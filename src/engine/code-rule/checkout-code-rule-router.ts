@@ -266,13 +266,22 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     let matcher = this.#gitIgnore.get(owner.checkoutRoot);
     if (matcher !== undefined) return matcher;
     try {
-      matcher = loadNativeBinding().openGitIgnoreMatcher(owner.checkoutRoot);
+      matcher = this.#openGitIgnore(owner.checkoutRoot);
     } catch (error) {
       matcher = null;
       this.#reportGitIgnoreError(owner, error);
     }
     this.#gitIgnore.set(owner.checkoutRoot, matcher);
     return matcher;
+  }
+
+  /**
+   * `root`'s Git ignore rules: the daemon's matcher for the checkout, which every session's router shares, or one of its
+   * own. A router that closed takes its own, so a late question does not hold the shared one past its close.
+   */
+  #openGitIgnore(root: string): NativeGitIgnoreMatcher | null {
+    const shared = this.#closing ? undefined : this.#options.gitIgnoreMatchers;
+    return shared === undefined ? loadNativeBinding().openGitIgnoreMatcher(root) : shared.matcher(root, this);
   }
 
   #reportGitIgnoreError(owner: CheckoutOwner, error: unknown): void {
@@ -411,6 +420,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     this.interrupt(options);
     const lanes = [...this.#lanes.values()];
     this.#lanes.clear();
+    this.#gitIgnore.clear();
+    this.#options.gitIgnoreMatchers?.release(this);
     await Promise.all(lanes.map(async lane => {
       await lane.opening.catch(() => undefined);
       await lane.enforcer.close(options);
