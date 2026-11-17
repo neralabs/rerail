@@ -696,7 +696,7 @@ export interface SourceScan {
    * (`#readFirstSeenTexts`): the preimage of the session's next shell write to it, which no blob could give.
    */
   readonly firstSeen: Map<string, { readonly text: string; readonly digest: string }>;
-  /** The checkout that owns each folder the walk passed a `.git` entry in: a checkout inside the session folder is found here. */
+  /** The checkout that owns each folder the walk passed a `.git` entry in: a checkout inside the session folder, or inside another worktree, is found here. */
   readonly checkouts: Set<string>;
   /** The unmerged entries of each of `checkouts` that no walk had read, read after the scan (`#readPassedCheckouts`). */
   readonly unmerged: Map<string, ReadonlyMap<string, string>>;
@@ -977,6 +977,15 @@ async function folderStamp(root: string, path: string): Promise<number | undefin
 }
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+/**
+ * Whether the other worktrees' walk finds the files of the checkout at `root`: it is one of them, or lies inside one (a
+ * submodule there, or a repository of its own). Told as `walkAnswersFor` tells a file's walk, by its path from the
+ * session folder: a worktree around the session folder does not take the session's checkout, nor one inside its folder.
+ */
+function inWorktrees(discovery: SourceDiscovery, root: string): boolean {
+  const path = sessionPath(discovery.root, root);
+  return discovery.worktrees.roots.has(path) || underBaselineRoot(discovery.worktrees.roots, path);
 }
 /**
  * Whether `path` lies below one of `roots` (`""` holds every path). Each folder above `path` is looked up in `roots`, so
@@ -2039,6 +2048,7 @@ export class CodeRuleBridge {
       checkout: this.#owningCheckout(discovery.root, ""),
       firstSight: new Set(worktrees.filter(worktree => this.#mayFirstSee(discovery, sessionPath(discovery.root, worktree)))),
       startedAt: discovery.startedAt,
+      heads: new Set([...discovery.heads.keys()].filter(root => inWorktrees(discovery, root))),
       scan: request => this.#scanWorktree(discovery, request, rules),
       take: walk => this.#takeWorktreeWalk(discovery, start, walk),
     };
@@ -2174,6 +2184,9 @@ export class CodeRuleBridge {
       snapshots.set(worktree, findings.snapshot);
       if (findings.head !== undefined) heads.set(root, findings.head);
       if (findings.unmerged !== undefined) unmerged.set(root, findings.unmerged);
+      for (const [checkout, head] of findings.inner.heads) heads.set(checkout, head);
+      for (const [checkout, entries] of findings.inner.unmerged) unmerged.set(checkout, entries);
+      for (const [checkout, entries] of findings.inner.passed) scan.unmerged.set(checkout, entries);
       this.#takeFindings(discovery, { root, worktree }, findings, kept.get(worktree) ?? [], { previous, scan });
     }
     const walk: WalkStart = {
@@ -2594,7 +2607,9 @@ export class CodeRuleBridge {
 
   /**
    * `HEAD` and the unmerged entries of the session folder's checkout and of every other checkout a walk has found a
-   * change in, but for the other worktrees, whose shared walk reads theirs (`WorktreeWalks`).
+   * change in, but for the other worktrees and the checkouts inside them (`inWorktrees`), whose shared walk reads theirs
+   * (`WorktreeWalks`, `InnerCheckouts`). No other walk reads a checkout: a move or a conflict read before the walk that
+   * does not find its files would be the last walk's by the time the one that does looks.
    * Each is read at the checkout that owns its files, as `#gitVerdicts` asks for it: a session opened in a subfolder
    * reads the checkout around it, whose unmerged paths Git lists from its top folder.
    * Read on every pass, not only one that finds changes: a modify/delete conflict can stop a merge without changing a
@@ -2610,8 +2625,7 @@ export class CodeRuleBridge {
       const entries = await unmergedNow(discovery, root);
       if (entries !== undefined) unmerged.set(root, entries);
     };
-    const walkedApart = (root: string): boolean => discovery.worktrees.roots.has(sessionPath(discovery.root, root));
-    const others = [...discovery.heads.keys()].filter(known => !walkedApart(known));
+    const others = [...discovery.heads.keys()].filter(known => !inWorktrees(discovery, known));
     // When no checkout owns the session folder, no change in it is asked about.
     const session = this.#owningCheckout(discovery.root, "");
     const withHead = new Set(session === undefined ? others : [session, ...others]);
@@ -2621,7 +2635,7 @@ export class CodeRuleBridge {
       heads.set(root, head);
       await readEntries(root);
     }
-    for (const root of discovery.passedCheckouts) if (!withHead.has(root) && !walkedApart(root)) await readEntries(root);
+    for (const root of discovery.passedCheckouts) if (!withHead.has(root) && !inWorktrees(discovery, root)) await readEntries(root);
     return { heads, unmerged };
   }
 
