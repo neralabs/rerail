@@ -87,7 +87,8 @@ export function recordHookFailure(
     const path = join(home, HOOK_FAILURES_FILE);
     const size = sizeOf(path);
     const moved = size > MAX_FAILURE_BYTES && movedAside(home, path);
-    if (!moved && size >= CAP_FAILURE_BYTES) return;
+    // At the cap by the size read before the lock, the log is read again: another hook may have moved it since.
+    if (!moved && size >= CAP_FAILURE_BYTES && sizeOf(path) >= CAP_FAILURE_BYTES) return;
     // Read after the move, past it by a clock step when this hook moved the log: the hook's own failure carries the
     // time the new part starts, so it counts in that part.
     const at = now ?? Date.now() + (moved ? PART_START_PAST_CLOCK_MS : 0);

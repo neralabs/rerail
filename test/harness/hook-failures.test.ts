@@ -297,6 +297,38 @@ describe("the hook failure log", () => {
     expect(sizeOfLog(rerailHome)).toBeLessThanOrEqual(CAP + slack(1));
   });
 
+  it("keeps the failure of a hook that found the log at its cap when another hook moved it before this one could", async () => {
+    const rerailHome = await home();
+    const line = `${JSON.stringify(failure(1))}\n`;
+    writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), line.repeat(Math.ceil(CAP / line.length) + 1));
+    expect(sizeOfLog(rerailHome)).toBeGreaterThanOrEqual(CAP);
+    // The hook's first look at the size finds the log at its cap; right after it, another hook moves the log to `.1`.
+    const program = `import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+const stat = fs.statSync;
+let first = true;
+fs.statSync = (path, ...rest) => {
+  const stats = stat(path, ...rest);
+  if (first && String(path).endsWith(${JSON.stringify(HOOK_FAILURES_FILE)})) {
+    first = false;
+    fs.renameSync(path, path + ".1");
+  }
+  return stats;
+};
+syncBuiltinESMExports();
+// Imported once the wrap is in place, so the module's own statSync is the wrapped one: a static import would load first.
+const { recordHookFailure } = await import(${JSON.stringify(sourceModule("src/harness/hook-failures.ts"))});
+recordHookFailure({ host: "claude-code", event: "PostToolUse", reason: "kept" }, { home: ${JSON.stringify(rerailHome)}, now: 5, env: {} });
+`;
+    const child = tracked(spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
+      cwd: join(import.meta.dirname, "..", ".."), stdio: ["ignore", "ignore", "inherit"], windowsHide: true,
+    }));
+    const [code] = await once(child, "exit") as [number | null];
+    expect(code).toBe(0);
+    expect(existsSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`))).toBe(true);
+    expect(readHookFailures(rerailHome, 0).failures.filter(entry => entry.reason === "kept")).toHaveLength(1);
+  });
+
   // The system frees a lock once its holder ends, however it ends; here the test holds it for as long as the hooks run.
   it("stops growing the live log at its cap while another process holds the move's lock", async () => {
     const processes = 20;
