@@ -629,6 +629,16 @@ describe("T6 / C6 summary", () => {
     expect(text).not.toContain("/hooks");
   });
 
+  it.each(LANES)("says the hooks of a coding agent whose hook failed are written, not that its config was left (%s)", lane => {
+    const failed = [{ agent: CLAUDE, message: "Claude Code's Rerail hook did not answer within 30 s", registered: true as const }];
+    const text = stripAnsi(renderSummary({ ...SUMMARY, agents: { ...CONNECTED, connected: [CLAUDE, CURSOR], failed } }, lane));
+    expect(text).toContain([
+      "  △ Couldn’t connect Claude Code: Claude Code's Rerail hook did not answer within 30 s",
+      "    Rerail’s hooks are written, but they fail. Fix that, then run rerail setup again to connect Claude Code.",
+    ].join("\n"));
+    expect(text).not.toContain("left its config");
+  });
+
   it.each(LANES)("names a coding agent it could not connect, with the file, why, and what to do (%s)", lane => {
     const failed = [{ agent: CLAUDE, message: "Expected property name or '}' in JSON at position 4", file: "/Users/me/.claude/settings.json" }];
     const text = stripAnsi(renderSummary({ ...SUMMARY, agents: { ...CONNECTED, connected: [CURSOR], failed } }, lane));
