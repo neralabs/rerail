@@ -317,7 +317,7 @@ export function gitStartEnvironment(path: string, env: NodeJS.ProcessEnv = proce
 function launcherEnvironment({ root, build }: GitForWindowsBuild, env: NodeJS.ProcessEnv, probe: GitProbe): NodeJS.ProcessEnv {
   const home = launcherHome(env, probe);
   const system = build.toUpperCase();
-  const first = [win32.join(root, system, "bin"), win32.join(root, "usr", "bin"), ...(home === undefined ? [] : [win32.join(home, "bin")])];
+  const first = [win32.join(root, system), win32.join(root, "usr"), ...(home === undefined ? [] : [home])].map(folder => win32.join(folder, "bin"));
   const plink = variable(env, "PLINK_PROTOCOL");
   return withVariables(env, {
     MSYSTEM: system,
