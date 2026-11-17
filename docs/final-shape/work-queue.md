@@ -473,8 +473,9 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
 - The 16 semantic fixtures listed here under Q19 were mostly not the work limit: a result limit was applied as the
   result capacity, so an evaluation past its witness limit failed (`WorkLimit` on Metal, `BackendCapacity` on the
   CPU JIT). It is now a selection at compaction (0334 §3). 13 of them pass; 3 differ in what they find (Q22).
-- **Open**: `metal_catches_a_widened_walk` catches 2 widened clauses of the 3 it wants; Metal and the CPU agree on
-  every one. Over its CPU twin's tapes (every fourth file of the pack, 16 a launch) it still catches 2.
+- `metal_catches_a_widened_walk` caught 2 widened clauses of the 3 it wanted, and so does its CPU twin
+  (`the_gate_catches_a_widened_walk`, in the slow tier, failing unseen): the pack's clauses give 2. Both now read
+  the same tapes (`widened_tapes`, Metal 16 a launch) and want 2 (`WIDENED_CAUGHT`); both pass.
 - **Open**: the replanning of over-long jobs (0334, "Over-long jobs are replanned"), awaiting the user's answers.
 
 ### Q20. The CPU JIT's capture pairs compare and scan a byte a step

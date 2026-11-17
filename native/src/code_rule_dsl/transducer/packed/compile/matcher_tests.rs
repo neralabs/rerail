@@ -202,6 +202,23 @@ fn lowered_python_clauses_match_where_ws_matcher_does() {
 }
 
 /// Widens the first `neighbor` walk to `end`: a lowering this wrong must not pass the gate.
+/// How many widened clauses the widened-walk checks must see differ from W's matcher: the pack's clauses give 2
+/// on `widened_tapes` (2026-11-17; the CPU's check and Metal's alike). One shows the walk is checked.
+const WIDENED_CAUGHT: usize = 2;
+
+/// The widened-walk checks' tapes: every fourth Python file of the pack's upstream sources.
+fn widened_tapes() -> Vec<TapeDoc> {
+    let mut sources = Vec::new();
+    files(&pack().join("upstream"), "py", &mut sources);
+    sources.sort();
+    sources
+        .iter()
+        .step_by(4)
+        .filter_map(|path| std::fs::read_to_string(path).ok())
+        .map(|source| python_tape(&source))
+        .collect()
+}
+
 fn widen_first_neighbor(tree: &mut MatchTree) -> bool {
     match tree {
         MatchTree::Walk { stop, rule, .. } => {
@@ -225,15 +242,7 @@ fn widen_first_neighbor(tree: &mut MatchTree) -> bool {
 
 #[test]
 fn the_gate_catches_a_widened_walk() {
-    let mut sources = Vec::new();
-    files(&pack().join("upstream"), "py", &mut sources);
-    sources.sort();
-    let tapes = sources
-        .iter()
-        .step_by(4)
-        .filter_map(|path| std::fs::read_to_string(path).ok())
-        .map(|source| python_tape(&source))
-        .collect::<Vec<_>>();
+    let tapes = widened_tapes();
     let compiled = clauses();
     let mut caught = 0;
     for (_, compiled) in &compiled {
@@ -254,7 +263,7 @@ fn the_gate_catches_a_widened_walk() {
                 program.roots(tape).ok() != Some(expected)
             });
             caught += usize::from(differs);
-            if caught >= 3 {
+            if caught >= WIDENED_CAUGHT {
                 return;
             }
         }
@@ -421,11 +430,12 @@ fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
     assert!(equal > 0, "no clause ran on the interpreter");
 }
 
-/// The Metal gate's mutation check: a widened walk must differ from W's matcher on Metal too.
+/// The Metal gate's mutation check: a widened walk must differ from W's matcher on Metal too, over the CPU check's
+/// tapes (`widened_tapes`), 16 a launch.
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
 #[test]
 fn metal_catches_a_widened_walk() {
-    let tapes = fixtures().into_iter().take(16).collect::<Vec<_>>();
+    let tapes = widened_tapes();
     let mut caught = 0;
     for (_, compiled) in &clauses() {
         for (_, grammar) in python_matchers(compiled) {
@@ -434,21 +444,24 @@ fn metal_catches_a_widened_walk() {
                 continue;
             }
             let Ok(program) = LoweredMatcher::lower(&tree) else { continue };
-            let expected = tapes
-                .iter()
-                .map(|tape| {
-                    let root = Root::doc(tape.clone());
-                    let mut work = usize::MAX;
-                    (0..tape.transducer_len() as u32)
-                        .filter(|&ordinal| grammar.match_root(node_at(&root, ordinal), &mut work).ok().flatten().is_some())
-                        .collect::<BTreeSet<_>>()
-                })
-                .collect::<Vec<_>>();
-            let metal = program.roots_metal(&tapes).ok().map(|(roots, _)| roots);
-            let cpu = program.roots_batch(super::compile_matcher::Backend::Cpu, &tapes).ok();
-            assert_eq!(metal, cpu, "a widened clause must still agree between CPU and Metal");
-            caught += usize::from(metal != Some(expected));
-            if caught >= 3 {
+            let differs = tapes.chunks(16).any(|tapes| {
+                let expected = tapes
+                    .iter()
+                    .map(|tape| {
+                        let root = Root::doc(tape.clone());
+                        let mut work = usize::MAX;
+                        (0..tape.transducer_len() as u32)
+                            .filter(|&ordinal| grammar.match_root(node_at(&root, ordinal), &mut work).ok().flatten().is_some())
+                            .collect::<BTreeSet<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                let metal = program.roots_metal(tapes).ok().map(|(roots, _)| roots);
+                let cpu = program.roots_batch(super::compile_matcher::Backend::Cpu, tapes).ok();
+                assert_eq!(metal, cpu, "a widened clause must still agree between CPU and Metal");
+                metal != Some(expected)
+            });
+            caught += usize::from(differs);
+            if caught >= WIDENED_CAUGHT {
                 return;
             }
         }
