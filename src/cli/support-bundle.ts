@@ -402,6 +402,11 @@ function repositoryAddresses(key: string): string[] {
   return segments.length >= 2 ? [key, address, segments.slice(-2).join("/")] : [key];
 }
 
+/**
+ * The names a repository goes by, and every path and clone id its checkouts were recorded under (`checkouts`): an
+ * earlier version's spelling of a folder too, such as a mapped drive's letter, which its log lines and the daemon's can
+ * hold.
+ */
 function repositoryLiterals(repository: RepositoryListing): KnownValue[] {
   return [
     ...[repository.repositoryKey, ...repository.aliases].flatMap(key => repositoryAddresses(key).map(value => ({ value, label: "<repository>" }))),

@@ -451,27 +451,42 @@ export function nestedCheckouts(db: Reader, checkout: Pick<CheckoutContext, "che
 }
 
 export interface RepositoryListing extends RepositoryRecord {
+  /**
+   * Every checkout recorded for the repository, the rows an earlier build keeps under another spelling of a folder
+   * among them: a reader that scrubs, deletes or reads history by checkout gets each path and clone id a checkout was
+   * recorded under. A list a person reads shows each folder once ({@link listedCheckouts}).
+   */
   readonly checkouts: readonly RecordedCheckout[];
   /**
-   * The rows an earlier build keeps under another spelling of a folder (`notAnEarlierSpelling`): left out of
-   * `checkouts`, and read by a start state as {@link startStateParents} reads them.
+   * The paths in `checkouts` that an earlier build keyed another way than this build keys their folder
+   * (`notAnEarlierSpelling`): {@link listedCheckouts} leaves them out, and a start state reads them as
+   * {@link startStateParents} does.
    */
-  readonly earlierSpellings?: readonly RecordedCheckout[];
+  readonly earlierSpellings?: readonly string[];
 }
 
-/** Every repository Rerail knows, with its recorded checkouts, each folder once (`notAnEarlierSpelling`), ordered by name. */
+/** Every repository Rerail knows, with every checkout recorded for it, ordered by name. */
 export function listRepositories(db: Reader): RepositoryListing[] {
-  const listed = new Map<RepositoryKey, RecordedCheckout[]>();
-  const earlier = new Map<RepositoryKey, RecordedCheckout[]>();
+  const recorded = new Map<RepositoryKey, RecordedCheckout[]>();
+  const earlier = new Map<RepositoryKey, string[]>();
   const rows = db.select({ ...recordedCheckoutColumns, listedHere: sql<number>`${notAnEarlierSpelling(checkouts.checkoutPath)}` })
     .from(checkouts).orderBy(checkouts.checkoutPath).all();
   for (const { listedHere, ...row } of rows) {
-    const into = listedHere ? listed : earlier;
-    into.set(row.repositoryKey, [...(into.get(row.repositoryKey) ?? []), row]);
+    recorded.set(row.repositoryKey, [...(recorded.get(row.repositoryKey) ?? []), row]);
+    if (!listedHere) earlier.set(row.repositoryKey, [...(earlier.get(row.repositoryKey) ?? []), row.checkoutPath]);
   }
   return db.select().from(repositories).all()
-    .map(repository => ({ ...recordOf(repository), checkouts: listed.get(repository.repositoryKey) ?? [], earlierSpellings: earlier.get(repository.repositoryKey) ?? [] }))
+    .map(repository => ({ ...recordOf(repository), checkouts: recorded.get(repository.repositoryKey) ?? [], earlierSpellings: earlier.get(repository.repositoryKey) ?? [] }))
     .sort((left, right) => left.displayName.localeCompare(right.displayName) || left.repositoryKey.localeCompare(right.repositoryKey));
+}
+
+/**
+ * The checkouts of `repository` as a list a person reads shows them: each folder once, under the key this build gives
+ * it, with the rows kept for an earlier build under another spelling of a folder left out (`earlierSpellings`).
+ */
+export function listedCheckouts(repository: RepositoryListing): RecordedCheckout[] {
+  const earlier = new Set(repository.earlierSpellings);
+  return repository.checkouts.filter(row => !earlier.has(row.checkoutPath));
 }
 
 /** A checkout of a listed repository as {@link listedCheckoutStates} reads it. */
@@ -512,9 +527,9 @@ function folderAndAbove(path: string): string[] {
  * the listing and each checkout's folder depth, not a few statements and a read of every checkout per checkout.
  */
 export function listedCheckoutStates(repository: RepositoryListing): (checkoutPath: string) => ListedCheckoutState {
-  const earlier = new Set((repository.earlierSpellings ?? []).map(row => row.checkoutPath));
+  const earlier = new Set(repository.earlierSpellings);
   const byFolder = new Map<string, RecordedCheckout[]>();
-  for (const row of [...repository.checkouts, ...(repository.earlierSpellings ?? [])]) {
+  for (const row of repository.checkouts) {
     const key = listedFolderKey(row.checkoutPath);
     byFolder.set(key, [...(byFolder.get(key) ?? []), row]);
   }

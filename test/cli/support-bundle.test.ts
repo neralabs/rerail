@@ -321,6 +321,27 @@ describe("rerail support-bundle", () => {
     expect(bundle.daemonLog).toContain("error reading <checkout>/src/app.ts in <repository>");
   });
 
+  // An earlier version kept a checkout under another spelling of its folder (a drive letter, where this version keys the
+  // folder the letter stands for). This version lists the folder once, and the bundle took out only the rows it lists,
+  // so the earlier spelling stayed in the log as written.
+  it("takes every spelling a checkout was recorded under out of the daemon log, an earlier version's included", async () => {
+    const world = await reportedWorld();
+    const earlier = join(world.root, "mapped-letter", "client-acme");
+    const database = openRerailDatabase(defaultRerailDatabasePath());
+    try {
+      database.$client.prepare("INSERT INTO path_key_spellings (stored, current, preferences_before) SELECT ?, checkout_path, 0 FROM checkouts LIMIT 1").run(earlier);
+      database.$client.prepare(`INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at)
+        SELECT ?, repository_key, 'clone-of-an-earlier-version', NULL, created_at, last_seen_at FROM checkouts LIMIT 1`).run(earlier);
+    } finally {
+      database.$client.close();
+    }
+    writeFileSync(join(world.home, "daemon.log"), `error reading ${earlier}/src/app.ts in clone-of-an-earlier-version\n`);
+
+    const { bundle, text } = await run(world);
+    expect(bundle.daemonLog).toContain("error reading <checkout>/src/app.ts in <repository>");
+    expect(text).not.toContain("client-acme");
+  });
+
   it("takes the computer's name out of the log by its first label too, as macOS logs it without .local", async () => {
     const world = await reportedWorld();
     const label = hostname().split(".")[0]!;

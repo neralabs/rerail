@@ -31,6 +31,7 @@ import { repositoryIdentityLocation } from "../engine/catalog/repository-identit
 import {
   checkoutStatus,
   linkAlias,
+  listedCheckouts,
   listedCheckoutStates,
   listRepositories,
   parentCheckouts,
@@ -260,7 +261,7 @@ export function repositorySummary(repository: RepositoryListing): z.infer<typeof
     started: repository.started,
     state: stateOf({ started: repository.started, setUp: repository.configuredAt !== null, startedBy: "repository" }),
     followGitignore: repository.followGitignore,
-    checkoutCount: repository.checkouts.length,
+    checkoutCount: listedCheckouts(repository).length,
   };
 }
 
@@ -457,7 +458,8 @@ function attachmentsOf(db: RerailDatabase, repositoryKey: string): z.infer<typeo
 /** A checkout of the repository that is on disk to scan: the target's, else the main checkout, else the most recently seen. */
 export function checkoutOnDisk(target: Target): string {
   if (target.checkout !== undefined && existsSync(target.checkout.checkoutPath)) return target.checkout.checkoutPath;
-  const present = target.repository.checkouts.filter(checkout => existsSync(checkout.checkoutPath));
+  // Each folder once, under the key this build gives it, which is the key what a scan finds there is kept under.
+  const present = listedCheckouts(target.repository).filter(checkout => existsSync(checkout.checkoutPath));
   const main = present.find(checkout => repositoryIdentityLocation(checkout.checkoutPath).main);
   const recent = [...present].sort((left, right) => right.lastSeenAt - left.lastSeenAt)[0];
   const chosen = main ?? recent;
@@ -512,7 +514,7 @@ export const repositoryOperations: readonly Operation[] = [
       // Every checkout's state from the listing the target was found in: no statement per checkout.
       const stateAt = listedCheckoutStates(target.repository);
       const clones = new Map<string, z.infer<typeof repositoryContextSchema>["clones"][number]["checkouts"]>();
-      for (const record of target.repository.checkouts) {
+      for (const record of listedCheckouts(target.repository)) {
         const { status, parentCheckoutPath } = stateAt(record.checkoutPath);
         clones.set(record.cloneId, [...(clones.get(record.cloneId) ?? []), {
           checkoutPath: record.checkoutPath,

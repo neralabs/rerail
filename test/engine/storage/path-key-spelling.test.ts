@@ -11,7 +11,9 @@ import { createRerailApi, DatabaseApiStores, invokeOperation, operations } from 
 import { startRerail } from "../../../src/cli/index.js";
 import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
-import { listedCheckoutStates, listRepositories, nestedCheckouts, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
+import {
+  listedCheckouts, listedCheckoutStates, listRepositories, nestedCheckouts, recordCheckout, repositoryHistoryIds,
+} from "../../../src/engine/catalog/repository-registry.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { currentPathKey, pathKeysCanMove, readableRoots, withDriveBudget } from "../../../src/engine/storage/path-key-spelling.js";
@@ -231,7 +233,8 @@ function recordsAt(folder: string, databasePath: string) {
   try {
     return {
       startState,
-      checkouts: listRepositories(database).flatMap(repository => repository.checkouts.map(row => row.checkoutPath)),
+      // The checkouts a list a person reads shows, each folder once.
+      checkouts: listRepositories(database).flatMap(repository => listedCheckouts(repository).map(row => row.checkoutPath)),
       settings: rows(database, `SELECT "on" FROM rule_settings WHERE owner_kind = 'checkout' AND owner_id = ?`, folder),
       auditSettings: controls.getWorkspaceSettings(folder),
       presence: preferences.effective(folder, "claude-code"),
@@ -731,8 +734,9 @@ describe("path keys an earlier build stored under another spelling", () => {
 
     const database = openRerailDatabase(databasePath);
     try {
-      const { repositoryKey, checkouts } = listRepositories(database).find(repository => repository.checkouts.length > 0)!;
-      expect(checkouts.map(row => row.checkoutPath).sort()).toEqual([folder, inner].sort());
+      const repository = listRepositories(database).find(candidate => candidate.checkouts.length > 0)!;
+      const { repositoryKey } = repository;
+      expect(listedCheckouts(repository).map(row => row.checkoutPath).sort()).toEqual([folder, inner].sort());
       // A start or stop of the folder sets the earlier build's rows inside it to follow too, as a build without the step
       // does, so that build reads what this one set: its row of a folder inside, and on Windows, which compares folders
       // without letter case, its row of the folder itself.
@@ -749,6 +753,35 @@ describe("path keys an earlier build stored under another spelling", () => {
       preferences.close();
     }
     expect(earlierBuildReads(databasePath, stored).presence).toBeUndefined();
+  });
+
+  // The repository list left the earlier build's rows out of `checkouts`, which the support bundle, `rerail reset`,
+  // `rerail feedback` and rule evidence read for every path and clone id a checkout was recorded under: the bundle left
+  // such a path in its file as written, and a reset left the sessions recorded under such a clone id.
+  it("give every reader of a repository's checkouts each spelling and clone id a folder was recorded under, and list it once", async () => {
+    const { folder, databasePath } = await checkoutFolder();
+    onTheSystemDrive(folder);
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    openRerailDatabase(databasePath).$client.close();
+    // The folder cloned again since: this build's row holds the new clone's id, the earlier build's the old one's.
+    const reader = new Database(databasePath, { readonly: true });
+    const earlierClone = (reader.prepare("SELECT clone_id FROM checkouts WHERE checkout_path = ?").get(stored) as { clone_id: string }).clone_id;
+    reader.close();
+    write(databasePath, [["UPDATE checkouts SET clone_id = 'clone-made-again' WHERE checkout_path = ?", folder]]);
+
+    const database = openRerailDatabase(databasePath);
+    try {
+      const repository = listRepositories(database).find(candidate => candidate.checkouts.length > 0)!;
+      expect({
+        recorded: repository.checkouts.map(row => row.checkoutPath).sort(),
+        listed: listedCheckouts(repository).map(row => row.checkoutPath),
+        historyIds: repositoryHistoryIds(repository).filter(id => id !== repository.repositoryKey).sort(),
+      }).toEqual({ recorded: [folder, stored].sort(), listed: [folder], historyIds: ["clone-made-again", earlierClone].sort() });
+    } finally {
+      database.$client.close();
+    }
   });
 
   it("stay where the key cannot be resolved or is no whole path, and the database still opens", async () => {

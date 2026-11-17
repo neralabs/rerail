@@ -5,7 +5,7 @@ import { and, asc, desc, eq, gte, inArray, lt, or, sql, type SQL } from "drizzle
 import { alias } from "drizzle-orm/sqlite-core";
 import { parseArguments } from "../daemon/daemon.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
-import { followsGitignore, listRepositories, lookupCheckout } from "../engine/catalog/repository-registry.js";
+import { followsGitignore, listedCheckouts, listRepositories, lookupCheckout, type RepositoryListing } from "../engine/catalog/repository-registry.js";
 import { loadNativeBinding, type NativeGitIgnoreMatcher } from "../engine/native/native.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { events, sessions } from "../engine/storage/schema.js";
@@ -406,7 +406,7 @@ export async function collectRuleEvidence(repo: string, options: RuleEvidenceOpt
     const stored = windowEvents(database, repositorySessions, since);
     const evidence = readEvents(stored, { hostOf, contexts: contextsBefore(database, stored, earlier) }, limit);
     return {
-      repository: { name, known: true, checkouts: repository?.checkouts.length ?? 1 },
+      repository: { name, known: true, checkouts: checkoutCount(repository) },
       window: { days, sessions: hostOf.size, hosts, prompts: evidence.prompts },
       ...evidence.found,
       standards,
@@ -414,6 +414,11 @@ export async function collectRuleEvidence(repo: string, options: RuleEvidenceOpt
   } finally {
     database.$client.close();
   }
+}
+
+/** How many checkouts the repository's list shows, each folder once (`listedCheckouts`); one for a repository not listed. */
+function checkoutCount(repository: RepositoryListing | undefined): number {
+  return repository === undefined ? 1 : listedCheckouts(repository).length;
 }
 
 /** What one pass over the window's events has found so far. */
