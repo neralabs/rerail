@@ -1072,6 +1072,9 @@ impl Source for Renamed {
     fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
         self.0.sorted_rows(column, value)
     }
+    fn sorted_range(&self, column: usize, value: i64) -> Option<std::ops::Range<u32>> {
+        self.0.sorted_range(column, value)
+    }
     fn sorts_rows(&self, column: usize) -> bool {
         self.0.sorts_rows(column)
     }
@@ -1753,6 +1756,9 @@ impl Source for Lazy {
     fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
         self.inner().sorted_rows(column, value)
     }
+    fn sorted_range(&self, column: usize, value: i64) -> Option<std::ops::Range<u32>> {
+        self.inner().sorted_range(column, value)
+    }
     fn sorts_rows(&self, column: usize) -> bool {
         self.inner().sorts_rows(column)
     }
@@ -1944,6 +1950,10 @@ impl Source for Traced {
     fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
         self.whole("sorted_rows (index)");
         self.inner.sorted_rows(column, value)
+    }
+    fn sorted_range(&self, column: usize, value: i64) -> Option<std::ops::Range<u32>> {
+        self.whole("sorted_rows (index)");
+        self.inner.sorted_range(column, value)
     }
     fn sorts_rows(&self, column: usize) -> bool {
         self.inner.sorts_rows(column)

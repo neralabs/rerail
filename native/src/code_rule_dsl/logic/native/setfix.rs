@@ -4345,7 +4345,11 @@ impl InRel {
             let eq: Vec<(usize, i64)> = ix.cols.iter().zip(key).map(|(&c, &k)| (v.cols[c], k)).collect();
             for r in v.src.lookup_all(&eq).unwrap_or_default() { give(RowRef::Source(v, r).read()) }
         } else if ix.sorted && let Some(v) = &self.view {
-            for &r in v.src.sorted_rows(v.cols[ix.cols[ix.lead]], key[ix.lead]).unwrap_or(&[]) { give(RowRef::Source(v, r as usize).read()) }
+            let (c, k) = (v.cols[ix.cols[ix.lead]], key[ix.lead]);
+            match v.src.sorted_range(c, k) {
+                Some(range) => for r in range { give(RowRef::Source(v, r as usize).read()) },
+                None => for &r in v.src.sorted_rows(c, k).unwrap_or(&[]) { give(RowRef::Source(v, r as usize).read()) },
+            }
         } else if ix.source && let Some(v) = &self.view {
             for r in v.find(ix.cols[ix.lead], key[ix.lead]) { give(RowRef::Source(v, r as usize).read()) }
         } else {
@@ -4384,8 +4388,13 @@ impl InRel {
             let found = index.find_at(&self.rows, self.k, permuted(&index.cols[..m], at, &mut pbuf), None, &mut hints);
             run(found.len(), &|i| live(found.nth(i)))
         } else if !ix.composite && ix.sorted && let Some(v) = &self.view {
-            let rows = v.src.sorted_rows(v.cols[ix.cols[ix.lead]], ikey[ix.lead]).unwrap_or(&[]);
-            run(rows.len(), &|i| Some(RowRef::Source(v, rows[i] as usize).read()))
+            let (c, k) = (v.cols[ix.cols[ix.lead]], ikey[ix.lead]);
+            if let Some(range) = v.src.sorted_range(c, k) {
+                run(range.len(), &|i| Some(RowRef::Source(v, range.start as usize + i).read()))
+            } else {
+                let rows = v.src.sorted_rows(c, k).unwrap_or(&[]);
+                run(rows.len(), &|i| Some(RowRef::Source(v, rows[i] as usize).read()))
+            }
         } else if !ix.composite && !ix.source || self.view.is_none() {
             let ids = ix.get(self, ikey);
             run(ids.len(), &|i| live(ids[i]))
@@ -4413,7 +4422,8 @@ impl InRel {
             let mut hints = [0u32; runs::HINTS];
             index.find_at(&self.rows, self.k, permuted(&index.cols[..m], at, &mut pbuf), None, &mut hints).len() as f64
         } else if !ix.composite && ix.sorted && let Some(v) = &self.view {
-            v.src.sorted_rows(v.cols[ix.cols[ix.lead]], ikey[ix.lead]).map_or(0, |r| r.len()) as f64
+            let (c, k) = (v.cols[ix.cols[ix.lead]], ikey[ix.lead]);
+            v.src.sorted_range(c, k).map_or_else(|| v.src.sorted_rows(c, k).map_or(0, |r| r.len()), |r| r.len()) as f64
         } else if !ix.composite && !ix.source || self.view.is_none() {
             ix.get(self, ikey).len() as f64
         } else {
@@ -4944,6 +4954,10 @@ struct Stored {
     /// Its columns packed in one block, every one held (`packed_source`), in place of `values`: read in place, by
     /// row (`ColRef`).
     packed: Option<rerail_blocks::block::Block>,
+    /// Whether each column is in row order (a packed export's first, in canonical order): its probes are ranges
+    /// found by a search of the column (`sorted_range`), its distinct values and statistics read along it; no
+    /// `Sorted` is built for it.
+    in_order: Vec<std::sync::OnceLock<bool>>,
 }
 /// One of a `Stored`'s columns as it is held: a slice, or packed per range (`rerail_blocks::ranged`).
 #[derive(Clone, Copy)]
@@ -4987,6 +5001,41 @@ impl Stored {
     fn held(&self, c: usize) -> bool {
         self.packed.is_some() || self.values[c].get().is_some()
     }
+    /// Whether column `c` is held and in row order (`in_order`).
+    fn in_order(&self, c: usize) -> bool {
+        self.held(c) && *self.in_order[c].get_or_init(|| {
+            let col = self.col_ref(c);
+            (1..col.n()).all(|i| col.at(i - 1) <= col.at(i))
+        })
+    }
+    /// Column `c`'s rows whose value is `v`, the column in row order: two searches of the column.
+    fn range_of(&self, c: usize, v: i64) -> std::ops::Range<u32> {
+        let col = self.col_ref(c);
+        let first = |below: &dyn Fn(i64) -> bool| {
+            let (mut a, mut b) = (0, col.n());
+            while a < b {
+                let m = (a + b) / 2;
+                if below(col.at(m)) { a = m + 1 } else { b = m }
+            }
+            a as u32
+        };
+        first(&|x| x < v)..first(&|x| x <= v)
+    }
+    /// Column `c`, in row order, as runs of one value each: `f(start, end)`.
+    fn each_run(&self, c: usize, mut f: impl FnMut(usize, usize)) {
+        let col = self.col_ref(c);
+        let n = col.n();
+        let mut at = 0;
+        while at < n {
+            let v = col.at(at);
+            let mut end = at + 1;
+            while end < n && col.at(end) == v {
+                end += 1;
+            }
+            f(at, end);
+            at = end;
+        }
+    }
     /// Column `c` as it is held.
     fn col_ref(&self, c: usize) -> ColRef<'_> {
         match self.packed() {
@@ -5024,7 +5073,7 @@ impl Stored {
     }
     fn new(columns: Vec<String>, values: Vec<std::sync::OnceLock<Vec<i64>>>) -> Self {
         let k = columns.len();
-        Stored { columns, n: std::sync::OnceLock::new(), values, index: (0..k).map(|_| std::sync::OnceLock::new()).collect(), distinct: (0..k).map(|_| std::sync::OnceLock::new()).collect(), orders: Mutex::default(), statistics: None, runs: std::sync::OnceLock::new(), packed: None }
+        Stored { columns, n: std::sync::OnceLock::new(), values, index: (0..k).map(|_| std::sync::OnceLock::new()).collect(), distinct: (0..k).map(|_| std::sync::OnceLock::new()).collect(), orders: Mutex::default(), statistics: None, runs: std::sync::OnceLock::new(), packed: None, in_order: (0..k).map(|_| std::sync::OnceLock::new()).collect() }
     }
     /// `syntax::measured`'s statistics, from each column's sorted index (which joins read too): a value's rows are
     /// one run of it, in row order, and their documents (`id >> 32` of the first column) are counted within it. A
@@ -5040,16 +5089,14 @@ impl Stored {
                 if !self.held(c) || n == 0 {
                     return (name, n as i64, n as i64, n as i64, n as i64);
                 }
-                let sorted = self.sorted(c);
-                let ids = &sorted.ids;
                 let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);
-                for run in sorted.starts.windows(2) {
-                    let (at, end) = (run[0] as usize, run[1] as usize);
-                    let l = (end - at) as i64;
+                // One value's rows (`rows`): its postings, and their spread over documents.
+                let mut run = |rows: &mut dyn Iterator<Item = u32>| {
+                    docs.clear();
+                    docs.extend(rows.map(doc));
+                    let l = docs.len() as i64;
                     ndv += 1;
                     sq += l * l;
-                    docs.clear();
-                    docs.extend(ids[at..end].iter().map(|&r| doc(r)));
                     if !docs.is_sorted() {
                         docs.sort_unstable();
                     }
@@ -5058,6 +5105,14 @@ impl Stored {
                         let de = d + docs[d..].partition_point(|x| *x == docs[d]);
                         sqd += ((de - d) * (de - d)) as i64;
                         d = de;
+                    }
+                };
+                if self.in_order(c) {
+                    self.each_run(c, |at, end| run(&mut (at as u32..end as u32)));
+                } else {
+                    let sorted = self.sorted(c);
+                    for w in sorted.starts.windows(2) {
+                        run(&mut sorted.ids[w[0] as usize..w[1] as usize].iter().copied());
                     }
                 }
                 (name, n as i64, ndv, sq, sqd)
@@ -5070,7 +5125,15 @@ impl Stored {
         // edit's index cost (0101).
         *self.distinct[c].get_or_init(|| {
             let kept = self.statistics.as_ref().and_then(|s| s.get()).and_then(|st| st.iter().find(|m| m.0 == self.columns[c]).map(|m| m.2 as usize));
-            kept.unwrap_or_else(|| self.sorted(c).keys.len()).max(1)
+            kept.unwrap_or_else(|| {
+                if self.in_order(c) {
+                    let mut runs = 0;
+                    self.each_run(c, |_, _| runs += 1);
+                    runs
+                } else {
+                    self.sorted(c).keys.len()
+                }
+            }).max(1)
         })
     }
     /// An order whose leading columns are exactly `cols` (as a set), built most selective column first.
@@ -5248,7 +5311,11 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
         if !self.held(c) {
             return Some(if values.contains(&0) { (0..self.len()).collect() } else { Vec::new() });
         }
-        let mut out: Vec<usize> = values.iter().flat_map(|&v| self.rows_of(c, v).iter().map(|&r| r as usize)).collect();
+        let mut out: Vec<usize> = if self.in_order(c) {
+            values.iter().flat_map(|&v| self.range_of(c, v).map(|r| r as usize)).collect()
+        } else {
+            values.iter().flat_map(|&v| self.rows_of(c, v).iter().map(|&r| r as usize)).collect()
+        };
         out.sort_unstable();
         Some(out)
     }
@@ -5260,6 +5327,7 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
         }
     }
     fn sorted_rows(&self, c: usize, v: i64) -> Option<&[u32]> { self.held(c).then(|| self.rows_of(c, v)) }
+    fn sorted_range(&self, c: usize, v: i64) -> Option<std::ops::Range<u32>> { self.in_order(c).then(|| self.range_of(c, v)) }
     fn sorts_rows(&self, c: usize) -> bool { self.held(c) }
 }
 /// A relation held in memory as columns (`None`: a column no rule reads, which reads as 0), read in place: a
@@ -6377,7 +6445,10 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         let rows = v.src.lookup_all(&eq[..ix.cols.len()]).unwrap_or_default();
                         (Rows::Source(v), Cands::Owned(rows.into_iter().map(|r| r as u32).collect()))
                     }
-                    else if ix.sorted && let Some(v) = &rel.view { (Rows::Source(v), Cands::Slice(v.src.sorted_rows(v.cols[ix.cols[ix.lead]], key[ix.lead]).unwrap_or(&[]))) }
+                    else if ix.sorted && let Some(v) = &rel.view {
+                        let (c, k) = (v.cols[ix.cols[ix.lead]], key[ix.lead]);
+                        (Rows::Source(v), match v.src.sorted_range(c, k) { Some(r) => Cands::Range(r.start, r.end), None => Cands::Slice(v.src.sorted_rows(c, k).unwrap_or(&[])) })
+                    }
                     else if ix.source && let Some(v) = &rel.view { (Rows::Source(v), Cands::Owned(v.find(ix.cols[ix.lead], key[ix.lead]))) }
                     else { (Rows::In(rel), Cands::Slice(ix.get(rel, key))) }
                 }
@@ -7676,6 +7747,18 @@ pub mod carry_sorted_tests {
         }
         assert_eq!(packed.lookup_all(&[(1, 40), (2, 3)]), plain.lookup_all(&[(1, 40), (2, 3)]));
         assert_eq!(packed.statistics(), plain.statistics());
+        // Its first column is in order: a probe of it is a range, the same rows; its distinct values, statistics
+        // and lookups read along it, and no index is built for it.
+        let fresh = packed_source(["n", "a", "b"].map(str::to_owned).to_vec(), &cols.iter().map(Vec::as_slice).collect::<Vec<_>>(), &[18, 0, 0]).0;
+        for v in [cols[0][0], cols[0][2000], cols[0][n / 2], -5] {
+            let range: Vec<u32> = fresh.sorted_range(0, v).expect("in order").collect();
+            assert_eq!(range, plain.sorted_rows(0, v).unwrap(), "range of {v}");
+            assert_eq!(fresh.lookup(0, &[v]), plain.lookup(0, &[v]));
+        }
+        assert_eq!(fresh.statistics(), plain.statistics());
+        assert_eq!(fresh.estimated_matches(0, false), plain.estimated_matches(0, false));
+        assert!(fresh.sorted_range(1, 40).is_none(), "a column out of order has no range");
+        assert!(of(&fresh).index[0].get().is_none(), "no index of the column in order");
         assert_eq!(of(&packed).runs(), of(&plain).runs());
         assert_eq!(carry_sorted(packed.as_ref(), plain.as_ref()).1, 0, "a packed source is not carried");
     }
