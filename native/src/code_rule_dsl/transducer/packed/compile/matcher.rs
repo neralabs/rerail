@@ -1348,7 +1348,7 @@ impl Entry {
         Self(tests)
     }
 
-    fn admits(&self, tape: &TapeDoc, node: u32) -> bool {
+    pub fn admits(&self, tape: &TapeDoc, node: u32) -> bool {
         self.0.iter().all(|&(op, arg)| match op {
             KIND => tape.transducer_kind(node) == arg,
             _ => tape.transducer_has_supertype(node, arg),

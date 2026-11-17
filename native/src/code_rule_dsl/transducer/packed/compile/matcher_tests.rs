@@ -2,7 +2,7 @@
 //! fixtures, at exactly the nodes W's matcher does (`GrammarMatcher::match_root` at each node of
 //! the same tape). Prints the coverage: clauses lowered, refused by operator, mismatched.
 
-use super::compile_matcher::LoweredMatcher;
+use super::compile_matcher::{Entry, Label, LoweredMatcher, domain};
 use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::{GrammarMatcher, MatchTree, Stop, match_tree, node_at};
@@ -779,6 +779,80 @@ fn recursive_groups_settle_in_few_sweeps() {
             }
         }
     }
+}
+
+/// The spike's anchor measure (prior work, ast-index-spike S151: anchor rows per answer, 1.05 there) for the wave:
+/// over the fixtures (10 unless `RERAIL_S1_FILES` says), each clause's candidate roots (its domain past its entry,
+/// where its root walk starts) against the roots it finds, the root walk's steps, and the rows its label passes
+/// start at (each pass's domain). A census, not a check: it prints the totals and the clauses with the most
+/// candidates per answer and the most steps.
+#[test]
+fn anchor_rows_per_answer() {
+    let mut tapes = fixtures();
+    if std::env::var_os("RERAIL_S1_FILES").is_none() {
+        tapes.truncate(10);
+    }
+    let (compiled, mut lowered, mut names) = (clauses(), Vec::new(), Vec::new());
+    for (policy, compiled) in &compiled {
+        for (clause, grammar) in python_matchers(compiled) {
+            if let Ok(tree) = match_tree(grammar)
+                && let Ok(matcher) = LoweredMatcher::lower(&tree)
+            {
+                lowered.push(matcher);
+                names.push(format!("{policy}/{clause}"));
+            }
+        }
+    }
+    let nodes: usize = tapes.iter().map(TapeDoc::transducer_len).sum();
+    // Per clause: candidates, roots, root-walk steps, label rows, label passes.
+    let mut per: Vec<(String, u64, u64, u64, u64, usize)> = Vec::new();
+    for (matchers, names) in lowered.chunks(16).zip(names.chunks(16)) {
+        let wave = LoweredWave::new(&matchers.iter().collect::<Vec<_>>()).unwrap();
+        let active = vec![vec![true; tapes.len()]; matchers.len()];
+        let Ok(views) = wave.labelled(&tapes, &active) else { continue };
+        for (clause, name) in wave.clauses.iter().zip(names) {
+            let entry = Entry::of(&clause.program);
+            let (mut candidates, mut roots, mut steps, mut label_rows) = (0_u64, 0_u64, 0_u64, 0_u64);
+            for view in &views {
+                let sets = view.transducer_labels();
+                let starts: Vec<u32> = domain(&clause.domain, view, sets).filter(|&n| entry.admits(view, n)).collect();
+                candidates += starts.len() as u64;
+                if let Ok((outputs, used)) = clause.program.execute_roots_budgeted(view, starts.iter().copied(), usize::MAX) {
+                    roots += outputs.iter().map(|o| o.start).collect::<BTreeSet<_>>().len() as u64;
+                    steps += used as u64;
+                }
+                for def in &clause.labels.defs {
+                    if let Label::Pattern(_, d) | Label::Constrained(_, d, _) | Label::Roots(_, d) | Label::Targets(_, d) | Label::Count { domain: d, .. } = def {
+                        label_rows += domain(d, view, sets).count() as u64;
+                    }
+                }
+            }
+            per.push((name.clone(), candidates, roots, steps, label_rows, clause.labels.defs.len()));
+        }
+    }
+    let total = |f: fn(&(String, u64, u64, u64, u64, usize)) -> u64| per.iter().map(f).sum::<u64>();
+    let (candidates, roots, steps, label_rows) = (total(|p| p.1), total(|p| p.2), total(|p| p.3), total(|p| p.4));
+    eprintln!(
+        "anchors: {} clauses on {} tapes ({nodes} nodes): {candidates} candidate roots for {roots} roots ({:.2} a root), {steps} root-walk steps ({:.1} a candidate), {label_rows} label-pass rows ({:.1} a node)",
+        per.len(),
+        tapes.len(),
+        candidates as f64 / roots.max(1) as f64,
+        steps as f64 / candidates.max(1) as f64,
+        label_rows as f64 / nodes.max(1) as f64,
+    );
+    let without = per.iter().filter(|p| p.2 == 0);
+    eprintln!("clauses that found nothing: {}, with {} candidates", without.clone().count(), without.map(|p| p.1).sum::<u64>());
+    let mut by_ratio: Vec<_> = per.iter().filter(|p| p.2 > 0).collect();
+    by_ratio.sort_by(|a, b| (b.1 as f64 / b.2 as f64).total_cmp(&(a.1 as f64 / a.2 as f64)));
+    for p in by_ratio.iter().take(10) {
+        eprintln!("  candidates a root {:>8.1}: {} ({} candidates, {} roots, {} steps)", p.1 as f64 / p.2 as f64, p.0, p.1, p.2, p.3);
+    }
+    let mut by_steps: Vec<_> = per.iter().collect();
+    by_steps.sort_by_key(|p| std::cmp::Reverse(p.3 + p.4));
+    for p in by_steps.iter().take(10) {
+        eprintln!("  steps {:>10} + label rows {:>8} ({} passes): {} ({} candidates, {} roots)", p.3, p.4, p.5, p.0, p.1, p.2);
+    }
+    assert!(!per.is_empty());
 }
 
 /// The root programs' micro walks give the interpreter's roots (decision 0334 §5's prefilter plan, and Metal's root

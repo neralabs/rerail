@@ -174,9 +174,23 @@ Done (2026-11-17):
   has a code of its own for a work stop (5, status 4), which restarts with twice the steps.
 
 Not yet:
-1. **Another anchor or driver** (§5): a clause driven from a rarer kind inside its pattern, walking up to its
-   root, is a second lowering of the clause, which the matcher's compiler does not make. Labels first is the
-   lowering's own shape (every relational sub-rule is a label pass the root walk reads), and the prefilter's plan
-   is the micro walk on the term index (above).
+1. **Another anchor or driver** (§5) is not a replan choice: it moves to the planner (2026-11-17). Prior work
+   (ast-index-spike): anchor selection is a planning decision from statistics, settled there (the rarest mandatory
+   concrete variable, 112 s to 33 s, D S049-S050 L3024-3112; 1.05 anchor rows per answer, D S151 L6640-6686, DH
+   L2578-2597; a value or exclusion seed scored against the whole pattern's rarest bound, DH L5074-5143 S205, DH
+   L5466-5509 S209; leaf-up against root-down priced by the walk's work from per-edge counts, not by kind counts or
+   a fitted ratio, DH L8691-8730 S277), and choosing a plan by running and retrying was built and removed (D S069
+   L4110-4129: it spends the budget on the queries with least headroom, makes latency nondeterministic and cannot
+   batch). Decision 0026 took the same rule ("climb versus descent is a planning choice: anchor on the rarest
+   kind"), but the wave's lowering never did: a clause's root walk starts at every node of its root's kinds
+   (`Domain::of`, every node where the root has none), and each label pass at every node of its domain; the
+   prefilter uses the rarest requirement (`Statistics::choose`) only to gate files. Measured
+   (`anchor_rows_per_answer`, 50 of corpus0's files, every file active, the 491 Python clauses): 7,753,599
+   candidate roots for 4,566 roots (1,698 a root, against the spike's 1.05), 34.8 M root-walk steps, and 206.6 M
+   label-pass rows (1,522 a node); the worst clauses start at every node (SIM118, RUF005: 135,743 candidates, one
+   root). The replanning's part stays as built: an overrun's steps reprice the program, so the next plan starts
+   from them. The anchor itself is a new decision for the wave's planner: each clause's and each label pass's
+   start set from its rarest mandatory requirement (a kind's positions, or a term's), reaching the root by the
+   tape's parent arithmetic, with climb against descent priced by work from 0096's per-edge counts.
 2. The micro walk's prediction is a prior (`predict_walk`): the walk counts no steps the cost store could learn
    from.
