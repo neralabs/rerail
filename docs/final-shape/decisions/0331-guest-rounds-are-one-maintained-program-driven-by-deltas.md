@@ -151,3 +151,26 @@ profiled run):
 
 Outputs identical in all three (660 relations, 30,449 rows). The maintained rounds' gain is back: round 2 3.05 s
 against 5.08 s merged, the slice's first round 2.00 s against 2.48 s. One sample each; the M3's load was 11–24.
+
+### Reviewed: readers renamed, folded, copied or gone (2026-11-17)
+
+The gate names readers by relation, and passes after lowering rename them: `simplify::merge_identical` merges a
+class into one name, hiding's `fold_own` folds a guest's copy back into its original, and inlining removes a
+reader. A request whose readers were all renamed away could never open its gate, and would be dropped while its
+reader's new name needed it. Now `Program::rename_readers` renames them in both merging passes, a copy under
+another name joins its source's sets (`push_rule_from`), and a reader the program no longer has keeps its requests
+in `prune` and the embed slice (it cannot be asked). With the renames, no recorded reader is gone at the version
+build (`RERAIL_DUMP_SLICE`'s `.readers`), and the slice stays 491 rules; with only the gone-reader rule, before the
+renames, it was 520.
+
+Confirmed on the M3 (load 3.5 to 5), three samples each, engines interleaved: cold, warm (again on its store) and
+an edit (one line added to one file). Medians, CPU:
+
+| | t9 (before the hub) | merged | the record carried |
+|---|---|---|---|
+| cold, s | 55.5 (54.9–56.5) | 59.1 (52.8–59.6) | 52.0 (50.0–55.5) |
+| edit, s | 5.42 | 3.92 | 3.90 |
+| warm, s | 0.23 | 0.11 | 0.11 |
+
+Outputs identical, cold and edit (660 relations, 30,449 rows). Four runs' wall stalled 46 to 147 s at their usual
+CPU, across engines, while the host's connection was dropping: the host's, not an engine's.
