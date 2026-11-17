@@ -4262,20 +4262,43 @@ fn the_product_reads_ecma_with_the_lean_parser() {
 fn using_as_a_name_reads_without_an_error_on_the_products_path() {
     use crate::code_rule_dsl::tape::ecma_lean;
     use rerail_ecma_lean::Dialect;
-    let sources = ["const using = [1]; using.filter(x => x)\n", "function f(using: number[]) { return using.length; }\n"];
-    for (dialect, gd) in [(Dialect::JavaScript, GrammarDialect::JavaScript), (Dialect::TypeScript, GrammarDialect::TypeScript), (Dialect::Tsx, GrammarDialect::Tsx)] {
+    let sources = [
+        "const using = [1]; using.filter(x => x)\n",
+        "function f(using: number[]) { return using.length; }\n",
+    ];
+    for (dialect, gd) in [
+        (Dialect::JavaScript, GrammarDialect::JavaScript),
+        (Dialect::TypeScript, GrammarDialect::TypeScript),
+        (Dialect::Tsx, GrammarDialect::Tsx),
+    ] {
         let grammar = Grammar::new(gd).unwrap();
         for source in sources {
             // A parameter's type is TypeScript's: JavaScript reads the first only.
             if dialect == Dialect::JavaScript && source.contains(": number") {
                 continue;
             }
-            let product = TapeImage::parse(&grammar, source, &|| false).expect("read to its end").unwrap_or_else(|e| panic!("{gd:?}: {source:?}: {e}"));
-            let doc = TapeDoc::restore(Arc::new(source.to_owned()), Arc::clone(&grammar), &product.primary, &|| false).unwrap();
-            assert_eq!(doc.syntax_error_ranges(), Vec::<std::ops::Range<usize>>::new(), "{gd:?}: {source:?}");
+            let product = TapeImage::parse(&grammar, source, &|| false)
+                .expect("read to its end")
+                .unwrap_or_else(|e| panic!("{gd:?}: {source:?}: {e}"));
+            let doc = TapeDoc::restore(
+                Arc::new(source.to_owned()),
+                Arc::clone(&grammar),
+                &product.primary,
+                &|| false,
+            )
+            .unwrap();
+            assert_eq!(
+                doc.syntax_error_ranges(),
+                Vec::<std::ops::Range<usize>>::new(),
+                "{gd:?}: {source:?}"
+            );
             // Accepted, the lean parser's tape is the product's.
             if let Ok(Ok(lean)) = ecma_lean::encode(dialect, &grammar, source, &|| false) {
-                assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap(), "{gd:?}: {source:?}");
+                assert_eq!(
+                    product.primary.to_bytes().unwrap(),
+                    lean.to_bytes().unwrap(),
+                    "{gd:?}: {source:?}"
+                );
             }
         }
     }
