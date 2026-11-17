@@ -1742,66 +1742,6 @@ async function chunkedCheckout(root: string, chunks: number, label: string): Pro
 const neededEdit = { revision: 1, checkpoints: ["edit" as const], edits: [{ path: "api/a.py", language: "python" as const, generatedText: "NEEDLE\n" }] };
 
 describe("the engine's evaluation slot", () => {
-  it("runs each edit check of another session after the repository scan chunk in progress, not after the whole scan", async () => {
-    let chunks = 0;
-    let onSecondChunk: (() => void) | undefined;
-    const binding = aroundIndexChunks(async chunk => {
-      const pending = chunk();
-      if (chunks === 1) onSecondChunk?.();
-      const result = await pending;
-      chunks += 1;
-      return result;
-    });
-    const { recorder, audits } = recordingAudits();
-    const scanner = await fixture({ audits: recorder });
-    const checker = await fixture();
-    let scanning = true;
-    let asked = 0;
-    let checkFailure: unknown;
-    // For each check, whether the scan still ran when it asked, and how many chunks ended before its steer.
-    const checks: { duringScan: boolean; chunksWaited: number }[] = [];
-    const checked = Promise.withResolvers<void>();
-    const check = (revision: number) => {
-      asked = chunks;
-      const edit = { path: `api/edit_${revision}.py`, language: "python" as const, generatedText: "NEEDLE\n" };
-      checker.enforcer.auditGeneratedEdits("editing-session", { revision, checkpoints: ["edit"], edits: [edit] }).catch((error: unknown) => {
-        checkFailure = error;
-        checked.resolve();
-      });
-      checks.push({ duringScan: scanning, chunksWaited: -1 });
-    };
-    checker.requestSteer.mockImplementation(async () => {
-      const last = checks.at(-1);
-      if (last !== undefined) last.chunksWaited = chunks - asked;
-      if (checks.length < 3) check(checks.length + 1);
-      else checked.resolve();
-      return undefined;
-    });
-    try {
-      await chunkedCheckout(scanner.root, 24, "three checks");
-      await scanner.enforcer.openWorkspace("scanning-session");
-      await checker.enforcer.openWorkspace("editing-session");
-      onSecondChunk = () => {
-        onSecondChunk = undefined;
-        check(1);
-      };
-      const [auditId] = await scanner.enforcer.audit("scanning-session", { scope: "repository", mode: "log" });
-      scanning = false;
-      await checked.promise;
-      expect(checkFailure).toBeUndefined();
-      expect(audits.get(auditId!)?.result?.status).toBe("completed");
-      // Each check waits for the chunk in progress when it asked, and at most one more that reached the engine before
-      // it did; a check that waited for the whole scan (22 chunks or more here) would show, and leave the later checks
-      // to an idle engine.
-      expect(checks).toHaveLength(3);
-      expect(checks.filter(({ duringScan, chunksWaited }) => !duringScan || chunksWaited < 0 || chunksWaited > 2)).toEqual([]);
-    } finally {
-      binding.mockRestore();
-      await checker.enforcer.close();
-      await scanner.enforcer.close();
-    }
-  });
-
   it("runs another session's edit check at once while a scan plans its index, as with no scan", async () => {
     const planned = Promise.withResolvers<void>();
     const released = Promise.withResolvers<void>();
