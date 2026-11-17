@@ -282,13 +282,28 @@ describe("headless rerail scan", () => {
     roots.push(copy);
     cpSync(root, copy, { recursive: true });
     const report = await scan(copy, { databasePath });
+    // Checkout paths are matched by their ends: on Windows they may come back with forward slashes or short (8.3) names.
     expect({ status: report.status, rulesSource: report.rulesSource, rules: report.rules, failures: report.failures }).toEqual({
       status: "failed",
       rulesSource: null,
       rules: [],
-      failures: [{ code: "checkout-not-audited", message: expect.stringContaining("no record of this checkout"), path: null, ruleId: null }],
+      failures: [{ code: "checkout-not-audited", message: expect.stringMatching(/-copy was not audited, so no rules ran: Rerail has no record of .+-copy$/u), path: null, ruleId: null }],
     });
     expect(report.summary).toEqual({ violations: 0, failures: 1 });
+  });
+
+  it("names the submodule, not the checkout around it, when the only paths asked for are in a submodule Rerail has no record of", async () => {
+    const root = checkout();
+    const submodule = checkout();
+    git(root, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", submodule, "sub");
+    git(root, "commit", "--quiet", "-m", "Add the submodule");
+    const report = await scan(root, { paths: ["sub/a.py"] });
+    expect({ status: report.status, rulesSource: report.rulesSource, rules: report.rules, failures: report.failures }).toEqual({
+      status: "failed",
+      rulesSource: null,
+      rules: [],
+      failures: [{ code: "checkout-not-audited", message: expect.stringMatching(/[\\/]sub was not audited, so no rules ran: Rerail has no record of .+[\\/]sub$/u), path: null, ruleId: null }],
+    });
   });
 
   it("prints JSON and exits 3 on violations only with --fail-on-violations", async () => {

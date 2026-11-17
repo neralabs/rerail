@@ -86,7 +86,7 @@ export interface ScanReport {
   scope: "repository" | "git-diff";
   base: { ref: string; mergeBase: string } | null;
   paths: string[] | null;
-  /** Null when no audit ran, so no configuration's rules did: `failures` then says why. */
+  /** Null when the scan had something to scan and ran no audit, so no configuration's rules ran: `failures` says why. */
   rulesSource: { kind: "home" } | { kind: "worktree" } | { kind: "ref"; ref: string } | null;
   status: "completed" | "failed";
   rules: ScanRule[];
@@ -415,11 +415,11 @@ type ScanAudit = AuditInput & { result?: AuditResult };
 
 /**
  * Runs the audits of one session over `paths` (or the whole repository), recording them rather than storing them.
- * Returns them with the eligibility the router read for the checkout the scan starts in, which says why none ran.
+ * When there was something to scan and no audit ran, `unaudited` says why for each checkout the scan meant to audit.
  */
 async function runScanAudits(
   databasePath: string, root: string, sessionId: string, paths: readonly string[] | null,
-): Promise<{ audits: ScanAudit[]; eligibility: CheckoutEligibility }> {
+): Promise<{ audits: ScanAudit[]; unaudited: ScanFailure[] }> {
   const audits: ScanAudit[] = [];
   const recorder: AuditRecorder = {
     start(input) { audits.push({ ...input, paths: [...input.paths] }); return String(audits.length - 1); },
@@ -444,24 +444,35 @@ async function runScanAudits(
     await router.openWorkspace(sessionId);
     if (paths === null) await router.audit(sessionId, { scope: "repository", mode: "log" });
     else if (paths.length > 0) await router.audit(sessionId, { scope: "touched-files", mode: "log", paths: [...paths] });
-    return { audits, eligibility: catalogs.eligibility(start) };
+    const nothingRan = audits.length === 0 && paths?.length !== 0;
+    return { audits, unaudited: nothingRan ? unauditedCheckouts(router, start, paths) : [] };
   } finally {
     await router.close();
     catalogs.close();
   }
 }
 
-/** Why the router ran no audit in the checkout the scan starts in, as the eligibility it read there says. */
-const NOT_AUDITED_BECAUSE: Record<CheckoutEligibility, string> = {
-  unrecorded: "Rerail has no record of this checkout",
-  stopped: "Rerail is stopped in this checkout",
-  "not-set-up": "Rerail is not set up in this checkout's repository",
-  ok: "Rerail runs in it, but no audit started",
+/**
+ * A `checkout-not-audited` failure for each checkout a scan that ran no audit meant to audit: the one it starts in, or
+ * those that own `paths` (a submodule's own, say), each with why the router runs no rules there.
+ */
+function unauditedCheckouts(router: CheckoutCodeRuleRouter, start: string, paths: readonly string[] | null): ScanFailure[] {
+  const owners = (paths ?? []).map(path => router.sourceRoot(path)).filter((owner): owner is string => owner !== undefined);
+  const checkouts = owners.length === 0 ? [start] : [...new Set(owners)].sort((left, right) => left.localeCompare(right));
+  return checkouts.map(checkout => notAudited(checkout, router.whyNoRules(checkout)));
+}
+
+/** Why the router runs no rules in a checkout, as that checkout's eligibility says. */
+const NO_RULES_BECAUSE: Record<Exclude<CheckoutEligibility, "ok">, (checkout: string) => string> = {
+  unrecorded: checkout => `Rerail has no record of ${checkout}`,
+  stopped: checkout => `Rerail is stopped in ${checkout}`,
+  "not-set-up": checkout => `Rerail is not set up in ${checkout}'s repository`,
 };
 
-/** The failure that stands for a scan that ran no audit, so no rules, though there was something to scan. */
-function notAudited(root: string, eligibility: CheckoutEligibility): ScanFailure {
-  return { code: "checkout-not-audited", message: `${root} was not audited, so no rules ran: ${NOT_AUDITED_BECAUSE[eligibility]}`, path: null, ruleId: null };
+/** The failure that stands for a checkout a scan meant to audit and did not, so no rules ran there. */
+function notAudited(checkout: string, why: ReturnType<CheckoutCodeRuleRouter["whyNoRules"]>): ScanFailure {
+  const reason = why === undefined ? "Rerail runs in it, but no audit started" : NO_RULES_BECAUSE[why.eligibility](why.checkoutRoot);
+  return { code: "checkout-not-audited", message: `${checkout} was not audited, so no rules ran: ${reason}`, path: null, ruleId: null };
 }
 
 function scanRules(audits: readonly ScanAudit[], refRuleIds: ReadonlySet<string>, rulesRef: string | undefined): Map<string, ScanRule> {
@@ -516,14 +527,14 @@ function auditFailures(audits: readonly ScanAudit[]): ScanFailure[] {
 }
 
 /**
- * Whether an audit ran, whether the scan completed, and its failures after the rules the ref left out. An empty
- * `paths` has nothing to scan, so no audit is expected; otherwise a scan that ran none failed, and a failure says why.
+ * Whether the scan audited what it had to, whether it completed, and its failures after the rules the ref left out. A
+ * scan with something to scan that ran no audit failed, and its `unaudited` failures say why.
  */
 function scanOutcome(
-  root: string, paths: readonly string[] | null, audits: readonly ScanAudit[], eligibility: CheckoutEligibility, skipped: readonly ScanFailure[],
+  audits: readonly ScanAudit[], unaudited: readonly ScanFailure[], skipped: readonly ScanFailure[],
 ): { audited: boolean; completed: boolean; failures: ScanFailure[] } {
-  const audited = audits.length > 0 || paths?.length === 0;
-  const failures = [...skipped, ...auditFailures(audits), ...audited ? [] : [notAudited(root, eligibility)]];
+  const audited = unaudited.length === 0;
+  const failures = [...skipped, ...auditFailures(audits), ...unaudited];
   return { audited, completed: audited && audits.every(audit => audit.result?.status === "completed"), failures };
 }
 
@@ -547,10 +558,10 @@ async function scanReport(
   }
   const repository = repositoryOf(databasePath, root);
   const { base, paths } = scanTarget(options, root);
-  const { audits, eligibility } = await runScanAudits(databasePath, root, `scan-${scanId}`, paths);
+  const { audits, unaudited } = await runScanAudits(databasePath, root, `scan-${scanId}`, paths);
   const rules = scanRules(audits, refRuleIds, options.rulesRef);
   const violations = scanViolations(audits, rules, root);
-  const { audited, completed, failures } = scanOutcome(root, paths, audits, eligibility, refRules?.skipped ?? []);
+  const { audited, completed, failures } = scanOutcome(audits, unaudited, refRules?.skipped ?? []);
   return {
     schema: SCAN_SCHEMA,
     scanId,
