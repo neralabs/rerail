@@ -1470,6 +1470,12 @@ pass.
 - **Done when**: each is a `ProgramPass` (as `on_request::SourcesOnRequest` is). A debug build checks it against
   the tree, and the combine and the cone decode no tree.
 
+- **Failing** (found 2026-11-17, after the hub's merge d1875e723; already so at 2fbc862df, since nothing on the
+  combine's path changed between): the debug check "the combine's tail on the version is the tree's" stops
+  `a_session_runs_the_cross_file_strata_an_edit_changed` and `combined_programs_see_guests_by_their_own_policy`. The
+  version's tail keeps `rr_node_text_req`, `rr_token_req`, `rr_token_named`, `rr_token_anon` and an `about asked` row
+  of `rr_node_text_req` the tree's has not, and the tree's `rr_value_req` rules are bounded where the version's differ.
+  To fix with the passes above (0281 step 7b).
 
 ### Q42. `a_second_corpus_run_deletes_and_creates_its_store_again` fails now and then beside the planner's tests
 
@@ -1768,3 +1774,40 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   its costs recorded per format; every difference is fixed; `.rr` has a format 16 table. Then format 15 is retired
   for documents, and not before: the user (2026-11-17), "I don't want to do it right now, as we still haven't proven
   that format 16 dominates it in all of our required ways".
+
+### Q77. An edit's chunks of partial hits made every guest their entries asked for
+
+- **Found** (2026-11-17, ep2 after the merges of rr-align 9552011a3 and the hub 59e862eef): on an edit of B101's body,
+  every chunk is a partial hit ("the slice not run"), yet each made the 27,373 guests its entries' requests named
+  and built a second batch with them: "guests" 1.6 s of 12.1 s CPU, 9,751 of them parsed again (0.31 s; Q30 parses
+  guests in memory, so the 0.01 s a run assumed when Q30 was chosen was wrong).
+- **Cause**: a chunk of partial hits runs its cone alone, and a rule sees a guest only through a guest relation
+  (`hiding::ENTRIES`, `guests::READS`), or an annotation through a relation whose copies for it were folded in
+  (`hiding::fold_own` widens the bound to `HIDDEN_KEYS`). B101's cone reads neither, so no guest it was given was
+  read.
+- **Fix**: `guests::guests_seen` reads off the cone's program which guests it can see (code; code and annotations;
+  every guest, also where an AST matcher's literal reads a document), and `Guests::seeing` makes no other: a guest
+  is skipped before it is parsed, a value request before it is made. `Report::guests_unseen` counts them.
+- **Test**: `a_partial_hit_makes_only_the_guests_its_cone_can_see` (partial tests): an edit of a rule naming no
+  guest makes none; one reading `parsed` makes them all; one reading a relation folded for annotations sees them
+  (`Bar`, named only in an annotation); each edit's rows are a full run's. A mutant that sees code only fails it.
+- **Measured** (ep2, profiled, an edit after a new build's first run): 104–111 G instructions and 6.7–7.3 s CPU,
+  against 123–131 G and 12.1–13.0 s (load about 35 now, 60–85 then: the instructions are the comparison).
+  "guests" is gone from the profile's head; what is left is prepare (2.0 s), parsing (1.4 s: the files' batch for
+  the cone), the store writer (0.8 s) and the partial hits' rows (0.4–0.7 s).
+
+### Q78. An embedded program's guest parses its host's text again
+
+- **Found** (2026-11-17, reading `guests::Guests::program`): each embedded program (a `<script>` in a Vue file, a
+  Python string an embedder reads) parses its host's whole text into a tape again (`TapeImage::parse`) to find its
+  root, though the host's tape is in hand (`Document::tape`, kept where a matcher or `taped` relation reads it).
+- **Done when**: the embedder reads the host's own tape, and no host is parsed for its guests.
+
+### Q79. `Rows::frozen` gave an empty kept relation no width
+
+- **Found** (2026-11-17, after the hub's merge, 0325's block rows): five session tests panicked ("a row of the
+  tail"): a maintained cross-file stratum started from an empty kept relation, whose `Rows` inferred its width from
+  its rows (0 of 0), so `extend_from_slice` held none of the rows pushed and a read went past the segments.
+- **Fix**: `Rows::frozen(rows, n, k)` takes the width from its caller. Test:
+  `a_relation_started_from_an_empty_kept_one_holds_its_rows`; the session tests pass but Q52's two.
+

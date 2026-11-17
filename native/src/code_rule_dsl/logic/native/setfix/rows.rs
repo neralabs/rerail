@@ -200,12 +200,14 @@ impl Rows {
         Rows { k, ..Rows::default() }
     }
 
-    /// `n` rows of a relation that does not grow (an `InRel` made of them): one frozen segment, shared by a
-    /// relation started from it without a copy.
-    pub(super) fn frozen(rows: Vec<i64>, n: usize) -> Rows {
-        let mut r = Rows::default();
-        if n > 0 && !rows.is_empty() {
-            r.k = rows.len() / n;
+    /// `n` rows of `k` values of a relation that does not grow (an `InRel` made of them): one frozen segment, shared
+    /// by a relation started from it without a copy. Its width is given, not inferred from the rows: inferred, an
+    /// empty relation's was 0, and a relation started from it (a session's maintained stratum) dropped every row
+    /// pushed to it (`extend_from_slice` holds none of no width), then read past its segments.
+    pub(super) fn frozen(rows: Vec<i64>, n: usize, k: usize) -> Rows {
+        debug_assert_eq!(rows.len(), n * k, "{n} rows of {k} values");
+        let mut r = Rows::new(k);
+        if n > 0 && k > 0 {
             r.hint = n;
             r.extend_from_slice(&rows);
         }
@@ -443,12 +445,26 @@ impl std::fmt::Debug for Row {
 mod tests {
     use super::*;
 
+    /// An empty kept relation has its width: one started from it holds what it pushes. Its width was inferred from its
+    /// rows, so 0, and the started one dropped every row and read past its segments (a session's maintained cross-file
+    /// stratum over an empty kept relation: "a row of the tail").
+    #[test]
+    fn a_relation_started_from_an_empty_kept_one_holds_its_rows() {
+        let k = 3;
+        let kept = Rows::frozen(Vec::new(), 0, k);
+        let mut next = kept.shared(0);
+        next.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
+        assert_eq!(next.len(), 6);
+        assert_eq!(*next.row(1, k), [4, 5, 6]);
+        assert_eq!(next.value(0, k, 2), 3);
+    }
+
     /// A frozen relation's rows are shared by one started from it, which pushes its own after them; freezing that
     /// one moves its tail into a segment, and both read every row by id.
     #[test]
     fn started_rows_share_the_kept_segments_and_freeze_their_own() {
         let k = 2;
-        let kept = Rows::frozen((0..20).collect(), 10);
+        let kept = Rows::frozen((0..20).collect(), 10, 2);
         let mut next = kept.shared(10);
         assert!(next.shares(&kept));
         next.extend_from_slice(&[100, 101]);

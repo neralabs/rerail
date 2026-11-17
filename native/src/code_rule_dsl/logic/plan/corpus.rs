@@ -309,6 +309,8 @@ pub struct Report {
     /// The files built in its waves whose tape was read before the first wave, and those parsed (Q22): a run over
     /// unchanged files parses none, whatever its programs.
     pub file_tapes: (usize, usize),
+    /// The guests chunks of partial hits did not make, their cones unable to see them (`guests::guests_seen`).
+    pub guests_unseen: usize,
     /// The rounds the cone ran from the last run's final round (decision 0145); 0 when it ran the gated fixpoint.
     pub cone_rounds: usize,
     /// Of those, strata maintained from deltas, of them recursive, and strata derived again (decision 0077 §3).
@@ -5301,6 +5303,7 @@ fn run_observed(
     // The partial hits' entries (`Unbuilt::partial`), by document key, until their chunk takes them.
     let partials: parking_lot::Mutex<HashMap<i64, memo::Entry>> = parking_lot::Mutex::new(HashMap::new());
     let partial_hits = std::sync::atomic::AtomicUsize::new(0);
+    let guests_unseen = std::sync::atomic::AtomicUsize::new(0);
     // The file-local program pruned to each set of relations partial hits miss (`cone_of`), made once a run.
     let cones: parking_lot::Mutex<HashMap<BTreeSet<String>, Arc<lower::Lowered>>> = parking_lot::Mutex::new(HashMap::new());
     let build_doc = |d: &i64, path: &String, module: Option<Arc<str>>, unbuilt: Unbuilt| -> Result<(Option<memo::Content>, Option<[u8; 32]>, syntax::Document)> {
@@ -5947,7 +5950,15 @@ fn run_observed(
             Some(slice) if !documents.is_empty() => {
                 let _guests = crate::code_rule_dsl::logic::profile::span(|| "guests".into());
                 let documents_len = documents.len();
-                let (mut docs, mut sources, mut made) = (documents, sources, guests::Guests::new(label, projection.shape, Arc::clone(&guest_keys)));
+                let mut made = guests::Guests::new(label, projection.shape, Arc::clone(&guest_keys));
+                // A chunk of partial hits runs its cone alone: it makes only the guests the cone can see (a rule that
+                // names no guest sees no annotation or value, `guests::guests_seen`). Before, it made every guest
+                // its entries asked for (on an edit of ep2, 27,373 guests and a second batch, 1.6 s of 12 s).
+                if let (Some(_), Some(wanted)) = (&replay, &cone) {
+                    let program = Arc::clone(cones.lock().entry(wanted.clone()).or_insert_with(|| Arc::new(wanted_cone(&local, wanted))));
+                    made = made.seeing(guests::guests_seen(&program.version));
+                }
+                let (mut docs, mut sources) = (documents, sources);
                 // The slice's planner statistics: what it reads, measured once, in the first round's batch. A later
                 // round adds only the guests' rows, which are few beside the files' (each measurement sorts a column).
                 let mut measured: BTreeMap<String, Vec<(String, i64, i64, i64, i64)>> = BTreeMap::new();
@@ -6004,6 +6015,11 @@ fn run_observed(
                     let narrowed = cone.as_ref().map(|wanted| cone_projection(wanted));
                     sources = syntax::with_matchers(&store, docs.clone(), &sets, &chunk_matchers, &vocabulary, binding, narrowed.as_deref().unwrap_or(&projection)).map_err(|e| Error::Plan(e.to_string()))?;
                 }
+                if made.unseen > 0 {
+                    let unseen = made.unseen;
+                    crate::code_rule_dsl::logic::profile::decision("guests the cone cannot see, not made", || format!("{unseen} in a chunk of {chunk_docs_n} partial hits"));
+                }
+                guests_unseen.fetch_add(made.unseen, std::sync::atomic::Ordering::Relaxed);
                 host_of = std::mem::take(&mut made.host_of);
                 askers = made.askers();
                 // The guest relations' constant postings, measured above before any guest was made (none then),
@@ -9565,7 +9581,7 @@ fn run_observed(
     if !nested && !phase0::active() {
         crate::code_rule_dsl::logic::profile::run_ends(crate::code_rule_dsl::logic::profile::snapshot());
     }
-    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }
