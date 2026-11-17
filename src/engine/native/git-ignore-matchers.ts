@@ -1,47 +1,171 @@
 /**
- * Git's ignore rules of each checkout, opened once for every session of the daemon. A matcher holds its checkout's Git
- * index, and its answers depend on the checkout alone, so the sessions' routers share it: each opening its own in every
- * worktree it audited held one index per worktree per session.
+ * Which Git ignore rules hold for each checkout now, for every session of the daemon. A native matcher holds its
+ * checkout's Git index, so the sessions' routers share one per checkout: each opening its own in every worktree it
+ * audited held one index per worktree per session. A router that asks gets the shared matcher while every file that
+ * matcher read is as it was when it read it (`IgnoreSources`), and a fresh one otherwise, which the routers that ask
+ * after it share. A router keeps the matcher it was given for its life, as it kept the one it opened itself.
  */
+import { readFileSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileStamp } from "../file-stamp.js";
+import { defaultExcludesFile, gitHome } from "../git.js";
 import { loadNativeBinding, type NativeGitIgnoreMatcher } from "./native.js";
 
 interface Shared {
+  readonly root: string;
   readonly matcher: NativeGitIgnoreMatcher | null;
+  readonly sources: IgnoreSources;
   readonly users: Set<object>;
 }
 
 export class GitIgnoreMatchers {
   readonly #open: (root: string) => NativeGitIgnoreMatcher | null;
-  readonly #shared = new Map<string, Shared>();
+  readonly #env: NodeJS.ProcessEnv;
+  /** The matcher of each checkout a router that asks now gets, while its sources are unchanged. */
+  readonly #current = new Map<string, Shared>();
+  /** Every matcher a router holds: the current ones, and those a change left with the routers that took them. */
+  readonly #held = new Set<Shared>();
 
-  constructor(open: (root: string) => NativeGitIgnoreMatcher | null = root => loadNativeBinding().openGitIgnoreMatcher(root)) {
+  constructor(
+    open: (root: string) => NativeGitIgnoreMatcher | null = root => loadNativeBinding().openGitIgnoreMatcher(root),
+    env: NodeJS.ProcessEnv = process.env,
+  ) {
     this.#open = open;
+    this.#env = env;
   }
 
   /**
-   * `root`'s matcher for `user`, opened on first use; null outside Git. A failed open throws to each user that asks
-   * while no matcher is open, as a router's own open did.
+   * `root`'s matcher for `user`: the shared one while the files it read are unchanged, else one opened now; null outside
+   * Git. A failed open throws to each user that asks while none is open, as a router's own open did. A checkout whose
+   * Git folders cannot be read here (`IgnoreSources.of`) gets a matcher of its own each time, as before sharing.
    */
   matcher(root: string, user: object): NativeGitIgnoreMatcher | null {
-    let shared = this.#shared.get(root);
-    if (shared === undefined) {
-      shared = { matcher: this.#open(root), users: new Set() };
-      this.#shared.set(root, shared);
+    const current = this.#current.get(root);
+    if (current !== undefined && current.sources.unchanged()) {
+      current.users.add(user);
+      leaveFolders(current.matcher);
+      return current.matcher;
     }
-    shared.users.add(user);
-    return shared.matcher;
+    const sources = IgnoreSources.of(root, this.#env);
+    // Stamped before the open reads them, so a change made meanwhile reads as one at the next ask.
+    const matcher = this.#open(root);
+    if (sources === undefined) return matcher;
+    const shared: Shared = { root, matcher, sources, users: new Set([user]) };
+    this.#current.set(root, shared);
+    this.#held.add(shared);
+    return matcher;
   }
 
   /** Ends `user`'s use of every matcher; one no user holds is dropped, and its index with it. */
   release(user: object): void {
-    for (const [root, shared] of this.#shared) {
+    for (const shared of [...this.#held]) {
       shared.users.delete(user);
-      if (shared.users.size === 0) this.#shared.delete(root);
+      if (shared.users.size > 0) continue;
+      this.#held.delete(shared);
+      if (this.#current.get(shared.root) === shared) this.#current.delete(shared.root);
     }
   }
 
-  /** How many checkouts hold a matcher now. */
+  /** How many matchers routers hold now. */
   get size(): number {
-    return this.#shared.size;
+    return this.#held.size;
   }
+}
+
+/**
+ * Has `matcher` leave the folders below its root. Its exclude stack reads a folder's `.gitignore` as it enters the
+ * folder and keeps it while the paths it is asked stay below, so a router taking the shared matcher could be answered by
+ * a nested `.gitignore` as an earlier router's question read it. Asked about `.git`, a path at the root that Git never
+ * tracks, the stack leaves every folder: its next path below one reads that folder's `.gitignore` again, as a matcher
+ * opened now would.
+ */
+function leaveFolders(matcher: NativeGitIgnoreMatcher | null): void {
+  try {
+    matcher?.ignored(".git", true);
+  } catch {
+    // An ignore file that cannot be read is reported by the question that reads it.
+  }
+}
+
+/**
+ * The files a matcher read Git's ignore rules from, besides the `.gitignore` of each folder below the root, which it
+ * reads as it enters the folder (`leaveFolders`): the root's `.gitignore`, `info/exclude` in the common Git folder, Git's
+ * default excludes file, the configuration files that can name another (`gitConfigFiles` names the same ones) and each
+ * file they name; each with its stamp. Read on each router's ask, without Git: about ten `stat` calls.
+ */
+class IgnoreSources {
+  readonly #files: readonly string[];
+  readonly #stamps: string;
+
+  private constructor(files: readonly string[]) {
+    this.#files = files;
+    this.#stamps = stampsOf(files);
+  }
+
+  /** `root`'s sources as they are now; undefined where `root` holds no `.git` (a folder below a checkout's root, or none). */
+  static of(root: string, env: NodeJS.ProcessEnv): IgnoreSources | undefined {
+    const folders = gitFolders(root);
+    return folders === undefined ? undefined : new IgnoreSources(sourceFiles(root, folders, env));
+  }
+
+  /** Whether every source is as it was when stamped. */
+  unchanged(): boolean {
+    return stampsOf(this.#files) === this.#stamps;
+  }
+}
+
+/** `root`'s Git folder and the common one every worktree shares, read from its `.git`; undefined without one. */
+function gitFolders(root: string): { git: string; common: string } | undefined {
+  const dotGit = join(root, ".git");
+  const info = statSync(dotGit, { throwIfNoEntry: false });
+  if (info === undefined) return undefined;
+  if (info.isDirectory()) return { git: dotGit, common: dotGit };
+  const named = /^gitdir: *(.+)$/mu.exec(readText(dotGit))?.[1]?.trim();
+  if (named === undefined) return undefined;
+  const git = resolve(root, named);
+  const common = readText(join(git, "commondir")).trim();
+  return { git, common: common === "" ? git : resolve(git, common) };
+}
+
+function sourceFiles(root: string, folders: { git: string; common: string }, env: NodeJS.ProcessEnv): string[] {
+  const excludes = defaultExcludesFile(env);
+  const global = env.GIT_CONFIG_GLOBAL;
+  const configs = [
+    join(folders.common, "config"),
+    join(folders.git, "config.worktree"),
+    ...(global === undefined || global === "" ? [join(gitHome(env), ".gitconfig"), join(dirname(excludes), "config")] : [global]),
+  ];
+  const named = configs.flatMap(config => namedExcludesFiles(config, root, env));
+  return [join(root, ".gitignore"), join(folders.common, "info", "exclude"), excludes, ...configs, ...named];
+}
+
+/** `core.excludesFile` in a configuration file, in any section: a file named elsewhere is stamped too, never missed. */
+const EXCLUDES_FILE = /^\s*excludesfile\s*=\s*"?([^"\r\n]*?)"?\s*$/gimu;
+
+function namedExcludesFiles(config: string, root: string, env: NodeJS.ProcessEnv): string[] {
+  return [...readText(config).matchAll(EXCLUDES_FILE)]
+    // Git writes a backslash or a quote in a value with a backslash before it (a Windows path: `C:\\Users\\...`).
+    .map(match => (match[1] ?? "").replace(/\\(["\\])/gu, "$1"))
+    .filter(value => value !== "")
+    .map(value => (value.startsWith("~/") ? join(gitHome(env), value.slice(2)) : resolve(root, value)));
+}
+
+function readText(file: string): string {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+/** Each file's stamp, `-` for one absent and `!` for one that cannot be read, in one string. */
+function stampsOf(files: readonly string[]): string {
+  return files.map(file => {
+    try {
+      const info = statSync(file, { throwIfNoEntry: false });
+      return info === undefined ? "-" : fileStamp(info);
+    } catch {
+      return "!";
+    }
+  }).join("|");
 }
