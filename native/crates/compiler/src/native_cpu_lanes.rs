@@ -538,7 +538,7 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
     // state (an escape, a fill, a value of a pass before). A byte class, or a run of them, is in
     // most blocks of text; a class with an escape before it, or inside a string, is rare.
     // Without measured densities a gate needs two conditions, one of them carried: simdjson's
-    // escapes, a `u` after an escaping backslash.
+    // escapes, a `u` after an escaping backslash. A run's first byte counts as carried.
     let mut conditions = vec![0usize; n];
     let mut carried = vec![false; n];
     for (x, inst) in native.insts.iter().enumerate() {
@@ -551,6 +551,9 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
             _ => 1,
         };
         carried[x] = match *inst {
+            // A run's first byte, `a & ~prev(a)`: as rare as the runs are, a token's start (a
+            // number's, which its check is gated on, as simdjson checks a number at its token).
+            BlockInst::AndNot(a, p) if matches!(native.insts[usize::from(p)], BlockInst::Prev(q, 1) if q == a) => true,
             BlockInst::And(a, b) => carried[usize::from(a)] || carried[usize::from(b)],
             BlockInst::AndNot(a, _) | BlockInst::Prev(a, _) | BlockInst::Early(a, _) => carried[usize::from(a)],
             _ => !lanes[x] && inst.operands().is_empty() && !matches!(inst, BlockInst::Const(_) | BlockInst::Within(_)) || matches!(inst, BlockInst::Escaped(_) | BlockInst::Toggle(_) | BlockInst::Fill(..) | BlockInst::Carry(_) | BlockInst::Walk { .. }) || grouped[x],

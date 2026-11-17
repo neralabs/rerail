@@ -3266,6 +3266,13 @@ mod json_probe {
             p.pad = rerail_compiler::native_cpu_block::BACK as u16;
         }
         let p = json_parser(&n);
+        // `RERAIL_JSON_PROGRAM=<path>`: the block program as text (its operations, outputs and
+        // records), to read what each word of the masks is.
+        if let Ok(path) = std::env::var("RERAIL_JSON_PROGRAM") {
+            let mut text = String::new();
+            rerail_compiler::block::block_rows(&mut text, 0, &json_split(Split::Tier2).block_programs[0]);
+            std::fs::write(&path, text).expect("writes");
+        }
         if let Ok(path) = std::env::var("RERAIL_JSON_RUST") {
             rerail_compiler::native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
             let bit = rerail_compiler::native_cpu_lanes::BIT_TEST.swap(true, std::sync::atomic::Ordering::Relaxed);

@@ -361,7 +361,7 @@ pub struct Lowering {
     /// Each `check`: a token kind and its grammar over the token's bytes.
     pub checks: Vec<(String, ::bitlex::syntax::Gram)>,
     /// Each `toggle(x)`: its value and `x`'s, the modes tier 2's states are read in
-    /// (`row_modes`).
+    /// (`row_modes`); each region's fill and its flips likewise.
     pub toggles: Vec<(Val, Val)>,
     /// Each cost's source and its operations' range (`Compiled::costs`).
     pub costs: Vec<(String, usize, usize)>,
@@ -987,6 +987,12 @@ impl Lowering {
             }
             named(self, format!("o_{}", r.kind), open);
             named(self, format!("f_{}", r.kind), fill);
+            // A region is a mode as a toggle is: `f` the mode, `f ^ prev(f)` its flips, the
+            // opener's first byte and the closer's (`row_modes`).
+            let f = Val { v: fill, d, dirty: true, set: None };
+            let before = self.prev(f, 1)?;
+            let flips = self.xor(f, before)?;
+            self.toggles.push((f, flips));
             kinds.push(crate::block::WalkKind { opener, closer, open, fill, bytes: r.bytes, outside: r.outside, empty });
         }
         let mut next = *hide.first().ok_or("regions that hide nothing")?;
@@ -3233,7 +3239,13 @@ fn row_modes(
     arms: &[grammar::ArmRow],
     marks: &[u16],
 ) -> Result<Vec<Vec<bool>>, String> {
-    let proved = |low: &Lowering, v: Val| bitlex_prove::never(&low.proof_ops(), &low.program.tables, v.v, v.d);
+    // With the fixed points' equations (a region's carry is its fills' bytes after the openers)
+    // where the plain search does not prove it, as the marks' proofs.
+    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
+    let mut proved = |low: &Lowering, v: Val| {
+        let ops = low.proof_ops();
+        bitlex_prove::never(&ops, &low.program.tables, v.v, v.d) || settled.never(&ops, &low.program.tables, v.v, v.d)
+    };
     // The toggles whose `x` bits are all token starts, at most eight.
     let mut starts: Option<Val> = None;
     for (_, s, _) in token_rows {
@@ -3251,7 +3263,7 @@ fn row_modes(
         }
     }
     // Each row's mode at its start, and its flips: per toggle, `Some(bit)` when fixed.
-    let fixed = |low: &mut Lowering, s: Val, v: Val| -> Result<Option<bool>, String> {
+    let mut fixed = |low: &mut Lowering, s: Val, v: Val| -> Result<Option<bool>, String> {
         let off = low.andnot(s, v)?;
         let on = low.and(s, v)?;
         Ok(match (proved(low, off), proved(low, on)) {
