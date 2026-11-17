@@ -1,1 +1,1 @@
-On Windows, rules run in sessions VS Code opens with a `c:\` path, Codex and Cursor get commands PowerShell runs, and `rerail daemon stop` lets the daemon finish its work. Plugin hooks work under a folder with a space in its path.
+On Windows, rules run in sessions VS Code opens with a `c:\` path, Codex and Cursor get commands PowerShell runs, set-up's answers included (`rerail setup --powershell`), and `rerail daemon stop` lets the daemon finish its work. Plugin hooks work under a folder with a space in its path.
