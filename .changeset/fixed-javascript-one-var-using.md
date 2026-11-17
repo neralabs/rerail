@@ -2,4 +2,4 @@
 "@neralabs/rerail-pack-javascript": patch
 ---
 
-`eslint-one-var` checks `using` and `await using` declarations in TypeScript files too, as it does in JavaScript files.
+`eslint-one-var` checks `using` and `await using` declarations in TypeScript files too, as it does in JavaScript files, with the Rerail released with this version or a newer one.
