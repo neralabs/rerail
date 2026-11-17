@@ -8,6 +8,7 @@ import type * as FsPromises from "node:fs/promises";
 import { chmod, link, mkdir, mkdtemp, opendir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { setImmediate as queueHostTurn } from "node:timers";
+import * as timersPromises from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -40,6 +41,7 @@ import { removeFolder } from "../../support/platform/remove-folder.js";
 vi.mock("node:fs/promises", { spy: true });
 vi.mock("node:child_process", { spy: true });
 vi.mock("node:fs", { spy: true });
+vi.mock("node:timers/promises", { spy: true });
 
 
 
@@ -1963,6 +1965,74 @@ describe("the engine's evaluation slot", () => {
       binding.mockRestore();
       await checker.enforcer.close();
       await scanner.enforcer.close();
+    }
+  });
+
+  it("starts a scan's next chunk when the session's own check ends, with no timer while the scan waits", async () => {
+    // Workspaces in the order they are made: the session's own, then its scan's.
+    const sessionWorkspace = 1;
+    const timer = vi.mocked(timersPromises.setTimeout);
+    const atEngine = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const secondChunkEnded = Promise.withResolvers<number>();
+    let chunks = 0;
+    let chunksDuringCheck = 0;
+    let checking = false;
+    let issueCheck: (() => void) | undefined;
+    const binding = aroundIndexChunks(
+      async chunk => {
+        chunks += 1;
+        if (checking) chunksDuringCheck += 1;
+        const pending = chunk();
+        if (chunks === 2) issueCheck?.();
+        const result = await pending;
+        if (chunks === 2) secondChunkEnded.resolve(timer.mock.calls.length);
+        return result;
+      },
+      async (workspace, apply) => {
+        if (workspace !== sessionWorkspace) return apply();
+        checking = true;
+        atEngine.resolve();
+        await release.promise;
+        try {
+          return await apply();
+        } finally {
+          checking = false;
+        }
+      },
+    );
+    const { recorder, audits } = recordingAudits();
+    const session = await fixture({ audits: recorder });
+    const steered = Promise.withResolvers<void>();
+    session.requestSteer.mockImplementation(async () => {
+      steered.resolve();
+      return undefined;
+    });
+    try {
+      await chunkedCheckout(session.root, 4, "own check");
+      await session.enforcer.openWorkspace("own-check");
+      const generatedText = `NEEDLE\n${"# padding\n".repeat(500)}`;
+      issueCheck = () => {
+        issueCheck = undefined;
+        void session.enforcer.auditGeneratedEdits("own-check", { revision: 1, checkpoints: ["edit"], edits: [{ path: "api/a.py", language: "python", generatedText }] });
+      };
+      const scan = session.enforcer.audit("own-check", { scope: "repository", mode: "log" });
+      await atEngine.promise;
+      const timersBefore = await secondChunkEnded.promise;
+      // Host turns, not time: the scan's step after the second chunk reaches its wait for the check within two.
+      for (let turn = 0; turn < 4; turn += 1) await new Promise<void>(resolve => queueHostTurn(resolve));
+      const timersWhileWaiting = timer.mock.calls.length - timersBefore;
+      release.resolve();
+      await steered.promise;
+      const [auditId] = await scan;
+      expect(audits.get(auditId!)?.result?.status).toBe("completed");
+      expect(chunksDuringCheck).toBe(0);
+      // The wait ends on the check's end: a scan that looked again on a clock would have set a timer meanwhile.
+      expect(timersWhileWaiting).toBe(0);
+    } finally {
+      release.resolve();
+      binding.mockRestore();
+      await session.enforcer.close();
     }
   });
 });

@@ -2,7 +2,7 @@ import { type Dirent, type Stats } from "node:fs";
 import { lstat, mkdtemp, opendir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
-import { setImmediate as yieldToHost, setTimeout as pause } from "node:timers/promises";
+import { setImmediate as yieldToHost } from "node:timers/promises";
 import { diffLines } from "diff";
 import { z } from "zod";
 import {
@@ -657,6 +657,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   #closing = false;
   /** Aborted at `interrupt`: a call still waiting for the engine's evaluation slot leaves the line (`evaluationSlot`). */
   readonly #interrupted = new AbortController();
+  /** Settles when a check pump ends or the session closes, then is replaced: what `#waitForEvaluationIdle` waits on. */
+  #checksDrained = Promise.withResolvers<void>();
   /** The workspaces whose repository index has had a chunk: the first one plans the index (`#indexChunk`). */
   readonly #indexed = new WeakSet<NativeCodeRuleDslWorkspace>();
   #closed = false;
@@ -1001,6 +1003,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     }
     this.#closing = true;
     this.#interrupted.abort(new Error("Policy execution interrupted by session closure"));
+    this.#checksMayHaveDrained();
     if (this.#sessionId !== undefined) {
       if (options?.interruptAudits === false) this.#interruptOwnAudits();
       else this.#record(() => this.#audits.interrupt(this.#sessionId!));
@@ -1162,6 +1165,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       .finally(() => {
         this.#pump = undefined;
         if (!this.#closing && this.#pending.size > 0) this.#schedule();
+        this.#checksMayHaveDrained();
       });
   }
 
@@ -1651,8 +1655,19 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return { resultPagesMilliseconds, violations: streamed.violationCount, failures: unboundedFailures.length, status };
   }
 
+  /**
+   * Waits until this session has no edit check queued or running, or it closes: a scan's next chunk, batch or final
+   * apply yields to the session's own checks. It looks again only when a check pump ends or the session closes
+   * (`#checksMayHaveDrained`).
+   */
   async #waitForEvaluationIdle(): Promise<void> {
-    while (!this.#closing && (this.#busy || this.#pending.size > 0)) await pause(2);
+    while (!this.#closing && (this.#busy || this.#pending.size > 0)) await this.#checksDrained.promise;
+  }
+
+  /** Wakes every scan step waiting in `#waitForEvaluationIdle`, to look at the session's checks again. */
+  #checksMayHaveDrained(): void {
+    this.#checksDrained.resolve();
+    this.#checksDrained = Promise.withResolvers<void>();
   }
   async *#auditFiles(
     workspace: NativeCodeRuleDslWorkspace,
