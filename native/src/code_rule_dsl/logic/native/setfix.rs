@@ -5202,7 +5202,9 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
 /// probe on a column is a slice of its sorted index, built on first use.
 pub fn columns_source(columns: Vec<String>, values: Vec<Option<Vec<i64>>>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
     let n = values.iter().flatten().map(Vec::len).max().unwrap_or(0);
-    let mut t = Stored::new(columns, values.into_iter().map(|v| { let l = std::sync::OnceLock::new(); if let Some(v) = v { let _ = l.set(v); } l }).collect());
+    // Columns grown a row at a time (an export the chunks added to) carry up to their length again in capacity,
+    // held as long as the source: trimmed here, in place for a large block, and nothing for one made to its size.
+    let mut t = Stored::new(columns, values.into_iter().map(|v| { let l = std::sync::OnceLock::new(); if let Some(mut v) = v { v.shrink_to_fit(); let _ = l.set(v); } l }).collect());
     t.statistics = Some(std::sync::OnceLock::new());
     let _ = t.n.set(n);
     Arc::new(t)

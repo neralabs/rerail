@@ -2373,6 +2373,13 @@ impl Retained {
         let phase = super::phases::current();
         let input_docs = &self.input_docs;
         let atoms_ref = &atoms;
+        // Each frame is encoded straight into the write's segments as its rows are read (Q61): neither a copy of the
+        // rows nor the frame's bytes are made on the heap. Copied and encoded on the heap, the frames were held whole
+        // until queued, and the cross part's were a cold PostHog run's peak (1.8 → 2.3 GB in its last second).
+        let derived_n: usize = sccs.iter().flatten().filter_map(|rel| self.framed(rel)).map(|k| k.rel.rows() * k.width * 2).sum();
+        let inputs_n: usize = inputs.iter().map(|(_, s)| s.len() * s.columns().len() * 2).sum();
+        let placer = store.frame_placer(sccs.iter().map(BTreeSet::len).sum::<usize>() + inputs.len() * 4 + 16, derived_n + inputs_n);
+        let placer_ref = &placer;
         let one_input = |rel: &String, source: &Arc<dyn Source>| -> Option<(u64, Vec<EncodedFrame>, usize)> {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "an input's frames (job)".into());
             let atoms: &crate::content_store::atoms::Atoms = atoms_ref;
@@ -2419,31 +2426,65 @@ impl Retained {
             // Each changed granule's rows, grouped by owner, owners ascending (`kept_inputs` reads each owner's
             // rows as one range). A maintained input (`Layered`) gives each owner's rows from its ranges; another
             // is read through once.
-            let mut by: BTreeMap<i64, BTreeMap<i64, Vec<i64>>> = changed.iter().map(|g| (*g, BTreeMap::new())).collect();
-            match source.as_any().and_then(|a| a.downcast_ref::<Layered>()) {
-                Some(l) => {
+            // The rows are grouped by row id (four bytes a row, not a copy of it), and each granule's frame is read
+            // from the source a window at a time into its place (`FramePlacer::place_rows`). A maintained input
+            // (`Layered`) gives each owner's rows from its ranges.
+            let layered = source.as_any().and_then(|a| a.downcast_ref::<Layered>());
+            let all: Vec<usize> = (0..width).collect();
+            let mut ids: BTreeMap<i64, BTreeMap<i64, Vec<u32>>> = BTreeMap::new();
+            let mut owners_of: BTreeMap<i64, Vec<i64>> = changed.iter().map(|g| (*g, Vec::new())).collect();
+            match layered {
+                Some(_) => {
                     for owner in docs.keys().filter(|d| changed.contains(&granule(**d))) {
-                        by.get_mut(&granule(*owner)).expect("a changed granule").insert(*owner, l.owner_rows(*owner));
+                        owners_of.get_mut(&granule(*owner)).expect("a changed granule").push(*owner);
                     }
                 }
                 None => {
-                    let all: Vec<usize> = (0..width).collect();
                     let mut row = vec![0i64; width];
                     for r in 0..source.len() {
                         source.row_at(r, &all[g..=g], &mut row[g..=g]);
                         let owner = super::memo::document_of(row[g]);
-                        if let Some(out) = by.get_mut(&granule(owner)) {
-                            source.row_at(r, &all, &mut row);
-                            out.entry(owner).or_default().extend_from_slice(&row);
+                        let gr = granule(owner);
+                        if changed.contains(&gr) {
+                            ids.entry(gr).or_default().entry(owner).or_default().push(r as u32);
                         }
                     }
                 }
             }
-            for (g, owners) in by {
-                let rows: Vec<i64> = owners.into_values().flatten().collect();
-                let n = rows.len() / width;
+            for gr in changed.iter().copied() {
+                let by_id = ids.remove(&gr).unwrap_or_default();
+                let owners = owners_of.remove(&gr).unwrap_or_default();
+                let n: usize = match layered {
+                    Some(l) => owners.iter().map(|o| l.owner_rows(*o).len() / width).sum(),
+                    None => by_id.values().map(Vec::len).sum(),
+                };
+                let each = |f: &mut dyn FnMut(&[i64])| match layered {
+                    Some(l) => owners.iter().for_each(|o| f(&l.owner_rows(*o))),
+                    None => {
+                        let mut buf: Vec<i64> = Vec::with_capacity(4096 * width);
+                        for r in by_id.values().flatten() {
+                            let at = buf.len();
+                            buf.resize(at + width, 0);
+                            source.row_at(*r as usize, &all, &mut buf[at..]);
+                            if buf.len() == 4096 * width {
+                                f(&buf);
+                                buf.clear();
+                            }
+                        }
+                        if !buf.is_empty() {
+                            f(&buf);
+                        }
+                    }
+                };
                 written += n;
-                puts.push(FramePut { rel: name.clone(), part: g, digest: 0, reads: Vec::new(), rows: FrameRows { types: types.clone(), rows, n } }.encoded());
+                puts.push(match placer_ref.place_rows(width, gr, &each) {
+                    Some(p) => FramePut::placed_as(name.clone(), gr, 0, Vec::new(), types.clone(), n, p),
+                    None => {
+                        let mut rows: Vec<i64> = Vec::with_capacity(n * width);
+                        each(&mut |w: &[i64]| rows.extend_from_slice(w));
+                        FramePut { rel: name.clone(), part: gr, digest: 0, reads: Vec::new(), rows: FrameRows { types: types.clone(), rows, n } }.encoded()
+                    }
+                });
             }
             let mut table: Vec<(i64, (u64, u64))> = docs.iter().map(|(d, v)| (*d, *v)).collect();
             table.sort_unstable();
@@ -2486,10 +2527,7 @@ impl Retained {
         // copies were the run's peak (460 MB of 3.3 GB at 300 files, beside the relations and their bytes). A
         // relation whose rows are the stored ones and whose reads changed copies its rows again there.
         // Each relation's rows are read where they lie, a window at a time, to digest them and, when its frame is
-        // written, to encode it straight into the write's segments (Q61): neither a copy of its rows nor its frame's
-        // bytes are made on the heap. Copied and encoded on the heap, the frames were held whole until queued, and
-        // the cross part's were a cold PostHog run's peak (1.8 → 2.3 GB in its last second).
-        let placer = store.frame_placer(whole.len() + inputs.len() + 16, whole.iter().map(|(_, k)| k.rel.rows() * k.width * 2).sum());
+        // written, to encode it straight into the write's segments (`placer`, above).
         let made: HashMap<&String, Whole> = {
             use rayon::prelude::*;
             let atoms = &atoms;
