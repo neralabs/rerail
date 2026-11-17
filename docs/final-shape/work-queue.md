@@ -578,6 +578,15 @@ pass.
   edit 43.9 G and 4.50 s CPU, from 50.8 G (A: 40.7 G); `prepare` 23.8 G, from 30.7 G; the front's own CPU 0.16 s,
   from 0.55 s. The cold run 965 G. Rows h1's; phase 0 and the sources phase still the whole's exactly. Left: the
   link 0.74 s CPU and reading 317 parts 0.27 s, the next lever (a kept link).
+- **0345: a kept part holds its own header only** (2026-11-17): profiled inside, the link's 0.74 s was not the
+  10,000 rules (under 0.05 s) but the fields every part shares (policies, natives, settings, kindsets, …): each of
+  the 318 stored images held them (0.24 s to read), each part's header was rebuilt with them (0.20 s), and the
+  header merge walked them per part (0.42 s). A part is now kept with its own header and only the shared fields its
+  passes changed; its key and the link read its own header. Same ep2 sequence, load 34–40: an edit **35.5 G** and
+  3.58 s CPU, from 43.9 G (A: 40.7 G, 3.31 s); `prepare` 15.3 G (A: 18.5 G); the cold run 957 G. Rows h1's; phase 0
+  and sources the whole's exactly. Before lowering is now about 0.4 s CPU (keys 0.14 s, the 317 images 0.11 s, the
+  parts' names 0.09 s), and the passes after lowering are the larger cost (push 0.21 s): 0345 stage 2. A kept link
+  would save at most the 0.2 s of names and images, and writes a linked program per edit.
   Getting it working took four fixes in the link, each a name read for its meaning: `strtest_<k>`,
   `rr_ast_<k>_<m>` (its capture count), the requests a runner answers (never inputs), and a part's header (the
   whole program's 3,000 declarations per part made the link quadratic and every part's key the whole's).

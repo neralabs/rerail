@@ -152,17 +152,17 @@ fn shared_of<'a>(header: &'a front::Program, made_by_parts: &BTreeSet<&str>) -> 
     shared
 }
 
-/// A part's header (decision 0345 §2): `common`, with the declarations, facts and lists of the relations it makes
-/// and reads and the `shared` ones. Another part's relations are not its interface, and a change of one does not
-/// change its key.
-fn part_header(header: &front::Program, common: &front::Program, part: &Part, read_elsewhere: &BTreeSet<String>, made_by_parts: &BTreeSet<&str>, shared: &BTreeSet<&str>) -> front::Program {
+/// A part's own header (decision 0345 §2): the declarations, facts and lists of the relations it makes and reads
+/// and the `shared` ones, and its inputs and outputs; the fields every part shares (`common_of`) are not in it.
+/// Another part's relations are not its interface, and a change of one does not change its key.
+fn part_header(header: &front::Program, part: &Part, read_elsewhere: &BTreeSet<String>, made_by_parts: &BTreeSet<&str>, shared: &BTreeSet<&str>) -> front::Program {
     let names: BTreeSet<&str> = part.made.iter().chain(&part.read).map(String::as_str).chain(shared.iter().copied()).collect();
     macro_rules! pick {
         ($field:ident) => {
             names.iter().filter_map(|r| header.$field.get_key_value(*r).map(|(k, v)| (k.clone(), v.clone()))).collect()
         };
     }
-    let mut head = common.clone();
+    let mut head = front::Program::default();
     head.decls = pick!(decls);
     head.lattice = pick!(lattice);
     head.facts = pick!(facts);
@@ -190,7 +190,7 @@ fn part_header(header: &front::Program, common: &front::Program, part: &Part, re
 fn key_of(head: &front::Program, common: &[u8; 32], rules: &[crate::code_rule_dsl::logic::program_image::RuleRef<'_>], part: &Part, dialect: crate::code_rule_dsl::language::GrammarDialect) -> [u8; 32] {
     use sha2::Digest as _;
     let mut h = sha2::Sha256::new();
-    h.update(b"rerail/part/v2\0");
+    h.update(b"rerail/part/v3\0");
     h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     h.update(format!("\0{dialect:?}\0").as_bytes());
     for s in SWITCHES {
@@ -206,11 +206,69 @@ fn key_of(head: &front::Program, common: &[u8; 32], rules: &[crate::code_rule_ds
     h.finalize().into()
 }
 
-/// A part's program: its header and its rules, copied from the combined program.
-fn program_of(v: &Version, rules: &[crate::code_rule_dsl::logic::program_image::RuleRef<'_>], head: &front::Program, part: &Part) -> Result<Arc<Version>> {
-    let mut b = Builder::of_program(head)?;
+/// A part's program: its own header on the shared fields (`common`), and its rules, copied from the combined program.
+fn program_of(v: &Version, rules: &[crate::code_rule_dsl::logic::program_image::RuleRef<'_>], own: &front::Program, common: &front::Program, part: &Part) -> Result<Arc<Version>> {
+    let mut head = common.clone();
+    head.decls = own.decls.clone();
+    head.nullary = own.nullary.clone();
+    head.lattice = own.lattice.clone();
+    head.facts = own.facts.clone();
+    head.qualifiers = own.qualifiers.clone();
+    head.tapes = own.tapes.clone();
+    head.demand = own.demand.clone();
+    head.inputs = own.inputs.clone();
+    head.outputs = own.outputs.clone();
+    let mut b = Builder::of_program(&head)?;
     for &i in &part.rules {
         b.copy(v, rules[i]);
+    }
+    Ok(b.finish()?.0)
+}
+
+/// A prepared part as it is kept: its rules, its own header, and of the shared fields only those its passes
+/// changed (each then whole). A field the passes left as `common` has it is the link's already, so neither the store
+/// nor the link holds a copy of it per part.
+fn stripped(v: &Arc<Version>, common: &front::Program, lists: &front::Lists) -> Result<Arc<Version>> {
+    let front::Program {
+        decls, nullary, lattice, facts, rules, inputs, outputs, kindsets, demand, demand_dropped, magic_extras, magic_report, gates, policies, settings, natives, rx_spans, ast_patterns, doc_scopes, answers, text_globs, qualifiers, tapes, again, together, asked_by, shapes,
+    } = v.header(lists)?;
+    macro_rules! changed {
+        ($field:ident) => {
+            if format!("{:?}", $field) == format!("{:?}", common.$field) { Default::default() } else { $field }
+        };
+    }
+    let head = front::Program {
+        decls,
+        nullary,
+        lattice,
+        facts,
+        rules,
+        inputs,
+        outputs,
+        demand,
+        qualifiers,
+        tapes,
+        kindsets: changed!(kindsets),
+        demand_dropped: changed!(demand_dropped),
+        magic_extras: changed!(magic_extras),
+        magic_report: changed!(magic_report),
+        gates: changed!(gates),
+        policies: changed!(policies),
+        settings: changed!(settings),
+        natives: changed!(natives),
+        rx_spans: changed!(rx_spans),
+        ast_patterns: changed!(ast_patterns),
+        doc_scopes: changed!(doc_scopes),
+        answers: changed!(answers),
+        text_globs: changed!(text_globs),
+        again: changed!(again),
+        together: changed!(together),
+        asked_by: changed!(asked_by),
+        shapes: changed!(shapes),
+    };
+    let mut b = Builder::of_program(&head)?;
+    for r in v.rules() {
+        b.copy(v, r);
     }
     Ok(b.finish()?.0)
 }
@@ -325,7 +383,9 @@ fn lookup(store: &ContentStore, key: &[u8; 32], lists: &front::Lists) -> StoreRe
     let Some(result) = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?.results.remove(&set.plans[0]) else { return Ok(None) };
     let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(None) };
     let Some(digest) = rows_of(&facts, "part_program").next().and_then(|r| r.first().and_then(|d| unhex(d))) else { return Ok(None) };
+    let s_image = crate::code_rule_dsl::logic::profile::span(|| "a part, from the store: its image".into());
     let Some((version, mut sources)) = program_text::load_image(store, &digest, lists)? else { return Ok(None) };
+    drop(s_image);
     sources.push(source);
     let num = |s: &str| s.parse::<usize>().unwrap_or(0);
     let reach = rows_of(&facts, "part_reach").next().unwrap_or_default();
@@ -516,7 +576,7 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
     let (mut found, mut made) = (0usize, 0usize);
     for (j, part) in parts.iter().enumerate() {
         let read_elsewhere: BTreeSet<String> = part.made.iter().filter(|r| readers.get(r.as_str()).is_some_and(|js| js.iter().any(|&o| o != j))).cloned().collect();
-        let head = part_header(&header, &common, part, &read_elsewhere, &made_by_parts, &shared);
+        let head = part_header(&header, part, &read_elsewhere, &made_by_parts, &shared);
         let key = key_of(&head, &common_digest, &rules, part, dialect);
         let kept = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "a part, from the store".into());
@@ -531,8 +591,9 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
             None => {
                 made += 1;
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("prepare part {} ({} rules)", part.name, part.rules.len()));
-                let input = program_of(&version, &rules, &head, part)?;
+                let input = program_of(&version, &rules, &head, &common, part)?;
                 let (v, f, _) = crate::code_rule_dsl::logic::profile::quiet(|| super::front(input, dialect, None, &mut |_, _| {}))?;
+                let v = stripped(&v, &common, lists)?;
                 let p = Prepared::of(v, f);
                 if keep {
                     record(store, &key, &p);
@@ -549,6 +610,7 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
 
 /// The prepared parts linked (decision 0345 §6), with what their passes found, renamed.
 fn link(version: &Version, header: &front::Program, parts: &[Part], prepared: Vec<(front::Program, Prepared)>, lists: &front::Lists) -> Result<(Arc<Version>, Front)> {
+    let s_names = crate::code_rule_dsl::logic::profile::span(|| "link: the parts' names".into());
     let known = names_of(version, header);
     // A relation made in one part alone is that part's own: what its passes remove of it goes.
     let mut makers: HashMap<&str, usize> = HashMap::new();
@@ -581,6 +643,8 @@ fn link(version: &Version, header: &front::Program, parts: &[Part], prepared: Ve
             taken.entry(stem).or_default().insert(k);
         }
     }
+    drop(s_names);
+    let s_merge = crate::code_rule_dsl::logic::profile::span(|| "link: renames and headers".into());
     for ((part, (before, p)), j) in parts.iter().zip(&prepared).zip(0..) {
         let after = &afters[j];
         let derived: BTreeSet<String> = p.version.rules().map(|r| p.version.rel_name(r.head().rel()).to_owned()).collect();
@@ -674,6 +738,8 @@ fn link(version: &Version, header: &front::Program, parts: &[Part], prepared: Ve
         renames.push(to);
     }
     // The program's inputs and every part's, less what a part derives; its outputs as they were.
+    drop(s_merge);
+    let s_build = crate::code_rule_dsl::logic::profile::span(|| "link: the linked version".into());
     let derived: BTreeSet<String> = prepared.iter().zip(&renames).flat_map(|((_, p), to)| p.version.rules().map(|r| {
         let rel = p.version.rel_name(r.head().rel());
         to.get(rel).cloned().unwrap_or_else(|| rel.to_owned())
@@ -690,6 +756,8 @@ fn link(version: &Version, header: &front::Program, parts: &[Part], prepared: Ve
         }
     }
     let (linked, _) = b.finish()?;
+    drop(s_build);
+    let _s_vocabulary = crate::code_rule_dsl::logic::profile::span(|| "link: the vocabulary and regexes".into());
     let mut vocabulary = Vocabulary::from_specs(&tests, specs)?;
     vocabulary.matches = matches.iter().map(|m| regex::Regex::new(m).map(Arc::new).map_err(|e| e.to_string())).collect::<Result<_>>()?;
     vocabulary.markers = markers;

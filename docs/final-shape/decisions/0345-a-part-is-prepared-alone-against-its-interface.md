@@ -92,3 +92,7 @@ program work done on every edit: building each part to key it (0.55 s), reading 
 Then keyed without building (same day): a part's key is its header and its rules' hashes, so only a missed part is
 built. An edit is 43.9 G against 0333's 40.7 G; what is left over it is the link (0.74 s CPU) and reading the 317
 parts (0.27 s).
+
+Then a kept part holds its own header only (same day): the fields every part shares are the link's, and a part
+keeps only those its passes changed. The link was quadratic in them, not in the rules. An edit is 35.5 G against
+0333's 40.7 G; before lowering is about 0.4 s CPU, and the passes after lowering (stage 2) are now the larger cost.
