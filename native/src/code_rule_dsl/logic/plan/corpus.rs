@@ -3140,33 +3140,33 @@ fn run_observed(
             }
             // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
             let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
+            // The prepared program's one image (decision 0281's path, step 6): made here, after the last pass that edits
+            // the tree; the passes after it run on the manager over the version (the program lowered for the dialect,
+            // `nearest` read from the transducer, the bound check, the file-local joins pushed, the exports factorized
+            // and cut to their demand, the rows located, the merges, the inputs the rules read, the rule order), and
+            // the run's readers read the version (`Lowered::placed`), the split's parts views of it. A program the
+            // image cannot hold is an error, not a run read from the tree.
             let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower the program".into());
-            let mut lowered = lower::lower_tree(&prog, dialect, &mut |s| {
+            let (version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish()).map_err(Error::Plan)?;
+            let (version, domains, ops) = lower::lower_version(version, dialect, &mut |s| {
                 let atoms: Vec<u32> = store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))?.into_iter().map(u32::from).collect();
                 interned.push((s.iter().map(|x| (*x).to_owned()).collect(), atoms.clone()));
                 Ok(atoms)
             })?;
             drop(lowering);
-            // The prepared program's one image (decision 0281's path, step 6): made here, after the last pass that edits
-            // the tree (`lower_tree`); the passes after it run on the manager over the version (`nearest` read from
-            // the transducer, the bound check, the file-local joins pushed, the exports factorized and cut to their
-            // demand, the rows located, the merges, the inputs the rules read, the rule order), and the run's readers
-            // read the version (`Lowered::placed`), the split's parts views of it. A program the image cannot hold is
-            // an error, not a run read from the tree.
-            let _step = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's image and the passes on it".into());
-            #[cfg_attr(not(debug_assertions), allow(unused_mut))]
-            let mut program: front::Program = std::mem::take(&mut lowered.program);
-            let (version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
-            // A debug build checks the version's passes against the tree's (below), which runs them on the tree.
+            let mut lowered = lower::Given { program: front::Program::default(), domains, ops, dialect };
+            // A debug build checks the version's passes against the tree's: the lowered tree here, the rest below.
             #[cfg(debug_assertions)]
-            let tree_sets = {
-                let mut given = lower::Given { program: std::mem::take(&mut program), domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
+            let (mut program, tree_sets) = {
+                let mut given = lower::lower_tree(&prog, dialect, &mut |s| Ok(store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))?.into_iter().map(u32::from).collect()))?;
+                assert_eq!(given.domains, lowered.domains, "the version's domains before lowering are the tree's");
+                assert_eq!(given.ops, lowered.ops, "the version's operator atoms are the tree's");
+                let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&given.program).and_then(|b| b.finish()).map_err(Error::Plan)?;
+                assert_eq!((tree_version.size(), tree_version.digest()), (version.size(), version.digest()), "the version is lowered as the tree is");
                 let sets = given.transduce_nearest();
-                program = given.program;
-                sets
+                (std::mem::take(&mut given.program), sets)
             };
-            #[cfg(not(debug_assertions))]
-            drop(program);
+            let _step = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's passes".into());
             let (version, found) = preparation::run(version, factorizing, bound).map_err(Error::Plan)?;
             let sets = found.sets.clone();
             #[cfg(debug_assertions)]

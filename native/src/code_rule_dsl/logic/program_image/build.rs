@@ -38,6 +38,8 @@ pub enum T<'a> {
     Str(&'a str),
     StrAtom(AtomId),
     Call(&'a str, Vec<T<'a>>),
+    /// A call by the atom naming its function (a version's, or the builder's).
+    CallAtom(AtomId, Vec<T<'a>>),
 }
 
 /// A relation to write, by its id (the builder's parent's, or one it made) or by name.
@@ -718,6 +720,13 @@ fn write_t(e: &mut Encoder<'_>, t: &T<'_>) {
             e.leaf(kind::STR, a);
         }
         T::StrAtom(a) => e.leaf(kind::STR, a.0),
+        T::CallAtom(a, args) => {
+            let at = e.open(kind::CALL, a.0);
+            for x in args {
+                write_t(e, x);
+            }
+            e.close(at);
+        }
         T::Call(f, args) => {
             let a = e.atom(f);
             let at = e.open(kind::CALL, a);
