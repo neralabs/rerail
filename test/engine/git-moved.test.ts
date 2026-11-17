@@ -9,17 +9,19 @@
  */
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", { spy: true });
+vi.mock("node:fs/promises", { spy: true });
 
 import { findGit, gitExecutable, gitHead, readGitBlobs, runGit, runGitAsync } from "../../src/engine/git.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+const actualFiles = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
 
 const GIT = process.platform === "win32" ? "git.exe" : "git";
 
@@ -141,6 +143,21 @@ describe("the Git a process keeps, gone under it", () => {
     expect(gitExecutable()).toBe(kept);
     await expect(gitHead(repository)).resolves.toBe(head);
     expect(started(spawn)).toEqual([kept, now]);
+  });
+
+  it("starts no other Git for a read stopped while the look for another Git runs, and keeps the Git that look found", async () => {
+    const [kept, now] = await moveKeptGit();
+    started(spawn);
+    const stop = new AbortController();
+    // The look's first question about the disk: the read is stopped while the look waits for its answer.
+    vi.mocked(stat).mockImplementationOnce(async (...args) => {
+      stop.abort();
+      return await actualFiles.stat(...args);
+    });
+    await expect(gitHead(repository, { signal: stop.signal })).resolves.toBeUndefined();
+    expect(started(spawn)).toEqual([kept]);
+    await expect(gitHead(repository)).resolves.toBe(head);
+    expect(started(spawn)).toEqual([now]);
   });
 
   it("starts no other Git for a call that does not block, stopped while its Git failed to start, and the next call finds it", async () => {

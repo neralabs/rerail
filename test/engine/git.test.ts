@@ -1334,6 +1334,20 @@ describe("ProcessGit", () => {
     expect([disk.reads.later, disk.reads.now]).toEqual([["/opt/a/bin/git", "/mnt/share/bin/git", "/opt/b/bin/git"], []]);
   });
 
+  it("for a start that cannot wait, starts the look off its thread at once and answers a Git another start found", async () => {
+    const files = new Set(["/opt/git/bin/git", "/usr/bin/git"]);
+    const disk = disks(files);
+    const git = new ProcessGit(() => lookOver("/opt/git/bin", disk), disk);
+    expect(git.path()).toBe("/opt/git/bin/git");
+    files.delete("/opt/git/bin/git");
+    // No Git to start yet: the look has begun off the thread, and a start that can wait joins it.
+    expect(git.replacedNow("/opt/git/bin/git")).toBeUndefined();
+    expect(disk.reads.later).toEqual(["/opt/git/bin/git"]);
+    await expect(git.afterMissing("/opt/git/bin/git")).resolves.toBe("/usr/bin/git");
+    expect(git.replacedNow("/opt/git/bin/git")).toBe("/usr/bin/git");
+    expect(disk.reads.later).toEqual(["/opt/git/bin/git", "/usr/bin/git"]);
+  });
+
   it("starts a Git it kept with the environment its look decided, reading no file", () => {
     const install = String.raw`C:\Program Files\Git`;
     const ucrt = win32.join(install, "ucrt64", "bin", "git.exe");
