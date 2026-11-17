@@ -5729,6 +5729,7 @@ fn run_observed(
                 totals_add.push((rel.clone(), source.estimated_len(), measured.clone()));
             }
             stats.measured(&rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
+            stats.lookup_costs(&rel, source.as_ref());
             modules.bind(db, &rel, source)?;
             bound.insert(rel);
         }

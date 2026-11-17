@@ -2215,6 +2215,12 @@ impl Batch {
         Ok(())
     }
 
+    /// Commits what is open without waiting: the work encoded so far runs before any command buffer committed after
+    /// it on the one queue (a batch that reads what this one's work writes).
+    pub(in crate::code_rule_dsl) fn commit_open(&mut self) -> Result<(), Error> {
+        self.submit_open()
+    }
+
     /// Commits what is open and waits for every command buffer.
     pub(in crate::code_rule_dsl) fn finish(&mut self) -> Result<Done, Error> {
         self.submit_open()?;

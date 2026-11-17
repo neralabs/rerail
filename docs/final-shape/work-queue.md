@@ -947,6 +947,41 @@ pass.
 - **Still priced under their CPU**: `attr_of` (113 ms against 20 ms priced), `rdefn` (76 against 15), `ann_root` (112
   against 57), and `fzk287` (56 against 11, unchanged by either fix: 790 rows over 18 runs, a cost per run that no
   span names yet). A per-view price needs each step's CPU, which the profile does not split by step.
+- **Each join step's CPU, profiled** (2026-11-16): a profiled walk times every step it enters and leaves with the
+  processor's tick counter, scaled to the walk's thread CPU (`setfix::StepClock`), the source's lookups in the step
+  that made them. The explain shows each step's CPU and its ns a row in, and the report and `sources.tsv` sum them by
+  the relation a step reads, its access and source. On the hogql run the steps hold 89% of the native plans' CPU; the
+  rest is the probes' setup outside the walk. A view lookup on the CPU binding (load 60–67, so read the ratios, not
+  the times), in units of 50 ns:
+
+  | Relation, access | ns a row in | units |
+  |---|---|---|
+  | `within` by `n` | 8,785 (994 a row out) | 176 |
+  | `rr_nearest_scope` by `n`, `docof` by `n`, `col` by `n` | 1,200–1,360 | 24–27 |
+  | `rr_nearest_lscope` by `n` | 985 | 20 |
+  | `field` by `(p, f)`, `text` by `n` | 500–690 | 10–14 |
+  | `kind` by `c0`, `line` by `n`, `node` by `n` | 220–350 | 4–7 |
+  | a derived relation's membership or anti-join | 60–220 | 1–4 |
+
+  So a view's lookup costs 4 to 27 units where placement prices it at 1, and `within`'s at 176. The next step is
+  placement's price per relation from these, or cheaper reads of `within`, `rr_nearest_scope`, `docof` and `col`.
+- **A lookup priced by its relation** (2026-11-16, decision 0312): each source declares a lookup's CPU per column as a
+  multiple of a derived relation's, fitted from `sources.tsv` (`within` by `n` 5.5, `docof` 4, `col` 3.5,
+  `rr_nearest_*` by `n` 3), and placement prices each join step at it. No stratum changed place on this run: the
+  costliest lookups are in strata the GPU runs. What still leaves strata priced under their CPU:
+  - **Their row estimates** (Q44's): `attr_of`, `rdefn`, `ann_root` and `qualname` estimate a step at 2.5–46 rows
+    that makes 450–870,000. Each `$n < 6917529027641081856` filter (the `0x6000…` value-class bound, which every node
+    passes) is estimated to keep half, so two or three cut a rule's estimate 4–8×; `kind($n, #k)` after a `field`
+    lookup is given a few percent where every row passes.
+  - **`col`'s lookup in `fzk287`**: 790 rows over 17 chunks in 52 ms, 65 µs a row against `col`'s 694 ns over the
+    run. Not the line index (built in projection, about 10 µs a file). It looks fixed per chunk. Next: a sample of
+    that step.
+- **The engine's steps were not the plan's** (found by the above, fixed 2026-11-16): a literal can make several
+  engine steps (`$k = @sub(@strlen($dots), 1)` makes two; a head's computed term makes more), and the engine's
+  counts were zipped against the plan's steps by place. From such a literal on, every step's counts were its
+  neighbour's: in the explain, in the observed fanouts the planner replans by (`observe`), and in the histograms of
+  0203 (`step_histograms`). `rel_base`'s `docof` lookup showed as its filter's 170 µs a row. The spec now says which
+  plan step made each of its items (`JoinSpec::from`), and the engine reports counts, CPU and histograms by plan step.
 
 ### Q37. (Q28, then Q31, on Native-and-GPU-strata) A rule that copies a view's columns is a stratum
 
@@ -1086,6 +1121,40 @@ pass.
 - **Whose**: the planner's statistics: the containment of a lookup after a `nearest` relation, and a lookup on two
   derived columns (0299's line of work).
 - **Done when**: these strata's planned work is within 2× of their work.
+
+### Q48. (Q46 at 1adc44eff) Under load, a Metal run loses findings (Native-and-GPU-strata's) — done
+
+- **Found** (2026-11-16, the light run over PostHog's `posthog/hogql`, cold, `RERAIL_DEVICE=metal`, at load 65–85):
+  1,629 findings in 6 runs, but 1,562, 1,626, 1,432, 1,432, 1,426 and 1,432 in the others, with the engines of
+  0da96155f and before as with this branch's latest. Every lost finding is `probe-len`'s, `sym_of(f,
+  "builtins.len")` (symbol resolution), in `printer/`. At load 30–60, earlier the same day, every run gave 1,629.
+  On the CPU binding at the same load: 1,629 in 3 runs of 3.
+- **Where it starts**: `wstart`, the first relation that differs from a run with device waves off
+  (`RERAIL_DEVICE_WAVES=off`: 236,533 rows in every run, as on the CPU). In a bad run a few chunks' `wstart` came out
+  at 132 to 220 rows instead of 13,000 to 16,000. The inputs were complete (the same sizes as in a good run), and the
+  device made the right rows from what it read (each waved stratum run again alone, with the resident copies
+  dropped, gave the same rows).
+- **Cause**: the bad chunks' `wstart` ran on the device in a batch of its own (`run_here`: its driver could not wait
+  for the wave) while the thread's wave was still open. The relations kept resident (`resident`, `verdicts`, the
+  texts) take their sorts, indexes and text verdicts from the batch that first asks for them, often the wave, and
+  the cache hands them out at once. The batch run apart was committed and waited for before the wave was, so it read
+  its inputs' sorts and verdicts still unwritten. Load made it likelier: more strata ran apart (a job off the run's
+  thread, the wave's budget spent).
+- **Fixed** (2026-11-16): a batch other than the wave's (`setfix::device::direct_batch`: one apart, a rerun after
+  the wave, a recursive stratum's rounds) commits the thread's open wave first (`Batch::commit_open`). The queue is
+  one, so the wave's work runs first. Ten runs at load 62–94: 236,533 `wstart` rows and 1,629 findings each.
+  Test: `device::tests::a_stratum_run_apart_beside_an_open_wave_reads_what_the_wave_made`.
+- **Done** (2026-11-16): ten loaded Metal runs give the CPU binding's findings. The test fails with the commit
+  taken out (the run apart reads its verdicts unwritten).
+
+### Q47. `keeps::observed_selectivities_price_a_copy_that_never_ran` fails (cost-classifier's to take)
+
+- **Found** (2026-11-16, Native-and-GPU-strata): it fails at 871d6d684 (cost-classifier's merge of phased-facts),
+  and so at this branch's merge of it and after: "estimated, the copy is priced above the stored side": the copy
+  65,156 against the build's 302,500. Nothing this branch changed reaches it.
+- **Done when**: it passes, or its expectation is restated with the decision that changed it.
+- **Done** (2026-11-16, in the hub, 4e6afe303): final-rerail-shape's 49f866af9 restated the first assertion with
+  0297 (the estimates inline `ctx`; the observed side keeps it stored); taken into the hub, `plan::keeps` 13 of 13.
 
 ## Questions for the user
 
