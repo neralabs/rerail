@@ -118,6 +118,8 @@ describe("the start mark", () => {
 
   it("writes nothing for a database in memory", async () => {
     const root = await temporary();
+    // A folder of kept answers where a database with no file of its own would find one, so a renewal there shows.
+    mkdirSync(join(root, STOPPED_ANSWERS_DIR));
     const previous = process.cwd();
     process.chdir(root);
     try {
@@ -126,7 +128,7 @@ describe("the start mark", () => {
     } finally {
       process.chdir(previous);
     }
-    expect(readdirSync(root)).toEqual([]);
+    expect(listing(root)).toEqual([STOPPED_ANSWERS_DIR]);
   });
 
   it("writes and reads nothing through a link at the folder of kept answers, which can lead anywhere", async () => {
