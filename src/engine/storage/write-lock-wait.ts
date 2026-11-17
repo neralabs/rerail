@@ -22,9 +22,10 @@ export const WRITE_LOCK_FREE = "write-lock-free";
  */
 export function waitForWriteLock(path: string, signal?: AbortSignal): Promise<boolean> {
   const stop = new Int32Array(new SharedArrayBuffer(4));
-  const worker = lockWaitWorker({ path, stop });
-  worker.unref();
+  // A worker that cannot start (a bundle that left its file behind) rejects, as one that fails later does.
   return new Promise<boolean>((resolve, reject) => {
+    const worker = lockWaitWorker({ path, stop });
+    worker.unref();
     const onAbort = (): void => {
       Atomics.store(stop, 0, 1);
       resolve(false);
