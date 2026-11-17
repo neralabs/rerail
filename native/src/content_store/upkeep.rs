@@ -319,6 +319,14 @@ impl Job for Frames {
 
     fn due(&mut self) -> Due {
         rerail_prof::code_rule_dsl::logic::profile::behind_the_run();
+        // A store whose file is gone (a test's, removed with its directory) has nothing to sweep. The reader still
+        // reads the removed file, whose last decision stays past its sweep: due for good, each step opened a new
+        // store at the path, swept that, and the old file's decision was still unswept (`finish_soon`'s hundred
+        // passes at every run's end, for every such store in the process).
+        if !self.path.exists() {
+            self.reader = None;
+            return Due::No;
+        }
         if self.reader.is_none() {
             self.reader = Connection::open_with_flags(&self.path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX).ok();
         }
@@ -338,6 +346,11 @@ impl Job for Frames {
         rerail_prof::code_rule_dsl::logic::profile::behind_the_run();
         if slice.over() {
             return Ok(Step::More);
+        }
+        // Gone since `due` (as there): a sweep would make a new store at the path.
+        if !self.path.exists() {
+            self.reader = None;
+            return Ok(Step::Done);
         }
         let store = ContentStore::open(&self.path).map_err(|e| e.to_string())?;
         // Stopped by a run that began: rolled back, and still due.
@@ -405,5 +418,23 @@ mod tests {
             assert_eq!(db.query_row_cached("PRAGMA auto_vacuum", [], |r| r.get::<_, i64>(0)).unwrap(), 2, "{auto}: incremental after");
             assert_eq!(job.due(), Due::No);
         }
+    }
+
+    /// A store removed after its last keep decision (a test's, with its directory) is due no more, and its job makes
+    /// no store at its path: its reader, opened before the removal, still read the old file's unswept decision.
+    #[test]
+    fn a_removed_stores_frames_are_not_due_and_no_store_is_made_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("test-store");
+        let path = folder.join("store.sqlite");
+        drop(ContentStore::open(&path).unwrap());
+        Connection::open(&path).unwrap().execute("UPDATE corpus_decided SET run = swept + 1 WHERE singleton = 1", []).unwrap();
+        let mut job = Frames::new(&path);
+        assert_eq!(job.due(), Due::Urgent, "a decision past the last sweep");
+        std::fs::remove_dir_all(&folder).unwrap();
+        assert_eq!(job.due(), Due::No, "the store is gone");
+        let stop = AtomicBool::new(false);
+        assert_eq!(job.step(&Slice::for_test(Duration::from_millis(200), 64 << 20, &stop)), Ok(Step::Done));
+        assert!(!folder.exists(), "no store is made where the removed one was");
     }
 }
