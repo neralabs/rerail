@@ -75,10 +75,12 @@ fn stage1_is_simdjsons() {
         assert_eq!(ours, theirs, "stage 1 of {:?}", String::from_utf8_lossy(&f[..f.len().min(200)]));
         let index = if ours > 0 { p.indexes(ours as usize).to_vec() } else { Vec::new() };
         if pmull {
-            let multiplied = p.stage1_pmull(f);
-            assert_eq!(multiplied, ours, "stage 1 (`vmull_p64`) of {:?}", String::from_utf8_lossy(&f[..f.len().min(200)]));
-            if ours > 0 {
-                assert_eq!(p.indexes(ours as usize), index, "the index (`vmull_p64`) of {:?}", String::from_utf8_lossy(&f[..f.len().min(200)]));
+            for form in [1, 2] {
+                let other = p.stage1_form(f, form);
+                assert_eq!(other, ours, "stage 1 (form {form}) of {:?}", String::from_utf8_lossy(&f[..f.len().min(200)]));
+                if ours > 0 {
+                    assert_eq!(p.indexes(ours as usize), index, "the index (form {form}) of {:?}", String::from_utf8_lossy(&f[..f.len().min(200)]));
+                }
             }
         }
         // simdjson's parser strips a byte order mark before its stage 1; `stage1_only` does not.
@@ -201,15 +203,17 @@ fn prefix_xor_forms() {
     };
     let mut p = Parser::new();
     eprintln!("least of {rounds} rounds; instructions / cycles a byte");
-    eprintln!("{:>20}  {:>15} {:>15}", "stage 1", "rounds", "vmull_p64");
+    eprintln!("{:>20}  {:>15} {:>15} {:>15}", "stage 1", "rounds", "vmull_p64", "vmull_p64 raw");
     for (name, files) in &inputs(Kernel::Arm64Sha) {
         if files.is_empty() {
             continue;
         }
         let bytes = files.iter().map(Vec::len).sum::<usize>() as f64;
         let r = least(&mut || files.iter().map(|f| p.stage1(f) as u64).sum());
-        let m = least(&mut || files.iter().map(|f| p.stage1_pmull(f) as u64).sum());
-        eprintln!("{name:>20}  {:6.2} / {:5.2}  {:6.2} / {:5.2}", r.0 as f64 / bytes, r.1 as f64 / bytes, m.0 as f64 / bytes, m.1 as f64 / bytes);
+        let m = least(&mut || files.iter().map(|f| p.stage1_form(f, 1) as u64).sum());
+        let v = least(&mut || files.iter().map(|f| p.stage1_form(f, 2) as u64).sum());
+        let per = |(i, c): (u64, u64)| format!("{:6.2} / {:5.2}", i as f64 / bytes, c as f64 / bytes);
+        eprintln!("{name:>20}  {} {} {}", per(r), per(m), per(v));
     }
     // The form alone, over masks no compiler can know.
     let mut x = 0x9e37_79b9_7f4a_7c15u64;

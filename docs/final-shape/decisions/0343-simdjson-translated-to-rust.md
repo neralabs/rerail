@@ -142,6 +142,25 @@ blocks are regular (numbers and short strings, 4–5%) and behind on the M5's co
 Simdjson's arm64 choice (the rounds) costs about nothing on Apple cores. The 3-cycle `pmull`
 does not show "slow"; simdjson's comment names the moves on Neoverse N1 and Cortex-A72.
 
+### A third form: the multiply where the mask is
+
+Prefix XOR is linear: `prefix_xor(q & !e) = prefix_xor(q) ^ prefix_xor(q & e)`. So the multiply
+can take the quotes as `addp` leaves them in a vector register, with no `fmov d, x` before it,
+and take the escaped quotes' part back out where there are any (`index::<PMULL_RAW>`). LLVM
+makes the correction branch-free (the rounds on `q & e`, then a `csel`): more instructions, but
+none on the path from the quotes to the toggle.
+
+| Stage 1, cycles a byte | rounds | `vmull_p64` | `vmull_p64` of the raw quotes |
+|---|---|---|---|
+| M5 Max, `jsonexamples` | 0.55–0.57 | 0.57–0.61 | 0.54 |
+| M5 Max, numbers and short strings | 0.90–0.91 | 0.86–0.87 | 0.83–0.84 |
+| M3 Max, `jsonexamples` | 0.58 | 0.57–0.58 | 0.56–0.57 |
+| M3 Max, numbers and short strings | 0.98–0.99 | 0.93 | 0.91 |
+
+Instructions a byte: 3.11, 3.06 and 3.19 on `jsonexamples`. The third form is the fastest on
+every input, on both cores (equal on long strings and white space). The difference between
+the forms is where the mask lives, not the multiply.
+
 ## Toolchain: `addp` needs rustc 1.99.1
 
 simdjson's `to_bitmask` is `and` with the bit weights, then four `vpaddq_u8`.

@@ -109,19 +109,28 @@ impl Parser {
         self.padded(src);
         self.ready(src.len());
         // SAFETY: the buffer holds `src` and its padding; the index, the room `index` needs.
-        match unsafe { stage1::index::<false>(self.buffer.as_ptr(), src.len(), self.indexes.as_mut_ptr()) } {
+        match unsafe { stage1::index::<{ stage1::ROUNDS }>(self.buffer.as_ptr(), src.len(), self.indexes.as_mut_ptr()) } {
             Ok(n) => i64::from(n),
             Err(e) => -(e as i64),
         }
     }
 
-    /// `stage1` with `prefix_xor` as the carry-less multiply simdjson left out (`vmull_p64`): the
-    /// measure of the two forms.
-    pub fn stage1_pmull(&mut self, src: &[u8]) -> i64 {
+    /// `stage1` with the string's toggle in another form (`form`: 1, the carry-less multiply
+    /// simdjson left out, `vmull_p64`; 2, that multiply of the quotes as the vector registers hold
+    /// them): the measure of the forms. The caller checks the host has `pmull`.
+    pub fn stage1_form(&mut self, src: &[u8], form: u8) -> i64 {
         self.padded(src);
         self.ready(src.len());
+        let (buf, len, out) = (self.buffer.as_ptr(), src.len(), self.indexes.as_mut_ptr());
         // SAFETY: as `stage1`.
-        match unsafe { stage1::index::<true>(self.buffer.as_ptr(), src.len(), self.indexes.as_mut_ptr()) } {
+        let r = unsafe {
+            match form {
+                stage1::PMULL => stage1::index::<{ stage1::PMULL }>(buf, len, out),
+                stage1::PMULL_RAW => stage1::index::<{ stage1::PMULL_RAW }>(buf, len, out),
+                _ => stage1::index::<{ stage1::ROUNDS }>(buf, len, out),
+            }
+        };
+        match r {
             Ok(n) => i64::from(n),
             Err(e) => -(e as i64),
         }
@@ -176,7 +185,7 @@ impl Parser {
         self.ready(body);
         // SAFETY: the buffer holds `src` and its padding; the index, the room `index` needs.
         let buf = unsafe { self.buffer.as_ptr().add(shift as usize) };
-        let count = match unsafe { stage1::index::<false>(buf, body, self.indexes.as_mut_ptr()) } {
+        let count = match unsafe { stage1::index::<{ stage1::ROUNDS }>(buf, body, self.indexes.as_mut_ptr()) } {
             Ok(n) => n,
             Err(e) => return e as i32,
         };
