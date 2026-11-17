@@ -70,8 +70,20 @@ unchanged: it already leaves inputs and outputs as they are (`kept`).
 
 1. **The front per part** (this decision's first build): the parts, their interfaces, the front on each part, the
    renaming, the key and the link before lowering. Measured on ep2 against 0333 (P) and against the whole.
-2. **The passes after lowering per part.** Push, factorize, cut and locate read the file-local split, which is
-   global. A part's split is decided at its interface.
+2. **The passes after lowering per part.** Push, factorize, cut and locate read two analyses: the fields (a part
+   has them from its own declarations) and the file-local split, which is global. A part's split is decided at its
+   interface:
+   - **The split is computed once over the linked, lowered program** (0.02 s on ep2), and cut into parts again.
+   - **A part carries its inputs' classification.** Each input another part makes is qualified, in the part's
+     header, with what the split found of it: file-local or not, a constant, a filter, its location and
+     same-document columns. The part's split treats a qualified input as a derived relation out of its scope, read
+     from those qualifiers as a scoped split reads an earlier one (`split(scope, prev)`); its own relations are its
+     scope. Its classification is part of its key.
+   - **The export cut is per part, and conservative across parts.** An export another part reads is a part output,
+     and outputs are never cut: the cut across parts is lost, as projection across parts is lost before lowering.
+   - **What stays global:** lowering (0.03 s), the merges of identical relations and repeated rules (helpers two
+     parts pushed alike are one relation, named by content), and the split into file-local and cross-file
+     programs. These are linear passes over the linked program; the keyed work is the rewriting.
 3. **The combine per part.** Hiding's rounds and the fact spaces over each program's part.
 
 ## How it is compared with 0333
