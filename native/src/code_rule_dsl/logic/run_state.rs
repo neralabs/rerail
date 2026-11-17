@@ -175,6 +175,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/profile/sql.rs", "EXPLAINING", Thread, "this thread's statement being explained"),
     ("src/code_rule_dsl/profile/sql.rs", "FRAME", Thread, "this thread's statement counters"),
     ("src/code_rule_dsl/profile/trace.rs", "CONTEXT", Call, "the attribution of the work this thread does for one call"),
+    ("src/code_rule_dsl/regexes/mod.rs", "LET_GO", Call, "the regexes a document's compilation let go of, kept by the table until that compilation ends"),
     ("src/code_rule_dsl/residency/admission/relational/producer.rs", "READERS", Call, "the state of one call in progress on this thread"),
     ("src/code_rule_dsl/residency/admission/relational/syntax.rs", "POOL", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/semver/mod.rs", "KEY_COMPARISONS", Thread, "a count of this thread's work, read by tests and the profile"),

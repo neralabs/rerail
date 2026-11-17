@@ -10802,9 +10802,16 @@ pub mod tests {
         // As `git_files` writes it: the overlays' count (eight bytes), then the files' list.
         let mut empty = 0u64.to_le_bytes().to_vec();
         empty.extend(super::reuse::encode_lists(&[&[][..] as &[String]]));
-        assert_eq!(record.map(|(_, files)| files), Some(empty), "the empty answer is kept, with no overlay and no file");
+        // The record holds with the journal's cursors (decision 0105). With no journal (Linux without Watchman, as on
+        // CI's runners) nothing could say the answer still holds, so none is kept, and each run asks Git again.
+        let journal = crate::content_store::journal::volume(&real).is_some();
+        assert_eq!(
+            record.map(|(_, files)| files),
+            journal.then_some(empty),
+            "the empty answer is kept where a journal runs, with no overlay and no file; without one, nothing is"
+        );
         let _run = super::ObservedBatch::begin();
-        assert_eq!(super::git_files(&root), None, "and answered from the record");
+        assert_eq!(super::git_files(&root), None, "and answered from the record, or from Git again without a journal");
     }
 
     /// A string's test rows (`strtest_<k>`, `memo::Owner::Text`) are held once by each file whose text holds the

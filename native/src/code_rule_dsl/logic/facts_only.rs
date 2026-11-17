@@ -205,12 +205,6 @@ const STATE: &[(&str, &str)] = &[
     // Decision 0203's feedback as measured: each line's notes, exact pair statistics, proposals and trials, written
     // back with the kept plans (`joins::to_store`) and read from them; measurements, as the cost model's `FITTED`.
     ("code_rule_dsl/logic/plan/joins.rs", "MEMO"),
-    // Decision 0211: the RERAIL_WARM switch, read once; and a `RERAIL_WARM=list` run's tally of its faults, reported
-    // at its end. A switch and a report, no result kept.
-    ("code_rule_dsl/logic/profile.rs", "WARM"),
-    ("code_rule_dsl/logic/profile.rs", "WARM_FAULTS"),
-    // Decision 0227: the `frames` upkeep job's one registration per store a process opens, a registry of jobs.
-    ("content_store/upkeep.rs", "JOBS"),
     // The gate of the RERAIL_* switches (`corpus::switches`): its readers, writer and waiters, no value kept.
     ("code_rule_dsl/logic/plan/corpus/switches.rs", "STATE"),
     // The SQL executor's plan model, fitted from `sql_plan_observations`, and the observations queued for writing.
@@ -272,9 +266,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
     ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
-    // The connections closing beside their runs, counted by file (`close_beside`), which a run deleting the file
-    // waits for: state of the connections, not a result kept.
-    ("code_rule_dsl/logic/plan/corpus.rs", "CLOSING"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
@@ -313,7 +304,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "EXITED"),
     ("code_rule_dsl/logic/profile.rs", "EXITED_GAPS"),
     ("code_rule_dsl/logic/profile.rs", "ON"),
-    ("code_rule_dsl/logic/profile.rs", "SHARD"),
     // Each thread's profile records, merged into `STATE` as they are read: records, no reusable results.
     ("code_rule_dsl/logic/profile.rs", "SHARDS"),
     ("code_rule_dsl/logic/profile.rs", "STACK"),
@@ -380,6 +370,22 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/write_back.rs", "WRITERS"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
+    // The rule files' entries read on this thread before its run, which the outermost run names in its manifest
+    // (decision 0275): the run's own record, taken by it.
+    ("code_rule_dsl/logic/plan/corpus/combined.rs", "READ_BEFORE"),
+    // Profiling: the command's start and its run's end (`command_begins`, `run_ends`), the run thread's phases by span
+    // (decision 0288), the open steps' decisions on this thread (decision 0269) and the process's start (0257). Records
+    // for the report, no result kept.
+    ("code_rule_dsl/logic/profile.rs", "COMMAND"),
+    ("code_rule_dsl/logic/profile.rs", "RUN_PHASES"),
+    ("code_rule_dsl/logic/profile.rs", "DECIDING"),
+    ("code_rule_dsl/logic/profile/life.rs", "ENTERED"),
+    // `core.rr`'s shape less what decision 0174's rewrite adds, read once from the engine's own library, as `DECLS`.
+    ("code_rule_dsl/logic/rr.rs", "SHAPE"),
+    // The rule images shipped with the engine (decision 0264), opened once: an open thing, not a result kept.
+    ("code_rule_dsl/logic/rr/images.rs", "SHIPPED"),
+    // rerail's own files the process names, which the observer leaves out (decisions 0246, 0284): a registry.
+    ("content_store/observe.rs", "OWN"),
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
 const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
