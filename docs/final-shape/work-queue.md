@@ -1471,6 +1471,9 @@ pass.
   the tree, and the combine and the cone decode no tree.
 - **The cone: done** (2026-11-17, 0281 step 7b): `corpus::cone_on_version` undoes, copies and asks again on the
   version; no tree is decoded. Left: `requests_file_local` and `answers_where_documents_are` on the combine's tail.
+- **`answers_where_documents_are`: done** (2026-11-17): on the version, by its `FileLocal` analysis, each round undone
+  through `link::undone_with` over `undo_round`. Left: `requests_file_local` (its `Narrower` unfolds a cross-file
+  atom into bodies drawn from the unfolded relation's rules, renamed apart: a rule written from several rules).
 
 - **Failing** (found 2026-11-17, after the hub's merge d1875e723; already so at 2fbc862df, since nothing on the
   combine's path changed between): the debug check "the combine's tail on the version is the tree's" stops

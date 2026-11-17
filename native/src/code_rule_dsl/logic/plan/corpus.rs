@@ -1427,12 +1427,31 @@ fn requests_where_documents_are<'s>(mut p: crate::code_rule_dsl::logic::program_
         crate::code_rule_dsl::logic::profile::decision(&d.what, || d.detail.clone());
     }
     let (v, _) = p.finish().map_err(Error::Plan)?;
-    let _s = crate::code_rule_dsl::logic::profile::span(|| "the requests narrowed, through the tree (work queue Q52)".into());
-    let mut tree = v.program(&front::Lists::default()).map_err(Error::Plan)?;
-    requests_file_local(&mut tree);
-    answers_where_documents_are(&mut tree);
-    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
+    let v = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the requests narrowed, through the tree (work queue Q52)".into());
+        let mut tree = v.program(&front::Lists::default()).map_err(Error::Plan)?;
+        requests_file_local(&mut tree);
+        crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?.0
+    };
+    let v = answers_where_documents_are_version(v)?;
     Ok(crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("combine", v))
+}
+
+/// `answers_where_documents_are` on the version (decision 0281's path, step 7b): each round whose function's answer
+/// a cross-file reader asks for undone (`link::undone_with` over `undo_round`), by the version's file-local split
+/// (`FileLocal`), to a fixpoint.
+fn answers_where_documents_are_version(mut v: Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+    use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST, undo_round};
+    loop {
+        let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&v).map_err(Error::Plan)?;
+        let head = v.header(&front::Lists::default()).map_err(Error::Plan)?;
+        let declared = |rel: &str| head.decls.contains_key(rel);
+        let Some((round, rel)) = ON_REQUEST.iter().find_map(|round| round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && declared(a.req) && !split.local.contains(a.rel)).map(|a| (*round, a.rel))) else {
+            return Ok(v);
+        };
+        crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || format!("no: its answer is not file-local (a cross-file reader asks), and the cross-file part holds no documents to read; {} eager (decision 0174 §6)", round.iter().map(|a| a.rel).collect::<Vec<_>>().join(", ")));
+        v = link::undone_with(&v, |head, rules| undo_round(head, rules, round))?;
+    }
 }
 
 /// `combine_read` up to the programs linked into one, and what its tail does to that (`Tail`).
