@@ -3411,11 +3411,36 @@ impl Program {
         tape: &TapeDoc,
         roots: impl IntoIterator<Item = u32>,
         initial_pc: u16,
+        stats: Option<&mut ExecutionStats>,
+        work_limit: usize,
+    ) -> Result<Vec<Output>, Error> {
+        self.execute_roots_budgeted_from(tape, roots, initial_pc, stats, work_limit, usize::MAX).map(|(outputs, _)| outputs)
+    }
+
+    /// [`execute_roots`](Self::execute_roots) held to `budget` steps over all its roots (decision 0334): past it,
+    /// `OverBudget`, the evaluation unfinished (the wave replans it, `LoweredWave::roots_batch`). Also the steps
+    /// it took.
+    pub fn execute_roots_budgeted(
+        &self,
+        tape: &TapeDoc,
+        roots: impl IntoIterator<Item = u32>,
+        budget: usize,
+    ) -> Result<(Vec<Output>, usize), Error> {
+        self.execute_roots_budgeted_from(tape, roots, 0, None, MAX_STEPS_PER_PATH, budget)
+    }
+
+    fn execute_roots_budgeted_from(
+        &self,
+        tape: &TapeDoc,
+        roots: impl IntoIterator<Item = u32>,
+        initial_pc: u16,
         #[cfg_attr(not(any(test, feature = "test-hooks")), allow(unused_variables, unused_mut))] mut stats: Option<
             &mut ExecutionStats,
         >,
         work_limit: usize,
-    ) -> Result<Vec<Output>, Error> {
+        budget: usize,
+    ) -> Result<(Vec<Output>, usize), Error> {
+        let mut spent = 0_usize;
         let mut output = Vec::new();
         let mut pending = Vec::new();
         let mut queued_states = HashSet::new();
@@ -3554,6 +3579,9 @@ impl Program {
                         }
                     }
                     charge_task_work(&mut task_work)?;
+                    if spent.saturating_add(task_work) > budget {
+                        return Err(Error::OverBudget);
+                    }
                     if has_repeats
                         && !admitted
                         && !self.admit_query_state(
@@ -3838,8 +3866,9 @@ impl Program {
                     }
                 }
             }
+            spent = spent.saturating_add(task_work);
         }
-        self.finalize_outputs(tape, output, has_repeats)
+        self.finalize_outputs(tape, output, has_repeats).map(|outputs| (outputs, spent))
     }
 
     pub fn finalize_outputs(

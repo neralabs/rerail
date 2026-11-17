@@ -19,6 +19,24 @@ pub use rerail_accel::program_steps::{Observation, Rate, drain, install, keep, k
 pub const PRIOR_STEPS_PER_WORD: u64 = 2;
 /// The least prediction: a task's launch costs more than its first steps.
 pub const MIN_PREDICTED: u64 = 256;
+/// W's matcher's steps per node of a root's subtree, for a clause with no measured rate (decision 0334): a pattern
+/// node's test at each node it visits, a few a node.
+pub const W_PRIOR_STEPS_PER_NODE: u64 = 4;
+
+/// The cost store's key for W's matcher at a clause's roots: the clause's root program's, marked as W's. W's steps
+/// (its utility steps, `matcher::end_clause`) are counted as the transducer's: one test at one node.
+pub fn w_key(program: &Program) -> String {
+    format!("w:{}", program.plain_digest())
+}
+
+/// W's predicted steps to confirm roots whose subtrees hold `nodes` nodes in all: its rate, else the prior.
+pub fn predict_w(program: &Program, nodes: u64) -> u64 {
+    match rate(&w_key(program)) {
+        Some(rate) if rate.samples > 0 && rate.steps_per_unit.is_finite() => (rate.steps_per_unit * nodes as f64).ceil() as u64,
+        _ => nodes.saturating_mul(W_PRIOR_STEPS_PER_NODE),
+    }
+}
+
 /// A task's size: its subtree's nodes, and its root's bytes over eight where the program tests text.
 pub fn size(program: &Program, nodes: u32, bytes: u32) -> u64 {
     let reads_text = !program.predicates.is_empty() || !program.value_programs.is_empty();

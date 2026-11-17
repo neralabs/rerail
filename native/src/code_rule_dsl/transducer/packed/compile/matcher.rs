@@ -1026,6 +1026,18 @@ impl LoweredWave {
     /// program outruns the work limit on a tape gives every candidate root there, listed in [`WaveRun::limited`], so
     /// one large file does not fail the wave: the caller confirms those roots with W's matcher.
     pub fn roots_batch(&self, backend: Backend, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
+        self.roots_batch_budgeted(backend, tapes, active, crate::code_rule_dsl::transducer::packed::WorkBudget::current())
+    }
+
+    /// [`roots_batch`](Self::roots_batch) with the root programs held to `budget` on the CPU (decision 0334,
+    /// `clause_roots`).
+    pub fn roots_batch_budgeted(
+        &self,
+        backend: Backend,
+        tapes: &[TapeDoc],
+        active: &[Vec<bool>],
+        budget: crate::code_rule_dsl::transducer::packed::WorkBudget,
+    ) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
         if let Backend::MetalInterpreter = backend
             && super::device::matcher().is_some()
         {
@@ -1047,18 +1059,22 @@ impl LoweredWave {
                     continue;
                 }
                 let candidates = || domain(&clause.domain, view, sets).filter(|&node| entry.admits(view, node));
-                per.push(match clause.program.execute_roots(view, candidates()) {
-                    Ok(outputs) => outputs.into_iter().map(|output| output.start).collect(),
-                    Err(Error::WorkLimit) => {
+                per.push(match clause_roots(&clause.program, view, candidates, budget)? {
+                    Some(roots) => roots,
+                    None => {
                         limited.push((c, t));
                         candidates().collect()
                     }
-                    Err(e) => return Err(e),
                 });
             }
             found.push(per);
         }
         Ok((found, WaveRun { limited, ..WaveRun::default() }))
+    }
+
+    /// The cost store's key for W's matcher at clause `clause`'s roots (`evaluation_costs::w_key`).
+    pub fn w_key(&self, clause: usize) -> String {
+        crate::code_rule_dsl::transducer::packed::evaluation_costs::w_key(&self.clauses[clause].program)
     }
 
     /// [`roots_metal`](Self::roots_metal), each half of the batch on its own where the whole outgrows a workspace or
@@ -1249,6 +1265,71 @@ impl LoweredMatcher {
     /// The batch's roots with every pass on the device in one command buffer, pattern leaves included.
     pub fn roots_metal(&self, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, super::device::Outcome), Error> {
         super::device::required()?.matcher_roots(self, tapes)
+    }
+}
+
+/// One clause's roots on one tape (decision 0334), or `None` where W's matcher is to confirm its candidates.
+///
+/// Under the full budget, the interpreter at the ceiling: `None` where it reaches it. Replanned, the interpreter is
+/// held to the clause's predicted steps over its candidates times the slack. At an overrun the evaluation is
+/// replanned by cost: W's matcher at the candidates (its predicted steps, `predict_w`) against the transducer again
+/// with twice the budget (at most that many steps); the cheaper runs. Each run is observed for the cost store, the
+/// overrun as a misprediction.
+fn clause_roots<I: Iterator<Item = u32>>(program: &Program, view: &TapeDoc, candidates: impl Fn() -> I, budget: crate::code_rule_dsl::transducer::packed::WorkBudget) -> Result<Option<BTreeSet<u32>>, Error> {
+    use crate::code_rule_dsl::transducer::packed::evaluation_costs as costs;
+    let starts = |outputs: Vec<crate::code_rule_dsl::transducer::packed::Output>| outputs.into_iter().map(|output| output.start).collect::<BTreeSet<u32>>();
+    if !budget.replans() {
+        return match program.execute_roots(view, candidates()) {
+            Ok(outputs) => Ok(Some(starts(outputs))),
+            Err(Error::WorkLimit) => Ok(None),
+            Err(e) => Err(e),
+        };
+    }
+    let roots: Vec<u32> = candidates().collect();
+    let rate = costs::rate(program.plain_digest());
+    let (mut size, mut nodes) = (0_u64, 0_u64);
+    for &root in &roots {
+        let subtree = view.transducer_descendants(root).end.saturating_sub(root).max(1);
+        let span = view.transducer_span(root);
+        let one = costs::size(program, subtree, span.end.saturating_sub(span.start) as u32);
+        size += one;
+        nodes += u64::from(subtree);
+    }
+    // One prediction for the evaluation (its floor is the evaluation's, not each root's).
+    let predicted = costs::predict(program, rate, size);
+    // The ceiling: every root's own (`MAX_WORK_PER_TASK`), where the interpreter stops with `WorkLimit`.
+    let ceiling = (crate::code_rule_dsl::transducer::packed::MAX_WORK_PER_TASK as u64).saturating_mul(roots.len().max(1) as u64);
+    let mut budget = budget;
+    loop {
+        let limit = match budget {
+            crate::code_rule_dsl::transducer::packed::WorkBudget::Replan { slack, doublings } => predicted.saturating_mul(u64::from(slack.max(1))).checked_shl(doublings).unwrap_or(u64::MAX),
+            crate::code_rule_dsl::transducer::packed::WorkBudget::Full => u64::MAX,
+        };
+        let limit = if limit >= ceiling { usize::MAX } else { limit as usize };
+        match program.execute_roots_budgeted(view, roots.iter().copied(), limit) {
+            Ok((outputs, used)) => {
+                if costs::keeping() {
+                    costs::observe([costs::Observation { program: program.plain_digest().to_owned(), steps: used as u64, size, predicted, over_budget: false }]);
+                }
+                return Ok(Some(starts(outputs)));
+            }
+            Err(Error::OverBudget) => {
+                if costs::keeping() {
+                    costs::observe([costs::Observation { program: program.plain_digest().to_owned(), steps: limit as u64, size, predicted, over_budget: true }]);
+                }
+                let w = costs::predict_w(program, nodes);
+                let again = (limit as u64).saturating_mul(2);
+                crate::code_rule_dsl::logic::profile::decision("ast clause over its budget, replanned by cost (0334)", || {
+                    format!("{} roots: W {w} steps against the transducer again {again}: {}", roots.len(), if w < again { "W" } else { "again" })
+                });
+                if w < again {
+                    return Ok(None);
+                }
+                budget = budget.doubled();
+            }
+            Err(Error::WorkLimit) => return Ok(None),
+            Err(e) => return Err(e),
+        }
     }
 }
 

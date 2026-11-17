@@ -482,6 +482,80 @@ fn a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots() {
     assert!(replanned > 0, "no task ran over a budget of a step per node");
 }
 
+/// Decision 0334: a wave clause over its budget is replanned by cost. With its programs priced at almost nothing,
+/// each clause's evaluations run over their budgets; where W's matcher is priced lower than the transducer again,
+/// the evaluation goes to W (`WaveRun::limited`, its candidates for W to confirm, every root the full run found
+/// among them), and where W is priced higher, the transducer runs again with twice the budget until it finishes,
+/// and finds the full run's roots.
+#[test]
+fn a_clause_over_its_budget_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not() {
+    use super::compile_matcher::{Backend, LoweredWave};
+    use crate::code_rule_dsl::transducer::packed::WorkBudget;
+    use crate::code_rule_dsl::transducer::packed::evaluation_costs::{self, Rate};
+    // One large file (the fixtures' sources one after another) and a few small ones.
+    let mut sources = Vec::new();
+    files(pack().join("upstream").as_path(), "py", &mut sources);
+    sources.sort();
+    let joined: String = sources.iter().step_by(8).filter_map(|path| std::fs::read_to_string(path).ok()).collect::<Vec<_>>().join("\n");
+    let mut tapes = vec![python_tape(&joined)];
+    tapes.extend(fixtures().into_iter().take(8));
+    let mut matchers = Vec::new();
+    for (policy, compiled) in &clauses() {
+        for (clause, grammar) in python_matchers(compiled) {
+            if !selected(policy, clause) {
+                continue;
+            }
+            let Ok(tree) = match_tree(grammar) else { continue };
+            if let Ok(matcher) = LoweredMatcher::lower(&tree) {
+                matchers.push(matcher);
+            }
+        }
+    }
+    // The wave's own programs (a wave relabels its clauses'), each at almost nothing, and W at `w` a node.
+    let priced = |wave: &LoweredWave, w: f64| {
+        let mut rates: std::collections::HashMap<String, Rate> = wave
+            .walked_programs()
+            .into_iter()
+            .map(|program| (program.plain_digest().to_owned(), Rate { steps_per_unit: 1e-6, samples: 1 }))
+            .collect();
+        rates.insert(wave.w_key(0), Rate { steps_per_unit: w, samples: 1 });
+        evaluation_costs::install(rates);
+    };
+    // A slack of 1: the budget is the prediction's floor (`MIN_PREDICTED`), which the large file's root walks outrun.
+    let replan = WorkBudget::Replan { slack: 1, doublings: 0 };
+    let active = vec![vec![true; tapes.len()]];
+    evaluation_costs::keep(true);
+    let (mut checked, mut handed, mut overran) = (0, 0, 0);
+    for matcher in matchers.iter().step_by(4).take(16) {
+        let wave = LoweredWave::new(&[matcher]).unwrap();
+        let Ok((full, full_run)) = wave.roots_batch_budgeted(Backend::Cpu, &tapes, &active, WorkBudget::Full) else { continue };
+        priced(&wave, 1e9);
+        let (again, again_run) = wave.roots_batch_budgeted(Backend::Cpu, &tapes, &active, replan).unwrap();
+        assert_eq!(again, full, "W priced higher: the transducer runs again and finds the full run's roots");
+        assert_eq!(again_run.limited, full_run.limited);
+        overran += evaluation_costs::drain().0.iter().filter(|seen| seen.over_budget).count();
+        priced(&wave, 1e-6);
+        let (cheap, cheap_run) = wave.roots_batch_budgeted(Backend::Cpu, &tapes, &active, replan).unwrap();
+        let _ = evaluation_costs::drain();
+        for (c, per) in cheap.iter().enumerate() {
+            for (t, roots) in per.iter().enumerate() {
+                if cheap_run.limited.contains(&(c, t)) {
+                    assert!(roots.is_superset(&full[c][t]), "W's candidates hold every root the full run found");
+                } else {
+                    assert_eq!(roots, &full[c][t]);
+                }
+            }
+        }
+        handed += cheap_run.limited.len().saturating_sub(full_run.limited.len());
+        checked += 1;
+    }
+    evaluation_costs::keep(false);
+    eprintln!("{checked} clauses checked, {overran} overruns run again, {handed} evaluations given to W");
+    assert!(checked > 0, "no clause ran");
+    assert!(overran > 0, "no evaluation ran over its budget");
+    assert!(handed > 0, "no evaluation went to W where W cost less");
+}
+
 /// The Metal gate's mutation check: a widened walk must differ from W's matcher on Metal too, over the CPU check's
 /// tapes (`widened_tapes`), 16 a launch.
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
