@@ -146,7 +146,11 @@ pub(in crate::code_rule_dsl) fn keys(prepared: &[u8; 32], cross: u64) -> ([u8; 3
     use sha2::Digest as _;
     let of = |prepared: &[u8; 32]| -> [u8; 32] {
         let mut hash = sha2::Sha256::new();
-        hash.update(b"rerail.cross-retained/v2\0");
+        // v3: under the engine build and the grammar (decision 0077 §4): another build may derive other rows from the
+        // same inputs, so it keeps its own part, and reads none of an older build's.
+        hash.update(b"rerail.cross-retained/v3\0");
+        hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
+        hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
         hash.update(prepared);
         hash.update(cross.to_le_bytes());
         hash.finalize().into()
@@ -2378,33 +2382,51 @@ impl Retained {
                 eprintln!("rerail: input {rel} (group col {g} of {width}, {} rows, docs {}, phase {:?}, layered {}): {} granules, {} owners of {} differ, {gone_n} gone; {}", source.len(), if hit { "the run's" } else { "recomputed" }, phase, source.as_any().and_then(|a| a.downcast_ref::<Layered>()).is_some(), changed.len(), differ_n, docs.len(), ex.join("; "));
             }
             // Each changed granule's rows, grouped by owner, owners ascending (`kept_inputs` reads each owner's
-            // rows as one range). A maintained input (`Layered`) gives each owner's rows from its ranges; another
-            // is read through once.
-            let mut by: BTreeMap<i64, BTreeMap<i64, Vec<i64>>> = changed.iter().map(|g| (*g, BTreeMap::new())).collect();
+            // rows as one range), each in the source's order. One granule's rows at a time are copied out, encoded
+            // and let go: a first write changes every granule, and holding every granule's copy (with a second, the
+            // granule's rows joined) made each input's job hold twice its rows, several inputs at once (the peak of
+            // a new build's first edit, 2026-11-17). A maintained input (`Layered`) gives each owner's rows from its
+            // ranges; another is read through once for its rows' places (4 bytes a row), then by them.
+            let encode = |part: i64, rows: Vec<i64>| -> (EncodedFrame, usize) {
+                let n = rows.len() / width;
+                (FramePut { rel: name.clone(), part, digest: 0, reads: Vec::new(), rows: FrameRows { types: types.clone(), rows, n } }.encoded(), n)
+            };
             match source.as_any().and_then(|a| a.downcast_ref::<Layered>()) {
                 Some(l) => {
+                    let mut by: BTreeMap<i64, Vec<i64>> = changed.iter().map(|g| (*g, Vec::new())).collect();
                     for owner in docs.keys().filter(|d| changed.contains(&granule(**d))) {
-                        by.get_mut(&granule(*owner)).expect("a changed granule").insert(*owner, l.owner_rows(*owner));
+                        by.get_mut(&granule(*owner)).expect("a changed granule").push(*owner);
+                    }
+                    for (part, mut owners) in by {
+                        owners.sort_unstable();
+                        let rows: Vec<i64> = owners.iter().flat_map(|o| l.owner_rows(*o)).collect();
+                        let (frame, n) = encode(part, rows);
+                        written += n;
+                        puts.push(frame);
                     }
                 }
                 None => {
                     let all: Vec<usize> = (0..width).collect();
                     let mut row = vec![0i64; width];
+                    let mut at: BTreeMap<i64, BTreeMap<i64, Vec<u32>>> = changed.iter().map(|g| (*g, BTreeMap::new())).collect();
                     for r in 0..source.len() {
                         source.row_at(r, &all[g..=g], &mut row[g..=g]);
                         let owner = super::memo::document_of(row[g]);
-                        if let Some(out) = by.get_mut(&granule(owner)) {
-                            source.row_at(r, &all, &mut row);
-                            out.entry(owner).or_default().extend_from_slice(&row);
+                        if let Some(out) = at.get_mut(&granule(owner)) {
+                            out.entry(owner).or_default().push(u32::try_from(r).expect("an input of fewer than 2^32 rows"));
                         }
                     }
+                    for (part, owners) in at {
+                        let mut rows: Vec<i64> = Vec::with_capacity(owners.values().map(Vec::len).sum::<usize>() * width);
+                        for r in owners.into_values().flatten() {
+                            source.row_at(r as usize, &all, &mut row);
+                            rows.extend_from_slice(&row);
+                        }
+                        let (frame, n) = encode(part, rows);
+                        written += n;
+                        puts.push(frame);
+                    }
                 }
-            }
-            for (g, owners) in by {
-                let rows: Vec<i64> = owners.into_values().flatten().collect();
-                let n = rows.len() / width;
-                written += n;
-                puts.push(FramePut { rel: name.clone(), part: g, digest: 0, reads: Vec::new(), rows: FrameRows { types: types.clone(), rows, n } }.encoded());
             }
             let mut table: Vec<(i64, (u64, u64))> = docs.iter().map(|(d, v)| (*d, *v)).collect();
             table.sort_unstable();

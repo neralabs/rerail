@@ -1363,6 +1363,43 @@ pass.
 - **Fix**: those 50 gated on `test` alone (four Metal ones on `all(test, target_os = "macos")`; the
   `component_loop` glob on `any(test, feature = "headless")`, its module's other build). The CLI's test-hooks build
   has no compiler warning; the test target builds and its partial-hit tests pass. Done (2026-11-17).
+- **Then**: 53 `#[cfg_attr(any(test, feature = "test-hooks"), path = …)]` on inline modules were unused too (`unused
+  attribute`; missed at first, as a sorted, cut list of the build's warnings showed the farm's lines alone): the paths
+  only their `#[cfg(test)]` child modules use. Gated on `test`, outer modules first (narrowing one showed the nested).
+  The test-hooks build has no compiler warning; 61 tests across the modules touched pass.
+
+### Q54. A new build reads the old build's kept cross-file inputs
+
+- **Found** (2026-11-17, profiling a new build's first edit on 300 files × 317 rules): live at the peak, 358.8 MB
+  under "cross/the kept part's rows, from the frames"; the decision line "2712 of 2712 strata run (0 maintained from
+  deltas … 1983 derived again)". The run read the old rows of every changed input to make deltas, and had no old
+  derived rows to apply them to: a stratum's identity is of the engine build (`plan::identities`), its inputs' frames
+  were not (`retain::keys`: the prepared program's key and the cross program's digest). Decision 0077 §4 keeps the
+  part per engine build.
+- **Fix**: `retain::keys` under the engine build and the grammar (`rerail.cross-retained/v3`). A new build finds no
+  kept input: every input is new to it, and an old build's input frames age out of the space as derived ones do.
+- **Test**: `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` asserts the new build's first
+  edit compares no input with the old build's (`defined`, which the edit leaves, is among its changed inputs: before,
+  only `col` and `xd_called` were). A cross-file rule (`twice`) the edit does not reach was added to the tests'
+  program; `assert_steady` asserts the cross part is kept, some strata not run.
+- **Also**: an input's frames job copied every changed granule's rows into per-owner vectors, then each granule's
+  joined, before encoding: about twice the input, several inputs at once. It now records the rows' places (4 bytes
+  a row) and copies, encodes and lets go one granule at a time; the frames are the same rows in the same order.
+- **Record**: done (2026-11-17). Profiled first edits of a new build: peak 2.44 GB before both, 2.40 GB after; the
+  359 MB is gone from the live heap. Kept-input and frame tests 18/18, partial-hit tests pass; strict 10-file cold,
+  warm and edit byte-identical.
+
+### Q55. A new build's first edit is a cold run, at 2.3–2.4 GB
+
+- **Found** (2026-11-17, after Q54): the first edit of a new build evaluates every file and derives every cross-file
+  stratum, as a cold run does, and its peak is the cold run's. Profiled, by phase (footprint, live heap): parse
+  0.70, 0.52 GB; the files' evaluation up to 1.92, 1.58 GB (chunks on 14 threads at once); the cross-file part 2.34,
+  2.12 GB, its live heap the run's inputs (exports 215 MB, base rows 191 MB, held for it), the writer's transaction
+  (130 MB) and a long tail of every stratum's rows (none above 25 MB). The footprint stands 0.2–0.5 GB above the live
+  heap.
+- **Open**: the two cold peaks, each above the 1 GB budget alone. t34's steps reach them: a relation's rows let go
+  after their last reader and frames queued per stratum (the cross part); the chunks' working sets bounded together
+  (the files' evaluation).
 
 ## Questions for the user
 

@@ -31,7 +31,7 @@ fn run(dir: &std::path::Path, program: &str, outputs: &[&str]) -> (super::Report
 const FILES: &[(&str, &str)] = &[
     ("a.py", "def helper(x):\n    assert x\n    return x\n\ndef other(y):\n    while y:\n        assert y\n    return helper(y)\n"),
     ("b.py", "from a import helper, other\n\ndef main():\n    assert True\n    helper(1)\n    other(2)\n    if main:\n        assert main\n"),
-    ("c.py", "def lone():\n    try:\n        assert lone\n    except Exception:\n        pass\n    return other(3)\n"),
+    ("c.py", "def lone():\n    try:\n        assert lone\n    except Exception:\n        pass\n    return other(3)\n\ndef helper(z):\n    return z\n"),
 ];
 
 /// A cross-file rule (`at`) reads `col` of the nodes an export (`called`) names, joined with another file's export
@@ -45,16 +45,18 @@ called(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x).
 defined(d, x) :- kind(d, "function_definition"), field(d, "name", n), text(n, x).
 .decl at(x: symbol, k: number)
 at(x, k) :- called(c, x), defined(_, x), col(c, k).
+.decl twice(x: symbol)
+twice(x) :- defined(d, x), defined(e, x), d != e.
 .decl flagged(n: node)
 flagged(n) :- kind(n, "assert_statement"), !kind(n, "{kind}").
 .decl flag_col(k: number, l: number)
 flag_col(k, l) :- flagged(n), col(n, k), line(n, l).
-.output at, flag_col
+.output at, flag_col, twice
 "#
     )
 }
 
-const OUTPUTS: &[&str] = &["at", "flag_col"];
+const OUTPUTS: &[&str] = &["at", "flag_col", "twice"];
 
 /// An edit of `flagged`'s body: the second run reads every file as a partial hit, and gives the rows a run with no
 /// memo gives, its cross-file part seeing no input changed (no export nor base relation the edit did not touch).
@@ -113,6 +115,7 @@ fn a_hit_read_for_its_outputs_alone_decodes_no_export_or_base_rows() {
 /// A steady edit of one of `FILES` (c.py): the other two are memo hits read for their outputs alone, decoding none
 /// of their export or base rows, and the statistics keeper counts the edited file out and in, and no other.
 fn assert_steady(edited: &super::Report, what: &str) {
+    assert!(edited.cross_kept.is_some_and(|(run, all)| run < all), "{what}: the cross-file part kept, some strata not run: {:?}", edited.cross_kept);
     assert_eq!(edited.memo.0, 2, "{what}: the unchanged files are memo hits");
     assert_eq!(edited.memo_kept.0, 2, "{what}: the hits are read for their outputs alone (decision 0117 step 1)");
     assert_eq!(edited.memo_kept.1, 0, "{what}: {} hits read for their outputs alone decoded export or base rows", edited.memo_kept.0);
@@ -149,6 +152,11 @@ fn a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady() {
     let (first, _) = edit("\nhelper(5)\n");
     assert_eq!(first.memo.0, 0, "no entry of the old build's is a hit");
     assert_eq!(first.stats_kept, Some(Ok((3, 0))), "the new build's first edit counts every file in");
+    // Nor is anything of the old build's cross-file part read (decision 0077 §4: kept per engine build): no
+    // stratum's rows (their identities are of the build), and no input's rows, which it read to make deltas with
+    // nothing to apply them to. So every input is new to it, `defined` too, which the edit leaves as it was.
+    assert!(first.cross_kept.is_none_or(|(run, all)| run == all), "the new build derives every cross-file stratum: {:?}", first.cross_kept);
+    assert!(first.cross_changed.iter().any(|r| r == "defined"), "no input compared with the old build's rows: {:?} changed", first.cross_changed);
     let tail = "\nhelper(6)\n";
     let (next, rows) = edit(tail);
     assert_steady(&next, "the new build's second edit");
