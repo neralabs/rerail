@@ -112,7 +112,17 @@ fn scala_contextual_aliases_preserve_native_node_identity() {
 
     let mut expected = Vec::new();
     native_nodes(native.tree.root_node(), &mut expected);
+    // The nodes a tape holds: the tokens the grammar implies (`def`, `:`, `}` here) left out, as
+    // Scala's token automata (0305) decide (`stored_children_for_test`, as `stored` reads them).
+    let mut kept = std::collections::HashSet::new();
+    let mut stack = vec![native.tree.root_node()];
+    while let Some(node) = stack.pop() {
+        kept.insert(node.id());
+        stack.extend(stored_children_for_test(GrammarDialect::Scala, node).into_iter().map(|(child, _)| child));
+    }
+    expected.retain(|node| kept.contains(&node.id()));
     let actual = tape.root_node().dfs().collect::<Vec<_>>();
+    assert!(actual.iter().any(|n| n.kind() == "arguments"), "the contextual alias is kept");
     assert_eq!(expected.len(), actual.len());
     for (native, restored) in expected.into_iter().zip(actual) {
         assert_eq!(restored.kind_id(), native.kind_id());
@@ -2536,6 +2546,9 @@ fn ecma_implied_tokens() {
         ("markdown", GrammarDialect::Markdown),
         ("markdown-inline", GrammarDialect::MarkdownInline),
         ("sql", GrammarDialect::Sql),
+        ("kotlin", GrammarDialect::Kotlin),
+        ("swift", GrammarDialect::Swift),
+        ("scala", GrammarDialect::Scala),
     ];
     let wanted = std::env::var("RERAIL_IMPLIED_DIALECTS").unwrap_or_else(|_| "javascript,typescript,tsx".into());
     for (name, dialect) in all.into_iter().filter(|(name, _)| wanted.split(',').any(|w| w == *name)) {
@@ -2552,7 +2565,7 @@ fn ecma_implied_tokens() {
 /// Writes a dialect's token automata (`TokenGrammar::automata_text`) to `RERAIL_AUTOMATA_OUT`, for a lean
 /// parser's tables: `RERAIL_AUTOMATA_DIALECT=sql` writes `native/crates/sql_lean/automata.tsv`,
 /// `markdown-inline` `native/crates/markdown_inline_lean/automata.tsv`, `vue`
-/// `native/crates/vue_lean/automata.tsv`.
+/// `native/crates/vue_lean/automata.tsv`; `kotlin`, `swift` and `scala` those lean parsers'.
 #[test]
 #[ignore = "writes a lean parser's automata table; needs RERAIL_AUTOMATA_OUT"]
 fn token_automata_text() {
@@ -2561,6 +2574,9 @@ fn token_automata_text() {
         Ok("sql") | Err(_) => GrammarDialect::Sql,
         Ok("markdown-inline") => GrammarDialect::MarkdownInline,
         Ok("vue") => GrammarDialect::Vue,
+        Ok("kotlin") => GrammarDialect::Kotlin,
+        Ok("swift") => GrammarDialect::Swift,
+        Ok("scala") => GrammarDialect::Scala,
         Ok(other) => panic!("no automata table for {other}"),
     };
     std::fs::write(out, tokens::TokenGrammar::of_dialect(dialect).expect("a token grammar").automata_text()).unwrap();
@@ -2608,6 +2624,9 @@ fn python_tape_expect() {
         Ok("markdown-inline") => GrammarDialect::MarkdownInline,
         Ok("sql") => GrammarDialect::Sql,
         Ok("vue") => GrammarDialect::Vue,
+        Ok("kotlin") => GrammarDialect::Kotlin,
+        Ok("swift") => GrammarDialect::Swift,
+        Ok("scala") => GrammarDialect::Scala,
         _ => GrammarDialect::Python,
     };
     let grammar = Grammar::new(dialect).unwrap();
