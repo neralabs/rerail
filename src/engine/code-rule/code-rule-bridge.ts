@@ -183,10 +183,11 @@ export interface HeldCall {
 }
 /**
  * A finished edit `rewind` may still roll back: the revision its finish audited, and each path's digest after it (none
- * when absent). `fromCapture` when finish read every file against the call's own capture: an edit read otherwise,
- * against what the tool's result says the file held or over the whole file, has a capture that may hold the tool's
- * write, as when the call reached Rerail only after the tool ran. Written back, it would undo only what changed the file
- * since and say the edit was rolled back, so such an edit is never rolled back.
+ * when absent). `fromCapture` when finish read every file against the call's own capture or its very text
+ * (`readAsCaptured`): an edit read otherwise, against what the tool's result says the file held or over the whole
+ * file, has a capture that may hold the tool's write, as when the call reached Rerail only after the tool ran. Written
+ * back, it would undo only what changed the file since and say the edit was rolled back, so such an edit is never
+ * rolled back.
  */
 interface RewindableEdit {
   readonly revision: number;
@@ -455,6 +456,13 @@ function changedSinceWrite(source: Source, captured: Preimage, reported: Reporte
   if (placesBeforeWrite(reported, text) || madeAfterCapture(reported, text, source.text)) return captured;
   const said = unprovenCaptureBefore(reported, text, source.text);
   return said === undefined ? captured : keptPreimage(source.path, said);
+}
+/**
+ * Whether an edit read against `preimage` was read against what its call captured: that capture, or its very text, as
+ * what an on-time Edit's result says the file held is, so `rewind` may write the capture back.
+ */
+function readAsCaptured(preimage: Preimage | undefined, captured: Preimage | undefined): boolean {
+  return preimage === captured || (preimage?.text !== undefined && preimage.text === captured?.text);
 }
 function absentThroughout(source: Source, preimage: Preimage | undefined): boolean {
   return source.deleted === true && preimage !== undefined && preimage.text === undefined && preimage.readError === undefined;
@@ -1895,8 +1903,8 @@ export class CodeRuleBridge {
 
   /**
    * The edit of the source at `configuredPath`, read against its preimage (`editPreimage`): the call's own capture, or
-   * what the tool's result reports for that source. A source whose edit is read against anything but its capture joins
-   * `notFromCapture`.
+   * what the tool's result reports for that source. A source whose edit is read against anything but its capture's
+   * text joins `notFromCapture`.
    */
   async #readToolEdit(
     discovery: SourceDiscovery,
@@ -1913,7 +1921,7 @@ export class CodeRuleBridge {
     const reported = preimages.reported?.path === source.path ? preimages.reported : undefined;
     const captured = preimages.captured.get(source.path);
     const preimage = editPreimage(source, captured, reported);
-    if (preimage !== captured) preimages.notFromCapture.add(source.path);
+    if (!readAsCaptured(preimage, captured)) preimages.notFromCapture.add(source.path);
     const before = this.#observedSource(source.path)?.digest;
     const edit = this.#readEdit(source, preimage);
     if (edit === undefined) return undefined;
