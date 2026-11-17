@@ -247,8 +247,10 @@ impl Decodes {
 
     /// Every piece decoded into its slab: one command, a dispatch a slab, waited for. A piece that does not decode
     /// to its length refuses the admission.
-    fn run(self) -> Result<(), Error> {
+    fn run(mut self) -> Result<(), Error> {
         use rerail_metal::launch::{CheckedComputeEncoder as _, LaunchScope, commit_checked, wait_checked};
+        // A document of no nodes has no pieces: nothing to dispatch for it.
+        self.slabs.retain(|(_, runs)| !runs.is_empty());
         if self.slabs.is_empty() {
             return Ok(());
         }
