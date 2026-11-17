@@ -162,6 +162,31 @@ impl<const N: usize> Masks<N> {
         }
     }
 
+    /// The last byte in `at..end` whose bit in mask `k` is set (`None`: none): a gap's last line
+    /// end, by leading zeros from the end back.
+    #[inline(always)]
+    pub fn last_in(&self, at: usize, end: usize, k: usize) -> Option<usize> {
+        let end = end.min(self.len);
+        if at >= end {
+            return None;
+        }
+        let mut b = (end - 1) / 64;
+        let mut m = self.at(b, k) & below(end - b * 64);
+        loop {
+            if b == at / 64 {
+                m &= from(at % 64);
+            }
+            if m != 0 {
+                return Some(b * 64 + 63 - m.leading_zeros() as usize);
+            }
+            if b == at / 64 {
+                return None;
+            }
+            b -= 1;
+            m = self.at(b, k);
+        }
+    }
+
     /// The first token start at `at` or after (`starts` over `word` and `gaps`; the text's length:
     /// none). A byte right at `at` counts only if it is a start: a lexer whose token ended inside
     /// a word run checks that byte itself.
@@ -248,6 +273,13 @@ mod tests {
         assert_eq!(masks.first_in(3, 150, 0), Some(133));
         assert_eq!(masks.first_in(3, 133, 0), None);
         assert_eq!(masks.first_in(134, 400, 0), None);
+        let two = Masks::new(150, vec![[1 << 3 | 1 << 60], [0], [1 << 5]]);
+        assert_eq!(two.last_in(0, 150, 0), Some(133));
+        assert_eq!(two.last_in(0, 133, 0), Some(60));
+        assert_eq!(two.last_in(4, 60, 0), None);
+        assert_eq!(two.last_in(3, 4, 0), Some(3));
+        assert_eq!(two.last_in(61, 133, 0), None);
+        assert_eq!(two.last_in(140, 140, 0), None);
         let s = Masks::new(70, vec![[!0u64, 0], [1, !1]]);
         assert_eq!(s.starts(1, 0, &[1]), 0, "a word on from the block before starts nothing");
         // Word bytes 0..3 and 70..72, gaps everywhere else: starts at 0 and 70.
