@@ -1300,6 +1300,31 @@ describe("path keys an earlier build stored under another spelling", () => {
     expect(spellings(databasePath)).toEqual([{ stored, current: null }]);
   });
 
+  // SQLite's codes were matched by prefix, so a damaged file (`SQLITE_IOERR_CORRUPTFS`, `SQLITE_IOERR_DATA`) read as a
+  // refused disk write, and the keys waited where the read should fail.
+  it.each([
+    ["SQLITE_IOERR_WRITE", "leave the keys waiting"],
+    ["SQLITE_IOERR_CORRUPTFS", "fail the read"],
+    ["SQLITE_IOERR_DATA", "fail the read"],
+  ] as const)("on a reader's copy of waiting keys that fails with %s, %s", async (code, outcome) => {
+    await onWindows();
+    const { folder, databasePath } = await checkoutFolder();
+    vi.stubEnv("SystemDrive", "Q:");
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    openRerailDatabase(databasePath).$client.close();
+    vi.mocked(withDriveBudget).mockImplementation(() => {
+      throw Object.assign(new Error(`disk I/O error (${code})`), { code });
+    });
+    const said: string[] = [];
+    const read = (): unknown => workspaceStartState(folder, databasePath, line => said.push(line));
+
+    if (outcome === "fail the read") expect(read).toThrow(code);
+    else expect({ read: read(), said: said.length }).toEqual({ read: expect.any(String), said: 1 });
+    expect(spellings(databasePath)).toEqual([{ stored, current: null }]);
+  });
+
   // A hook's own start check, with no daemon to answer it, dropped the line that said why the keys still wait.
   it("say why a hook's own start check left keys waiting in the hook failure log, which `rerail status` reads", async () => {
     await onWindows();

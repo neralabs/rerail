@@ -294,9 +294,16 @@ function sqliteCause(error: unknown): unknown {
 
 /**
  * SQLite's codes for a write that a later open can make: another connection holds a lock this one needs, or the disk
- * refused the write (full, or an I/O error), each with its kinds (`SQLITE_BUSY_SNAPSHOT`, `SQLITE_IOERR_WRITE`).
+ * refused the write (full, or an I/O error), each with its kinds (`SQLITE_BUSY_SNAPSHOT`, `SQLITE_IOERR_WRITE`), but
+ * {@link DAMAGED_FILE_SQLITE_CODES}.
  */
 const PASSING_SQLITE_CODES = ["SQLITE_BUSY", "SQLITE_LOCKED", "SQLITE_FULL", "SQLITE_IOERR"];
+
+/**
+ * The kinds of {@link PASSING_SQLITE_CODES} that report a damaged file, which a later open finds damaged too: the file
+ * system's report, and a page whose checksum does not match.
+ */
+const DAMAGED_FILE_SQLITE_CODES = new Set(["SQLITE_IOERR_CORRUPTFS", "SQLITE_IOERR_DATA"]);
 
 /**
  * Whether a copy of waiting keys that failed with `error` can wait for a later open from the drive: the lock or the disk
@@ -304,7 +311,9 @@ const PASSING_SQLITE_CODES = ["SQLITE_BUSY", "SQLITE_LOCKED", "SQLITE_FULL", "SQ
  */
 function copyCanWait(error: unknown): boolean {
   const code = (error as { code?: unknown } | undefined)?.code;
-  return cannotWrite(error) || (typeof code === "string" && PASSING_SQLITE_CODES.some(passing => code.startsWith(passing)));
+  if (cannotWrite(error)) return true;
+  if (typeof code !== "string" || DAMAGED_FILE_SQLITE_CODES.has(code)) return false;
+  return PASSING_SQLITE_CODES.some(passing => code.startsWith(passing));
 }
 
 /** Says on this process's standard error why the keys waiting on a drive were not copied ({@link copyKeysWaitingIn}). */
