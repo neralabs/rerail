@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
 import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
@@ -896,14 +897,34 @@ describe("Rerail daemon", () => {
     }
   });
 
-  it("makes the folder of kept answers in its home when it starts, a folder only this user may open", { timeout: 30_000 }, async () => {
+  it("makes the folder of kept answers in its home when it starts, and in it its own folder of marks of start checks, folders only this user may open", { timeout: 30_000 }, async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const home = join(root, "home");
     await mkdir(home);
-    await start({ stateFile: join(home, DAEMON_STATE_FILE) });
-    const made = await stat(join(home, "stopped-answers"));
-    const mode = process.platform === "win32" ? "not checked on Windows" : (made.mode & 0o777).toString(8);
-    expect({ folder: made.isDirectory(), mode }).toEqual({ folder: true, mode: process.platform === "win32" ? "not checked on Windows" : "700" });
+    const daemon = await start({ stateFile: join(home, DAEMON_STATE_FILE) });
+    const folders = [join(home, "stopped-answers"), join(home, "stopped-answers", `${process.pid}-${daemon.startedAt}`, "asks")];
+    const made = await Promise.all(folders.map(async folder => await stat(folder)));
+    const modes = made.map(each => (process.platform === "win32" ? "not checked on Windows" : (each.mode & 0o777).toString(8)));
+    expect({ folders: made.map(each => each.isDirectory()), modes })
+      .toEqual({ folders: [true, true], modes: Array(2).fill(process.platform === "win32" ? "not checked on Windows" : "700") });
+  });
+
+  it("removes the marks of a folder's start check as it serves one there, before it answers, and leaves those of other folders and of a footer's read", { timeout: 30_000 }, async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const home = join(root, "home");
+    await mkdir(home);
+    const daemon = await start({ stateFile: join(home, DAEMON_STATE_FILE) });
+    const asks = join(home, "stopped-answers", `${process.pid}-${daemon.startedAt}`, "asks");
+    const [served, other] = [join(root, "served"), join(root, "other")];
+    const name = (folder: string): string => createHash("sha256").update(folder).digest("hex").slice(0, 32);
+    for (const folder of [served, other]) {
+      await mkdir(folder);
+      for (const kind of ["asking", "waiting"]) await writeFile(join(asks, `${name(folder)}.${kind}`), "");
+    }
+    await getJson(daemon, `/api/presentation?${new URLSearchParams({ repository: served, host: "claude-code" })}`);
+    // A footer's read names its session: it is no start check, and no hook marks one.
+    await getJson(daemon, `/api/presentation?${new URLSearchParams({ repository: other, host: "claude-code", sessionId: "session-1" })}`);
+    expect((await readdir(asks)).sort()).toEqual([`${name(other)}.asking`, `${name(other)}.waiting`].sort());
   });
 
   it("removes the answers of stopped the daemons before it kept for hooks once it has written its state file, removing a link as a link", { timeout: 30_000 }, async () => {
@@ -917,10 +938,11 @@ describe("Rerail daemon", () => {
     await writeFile(join(outside, "keep.txt"), "kept");
     linkFolder(outside, join(answers, "7-1", "linked"));
     linkFolder(outside, join(answers, "8-1"));
-    await start({ stateFile: join(home, DAEMON_STATE_FILE) });
+    const daemon = await start({ stateFile: join(home, DAEMON_STATE_FILE) });
+    const own = `${process.pid}-${daemon.startedAt}`;
     // It removes them off its start, so no hook that finds it pays for the removal.
-    for (let waited = 0; waited < 10_000 && (await readdir(answers)).length > 0; waited += 50) await delay(50);
-    expect({ answers: await readdir(answers), outside: await readdir(outside) }).toEqual({ answers: [], outside: ["keep.txt"] });
+    for (let waited = 0; waited < 10_000 && (await readdir(answers)).length > 1; waited += 50) await delay(50);
+    expect({ answers: await readdir(answers), outside: await readdir(outside) }).toEqual({ answers: [own], outside: ["keep.txt"] });
   });
 
   it.runIf(process.platform === "win32")("runs, and removes the other earlier answers, where Windows refuses to remove an earlier answer another program holds open", { timeout: 30_000 }, async () => {
@@ -942,8 +964,8 @@ describe("Rerail daemon", () => {
       const daemon = await start({ stateFile: join(home, DAEMON_STATE_FILE) });
       for (let waited = 0; waited < 10_000 && (await readdir(answers)).includes("8-1"); waited += 50) await delay(50);
       await delay(200);
-      expect({ answers: await readdir(answers), unhandled, health: (await getJson(daemon, "/healthz")).status })
-        .toEqual({ answers: ["7-1"], unhandled: [], health: 200 });
+      expect({ answers: (await readdir(answers)).sort(), unhandled, health: (await getJson(daemon, "/healthz")).status })
+        .toEqual({ answers: ["7-1", `${process.pid}-${daemon.startedAt}`].sort(), unhandled: [], health: 200 });
     } finally {
       process.off("unhandledRejection", onUnhandled);
       await holder.end();

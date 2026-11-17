@@ -22,6 +22,7 @@ import {
   type EngineEndpoint,
   makeAnswersFolder,
   removeEarlierAnswers,
+  ServedAsks,
   setCheckoutStarted,
   setRepositoryStarted,
   startStateReader,
@@ -538,8 +539,9 @@ async function countingDaemon(
   home: string,
   repositoryState: string | ((repository: string) => string) = "stopped",
   answerWhen?: (url: URL) => Promise<unknown>,
-  { holdsDatabase = true, pid = process.pid, startedAt = 1, scopeOf = daemonScope, databasePath = join(home, "rerail.sqlite"), answersFolder = true }: StandInOptions = {},
+  { holdsDatabase = true, pid = process.pid, startedAt = 1, scopeOf = daemonScope, databasePath = join(home, "rerail.sqlite"), answersFolder = true, marks = "removed" }: StandInOptions = {},
 ): Promise<CountingDaemon> {
+  const asks = new ServedAsks();
   const requests: string[] = [];
   const asked: string[] = [];
   let ended = 0;
@@ -563,7 +565,10 @@ async function countingDaemon(
         if (gone) ended += 1;
       });
       await Promise.race([answerWhen(url), closing.promise]);
+      if (marks === "removed") asks.served(url.searchParams.get("repository") ?? "");
       if (gone) return;
+    } else if (url.pathname === "/api/presentation" && marks === "removed") {
+      asks.served(url.searchParams.get("repository") ?? "");
     }
     const answer = Object.hasOwn(answers, url.pathname) ? answers[url.pathname] : undefined;
     response.writeHead(answer === undefined ? 404 : 200, { "content-type": "application/json" });
@@ -579,6 +584,7 @@ async function countingDaemon(
     databasePath, kernelSocketPath, ui: "bundled", startedAt, packageRoot: home,
   }));
   if (answersFolder) makeAnswersFolder(home);
+  if (answersFolder && marks !== "none") asks.open(home, { pid, startedAt });
   const database = holdsDatabase ? heldOpen(join(home, "rerail.sqlite")) : undefined;
   return {
     requests,
@@ -606,6 +612,11 @@ interface StandInOptions {
   readonly databasePath?: string;
   /** Whether it makes the folder of kept answers at its start, as a daemon does (`makeAnswersFolder`); true unless given. */
   readonly answersFolder?: boolean;
+  /**
+   * Its folder of marks of start checks hooks gave up on (`ServedAsks`): `removed` as it serves each start check, as a
+   * daemon does (unless given); `kept`, made but never removed; `none`, never made, as by a daemon of an older build.
+   */
+  readonly marks?: "removed" | "kept" | "none";
 }
 
 /** The checkout a live daemon names for `folder` in its answer (`lookupCheckout`); null where it knows none. */
@@ -1010,6 +1021,27 @@ async function daemonAnsweringAfterProof(
 function keptAnswerFile(folder: string, { pid = process.pid, startedAt = 1 }: Pick<StandInOptions, "pid" | "startedAt"> = {}): string {
   const name = createHash("sha256").update(realpathSync.native(folder)).digest("hex").slice(0, 32);
   return join(process.env.RERAIL_HOME!, "stopped-answers", `${pid}-${startedAt}`, `${name}.json`);
+}
+
+/**
+ * The marks of `folder`'s start checks in the folder of marks of the daemon `daemon.json` names by `pid` and `startedAt`
+ * (`countingDaemon`'s, unless given): `asking`, `waiting`, or neither.
+ */
+function askMarks(folder: string, daemon: Pick<StandInOptions, "pid" | "startedAt"> = {}): string[] {
+  const named = keptAnswerFile(folder, daemon).replace(/\.json$/u, "");
+  return ["asking", "waiting"].filter(kind => existsSync(join(dirname(named), "asks", `${basename(named)}.${kind}`)));
+}
+
+/** A mark of `kind` for `folder`'s start checks in the daemon's folder of marks, made where it is not there yet. */
+function plantMark(folder: string, kind: "asking" | "waiting", daemon: Pick<StandInOptions, "pid" | "startedAt"> = {}): void {
+  const named = keptAnswerFile(folder, daemon).replace(/\.json$/u, "");
+  mkdirSync(join(dirname(named), "asks"), { recursive: true });
+  writeFileSync(join(dirname(named), "asks", `${basename(named)}.${kind}`), "");
+}
+
+/** What is in the daemon's folder of the answer kept for `folder`, but its folder of marks (`askMarks`). */
+function answersBeside(folder: string): string[] {
+  return readdirSync(dirname(keptAnswerFile(folder))).filter(name => name !== "asks");
 }
 
 /** The answer kept for `folder`, as it was kept but at `at`. */
@@ -2367,6 +2399,117 @@ describe("the hook start check", () => {
     }
   });
 
+  it("asks nothing where the start check an earlier hook there gave up on still waits at the daemon, repeating the answer kept; once the daemon served it, the next hook asks", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    await keptStopped(host, app);
+    const busy = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
+    try {
+      const first = await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", app));
+      const marks = askMarks(app);
+      const later: boolean[] = [];
+      for (let hook = 0; hook < 3; hook += 1) later.push(await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", app)));
+      expect({ first, marks, later, asked: busy.asked.length }).toEqual({ first: false, marks: ["waiting"], later: [false, false, false], asked: 1 });
+    } finally {
+      // The held check goes on as the daemon closes, and is served then.
+      await busy.close();
+    }
+    const prompt = await countingDaemon(process.env.RERAIL_HOME!, "stopped");
+    try {
+      expect({ started: await host.hookRerailStarted("claude-code", app), asked: prompt.asked.length, marks: askMarks(app) }).toEqual({ started: false, asked: 1, marks: [] });
+    } finally {
+      await prompt.close();
+    }
+  });
+
+  it("removes the mark of its own start check where the daemon answers it in time, though the daemon removed none", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    await keptStopped(host, app);
+    const prompt = await countingDaemon(process.env.RERAIL_HOME!, "stopped", undefined, { marks: "kept" });
+    try {
+      expect({ started: await host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES), asked: prompt.asked.length, marks: askMarks(app) })
+        .toEqual({ started: false, asked: 1, marks: [] });
+    } finally {
+      await prompt.close();
+    }
+  });
+
+  it("marks no check as waiting where the daemon served a start check of the folder after this hook asked, so the next hook there asks", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    await keptStopped(host, app);
+    // The daemon serves an earlier check of the folder while this one waits in its queue, then holds this one.
+    const daemonSide = new ServedAsks();
+    daemonSide.open(process.env.RERAIL_HOME!, { pid: process.pid, startedAt: 1 });
+    const servedEarlier = async (url: URL): Promise<never> => {
+      daemonSide.served(url.searchParams.get("repository") ?? "");
+      return await busyTheWholeTest();
+    };
+    const busy = await countingDaemon(process.env.RERAIL_HOME!, "started", servedEarlier, { marks: "kept" });
+    try {
+      const first = await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", app));
+      const marks = askMarks(app);
+      const next = await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", app));
+      expect({ first, marks, next, asked: busy.asked.length }).toEqual({ first: false, marks: [], next: false, asked: 2 });
+    } finally {
+      await busy.close();
+    }
+  });
+
+  it("makes no mark beside a daemon that keeps none, as one of an older build, and each hook there asks", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    await keptStopped(host, app, { marks: "none" });
+    const busy = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest, { marks: "none" });
+    try {
+      const answers: boolean[] = [];
+      for (let hook = 0; hook < 2; hook += 1) answers.push(await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", app)));
+      expect({ answers, asked: busy.asked.length, asks: existsSync(join(dirname(keptAnswerFile(app)), "asks")) }).toEqual({ answers: [false, false], asked: 2, asks: false });
+    } finally {
+      await busy.close();
+    }
+  });
+
+  it.each([
+    { what: "no answer is kept there", keep: false },
+    { what: "the answer kept there no longer holds, the checkout started since", keep: true },
+  ])("asks the daemon and takes its answer where a mark says a check of the folder waits but $what: a mark, forged or left, repeats only what the kept answer allows", async ({ keep }) => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    if (keep) {
+      await keptStopped(host, app);
+      startTestRepository(app);
+    }
+    const prompt = await countingDaemon(process.env.RERAIL_HOME!, "started", undefined, { marks: "kept" });
+    plantMark(app, "waiting");
+    try {
+      expect({ started: await host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES), asked: prompt.asked.length }).toEqual({ started: true, asked: 1 });
+    } finally {
+      await prompt.close();
+    }
+  });
+
+  it("reads no mark of a daemon before the one daemon.json names, whose queue is gone with it", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    await keptStopped(host, app, { startedAt: 2 });
+    plantMark(app, "waiting", { startedAt: 1 });
+    const busy = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest, { startedAt: 2 });
+    try {
+      const first = await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", app));
+      expect({ first, asked: busy.asked.length, marks: askMarks(app, { startedAt: 2 }) }).toEqual({ first: false, asked: 1, marks: ["waiting"] });
+    } finally {
+      await busy.close();
+    }
+  });
+
   it.each(changesSinceTheAnswer)("waits for a late daemon where it last answered stopped, once $what", async ({ change, startedAt, held }) => {
     const root = await temporaryDirectory({ started: false });
     const app = stoppedApp(root);
@@ -2497,7 +2640,7 @@ describe("the hook start check", () => {
         const hooks = Array.from({ length: 8 }, () => host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES));
         expect(await Promise.all(hooks)).toEqual(Array.from({ length: 8 }, () => false));
         expect(JSON.parse(readFileSync(keptAnswerFile(app), "utf8"))).toMatchObject({ v: 4, depth: 0, cloneId: readFileSync(cloneIdFile(app), "utf8").trim() });
-        expect(readdirSync(dirname(keptAnswerFile(app)))).toEqual([basename(keptAnswerFile(app))]);
+        expect({ kept: answersBeside(app), marks: readdirSync(join(dirname(keptAnswerFile(app)), "asks")) }).toEqual({ kept: [basename(keptAnswerFile(app))], marks: [] });
       }
     } finally {
       await daemon.close();
@@ -2524,7 +2667,7 @@ describe("the hook start check", () => {
           refusedOtherwise: [...reads.flatMap(read => ("code" in read ? [read.code] : [])), ...traffic.renames.filter(code => code !== "renamed")]
             .filter(code => process.platform !== "win32" || !WINDOWS_HOLDS.includes(code)),
           waitedThoughWhole: Math.max(0, waited - refusedReads), written: traffic.renames.includes("renamed"),
-          folder: readdirSync(dirname(keptAnswerFile(app))), whole: wholeKeptAnswer(readFileSync(keptAnswerFile(app), "utf8")),
+          folder: answersBeside(app), whole: wholeKeptAnswer(readFileSync(keptAnswerFile(app), "utf8")),
         }).toEqual({
           answers: Array.from({ length: 100 }, () => false), partReads: [], refusedOtherwise: [], waitedThoughWhole: 0, written: true,
           folder: [basename(keptAnswerFile(app))], whole: true,
@@ -2638,7 +2781,8 @@ describe("the hook start check", () => {
     try {
       host.proofs.nextCheck();
       expect({
-        kept: existsSync(join(process.env.RERAIL_HOME!, "stopped-answers", `${process.pid}-1`)), started: await host.hookRerailStarted("claude-code", share),
+        kept: readdirSync(join(process.env.RERAIL_HOME!, "stopped-answers", `${process.pid}-1`)).some(name => name.endsWith(".json")),
+        started: await host.hookRerailStarted("claude-code", share),
         checked: host.proofs.found.at(-1), asked: [...prompt.asked, ...late.asked].map(folder => (folder.startsWith("\\\\") ? "the share" : folder)),
       }).toEqual({ kept: false, started: true, checked: false, asked: ["the share", "the share"] });
     } finally {
@@ -2702,7 +2846,7 @@ describe("the hook start check", () => {
       await standIn?.close();
     }
     const kept = relative(process.env.RERAIL_HOME!, keptAnswerFile(app));
-    expect(homeEntries()).toEqual([...before, ...(keeps ? [dirname(kept), kept] : [])].sort());
+    expect(homeEntries()).toEqual([...new Set([...before, ...(keeps ? [dirname(kept), kept] : [])])].sort());
   });
 
   it("keeps no answer, and makes no folder of kept answers, where that folder goes while the hook waits for the daemon", async () => {

@@ -23,11 +23,12 @@ import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/engine-
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { makeAnswersFolder, removeEarlierAnswers } from "../runtime/start-check/stopped-answers.js";
+import { ServedAsks } from "../runtime/start-check/waiting-asks.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { startCheckoutPruning, type CheckoutPruning } from "./checkout-pruning.js";
 import type { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import { getRequestListener } from "@hono/node-server";
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, requestBodyLimit } from "../api/http.js";
 import { createRerailMcpHandler } from "../api/mcp.js";
@@ -337,10 +338,26 @@ function daemonUi(options: RerailDaemonOptions): { uiRoot: string | undefined; u
   return { uiRoot, ui: uiRoot === undefined || options.dev === true ? "dev" : "bundled" };
 }
 
-/** What the HTTP app serves. `health` asks the daemon the app ends up behind. */
-function daemonApp({ stores, options, publicHosts, accessToken, nativeToken, sessions, workspaceRoot, uiRoot, health }: {
+/**
+ * Removes the marks of a hook's start check (`GET /api/presentation` with no session) for its folder as the daemon
+ * serves one, before it answers: a hook that gave up on its own leaves a mark the hooks after it in that folder read as
+ * "one waits at the daemon already" (`ServedAsks`).
+ */
+function servingStartCheck(asks: ServedAsks): MiddlewareHandler {
+  return async (context, next) => {
+    const repository = context.req.query("repository");
+    if (context.req.method === "GET" && repository !== undefined && context.req.query("sessionId") === undefined) asks.served(repository);
+    await next();
+  };
+}
+
+/**
+ * What the HTTP app serves. `health` asks the daemon the app ends up behind; `asks` holds the marks of start checks hooks
+ * gave up on, which serving a start check removes.
+ */
+function daemonApp({ stores, options, publicHosts, accessToken, nativeToken, sessions, workspaceRoot, uiRoot, health, asks }: {
   stores: DatabaseApiStores; options: RerailDaemonOptions; publicHosts: ReturnType<typeof publicHostSet>; accessToken: string; nativeToken: string;
-  sessions: NativeSessionServer; workspaceRoot: string; uiRoot: string | undefined; health: () => ReturnType<RerailDaemon["health"]>;
+  sessions: NativeSessionServer; workspaceRoot: string; uiRoot: string | undefined; health: () => ReturnType<RerailDaemon["health"]>; asks: ServedAsks;
 }): Hono {
   const mcp = createRerailMcpHandler(stores, operations, { version: options.version, publicHosts });
   const app = new Hono();
@@ -349,6 +366,7 @@ function daemonApp({ stores, options, publicHosts, accessToken, nativeToken, ses
   app.use("/api/*", requestBodyLimit(API_BODY_LIMIT_BYTES));
   app.use("/mcp", requestBodyLimit(API_BODY_LIMIT_BYTES));
   app.use("/native/*", requestBodyLimit(NATIVE_BODY_LIMIT_BYTES));
+  app.use("/api/presentation", servingStartCheck(asks));
   app.get("/healthz", context => context.json(health()));
   const requestShutdown = options.onShutdownRequest;
   if (requestShutdown !== undefined) {
@@ -594,7 +612,8 @@ export class RerailDaemon {
       const nativeToken = randomBytes(32).toString("hex");
       const sessions = new NativeSessionServer({ workspaceRoot, modelPath, databasePath, worktreeWalks, ...sharedMergeAssist });
       started.nativeServer = sessions;
-      const app = daemonApp({ stores, options, publicHosts, accessToken, nativeToken, sessions, workspaceRoot, uiRoot, health: () => daemon!.health() });
+      const asks = new ServedAsks();
+      const app = daemonApp({ stores, options, publicHosts, accessToken, nativeToken, sessions, workspaceRoot, uiRoot, health: () => daemon!.health(), asks });
       const server = createDaemonServer(options, app);
       started.server = server;
       const remembered = options.portFile === undefined ? undefined : await readRememberedPort(options.portFile);
@@ -603,7 +622,7 @@ export class RerailDaemon {
         server, engineService, kernelSocketPath: engineService.socketPath, stores, options, databasePath, native, ui, workspaceRoot,
         nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, worktreeWalks, ...sharedMergeAssist,
       });
-      await daemon.#announce(remembered);
+      await daemon.#announce(remembered, asks);
       daemon.#startCheckoutPruning();
       daemon.#startProvenanceMove();
       return daemon;
@@ -613,13 +632,17 @@ export class RerailDaemon {
     }
   }
 
-  /** What a started daemon leaves behind for others: its state file, its remote sink and the port links point at. */
-  async #announce(remembered: number | undefined): Promise<void> {
+  /**
+   * What a started daemon leaves behind for others: its state file, its remote sink, the port links point at, and the
+   * folder where hooks mark the start checks they gave up on (`asks`).
+   */
+  async #announce(remembered: number | undefined, asks: ServedAsks): Promise<void> {
     const options = this.#options;
     if (options.stateFile !== undefined) {
       // Made before hooks can find this daemon, so the first of them may keep its answer: a home no daemon ran in has
       // no such folder, and a start or a stop there writes nothing beside the database.
       makeAnswersFolder(dirname(options.stateFile));
+      asks.open(dirname(options.stateFile), { pid: process.pid, startedAt: this.startedAt });
       await this.#record(options.stateFile);
       // Hooks find this daemon by the file just written, and never repeat an answer of stopped an earlier daemon gave:
       // it removes those off its start, so no hook pays for the removal.

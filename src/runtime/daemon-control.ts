@@ -2,6 +2,7 @@ import type { SpawnOptions } from "node:child_process";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -172,13 +173,17 @@ function fetchHeaders(incoming: Readonly<Record<string, string | string[] | unde
   return headers;
 }
 
-/** `fetch` over `agent`, for the request shapes Rerail's own clients send. Redirects are never followed. */
-function pinnedFetch(agent: PinnedDaemonAgent): DaemonFetch {
+/**
+ * `fetch` over Node's own client: `send` (`http.request` or `https.request`) over `agent`, for the request shapes
+ * Rerail's own clients send. Redirects are never followed. `sent` is told once the request was handed to the OS (its
+ * `finish`), which `fetch` never says.
+ */
+function nodeFetch(send: typeof httpsRequest | typeof httpRequest, agent: HttpsAgent | false, sent?: () => void): DaemonFetch {
   return async (endpoint, init) => {
     const method = (init.method ?? "GET").toUpperCase();
     const body = requestBody(init.body);
     const { promise, resolve: answer, reject } = Promise.withResolvers<Response>();
-    const request = httpsRequest(endpoint, {
+    const request = send(endpoint, {
       method,
       headers: Object.fromEntries(new Headers(init.headers)),
       agent,
@@ -192,6 +197,7 @@ function pinnedFetch(agent: PinnedDaemonAgent): DaemonFetch {
       }));
     });
     request.once("error", reject);
+    if (sent !== undefined) request.once("finish", sent);
     request.end(body);
     return await promise;
   };
@@ -200,17 +206,18 @@ function pinnedFetch(agent: PinnedDaemonAgent): DaemonFetch {
 /**
  * How a Rerail process reaches the daemon `state` records: plain `fetch` for an `http:` daemon; for an `https:` one, a
  * client that pins the certificate fingerprint the daemon recorded. An `https:` state without a fingerprint is refused
- * rather than trusted.
+ * rather than trusted. A caller that gives `sent` is told once each request was handed to the OS, so its `http:`
+ * requests go through Node's own client, on a connection of their own.
  */
-export function daemonFetch(state: Pick<DaemonState, "url" | "tlsFingerprint256">): DaemonFetch {
-  if (new URL(state.url).protocol !== "https:") return fetch;
+export function daemonFetch(state: Pick<DaemonState, "url" | "tlsFingerprint256">, sent?: () => void): DaemonFetch {
+  if (new URL(state.url).protocol !== "https:") return sent === undefined ? fetch : nodeFetch(httpRequest, false, sent);
   const fingerprint = state.tlsFingerprint256;
   if (fingerprint === undefined) {
     return async () => {
       throw new Error("daemon.json names an https Rerail daemon without the certificate fingerprint to pin");
     };
   }
-  return pinnedFetch(new PinnedDaemonAgent(fingerprint));
+  return nodeFetch(httpsRequest, new PinnedDaemonAgent(fingerprint), sent);
 }
 
 /** `url` on the origin a browser on this machine reaches: an unspecified bind address (`0.0.0.0`, `::`) is loopback. */

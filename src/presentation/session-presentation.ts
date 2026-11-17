@@ -17,6 +17,7 @@ import {
 } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { StartAnswer } from "../runtime/start-check/stopped-answers.js";
+import type { StartAsk } from "../runtime/start-check/waiting-asks.js";
 import type { PresentationPresence } from "../engine/storage/presentation-presence.js";
 import { cappedLine, ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 import { conflictUrl } from "../engine/merge-assist/conflict-note.js";
@@ -166,25 +167,31 @@ function endedBy(limit: AbortSignal, stop: AbortSignal | undefined): AbortSignal
   return stop === undefined ? limit : AbortSignal.any([limit, stop]);
 }
 
+/** What a caller adds to one read: `stop` ends it early; `sent` is told once the request was handed to the OS. */
+interface ReadCall {
+  readonly stop?: AbortSignal | undefined;
+  readonly sent?: (() => void) | undefined;
+}
+
 /**
  * Validate responses with the same contracts used by the daemon, without opening a database. Throws `NotAnswering`
- * once the read's time runs out, whatever the transport threw then. `stop` ends the read early.
+ * once the read's time runs out, whatever the transport threw then.
  */
 async function get<Schema extends z.ZodType>(
-  daemon: Pick<VerifiedDaemon, "origin" | "state">, path: string, schema: Schema, stop?: AbortSignal,
+  daemon: Pick<VerifiedDaemon, "origin" | "state">, path: string, schema: Schema, { stop, sent }: ReadCall = {},
 ): Promise<z.infer<Schema>> {
   const signal = AbortSignal.timeout(READ_TIMEOUT_MS);
   try {
-    return await readAnswer(daemon, new URL(path, daemon.origin), schema, endedBy(signal, stop));
+    return await readAnswer(daemon, new URL(path, daemon.origin), schema, { stop: endedBy(signal, stop), sent });
   } catch (error) {
     throw signal.aborted ? new NotAnswering("The Rerail daemon did not answer in time", { cause: error }) : error;
   }
 }
 
 async function readAnswer<Schema extends z.ZodType>(
-  daemon: Pick<VerifiedDaemon, "state">, url: URL, schema: Schema, signal: AbortSignal,
+  daemon: Pick<VerifiedDaemon, "state">, url: URL, schema: Schema, { stop: signal, sent }: ReadCall,
 ): Promise<z.infer<Schema>> {
-  const response = await daemonFetch(daemon.state)(url, { headers: daemonAccessHeaders(daemon.state), signal, redirect: "error" });
+  const response = await daemonFetch(daemon.state, sent)(url, { headers: daemonAccessHeaders(daemon.state), signal: signal ?? null, redirect: "error" });
   if (!response.ok || response.body === null) throw new Error("Rerail read unavailable");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -448,10 +455,11 @@ export async function readRepositoryState(cwd: string, host: RerailHost): Promis
  * daemon was asked about it (`workspace`, its real path), the checkout the daemon placed it in (`scope`, null where it
  * placed it in none it knows), and the daemon that answered. Null where none answered. `stop` ends the request, as null,
  * for a caller that no longer needs the answer: a one-shot hook that repeats the daemon's last answer
- * (`hookRerailStarted`).
+ * (`hookRerailStarted`). `ask` is that hook's start check as the daemon's queue holds it (`HookAsk`): told the live
+ * daemon before it is asked, which it may forbid (null then), and when the request was handed to the OS.
  */
-export async function readStartAnswer(cwd: string, host: RerailHost, stop?: AbortSignal): Promise<StartAnswer | null> {
-  const answer = await daemonStartAnswer(cwd, host, stop);
+export async function readStartAnswer(cwd: string, host: RerailHost, stop?: AbortSignal, ask?: StartAsk): Promise<StartAnswer | null> {
+  const answer = await daemonStartAnswer(cwd, host, { stop, ask });
   return answer === "not-answering" ? null : answer;
 }
 
@@ -468,15 +476,28 @@ async function daemonRepositoryState(cwd: string, host: RerailHost): Promise<Sum
 }
 
 /** {@link readStartAnswer}, or `not-answering` when the live daemon gave no answer in time. `stop` ends the request, as null. */
-async function daemonStartAnswer(cwd: string, host: RerailHost, stop?: AbortSignal): Promise<StartAnswer | "not-answering" | null> {
+async function daemonStartAnswer(cwd: string, host: RerailHost, call: StartCall = {}): Promise<StartAnswer | "not-answering" | null> {
   try {
     const daemon = await verifyDaemon(cwd);
-    if (typeof daemon === "string" || !(await readableDaemon(daemon.state, stop))) return null;
-    const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationReadSchema, stop);
-    return { state: response.repositoryState, workspace: daemon.workspace, scope: response.scope ?? null, daemon: daemon.state };
+    if (typeof daemon === "string" || !(await readableDaemon(daemon.state, call.stop))) return null;
+    return await askedLive(daemon, host, call);
   } catch (error) {
     return error instanceof NotAnswering ? "not-answering" : null;
   }
+}
+
+/** What a start check carries for its caller: `stop` ends the request; `ask` is a one-shot hook's (`readStartAnswer`). */
+interface StartCall {
+  readonly stop?: AbortSignal | undefined;
+  readonly ask?: StartAsk | undefined;
+}
+
+/** The start check `daemon`, known to be live, answers for its folder; null where `ask` forbids asking it. */
+async function askedLive(daemon: VerifiedDaemon, host: RerailHost, { stop, ask }: StartCall): Promise<StartAnswer | null> {
+  if (ask !== undefined && !ask.beforeAsking(daemon.state, daemon.workspace)) return null;
+  const path = `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`;
+  const response = await get(daemon, path, presentationReadSchema, { stop, sent: ask === undefined ? undefined : () => ask.sent() });
+  return { state: response.repositoryState, workspace: daemon.workspace, scope: response.scope ?? null, daemon: daemon.state };
 }
 
 /** Why no daemon answered in a started checkout: none is running, or the live one gave no answer in time. */

@@ -313,6 +313,15 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
   own 0600 file: a process of the same user that rewrites one to name the mark now there, and writes an older copy of
   the database in place, makes hooks skip events while the daemon answers started, as such a process can on earlier
   releases by keeping the daemon from answering for 2 s.
+- The marks of start checks hooks gave up on (`stopped-answers/<daemon>/asks/`,
+  `src/runtime/start-check/waiting-asks.ts`) are empty 0600 files in a 0700 folder that only the daemon makes, as it
+  starts, and nothing reads, makes or removes them through a link. A process of the same user may plant one or keep
+  one from being removed: the hooks in that folder then repeat the kept answer without asking the daemon, as they do
+  beside a daemon too busy to answer in 75 ms, and only where every check of that answer above holds. A mark where no
+  answer is kept, or where the kept one no longer holds (the checkout started since, say), has the hook ask the daemon
+  and take its answer (`test/harness/hook-host.test.ts`). The daemon removes a folder's marks as it serves a start
+  check there, and tries a removal that failed again at each start check it serves; a new daemon reads none of an
+  earlier one's.
 - Session directories are created 0700 and explicitly chmod 0700; ledgers append 0600 (`src/runtime/runtime.ts`).
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which

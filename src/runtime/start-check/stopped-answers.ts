@@ -408,8 +408,22 @@ function plainFileText(descriptor: number, most: number): string | undefined {
 
 /** The file of the answer `daemon` gave for `folder`, a real path. */
 function keptFile(daemon: DaemonIdentity, folder: string, home = defaultRerailHome()): string {
-  const name = createHash("sha256").update(folder).digest("hex").slice(0, 32);
-  return join(home, STOPPED_ANSWERS_DIR, daemonFolder(daemon), `${name}.json`);
+  return join(daemonAnswersFolder(daemon, home), `${answerName(folder)}.json`);
+}
+
+/** The name the answer kept for `folder`, a real path, goes by: the first 32 hex digits of its SHA-256. */
+export function answerName(folder: string): string {
+  return createHash("sha256").update(folder).digest("hex").slice(0, 32);
+}
+
+/** The folder of the answers `daemon` gave, in the Rerail home `home`. */
+export function daemonAnswersFolder(daemon: DaemonIdentity, home = defaultRerailHome()): string {
+  return join(home, STOPPED_ANSWERS_DIR, daemonFolder(daemon));
+}
+
+/** Whether an answer `daemon` gave for `folder` is kept, a plain file at its name; its checks are `repeatsStoppedAnswer`'s. */
+export function hasKeptAnswer(daemon: DaemonIdentity, folder: string): boolean {
+  return entryKind(keptFile(daemon, folder)) === "file";
 }
 
 /** The name of the folder of the answers `daemon` gave. */
