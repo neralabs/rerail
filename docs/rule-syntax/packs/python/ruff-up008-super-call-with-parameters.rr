@@ -31,12 +31,18 @@ pos_arg(al, i, a) :- kind(al, "argument_list"), child(al, a, j), !kind(a, "keywo
     !kind(a, "dictionary_splat"), !kind(a, "comment"),
     i = count : { child(al, o, j2), j2 < j, !kind(o, "keyword_argument"), !kind(o, "dictionary_splat"),
         !kind(o, "comment") }.
-// names_class(a, f): a names the class around f: `__class__` when f does not rebind it, or the class path
-// (`Outer.Inner`) whose head is that outermost class, not a local of the same name (`C = B; super(C, self)`).
+// names_class(a, f): a, super's first argument in a call that runs in f, names the class around f: `__class__`
+// when f does not rebind it, or the class path (`Outer.Inner`) whose head is that outermost class, not a local of
+// the same name (`C = B; super(C, self)`). Asked only of super's first argument: matched by text alone, a class
+// path paired each method with every same-named identifier in the corpus.
 .decl names_class(a: node, f: node)
-names_class(a, f) :- text(a, "__class__"), kind(a, "identifier"), run_scope(a, f, _), !local_class(f).
-names_class(a, f) :- class_path(f, p), text(a, p), (kind(a, "identifier") ; kind(a, "attribute")),
+names_class(a, f) :- super_first(a, f), text(a, "__class__"), kind(a, "identifier"), run_scope(a, f, _),
+    !local_class(f).
+names_class(a, f) :- super_first(a, f), class_path(f, p), text(a, p), (kind(a, "identifier") ; kind(a, "attribute")),
     head_ref(a, h, x), look(h, x, s), binding(s, x, _, "class").
+.decl super_first(a: node, f: node)
+super_first(a, f) :- kind(c, "call"), field(c, "function", fn), sym_at(fn, "builtins.super"),
+    field(c, "arguments", al), pos_arg(al, 0, a), run_scope(c, f, _).
 // class_cell(f): CPython gives f a `__class__` cell.
 .decl class_cell(f: node)
 class_cell(f) :- cell_user(g, f), !local_class(f), !local_class(g).

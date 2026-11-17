@@ -45,13 +45,23 @@ reset(p) :- ignored(p).
 ignored(p) :- computed(p), option("ignoreComputedKeys", "true").
 .decl computed(p: node)
 computed(p) :- entry(_, p, _), (field(p, "key", k) ; field(p, "name", k)), kind(k, "computed_property_name").
-// prev_name(p, q): q is the last named property before p since the last reset; p is named and not a reset.
+// prev_name(p, q): q is the last named property before p since the last reset; p is named and not a reset. q is
+// the nearest mark before p, walked entry by entry: counting the marks between every earlier entry and p was
+// cubic in an object's size.
 .decl prev_name(p: node, q: node)
-prev_name(p, q) :- entry(o, p, i), pname(p, _, _), !reset(p), entry(o, q, j), pname(q, _, _), j < i, !reset(q),
-    count : { entry(o, r, k), j < k, k < i, marks(r) } = 0.
+prev_name(p, q) :- entry(_, p, _), pname(p, _, _), !reset(p), prev_mark(p, q), pname(q, _, _), !reset(q).
 .decl marks(r: node)  // a property that would end the search for the previous name: a reset or a named one
 marks(r) :- reset(r).
 marks(r) :- pname(r, _, _).
+.decl prev_mark(p: node, q: node)  // q is the nearest mark before entry p in its object
+prev_mark(p, q) :- next_entry(q, p), marks(q).
+prev_mark(p, q) :- next_entry(r, p), !marks(r), prev_mark(r, q).
+// next_entry(q, p): p is the entry right after entry q, comments between skipped.
+.decl next_entry(q: node, p: node)
+next_entry(q, p) :- entry_step(q, p), entry(_, p, _).
+.decl entry_step(q: node, n: node)  // the named siblings after entry q, up to and including the next entry
+entry_step(q, n) :- entry(_, q, _), next_sibling(q, n).
+entry_step(q, n) :- entry_step(q, m), !entry(_, m, _), next_sibling(m, n).
 
 // The comparison: as written, lower-cased, and/or as natural-compare reads it.
 .decl order(o: symbol)
@@ -79,8 +89,11 @@ large(p) :- entry(o, p, _), k = count : { entry(o, _, _) }, (option("minKeys", m
 .decl grouped(p: node)
 grouped(p) :- option("allowLineSeparatedGroups", "true"), prev_prop(p, q), blank_between(q, p).
 grouped(p) :- option("allowLineSeparatedGroups", "true"), prev_prop(p, q), grouped(q), !pname(q, _, _).
-.decl prev_prop(p: node, q: node)  // q is the property just before p, spreads skipped
-prev_prop(p, q) :- property(o, p, i), property(o, q, j), j < i, count : { property(o, _, k), j < k, k < i } = 0.
+.decl prev_prop(p: node, q: node)  // q is the property just before p, spreads skipped; only under the option
+prev_prop(p, q) :- property(_, p, _), back_prop(p, q).
+.decl back_prop(p: node, q: node)  // q is the nearest property before entry p
+back_prop(p, q) :- option("allowLineSeparatedGroups", "true"), next_entry(q, p), property(_, q, _).
+back_prop(p, q) :- next_entry(r, p), !property(_, r, _), back_prop(r, q).
 .decl property(o: node, p: node, i: number)
 property(o, p, i) :- entry(o, p, i), !kind(p, "spread_element"), !ignored(p).
 .decl blank_between(q: node, p: node)  // a line with nothing on it, not inside a comment or a template
