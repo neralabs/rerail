@@ -1,32 +1,33 @@
-# 0328: Maintenance is how the evaluator runs a rule on deltas, not a program written per stratum
+# 0328: A rule is stored once, small; maintenance is metadata and a mode of the evaluator, not more rules
 
 Status: draft (2026-11-16), for the user's choice. It would retire the maintained forms (decisions 0117 step 3, 0241,
-0298) and the support relations (`corpus/supports.rs`, counting as 0090 made it the default). Nothing is built.
+0298), the support relations (`corpus/supports.rs`, 0090's counting), and the program image as the format of a
+pass's output (0173, as 0266 step 3 also plans). Nothing is built.
 
 ## Intro
 
-When one file changes, a session does not run every rule again. It keeps the last run's rows and works out what
-changed: which rows of each relation are gone and which are new. Then it updates each relation by those changes
-alone. That is *maintenance*.
+When one file changes, a session keeps the last run's rows and updates each relation by what changed. That is
+*maintenance*. Today the engine does it by **adding rules**:
 
-Today the engine maintains a stratum by **writing a new program for it**: a set of rules over new relations
-(`__del`, `__ins`, `__minus`, `__plus`, …) that compute the changes. That program is the stratum's *maintained
-form*. Each form is written, keyed, stored, read back, opened, and then planned and placed like any program, on
-every edit and for every stratum the edit reaches. On dl10 that is about 250 strata for a comment added to one file.
+- a pass (`counting`) gives each rule a relation of its own derivations (`__sup`);
+- for each stratum an edit reaches, a program of change rules (`__del`, `__ins`, `__minus`, `__plus`, …) is
+  written, stored, read back, selected from, and planned and placed like any program: the stratum's *form*;
+- the program passes that lead there (the split, the cross-file part, the supports) each store a whole program
+  image.
 
-This decision asks to stop writing those programs. The evaluator already runs a rule with one of its atoms bound
-to "the rows new since the last round": that is how its semi-naive fixpoint works (`native/setfix.rs`). An edit's
-changes are the same thing, one level up: the first round's new and gone rows. So a stratum is maintained by running
-its own rules with a changed atom bound to that atom's changes, not by a program written for it.
+The information all of this carries is small: for each rule, which of its atoms changed and in which order to join
+from it; for each relation, its old rows and what was added and removed; and for a stratum that needs it, a count or
+a level per row. This decision stores the rules once, in a compact form, and keeps that information as metadata
+beside them. The evaluator runs a rule *from a changed atom* as a mode, the way its fixpoint already runs a
+recursive rule from the last round's new rows (`native/setfix.rs`, semi-naive). No rule is written for it.
 
-## The relations a maintained stratum uses
+## The relations a maintained stratum uses today
 
-Take one rule, `h(x) :- p(x, y), q(y)`, and an edit that changed `p`. Every name below is a relation the engine makes
-or binds today, in `plan/corpus/maintain.rs`.
+Take `h(x) :- p(x, y), q(y)`, and an edit that changed `p`. Every name is one the engine makes or binds today
+(`plan/corpus/maintain.rs`):
 
 ```text
-p__old(x, y)      the rows of p the last run kept           bound from the kept part, not derived
-p(x, y)           p's rows now                              the input as the edit left it
+p__old(x, y)      the rows of p the last run kept           bound from the kept part
 p__minus(x, y)    rows gone:  p__minus :- p__old, !p.       a diff of old and new
 p__plus(x, y)     rows new:   p__plus  :- p, !p__old.
 
@@ -36,136 +37,176 @@ h__redo(x)        of those, rows that still have one        ("rederive")
                     h__redo(x) :- h__del(x), p(x, y), q(y).
 h__ins(x)         rows a new p row derives                  ("insert")
                     h__ins(x) :- p__plus(x, y), q(y).
-h(x)              h's rows now: the old ones not deleted, plus the redone and the inserted
-                    h(x) :- h__old(x), !h__del(x).   h(x) :- h__redo(x).   h(x) :- h__ins(x).
+h(x)              the old rows not deleted, plus the redone and the inserted
 
 h__minus(x)       h's net loss, for the strata that read h:  h__del, not redone, not inserted
 h__plus(x)        h's net gain:                               h__ins, not in h__old
 h__ins__ready(0)  a flag that h__ins has run, so h__minus may read !h__ins
 ```
 
-This is delete-and-rederive (DRed): delete everything that *might* have lost its support, then win back what still
-has one.
+This is delete-and-rederive (DRed): delete what *might* have lost its support, then win back what still has one.
 
-### Counting, and `__sup`
-
-DRed's "might" costs something: `h__del` can hold rows that never really went, and `h__redo` derives them again.
-*Counting* avoids that by keeping, for each row of `h`, how many ways it is derived: a row goes when its count reaches
-zero, so no row is deleted and rederived. Counting does not hold across recursion, because rows in a cycle keep
-each other's counts above zero.
-
-The engine counts by making each rule of a non-recursive stratum go through a *support relation*, one row per
-derivation (the `counting` pass, `corpus/supports.rs`):
+**Counting** avoids the over-deletion: a row whose derivations are counted goes when its count reaches zero. It does
+not hold across recursion, because rows in a cycle keep each other's counts above zero. The engine counts by giving
+each rule of a non-recursive stratum a relation of its derivations:
 
 ```text
 h(x) :- p(x, y), q(y, _).      becomes      h__sup0(x, y, w0) :- p(x, y), q(y, w0).
                                             h(x) :- h__sup0(x, _, _).
 ```
 
-A row of `h__sup0` has exactly one derivation, so its deletes are exact. A row of `h` goes when its last support row
-does (`h__lost`, `h__held`). The count is never stored as a number: it is the support rows themselves.
+The count is never a number: it is those rows. For a rule of one atom it is a copy of the atom's input:
+`kind(n, k) :- node(_, n, k, _, _)` gets `kind__sup0`, the node table with its columns in another order, kept between
+runs. **Levels** (0090) give a recursive stratum's rows the round they were derived in, which is what lets counting
+hold inside recursion.
 
-### Why counting is the default
-
-Decision 0090 measured both on the O125 replay (2026-11-09). DRed over-deleted 1.3–1.6× what was gone in
-non-recursive strata, and 6.7–22× in recursive ones. But counting does not apply to recursive strata, which 0090
-gave to *levels* instead. In the non-recursive ones, counting would save their redo, "about 0.3–0.5 s a step… Small
-either way".
-
-Counting was made the default on 2026-11-09 all the same, because it deletes only what is gone and derives nothing
-again. The measurement in the same section shows its cost: "a support per rule makes about 3.7× the strata, and each
-pays a fixed cost". On O125 steps 07–08, counting took 14.4–19.7 s for the cross part against DRed's 9.7–10.9 s:
-"until 0101 removes the per-stratum fixed cost, counting is the slower default on edits like these". That fixed cost
-was not removed. It is the form per stratum: each support relation is a stratum, so each gets a form, a key, a
-stored source, a selection, a placement and a spec.
+Decision 0090 made counting the default on 2026-11-09, and measured then that "a support per rule makes about 3.7×
+the strata, and each pays a fixed cost", and that on O125's larger steps counting was 4–10 s slower than DRed "until
+0101 removes the per-stratum fixed cost". That cost was not removed: it is the form per stratum.
 
 ## What was measured (2026-11-16)
 
-### One form, end to end
+Debug build, CPU binding, strict SQL, each mode on its own store; instructions retired, and CPU from profiles.
 
-dl10, the 39 policies, one comment added to one `.py` file. The rule `kind(n, k) :- node(_, n, k, _, _)`
-(`typing/programs/calls.rr:33`):
+### Two workloads, both modes
 
-1. **Counting** splits it: `kind__sup0(n, k, w1, w2, w3) :- node(w1, n, k, w2, w3)` and
-   `kind(n, k) :- kind__sup0(n, k, _, _, _)`. `kind__sup0` is `node` with its columns in another order, kept between
-   runs as a relation of its own: a second copy of the corpus's node table.
-2. **The edit** changes `node`, so the run reaches `kind__sup0`'s stratum, then `kind`'s.
-3. **The general form** (0298) of `kind__sup0`: 8 rules (`__del`, two `__ins`, the survivors, the inserted, `__minus`,
-   `__plus`, `__ins__ready`), and 3 more of maintenance (the rule itself again, and `__minus` and `__plus` as a diff).
-   All of it follows from the one rule, the read that changed and which old rows are kept.
-4. **Stored** as one source of 7,302 bytes, with an 89-byte record. The source rule is 40 characters.
-5. **Every edit:** the form is found by its key, decompressed, copied into aligned memory, checked, opened, selected,
-   and its 8 rules are added to the run's program, split into pieces, priced to choose whether to derive the stratum
-   again (0090 §4), and specified, placed and lowered like any rules.
+| Workload | Step | DRed | Counting (default) |
+|---|---|---|---|
+| dl10: 39 data-layer policies, 10 files | edit (3) | 68.3–75.7 G | 73.7–80.8 G |
+| | revert (3) | 53.0–53.9 G | 58.8–88.4 G |
+| Python pack: 317 rules (Benchmarks-and-parity's step benchmark, the Async-family's rules among them), 50 files | cold | 2,702 G | 2,749 G |
+| | append a function | 459 G | 482 G |
+| | change a body | 636 G | 610 G |
+| | add a comment | 408 G | 444 G |
+| | add an import | 699 G | 490 G |
 
-Of the 249 strata this edit reached, 201 are support relations (`__sup`). 100 of the reached strata have one rule in
-the program and 14 in the form the run plans.
+Every step's findings are the same in both modes. Neither mode wins everywhere: an import, which moves the
+cross-file module relations, costs DRed 43% more. So the choice is per stratum and per edit, not one switch.
 
-### DRed against counting, today
+### Where an edit's cross-file part goes
 
-The engine still has the switch (`RERAIL_MAINTAIN=dred`). dl10, debug build, each mode on its own store, warmed, then
-the same three edits and reverts on both. Each edit's comment text was new to both stores. Instructions retired:
+Own CPU of the cross-file part's spans, grouped:
 
-| Step | DRed | Counting (default) |
+| | dl10 edit, counting | Python import, counting | Python import, DRed |
+|---|---|---|---|
+| the cross-file part | 1.21 s | 19.26 s | 15.02 s |
+| kept rows moved to and from their frames | 30% | 26% | 28% |
+| placement, spec and pricing of the strata | 20% | 21% | 20% |
+| input deltas and digests | 14% | 13% | 15% |
+| forms: written, keyed, read, selected | 9% | 10% | 8% |
+| joins, and the jobs that run them | 10% | 25% | 26% |
+
+The joins are a tenth to a quarter. One import edit on 50 files places 3,105 strata under counting (2,855 under DRed),
+and writes or reads 1,114 forms (646).
+
+### Shapes
+
+Strata placed on the same edits, by what they hold:
+
+| | dl10 | Python pack |
 |---|---|---|
-| edit 1 | 75.37 G | 75.29 G |
-| revert 1 | 53.91 G | 59.52 G |
-| edit 2 | 75.73 G | 80.83 G |
-| revert 2 | 53.41 G | 88.43 G |
-| edit 3 | 68.31 G | 73.67 G |
-| revert 3 | 53.03 G | 58.79 G |
+| non-recursive | 839 (0.81 s) | 2,572 (7.11 s) |
+| non-recursive, with a text test | 236 (0.08 s) | 197 (0.46 s) |
+| non-recursive, with an aggregate | 17 (0.03 s) | 57 (0.14 s) |
+| recursive | 84 (0.32 s) | 279 (1.96 s) |
 
-DRed is as cheap or cheaper on every step.
+Recursive strata are 7–9% of the strata and 20–26% of their CPU. Each shape needs its own way to maintain:
+- joins and negations: DRed or counting;
+- aggregates: their changed groups;
+- recursion: levels, or deriving the component again;
+- text tests: only the new strings.
 
-Both still write a form per stratum. What the forms and their planning cost was profiled under 0298 on the same
-edit: the reached strata's forms 0.054 s, finding and opening them 0.082 s, and placement and spec "about 0.46 s", of
-a cross-file part of 1.26 s. The joins themselves took 0.017 s.
+Two more workloads did not run from the command line, and are recorded here rather than worked around:
+- Typing-support's `calls.rr` over the O125 replay (`~/orca/rerail-shared/o125-replay`, remade today) fails with
+  "@rr_node_text without the run's long-text nodes bound". This is open item O-cross-file-answers: a cross-file
+  rule reads a node's text, which only the per-file part binds. `RERAIL_NODE_SOURCES=eager` does not cover it.
+- `workload.rr`, the spike's type-inference fixpoint, stops in strict mode: the native engine declines one of its
+  strata.
+
+### What is stored
+
+| | dl10 |
+|---|---|
+| the 39 programs' rules, as text | 3,416 rules, 481 KB; 3.3 body atoms a rule |
+| the program images in the store | 110 images, 10.6 MB raw (four of 1.35–1.64 MB: a pass's output is a whole image) |
+| general forms | 252 after one edit, 4.4 MB raw; one is 7.3 KB for a 40-character rule |
+| rules counting adds | 952 through support relations (Python: 1,940); general forms 10,379 rules over 655 strata |
+
+A program image is about 3.4× its rules' text. Its header is 976 bytes whatever a layer holds, and a pass's output
+is stored whole.
 
 ## Decision
 
-1. **A stratum is maintained by running its own rules on deltas.** For a rule `h :- B1, …, Bn` and a changed atom
-   `Bk`, the evaluator runs the rule's join with `Bk` bound to its delta (gone rows to delete, new rows to insert),
-   the atoms before `k` over the new rows and those after over the old. This is the semi-naive step `setfix`
-   already runs for a recursive atom each wave, made the first step of every stratum an edit reaches. No `__del`,
-   `__ins`, `__redo` or `__minus` relation is declared, and no program is written, stored, read or selected.
-2. **A relation's old rows and its delta are one relation, versioned** (0266: a base and its delta, read as one).
-   `p__old` is the base, `p` the base read with its delta, `p__minus` and `p__plus` the delta's kills and adds. They
-   are not relations made by rules.
-3. **A rule's delta plans are made with its program**, once per program, one per atom that can change: the same
-   rule, joined from a different atom. A run picks the plans of the atoms that changed; it prices and places no
-   new rules.
-4. **Delete-and-rederive is the default; support relations go.** The rederive step is the rule's own join, over
-   the rows `__del` named. Measured, DRed is as cheap or cheaper on every step above, and 0090 found its
-   over-deletion small in non-recursive strata. Where a stratum's over-deletion is measured to cost more than a
-   count would, it gets a count per row, held as a column of the relation (counting as Gupta, Mumick and
-   Subrahmanian write it), not one relation of derivations per rule. A rule with one positive atom never needs a
-   support relation: its derivations are its input's rows.
-5. **Recursive strata keep levels** (0090), run the same way: their rules on deltas, in rounds, inside the fixpoint
-   that already runs them.
+1. **A rule is a small record, stored once.** It holds:
+   - the head relation, and each body literal as a relation id, a sign and its argument slots;
+   - constants in a table of their own, referenced from the slots;
+   - comparisons and functions as short ops over slots.
 
-## What goes
+   At 3.3 atoms of about three arguments, a rule is about 30–40 bytes, against about 480 bytes in today's image and
+   144 characters as text. Names are atoms of the program block (0266), so a rule holds no text.
+2. **A pass's output is metadata over the rule table, not a new program.** The split into file-local and cross-file
+   parts, a stratum's components, the parts and the cone of requests are sets of rule ids (bitsets) and small
+   tables. A rewrite that does make a new rule (the split's exports, a request's rule) appends its record. No pass
+   stores a whole program, and none copies one.
+3. **Maintenance is a mode of evaluating a rule.** For a rule and one of its atoms that changed, the evaluator joins
+   from that atom's delta: the atoms before it over the new rows, those after it over the old. Removed rows give
+   the rule's losses, added rows its gains. The rederive step (DRed) is the same rule probed with its head bound.
+   None of `__del`, `__ins`, `__redo`, `__minus`, `__plus` or `__ready` is a declared relation or a rule.
+4. **A rule's delta plans are metadata, made with its program.** For each atom that can change, a join order from
+   that atom, with each step's access path: a few bytes a step, about 25 bytes a rule. For dl10's 1,348 cross-file
+   rules that is about 35 KB, against 4.4 MB of forms after one edit. A run picks the plans of the atoms that
+   changed. It writes, stores, reads, selects and places no rules, so the forms' 8–10% goes, and most of the
+   placement and spec (20–21%), because the plans were placed with the program.
+5. **A relation's old rows and its delta are one relation, versioned** (0266: a base and its delta, read as one).
+   The old rows are the base, the rows now are the base read with its delta, and the delta's kills and adds are
+   what was removed and added. The kept rows are read in place, not moved to and from frames (26–30% today).
+6. **How a stratum is maintained is a byte of metadata, chosen per stratum by cost:**
+   - delete-and-rederive;
+   - counting, with a count per row held as a column of the relation;
+   - levels, with a round per row held as a column;
+   - its changed groups, for an aggregate;
+   - derive it again.
 
-- `maintain::form`, `maintain::general`, `General`, `StoredForms` and the forms' keyed steps (0298 steps 2–4).
-- The counting pass (`corpus/supports.rs`), the `__sup` relations, and the kept copies they hold.
-- Per run: adding a form to the run's versions, splitting it into pieces, and specifying and placing its rules.
+   The column exists only where the stratum is maintained that way. No support relations are kept, so `kind` keeps
+   no copy of `node`.
+
+   A count is needed only where a head row can have more than one derivation: the rule projects a variable away, or
+   several rules make the head. That is a property of the rule, known at preparation.
+
+   The choice is made with the program and checked against each edit's deltas (0090 §4's threshold). The import
+   edit above is where it matters: counting saves 30% there, and DRed saves 5–8% on appends and comments.
+
+## Sizes, today against this decision (dl10)
+
+| | Today | This decision |
+|---|---|---|
+| the rules | 1.35–1.64 MB a stored pass output; 10.6 MB of images | about 140 KB (3,416 rules × 40 B), once |
+| what a pass leaves | a whole image | rule-id sets and small tables |
+| a reached stratum's maintenance | a form of 8–17 rules: 7.3 KB stored; about 1 ms of placement, spec and pricing (0.246 s over 248) | its rules' delta plans: about 25 B a rule, placed with the program |
+| counting | a support relation per rule, kept rows the size of its input | a count column where chosen (4 B a row, or 1 B and an overflow table) |
+| old rows and deltas | relations `x__old`, `x__minus`, `x__plus` | the relation's base and its delta |
+
+The first and third rows are estimates from the measured counts; the rest follow from them.
 
 ## Path
 
-Each step is measured in instructions retired on dl10 against today's default, and each step's rows are compared
-with a cold run's.
+Each step is measured in instructions retired on dl10 and on the Python pack's 50 files, against today's default,
+with each step's findings and rows compared with a cold run's.
 
-1. **Measure the split.** Of an edit's ~75 G, how much is forms, selection, pricing, spec and placement (formats
-   8–15 of the walk above), and how much is the joins.
-2. **DRed the default** (`RERAIL_MAINTAIN=dred`'s path), and the support relations removed. The `kind` example
-   becomes one stratum with no copy of `node`.
-3. **A rule's delta plans at preparation** (3), beside its plan, for non-recursive rules of joins and negations.
-4. **The evaluator runs a reached stratum from them** (1), with the delta read from the versioned relation (2);
-   `maintain::form` stays only for the shapes not yet covered (aggregates by group, `nearest`, text tests).
-5. Those shapes, then recursive strata (5); then the forms' code and storage go.
+1. **The strategy per stratum** (6) over today's mechanisms: DRed or counting chosen per stratum from the
+   measured edits, to show the choice is worth having before the mechanisms change.
+2. **The rule record and the rule table** (1, 2) in the program block, beside today's image, with a check that
+   both give the same programs; then the passes write metadata instead of images.
+3. **Delta plans** (4) for non-recursive rules of joins and negations, and the evaluator's mode (3) that runs them
+   over versioned relations (5). Forms then remain only for aggregates, recursion and text tests.
+4. **Counting as a column** (6), and the support relations removed.
+5. **Aggregates by group, text tests, and recursion by levels** in the same mode; then the forms' code goes (0298's
+   storage with it).
 
 ## Open
 
-- Aggregates by changed group, `nearest` over a changed tree, and natively made text tests: today each has its own
-  form. Each needs its delta step in the evaluator.
-- Whether any stratum's over-deletion is large enough for a count column (4): measured per stratum after step 2.
-- Step 2's DRed path still writes forms; the gain from dropping supports alone is measured before step 3.
+- O-cross-file-answers blocks `calls.rr`, the largest recursive workload, from the command line; it is the
+  workload where levels matter most (0090: 6.7–22× over-deletion under DRed).
+- `workload.rr` needs its declined stratum made native before it can be measured strictly.
+- The kept rows' moves to and from frames (26–30%) are 0266's `Facts` block (its step 4), not this decision's; this
+  decision depends on it for (5).
