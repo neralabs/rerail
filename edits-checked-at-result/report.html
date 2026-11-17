@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 665 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #665</div>
+  <h1>Code rules: a late Claude Code edit is checked at its result</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>Does every Claude Code edit <code>main</code> checks stay checked, now that an edit whose call arrived after its tool wrote is read from its result?</p>
+  </div>
+  <p class="rec"><b>We recommend:</b> approve it: of 139 edits through a real daemon, 33 read better than <code>main</code> on Linux x64, 34 on Windows 11, none worse; one kind of late Write stays unchecked, as at <code>main</code>.</p>
+  <div class="big">
+    <div><b class="w">1,118 lines</b><span>in 8 files. 532 ship, 586 are tests and text.</span></div><div><b class="w">Careful review</b><span>It changes what is checked: a code owner approves.</span></div><div><b class="w">Waits on CI</b><span>GitHub&#x27;s CI had not run at this head.</span></div><div><b class="w">4 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/665">GitHub</a> on 17 November 2026, at head 3c8939321.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><b>A late call</b></td><td class="in" data-l="Intended">A tool edit is read against the file as the call captured it, before the tool ran. <span class="tagx">our reading</span></td><td class="fo" data-l="Found">A call taken up after its tool wrote captures the write, so the edit reads as no change: 11 of 12 late Edits unchecked. <span class="tagx">daemon and hook runs</span></td><td class="now" data-l="Now"><b>Closes the gap</b> for Claude Code once the rules are open: the edit is read against what the tool&#x27;s result says the file held.</td></tr><tr><td class="k"><b>Rewind, late edit</b></td><td class="in" data-l="Intended">&quot;every file the call captured returns to its preimage (created files deleted), all or none.&quot; <span class="tagx">docs</span></td><td class="fo" data-l="Found">A late call&#x27;s capture is the tool&#x27;s own write: a rollback wrote the edit back and said it was undone. <span class="tagx">automated review</span></td><td class="now" data-l="Now"><b>Closes the gap</b> since an edit read against anything but its capture is steered as a message, never rolled back.</td></tr></tbody></table>
+<figcaption>Found on 13 November 2026 with busy Claude Code sessions on a Windows 11 machine. Run on Linux x64 and Windows 11 through 17 November.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">A late call</td><td data-l="Where main states the intent"><code>src/engine/code-rule/code-rule-bridge.ts</code> at <code>main</code>: <code>begin</code> captures each file the call names (<code>#capturePreimages</code>), and <code>#readEdit</code> returns no edit when <code>unchangedSince(source, preimage)</code> holds. <code>docs/reference.md</code>: &quot;Pending calls and captured preimages survive daemon restarts.&quot; Nothing at <code>main</code> says what a call that arrives after its tool is read against.</td><td data-l="The cause, and what was measured">Claude Code&#x27;s <code>PreToolUse</code> hook gives up on a daemon too busy to answer in time, and the tool runs. The daemon then takes the call up and captures the file as the tool left it. At the result the file equals the capture, so <code>#readEdit</code> sees no change. No source file at <code>main</code>, at 0.1.4 or at 0.1.5 reads the result&#x27;s <code>structuredPatch</code> or <code>originalFile</code>.</td></tr><tr><td class="k">Rewind, late edit</td><td data-l="Where main states the intent"><code>docs/reference.md</code> at <code>main</code>, on the <code>rewind</code> steer strategy: &quot;if an edit&#x27;s own check steers before its tool result is answered, every file the call captured returns to its preimage (created files deleted), all or none.&quot; It falls back to <code>message</code> &quot;when the preimage was unreadable, the call didn&#x27;t capture the file, or the steer came after the result was answered&quot;.</td><td data-l="The cause, and what was measured">The automated reviewer found it at dcf3d7dd3: <code>finish</code> read the edit against the result&#x27;s report and kept the call&#x27;s own capture for the rollback. 47c47fc7f records whether every file was read against its capture; 6617b4301 compares the text, so a result that gives the capture&#x27;s very text keeps the rollback.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>reported-preimage.ts</code>: <code>claudeCodeReportedPreimage</code>, <code>placesBeforeWrite</code>, <code>unprovenCaptureBefore</code>, <code>capturedOtherThanMade</code></b><span class="min">12 min</span><span class="x">Can a result place an on-time capture after the tool, or a late one before it?</span></div></li><li><div><b><code>code-rule-bridge.ts</code>: <code>editPreimage</code>, <code>changedSinceWrite</code>, <code>#takeRewindable</code>; <code>runtime.ts</code>: <code>#finishCall</code></b><span class="min">12 min</span><span class="x">Is any edit rolled back that was not read against its capture?</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">8 min</span><span class="x">The bridge&#x27;s new cases name each late shape. <code>steer-strategy.test.ts</code> holds the rollback cases. <code>docs/reference.md</code> gains one paragraph on late edits. The release note says what stays unchecked.</span></div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 159" role="img" aria-label="The changes by risk, high on top, against six checks. Late edit read, high risk: independent review holds with a limit. CI at this head does not hold yet for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="50" rx="8" class="bx hib"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk high"/><text x="28" y="34" class="t s b">High risk</text><text x="12" y="56" class="t b">Late edit read</text><g><title>Late edit read, fails without the fix: At 11bd65a7b each fix taken out fails a case with the head&#x27;s tests kept. Linux x64: no fix 5 cases, the tab reading 1, the text comparison 1, the made-file capture 2. Windows 11: 3 of 3 runs, 3 of 3 and 20 of 20. The new and changed cases pass 20 runs in a row on both systems.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>Late edit read, independent review: A second run of 139 edits through a real daemon and the built hook, `main` beside 11bd65a7b, on Linux x64 and Windows 11, found no edit read worse than at `main`. The limit: against 9e0059c26, an earlier commit of this branch, four late Writes read worse, at `main`&#x27;s level.</title><circle cx="184" cy="52" r="7.4" class="ml"/><path d="M184 44.6A7.4 7.4 0 0 0 184 59.4Z" class="mlf"/></g><g><title>Late edit read, users lose nothing: No edit `main` checks is unchecked here: 0 of 139 worse on each system, the 16 secret-like-file rows included. 33 edits `main` leaves unchecked are checked on Linux x64 and 34 on Windows 11. On-time edits and calls made while the rules open read the same at both.</title><circle cx="218" cy="52" r="8" class="mh"/><path d="M214 52l3 3l5 -6" class="mt"/></g><g><title>Late edit read, rules scan: nothing new: The scan the automated reviewer runs, at 11bd65a7b against `main` at 44576f751, with the published 0.1.1 and with Rerail built from `main`: no new finding. All 59 functions added or edited are at cyclomatic complexity 6 or under.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Late edit read, Windows 11: no new failure: Windows 11 x64, Node 24.21.0, at 11bd65a7b: the 25 test files that import a changed module and two daemon files, 600 passed, 3 skipped, 0 failed, nothing `main` does not fail too; the 139 edits; each fix taken out; 20 runs in a row.</title><circle cx="286" cy="52" r="8" class="mh"/><path d="M282 52l3 3l5 -6" class="mt"/></g><g><title>Late edit read, CI at this head: GitHub&#x27;s CI had not run at 3c8939321 when this was written: the head was not pushed. At 11bd65a7b, CI&#x27;s `Integration tests` job run on Linux x64 passed, 22 of 22 files, 90 tests passed and 6 skipped, and `npm run check` exits 0 at each commit.</title><circle cx="320" cy="52" r="7.4" class="mo"/></g><text x="8" y="89" class="t s">1  fails without the fix</text><text x="168" y="89" class="t s">2  independent review</text><text x="8" y="105" class="t s">3  users lose nothing</text><text x="168" y="105" class="t s">4  rules scan: nothing new</text><text x="8" y="121" class="t s">5  Windows 11: no new failure</text><text x="168" y="121" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="145" r="8" class="mh"/><path d="M10 145l3 3l5 -6" class="mt"/></g><text x="28" y="149" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="145" r="7.4" class="ml"/><path d="M92 137.6A7.4 7.4 0 0 0 92 152.4Z" class="mlf"/></g><text x="106" y="149" class="t s">holds with a limit</text><g><title>does not hold yet</title><circle cx="244.1" cy="145" r="7.4" class="mo"/></g><text x="258.1" y="149" class="t s">not yet</text></svg>
+<figcaption>One half mark: four late Writes read at <code>main</code>&#x27;s level where an earlier commit of this branch checked them. CI had not run at this head.</figcaption></figure>
+<details class="ev"><summary>Each limit, and each check that does not hold yet</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>Its limit, or why it does not hold yet</th></tr></thead><tbody><tr><td class="k">Late edit read</td><td data-l="Check">independent review</td><td data-l="Its limit, or why it does not hold yet">A second run of 139 edits through a real daemon and the built hook, <code>main</code> beside 11bd65a7b, on Linux x64 and Windows 11, found no edit read worse than at <code>main</code>. The limit: against 9e0059c26, an earlier commit of this branch, four late Writes read worse, at <code>main</code>&#x27;s level.</td></tr><tr><td class="k">Late edit read</td><td data-l="Check">CI at this head</td><td data-l="Its limit, or why it does not hold yet">GitHub&#x27;s CI had not run at 3c8939321 when this was written: the head was not pushed. At 11bd65a7b, CI&#x27;s <code>Integration tests</code> job run on Linux x64 passed, 22 of 22 files, 90 tests passed and 6 skipped, and <code>npm run check</code> exits 0 at each commit.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<ul class="lines"><li><span class="chip high"><i></i>High risk</span> <b>Late edit read from its result</b>: Of 12 late Claude Code Edits, <code>main</code> checks 1 and this change 12, on Linux x64 and Windows 11.</li></ul>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>Which text is a late edit read against?</h3>
+<p><b>We chose</b> the tool result&#x27;s own report, only where the capture cannot be placed before the tool.</p>
+<p><b>Would change our mind:</b> a Claude Code version whose result no longer carries <code>structuredPatch</code> or <code>originalFile</code>: late edits would read as at <code>main</code>.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">The result&#x27;s report, where the capture cannot have come first <span class='tag new'>chosen</span></td><td data-l="What a user gets">A late Edit or Write is checked at its own result, against its own lines. On-time edits read as at <code>main</code>.</td><td data-l="Cost">351 lines that parse <code>structuredPatch</code> and <code>originalFile</code>; 0.9 ms per result for a 0.5 MB file on Linux x64.</td><td data-l="What it breaks">An edit read this way is not rolled back under <code>rewind</code>: it steers as a message.</td></tr><tr><td class="k">Leave it, as at <code>main</code></td><td data-l="What a user gets">Nothing checked for a late call.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">33 of 139 edits stay unchecked on Linux x64, 34 on Windows 11.</td></tr><tr><td class="k">Check every late call over its whole file</td><td data-l="What a user gets">Every late edit is checked.</td><td data-l="Cost">A few lines.</td><td data-l="What it breaks">The agent is steered on lines it did not write.</td></tr><tr><td class="k">Tell a late call by when it arrived</td><td data-l="What a user gets">Every case told apart.</td><td data-l="Cost">A time on the call event: a change to the hook protocol. Not built.</td><td data-l="What it breaks">Nothing known.</td></tr></tbody></table></div><p><b>Evidence.</b> Through a real daemon and the built hook, with the call held until the tool wrote: of 12 late Edits, 10 are read against their own lines and 2 over the whole file here, against 1 checked at <code>main</code>. The two whole-file rows have no <code>originalFile</code> and a line a formatter rewrote. On-time rows read the same at both. Linux x64 and Windows 11 agree.</p></details></div>
+<div class="dblock"><h3>What is a Write that made its file read against, when its capture differs?</h3>
+<p><b>We chose</b> the capture, as at <code>main</code>: no false steer, and one kind of late Write stays unchecked.</p>
+<p><b>Would change our mind:</b> a maintainer&#x27;s word that a false steer costs less than an unchecked new file.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Keep the capture whenever it is not the Write&#x27;s <code>content</code> <span class='tag new'>chosen</span></td><td data-l="What a user gets">A file removed and made again steers only its new lines, as at <code>main</code>. A late Write in CRLF form, with a byte order mark or a last line ending is still read against an empty file.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">A late Write whose new file a formatter changed first stays unchecked, as at <code>main</code>: 4 of 139 edits.</td></tr><tr><td class="k">Read against an empty file once the file changed again</td><td data-l="What a user gets">Those 4 late Writes are checked against their own lines, as at 9e0059c26.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">The file removed and made again is steered on its old lines too, where <code>main</code> steers only the new one.</td></tr><tr><td class="k">Record the file&#x27;s state as the call arrives</td><td data-l="What a user gets">Both are read right.</td><td data-l="Cost">A time or a digest on the call event: a change to the hook protocol. Not built.</td><td data-l="What it breaks">Nothing known.</td></tr></tbody></table></div><p><b>Evidence.</b> The two states give the daemon the same facts: a result that says the Write made the file, and a capture with other text. The removed and remade file, 10 tries on each system: only the new function is told, at <code>main</code> and at 11bd65a7b. The 4 late Writes: own lines in 4 of 4 runs at 9e0059c26 on Linux x64, unchecked at 11bd65a7b and at <code>main</code> on both systems.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<p>Nothing has to merge first: it holds <code>main</code> at 44576f751 and merges with <code>main</code> at a9a543d04 without conflict. No open pull request needs it.</p>
+<p>#738 edits four of its files: one import line conflicts in <code>code-rule-bridge.ts</code> and one in its test file. Keep both lines.</p>
+<details class="ev"><summary>Related pull requests and issues</summary><p>Of the 15 other pull requests open on 17 November 2026, two edit a file this one edits, each trial-merged with 3c8939321. #738 (the team&#x27;s, at 787fb6423): <code>code-rule-bridge.ts</code>, its test file, <code>runtime.ts</code> and <code>docs/reference.md</code>; one import line conflicts in each of the first two. #674 (ours, draft, at 6993ee854): <code>docs/reference.md</code> in other lines, no conflict. The 13 others share no file. #623, on calls made while a session&#x27;s rules open, stays open: this no longer changes them. #548 lists the busy daemon.</p></details>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>A late Write whose new file a formatter changed first</b> stays unchecked, as at <code>main</code>: 4 of 139 edits. 9e0059c26 checked them. Closing it needs the file&#x27;s state at the call&#x27;s arrival.</li>
+<li><b>How often a real call arrives late</b> is not measured.</li>
+<li><b>Codex, Cursor, OMP and Pi</b> results do not say what a file held: as at <code>main</code>.</li>
+<li><b>CI on GitHub at this head, and macOS</b> had not run when this was written.</li>
+</ul>
+<details class="ev"><summary>Four smaller gaps, four limits that stay</summary><ul class="facts">
+<li><b>A whole-file check of a late Edit.</b> With no <code>originalFile</code> and a line a formatter rewrote, a late Edit is checked over its whole file, so the agent can be told of a line it did not write: 2 of 12 late Edits. <code>main</code> checks nothing there.</li>
+<li><b>A late Edit nothing rebuilds.</b> With no <code>originalFile</code>, a file that changed again and no longer holds the diff&#x27;s lines, the edit stays unchecked at <code>main</code> and here: 1 of 9 rows.</li>
+<li><b>A file made again with its old text.</b> An on-time Write over a file another process removed, made again with exactly its old text: the agent is told of a function its Write wrote back unchanged. <code>main</code> tells nothing there.</li>
+<li><b>Published 0.1.4 and 0.1.5.</b> Read in their code, not run: at v0.1.4 and at 9cad73564, <code>#readEdit</code> reads a tool edit against the call&#x27;s capture alone, and no source file reads <code>structuredPatch</code> or <code>originalFile</code>.</li>
+</ul>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>Calls made while a session&#x27;s rules open are answered as at <code>main</code>: the first walk after the open checks each changed file whole.</li>
+<li>Under <code>rewind</code>, a late edit is steered as a message and stays in the file.</li>
+<li>A <code>rewind</code> rollback writes the call&#x27;s capture back even when another writer changed the file between the call and the tool, as at <code>main</code>.</li>
+<li>A real Claude Code session was not run: the hook was fed the result shapes Claude Code 2.1.322 sends.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p>We ask no ruling.</p>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description on GitHub is the record. &quot;How you tested it&quot; holds the table of 139 edits, each defect a later run found with its fix, and the runs at 11bd65a7b.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">Linux x64, Windows 11</td><td data-l="What ran">139 edits through a real daemon of each build and Rerail&#x27;s built Claude Code hook, <code>main</code> at 44576f751 beside 11bd65a7b; a socket holds a late call&#x27;s <code>PreToolUse</code> event until the tool wrote</td><td data-l="Result">Better than <code>main</code>: 33 on Linux x64, 34 on Windows 11. Worse: 0. Late Edits 11 of 12, late Writes that made the file 6 of 8, late Edits under <code>rewind</code> 3 of 4, the reference paragraph&#x27;s cases 5 of 9, secret-like files 4 of 16 (5 on Windows 11), others 4 of 90.</td></tr><tr><td class="k">Linux x64, Windows 11</td><td data-l="What ran">The two defects found at 9e0059c26, 10 tries each, <code>main</code> beside 11bd65a7b</td><td data-l="Result">An on-time Edit beside a tab, space, tab line under <code>rewind</code> rolls back in 10 of 10. An on-time Write over a removed and remade file tells only the new function in 10 of 10. Both as at <code>main</code>.</td></tr><tr><td class="k">Linux x64, Windows 11</td><td data-l="What ran">Each fix taken out with the head&#x27;s tests kept, and the new and changed cases 20 times in a row</td><td data-l="Result">Linux x64: 5, 1, 1 and 2 cases fail. Windows 11: 3 of 3, 3 of 3 and 20 of 20 runs fail. At 11bd65a7b 0 of 20 runs fail on each system, 10 cases a run.</td></tr><tr><td class="k">Linux x64, Windows 11</td><td data-l="What ran">The 25 test files that import a changed module and two daemon files, at 11bd65a7b</td><td data-l="Result">Linux x64: 602 passed, 1 skipped, 0 failed. Windows 11: 600 passed, 3 skipped, 0 failed, nothing <code>main</code> does not fail too.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">CI&#x27;s <code>Integration tests</code> job and the rules scan as the automated reviewer runs it, at 11bd65a7b</td><td data-l="Result">22 of 22 files, 90 passed, 6 skipped; one file ran on a second machine. The scan: no new finding; all 59 functions added or edited at complexity 6 or under.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The cost of reading the result per on-time Edit result, mean of 5 runs</td><td data-l="Result">0.9 ms for a 0.05 MB and a 0.5 MB file, 13.6 ms for 5.1 MB, 35 ms for 15.7 MB. No timer is new or longer.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>What this report adds</summary><ul class="facts">
+<li><b>GitHub on 17 November 2026.</b> #665 is an open draft at dcf3d7dd3. The automated reviewer asked for changes there on 13 November: one blocker, four follow-ups, one nit. No person has reviewed it. This report describes 3c8939321, which was not pushed when it was written.</li>
+</ul></details>
+<details class="ev"><summary>Sources</summary><p>Pull request #665, its review and issue #623 on GitHub, read on 17 November 2026. Rerail at <code>main</code> (44576f751) for each quoted intent. Each count names the commit it ran at. The 15 other open pull requests on GitHub, each trial-merged with this head.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
