@@ -707,8 +707,8 @@ fn texts_digest(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::A
 /// asked again of the store on reuse.
 #[derive(Clone)]
 pub struct Prepared {
-    pub prog: front::Program,
-    /// The program before lowering, as the run's readers read it (decision 0281's path, step R): `prog`'s image.
+    /// The program before lowering, as the run's readers read it (decision 0281's path, step R): the image of the
+    /// tree the preparation passes before lowering made, the last tree the run holds.
     pub source: Arc<crate::code_rule_dsl::logic::program_image::Version>,
     /// `source`'s fields besides its rules (`Version::header`): its settings, declarations, facts, inputs and outputs,
     /// which the run reads.
@@ -3235,7 +3235,8 @@ fn run_observed(
                 let ruleless = front::Program { rules: Vec::new(), ..prog.clone() };
                 assert_eq!(digest(&head), digest(&ruleless), "the source's header is the tree's fields");
             }
-            let prepared = Arc::new(Prepared { prog, source, head, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, cone: Default::default(), maintained: Default::default(), parts: Default::default() });
+            drop(prog);
+            let prepared = Arc::new(Prepared { source, head, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, cone: Default::default(), maintained: Default::default(), parts: Default::default() });
             if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
                 eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: prepared, durable {:?}", phases::current().unwrap_or_else(|| "main".into()), prepared_key[..6].iter().map(|b| format!("{b:02x}")).collect::<String>(), durable.map(|d| d.is_some()));
             }
@@ -3275,7 +3276,7 @@ fn run_observed(
         (false, _) if durable.is_some() => "prepared, and stored for later processes (decision 0073)".to_owned(),
         (false, _) => "prepared".to_owned(),
     });
-    let Prepared { prog, source, head, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _, cone: shared_cone, maintained: shared_maintained, parts: shared_parts } = &*prepared;
+    let Prepared { source, head, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _, cone: shared_cone, maintained: shared_maintained, parts: shared_parts } = &*prepared;
     let (remerged, reshared) = (*remerged, *reshared);
     // The run takes the split's programs apart (`part` below): its own copy, the kept one shared.
     let split = shared_split.clone();
@@ -3505,7 +3506,7 @@ fn run_observed(
         }
     };
     let cross_outputs: BTreeSet<&str> = cross_now.outputs().map(|a| cross_now.text(a)).collect();
-    let not_per_document = prog
+    let not_per_document = head
         .outputs
         .iter()
         .filter(|o| cross_outputs.contains(o.as_str()) && !load_heads.contains(o.as_str()))
@@ -3623,8 +3624,6 @@ fn run_observed(
     // The tree's projection: `core.rr`'s for a program that includes it, T's for one that declares its base relations
     // itself (decision 0046); relations no rule reads are not made.
     let projection = super::text_demand::projection(source, head, read.clone(), &matchers);
-    #[cfg(debug_assertions)]
-    assert_eq!(format!("{projection:?}"), format!("{:?}", syntax::Projection::of(prog, read.clone()).with_long_text(prog, &matchers)), "the source's projection is the tree's");
     crate::code_rule_dsl::logic::profile::decision("base relations", || format!("{:?} shape (decision 0046)", projection.shape));
     // A run that reads nothing of its documents builds none: every relation its outputs need, through any rule, is
     // derived, given as facts (an earlier phase's exports, the run's constants) or a native function. A main
@@ -3632,9 +3631,9 @@ fn run_observed(
     // for nothing: a third of the documents' cost of struct and values run with such a program. Anything else that
     // might read them (T's facts, requests' loads, guests, text or AST patterns) keeps them.
     {
-        // Read from the prepared program's version; its text and AST patterns, which the image does not hold, from
-        // the front program it was lowered from (`lower` copies them), as the run's projection reads them.
-        let p = &prog;
+        // Read from the prepared program's version; its text and AST patterns from its source's fields (`head`), as
+        // the run's projection reads them.
+        let p = head;
         let not_of_documents = |rel: &str| pf.derives(rel) || pf.facts(rel).is_some() || pf.native(rel).is_some() || phased.contains_key(rel);
         let needed = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::analyses::Needed>(&prepared_placed.v).map_err(Error::Plan)?;
         // The outputs by name too, as `front::needed` has its roots (one no relation names is still read).
