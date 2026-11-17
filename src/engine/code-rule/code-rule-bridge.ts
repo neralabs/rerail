@@ -43,7 +43,7 @@ import { binaryPrefix } from "./binary-prefix.js";
 import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
-import { type CallPlace, ToolCallWindows } from "./tool-call-windows.js";
+import { type CallPlace, type CallsCounted, ToolCallWindows } from "./tool-call-windows.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
   type WatcherWalk, type WorktreeFindings, type WorktreeScan, type WorktreeScanned, type WorktreeRecords, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks,
@@ -2077,6 +2077,7 @@ export class CodeRuleBridge {
     return {
       worktrees: new Set(worktrees),
       checkout: this.#owningCheckout(discovery.root, ""),
+      folder: discovery.root,
       firstSight: new Set(worktrees.filter(worktree => this.#mayFirstSee(discovery, sessionPath(discovery.root, worktree)))),
       startedAt: discovery.startedAt,
       heads: new Set([...discovery.heads.keys()].filter(root => inWorktrees(discovery, root))),
@@ -2178,12 +2179,17 @@ export class CodeRuleBridge {
    */
   async #claimsIn(discovery: SourceDiscovery, root: string, findings: WorktreeFindings): Promise<Set<string>> {
     const claimed = new Set<string>();
+    if (this.#abandoned(discovery)) return claimed;
     const worktree = sessionPath(discovery.root, root);
-    if (this.#abandoned(discovery) || !discovery.worktrees.roots.has(worktree)) return claimed;
+    // Else the session's own checkout, which holds its folder: the session takes nothing of it outside the folder, so
+    // only an edit tool, whose result checked the file, made a change there it records.
+    const watched = discovery.worktrees.roots.has(worktree);
     for (const change of findings.changes) {
+      const path = watched ? inWorktree(worktree, change.path) : sessionPath(discovery.root, join(root, change.path));
+      const counted = watched ? this.#ranIn(discovery, worktree, path) : (call: CallPlace) => call.paths.includes(path);
       const since = change.before?.observedAt ?? discovery.startedAt;
       const written = { stamp: change.after?.modifiedAt, deleted: change.after === undefined, since, until: findings.readFrom };
-      if (await this.#callRanAsWritten(discovery, worktree, inWorktree(worktree, change.path), written)) claimed.add(change.path);
+      if (await this.#callRanAsWritten(discovery, counted, path, written)) claimed.add(change.path);
     }
     return claimed;
   }
@@ -2506,14 +2512,18 @@ export class CodeRuleBridge {
   async #auditWalkEdits(discovery: SourceDiscovery, walk: WalkStart, edits: readonly CodeRuleEdit[], uncaptured: Map<string, string>): Promise<void> {
     const { own, notOwn, repository } = await this.#separateOwnWrites(discovery, walk, edits, uncaptured);
     const checkpoints = discoveryCheckpoints(strongerCheckpoint(walk.checkpoint, discovery.requested));
+    // The walk hands a change over once: what is not recorded for the repository yet waits for the retry.
+    const unrecorded = new Set(repository.map(edit => edit.path));
     try {
       if (notOwn.length > 0) await this.#auditEdits(discovery, notOwn, checkpoints, new Map(), "log");
       if (repository.length > 0) await this.#auditEdits(discovery, repository, checkpoints, uncaptured, "log", "repository");
+      unrecorded.clear();
       if (own.length > 0) await this.#auditEdits(discovery, own, checkpoints, uncaptured);
     } catch (error) {
       // A rejected evaluator submission is not an observation we have enforced.
       // Restore these baselines so the next requested scan can retry the changes.
       this.#restoreObservations(discovery, walk, edits);
+      for (const path of unrecorded) discovery.worktrees.unrecorded.add(path);
       throw error;
     }
   }
@@ -2547,7 +2557,9 @@ export class CodeRuleBridge {
    * places two walks read stays until the oldest calls go (`MAX_FINISHED_CALLS`), which only costs its memory.
    */
   #callPlaces(discovery: SourceDiscovery, call: CallPlace): Array<string | undefined> {
-    return [call.folder, ...call.paths].map(path => this.#worktreeHolding(discovery, path));
+    // Outside the session folder but in no other worktree: the session's checkout, which no walk of its reads, but whose
+    // shared walk asks it of the files a call named there (`#claimsIn`).
+    return [call.folder, ...call.paths].map(path => this.#worktreeHolding(discovery, path) ?? (path?.startsWith("..") === true ? ".." : undefined));
   }
 
   /** The other worktree that holds `path` (session-relative), or is it; undefined for one in the session's own checkout. */
@@ -2811,27 +2823,32 @@ export class CodeRuleBridge {
    */
   async #writtenByCall(discovery: SourceDiscovery, walk: WalkStart, edit: CodeRuleEdit): Promise<boolean> {
     const worktree = walk.inSession ? undefined : this.#worktreeHolding(discovery, edit.path);
+    const counted = worktree === undefined ? undefined : this.#ranIn(discovery, worktree, edit.path);
     const since = walk.previous.get(edit.path)?.observedAt ?? discovery.startedAt;
     const written = { stamp: this.#observedSource(edit.path)?.modifiedAt, deleted: edit.deleted === true, since, until: walk.observedAt };
-    return await this.#callRanAsWritten(discovery, worktree, edit.path, written);
+    return await this.#callRanAsWritten(discovery, counted, edit.path, written);
   }
 
   /**
-   * Whether a call of the session that ran in `worktree` or named `path` (any call, without a worktree) ran as `path` was
-   * written: as it was stamped, or a removed file as its folder was; with no stamp to go by, at some point from `since`
-   * to `until`. An edit tool's call into another worktree runs where the agent is, but names the file it writes.
+   * The calls that may have written `path` in the other worktree `worktree`: one that ran there, by its host's `cwd`, or
+   * named the file. An edit tool's call into another worktree runs where the agent is, but names the file it writes.
+   */
+  #ranIn(discovery: SourceDiscovery, worktree: string, path: string): CallsCounted {
+    return call => this.#worktreeHolding(discovery, call.folder) === worktree || call.paths.includes(path);
+  }
+
+  /**
+   * Whether a call of the session `counted` holds (any call, without it) ran as `path` was written: as it was stamped,
+   * or a removed file as its folder was; with no stamp to go by, at some point from `since` to `until`.
    */
   async #callRanAsWritten(
     discovery: SourceDiscovery,
-    worktree: string | undefined,
+    counted: CallsCounted | undefined,
     path: string,
     { stamp, deleted, since, until }: { stamp: number | undefined; deleted: boolean; since: number; until: number },
   ): Promise<boolean> {
-    const ranThere = worktree === undefined
-      ? undefined
-      : (call: CallPlace) => this.#worktreeHolding(discovery, call.folder) === worktree || call.paths.includes(path);
     const at = stamp ?? (deleted ? await folderStamp(discovery.root, path) : undefined);
-    return at === undefined ? discovery.toolCalls.ranDuring(since, until, ranThere) : discovery.toolCalls.ranDuring(at, at, ranThere);
+    return at === undefined ? discovery.toolCalls.ranDuring(since, until, counted) : discovery.toolCalls.ranDuring(at, at, counted);
   }
 
   /**

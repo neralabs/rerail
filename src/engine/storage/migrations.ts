@@ -193,7 +193,9 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
     // (`dropNotNull`). The derived tables' rows are small, so they are rebuilt. No floor: an older build writes
     // audits with a session as before, which the new triggers derive as before; its repository-scoped reads match
     // `session_id IN (...)` and so leave the repository's audits out, and it creates a trigger only when the trigger
-    // is missing, so it keeps these.
+    // is missing, so it keeps these. Its unscoped reads return them with no session, and its dashboard reads unscoped
+    // while it knows no repository: there its History by rule and rule panel fail on such a violation (they read every
+    // violation's session id). A floor would lock that build out of the file instead, its hooks included.
     id: "audits-repository-owner",
     up(database) {
       for (const trigger of AUDIT_HISTORY_TRIGGERS) database.run(sql.raw(`DROP TRIGGER IF EXISTS \`${trigger}\``));

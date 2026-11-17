@@ -1951,6 +1951,20 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     ]);
   });
 
+  // Review of #738 (F2): the walk hands a change over once, so a rejected record has to wait for the retry itself.
+  it("records a change for the repository at the next walk when the evaluator rejected its record", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    auditGeneratedEdits.mockRejectedValueOnce(new Error("evaluator busy"));
+    await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "a.py"), "old\nviolation\nmine\n"), root).catch(() => undefined);
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    const path = repositoryPath(root, join(worktree, "src", "a.py"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits.map(edit => edit.path), batch.mode, batch.owner]))
+      .toEqual([[[path], "log", "repository"], [[path], "log", "repository"]]);
+  });
+
   it("records once for the repository, in Log, a shell write in another worktree made by a call that ran elsewhere", async () => {
     const root = await twoBranches();
     const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));

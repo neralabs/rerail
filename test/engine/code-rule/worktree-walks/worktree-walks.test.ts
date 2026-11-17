@@ -305,6 +305,41 @@ describe("WorktreeWalks", () => {
     expect(owned(writer).every(([, , owner]) => owner === undefined)).toBe(true);
   });
 
+  // Review of #738 (B1): a session opened in a subfolder judges that folder alone, not its whole checkout.
+  it("records once for the repository a change in a worktree outside the folder of a session open in a subfolder of it", async () => {
+    const { main, checkouts, worktrees } = await repository();
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const watcher = await session(main, checkouts, walks);
+    await mkdir(join(worktrees[0]!, "pkg"), { recursive: true });
+    const inside = await session(join(worktrees[0]!, "pkg"), checkouts, walks);
+    await writeFile(join(worktrees[0]!, "pkg", "own.py"), "own = 1\n");
+    await writeFile(join(worktrees[0]!, "src", "a.py"), "old\nmine\n");
+    // The subfolder session's edit tool writes outside its folder: its result checked it, so no one records a copy.
+    const edited = join(worktrees[0]!, "src", "b.py");
+    await inside.bridge.begin("write-1", "write", { file_path: edited, content: "b = 1\n" });
+    await writeFile(edited, "b = 1\n");
+    await inside.bridge.finish("write-1");
+    await turn(inside, watcher);
+    expect(owned(watcher)).toEqual([[["../w1/src/a.py"], "log", "repository"]]);
+  });
+
+  // Review of #738 (F1): the session's own folder walk recorded its write before it closed.
+  it("records no copy of a session's write in its own worktree once it closed before another session's walk", async () => {
+    const { main, checkouts, worktrees } = await repository();
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const watcher = await session(main, checkouts, walks);
+    const inside = await session(worktrees[0]!, checkouts, walks);
+    await shell(inside.bridge, "shell-1", () => writeFile(join(worktrees[0]!, "src", "a.py"), "old\nmine\n"));
+    await inside.bridge.checkpoint("turn");
+    await inside.bridge.close();
+    await turn(watcher);
+    expect(owned(watcher)).toEqual([]);
+    // A later change there, which no session made, is recorded once.
+    await writeFile(join(worktrees[0]!, "src", "a.py"), "old\nmine\ntheirs\n");
+    await turn(watcher);
+    expect(owned(watcher)).toEqual([[["../w1/src/a.py"], "log", "repository"]]);
+  });
+
   it("credits a write in a worktree to no session whose call was running elsewhere as it was made", async () => {
     const { checkouts, worktrees } = await repository();
     const walks = new WorktreeWalks({ gapMs: 0 });
@@ -924,7 +959,7 @@ function watcherOf(roots: readonly string[], scans: string[]): WorktreeWatcher {
   return {
     clock: async () => Date.now(),
     start: () => ({
-      worktrees: new Set(roots), checkout: undefined, firstSight: new Set(), startedAt: 0, heads: new Set(), unmerged: new Set(),
+      worktrees: new Set(roots), checkout: undefined, folder: "/nowhere", firstSight: new Set(), startedAt: 0, heads: new Set(), unmerged: new Set(),
       scan: async ({ root }) => {
         scans.push(root);
         return {
