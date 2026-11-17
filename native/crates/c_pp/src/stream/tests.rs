@@ -7,7 +7,7 @@ use crate::sink::{FactSink, Tee};
 struct Spellings(Vec<String>);
 
 impl Sink for Spellings {
-    fn token(&mut self, _t: &Tk, text: &[u8], _at: Option<At>) {
+    fn token(&mut self, _t: &Tk, text: &[u8], _at: Option<At>, _off: u32) {
         self.0.push(String::from_utf8_lossy(text).into_owned());
     }
 }

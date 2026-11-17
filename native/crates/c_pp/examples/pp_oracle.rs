@@ -21,7 +21,7 @@ use std::process::Command;
 struct Spellings(Vec<Vec<u8>>);
 
 impl Sink for Spellings {
-    fn token(&mut self, _t: &Tk, text: &[u8], _at: Option<At>) {
+    fn token(&mut self, _t: &Tk, text: &[u8], _at: Option<At>, _off: u32) {
         self.0.push(text.to_vec());
     }
 }

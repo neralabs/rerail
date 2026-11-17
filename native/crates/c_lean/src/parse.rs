@@ -147,6 +147,8 @@ struct P<'a> {
     lx: &'a Lexer<'a>,
     cpp: bool,
     toks: Vec<Tok>,
+    /// Tokens given (a preprocessor's, over its expanded text), read in place of the lexer's.
+    given: Option<&'a [Tok]>,
     i: usize,
     /// Where the next token is lexed into the buffer.
     next: usize,
@@ -216,6 +218,16 @@ struct Mark {
 
 /// `src` parsed.
 pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
+    parse_from(src, None, dialect)
+}
+
+/// `src` parsed from the tokens `given` (ending in `Eof`), which are `src`'s: the lexer is not run.
+pub fn parse_tokens(src: &[u8], given: &[Tok], dialect: Dialect) -> R<Tape> {
+    debug_assert!(given.last().is_some_and(|t| t.kind == T::Eof));
+    parse_from(src, Some(given), dialect)
+}
+
+fn parse_from(src: &[u8], given: Option<&[Tok]>, dialect: Dialect) -> R<Tape> {
     let cpp = dialect == Dialect::Cpp;
     let lx = Lexer::new(src, cpp);
     if let Some(at) = lx.blocks.first_nul() {
@@ -227,10 +239,12 @@ pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
             src,
             lx: &lx,
             cpp,
-            toks: Vec::with_capacity(src.len() / 4 + 4),
+            toks: Vec::with_capacity(given.map_or(src.len() / 4 + 4, |g| g.len() + 1)),
+            given,
             i: 0,
             // A byte-order mark: tree-sitter's lexer passes it.
-            next: if src.starts_with("\u{feff}".as_bytes()) { 3 } else { 0 },
+            // (Given tokens: `next` indexes them.)
+            next: if given.is_none() && src.starts_with("\u{feff}".as_bytes()) { 3 } else { 0 },
             extras: Vec::new(),
             e: 0,
             extra_at: u32::MAX,
@@ -500,6 +514,13 @@ impl<'a> P<'a> {
         if let Some(t) = self.toks.last().filter(|t| t.kind == T::Eof) {
             let t = *t;
             self.toks.push(t);
+            return;
+        }
+        if let Some(g) = self.given {
+            // The given tokens a batch at a time (`next` is the next one's index there).
+            let n = BATCH.min(g.len() - self.next);
+            self.toks.extend_from_slice(&g[self.next..self.next + n]);
+            self.next += n;
             return;
         }
         self.next = self.lx.run(self.next, &mut self.extras, &mut self.toks, BATCH);

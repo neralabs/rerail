@@ -36,7 +36,7 @@ pub mod pp;
 mod oracle;
 
 pub use kinds::{FIELDS, K, KINDS, f};
-pub use lex::{Refusal, T};
+pub use lex::{NO_NL, Refusal, T, Tok, number_end, refused, word};
 pub use rerail_tape_format::Columns as Tape;
 
 /// The language read: C (tree-sitter-c) or C++ (tree-sitter-cpp).
@@ -84,6 +84,16 @@ pub fn tape(src: &[u8], dialect: Dialect) -> Result<Tape, Refusal> {
         return Err(Refusal::TooLarge);
     }
     parse::parse(src, dialect)
+}
+
+/// The tape of `src` read from `toks` (ending in `Eof`), which are `src`'s tokens as the lexer
+/// would make them: a preprocessor's tokens over its expanded text (decision 0327), parsed with no
+/// lexing of the text.
+pub fn tape_of_tokens(src: &[u8], toks: &[Tok], dialect: Dialect) -> Result<Tape, Refusal> {
+    if src.len() >= u32::MAX as usize / 2 {
+        return Err(Refusal::TooLarge);
+    }
+    parse::parse_tokens(src, toks, dialect)
 }
 
 /// Stage 1 alone over `src` (its masks), for the cost examples: the text's first NUL, if any.

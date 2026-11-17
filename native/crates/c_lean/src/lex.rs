@@ -785,62 +785,9 @@ impl<'s> Lexer<'s> {
         }
     }
 
-    /// `digit+ ('digit+)*` from `i`: its end, `None` where no digit starts it.
-    fn digits(&self, mut i: usize, digit: impl Fn(u8) -> bool) -> Option<usize> {
-        if !digit(self.at(i)) {
-            return None;
-        }
-        loop {
-            i += 1;
-            while digit(self.at(i)) {
-                i += 1;
-            }
-            if self.at(i) == b'\'' && digit(self.at(i + 1)) {
-                i += 1;
-                continue;
-            }
-            return Some(i);
-        }
-    }
-
-    /// A number at `s` (a digit, or a `.` before one): tree-sitter-c's `number_literal`, whose
-    /// mantissa after a `.` and whose exponent take hex digits, and whose suffix is any run of
-    /// `[uUlLwWfFbBdD]`. C++'s reads the same here; its suffixes are checked by the parser.
+    /// A number at `s` (`number_end`).
     fn number(&self, s: usize) -> R<(T, usize, u8)> {
-        let hexd = |c: u8| c.is_ascii_hexdigit();
-        let dec = |c: u8| c.is_ascii_digit();
-        let (c0, c1) = (self.at(s), self.at(s + 1));
-        // C++: `0x` with no digit after is `0` and a user-defined literal's suffix `x`
-        // (tree-sitter-cpp's longest match).
-        let mut i = if c0 == b'0' && matches!(c1, b'x' | b'X') {
-            self.digits(s + 2, hexd).unwrap_or(if self.cpp && self.at(s + 2) != b'.' { s + 1 } else { s + 2 })
-        } else if c0 == b'0' && matches!(c1, b'b' | b'B') {
-            self.digits(s + 2, dec).unwrap_or(if self.cpp { s + 1 } else { s + 2 })
-        } else if c0 == b'.' {
-            s
-        } else {
-            self.digits(s, dec).unwrap_or(s)
-        };
-        if self.at(i) == b'.' {
-            i = self.digits(i + 1, hexd).unwrap_or(i + 1);
-        }
-        // The longest match: a hex run's last `e`/`p` is the exponent's where a sign and a digit
-        // follow it (`1.5E-3`, `0x1e+5`).
-        if matches!(self.at(i), b'+' | b'-') && i > s && matches!(self.src[i - 1], b'e' | b'E' | b'p' | b'P') && hexd(self.at(i + 1)) {
-            i = self.digits(i + 1, hexd).unwrap_or(i + 1);
-        } else if matches!(self.at(i), b'e' | b'E' | b'p' | b'P') {
-            let k = if matches!(self.at(i + 1), b'+' | b'-') { i + 2 } else { i + 1 };
-            i = self.digits(k, hexd).unwrap_or(if k == i + 2 { i + 1 } else { k });
-        }
-        while matches!(self.at(i), b'u' | b'U' | b'l' | b'L' | b'w' | b'W' | b'f' | b'F' | b'b' | b'B' | b'd' | b'D') {
-            i += 1;
-        }
-        // A name's byte right after a number is no token tree-sitter reads apart (in C++, a
-        // user-defined literal's suffix, which the parser does not read yet).
-        if !self.cpp && (block::is_word(self.at(i)) || self.at(i) >= 0x80) {
-            return Err(Refusal::Lex(i as u32));
-        }
-        Ok((T::Number, i, 0))
+        number_end(self.src, s, self.cpp).map(|e| (T::Number, e, 0))
     }
 
     /// The end of a string's text from `i` (past its opening `"`): past its closer. `None` where a
@@ -977,6 +924,66 @@ impl<'s> Lexer<'s> {
             }
         }
     }
+}
+
+/// `digit+ ('digit+)*` from `i`: its end, `None` where no digit starts it.
+fn digits(src: &[u8], mut i: usize, digit: impl Fn(u8) -> bool) -> Option<usize> {
+    let at = |i: usize| src.get(i).copied().unwrap_or(0);
+    if !digit(at(i)) {
+        return None;
+    }
+    loop {
+        i += 1;
+        while digit(at(i)) {
+            i += 1;
+        }
+        if at(i) == b'\'' && digit(at(i + 1)) {
+            i += 1;
+            continue;
+        }
+        return Some(i);
+    }
+}
+
+/// The end of a number at `s` in `src` (a digit, or a `.` before one): tree-sitter-c's `number_literal`, whose
+/// mantissa after a `.` and whose exponent take hex digits, and whose suffix is any run of
+/// `[uUlLwWfFbBdD]`. C++'s reads the same here; its suffixes are checked by the parser.
+pub fn number_end(src: &[u8], s: usize, cpp: bool) -> R<usize> {
+    let at = |i: usize| src.get(i).copied().unwrap_or(0);
+    let hexd = |c: u8| c.is_ascii_hexdigit();
+    let dec = |c: u8| c.is_ascii_digit();
+    let (c0, c1) = (at(s), at(s + 1));
+    // C++: `0x` with no digit after is `0` and a user-defined literal's suffix `x`
+    // (tree-sitter-cpp's longest match).
+    let mut i = if c0 == b'0' && matches!(c1, b'x' | b'X') {
+        digits(src, s + 2, hexd).unwrap_or(if cpp && at(s + 2) != b'.' { s + 1 } else { s + 2 })
+    } else if c0 == b'0' && matches!(c1, b'b' | b'B') {
+        digits(src, s + 2, dec).unwrap_or(if cpp { s + 1 } else { s + 2 })
+    } else if c0 == b'.' {
+        s
+    } else {
+        digits(src, s, dec).unwrap_or(s)
+    };
+    if at(i) == b'.' {
+        i = digits(src, i + 1, hexd).unwrap_or(i + 1);
+    }
+    // The longest match: a hex run's last `e`/`p` is the exponent's where a sign and a digit
+    // follow it (`1.5E-3`, `0x1e+5`).
+    if matches!(at(i), b'+' | b'-') && i > s && matches!(src[i - 1], b'e' | b'E' | b'p' | b'P') && hexd(at(i + 1)) {
+        i = digits(src, i + 1, hexd).unwrap_or(i + 1);
+    } else if matches!(at(i), b'e' | b'E' | b'p' | b'P') {
+        let k = if matches!(at(i + 1), b'+' | b'-') { i + 2 } else { i + 1 };
+        i = digits(src, k, hexd).unwrap_or(if k == i + 2 { i + 1 } else { k });
+    }
+    while matches!(at(i), b'u' | b'U' | b'l' | b'L' | b'w' | b'W' | b'f' | b'F' | b'b' | b'B' | b'd' | b'D') {
+        i += 1;
+    }
+    // A name's byte right after a number is no token tree-sitter reads apart (in C++, a
+    // user-defined literal's suffix, which the parser does not read yet).
+    if !cpp && (block::is_word(at(i)) || at(i) >= 0x80) {
+        return Err(Refusal::Lex(i as u32));
+    }
+    Ok(i)
 }
 
 #[cfg(test)]

@@ -53,8 +53,9 @@ pub trait Sink {
         false
     }
 
-    /// An output token, its spelling, and (`wants_lines`) where a line's first token came from.
-    fn token(&mut self, t: &Tk, text: &[u8], at: Option<At>) {}
+    /// An output token, its spelling, (`wants_lines`) where a line's first token came from, and
+    /// its file position where it was read from a file (`t.exp == 0`, `t.buf != 0`; else 0).
+    fn token(&mut self, t: &Tk, text: &[u8], at: Option<At>, off: u32) {}
 
     /// File `file` entered, from directive `from` (the includer and its `#`'s file position; `None`
     /// for the main file), at include depth `depth`.
@@ -95,9 +96,9 @@ impl Sink for Tee<'_> {
     fn wants_lines(&self) -> bool {
         self.0.wants_lines() || self.1.wants_lines()
     }
-    fn token(&mut self, t: &Tk, text: &[u8], at: Option<At>) {
-        self.0.token(t, text, at);
-        self.1.token(t, text, at);
+    fn token(&mut self, t: &Tk, text: &[u8], at: Option<At>, off: u32) {
+        self.0.token(t, text, at, off);
+        self.1.token(t, text, at, off);
     }
     fn enter(&mut self, file: u32, path: &str, from: Option<(u32, u32)>, depth: u32) {
         self.0.enter(file, path, from, depth);
@@ -166,7 +167,7 @@ impl TextSink {
     }
 
     /// Whether `b` after `a` (with no blank) would read as other tokens than `a` and `b`.
-    fn would_join(a: (u8, P), b0: u8, b: P) -> bool {
+    pub(crate) fn would_join(a: (u8, P), b0: u8, b: P) -> bool {
         let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$' || c >= 0x80 || c == b'\\';
         let (a1, ak) = a;
         if ak == P::Eof {
@@ -183,7 +184,7 @@ impl Sink for TextSink {
         true
     }
 
-    fn token(&mut self, t: &Tk, text: &[u8], at: Option<At>) {
+    fn token(&mut self, t: &Tk, text: &[u8], at: Option<At>, _off: u32) {
         if let Some(at) = at {
             if !self.started || at.file != self.file || at.line < self.line || at.line > self.line + 8 {
                 self.started = true;
@@ -246,7 +247,7 @@ pub struct FactSink {
 }
 
 impl Sink for FactSink {
-    fn token(&mut self, _t: &Tk, _text: &[u8], _at: Option<At>) {
+    fn token(&mut self, _t: &Tk, _text: &[u8], _at: Option<At>, _off: u32) {
         self.tokens += 1;
     }
     fn enter(&mut self, file: u32, path: &str, from: Option<(u32, u32)>, depth: u32) {

@@ -205,6 +205,15 @@ must not become a per-token one (history index, lesson 6).
 
   Not compared: clang's error recovery. Where `"../x/y.h"` is missing, clang includes the
   `x/y.h` it suggests.
+- **The frontends (built):**
+  - `rerail_c_pp::tokens::TokenSink` writes a unit's expanded text and the lean parser's tokens
+    over it;
+  - `rerail_c_lean::tape_of_tokens` parses those tokens with no lexing.
+
+  Both corpora (3,135 files) give the same tape from the tokens as from lexing the text. A
+  pp-number is split where the parser's lexer ends a number, so `100ms` is a number and a name.
+  Digraphs are written in their plain spelling. Origins are run-length segments: a segment holds
+  while the text follows its file byte for byte, or one expansion.
 - **The compiled forms** are held to the lean preprocessor: the same rows and the same tokens, on
   every backend.
 

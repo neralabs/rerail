@@ -329,8 +329,9 @@ impl<'a> Pp<'a> {
                 break;
             }
             let at = if self.lines && t.flags & BOL != 0 && t.exp == 0 && t.buf != 0 { Some(self.at(&t)) } else { None };
+            let off = if t.exp == 0 && t.buf != 0 { self.files[t.buf as usize - 1].orig(t.start) } else { 0 };
             let text = spell(&self.files, &self.scratch, &t);
-            self.sink.token(&t, text, at);
+            self.sink.token(&t, text, at, off);
         }
         true
     }
