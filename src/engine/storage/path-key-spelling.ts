@@ -59,27 +59,16 @@ interface PathColumn {
 
 /** A table keyed by a path. */
 interface PathKeyedTable extends PathColumn {
-  /** The other primary key columns: two rows that come to one path clash only when these agree. */
+  /** The other primary key columns: two rows that come to one path are one record only when these agree. */
   readonly rest: readonly string[];
-  /** Of two clashing rows, the one with the larger value here stays; on a tie, the one already under the new key. */
-  readonly newer: string;
-  /** Runs the copy of the rows of `from` to `to`, keeping what that alone would lose. */
-  readonly around?: (database: RerailDatabase, rows: { from: string; to: string }, copy: () => void) => void;
 }
 
 const PATH_KEYED_TABLES: readonly PathKeyedTable[] = [
-  { table: "checkouts", key: "checkout_path", paths: "1", rest: [], newer: "last_seen_at", around: keepStartState },
-  {
-    table: "rule_settings",
-    key: "owner_id",
-    paths: "owner_kind = 'checkout'",
-    rest: ["owner_kind", "folder", "target_kind", "target_id"],
-    newer: "updated_at",
-  },
-  { table: "audit_settings", key: "workspace_root", paths: "1", rest: [], newer: "updated_at" },
-  { table: "repository_audits", key: "workspace_root", paths: "1", rest: [], newer: "started_at" },
-  // A preference keeps no time, and saving one again updates its row in place, so the row created later stays.
-  { table: "presentation_preferences", key: "repository", paths: "repository <> ''", rest: ["host"], newer: "rowid" },
+  { table: "checkouts", key: "checkout_path", paths: "1", rest: [] },
+  { table: "rule_settings", key: "owner_id", paths: "owner_kind = 'checkout'", rest: ["owner_kind", "folder", "target_kind", "target_id"] },
+  { table: "audit_settings", key: "workspace_root", paths: "1", rest: [] },
+  { table: "repository_audits", key: "workspace_root", paths: "1", rest: [] },
+  { table: "presentation_preferences", key: "repository", paths: "repository <> ''", rest: ["host"] },
 ];
 
 /**
@@ -232,8 +221,8 @@ export function lookUpWaitingKeys(database: RerailDatabase, keyOf: PathKeyOf): P
 
 /**
  * Under the lock: copies the rows under every path key the file holds to the key `lookups` found for it where that
- * differs, merging the rows that come to one key (the newer stays, `PathKeyedTable.newer`, and a checkout keeps a start
- * state either row had), and records each spelling that moved in `path_key_spellings`, the audit history's among them:
+ * differs and that key holds no row of the same record (`copyKeyedRows`), and records each spelling that moved in
+ * `path_key_spellings`, the audit history's among them:
  * those read before the lock, and those of rows written since. A key with no key found (its lookup failed for a reason
  * that can pass, such as a share that did not answer), or one written after the lookups (`lookedUp`), goes there with
  * none, for a later open to look up. A key whose folder is gone or that Rerail may not read stays as it is, so the open
@@ -381,38 +370,13 @@ function copiedColumns(database: RerailDatabase, keyed: PathKeyedTable): string 
 }
 
 /**
- * The rows of `from` copied to `to`, where `to` holds no row as new with the same other key columns; a row of `to` that
- * one of `from` outdates goes first, so no key is held twice. The rows of `from` stay as they are.
+ * The rows of `from` copied to `to` where `to` holds no row with the same other key columns. A row already under `to`
+ * stays as it is: an earlier build that saved the folder under both spellings, or a build without the step, reads it
+ * there, and this build reads it as such a build does. The rows of `from` stay as they are.
  */
 function copyKeyedRows(database: RerailDatabase, keyed: PathKeyedTable, rows: { from: string; to: string }): void {
-  const copy = (): void => {
-    const { table, key, paths, same } = statementParts(keyed);
-    const columns = sql.raw(copiedColumns(database, keyed));
-    const newer = sql.raw(keyed.newer);
-    database.run(sql`DELETE FROM ${table} WHERE ${key} = ${rows.to} AND ${paths} AND EXISTS (SELECT 1 FROM ${table} AS other
-      WHERE other.${key} = ${rows.from}${same} AND other.${newer} > ${table}.${newer})`);
-    database.run(sql`INSERT INTO ${table} (${key}, ${columns}) SELECT ${rows.to}, ${columns} FROM ${table}
-      WHERE ${key} = ${rows.from} AND ${paths} AND NOT EXISTS (SELECT 1 FROM ${table} AS other WHERE other.${key} = ${rows.to}${same})`);
-  };
-  if (keyed.around === undefined) copy();
-  else keyed.around(database, rows, copy);
-}
-
-/**
- * Copies a checkout's row keeping its start state: of two rows for one checkout of the same clone, the row that stays
- * under `to` takes the other's start state where it has none, so a checkout started or stopped under one spelling stays
- * so. A row of another clone id (the folder was cloned again) gives none, as recording a re-clone keeps none. The row
- * under `from` keeps its own, for the earlier build that reads it.
- */
-function keepStartState(database: RerailDatabase, rows: { from: string; to: string }, copy: () => void): void {
-  const before = database.all<{ cloneId: string; started: number | null }>(
-    sql`SELECT clone_id AS cloneId, started FROM checkouts WHERE checkout_path IN (${rows.from}, ${rows.to})`,
-  );
-  copy();
-  const after = database.get<{ cloneId: string; started: number | null }>(
-    sql`SELECT clone_id AS cloneId, started FROM checkouts WHERE checkout_path = ${rows.to}`,
-  );
-  if (after === undefined || after.started !== null) return;
-  const kept = before.find(row => row.cloneId === after.cloneId && row.started !== null);
-  if (kept !== undefined) database.run(sql`UPDATE checkouts SET started = ${kept.started} WHERE checkout_path = ${rows.to}`);
+  const { table, key, paths, same } = statementParts(keyed);
+  const columns = sql.raw(copiedColumns(database, keyed));
+  database.run(sql`INSERT INTO ${table} (${key}, ${columns}) SELECT ${rows.to}, ${columns} FROM ${table}
+    WHERE ${key} = ${rows.from} AND ${paths} AND NOT EXISTS (SELECT 1 FROM ${table} AS other WHERE other.${key} = ${rows.to}${same})`);
 }

@@ -104,7 +104,7 @@ const NOTHING_LOOKED_UP: PathKeyLookups = { keys: new Map(), historyThrough: new
  * preferences by the folder as the file system spells it (`currentPathKey`), where earlier builds kept the spelling
  * a caller passed, such as `c:\` from VS Code. Before the lock the step reads every key, and every place the audit
  * history says an audit ran, and looks each up (`lookUpPathKeys`); under it, the rows under each key whose folder is
- * spelt otherwise are copied to that spelling, and rows that come to one key are merged (`path-key-spelling.ts`), so a
+ * spelt otherwise are copied to that spelling where it holds none of the same record (`path-key-spelling.ts`), so a
  * checkout keeps its start state and settings. The rows under the earlier spelling stay as they were, so an older
  * build that opens the file after this step (after a downgrade, or on another agent host sharing the file) reads all
  * it read before; the new table `path_key_spellings` records each spelling that moved, and this build's lists leave

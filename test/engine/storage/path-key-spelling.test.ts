@@ -381,6 +381,18 @@ function spellings(databasePath: string): unknown[] {
   return fileRows(databasePath, "SELECT stored, current FROM path_key_spellings ORDER BY stored");
 }
 
+/** Every row the file holds under `key`, in each table keyed by a folder, with the columns that say when it was saved. */
+function rowsUnder(databasePath: string, key: string) {
+  return {
+    checkout: fileRows(databasePath, "SELECT started, created_at FROM checkouts WHERE checkout_path = ?", key),
+    settings: fileRows(databasePath, `SELECT target_id, "on", updated_at FROM rule_settings WHERE owner_kind = 'checkout' AND owner_id = ?
+      ORDER BY target_id`, key),
+    auditSettings: fileRows(databasePath, "SELECT settings_json, updated_at FROM audit_settings WHERE workspace_root = ?", key),
+    repositoryAudit: fileRows(databasePath, "SELECT audit_id, status, started_at, error FROM repository_audits WHERE workspace_root = ?", key),
+    presence: fileRows(databasePath, "SELECT presence FROM presentation_preferences WHERE repository = ?", key),
+  };
+}
+
 describe("path keys an earlier build stored under another spelling", () => {
   it("keep a checkout recording, with its start state, settings, audit and presentation, once they are copied", async () => {
     const { folder, databasePath } = await checkoutFolder();
@@ -486,31 +498,52 @@ describe("path keys an earlier build stored under another spelling", () => {
     }
   });
 
-  it("merge with rows this build already wrote for the folder: the newer row stays, and the start state is kept", async () => {
+  // The step put the newer of two rows of one folder under the key the disk stores, so where an earlier build had saved
+  // the folder under both spellings, that build's reader of the stored spelling lost what it saved there: a session
+  // there read Log over the touched-files scope it saved, and a folder it stopped there read started. A build without
+  // the step reads the row under the stored spelling, and so does that earlier build.
+  it("keep the rows an earlier build saved under the spelling the disk stores too, and copy in only those that key lacks", async () => {
     const { folder, databasePath } = await checkoutFolder();
     const stored = otherSpelling(folder);
     earlierBuildRecorded(folder, databasePath, stored);
-    // A build without the step opened a session in the folder: a row of its own, seen later and following its
-    // repository, an older setting of the same rule, a newer audit, and audit settings and a preference saved before
-    // the earlier build's.
+    // Under the spelling the disk stores, each saved before its row under `stored`: the folder stopped, the rule on, Steer
+    // over the whole repository, an interrupted repository audit and a compact status line. A checkout inside the folder
+    // follows its repository there and was started on its own under the other spelling, and a second rule setting is
+    // under `stored` alone.
+    const [inner, storedInner] = [join(folder, "inner"), join(stored, "inner")];
     write(databasePath, [
       [`INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at)
-        SELECT ?, repository_key, clone_id, NULL, created_at, last_seen_at + 1 FROM checkouts`, folder],
+        SELECT ?, repository_key, clone_id, 0, created_at - 1, last_seen_at - 1 FROM checkouts`, folder],
+      [`INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at)
+        SELECT ?, repository_key, clone_id, NULL, created_at, last_seen_at FROM checkouts WHERE checkout_path = ?`, inner, folder],
+      [`INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at)
+        SELECT ?, repository_key, clone_id, 1, created_at + 1, last_seen_at + 2 FROM checkouts WHERE checkout_path = ?`, storedInner, stored],
       [`INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, "on", updated_at)
-        VALUES ('checkout', ?, '', 'rule', 'no-console', 1, 0)`, folder],
+        VALUES ('checkout', ?, '', 'rule', 'no-console', 1, 0), ('checkout', ?, '', 'rule', 'no-debugger', 0, 1)`, folder, stored],
+      [`INSERT INTO audit_settings (workspace_root, settings_json, updated_at) VALUES (?, '{"scope":"repository","mode":"steer"}', 0)`, folder],
       [`INSERT INTO repository_audits (workspace_root, session_id, audit_id, status, started_at, finished_at)
-        VALUES (?, 'later', 'audit-2', 'interrupted', 3, 4)`, folder],
+        VALUES (?, 'earlier', 'audit-2', 'interrupted', 0, 1)`, folder],
       auditRow("audit-2", folder),
-      [`INSERT INTO audit_settings (workspace_root, settings_json, updated_at)
-        VALUES (?, '{"scope":"repository","mode":"steer"}', 0)`, folder],
       ["DELETE FROM presentation_preferences WHERE repository = ?", stored],
       ["INSERT INTO presentation_preferences (repository, host, presence) VALUES (?, 'claude-code', 'compact')", folder],
       ["INSERT INTO presentation_preferences (repository, host, presence) VALUES (?, 'claude-code', 'silent')", stored],
     ]);
-    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    const saved = { folder: rowsUnder(databasePath, folder), inner: rowsUnder(databasePath, inner), stored: rowsUnder(databasePath, stored) };
+    vi.mocked(currentPathKey).mockImplementation(path => ({ [stored]: folder, [storedInner]: inner })[path] ?? path);
 
-    expect(recordsAt(folder, databasePath)).toEqual(kept(folder, { status: "interrupted", auditId: "audit-2" }));
-    expect(earlierBuildReads(databasePath, stored)).toEqual(EARLIER_BUILD_READS);
+    expect(recordsAt(folder, databasePath)).toMatchObject({
+      startState: "stopped",
+      auditSettings: { scope: "repository", mode: "steer" },
+      presence: "compact",
+      repositoryAuditList: [{ workspaceRoot: folder, status: "interrupted", auditId: "audit-2" }],
+    });
+    // What the earlier build reads under each spelling is what it saved there, and the setting only `stored` held is copied.
+    expect(rowsUnder(databasePath, folder)).toEqual({
+      ...saved.folder, settings: [...saved.folder.settings, { target_id: "no-debugger", on: 0, updated_at: 1 }],
+    });
+    expect([rowsUnder(databasePath, inner), rowsUnder(databasePath, stored)]).toEqual([saved.inner, saved.stored]);
+    expect(spellings(databasePath)).toEqual([{ stored, current: folder }, { stored: storedInner, current: inner }]
+      .sort((left, right) => (left.stored < right.stored ? -1 : 1)));
   });
 
   it("list a folder once where only its audit history holds the earlier spelling, and leave that history as it was", async () => {

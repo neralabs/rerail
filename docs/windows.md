@@ -244,8 +244,9 @@ the first reader of that folder (below), so a checkout keeps its start state, it
 audit, and its presentation preferences. The rows under the old spelling stay as they were, so an earlier version that
 opens the database later, after a downgrade or for a coding agent whose Rerail is still on that version, finds each row
 it wrote where it wrote it. Its own lists show this version's copies beside its rows (a folder outside Git twice among
-the checkouts), and where it saved one folder under both spellings it reads the newer of the two rows under the stored
-spelling (below). The step records each spelling it copied from in the table `path_key_spellings`, and this
+the checkouts). Where a folder already has a row under the spelling this version looks it up by (the earlier version
+saved the folder under both spellings, or a version without the step recorded it), that row stays as it is and only
+the records it lacks are copied in, so each version reads it there as a version without the step does. The step records each spelling it copied from in the table `path_key_spellings`, and this
 version's lists leave the copies under those spellings out, so each folder is listed once: repositories and their
 checkouts, the checkouts above one whose rule settings apply there, presentation preferences, and the list of
 repository audits, which also reads where each audit ran through that table (an earlier version wrote a Git checkout's
@@ -255,9 +256,7 @@ version without the step does: that version's `rerail stop` or `rerail start` in
 check counts as inside the folder to follow it, which on Windows, where the check ignores letter case, includes this
 version's row of the same folder; and this version's start or stop of a folder sets the earlier version's rows inside it
 to follow, so each version reads what the other set last. The audit
-history itself is never rewritten. Two rows that come to one folder merge: the newer one stays (last seen, last saved,
-last started; of two presentation preferences, which keep no time, the one created later), and a start state either row
-held is kept.
+history itself is never rewritten.
 
 The step reads the keys, and where the audit history says each audit ran, and looks every folder up before it takes the
 database's write lock; under the lock it only copies rows. So no other writer waits for a lookup, nor for the read of a
