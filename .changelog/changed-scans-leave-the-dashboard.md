@@ -1,0 +1,1 @@
+What a scan or the first repository audit found no longer shows as session violations in the dashboard: no violation card, no logged or steered count. On update this applies to scans already recorded, the whole-repository scan 0.1.0 ran in every checkout included. Their findings stay at `/api/audits?origin=scan`.
