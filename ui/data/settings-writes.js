@@ -77,7 +77,8 @@ const writing = new Map();
 /**
  * Send `puts` to the captured scope's target as owner `by`, once the writes clicked before them for the same target
  * are answered. Stops at the first that fails, or once the page shows another repository. What failed (`null` when
- * nothing did), and how many writes saved.
+ * nothing did), how many writes saved, and `done`, which lets the next write for the target go: the caller calls it
+ * first thing, so its own follow-up (toast, reload) runs in the same tick, before the next write is sent.
  */
 async function sendInOrder(scope, by, puts) {
   const key = JSON.stringify(scope.target);
@@ -94,14 +95,12 @@ async function sendInOrder(scope, by, puts) {
     }
   } catch (error) {
     failure = error;
-  } finally {
-    done();
   }
-  return { failure, saved };
+  return { failure, saved, done };
 }
 
 /**
- * Show a change on `rules` at once with `show`. Returns what puts back what it showed (`undo`), on a write that saved
+ * Show a change on `rules` at once with `show`. Returns what puts back what it showed, for a write that saved
  * nothing.
  */
 function showChange(rules, show) {
@@ -124,7 +123,8 @@ export function settingWrites({ toast, invalidate, owner }) {
     const by = owner(packId);
     const putBack = showChange(rules, show);
     invalidate();
-    const { failure, saved } = await sendInOrder(scope, by, puts);
+    const { failure, saved, done } = await sendInOrder(scope, by, puts);
+    done();
     // Another repository's page now: these rows and the outcome are not its.
     if (!inScope(scope)) return;
     if (failure === null) {

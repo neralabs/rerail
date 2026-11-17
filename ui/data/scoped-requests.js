@@ -38,7 +38,8 @@ export async function fetchFresh(path, slot = path, wanted = () => true) {
 
 /**
  * Fetch slot `slot` in full on the next poll, not conditionally: after a write failed, what the page shows was
- * changed by hand and may differ from what the daemon holds although the daemon's body did not change.
+ * changed by hand and may differ from what the daemon holds although the daemon's body did not change; and once a
+ * paged list's key changes, the tag of the list it held no longer describes it.
  */
 export const refetch = slot => { etags.delete(slot); };
 

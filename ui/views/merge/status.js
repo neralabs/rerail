@@ -4,7 +4,8 @@
  * through `gh`, and Turn on Merge Assist), and the status strip while on (branch and base, `gh`, the last scan and its
  * problems, Scan now and Turn off). The buttons are kept on `page` so each render patches them in place.
  *
- * Branch names are other people's text: every one is a text node (`h()` children), never markup.
+ * Branch names, the last scan's problems and the readiness checks come from the daemon, and branch names are other
+ * people's text: every one is a text node (`h()` children), never markup.
  */
 import { h, icon, setAttr, setContent, setText } from "../../dom.js";
 import { ago, failed, fmt, plural } from "../../format.js";

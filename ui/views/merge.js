@@ -6,8 +6,8 @@
  * `merge/conflicts.js` the conflict cards and the dismissed list. What each shows comes from `merge-model.js`. When
  * the status cannot be read, the page says why and shows nothing to act on until a read succeeds again.
  *
- * Conflict titles, summaries, hunks, authors, branch names and links are other people's text: every one is a text
- * node (`h()` children), never markup, and a pull request link is an `href` only when `safePeerUrl` accepts it.
+ * The parts render other people's text (conflict titles, summaries, hunks, authors, branch names and links) as text
+ * nodes only, and link a pull request only when `safePeerUrl` accepts it; this module renders none of it.
  *
  * Buttons the page keeps busy (Turn on, Scan now, Turn off, Save) are patched in place, never rebuilt for a write in
  * flight or the passing of time. A busy button is disabled, which drops its focus, and the answer may rebuild it (or
