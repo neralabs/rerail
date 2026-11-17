@@ -136,3 +136,25 @@ Step by step, each leaving the engine working (see the commits that name this de
   - Open: a block is given back when its last part goes, so a long session's kept relations hold the blocks they
     were made in, with whatever else died there. If the memory profile shows it, a freeze copies a kept segment
     out of a block that is mostly dead.
+  - Compares read the columns they compare (`RowData::value`, `cmp_ids`), not the row copied. A `Row` keeps 16
+    values on the stack, and a wider one goes on the heap. On posthog/hogql the CPU binding is then level with
+    step 1.
+- **Step 3, flat relations** (2026-11-16): the device reads a flat input relation where it lies.
+  - `InRel::in_block` gives its rows as one relation in one block. That is the one part, or every part merged
+    into one, made once and kept. It is offered for a relation with no view, no dead rows and some columns.
+    `resident` binds it as a `DevRel::in_block`: the block's own device buffer (`Held::kept` keeps the block),
+    the descriptor's offset, and every column at its own place. Nothing is uploaded.
+  - A stage carries the offset (`Stage::r_at`; 0 for a relation of its own, column-major). Every read of the
+    probed relation goes through `rget`, which calls the generated `clif_rel_get`. That covers `colval`,
+    `matches`, the aggregate, the binds, the witness's probes of its outer relation, and `rel_hash`. The column
+    statistics read a relation's column in its block (`StatCol::Device`'s `col`). A copy (`copy_rows`) reads and
+    writes only relations of their own, and asserts it.
+  - FACTS blocks lease only spare room (`lease_block_spare`): idle buffers released, nothing evicted. A lease
+    within the budget (`lease_block_within`) retired the tape residency's slabs to make room. The run then
+    admitted its tapes again: 20–35 s runs, 534 B instructions, about one run in four on hogql.
+  - On posthog/hogql (load about 40): Metal retires a median 80.7 B instructions over five runs, against 87.1 B
+    for step 1 over three. The CPU binding is a median 90.7 B against 93.2 B. Findings 1,629. Flat relations
+    upload 0 MB (519 read in place), against 160 MB at step 1. The views (the source views over a batch, 88 MB)
+    still upload: they are not blocks.
+  - Still copied: a relation with dead rows (its bits are setfix's, not the block's), the views, and the rows
+    back (step 4).

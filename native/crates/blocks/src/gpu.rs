@@ -129,7 +129,7 @@ pub fn source() -> String {
     let mut more = Vec::new();
     JoinArgs::deps(&mut more);
     s += &more.concat();
-    s += include_str!("relation_reads.metal");
+    s += crate::RELATION_READS;
     s += LIB;
     s
 }

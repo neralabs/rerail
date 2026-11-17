@@ -364,6 +364,8 @@ pub struct GpuTotal {
     /// Uploads by what was read (`UPLOAD_KINDS`): bytes and the host's CPU.
     pub upload_by: [(u64, f64); 4],
     pub resident: u64,
+    /// Relations read where they lie, in their block (decision 0325): nothing uploaded.
+    pub in_place: u64,
     pub sorts: u64,
     pub sort_hits: u64,
     pub rows: u64,
@@ -400,6 +402,7 @@ impl GpuTotal {
             a.1 += b.1;
         }
         self.resident += o.resident;
+        self.in_place += o.in_place;
         self.sorts += o.sorts;
         self.sort_hits += o.sort_hits;
         self.rows += o.rows;
@@ -2021,8 +2024,8 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
         ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.sized);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
-    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device); texts made {}",
-        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.made);
+    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}, found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device); texts made {}",
+        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.made);
     let by: Vec<String> = UPLOAD_KINDS.iter().zip(&sum.upload_by).map(|(k, (b, c))| format!("{k} {:.1} MB in {:.1} ms", *b as f64 / 1e6, ms(*c))).collect();
     let _ = writeln!(r, "  uploads by what they read: {}", by.join(", "));
     let mut top = ran.clone();
@@ -2836,6 +2839,8 @@ pub struct Report {
     /// The uploads by what they read (`UPLOAD_KINDS`, in order): bytes and this thread's CPU.
     pub upload_by: [(u64, f64); 4],
     pub resident_hits: u32,
+    /// Relations read where they lie, in their block (decision 0325).
+    pub in_place: u32,
     pub sorts: u32,
     pub sort_hits: u32,
     /// Rows the heads made (before the store's set), and bindings the stages made.

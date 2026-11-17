@@ -280,6 +280,20 @@ pub fn lease_block_within(kind: u32, bytes: usize) -> Result<rerail_blocks::Bloc
     Ok(rerail_blocks::Block::over(kind, Box::new(slab)))
 }
 
+/// `lease_block`, only when the Metal budget holds it with no more than idle buffers released: nothing the evictor
+/// holds (the tape residency's slabs) is retired for it. For a block that has a home without the pool (anonymous
+/// memory, which the device reads through a no-copy wrap): the FACTS blocks of a run's relations (decision 0325),
+/// whose leases retiring the residency's tapes made a run admit them again (20-35 s runs on posthog/hogql).
+pub fn lease_block_spare(kind: u32, bytes: usize) -> Result<rerail_blocks::Block, String> {
+    let need = class(bytes.max(SLAB_MIN));
+    pool().lock().expect("the pool").trim(need);
+    if other() + LIVE.load(std::sync::atomic::Ordering::Relaxed) + need > crate::budget::metal() {
+        return Err(format!("device budget: no spare room for a block of {} MB", need >> 20));
+    }
+    let slab = lease(bytes.max(SLAB_MIN))?;
+    Ok(rerail_blocks::Block::over(kind, Box::new(slab)))
+}
+
 /// A scratch region (`rerail_blocks::scratch`) in a pooled slab of at least `bytes`: freeze's and pack's
 /// temporaries counted in the one Metal budget, and readable by a kernel. Install it on a thread
 /// (`rerail_blocks::scratch::install`) for that thread's freezes; it goes back to the pool when dropped.

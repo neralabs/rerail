@@ -44,11 +44,11 @@ pub struct Facts {
 /// The block new relations go in, while it has room.
 static OPEN: Mutex<Option<Arc<Facts>>> = Mutex::new(None);
 
-/// A block of at least `bytes`: the pool's (within the Metal budget), else anonymous.
+/// A block of at least `bytes`: the pool's when it has room to spare (nothing evicted for it), else anonymous.
 fn lease(bytes: usize) -> Block {
     let bytes = bytes.max(FACTS_BYTES);
     #[cfg(target_os = "macos")]
-    if let Ok(b) = rerail_accel::gpu::shared::lease_block_within(kind::FACTS, bytes) {
+    if let Ok(b) = rerail_accel::gpu::shared::lease_block_spare(kind::FACTS, bytes) {
         return b;
     }
     Block::anon(kind::FACTS, bytes)
@@ -170,6 +170,16 @@ pub struct Rows {
     k: usize,
     /// Rows to make room for when the tail is made (`reserve` before the first push).
     hint: usize,
+    /// Every part merged into one, made once for a reader that binds one relation (`in_block`).
+    merged: std::sync::OnceLock<Part>,
+}
+
+/// Where a relation's rows lie for a reader that binds its block (the device, decision 0325): the block, kept while
+/// this lives, and the relation's descriptor's offset in it.
+pub struct InBlock {
+    pub facts: Arc<Facts>,
+    pub at: usize,
+    pub rows: u32,
 }
 
 impl Clone for Rows {
@@ -180,7 +190,7 @@ impl Clone for Rows {
             c.copy_from(t, 0, t.len());
             c
         });
-        Rows { segs: self.segs.clone(), from: self.from, tail, k: self.k, hint: self.hint }
+        Rows { segs: self.segs.clone(), from: self.from, tail, k: self.k, hint: self.hint, merged: Default::default() }
     }
 }
 
@@ -287,7 +297,26 @@ impl Rows {
             c.copy_from(t, 0, t.len());
             segs.push((self.from, c));
         }
-        Rows { segs, from: n as u32, tail: None, k: self.k, hint: 0 }
+        Rows { segs, from: n as u32, tail: None, k: self.k, hint: 0, merged: Default::default() }
+    }
+
+    /// The rows as one relation in one block, ids from 0: the one part, or every part merged into one (made once,
+    /// and kept while these rows are). `None` for no rows.
+    pub(super) fn in_block(&self) -> Option<InBlock> {
+        let one = match (&self.segs[..], &self.tail) {
+            ([], None) => return None,
+            ([], Some(t)) if self.from == 0 => t,
+            ([(0, p)], None) => p,
+            (segs, tail) => self.merged.get_or_init(|| {
+                let parts: Vec<&Part> = segs.iter().map(|(_, p)| p).chain(tail.iter()).collect();
+                let mut one = Part::new(self.k, parts.iter().map(|p| p.len() as usize).sum());
+                for p in parts {
+                    one.copy_from(p, 0, p.len());
+                }
+                one
+            }),
+        };
+        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len() })
     }
 
     /// Whether these rows share a frozen segment with `other` (a relation started from it).

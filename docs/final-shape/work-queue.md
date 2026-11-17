@@ -1262,3 +1262,13 @@ iteration. Both are per-byte loops, which the engine's code refuses elsewhere.
    (`corpus::requests_file_local`, `file_local::requests_file_local`), with the test
    `a_cross_file_reader_finds_the_text_of_another_files_node`; `a_cross_file_text_test_is_maintained_as_a_filter`
    runs again.
+
+### Q55. Relations are blocks the CPU and GPU read in place (0325): steps 3–7
+
+Steps 1 and 2 are built (417256f3a, b84b98d3e, 061fbbfca, 640ce085c): a relation's reads are written once in
+CLIF for the host, the kernels and the JIT, and setfix's rows are `rerail_blocks` relations in shared FACTS blocks.
+On posthog/hogql the CPU binding is level with step 1 (about 90 B instructions). Metal is about 10% over: the
+device's uploads (`DevRel::upload`) and rows back still copy, now value by value through the blocks. Steps 3 and 4
+remove those copies, then the indexes (5), placement's prices (6) and the other row stores (7). The design of step
+3 is in 0325's "Built".
+

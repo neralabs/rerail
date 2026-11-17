@@ -44,7 +44,7 @@ pub mod ordered;
 pub mod runs;
 use runs::{Index, RowData};
 mod rows;
-pub use rows::Row;
+pub use rows::{Facts, InBlock, Row};
 use rows::Rows;
 /// A column's statistics in a fixed size (decision 0112): no index is kept for them.
 pub mod sketch;
@@ -4491,6 +4491,14 @@ impl InRel {
     }
     /// A flat relation's row (a derived one: views are base inputs, or an index's relation, `hold_source`).
     pub fn row(&self, id: usize) -> Row { self.rows.row(id as u32, self.k) }
+    /// A flat relation's rows in one block, for a reader that binds its block (the device, decision 0325): none for
+    /// a view, a relation with dead rows (a reader skips no rows yet) or no columns.
+    pub fn in_block(&self) -> Option<InBlock> {
+        if self.view.is_some() || self.ndead > 0 || self.k == 0 {
+            return None;
+        }
+        self.rows.in_block().filter(|b| b.rows as usize == self.n)
+    }
     /// A flat relation's row `id`'s value in column `c`, read where it lies.
     pub fn value(&self, id: usize, c: usize) -> i64 { self.rows.value(id as u32, self.k, c) }
     /// Row `id`'s values, flat or read from its view.
