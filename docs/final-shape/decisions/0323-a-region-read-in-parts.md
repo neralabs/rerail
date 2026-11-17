@@ -1,9 +1,9 @@
 # 0323: A region read in parts
 
 Status: decided (2026-11-16). The grammar form, its meaning as masks and the
-reference token loop have landed. Two CPU lowerings are being built to compare:
-A in tier 1's token loop, B in tier 2's token fetch. Metal keeps the masks
-(option C) for now. Part of 0177's token loop.
+reference token loop have landed, and lowering A (tier 1's token loop) on the
+CPU. Lowering B (tier 2's token fetch) is being built to compare. Metal keeps
+the masks (option C) for now. Part of 0177's token loop.
 
 ## Intro
 
@@ -69,9 +69,40 @@ generated code splits a string:
 - **B, tier 2.** Tier 1 reads the string as one token. Tier 2's token fetch
   splits it by the same bits, as simdjson's stage 2 walks a string.
 
-Until A is built, the CPU builder refuses a reader with parts
-(`RecordTables::new`), so no executor can give records that differ from
-the reference.
+### A, as built
+
+`rule_last`'s reader arm ends the token at the opener's byte when its reader
+has parts. The tail of the loop writes the opener's record, then
+`read_in_parts` walks the rest of the region:
+- from the byte after the opener, a word at a time, it ORs the closer's word
+  and each part's word, masked from where it stands;
+- at the lowest bit, the bytes before it are a content token;
+- a part's bit there makes a part token, and the walk goes on after its
+  bytes;
+- the closer's bit makes the closer token, which wins where both hold, as
+  `read_parts` has it.
+
+Each record's code is `records::pass`'s: its first byte's kind (the tables'
+first 256 bytes) and its word (`word_hit`, the lookup the tail uses, now one
+function). JSON needs the word: an `escape_sequence` takes its kind from its
+keyword (`required`). The loop goes on from the byte after the closer, with
+the cursor past the region's records. No closer in the file refuses the
+file, as `read_parts`' `Err` does.
+
+The walk's tokens are one turn each (`Step::Token`), and its word steps are
+`Step::Word`. No loop steps a byte.
+
+In the string rule's own tail (a rare class, `Side::Rare`), the walk only
+tests the opener's bit. Where a tail is shared by several rules
+(`Side::Both`), it also tests the token's first byte against the rule's.
+
+`RecordTables::new` still refuses what A does not give a part:
+- more than one reader with parts, or one with more than one region;
+- marks, retags or gap marks;
+- a token test of the reader's rule;
+- words past 16 bytes.
+
+JSON has none of these.
 
 ## Checked
 
@@ -81,3 +112,9 @@ JSONTestSuite file and every corpus file under 1 MB: 129 parsed the same,
 216 refused by both, none differ (`rr_parser`'s `json_loop_against_step_14`,
 a probe until the JSON crate has its tests). Its end rules are `Run`
 (words), `Read` (strings) and `Pair` (structural bytes): a token loop.
+
+On the CPU (A), `rr_parser`'s `jsons_cpu_records_are_the_interpreters`
+compares the token loop's starts, lasts, codes and totals with the
+interpreter's. Its inputs are strings with escapes at each offset around a
+block's edge, strings over blocks, strings open at the file's end, and
+JSON's files: 759 files, 1,165,206 records, all the same.

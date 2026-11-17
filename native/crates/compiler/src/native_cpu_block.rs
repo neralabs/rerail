@@ -1848,9 +1848,16 @@ impl RecordTables {
     }
 
     pub fn new(r: &crate::records::Records, made: &crate::block_native::BlockNative) -> Result<Self, Error> {
-        // A region read in parts (`Reader::parts`): not yet the CPU loop's.
-        if r.readers.iter().any(|rd| !rd.parts.is_empty()) {
-            return Err(Error::UnsupportedFeature("a region read in parts, on the CPU"));
+        // A region read in parts (`Reader::parts`, decision 0323): the token loop's walk
+        // (`read_in_parts`) writes each part's kind and word, as `records::pass` gives them. Not
+        // yet: more than one such reader, one of more than one region, marks or retags (which a
+        // part's code would need), a test of its rule, or words past sixteen bytes.
+        let parted: Vec<&crate::records::Reader> = r.readers.iter().filter(|rd| !rd.parts.is_empty()).collect();
+        if !parted.is_empty() {
+            let tested = r.rules.iter().enumerate().any(|(k, e)| matches!(e, crate::records::EndRule::Read(i) if !r.readers[usize::from(*i)].parts.is_empty()) && r.checks.iter().any(|c| usize::from(c.rule) == k));
+            if parted.len() > 1 || parted[0].arms.len() != 1 || !r.marks.is_empty() || !r.retags.is_empty() || r.gaps != 0 || tested {
+                return Err(Error::UnsupportedFeature("a region read in parts, on the CPU, with this grammar's marks or tests"));
+            }
         }
         let table = crate::records::WordTable::new(&r.words).map_err(|_| Error::InvalidTarget(0))?;
         let mut words: Vec<u64> = r.kinds.chunks(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 kinds"))).collect();
@@ -1865,6 +1872,9 @@ impl RecordTables {
             10..=16 => WordRest::Second,
             _ => WordRest::Tails,
         };
+        if !parted.is_empty() && rest == WordRest::Tails {
+            return Err(Error::UnsupportedFeature("a region read in parts, on the CPU, with words past sixteen bytes"));
+        }
         let metas: Vec<u64> = table.meta.iter().map(|&m| {
             let word = u64::from(m >> 8);
             let alone = r.marks.iter().enumerate().filter(|(_, x)| x.0 == crate::records::WORD_ALONE && u64::from(x.1) == word && word != 0).fold(0u64, |a, (k, _)| a | 1 << k);
@@ -2204,6 +2214,57 @@ fn write_record(f: &mut FunctionBuilder<'_>, c: &FileCols, stores: MemFlags, cur
             f.ins().istore32(stores, v, a, o);
         }
     }
+}
+
+/// A token's word slot and whether its word is the slot's (`records::WordTable::word`), from its
+/// first eight bytes `raw`, its length and its address `from`: the slot by the key's hash, then
+/// the key, the length and (`WordRest`) the bytes past eight compared, each field a load, as the
+/// lean lexer's `word_code`. A hit on a word past eight bytes (`WordRest::Tails`) is checked by
+/// the caller.
+fn word_hit(f: &mut FunctionBuilder<'_>, t: &RecordTables, c: &FileCols, raw: Value, len: Value, from: Value) -> (Value, Value) {
+    let ro = MemFlags::trusted().with_readonly();
+    let fl = MemFlags::trusted();
+    let key = cut_to(f, raw, len);
+    let h1 = f.ins().bxor(key, len);
+    let h1 = f.ins().imul(h1, c.mult);
+    let slot = f.ins().ushr_imm(h1, i64::from(64 - t.table.bits));
+    // The slot's key, then each field of its meta a load of its own (`META_TOP`, `META_CODE`),
+    // as lean's `ldr` and `ldrb`s: a field cut from a wider load is an instruction more on the
+    // way to the hit and the record.
+    let off = f.ins().ishl_imm(slot, if t.rest == WordRest::Second { 5 } else { 4 });
+    let sa = f.ins().iadd(c.slots, off);
+    let kk = f.ins().load(types::I64, ro, sa, 0);
+    let same_key = f.ins().icmp(IntCC::Equal, kk, key);
+    let mlen = f.ins().uload8(types::I64, ro, sa, 8);
+    let same_len = f.ins().icmp(IntCC::Equal, mlen, len);
+    let mut hit = f.ins().band(same_key, same_len);
+    if t.rest == WordRest::Ninth {
+        // Its ninth byte, where it has nine, as the slot's (lean's `(len != 9) | (ninth ==
+        // b'n')`): read past the token where it is shorter, in the padding at the file's end.
+        let ninth = f.ins().uload8(types::I64, fl, from, 8);
+        let want = f.ins().uload8(types::I64, ro, sa, 8 + META_TOP);
+        let same = f.ins().icmp(IntCC::Equal, ninth, want);
+        let other = f.ins().icmp_imm(IntCC::NotEqual, len, 9);
+        let ok = f.ins().bor(same, other);
+        hit = f.ins().band(hit, ok);
+    }
+    if t.rest == WordRest::Second {
+        // Its second eight bytes, as the slot's: read where it has them (else its first again,
+        // in bounds as `raw`), none for a token of eight bytes at most. Straight-line, as the
+        // lean lexer's ninth byte.
+        let long = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, len, 8);
+        let past = f.ins().iadd_imm(from, 8);
+        let at = f.ins().select(long, past, from);
+        let chunk = f.ins().load(types::I64, fl, at, 0);
+        let rest = f.ins().iadd_imm(len, -8);
+        let chunk = cut_to(f, chunk, rest);
+        let zero = f.ins().iconst(types::I64, 0);
+        let chunk = f.ins().select(long, chunk, zero);
+        let want = f.ins().load(types::I64, ro, sa, 16);
+        let same = f.ins().icmp(IntCC::Equal, chunk, want);
+        hit = f.ins().band(hit, same);
+    }
+    (hit, sa)
 }
 
 /// The signature of a file's record function (`record_fn`).
@@ -3102,11 +3163,185 @@ impl Reads<'_> {
     }
 }
 
+/// The rule of the region read in parts (`Reader::parts`, decision 0323) and its reader, where
+/// one is (`RecordTables::new` refuses more than one).
+fn parted_rule(r: &crate::records::Records) -> Option<(usize, &crate::records::Reader)> {
+    r.rules.iter().enumerate().find_map(|(k, e)| match e {
+        crate::records::EndRule::Read(i) => Some((k, &r.readers[usize::from(*i)])).filter(|(_, rd)| !rd.parts.is_empty()),
+        _ => None,
+    })
+}
+
+/// A region read in parts (decision 0323), after its opener's record (`rule_last` ends its
+/// token there): from the byte after the opener, a word at a time, the nearest of its closer's
+/// bits and its parts' (the closer's where they meet). The bytes before it are a content token;
+/// a part is its bytes; the closer ends the region. Each is written as `records::read_parts`
+/// gives it, its code as `records::pass` gives it: its first byte's kind, and its word. As a
+/// lexer's string arm reads a string, a token at each escape.
+///
+/// Where the tail is the reader's rule's own (`known`), only its opener's bit is tested; else
+/// its first bytes too. The cursor after the region's records and the byte after its closer,
+/// or `(cur, next)` where the token is not the opener. No closer in the file: the file refused,
+/// to `finish` with `refused` (its cursor, its marks' bits, its gap's start).
+#[allow(clippy::too_many_arguments)]
+fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, (k, reader): (usize, &crate::records::Reader), s: Value, raw: Value, (cur, next): (Value, Value), known: bool, limit: Option<Limit>, (finish, refused): (cranelift_codegen::ir::Block, [Value; 3]), heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value) {
+    let ro = MemFlags::trusted().with_readonly();
+    let fl = MemFlags::trusted();
+    let stores = MemFlags::new().with_notrap();
+    let a = &reader.arms[0];
+    // The parts by their lengths: at one byte, the shortest part's, as `read_parts`' `min`.
+    let mut parts: Vec<crate::records::ReadPart> = reader.parts.clone();
+    parts.sort_by_key(|p| (p.bytes, p.start));
+    let limit = if std::iter::once(a.closer).chain(parts.iter().map(|p| p.start)).all(|o| rd.bytewise(o)) { None } else { limit };
+    let (walk, join) = (f.create_block(), f.create_block());
+    f.append_block_param(join, types::I64);
+    f.append_block_param(join, types::I64);
+    let firsts = first_bytes(r, k);
+    let opens = rd.bit_first(f, c, s, a.opener, Some(firsts), heads);
+    let gate = if known {
+        opens
+    } else {
+        // Its first byte one of the rule's: a bit of the four words, or the one byte compared.
+        let b = f.ins().band_imm(raw, 0xff);
+        let ones: Vec<usize> = (0..256).filter(|&x| firsts[x / 64] >> (x % 64) & 1 == 1).collect();
+        let is = if let [one] = ones[..] {
+            let e = f.ins().icmp_imm(IntCC::Equal, b, one as i64);
+            f.ins().uextend(types::I64, e)
+        } else {
+            let hi = f.ins().ushr_imm(b, 6);
+            let mut w = f.ins().iconst(types::I64, firsts[3] as i64);
+            for j in (0..3).rev() {
+                let here = f.ins().icmp_imm(IntCC::Equal, hi, j as i64);
+                let x = f.ins().iconst(types::I64, firsts[j] as i64);
+                w = f.ins().select(here, x, w);
+            }
+            let lo = f.ins().band_imm(b, 63);
+            let x = f.ins().ushr(w, lo);
+            f.ins().band_imm(x, 1)
+        };
+        f.ins().band(opens, is)
+    };
+    f.ins().brif(gate, walk, &[], join, &[cur.into(), next.into()]);
+    f.switch_to_block(walk);
+    // A token's code, as `records::pass`: its first byte's kind (the tables' first 256 bytes),
+    // and its word's bits on a hit (`word_hit`).
+    let code_at = |f: &mut FunctionBuilder<'_>, at: Value, len: Value| {
+        let from = f.ins().iadd(c.bytes, at);
+        let raw = f.ins().load(types::I64, fl, from, 0);
+        let b = f.ins().band_imm(raw, 0xff);
+        let ka = f.ins().iadd(c.tables, b);
+        let kind = f.ins().uload8(types::I64, ro, ka, 0);
+        let (hit, sa) = word_hit(f, t, c, raw, len, from);
+        let w = f.ins().uload32(ro, sa, 8 + META_CODE);
+        let zero = f.ins().iconst(types::I64, 0);
+        let bits = f.ins().select(hit, w, zero);
+        f.ins().bor(kind, bits)
+    };
+    // The region's tokens, one a turn: the cursor and the byte the next starts at.
+    let (tok, scan, look, hit, after, content, none) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
+    for _ in 0..2 {
+        f.append_block_param(tok, types::I64);
+    }
+    // And the word read, and the bits of it from the token's start on.
+    for _ in 0..4 {
+        f.append_block_param(scan, types::I64);
+    }
+    f.append_block_param(after, types::I64);
+    let at0 = f.ins().iadd_imm(s, 1);
+    f.ins().jump(tok, &[cur.into(), at0.into()]);
+    f.switch_to_block(tok);
+    heads.push((tok, Step::Token));
+    let (kc, at) = (f.block_params(tok)[0], f.block_params(tok)[1]);
+    let q = f.ins().ushr_imm(at, 6);
+    let sh = f.ins().band_imm(at, 63);
+    let ones = f.ins().iconst(types::I64, -1);
+    let m = f.ins().ishl(ones, sh);
+    f.ins().jump(scan, &[kc.into(), at.into(), q.into(), m.into()]);
+    f.switch_to_block(scan);
+    heads.push((scan, Step::Word));
+    let p = f.block_params(scan).to_vec();
+    let (kc, at, w, m) = (p[0], p[1], p[2], p[3]);
+    let inside = f.ins().icmp(IntCC::UnsignedLessThan, w, bound(c, limit));
+    inside_or_past(f, inside, look, limit, none, &[]);
+    f.switch_to_block(look);
+    let xc = rd.word(f, c, w, a.closer, heads);
+    let xc = f.ins().band(xc, m);
+    let xp: Vec<Value> = parts.iter().map(|pt| {
+        let x = rd.word(f, c, w, pt.start, heads);
+        f.ins().band(x, m)
+    }).collect();
+    let any = xp.iter().fold(xc, |acc, &x| f.ins().bor(acc, x));
+    let w1 = f.ins().iadd_imm(w, 1);
+    let ones = f.ins().iconst(types::I64, -1);
+    f.ins().brif(any, hit, &[], scan, &[kc.into(), at.into(), w1.into(), ones.into()]);
+    // The nearest: the bytes before it, a content token where there are any.
+    f.switch_to_block(hit);
+    let neg = f.ins().ineg(any);
+    let low = f.ins().band(any, neg);
+    let tz = f.ins().ctz(any);
+    let w64 = f.ins().ishl_imm(w, 6);
+    let pos = f.ins().iadd(w64, tz);
+    let some = f.ins().icmp(IntCC::UnsignedGreaterThan, pos, at);
+    f.ins().brif(some, content, &[], after, &[kc.into()]);
+    f.switch_to_block(content);
+    let len = f.ins().isub(pos, at);
+    let code = code_at(f, at, len);
+    let last = f.ins().iadd_imm(pos, -1);
+    write_record(f, c, stores, kc, Some(at), Some(last), code);
+    let k2 = c.step(f, kc);
+    f.ins().jump(after, &[k2.into()]);
+    // Then the closer, or a part.
+    f.switch_to_block(after);
+    let kc = f.block_params(after)[0];
+    let mut checks: Vec<(Value, i64, Option<i64>)> = vec![(xc, i64::from(a.off), None)];
+    checks.extend(parts.iter().zip(&xp).map(|(pt, &x)| (x, i64::from(pt.bytes) - 1, Some(i64::from(pt.bytes)))));
+    let n = checks.len();
+    for (j, (x, off, part)) in checks.into_iter().enumerate() {
+        let (this, other) = (f.create_block(), if j + 1 < n { Some(f.create_block()) } else { None });
+        match other {
+            Some(o) => {
+                let is = f.ins().band(x, low);
+                f.ins().brif(is, this, &[], o, &[]);
+            }
+            None => {
+                f.ins().jump(this, &[]);
+            }
+        }
+        f.switch_to_block(this);
+        let l = f.ins().iadd_imm(pos, off);
+        let len = f.ins().iconst(types::I64, off + 1);
+        let code = code_at(f, pos, len);
+        write_record(f, c, stores, kc, Some(pos), Some(l), code);
+        let k2 = c.step(f, kc);
+        match part {
+            // A part: the next token after its bytes.
+            Some(bytes) => {
+                let at2 = f.ins().iadd_imm(pos, bytes);
+                f.ins().jump(tok, &[k2.into(), at2.into()]);
+            }
+            // The closer: the region's end.
+            None => {
+                let na = f.ins().iadd_imm(l, 1);
+                f.ins().jump(join, &[k2.into(), na.into()]);
+            }
+        }
+        if let Some(o) = other {
+            f.switch_to_block(o);
+        }
+    }
+    // No closer in the file: refused, as `read_parts`' `Err`.
+    f.switch_to_block(none);
+    f.set_cold_block(none);
+    let all = f.ins().iconst(types::I64, -1);
+    f.ins().jump(finish, &[all.into(), refused[0].into(), refused[1].into(), refused[2].into()]);
+    f.switch_to_block(join);
+    (f.block_params(join)[0], f.block_params(join)[1])
+}
+
 /// A token's last byte from its first, `s`, by its end rule (`records::last_by_rule`, decision
 /// 0177): the rule by one load of its first byte, then a block a rule, each straight-line in its
 /// first word; a run or a search past it goes on a word at a time, in a cold block. A search
 /// that finds no last gives `s - 1`, which the order check refuses.
-#[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
 fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, s: Value, raw: Value, (entry, pure): (Value, bool), limit: Option<Limit>, regs: Option<&BlockRegs>, mode: RuleMode, side: Side, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<(Side, cranelift_codegen::ir::Block)>, Option<cranelift_codegen::ir::Block>) {
     use crate::records::EndRule;
@@ -3794,6 +4029,13 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     let bit = rd.bit_first(f, c, s, a.opener, Some(firsts), heads);
                     f.ins().brif(bit, arm, &[], not, &[]);
                     f.switch_to_block(arm);
+                    // A region read in parts (decision 0323): its token here is its opener's byte;
+                    // the loop's tail walks its parts and its closer (`read_in_parts`).
+                    if !reader.parts.is_empty() {
+                        f.ins().jump(ended, &[s.into(), tag.into(), nohits.into()]);
+                        f.switch_to_block(not);
+                        continue;
+                    }
                     // No closer after the opener: what its region says.
                     let none = f.create_block();
                     f.set_cold_block(none);
@@ -5965,45 +6207,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let wordy = f.ins().band_imm(entry, 1 << TOKEN_WORDY);
     f.ins().brif(wordy, looked, &[], coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), kind.into(), hits.into()]);
     f.switch_to_block(looked);
-    let key = cut_to(f, raw, len);
-    let h1 = f.ins().bxor(key, len);
-    let h1 = f.ins().imul(h1, c.mult);
-    let slot = f.ins().ushr_imm(h1, i64::from(64 - t.table.bits));
-    // The slot's key, then each field of its meta a load of its own (`META_TOP`, `META_CODE`),
-    // as lean's `ldr` and `ldrb`s: a field cut from a wider load is an instruction more on the
-    // way to the hit and the record.
-    let off = f.ins().ishl_imm(slot, if t.rest == WordRest::Second { 5 } else { 4 });
-    let sa = f.ins().iadd(c.slots, off);
-    let kk = f.ins().load(types::I64, ro, sa, 0);
-    let same_key = f.ins().icmp(IntCC::Equal, kk, key);
-    let mlen = f.ins().uload8(types::I64, ro, sa, 8);
-    let same_len = f.ins().icmp(IntCC::Equal, mlen, len);
-    let mut hit = f.ins().band(same_key, same_len);
-    if t.rest == WordRest::Ninth {
-        // Its ninth byte, where it has nine, as the slot's (lean's `(len != 9) | (ninth ==
-        // b'n')`): read past the token where it is shorter, in the padding at the file's end.
-        let ninth = f.ins().uload8(types::I64, fl, from, 8);
-        let want = f.ins().uload8(types::I64, ro, sa, 8 + META_TOP);
-        let same = f.ins().icmp(IntCC::Equal, ninth, want);
-        let other = f.ins().icmp_imm(IntCC::NotEqual, len, 9);
-        let ok = f.ins().bor(same, other);
-        hit = f.ins().band(hit, ok);
-    }
-    if t.rest == WordRest::Second {
-        // Its second eight bytes, as the slot's: read where it has them (else its first again,
-        // in bounds as `raw`), none for a token of eight bytes at most. Straight-line, as the
-        // lean lexer's ninth byte.
-        let long = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, len, 8);
-        let past = f.ins().iadd_imm(from, 8);
-        let at = f.ins().select(long, past, from);
-        let chunk = f.ins().load(types::I64, fl, at, 0);
-        let rest = f.ins().iadd_imm(len, -8);
-        let chunk = cut_to(f, chunk, rest);
-        let chunk = f.ins().select(long, chunk, zero);
-        let want = f.ins().load(types::I64, ro, sa, 16);
-        let same = f.ins().icmp(IntCC::Equal, chunk, want);
-        hit = f.ins().band(hit, same);
-    }
+    let (hit, sa) = word_hit(f, t, c, raw, len, from);
     // The word's code bits (its word and the marks of it alone, `RecordTables`), on a hit.
     let w = f.ins().uload32(ro, sa, 8 + META_CODE);
     let bits = f.ins().select(hit, w, zero);
@@ -6219,7 +6423,22 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         }
     }
     write_record(f, c, stores, cv[0], start_kept.then_some(s), last_kept, code);
-    let k1 = c.step(f, cv[0]);
+    let mut k1 = c.step(f, cv[0]);
+    // A region read in parts (decision 0323): its parts' and closer's records after its
+    // opener's, and the loop on past its closer. In its rule's own tail, or a tail it may
+    // reach; never the fused rules'.
+    if let Some(pr) = parted_rule(r).filter(|_| walked.is_some() && ruled) {
+        let known = match side {
+            Side::Rare(Some(x)) => (x.rule == pr.0).then_some(true),
+            Side::Fused => None,
+            _ => Some(false),
+        };
+        if let (Some(known), false) = (known, common) {
+            let (k2, na) = read_in_parts(f, r, t, &rd, c, pr, s, raw, (k1, cv[1]), known, limit, (finish, [cv[0], pending, from]), heads);
+            k1 = k2;
+            cv[1] = na;
+        }
+    }
     let mut back: Vec<BlockArg> = vec![k1.into(), cv[1].into(), cv[2].into(), pending.into(), from.into(), word_before.into()];
     // The block's starts after the token, while it ends in the block; else none, for a refill.
     // The marks so far flagged where the refill reads this block again (`REREAD_FLAG`).

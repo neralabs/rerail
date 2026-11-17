@@ -3183,4 +3183,82 @@ mod json_probe {
         eprintln!("{ok} parsed the same, {refused} refused by both, {bad} differ");
         assert_eq!(bad, 0);
     }
+
+    /// JSON's files: the probe's, and JSONTestSuite's and the corpus's under 1 MB where
+    /// `RERAIL_JSON_SUITE` and `RERAIL_JSON_CORPUS` name them.
+    fn json_files() -> Vec<Vec<u8>> {
+        let mut out: Vec<Vec<u8>> = Vec::new();
+        for var in ["RERAIL_JSON_SUITE", "RERAIL_JSON_CORPUS"] {
+            let Ok(dir) = std::env::var(var) else { continue };
+            let mut paths: Vec<_> = std::fs::read_dir(&dir).expect("the directory").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+            paths.sort();
+            out.extend(paths.iter().map(|p| std::fs::read(p).expect("reads")).filter(|b| b.len() < 1 << 20));
+        }
+        out
+    }
+
+    /// A region read in parts on the CPU (decision 0323, lowering A): tier 1's token loop
+    /// writes a string's quote, contents, escapes and closer as the interpreter's records
+    /// (`records::read_parts`), with their codes, on strings with escapes at every offset of a
+    /// block's edge, over blocks, open at the file's end, and on JSON's files.
+    #[test]
+    fn jsons_cpu_records_are_the_interpreters() {
+        let program = program(include_str!("../../json_parser/json.bitlex")).unwrap_or_else(|e| panic!("json.bitlex: {e}"));
+        let block = &program.block_programs[0];
+        let r = block.records.as_ref().expect("records");
+        assert!(r.readers.iter().any(|rd| !rd.parts.is_empty()), "a reader in parts");
+        let mut native = rerail_compiler::native_ir::lower(&program, 0, 0).expect("lowers");
+        for b in &mut native.block_programs {
+            b.pad = rerail_compiler::native_cpu_block::BACK as u16;
+        }
+        let cpu = rerail_compiler::native_cpu_block::compile(&native.block_programs[0]).expect("the token loop compiles");
+        let mut inputs: Vec<Vec<u8>> = [
+            &br#"{"a": [1, -2.5e3, true, null], "b\n": {"c": "dAx"}}"#[..],
+            br#""""#,
+            br#""\\""#,
+            br#"["a\"b", "\\\"", "x"]"#,
+            br#"["\\\\", "\"\"", "a\\", "\\a", "true", "\n\t\r"]"#,
+            br#"{"k":"v"}"#,
+            br#""open"#,
+            br#""open\"#,
+            br#"["\q"]"#,
+        ].iter().map(|x| x.to_vec()).collect();
+        for pad in [0usize, 1, 30, 58, 59, 60, 61, 62, 63, 64, 65, 126, 127] {
+            for t in [r#""\n""#, r#""ab\"cd""#, r#""x\\""#, r#""AB""#, r#""\\\\\\\"""#, r#""true""#, r#"["a",1,"\"",{"b":"c\nd"}]"#] {
+                inputs.push(format!("{}{t}", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("[{}{t}, 1]", "1,".repeat(pad / 2)).into_bytes());
+            }
+            // A string over blocks, its escapes on each side of their edges.
+            for n in [60usize, 63, 64, 65, 130, 200] {
+                inputs.push(format!("{}\"{}\\n{}\"", " ".repeat(pad), "s".repeat(n), "t".repeat(n)).into_bytes());
+                inputs.push(format!("{}[\"{}\", \"{}\\\\\"]", " ".repeat(pad), "s".repeat(n), "\\\"".repeat(n / 2)).into_bytes());
+                inputs.push(format!("{}\"{}", " ".repeat(pad), "s".repeat(n)).into_bytes());
+            }
+        }
+        let files = json_files();
+        inputs.extend(files);
+        let refs: Vec<&[u8]> = inputs.iter().map(|f| f.as_slice()).collect();
+        let got = cpu.run_files(&refs);
+        let refusal = |t: &[u64]| t.iter().any(|&x| x != 0);
+        let (mut strings, mut parts) = (0usize, 0usize);
+        for (k, (f, g)) in refs.iter().zip(&got).enumerate() {
+            let want = block.run(f);
+            let refused = refusal(&want.totals);
+            assert_eq!(refusal(&g.totals), refused, "file {k} ({:?}): the refusal", String::from_utf8_lossy(&f[..f.len().min(80)]));
+            let upto = |x: usize, y: usize| if refused { x.min(y) } else { x.max(y) };
+            let (gs, gl) = (&g.positions[usize::from(r.starts)], &g.positions[usize::from(r.lasts)]);
+            let (ws, wl) = (&want.positions[usize::from(r.starts)], &want.positions[usize::from(r.lasts)]);
+            let n = upto(gs.len(), ws.len());
+            if let Some(i) = (0..n).find(|&i| gs.get(i) != ws.get(i) || gl.get(i) != wl.get(i) || g.codes.get(i) != want.codes.get(i)) {
+                let around = |s: &Vec<u32>, l: &Vec<u32>, c: &Vec<u32>| (i.saturating_sub(2)..(i + 3).min(s.len())).map(|j| (s[j], l.get(j).copied(), c.get(j).map(|x| format!("{x:#x}")))).collect::<Vec<_>>();
+                panic!("file {k} ({:?}): token {i}: the CPU's (start, last, code) {:?}, the interpreter's {:?}", String::from_utf8_lossy(&f[..f.len().min(120)]), around(gs, gl, &g.codes), around(ws, wl, &want.codes));
+            }
+            if !refused {
+                assert_eq!(g.totals, want.totals, "file {k}: the totals");
+                strings += f.iter().filter(|&&b| b == b'"').count();
+                parts += ws.len();
+            }
+        }
+        eprintln!("{} files, {strings} quotes, {parts} tokens the same", refs.len());
+    }
 }
