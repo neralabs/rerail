@@ -228,13 +228,23 @@ fn when_is_the_lean_parsers() {
     ]);
 }
 
+/// Step 12: `;`.
 #[test]
-fn what_step_11_does_not_read_is_refused() {
+fn semicolons_are_the_lean_parsers() {
+    same(&[
+        "package a;\nimport b.C;\nfun f() {\n    a(); b()\n    c(); // x\n    d();\n}\nclass A { val x = 1; }\n",
+        "fun f() { a(); }\nval x = 1;\nfun g() = 2\n",
+        "package a; import b\n",
+        "class B {\n    fun f() {}; fun g() {}\n}\nclass C { fun f(); }\n",
+    ]);
+}
+
+#[test]
+fn what_step_12_does_not_read_is_refused() {
     refused(&[
         "val a = b to f<T>()\n",
         "val a = x + f<T>(1)\n",
         "val a = x < f<T>(1)\n",
-        "package a; import b\n",
         "import a.b import c\n",
         "val s = 'x\n",
         "val s = \"a\nb\"\n",

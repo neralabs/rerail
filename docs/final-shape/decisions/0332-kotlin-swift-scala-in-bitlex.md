@@ -310,6 +310,24 @@ not a lambda. No grammar change was needed beyond the nodes.
 
 Corpus: 137 the same, 354 refused, 0 differ.
 
+## Kotlin, step 12 (`12-semicolons.bitlex`)
+
+A `;` is a semicolon of its own. It is a token the tape keeps no leaf of, but the span of the
+node it ends counts it: `package a;` is `package_header [0..10]`. That is why it is an implied
+token and not a mark: a mark has no width.
+
+- A line break after a `;` is not a second semicolon. Blanks and comments may come between
+  (`after_semi`).
+- A `}` after a `;` closes as after a line break (`semi_close`). A class body's members must
+  end with one: the lean parser refuses `class A { val x = 1 }` on one line, and reads
+  `class A { val x = 1; }`.
+- A list of statements or members takes `';' [item]` beside `semi item`, so `a(); }` and
+  `a(); b()` both read.
+- A `;` that starts a line, or ends the file, comes with the line break's semicolon as well.
+  Both are refused for now.
+
+Corpus: 144 the same, 347 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
