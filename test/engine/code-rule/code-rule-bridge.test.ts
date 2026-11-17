@@ -2013,7 +2013,11 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     const sourceRoot = (path: string) => resolve(root, path).startsWith(`${nested}${sep}`) ? nested : extra.sourceRoot!(path);
     return { root, nested, extra: { ...extra, sourceRoot } };
   }
-  const stopMerge = (nested: string) => () => { try { git(nested, "merge", "--quiet", "other"); } catch { /* The conflict is the point. */ } };
+  /** Merges `other` in `nested`, which stops on the modify/delete conflict and leaves its unmerged entries. */
+  const stopMerge = (nested: string) => () => {
+    expect(() => git(nested, "merge", "--quiet", "other")).toThrow();
+    expect(execFileSync("git", ["ls-files", "--unmerged"], { cwd: nested, encoding: "utf8" })).not.toBe("");
+  };
 
   const eitherWay = [["", false], [", once a walk has found a change there", true]] as const;
   /** With `earlier`, a shell write the worktrees' walk finds in `nested` first, which no later assertion counts. */
@@ -2052,6 +2056,62 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
     // Measured from `other`'s blob only by the `HEAD` the switch left: read before the worktrees' walk, each time.
     await shellInWorktree(bridge, async () => {
+      await writeFile(path, "theirs\n2\n3\n4\n5\n6\n7\nmine\n");
+      git(nested, "commit", "--quiet", "-am", "mine");
+    });
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path: repositoryPath(root, path), language: "python", previousText: "theirs\n2\n3\n4\n5\n6\n7\n", generatedText: "theirs\n2\n3\n4\n5\n6\n7\nmine\n" }], "log"],
+    ]);
+  });
+
+  /** `extra` with a `worktreeRoots` that throws while `failing.on`, as a Git that cannot list the worktrees does. */
+  function failingRoots(extra: Partial<CodeRuleAuditor>) {
+    const failing = { on: false };
+    const worktreeRoots = () => {
+      if (failing.on) throw new Error("git worktree list failed");
+      return extra.worktreeRoots!();
+    };
+    return { extra: { ...extra, worktreeRoots }, failing };
+  }
+  /** Walks while the session cannot list its worktrees, so it takes no part, and the shared walk drops what it kept of them. */
+  async function walkUnlisted(bridge: CodeRuleBridge, failing: { on: boolean }): Promise<void> {
+    failing.on = true;
+    try {
+      await shellInWorktree(bridge, () => undefined);
+    } finally {
+      failing.on = false;
+    }
+  }
+
+  /** Runs `run` as a shell call, and the one walk of the other worktrees its finish asks for, as a call followed by another in one turn has. */
+  async function shellThenWalk(bridge: CodeRuleBridge, run: () => void | Promise<void>): Promise<void> {
+    await shell(bridge, run);
+    await bridge.settleWorktreeWalk();
+  }
+
+  it.each(eitherWay)("records a shell edit of a file a modify/delete conflict left as it was, in a checkout inside another worktree whose walk dropped what it kept%s", async (_name, earlier) => {
+    const { root, nested, extra: listed } = await checkoutInWorktree();
+    const { extra, failing } = failingRoots(listed);
+    const path = join(nested, "src", "gone.py");
+    const { bridge, auditGeneratedEdits } = await openedOn(root, nested, extra, earlier);
+    await walkUnlisted(bridge, failing);
+    await shellThenWalk(bridge, stopMerge(nested));
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    await shellThenWalk(bridge, () => writeFile(path, "gone\nours\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path: repositoryPath(root, path), language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }], "log"],
+    ]);
+  });
+
+  it.each(eitherWay)("records nothing a branch switch wrote in a checkout inside another worktree whose walk dropped what it kept%s, and a file written and committed after it from the branch's text", async (_name, earlier) => {
+    const { root, nested, extra: listed } = await checkoutInWorktree({ both: true });
+    const { extra, failing } = failingRoots(listed);
+    const path = join(nested, "src", "both.py");
+    const { bridge, auditGeneratedEdits } = await openedOn(root, nested, extra, earlier);
+    await walkUnlisted(bridge, failing);
+    await shellThenWalk(bridge, () => git(nested, "switch", "--quiet", "other"));
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    await shellThenWalk(bridge, async () => {
       await writeFile(path, "theirs\n2\n3\n4\n5\n6\n7\nmine\n");
       git(nested, "commit", "--quiet", "-am", "mine");
     });

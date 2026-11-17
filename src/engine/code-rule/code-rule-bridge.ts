@@ -2049,6 +2049,7 @@ export class CodeRuleBridge {
       firstSight: new Set(worktrees.filter(worktree => this.#mayFirstSee(discovery, sessionPath(discovery.root, worktree)))),
       startedAt: discovery.startedAt,
       heads: new Set([...discovery.heads.keys()].filter(root => inWorktrees(discovery, root))),
+      unmerged: new Set([...discovery.unmerged.keys()].filter(root => inWorktrees(discovery, root))),
       scan: request => this.#scanWorktree(discovery, request, rules),
       take: walk => this.#takeWorktreeWalk(discovery, start, walk),
     };

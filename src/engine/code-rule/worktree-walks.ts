@@ -85,7 +85,10 @@ export interface WorktreeFindings {
 export interface InnerCheckouts {
   /** `HEAD` as the walk began, of each one a watching session holds a `HEAD` of (`WatcherWalk.heads`). */
   readonly heads: ReadonlyMap<string, string>;
-  /** The unmerged entries as the walk began (`gitUnmergedReader`), of each one the last read passed. */
+  /**
+   * The unmerged entries as the walk began (`gitUnmergedReader`), of each one the last read passed or a watching session
+   * holds entries or a `HEAD` of (`WatcherWalk.unmerged`, `WatcherWalk.heads`).
+   */
   readonly unmerged: ReadonlyMap<string, ReadonlyMap<string, string>>;
   /**
    * The unmerged entries as the read ended, of each one no read had passed: its snapshot, so a conflict that stops Git
@@ -137,6 +140,11 @@ export interface WatcherWalk {
    * reads theirs as it begins (`InnerCheckouts.heads`); until one does, a checkout there starts no Git process for it.
    */
   readonly heads: ReadonlySet<string>;
+  /**
+   * The checkouts inside its worktrees that it holds unmerged entries of, physical. The walk reads theirs as it begins
+   * even when it kept nothing of their worktree, so the entries a session holds never stay older than the walk.
+   */
+  readonly unmerged: ReadonlySet<string>;
   /**
    * Reads a worktree for the walk, asking this session which files it reads and which Git ignores; undefined when the
    * session closed meanwhile, and another watching session reads it instead.
@@ -298,6 +306,13 @@ function leftOut(roots: ReadonlySet<string>, walks: Iterable<WatcherWalk>): Set<
   const skip = new Set(roots);
   for (const walk of walks) if (walk.checkout !== undefined) skip.add(walk.checkout);
   return skip;
+}
+
+/** The innermost of `roots` that `path` lies inside; undefined when it lies in none. A worktree's read leaves out those inside it. */
+function worktreeAround(roots: ReadonlySet<string>, path: string): string | undefined {
+  let around: string | undefined;
+  for (const root of roots) if (path.startsWith(`${root}${sep}`) && (around === undefined || root.length > around.length)) around = root;
+  return around;
 }
 
 /** The folders of `skip` inside the worktree at `root`, one per line. */
@@ -683,18 +698,25 @@ export class WorktreeWalks {
 
   /**
    * What Git says of the checkouts inside each of `roots` as the walk begins: the unmerged entries of each one its last
-   * read passed, which cost a `stat` while its index file is as it was, and the `HEAD` of each a session asks for
-   * (`WatcherWalk.heads`), which costs a Git process. A checkout whose entries Git could not list is left out, so the
-   * last entries a session took stay its snapshot.
+   * read passed or a session holds anything of, which cost a `stat` while its index file is as it was, and the `HEAD` of
+   * each a session asks for (`WatcherWalk.heads`), which costs a Git process. Those a session holds are read even when
+   * nothing of their worktree was kept (a walk none of its sessions took part in dropped it), or the session would
+   * take the walk against entries and a `HEAD` older than it. A checkout whose entries Git could not list is left out,
+   * so the last entries a session took stay its snapshot.
    */
   async #readInner(roots: ReadonlySet<string>, walking: ReadonlyMap<Watching, WatcherWalk>): Promise<Map<string, Omit<InnerCheckouts, "passed">>> {
     const asked = new Set([...walking.values()].flatMap(walk => [...walk.heads]));
+    const held = new Map<string, Set<string>>();
+    for (const checkout of new Set([...walking.values()].flatMap(walk => [...walk.heads, ...walk.unmerged]))) {
+      const root = roots.has(checkout) ? undefined : worktreeAround(roots, checkout);
+      if (root !== undefined) held.set(root, (held.get(root) ?? new Set()).add(checkout));
+    }
     const inner = new Map<string, Omit<InnerCheckouts, "passed">>();
     const git = this.#git;
     for (const root of roots) {
       const heads = new Map<string, string>();
       const unmerged = new Map<string, ReadonlyMap<string, string>>();
-      for (const checkout of this.#kept.get(root)?.findings.checkouts ?? []) {
+      for (const checkout of new Set([...this.#kept.get(root)?.findings.checkouts ?? [], ...held.get(root) ?? []])) {
         if (checkout === root) continue;
         if (asked.has(checkout)) {
           const head = await git.run(signal => gitHead(checkout, { signal }));

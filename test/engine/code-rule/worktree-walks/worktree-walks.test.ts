@@ -868,7 +868,7 @@ function watcherOf(roots: readonly string[], scans: string[]): WorktreeWatcher {
   return {
     clock: async () => Date.now(),
     start: () => ({
-      worktrees: new Set(roots), checkout: undefined, firstSight: new Set(), startedAt: 0, heads: new Set(),
+      worktrees: new Set(roots), checkout: undefined, firstSight: new Set(), startedAt: 0, heads: new Set(), unmerged: new Set(),
       scan: async ({ root }) => {
         scans.push(root);
         return {
