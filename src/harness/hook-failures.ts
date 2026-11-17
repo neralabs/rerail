@@ -207,10 +207,10 @@ function moveTaken(taken: string, path: string, movedAside: string): boolean {
  * Moves the link a person made at the live name `path`, which this hook took as `taken`, on to `movedAside` by one
  * rename, as `main`'s rename right after its size check moves it from the live name. A log another hook began at the
  * free live name since stays there, and this hook writes into it. When `.1` refuses that rename (a folder there, or on
- * Windows a `.1` another program holds), the link goes back to the live name by one rename, replacing such a log, and
- * moves as `main` moves it, with `main`'s retries ({@link moveLink}): so it waits at the live name, where status reads
- * it, as on `main`. When that rename back fails, this throws: the hook writes nothing, and the link stays under the
- * hook's name, where no hook reads or removes it ({@link removeStrandedLogs}).
+ * Windows a `.1` another program holds), the link goes back to the live name ({@link putBackLink}) and moves as `main`
+ * moves it, with `main`'s retries ({@link moveLink}): so it waits at the live name, where status reads it, as on `main`.
+ * When it cannot go back, this throws: the hook writes nothing, and the link stays under the hook's name, where no hook
+ * reads or removes it ({@link removeStrandedLogs}).
  */
 function moveTakenLink(taken: string, path: string, movedAside: string): true {
   try {
@@ -219,8 +219,62 @@ function moveTakenLink(taken: string, path: string, movedAside: string): true {
   } catch {
     // `.1` refused it: the link goes back and moves as `main` moves it.
   }
-  renameWithRetrySync(taken, path, { retryMs: 0 });
+  putBackLink(taken, path);
   return moveLink(path, movedAside);
+}
+
+/**
+ * Puts the link this hook took as `taken` back at the live name `path`, keeping a log another hook began there while this
+ * hook held the link. That hook found no live name and wrote its failure into that log; `main`'s hook finds the link
+ * there and, when the file it leads to has room, appends through it, and status counts that failure. The link first
+ * gets the live name as a second name, which never replaces a name there ({@link linkedBack}). When a log is there, the
+ * log gets a name of this hook's own, where status counts it and a hook that opened it still writes into it, and the
+ * link then replaces only the log's live name, by one rename: the live name is never free in between, so no other log
+ * begins there. On macOS a second name of a link names the file it leads to, so there the link goes back by that rename
+ * alone, and a log begun between the two steps is replaced.
+ */
+function putBackLink(taken: string, path: string): void {
+  if (LINK_NAMES_A_LINK && linkedBack(taken, path)) return;
+  keepUnderOwnName(path);
+  renameWithRetrySync(taken, path, { retryMs: 0 });
+}
+
+/**
+ * Whether `fs.linkSync` gives a link a second name of its own: Linux's `link` does not follow a link, nor does Windows'
+ * `CreateHardLinkW`; macOS's `link` follows it to the file it leads to.
+ */
+const LINK_NAMES_A_LINK = process.platform !== "darwin";
+
+/**
+ * Gives the link taken as `taken` the live name `path` as a second name, then takes this hook's name off it, and says
+ * whether it did. False when a name is at `path`, or the link cannot get a second name there.
+ */
+function linkedBack(taken: string, path: string): boolean {
+  try {
+    linkSync(taken, path);
+  } catch {
+    // A log another hook began is there, or the file system makes no hard links: the link goes back by a rename.
+    return false;
+  }
+  try {
+    unlinkSync(taken);
+  } catch {
+    // The link keeps this hook's name too, where no hook reads or removes it ({@link removeStrandedLogs}).
+  }
+  return true;
+}
+
+/**
+ * Gives the log at the live name `path`, which another hook began, a name of this hook's own ({@link takenName}), where
+ * status counts it and a later move removes it once it has not changed for a day ({@link removeStrandedLogs}).
+ */
+function keepUnderOwnName(path: string): void {
+  try {
+    linkSync(path, takenName(path));
+  } catch {
+    // No log there; or it cannot get a second name, as when another program holds it on Windows, where the rename back
+    // over it fails too.
+  }
 }
 
 /**

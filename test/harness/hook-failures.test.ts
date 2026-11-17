@@ -580,6 +580,70 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     });
   });
 
+  // As above, the person's file holding 3 failures, and another hook runs to its end while this one holds the link: it
+  // finds no live log and begins one. `main`'s hook, which never takes the link, would have found it and appended through
+  // it, and status counts that failure through the link. Here the log the other hook began keeps a name of this hook's
+  // own, where status counts it, and the link goes back to the live name over that log's live name only: both the
+  // person's file and the other hook's failure are counted, and nothing is written through the link.
+  it.for(UNREACHABLE)("keeps the log another hook begins while a hook holds a link a person made at the live name as it took the log, when .1 $how", async ({ block }, context) => {
+    const rerailHome = await home();
+    const live = join(rerailHome, HOOK_FAILURES_FILE);
+    writeFullLog(rerailHome);
+    const lift = block(join(rerailHome, `${HOOK_FAILURES_FILE}.1`));
+    const { elsewhere, text, made } = await linkMadeLater(context, rerailHome, 3);
+    const opened = await recordWithWrapped(rerailHome, 2, {
+      ...refusedThrough(elsewhere),
+      renameSync: `rename => (from, to) => {
+        if (from !== ${JSON.stringify(live)} || !to.endsWith(".old") || globalThis.made) return rename(from, to);
+        globalThis.made = true;
+        rename(${JSON.stringify(made)}, from);
+        rename(from, to);
+        hookFailures.recordHookFailure({ host: "codex", event: "Stop", reason: "another hook" }, { home: HOME, now: 3, env: {} });
+      }`,
+    }).finally(lift);
+    expect({ opened, ...leftInPlace(rerailHome, elsewhere, text) }).toEqual({
+      opened: "", live: "link", leadsTo: elsewhere,
+      files: [HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`, expect.stringMatching(/^hook-failures\.jsonl\.\d+\.[0-9a-f-]+\.old$/u)],
+      counted: 3 + 1, leftAsItWas: true,
+    });
+  });
+
+  // As above, and the other hook runs right after the first step of putting the link back. The link takes the live name
+  // in that one step, so the other hook finds it there, as `main`'s hook finds it, and appends through it to the
+  // person's file, which has room; status counts that failure through the link. Had the step only looked and found the
+  // live name free, the other hook would begin a log there, and the rename back would replace it.
+  it("puts a link it took back at the live name in one step, so a hook that runs then finds it there", async context => {
+    const rerailHome = await home();
+    const live = join(rerailHome, HOOK_FAILURES_FILE);
+    writeFullLog(rerailHome);
+    mkdirSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`));
+    const { elsewhere, text, made } = await linkMadeLater(context, rerailHome, 3);
+    const other = 'hookFailures.recordHookFailure({ host: "codex", event: "Stop", reason: "another hook" }, { home: HOME, now: 3, env: {} });';
+    await recordWithWrapped(rerailHome, 2, {
+      renameSync: `rename => (from, to) => {
+        if (from === ${JSON.stringify(live)} && to.endsWith(".old") && !globalThis.made) {
+          globalThis.made = true;
+          rename(${JSON.stringify(made)}, from);
+        }
+        return rename(from, to);
+      }`,
+      linkSync: `link => (existing, path) => {
+        let refused = null;
+        try { link(existing, path); } catch (error) { refused = error; }
+        if (!globalThis.other && [existing, path].includes(${JSON.stringify(live)})) {
+          globalThis.other = true;
+          ${other}
+        }
+        if (refused !== null) throw refused;
+      }`,
+    });
+    const { live: kind, leadsTo, files, counted } = leftInPlace(rerailHome, elsewhere, text);
+    const added = readFileSync(elsewhere, "utf8").slice(text.length).split("\n").filter(Boolean).map(line => (JSON.parse(line) as HookFailure).reason);
+    expect({ kind, leadsTo, files, counted, added }).toEqual({
+      kind: "link", leadsTo: elsewhere, files: [HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`], counted: 3 + 1, added: ["another hook"],
+    });
+  });
+
   // As above with `.1` free, and another hook, which finds no live log while this one holds the link, begins one. The
   // hook moves the link on to `.1` from its own name, as `main`'s rename moves it from the live name, and the log the
   // other hook began stays, with both hooks' failures. Put back to the live name first, the link would replace that log
