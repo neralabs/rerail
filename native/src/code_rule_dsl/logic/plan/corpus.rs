@@ -4972,6 +4972,14 @@ fn run_observed(
     let build_doc = |d: &i64, path: &String, module: Option<Arc<str>>, unbuilt: Unbuilt| -> Result<(Option<memo::Content>, Option<[u8; 32]>, syntax::Document)> {
         let Unbuilt { text: source, content: source_id, digest, tape, partial } = unbuilt;
         // The content's digest, which names its memo entry: the writer is given it, not left to read it (decision 0104).
+        // A stored source the stat index knew was not hashed to look it up: its text, in hand, is hashed here.
+        let digest = match (digest, source_id) {
+            (None, Some(memo::Content::Stored(_))) => {
+                use sha2::{Digest as _, Sha256};
+                Some(Sha256::digest(source.as_bytes()).into())
+            }
+            (d, _) => d,
+        };
         let content_digest = digest;
         if let Some(entry) = partial {
             partials.lock().insert(*d, entry);
@@ -6312,7 +6320,12 @@ fn run_observed(
                     let (Some(columns), Some((_, texts))) = (super::super::sql::select::input_columns(rel), crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(r, _)| r == rel)) else { continue };
                     let have = source.columns();
                     let at = |name: &str| have.iter().position(|h| h == name);
-                    let Some(owner) = columns.first().and_then(|c| at(c)) else { continue };
+                    // Only a relation whose rows are a node's or a document's names the files holding a string: a
+                    // string-keyed one's owner column is a string (`value_type(v, t)`), which read as a document
+                    // made each value its own file, and a value no file's text holds was then dropped as another
+                    // chunk's, not kept as a made one (Q27).
+                    let memo::Owner::Node(o) = memo::owner(rel) else { continue };
+                    let Some(owner) = columns.get(o).and_then(|c| at(c)) else { continue };
                     let texts: Vec<usize> = texts.iter().filter_map(|&c| columns.get(c).and_then(|c| at(c))).collect();
                     for r in 0..source.len() {
                         for &c in &texts {
@@ -10422,9 +10435,15 @@ impl Own {
             }
             let rel = v.rel_name(atom.rel());
             for (i, arg) in atom.args().enumerate() {
-                if let TermRef::Int(n) = arg {
-                    out.entry((rel.to_owned(), super::sql_col(rel, i))).or_default().insert(n);
-                }
+                // A kind, field or name is a branded atom (decision 0270), compared as its atom's value, as
+                // `Body::constant` reads it: unread here, `field($l, "left", $t)` had no postings, and was priced
+                // at one row a line (Q36: 1,159 read; `p293_read_elsewhere`, 8 priced for 196,060 done).
+                let n = match arg {
+                    TermRef::Int(n) => n,
+                    TermRef::Branded(a) => a.value(),
+                    _ => continue,
+                };
+                out.entry((rel.to_owned(), super::sql_col(rel, i))).or_default().insert(n);
             }
         }
         out
@@ -10746,6 +10765,18 @@ pub mod tests {
         assert!(demands["alias"].contains(&(1,9)));
         assert!(demands["tags"].contains(&(1,9)));
         assert!(demands["raw"].contains(&(2,9)),"measure the actual source column before planning its consumers");
+    }
+
+    /// A kind's or a field's name in a rule is a branded atom (decision 0270): its postings are counted as an
+    /// integer constant's are (Q36: unread, `field($l, "left", $t)` was priced at one row, 1,159 read).
+    #[test]
+    fn branded_constants_have_their_postings_counted() {
+        use super::*;
+        let p = front::prune(crate::code_rule_dsl::logic::rr::parse(".decl left_name(l: node)\n.output left_name\nleft_name(l) :- field(l, \"left\", t), kind(t, \"identifier\").\n").unwrap());
+        let placed = crate::code_rule_dsl::logic::plan::body::Placed::of_program(&p).unwrap();
+        let constants = Own::constants_of(&placed.v);
+        let of = |rel: &str| constants.iter().filter(|((r, _), _)| r == rel).map(|(_, v)| v.len()).sum::<usize>();
+        assert_eq!((of("field"), of("kind")), (1, 1), "{constants:?}");
     }
 
     #[test]

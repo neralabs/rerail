@@ -1137,6 +1137,33 @@ fn a_stratum_whose_rules_join_nothing_keeps_its_facts() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A rule that copies a bound input's columns (`kind(n, k) :- node(_, n, k, _, _)`, the data-layer prelude's) is
+/// held as a view of the input, not derived by a stratum (Q37); its readers find what the derived copy gave them.
+/// A rule that drops the input's key, or filters it, is still a stratum.
+#[test]
+fn a_copy_of_an_inputs_columns_is_a_view_of_it() {
+    let dir = corpus("input-view", &[TREE]);
+    let program = ".decl kind(n: node, k: symbol)\nkind(n, k) :- node(_, n, k, _, _).\n\
+                   .decl kinds(k: symbol)\nkinds(k) :- node(_, _, k, _, _).\n\
+                   .decl calls(s: number, k: symbol)\ncalls(s, k) :- kind(n, \"call\"), node(_, n, _, s, _), kinds(k), k = \"call\".\n\
+                   .output calls\n";
+    let before = crate::code_rule_dsl::logic::plan::input_views();
+    let viewed = run(&dir, program, &["calls"]);
+    let held = crate::code_rule_dsl::logic::plan::input_views() - before;
+    assert!(held >= 1, "kind is a view of node: {held}");
+    let copied = {
+        let _copy = super::switches::set(&[("RERAIL_COPY_VIEWS", "1")]);
+        let before = crate::code_rule_dsl::logic::plan::input_views();
+        std::fs::remove_dir_all(dir.join(".out")).ok();
+        let got = run(&dir, program, &["calls"]);
+        assert_eq!(crate::code_rule_dsl::logic::plan::input_views(), before, "RERAIL_COPY_VIEWS derives it");
+        got
+    };
+    assert_eq!(viewed, copied);
+    assert_eq!(viewed[0].len(), 5, "the five calls: {viewed:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A core relation nothing derives and the runner does not bind is a named error, not the planner's missing
 /// statistics; those that need CPython say so. A program's own input is its business: no such error.
 #[test]

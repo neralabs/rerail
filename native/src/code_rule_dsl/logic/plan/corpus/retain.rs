@@ -338,10 +338,26 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
     let mut clean = BTreeSet::new();
     // Gates decide on the whole program. Reuse it only when every input and derived relation survived unchanged.
     // A view of one input (`input_views`, only with `RERAIL_SESSION_VIEWS=on`) is never kept: its rule stays.
-    let views = match super::maintain::views_on() {
-        true => super::maintain::input_views(prog)?,
+    let mut views: BTreeMap<String, ()> = match super::maintain::views_on() {
+        true => super::maintain::input_views(prog)?.into_keys().map(|r| (r, ())).collect(),
         false => BTreeMap::new(),
     };
+    // A copy of an input's columns is held as a view of it in every run (Q37, `input_view_shape`): not kept either.
+    {
+        let f = prog.fields()?;
+        let mut by_head: BTreeMap<&str, Vec<RuleRef<'_>>> = BTreeMap::new();
+        for r in prog.v.rules() {
+            by_head.entry(prog.v.rel_name(r.head().rel())).or_default().push(r);
+        }
+        for (rel, rules) in by_head {
+            if let [rule] = rules.as_slice()
+                && !f.has_facts(rel) && f.native(rel).is_none() && !f.lattice(rel) && !f.request(rel) && !f.produced(rel) && !f.gate(rel)
+                && crate::code_rule_dsl::logic::plan::input_view_shape(&prog.v, *rule, |r| f.is_input(r)).is_some()
+            {
+                views.insert(rel.to_owned(), ());
+            }
+        }
+    }
     let complete = kept.is_some_and(|k| sccs.iter().flatten().all(|r| k.holds(r, prog) || views.contains_key(r)));
     let whole = kept.is_none() || (!prog.fields()?.gates().is_empty() && (!changed.is_empty() || !complete));
     let mut ran = 0;
@@ -470,9 +486,10 @@ pub(in crate::code_rule_dsl) fn after(
     let mut bytes: usize = rels.values().map(Kept::bytes).sum();
     let mut past: HashMap<String, Kept> = HashMap::new();
     for (rel, width, held) in derived {
-        // An index's relation (the reach index, decision 0119) is made again in less than reading it back costs:
-        // not kept, so it never takes the budget from the relations whose rows are work.
-        if held.held_source().is_some() {
+        // An index's relation (the reach index, decision 0119), or a view of an input's columns (Q37), is made again
+        // in less than reading it back costs: not kept, so it never takes the budget from the relations whose rows
+        // are work.
+        if held.view.is_some() {
             continue;
         }
         let k = Kept { rel: held, width, output: outputs.get(&rel).cloned() };

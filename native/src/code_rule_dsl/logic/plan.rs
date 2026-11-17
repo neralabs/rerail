@@ -5052,6 +5052,51 @@ fn add_answers(db: &Connection, answered: &mut BTreeMap<String, Vec<Vec<i64>>>, 
     Ok(())
 }
 
+/// Rule `rule` (of version `v`) as a view of an input's columns (Q37), the input bound or not: its body one positive
+/// atom of an input (`input`), no constants and each variable once, its head distinct variables of it, and its rows
+/// the input's, one each: the head keeps the input's key (`node`'s node, `doc`'s and `tape`'s first column) or every
+/// column. The input, and the atom's column of each head column. A run holds such a relation in place
+/// (`Run::input_view`); a session neither keeps nor counts it run (`retain::cut`).
+pub(crate) fn input_view_shape(v: &super::program_image::Version, rule: super::program_image::RuleRef<'_>, input: impl Fn(&str) -> bool) -> Option<(String, Vec<usize>)> {
+    if std::env::var_os("RERAIL_COPY_VIEWS").is_some() {
+        return None;
+    }
+    let mut body = rule.body();
+    let (Some(only), None) = (body.next(), body.next()) else { return None };
+    let Lit::Atom(a) = only.view() else { return None };
+    let base = v.rel_name(a.rel());
+    if a.neg() || !input(base) {
+        return None;
+    }
+    let args: Vec<TermRef<'_>> = a.args().collect();
+    let mut vars = HashSet::new();
+    if !args.iter().all(|t| match t {
+        TermRef::Var(x) => vars.insert(*x),
+        TermRef::Wild => true,
+        _ => false,
+    }) {
+        return None;
+    }
+    let at: Vec<usize> = rule.head().args().map(|t| t.var().and_then(|x| args.iter().position(|y| y.var() == Some(x)))).collect::<Option<_>>()?;
+    if at.iter().collect::<HashSet<_>>().len() != at.len() {
+        return None;
+    }
+    let key = match base {
+        "node" if args.len() == 5 => Some(1),
+        "doc" | "tape" => Some(0),
+        _ => None,
+    };
+    (key.is_some_and(|k| at.contains(&k)) || at.len() == args.len()).then(|| (base.to_owned(), at))
+}
+
+/// The strata the process held as views of a bound input's columns (`Run::input_view`, Q37), not derived.
+static INPUT_VIEWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many strata the process held as views of an input's columns, for tests and profiles.
+pub fn input_views() -> u64 {
+    INPUT_VIEWS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The relations of `prog` whose one rule's body is a single atom of distinct variables and wildcards.
 pub fn projections(prog: &Program) -> HashMap<String, Vec<(usize, i64)>> {
     let mut by_head: HashMap<&str, Vec<&Rule>> = HashMap::new();
@@ -7179,6 +7224,48 @@ impl<'a> Run<'a, '_> {
         out
     }
 
+    /// Rule `r` as a view of a bound input (Q37): its body one positive atom of an input bound in place (no
+    /// constants, each variable once), its head distinct variables of it, and its rows the input's, one each: the
+    /// head keeps the input's key (`node`'s node, `doc`'s and `tape`'s first column) or every column. The input, its
+    /// source, and the source's column of each head column.
+    fn input_view(&self, r: RuleKey) -> Option<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<usize>)> {
+        let (v, rule) = self.versions.rule_at(r);
+        let (base, at) = input_view_shape(v, rule, |rel| self.inputs.contains(rel))?;
+        let base = base.as_str();
+        let args_len = rule.body().next().and_then(|l| l.atom()).map_or(0, |a| a.args().count());
+        let src = crate::code_rule_dsl::facts::vtab::bound_source(self.db, base)?;
+        let src = src.frozen().unwrap_or(src);
+        let names = crate::code_rule_dsl::facts::vtab::named(base, src.as_ref());
+        if names.len() != args_len {
+            return None;
+        }
+        let cols: Vec<usize> = at.iter().map(|&c| names.iter().position(|n| *n == self.model.col(base, c))).collect::<Option<_>>()?;
+        Some((base.to_owned(), src, cols))
+    }
+
+    /// Gives view `rel` of `base`'s source columns `cols` (`input_view`) those columns' statistics, and its rows.
+    fn view_stats(&mut self, rel: &str, base: &str, src: &dyn crate::code_rule_dsl::facts::vtab::Source, cols: &[usize]) -> Result<()> {
+        self.model.stats.card.insert(rel.to_owned(), src.len().max(1) as f64);
+        let f = self.versions.whole(self.version);
+        self.model.resolve(f, [base])?;
+        let names = crate::code_rule_dsl::facts::vtab::named(base, src);
+        let Some((stats, vals)) = self.model.stats.of_columns(base, &names, cols) else { return Ok(()) };
+        let width = stats.len();
+        self.model.stats.measured(rel, stats.into_iter().enumerate().map(|(c, m)| (sql_col(rel, c), m)), vals.into_iter().map(|(c, v, n)| (sql_col(rel, c), v, n)));
+        input_stats(&mut self.model.stats, &mut self.model.ndv, Some(width), rel)
+    }
+
+    /// Stratum `scc` (`rules`) as a view of an input's columns (`input_view`): its relation, and what it views.
+    fn input_view_stratum(&self, scc: &BTreeSet<String>, rules: &[RuleKey]) -> Option<(String, String)> {
+        let f = self.fields();
+        let (Some(rel), 1, [r]) = (scc.iter().next(), scc.len(), rules) else { return None };
+        if f.has_facts(rel) || f.native(rel).is_some() || f.lattice(rel) || f.request(rel) || f.produced(rel) || f.gate(rel) {
+            return None;
+        }
+        let (base, _, cols) = self.input_view(*r)?;
+        Some((rel.clone(), format!("{rel} = {base}{cols:?}")))
+    }
+
     /// T's `native_stratum`: plans with the stratum as the component being solved when a rule reads it. The stratum
     /// may come back waiting on its device wave (`Native::Waiting`); `native_resume` finishes it once the wave ran.
     /// Whether a native join reads the view `r` from its input in place (`projections`): no SQL view is made for it
@@ -7408,6 +7495,22 @@ impl<'a> Run<'a, '_> {
                 super::native::component::hold_empty(self.db, r, types(r).into_bytes());
             }
             super::profile::stratum(&stratum_key(scc), "native set engine", || "every rule joins an empty relation: held empty, no component opened".to_owned());
+            self.native_rels.extend(scc.iter().cloned());
+            return Ok(Native::Ran);
+        }
+        // A copy of a bound input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _)`, 3.5 M rows a cold run of
+        // hogql): its relation is held as a view of the input's columns (`hold_view`), read in place by every reader,
+        // and no component copies it. `RERAIL_COPY_VIEWS` derives it as before (to measure what the view saves).
+        if let ([rel], [r]) = (rels.as_slice(), rules.as_slice())
+            && based.is_empty() && gates.is_empty() && levels.is_empty() && !asks && !facts
+            && let Some((base, src, cols)) = self.input_view(*r)
+        {
+            // Its rows are the input's, one each, so each column's statistics are the input column's: without them
+            // each column read as one value, and its readers' plans probed it as all its rows.
+            self.view_stats(rel, &base, src.as_ref(), &cols)?;
+            super::native::component::hold_view(self.db, rel, src, cols.clone(), types(rel).into_bytes());
+            INPUT_VIEWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            super::profile::stratum(&stratum_key(scc), "native set engine", || format!("a view of {base}'s columns {cols:?}: held in place, no component opened"));
             self.native_rels.extend(scc.iter().cloned());
             return Ok(Native::Ran);
         }
@@ -10181,7 +10284,10 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     // run or chunk made for the same program at its scale or more (`choices`, decision 0090 §5).
     // A program of no rules (a cross part whose every stratum is kept) has no choice to make, so none is kept for it:
     // keeping one wrote to the store in the run after a cold one, for a program no other run plans (decision 0250).
-    let chosen_key = (corpus && program.len() > 0).then(|| choices::key(&normal_v));
+    // So too a program whose every rule is a view of an input's columns (Q37): held in place, never kept, it is what
+    // is left of a cross part kept whole otherwise.
+    let choosing = program.len() > 0 && normal_v.fields().ok().is_none_or(|f| normal_v.v.rules().any(|r| input_view_shape(&normal_v.v, r, |x| f.is_input(x)).is_none()));
+    let chosen_key = (corpus && choosing).then(|| choices::key(&normal_v));
     let reused = chosen_key.as_ref().and_then(|k| choices::lookup(k, model.stats.nodes));
     // The program's version as the passes chose it (t36 item 6): their overlay, or the kept choice's, which the run
     // reads its rules from as it is; the program's own where nothing was rewritten.
@@ -11263,6 +11369,22 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
         let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
         if let Some(ks) = strata_kept.as_deref_mut() {
             let reads = stratum_reads(f0, &run_vs, scc, &rules);
+            // A view of an input's columns (Q37) is never kept: it is held again in place, which is no work, so it
+            // is clean as its input is. Its digest is its reads' with what it views (as a SQL view's, `view_digest`).
+            if let Some((rel, view)) = run.input_view_stratum(scc, &rules) {
+                let nows: Option<Vec<(String, u64)>> = reads
+                    .iter()
+                    .map(|r| {
+                        let now = if fresh.contains_key(r) { fresh[r] } else if input_set.contains(r.as_str()) { ks.input(r) } else { None };
+                        now.map(|d| (r.clone(), d))
+                    })
+                    .collect();
+                if run.native_stratum_now(scc, &rules)? {
+                    fresh.insert(rel, view_digest(nows.as_deref(), &[(view, Some(0))]));
+                    clean_strata += 1;
+                    continue;
+                }
+            }
             // A stratum the engine makes otherwise (a native operator, a lattice, a view, a produced request, a
             // tree pattern read off the documents) always runs.
             // A request this stratum makes and answers inside its fixpoint (decision 0065 §2a) is its native step:
