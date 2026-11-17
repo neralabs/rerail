@@ -690,6 +690,12 @@ pass.
   it). Passes, with the executor's other 13 top-level tests and the on-request tests.
 
 - **Done when**: each passes on the hub, fixed at its cause.
+- **Record** (2026-11-16, this branch at d9419e6ee): `rule_files_pass_their_own_tests` passes. `executors_are_shared`
+  failed on `crates/blocks/src/gpu.rs` alone: `Gpu::new` made its own Metal device and command queue, where decision
+  0100 §2 has the process's one (`forest`'s `gpu::shared`, handed out as `rerail_metal::device()`/`queue()`). Its only
+  caller is the `paces` example; the engine's GPU lane is `accel`'s `Gpu`, on the shared queue. Now `Gpu::on(device,
+  queue)` takes them from its caller, and the example, a process of its own, makes them. Passes; the example builds.
+  The replay sample was not run (Q21's other tests all pass now).
 
 ### Q22. Two `rr::tests` red on the branch head
 
@@ -779,6 +785,14 @@ pass.
   reads 9 rows, all `str` but one `int`, where 29 are wanted: every `int`, `float`, `bool`, `NoneType` and
   `ellipsis` value but `12` is missing. Maybe one of the 32 hub failures in Q17 ("The hub's gate failures at 692cc9772"); not checked on the hub.
 - **Done when**: it passes, traced to the commit and cause that dropped the non-string values.
+- **Record** (2026-11-16): passes with `RERAIL_CORPUS_MEMO=off`, so it is the memoised chunk's hand-on of base rows
+  (`corpus.rs`, the base rows by file). A string-keyed row (`value_type(v, t)`) is each file's whose text holds `v`,
+  found by scanning the chunk's text sources (`strings::TEXT_COLUMNS`). `value_type` is one of them, and its owner
+  was taken as its first column, `v` itself: each value's string id was read as a document, so every value seemed
+  held by a file of another chunk and was skipped. A value only some file's text also gives (`str`, `text`: `12`,
+  `"ab"`) carried its real file beside it and stayed. A value none gives (`-3`, `1e+20`, `None`) should be every file
+  of the chunk's, as a made string is. Now only a relation owned by a node or a document (`memo::owner`) names a
+  string's files. The test passes, with the corpus base tests and the text-test tests (116).
 
 ### Q29. Two of rr_aot's shape tests check shapes 0177 retired
 
@@ -952,6 +966,16 @@ pass.
   run starts seconds after the cold one: the stat index's racy window is a candidate), not the commit.
 - **Done when**: the faults' detail lines from a failing run name what the observer recorded, and the cause is fixed.
   The m3 was short of disk (38 GB free, the farm's floor 40) when this was written, so it is not reproduced yet.
+- **Record** (2026-11-16, the m3 with 133 GB free): reproduced, and named. The warm run straight after the cold one
+  re-records all 317 rule files (detail: "317 paths, first …/rules/bandit-b101-assert-used.rr"); warm runs 5 s and 20 s
+  later record nothing. The check copies the rules in just before the cold run, which reads them inside the racy
+  window (`RACY_NS`, 2 s: an answer is trusted only when recorded that long after the path changed, git's rule). The
+  answer was kept untrusted, so the next run read each file again and recorded it: a write. The m1max is slower to
+  the first read and missed the window. Correct, but the write belongs to the run that read them: the observer now
+  keeps the paths it recorded inside the window, and at the outermost run's end reads again each whose window has
+  passed (same stat, same bytes or listing): trusted then, written with that run's answers. One still inside waits for
+  a later end; one that changed is the next run's. Test: `a_racy_answer_is_settled_at_the_runs_end`. On the m3 the
+  strict warm run straight after the cold one now exits 0 with no fault (it exited 3).
 - **Seen beside it, not a fault**: a run with a tape store leaves an empty `store.sqlite` in its outputs: the run's SQL
   scratch, whose connection is opened before the first wave (0104) and creates the file even when no statement runs.
   Not creating it eagerly (`atoms::key` resolving a missing file by its directory) did not remove it: the connection
