@@ -130,6 +130,7 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
         BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
         BlockInst::Walk { .. } | BlockInst::Args(..) => unreachable!("the CPU's form only: Metal runs a walk's rounds"),
         BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
+        BlockInst::Early(..) => unreachable!("refused at `run_batch`: Metal runs no `early` yet"),
         // `j` in `a`; below 6 the period's pattern in `b` and `imm`.
         BlockInst::Position(j) => {
             let pattern = (0..64u32).filter(|i| u32::from(j) < 6 && i >> j & 1 == 1).fold(0u64, |a, i| a | 1 << i);
@@ -215,8 +216,9 @@ pub fn run_batch(
 ) -> Result<BatchRun, Error> {
     // A fixed point (`rounds`) is the CPU's for now: each lane would run its rounds in its own
     // frame, within `block::MAX_ROUNDS`, to the same values.
-    // A `back_fill` likewise: a backward pass over the groups' summaries, not generated yet.
-    if programs.iter().any(|p| !p.groups.is_empty() || p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_)))) {
+    // A `back_fill` likewise: a backward pass over the groups' summaries, not generated yet. An
+    // `early` too (decision 0330): a file's first lane shifted down, not generated yet.
+    if programs.iter().any(|p| !p.groups.is_empty() || p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_) | BlockInst::Early(..)))) {
         return Err(Error::UnsupportedBackend);
     }
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
@@ -1342,6 +1344,7 @@ fn emit(
             }
             BlockInst::Position(j) => format!("{m}(0) - {m}((uint({offset}) >> {j}u) & 1u)"),
             BlockInst::Carry(_) => unreachable!("a carry is its group's loop's (`emit`)"),
+            BlockInst::Early(..) => unreachable!("refused at `run_batch`: Metal runs no `early` yet"),
             BlockInst::Walk { .. } | BlockInst::Args(..) => unreachable!("the CPU's form only: Metal runs a walk's rounds"),
             // A slot word of a pass before (`native_ir::Passes`): the forward carry's, a block a
             // word, in the output buffer `out`.

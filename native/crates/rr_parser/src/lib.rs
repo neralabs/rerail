@@ -3251,9 +3251,108 @@ mod json_probe {
         }
     }
 
+    /// JSON's tier 1 by pass (decision 0323's next measure): over JSON's corpus
+    /// (`RERAIL_JSON_CORPUS`) under B, each pass's instructions and cycles a byte, the least of
+    /// `RR_ROUNDS`, against simdjson's stage 1 on the same files. `RERAIL_JSON_RUST=<path>`:
+    /// tier 1 written as Rust there (`clif_rust`, the ahead-of-time form), to read its shape.
+    #[test]
+    #[ignore = "a benchmark: run by hand"]
+    fn json_tier1_by_pass() {
+        use rerail_compiler::records::Split;
+        let retired = rerail_compiler::native_cpu_codegen::retired;
+        let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(9);
+        let mut n = rerail_compiler::native_ir::lower(&json_split(Split::Tier2), 0, 0).expect("lowers");
+        for p in &mut n.block_programs {
+            p.pad = rerail_compiler::native_cpu_block::BACK as u16;
+        }
+        let p = json_parser(&n);
+        if let Ok(path) = std::env::var("RERAIL_JSON_RUST") {
+            rerail_compiler::native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
+            let bit = rerail_compiler::native_cpu_lanes::BIT_TEST.swap(true, std::sync::atomic::Ordering::Relaxed);
+            let kept = json_parser(&n);
+            rerail_compiler::native_cpu_lanes::BIT_TEST.store(bit, std::sync::atomic::Ordering::Relaxed);
+            let src = rerail_compiler::clif_rust::rust_source(&kept).unwrap_or_else(|e| panic!("to Rust: {e}"));
+            std::fs::write(&path, &src).expect("writes");
+            eprintln!("tier 1 as Rust: {path}, {} bytes", src.len());
+        }
+        let files: Vec<Vec<u8>> = json_files().into_iter().filter(|f| p.image(f).is_ok()).collect();
+        let bytes: usize = files.iter().map(Vec::len).sum();
+        let passes = p.tier1.pass_count();
+        let mut batches: Vec<_> = files.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_slice()])).collect();
+        for b in &mut batches {
+            b.call(&p.tier1);
+        }
+        let mut best = vec![(u64::MAX, u64::MAX); passes + 1];
+        let kernel = rerail_simdjson_native::Kernel::best().expect("a simdjson kernel");
+        for _ in 0..rounds {
+            for k in 0..passes {
+                let (i0, c0) = retired();
+                for b in &mut batches {
+                    b.call_pass(&p.tier1, k);
+                }
+                let (i1, c1) = retired();
+                best[k] = (best[k].0.min(i1 - i0), best[k].1.min(c1 - c0));
+            }
+            let (i0, c0) = retired();
+            let mut n = 0i64;
+            for f in &files {
+                n += kernel.stage1(f, false);
+            }
+            std::hint::black_box(n);
+            let (i1, c1) = retired();
+            best[passes] = (best[passes].0.min(i1 - i0), best[passes].1.min(c1 - c0));
+        }
+        eprintln!("{} files, {bytes} bytes; least of {rounds} rounds; simdjson's kernel {}", files.len(), kernel.name());
+        let per = |x: u64| x as f64 / bytes as f64;
+        for (k, &(i, c)) in best.iter().enumerate() {
+            let name = if k == passes { "simdjson stage 1".to_string() } else { format!("tier 1 pass {k}{}", if k + 1 == passes { " (records)" } else { "" }) };
+            eprintln!("{name:>24}: {:7.3} instructions {:6.3} cycles a byte", per(i), per(c));
+        }
+        // Inputs that part the block's masks from the token loop: strings of 5,000 bytes (a few
+        // tokens: the masks alone), the same of two-byte UTF-8, white space, and dense tokens.
+        // Each input is cut into files under the tape's 16-bit widths: 16 files of about 60 KB.
+        let n = 60_000;
+        let synth: [(&str, Vec<u8>); 5] = [
+            ("long ASCII strings", [b"[".as_slice(), &format!("\"{}\",", "a".repeat(5_000)).repeat(n / 5_000).into_bytes(), b"0]"].concat()),
+            ("long UTF-8 strings", [b"[".as_slice(), &format!("\"{}\",", "\u{e9}".repeat(2_500)).repeat(n / 5_000).into_bytes(), b"0]"].concat()),
+            ("white space", [b"[".as_slice(), &vec![b' '; n], b"]"].concat()),
+            ("numbers", [b"[".as_slice(), &"1234,".repeat(n / 5).into_bytes(), b"0]"].concat()),
+            ("short strings", [b"[".as_slice(), &"\"ab\",".repeat(n / 5).into_bytes(), b"0]"].concat()),
+        ];
+        for (name, f) in &synth {
+            p.image(f).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+            let mut bs: Vec<_> = (0..16).map(|_| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_slice()])).collect();
+            for b in &mut bs {
+                b.call(&p.tier1);
+            }
+            let mut best = (u64::MAX, u64::MAX);
+            for _ in 0..rounds {
+                let (i0, c0) = retired();
+                for b in &mut bs {
+                    b.call_pass(&p.tier1, passes - 1);
+                }
+                let (i1, c1) = retired();
+                best = (best.0.min(i1 - i0), best.1.min(c1 - c0));
+            }
+            let mut s = (u64::MAX, u64::MAX);
+            for _ in 0..rounds {
+                let (i0, c0) = retired();
+                for _ in 0..16 {
+                    std::hint::black_box(kernel.stage1(f, false));
+                }
+                let (i1, c1) = retired();
+                s = (s.0.min(i1 - i0), s.1.min(c1 - c0));
+            }
+            let per = |x: u64| x as f64 / (16 * f.len()) as f64;
+            eprintln!("{name:>24}: tier 1 {:7.3} instructions {:6.3} cycles a byte; simdjson {:6.3} {:6.3}", per(best.0), per(best.1), per(s.0), per(s.1));
+        }
+    }
+
     /// JSON's program with its strings split where `at` says (decision 0323).
     fn json_split(at: rerail_compiler::records::Split) -> rerail_compiler::program::Words {
-        let mut w = program(include_str!("../../json_parser/json.bitlex")).unwrap_or_else(|e| panic!("json.bitlex: {e}"));
+        // `RERAIL_JSON_BITLEX` names another grammar file, for a probe's variants.
+        let text = std::env::var("RERAIL_JSON_BITLEX").map(|p| std::fs::read_to_string(p).expect("the grammar")).unwrap_or_else(|_| include_str!("../../json_parser/json.bitlex").to_owned());
+        let mut w = program(&text).unwrap_or_else(|e| panic!("json.bitlex: {e}"));
         w.block_programs[0].records.as_mut().expect("records").split_parts_in(at);
         w
     }
@@ -3364,6 +3463,13 @@ mod json_probe {
                 inputs.push(format!("{}\"{}\\n{}\"", " ".repeat(pad), "s".repeat(n), "t".repeat(n)).into_bytes());
                 inputs.push(format!("{}[\"{}\", \"{}\\\\\"]", " ".repeat(pad), "s".repeat(n), "\\\"".repeat(n / 2)).into_bytes());
                 inputs.push(format!("{}\"{}", " ".repeat(pad), "s".repeat(n)).into_bytes());
+            }
+        }
+        // A byte order mark, whole or cut, at the start and not (an `early`, decision 0330), in
+        // short files and before a value over a block's edge.
+        for head in [&b"\xef\xbb\xbf"[..], b"\xef\xbb", b"\xef", b" \xef\xbb\xbf", b"\xef\xbb\xbf\xef\xbb\xbf"] {
+            for t in ["", "1", "[1]", "\"a\"", "  {\"k\": 12}", &*format!("[{}0]", "1,".repeat(40))] {
+                inputs.push([head, t.as_bytes()].concat());
             }
         }
         let files = json_files();

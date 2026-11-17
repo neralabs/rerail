@@ -47,9 +47,10 @@ pub struct Local {
 }
 
 /// Whether operation `x` is carried: its bit depends on bytes any distance away. A fixed
-/// point's members are: their words are the settled rounds'.
+/// point's members are: their words are the settled rounds'. An `early` is taken as one: it
+/// reads the bytes after, which no window holds.
 pub fn carried(program: &BlockProgram, members: &[bool], x: usize) -> bool {
-    members[x] || matches!(program.ops[x], BlockOp::Toggle(_) | BlockOp::Escaped(_) | BlockOp::Fill(..) | BlockOp::BackFill(..) | BlockOp::Carry(_))
+    members[x] || matches!(program.ops[x], BlockOp::Toggle(_) | BlockOp::Escaped(_) | BlockOp::Fill(..) | BlockOp::BackFill(..) | BlockOp::Carry(_) | BlockOp::Early(..))
 }
 
 /// Whether operation `x` is a leaf of position alone: a byte test, a constant, or a value of

@@ -501,6 +501,12 @@ fn full_words(native: &BlockNative, lanes: &[bool]) -> Vec<Option<u64>> {
                 let first = Known { known: (y.known << k) | low, value: y.value << k };
                 (full, first)
             }
+            // In the word: the top `k` bits known zero.
+            BlockInst::Early(a, k) => {
+                let (x, y) = get(a);
+                let down = |x: Known| Known { known: (x.known >> k) | !(u64::MAX >> k), value: x.value >> k };
+                (down(x), down(y))
+            }
             _ => (NONE, NONE),
         };
     }
@@ -541,12 +547,12 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
             BlockInst::Const(_) | BlockInst::Within(_) => 0,
             BlockInst::And(a, b) => c(a) + c(b),
             BlockInst::AndNot(a, _) => c(a) + 1,
-            BlockInst::Prev(a, _) => c(a),
+            BlockInst::Prev(a, _) | BlockInst::Early(a, _) => c(a),
             _ => 1,
         };
         carried[x] = match *inst {
             BlockInst::And(a, b) => carried[usize::from(a)] || carried[usize::from(b)],
-            BlockInst::AndNot(a, _) | BlockInst::Prev(a, _) => carried[usize::from(a)],
+            BlockInst::AndNot(a, _) | BlockInst::Prev(a, _) | BlockInst::Early(a, _) => carried[usize::from(a)],
             _ => !lanes[x] && inst.operands().is_empty() && !matches!(inst, BlockInst::Const(_) | BlockInst::Within(_)) || matches!(inst, BlockInst::Escaped(_) | BlockInst::Toggle(_) | BlockInst::Fill(..) | BlockInst::Carry(_) | BlockInst::Walk { .. }) || grouped[x],
         };
     }
@@ -563,7 +569,7 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
             let is = |x: u16| z[usize::from(x)] || matches!(native.insts[usize::from(x)], BlockInst::Const(0));
             z[at] = match *inst {
                 BlockInst::And(a, b) => is(a) || is(b),
-                BlockInst::AndNot(a, _) | BlockInst::Prev(a, _) | BlockInst::Fill(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) => is(a),
+                BlockInst::AndNot(a, _) | BlockInst::Prev(a, _) | BlockInst::Early(a, _) | BlockInst::Fill(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) => is(a),
                 BlockInst::Or(a, b) | BlockInst::Xor(a, b) => is(a) && is(b),
                 _ => false,
             };

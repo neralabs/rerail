@@ -167,6 +167,115 @@ pub type ByteSet = [u64; 4];
 /// The largest delay: the outputs are brought to it by `prev`s, and the executors shift it out.
 pub const MAX_DELAY: u8 = 63;
 
+/// What a value's word is known to be, over a file's words end to end (bit `i` of word `w` is
+/// position `64 w + i`; `len` the file's length):
+/// - `zero_from`: no bit at a position from it on (`first_bits`);
+/// - `ones`: `(g, e)`, a bit at every position from `g` up to `len + e` (`None`: past the end
+///   too);
+/// - `zero_past`: no bit at a position from `len + zero_past` on.
+#[derive(Clone, Copy, Debug, Default)]
+struct Bounds {
+    zero_from: Option<u32>,
+    ones: Option<(u32, Option<u32>)>,
+    zero_past: Option<u32>,
+}
+
+/// The positions value `v`'s bits lie below, when they all lie in a file's first bytes: a
+/// file's first byte, `~prev(~empty)`, has none from position 1 on, and so has an `and` with
+/// it; a `prev` of such a value, and an `or` of two, are bounded too. A value bounded so moves
+/// its bits down in the word with no carry (`BlockOp::Early`, `Lowering::early_to`). `None`
+/// where the operations do not show it.
+pub fn first_bits(ops: &[BlockOp], tables: &[ClassTable], v: u16) -> Option<u32> {
+    fn go(ops: &[BlockOp], tables: &[ClassTable], v: u16, memo: &mut HashMap<u16, Bounds>, depth: u32) -> Bounds {
+        if let Some(&b) = memo.get(&v) {
+            return b;
+        }
+        if depth > 256 {
+            return Bounds::default();
+        }
+        let mut get = |x: u16| go(ops, tables, x, memo, depth + 1);
+        // The smaller of two bounds, either one known; the larger, both known.
+        let min = |x: Option<u32>, y: Option<u32>| match (x, y) {
+            (Some(x), Some(y)) => Some(x.min(y)),
+            (x, None) | (None, x) => x,
+        };
+        let max = |x: Option<u32>, y: Option<u32>| Some(x?.max(y?));
+        // The end of a run of ones, `None` past the end: the nearer of two.
+        let end = |x: Option<u32>, y: Option<u32>| match (x, y) {
+            (Some(x), Some(y)) => Some(x.min(y)),
+            (x, None) | (None, x) => x,
+        };
+        let b = match ops[usize::from(v)] {
+            BlockOp::Const(0) => Bounds { zero_from: Some(0), ones: None, zero_past: Some(0) },
+            BlockOp::Const(u64::MAX) => Bounds { zero_from: None, ones: Some((0, None)), zero_past: None },
+            // A test the padding's 0x00 fails is zero past the end; one every byte passes, all
+            // ones.
+            BlockOp::Eq(c) => Bounds { zero_from: None, ones: None, zero_past: (c != 0).then_some(0) },
+            BlockOp::Class { table, bits } => {
+                let t = &tables[usize::from(table)];
+                let all = (0..=255u8).all(|b| t.member(b, bits));
+                Bounds { zero_from: None, ones: all.then_some((0, None)), zero_past: (!t.member(0, bits)).then_some(0) }
+            }
+            BlockOp::Within(d) => Bounds { zero_from: None, ones: Some((u32::from(d), Some(u32::from(d)))), zero_past: Some(u32::from(d)) },
+            BlockOp::And(a, c) => {
+                let (x, y) = (get(a), get(c));
+                let ones = match (x.ones, y.ones) {
+                    (Some((g, e)), Some((h, f))) => Some((g.max(h), end(e, f))),
+                    _ => None,
+                };
+                Bounds { zero_from: min(x.zero_from, y.zero_from), ones, zero_past: min(x.zero_past, y.zero_past) }
+            }
+            BlockOp::Or(a, c) => {
+                let (x, y) = (get(a), get(c));
+                // Either run of ones is one of the result's.
+                let ones = match (x.ones, y.ones) {
+                    (Some(o), Some(p)) => Some(if o.0 <= p.0 { o } else { p }),
+                    (o, None) | (None, o) => o,
+                };
+                Bounds { zero_from: max(x.zero_from, y.zero_from), ones, zero_past: max(x.zero_past, y.zero_past) }
+            }
+            BlockOp::Xor(a, c) => {
+                let (x, y) = (get(a), get(c));
+                Bounds { zero_from: max(x.zero_from, y.zero_from), ones: None, zero_past: max(x.zero_past, y.zero_past) }
+            }
+            // `a & ~c`: zero where `a` is, and where `c` is ones as far as `a` reaches; ones
+            // where `a` is and `c` is zero.
+            BlockOp::AndNot(a, c) => {
+                let (x, y) = (get(a), get(c));
+                let under = match y.ones {
+                    Some((g, None)) => Some(g),
+                    Some((g, Some(e))) if x.zero_past.is_some_and(|z| z <= e) => Some(g),
+                    _ => None,
+                };
+                let ones = match (x.ones, y.zero_from) {
+                    (Some((g, e)), Some(z)) => Some((g.max(z), e)),
+                    _ => None,
+                };
+                Bounds { zero_from: min(x.zero_from, under), ones, zero_past: x.zero_past }
+            }
+            BlockOp::Not(a) => {
+                let x = get(a);
+                Bounds { zero_from: match x.ones {
+                    Some((g, None)) => Some(g),
+                    _ => None,
+                }, ones: x.zero_from.map(|z| (z, None)), zero_past: None }
+            }
+            BlockOp::Prev(a, k) => {
+                let (x, k) = (get(a), u32::from(k));
+                Bounds { zero_from: x.zero_from.map(|z| z + k), ones: x.ones.map(|(g, e)| (g + k, e.map(|e| e + k))), zero_past: x.zero_past.map(|z| z + k) }
+            }
+            BlockOp::Early(a, k) => {
+                let (x, k) = (get(a), u32::from(k));
+                Bounds { zero_from: x.zero_from.map(|z| z.saturating_sub(k)), ones: None, zero_past: x.zero_past.map(|z| z.saturating_sub(k)) }
+            }
+            _ => Bounds::default(),
+        };
+        memo.insert(v, b);
+        b
+    }
+    go(ops, tables, v, &mut HashMap::new(), 0).zero_from
+}
+
 pub struct Lowering {
     /// Tier 2's shape.
     pub shape: Shape,
@@ -946,6 +1055,25 @@ impl Lowering {
         }
     }
 
+    /// `x` at delay `d`, below its own, when every bit of it lies in a file's first
+    /// `block::EARLY_BITS` bits (`first_bits`): the same bytes' bits, `x.d - d` earlier in the
+    /// word (`BlockOp::Early`). So a test of a file's start that looks ahead, as a byte order
+    /// mark's, delays nothing it is combined with (decision 0330). Else `x` as it is.
+    pub fn early_to(&mut self, x: Val, d: u8) -> Val {
+        if x.d <= d || !first_bits(&self.program.ops, &self.program.tables, x.v).is_some_and(|s| s <= crate::block::EARLY_BITS) {
+            return x;
+        }
+        let k = x.d - d;
+        let v = match self.program.ops[usize::from(x.v)] {
+            // A `prev` of at least `k`: its first `k` bits are the zeros it shifted in.
+            BlockOp::Prev(p, j) if j > k => self.op(BlockOp::Prev(p, j - k)),
+            BlockOp::Prev(p, j) if j == k => p,
+            BlockOp::Early(p, j) if u16::from(j) + u16::from(k) <= 63 => self.op(BlockOp::Early(p, j + k)),
+            _ => self.op(BlockOp::Early(x.v, k)),
+        };
+        Val { v, d, set: None, ..x }
+    }
+
     /// `within`, the stream's bytes, at delay `d`: a leaf, never a carry.
     pub fn within(&mut self, d: u8) -> Result<u16, String> {
         if d > MAX_DELAY {
@@ -955,6 +1083,7 @@ impl Lowering {
     }
 
     pub fn two(&mut self, a: Val, b: Val, f: fn(u16, u16) -> BlockOp, dirty: bool) -> Result<Val, String> {
+        let (a, b) = (self.early_to(a, b.d), self.early_to(b, a.d));
         let d = a.d.max(b.d);
         let (x, y) = (self.at(a, d)?, self.at(b, d)?);
         Ok(Val { v: self.op(f(x, y)), d, dirty, set: None })
@@ -1153,6 +1282,8 @@ impl Lowering {
         let by_a = match x {
             BlockOp::Const(0) => true,
             BlockOp::Prev(p, k) => self.implied(p, da - i32::from(k), b, db, steps),
+            // The same bytes' bits as its operand's, at a delay `k` smaller.
+            BlockOp::Early(p, k) => self.implied(p, da + i32::from(k), b, db, steps),
             BlockOp::And(p, q) => self.implied(p, da, b, db, steps) || self.implied(q, da, b, db, steps),
             BlockOp::AndNot(p, _) => self.implied(p, da, b, db, steps),
             BlockOp::Or(p, q) => self.implied(p, da, b, db, steps) && self.implied(q, da, b, db, steps),
@@ -1162,6 +1293,7 @@ impl Lowering {
         by_a || match y {
             // Its first `k` bits are the bytes before the stream's: only at a delay of `k` or more.
             BlockOp::Prev(q, k) if db >= i32::from(k) => self.implied(a, da, q, db - i32::from(k), steps),
+            BlockOp::Early(q, k) => self.implied(a, da, q, db + i32::from(k), steps),
             BlockOp::Or(p, q) => self.implied(a, da, p, db, steps) || self.implied(a, da, q, db, steps),
             BlockOp::And(p, q) => self.implied(a, da, p, db, steps) && self.implied(a, da, q, db, steps),
             _ => false,

@@ -975,6 +975,10 @@ impl Emit<'_, '_> {
             BlockInst::AndNot(a, b) => Some(Sym::and(&mut *f, logic(a), logic(b).not())),
             BlockInst::Or(a, b) => Some(Sym::and(&mut *f, logic(a).not(), logic(b).not()).not()),
             BlockInst::Xor(a, b) => Some(Sym::xor(&mut *f, logic(a), logic(b))),
+            BlockInst::Early(a, k) => match logic(a) {
+                Sym::Known(c) => Some(Sym::Known(c >> k)),
+                _ => None,
+            },
             _ => None,
         };
         if let Some(sym) = folded {
@@ -1019,6 +1023,8 @@ impl Emit<'_, '_> {
             BlockInst::Cmp { .. } | BlockInst::Bit { .. } => unreachable!("a row program's (`native_cpu_rows`)"),
             BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Pair { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) => unreachable!("on the vectors"),
             BlockInst::Const(_) | BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..) => unreachable!("folded"),
+            // A file's first bytes read ahead, in the word (`block::BlockOp::Early`).
+            BlockInst::Early(a, k) => f.ins().ushr_imm(v(a), i64::from(k)),
             BlockInst::Prev(a, k) => {
                 // The top `k` of the bits the field keeps of `a`'s previous word.
                 let field = state.fields[state.top[usize::from(a)].expect("a looked-back value has a field")];

@@ -60,3 +60,53 @@ fn delayed_outputs_equal_the_interpreter() {
         assert_eq!(compiled.run_files(&refs), g.block.run_files(&refs), "a batch");
     }
 }
+
+/// A test of the file's first bytes that looks ahead, as a byte order mark's (decision 0330):
+/// its bits all lie in the first bytes, so it is brought to the earlier delay by an `early`,
+/// and nothing it is combined with is delayed.
+const EARLY: &str = "lexer t
+class a = 'a'
+class b = 'b'
+class c = 'c'
+class s = ' '
+mask head = ~prev(~empty) & a & next(b) & next(c, 2)
+mask head_bytes = head | prev(head) | prev(head, 2)
+escape \"w\" when s & ~head_bytes
+escape \"h\" when head_bytes
+";
+
+#[test]
+fn a_files_start_read_ahead_delays_nothing() {
+    use crate::block::BlockOp;
+    let g = small(EARLY);
+    assert_eq!(g.block.delay, 0, "a delay where an `early` does");
+    assert!(g.block.ops.iter().any(|op| matches!(op, BlockOp::Early(..))), "no `early`");
+    let compiled = native_cpu_block::compile(&g.native).expect("compiles");
+    // The escapes' one output (one delay): the spaces, and the first three bytes where the file
+    // starts with `abc`.
+    let want = |file: &[u8]| -> Vec<u64> {
+        let mut w = vec![0u64; file.len().div_ceil(64)];
+        for (i, &x) in file.iter().enumerate() {
+            if x == b' ' || (i < 3 && file.starts_with(b"abc")) {
+                w[i / 64] |= 1 << (i % 64);
+            }
+        }
+        w
+    };
+    let units: [&[u8]; 4] = [b"abc ab c abc  ", b"ab", b" abc", b"abcabc"];
+    let mut files: Vec<Vec<u8>> = Vec::new();
+    for unit in units {
+        for len in [0usize, 1, 2, 3, 4, 15, 16, 17, 63, 64, 65, 66, 127, 128, 130, 200] {
+            files.push(unit.iter().copied().cycle().take(len).collect());
+        }
+    }
+    for file in &files {
+        let (cpu, interp) = (compiled.run_files(&[file]), g.block.run_files(&[file]));
+        assert_eq!(cpu, interp, "{:?}", String::from_utf8_lossy(file));
+        let union: Vec<u64> = (0..file.len().div_ceil(64)).map(|k| interp[0].outputs.iter().fold(0, |a, o| a | o.get(k).copied().unwrap_or(0))).collect();
+        assert_eq!(union, want(file), "{:?}", String::from_utf8_lossy(file));
+    }
+    // A batch: each file's start its own.
+    let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
+    assert_eq!(compiled.run_files(&refs), g.block.run_files(&refs), "a batch");
+}
