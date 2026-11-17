@@ -254,6 +254,59 @@ static ONE: [T; 256] = {
     t
 };
 
+/// `LEAD`'s classes of a token's first byte in `run`: a one-byte punctuator (`ONE`; its kind in
+/// `one`)...
+const L_ONE: u8 = 0;
+/// ...an ASCII name with no literal's prefix (`FIRST`'s `NAME` clear)...
+const L_NAME: u8 = 1;
+/// ...a byte read from the gap's start by `token` (a comment's `/`, a `\\`, a NUL, or the text's end, read as a 0)...
+const L_TOKEN: u8 = 2;
+/// ...or the rest (`decimal`, then `token_at`).
+const L_REST: u8 = 3;
+
+#[derive(Clone, Copy)]
+struct Lead {
+    one: T,
+    class: u8,
+}
+
+/// A token's first byte's class and one-byte kind, by one load.
+static LEAD: [Lead; 256] = {
+    let mut t = [Lead { one: T::Eof, class: L_REST }; 256];
+    let mut c = 0;
+    while c < 256 {
+        if FIRST[c] & NAME == 0 {
+            t[c].class = L_NAME;
+        }
+        if ONE[c] as u8 != T::Eof as u8 {
+            t[c] = Lead { one: ONE[c], class: L_ONE };
+        }
+        c += 1;
+    }
+    t[0].class = L_TOKEN;
+    t[b'/' as usize].class = L_TOKEN;
+    t[b'\\' as usize].class = L_TOKEN;
+    t
+};
+
+/// `t` written at `p`, a field at a time: its padding is left unwritten (a write of the whole
+/// token copies it, from wherever the token was made).
+///
+/// # Safety
+/// `p` is valid for a write of a `Tok`.
+#[inline(always)]
+unsafe fn put(p: *mut std::mem::MaybeUninit<Tok>, t: Tok) {
+    let p = p.cast::<Tok>();
+    // SAFETY: as above; each field's place is in the token's room.
+    unsafe {
+        (&raw mut (*p).kind).write(t.kind);
+        (&raw mut (*p).word).write(t.word);
+        (&raw mut (*p).start).write(t.start);
+        (&raw mut (*p).end).write(t.end);
+        (&raw mut (*p).nl).write(t.nl);
+    }
+}
+
 pub struct Lexer<'s> {
     pub src: &'s [u8],
     pub blocks: Blocks,
@@ -371,7 +424,6 @@ impl<'s> Lexer<'s> {
     /// its start; a comment or a `\` in the gap sends the token to `token` from the gap's start.
     #[inline(always)]
     pub fn run(&self, mut at: usize, extras: &mut Vec<Extra>, out: &mut Vec<Tok>, n: usize) -> usize {
-        let len = self.src.len();
         let mut cur = rerail_simd8::blocks::Cursor::default();
         out.reserve(n);
         let base = out.len();
@@ -380,27 +432,30 @@ impl<'s> Lexer<'s> {
         let mut k = 0;
         while k < n {
             let c0 = self.at(at);
-            let (s, nl) = if FIRST[usize::from(c0)] & GAP == 0 {
+            let (s, c, nl) = if FIRST[usize::from(c0)] & GAP == 0 {
                 // No gap: a token right here, though it need be no start (after a number like
                 // C++'s `0x`, a name goes on inside a word run).
-                (at, NO_NL)
+                (at, c0, NO_NL)
             } else if matches!(c0, b'/' | b'\\') {
-                (usize::MAX, NO_NL)
+                // A comment or a `\\`-newline in the gap: `token` reads from the gap's start (a 0
+                // byte's class).
+                (at, 0, NO_NL)
             } else if matches!(c0, b' ' | b'\t') && FIRST[usize::from(self.at(at + 1))] & GAP == 0 {
                 // One blank, the most common gap: no walk and no line end to look for.
-                (at + 1, NO_NL)
+                (at + 1, self.at(at + 1), NO_NL)
+            } else if let Some((s, eols)) = self.blocks.gap(at) {
+                // A gap that ends in its block: its end and its line ends by one run of the masks.
+                (s, self.at(s), if eols != 0 { (at & !63) as u32 + eols.trailing_zeros() } else { NO_NL })
             } else {
-                // A gap of blanks and line ends: the next start ends it.
+                // A gap on past its block: the next start ends it.
                 let s = self.blocks.next_start(&mut cur, at);
-                (s, self.blocks.eol_in(at, s).map_or(NO_NL, |e| e as u32))
+                (s, self.at(s), self.blocks.eol_in(at, s).map_or(NO_NL, |e| e as u32))
             };
-            let c = if s < len { self.src[s] } else { 0 };
-            let one = ONE[usize::from(c)];
-            let t = if s >= len || matches!(c, b'/' | b'\\') {
-                self.token(at, extras).unwrap_or_else(refused)
-            } else if one != T::Eof {
-                Tok { kind: one, word: 0, start: s as u32, end: s as u32 + 1, nl }
-            } else if FIRST[usize::from(c)] & NAME == 0 {
+            // The start byte's class by one load (the text's end read as a 0, as a NUL).
+            let lead = LEAD[usize::from(c)];
+            let t = if lead.class == L_ONE {
+                Tok { kind: lead.one, word: 0, start: s as u32, end: s as u32 + 1, nl }
+            } else if lead.class == L_NAME {
                 let end = self.blocks.word_end(s + 1);
                 let d = self.at(end);
                 if d != b'\\' && d < 0x80 {
@@ -408,6 +463,8 @@ impl<'s> Lexer<'s> {
                 } else {
                     self.token(at, extras).unwrap_or_else(refused)
                 }
+            } else if lead.class == L_TOKEN {
+                self.token(at, extras).unwrap_or_else(refused)
             } else if let Some(end) = self.decimal(s) {
                 Tok { kind: T::Number, word: 0, start: s as u32, end: end as u32, nl }
             } else {
@@ -417,7 +474,7 @@ impl<'s> Lexer<'s> {
                 }
             };
             // SAFETY: `k < n`, and `n` tokens' room is reserved past `base`.
-            unsafe { (*w.add(k)).write(t) };
+            unsafe { put(w.add(k), t) };
             k += 1;
             at = t.end as usize;
             if t.kind == T::Eof {

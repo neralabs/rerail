@@ -155,6 +155,21 @@ impl<const N: usize> Masks<N> {
         self.next(at + r, k, false)
     }
 
+    /// The run of bytes set in mask `a` or `b` from `at`, if it ends inside `at`'s block: its end
+    /// and mask `b`'s bits in it, as bits of the block. A gap of blanks and line ends: where the
+    /// next token starts and the gap's line ends, by one load of each mask (`None`: the run goes
+    /// on to the block's end, or `at` is past the text).
+    #[inline(always)]
+    pub fn run_in_block(&self, at: usize, a: usize, b: usize) -> Option<(usize, u64)> {
+        if at >= self.len {
+            return None;
+        }
+        let (blk, q) = (at / 64, at % 64);
+        let (ma, mb) = (self.at(blk, a), self.at(blk, b));
+        let r = run_len(ma | mb, q);
+        (q + r < 64).then(|| (at + r, mb & between(q, q + r)))
+    }
+
     /// The first byte in `at..end` whose bit in mask `k` is set (`None`: none). It reads the blocks
     /// of `at..end` only: a gap's line end, say, with no scan on to the next line's.
     #[inline(always)]
@@ -292,6 +307,13 @@ mod tests {
         assert_eq!(words.run_end(129, 0), 130);
         assert_eq!(words.run_end(140, 0), 140);
         assert_eq!(words.run_end(150, 0), 150);
+        // Blanks (mask 0) and line ends (mask 1): a gap at 2..9 with line ends at 4 and 7; one on
+        // past its block; one past the text.
+        let gaps = Masks::new(150, vec![[0b1_0110_1100, 0b1001_0000], [!0, 0], [0, 0]]);
+        assert_eq!(gaps.run_in_block(2, 0, 1), Some((9, 0b1001_0000)));
+        assert_eq!(gaps.run_in_block(9, 0, 1), Some((9, 0)));
+        assert_eq!(gaps.run_in_block(70, 0, 1), None);
+        assert_eq!(gaps.run_in_block(150, 0, 1), None);
         assert_eq!(masks.first_in(3, 150, 0), Some(133));
         assert_eq!(masks.first_in(3, 133, 0), None);
         assert_eq!(masks.first_in(134, 400, 0), None);

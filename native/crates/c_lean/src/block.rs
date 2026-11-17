@@ -177,6 +177,13 @@ impl Blocks {
         self.m.next_start(cur, at, WORD, [BLANK, EOL])
     }
 
+    /// The gap of blanks and line ends from `at`, if it ends in `at`'s block: the next token's start
+    /// and the gap's line ends, as bits of the block.
+    #[inline(always)]
+    pub fn gap(&self, at: usize) -> Option<(usize, u64)> {
+        self.m.run_in_block(at, BLANK, EOL)
+    }
+
     /// The first `\n` in `at..end`, if one is there (a gap's line end).
     #[inline(always)]
     pub fn eol_in(&self, at: usize, end: usize) -> Option<usize> {
