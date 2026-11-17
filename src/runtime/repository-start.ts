@@ -11,6 +11,7 @@ import {
   nestedCheckouts,
   parentCheckouts,
   recordCheckout,
+  startStateParents,
 } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
@@ -238,12 +239,16 @@ export function setRepositoryStarted(database: RerailDatabase, repositoryKey: Re
   }, { behavior: "immediate" });
 }
 
-/** Turn `checkout` on or off itself, with the checkouts nested in it following it again. */
+/**
+ * Turn `checkout` on or off itself, with the checkouts nested in it following it again. The nested rows go first: on
+ * Windows one can be an earlier build's row of this same folder in another letter case, and the trigger that carries
+ * that row's start state to this build's row (`path-key-spelling-triggers.ts`) would otherwise undo the value set here.
+ */
 export function setCheckoutStarted(database: RerailDatabase, checkout: CheckoutContext, started: boolean): void {
   database.transaction(tx => {
-    tx.update(checkouts).set({ started }).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).run();
     const nested = nestedCheckouts(tx, checkout).map(row => row.checkoutPath);
     if (nested.length > 0) tx.update(checkouts).set({ started: null }).where(inArray(checkouts.checkoutPath, nested)).run();
+    tx.update(checkouts).set({ started }).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).run();
     clearSetupReview(tx, checkout.repositoryKey);
   }, { behavior: "immediate" });
 }
@@ -266,7 +271,7 @@ export function startSetUpRepository(database: RerailDatabase, checkout: Checkou
   }
   database.transaction(tx => {
     tx.update(repositories).set({ started: true, updatedAt: Date.now() }).where(eq(repositories.repositoryKey, checkout.repositoryKey)).run();
-    const parentStopped = parentCheckouts(tx, checkout).find(row => row.started !== null)?.started === false;
+    const parentStopped = startStateParents(tx, checkout).find(row => row.started !== null)?.started === false;
     tx.update(checkouts).set({ started: parentStopped ? true : null }).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).run();
     clearSetupReview(tx, checkout.repositoryKey);
   }, { behavior: "immediate" });

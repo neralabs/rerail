@@ -10,8 +10,10 @@
  * What carries over: a checkout's start state when it changes; and for audit settings, a checkout's rule settings, its
  * repository audit and its presentation preferences, each row an earlier build inserts or changes (unless this build's
  * row for the folder is newer, `CarriedTable.newer`) and each row it deletes. A write under any other key finds no
- * spelling and changes nothing, so this build's own writes cost one lookup of that table's primary key. Nothing goes
- * the other way: an earlier build reads its own rows, as beside a build without the step.
+ * spelling and changes nothing, so this build's own writes cost one lookup of that table's primary key. On Windows an
+ * earlier build's start or stop of a folder also sets this build's row of it, in another letter case, to follow its
+ * own, so a start state reads that build's row as a containing checkout (`startStateParents`). Nothing else goes the
+ * other way: an earlier build reads its own rows, as beside a build without the step.
  *
  * Like the audit history triggers (`audit-history.ts`) they are part of the DDL applied on every writable open, created
  * `IF NOT EXISTS`: a build that changes one must drop it in a migration step so the new body is created. They use no

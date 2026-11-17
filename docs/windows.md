@@ -247,9 +247,14 @@ it wrote where it wrote it. Its own lists show this version's copies beside its 
 the checkouts), and where it saved one folder under both spellings it reads the newer of the two rows under the stored
 spelling (below). The step records each spelling it copied from in the table `path_key_spellings`, and this
 version's lists leave the copies under those spellings out, so each folder is listed once: repositories and their
-checkouts, the checkouts above and inside one, presentation preferences, and the list of repository audits, which also
-reads where each audit ran through that table (an earlier version wrote a Git checkout's audits under the session's
-spelling and its repository audit under Git's). Removing a presentation preference removes its copies too. The audit
+checkouts, the checkouts above one whose rule settings apply there, presentation preferences, and the list of
+repository audits, which also reads where each audit ran through that table (an earlier version wrote a Git checkout's
+audits under the session's spelling and its repository audit under Git's). Removing a presentation preference removes
+its copies too. A start state still counts an earlier version's row of a folder as a checkout above or inside it, as a
+version without the step does: that version's `rerail stop` or `rerail start` in one folder sets every row its own
+check counts as inside the folder to follow it, which on Windows, where the check ignores letter case, includes this
+version's row of the same folder; and this version's start or stop of a folder sets the earlier version's rows inside it
+to follow, so each version reads what the other set last. The audit
 history itself is never rewritten. Two rows that come to one folder merge: the newer one stays (last seen, last saved,
 last started; of two presentation preferences, which keep no time, the one created later), and a start state either row
 held is kept.
@@ -289,8 +294,8 @@ What an earlier version changes later under a spelling the step recorded reaches
 database (`src/engine/storage/path-key-spelling-triggers.ts`), which run inside that version's own writes, carry a start
 or a stop it makes to this version's row for the folder, and each audit setting, rule setting of the checkout,
 repository audit and presentation preference it saves, changes or deletes there, unless this version's row is newer. A
-write that leaves a row's values as they were (a session that only touches its checkout) carries nothing. Nothing goes
-the other way: an earlier version reads its own rows, as it does beside a version without the step. Rows an earlier
+write that leaves a row's values as they were (a session that only touches its checkout) carries nothing. Nothing else
+goes the other way: an earlier version reads its own rows, as it does beside a version without the step. Rows an earlier
 version writes under a spelling the step never saw stay under that spelling: the step runs once per database.
 
 <details>

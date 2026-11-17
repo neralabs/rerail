@@ -11,7 +11,7 @@ import { createRerailApi, DatabaseApiStores, invokeOperation, operations } from 
 import { startRerail } from "../../../src/cli/index.js";
 import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
-import { listRepositories, nestedCheckouts, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
+import { listedCheckoutStates, listRepositories, nestedCheckouts, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { currentPathKey, pathKeysCanMove, readableRoots, withDriveBudget } from "../../../src/engine/storage/path-key-spelling.js";
@@ -269,6 +269,18 @@ function kept(folder: string, repositoryAudit: Omit<Records["repositoryAuditList
  * What an earlier build reads for its checkout `stored`, by the key it looks each record up by: the spelling it stored.
  * 0.1.4's stores look a checkout, its settings, its audit settings and audit, and its preferences up so.
  */
+/** Whether `folder`'s checkout runs, and the checkout above it, as the dashboard's view of its repository shows them. */
+function dashboardState(folder: string, databasePath: string): { started: boolean; parentCheckoutPath: string | null } {
+  const database = openRerailDatabase(databasePath, { readonly: true });
+  try {
+    const repository = listRepositories(database).find(candidate => candidate.checkouts.length > 0)!;
+    const { status, parentCheckoutPath } = listedCheckoutStates(repository)(folder);
+    return { started: status.started, parentCheckoutPath };
+  } finally {
+    database.$client.close();
+  }
+}
+
 function earlierBuildReads(databasePath: string, stored: string) {
   const client = new Database(databasePath, { readonly: true });
   try {
@@ -435,20 +447,43 @@ describe("path keys an earlier build stored under another spelling", () => {
     });
   });
 
-  // 0.1.4 keys a folder outside Git by the folder as its session spelt it. After the step, a stop it made there read as
-  // started here, where a build without the step read it stopped: it counts the earlier row as the folder's container.
-  it.runIf(process.platform === "win32")("carry, on Windows, a stop an earlier build makes later in a folder outside Git it stored in another case", async () => {
+  // 0.1.4 keys a folder outside Git by the folder as its session spelt it. Its `rerail stop` there sets its own row, then
+  // sets every row its containment check counts as inside the folder to follow it, and on Windows that check ignores
+  // letter case, so this build's row for the same folder is one of them. A build without the step reads 0.1.4's row as
+  // the folder's containing checkout and reads it stopped; this build left that row out and read it started, with 0.1.4
+  // from npm on Windows 11 as here.
+  it.runIf(process.platform === "win32")("follow, on Windows, a stop an earlier build makes later in a folder outside Git it stored in another case, and a stop and start here after it", async () => {
     const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
     vi.mocked(currentPathKey).mockImplementation(actual.currentPathKey);
     const { folder, databasePath } = await checkoutFolder({ git: false });
     onTheSystemDrive(folder);
     const stored = otherSpelling(folder).replace(/^[A-Z]:/u, drive => drive.toLowerCase());
     earlierBuildRecorded(folder, databasePath, stored);
+    // As `rerail start` leaves a folder: the repository started, the folder following it.
+    write(databasePath, [["UPDATE repositories SET started = 1"], ["UPDATE checkouts SET started = NULL"]]);
     expect(workspaceStartState(folder, databasePath)).toBe("started");
 
-    write(databasePath, [["UPDATE checkouts SET started = 0 WHERE checkout_path = ?", stored]]);
-
+    // 0.1.4's `setCheckoutStarted`, in one transaction: its own row, then the rows it counts as nested.
+    write(databasePath, [
+      ["BEGIN IMMEDIATE"],
+      ["UPDATE checkouts SET started = 0 WHERE checkout_path = ?", stored],
+      ["UPDATE checkouts SET started = NULL WHERE checkout_path = ?", folder],
+      ["COMMIT"],
+    ]);
     expect([workspaceStartState(folder, databasePath), workspaceStartState(stored, databasePath)]).toEqual(["stopped", "stopped"]);
+    expect(dashboardState(folder, databasePath)).toEqual({ started: false, parentCheckoutPath: null });
+
+    // This build stops the folder, then starts it: the earlier build's row follows, as beside a build without the step.
+    for (const started of [false, true]) {
+      const database = openRerailDatabase(databasePath);
+      try {
+        setCheckoutStarted(database, recordCheckout(database, folder), started);
+      } finally {
+        database.$client.close();
+      }
+      expect([workspaceStartState(folder, databasePath), dashboardState(folder, databasePath).started, earlierBuildReads(databasePath, stored).started])
+        .toEqual([started ? "started" : "stopped", started, { started: null }]);
+    }
   });
 
   it("merge with rows this build already wrote for the folder: the newer row stays, and the start state is kept", async () => {
@@ -499,7 +534,7 @@ describe("path keys an earlier build stored under another spelling", () => {
     expect(earlierBuildReads(databasePath, stored)).toMatchObject({ audits: [{ audit_id: "audit-1" }] });
   });
 
-  it("leave out of this build's lists the copies kept for an earlier build, and remove a preference's copies with it", async () => {
+  it("leave out of this build's lists the copies kept for an earlier build, start or stop its rows inside a folder with it, and remove a preference's copies with it", async () => {
     const { folder, databasePath } = await checkoutFolder();
     onTheSystemDrive(folder);
     const stored = otherSpelling(folder);
@@ -512,8 +547,14 @@ describe("path keys an earlier build stored under another spelling", () => {
 
     const database = openRerailDatabase(databasePath);
     try {
-      const { repositoryKey } = listRepositories(database).find(repository => repository.checkouts.length > 0)!;
-      expect(nestedCheckouts(database, { checkoutPath: folder, repositoryKey }).map(row => row.checkoutPath)).toEqual([inner]);
+      const { repositoryKey, checkouts } = listRepositories(database).find(repository => repository.checkouts.length > 0)!;
+      expect(checkouts.map(row => row.checkoutPath).sort()).toEqual([folder, inner].sort());
+      // A start or stop of the folder sets the earlier build's rows inside it to follow too, as a build without the step
+      // does, so that build reads what this one set: its row of a folder inside, and on Windows, which compares folders
+      // without letter case, its row of the folder itself.
+      const sameFolder = process.platform === "win32" ? [stored] : [];
+      expect(nestedCheckouts(database, { checkoutPath: folder, repositoryKey }).map(row => row.checkoutPath).sort())
+        .toEqual([inner, storedInner, ...sameFolder].sort());
     } finally {
       database.$client.close();
     }
