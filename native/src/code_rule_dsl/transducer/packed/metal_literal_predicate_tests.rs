@@ -58,7 +58,7 @@ fn program(literal: &[u8], prefix: bool, route: usize) -> Program {
 }
 
 #[test]
-#[ignore = "Q19: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
+#[ignore = "Q22: the packed Metal JIT finds other results than the CPU interpreter (a result missing, or other candidates)"]
 fn finite_literals_filter_before_witness_limits_across_register_and_dynamic_branches() {
     for length in [0, 1, 63, 64] {
         let literal = if length == 0 {

@@ -2,7 +2,6 @@
 use super::*;
 
 #[test]
-#[ignore = "Q19: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
 fn query_inline_text_values_preserve_false_paths_and_inherited_work_before_later_operands() {
     let pattern = "^# (?:a|aa)*$";
     let nfa = value::ByteNfa::compile(pattern).unwrap();

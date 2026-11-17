@@ -320,7 +320,7 @@ fn operator_cases() -> Vec<(CapturePredicate, usize)> {
 }
 
 #[test]
-#[ignore = "Q19: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
+#[ignore = "Q22: the packed Metal JIT finds other results than the CPU interpreter (a result missing, or other candidates)"]
 fn shared_capture_operators_preserve_pairing_quantifiers_empty_groups_and_properties() {
     let cases = operator_cases();
     let programs = cases
@@ -378,7 +378,6 @@ fn native_capture_operators_preserve_the_complete_group_truth_table() {
 }
 
 #[test]
-#[ignore = "Q19: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
 fn shared_capture_operators_compare_long_utf8_spans_and_chunk_crossing_needles() {
     let text = format!("{}é{}tail", "a".repeat(71), "b".repeat(87));
     let source = format!("{text}\n");
@@ -838,7 +837,7 @@ fn general_capture_predicates_gate_later_regex_work_and_keep_errors_evaluation_s
 }
 
 #[test]
-#[ignore = "Q19: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
+#[ignore = "Q22: the packed Metal JIT finds other results than the CPU interpreter (a result missing, or other candidates)"]
 fn ordinary_capture_operators_apply_the_complete_truth_table_at_the_assertion() {
     let cases = operator_cases();
     let programs = cases

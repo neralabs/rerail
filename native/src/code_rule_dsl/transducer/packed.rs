@@ -155,6 +155,35 @@ pub const MAX_FINITE_JOB_INSTRUCTIONS: usize = 256;
 pub const MAX_STEPS_PER_PATH: usize = 1 << 20;
 pub const MAX_WORK_PER_TASK: usize = 1 << 26;
 
+/// What a task may spend on the device before it stops (decision 0334). The workspace estimate sizes a task's
+/// states either way; the budget alone stops it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkBudget {
+    /// The CPU's limits: `MAX_WORK_PER_TASK` a task, `MAX_STEPS_PER_PATH` a path. A task runs past its estimate, and
+    /// its results are the CPU's. The default.
+    Full,
+    /// The workspace estimate: a task stops at it (`WorkLimit`), where the CPU's may run on. `RERAIL_DEVICE_BUDGET=estimate`.
+    Estimate,
+}
+
+impl WorkBudget {
+    /// The process's budget: `RERAIL_DEVICE_BUDGET` (`full`, the default, or `estimate`).
+    pub fn current() -> Self {
+        match std::env::var("RERAIL_DEVICE_BUDGET").as_deref() {
+            Ok("estimate") => Self::Estimate,
+            _ => Self::Full,
+        }
+    }
+
+    /// A task's limit, from its workspace estimate.
+    pub fn task_limit(self, estimate: u32) -> u32 {
+        match self {
+            Self::Full => MAX_WORK_PER_TASK as u32,
+            Self::Estimate => estimate,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum TextPredicate {
     Equal(u16),

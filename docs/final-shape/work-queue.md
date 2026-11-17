@@ -464,52 +464,18 @@ pass.
 
 ### Q19. The matcher's `metal-tests` gates: one clause past its work limit, one coverage count short
 
-Found 2026-11-16 (0293 step 5): the gated tests had not compiled (`LoweredWave::roots_metal` was private to the
-transducer crate, which the engine's `waves::matches` test calls; now `pub`). Compiled, two fail, the same in 15,
-16 and 16z, and the first the same at 6afcddb0a, before the device read format 16:
+Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two failed.
 
-- `lowered_clauses_find_the_same_roots_on_the_resident_interpreter`: 114 of 122 clauses equal, 7 refused, and
-  `ruff-d416-missing-section-name-colon/missing-colon-underlined` fails on the device (`BackendFailure`): a task's
-  status is 4, the work limit (`resident_work`), with every walk on the interpreter (`INTERPRET_ONLY`).
-- `metal_catches_a_widened_walk`: Metal and the CPU agree on every widened clause, but only 2 differ from W's
-  matcher where the test wants 3.
-
-- **The cause** (2026-11-16, after 0310): the two limits differ. The CPU charges every task against
-  `MAX_WORK_PER_TASK` (2^26, `charge_task_work`). The device's limit is the task's workspace estimate:
-  - the packed batch's `workspace_work_estimate`, and the resident `resident_work`;
-  - both are the root's subtree (its file where the program repeats) × program words × 4,096, in [4,096, 2^26].
-  
-  A small root with a long text test (D416's underlined section) passes on the CPU and fails on the device. It
-  fails the same at HEAD and before 0310 step 4 (the generated reads). Seen through `label_sink`'s status codes:
-  4 on the narrow lanes and again on the wide ones.
-- **Tradeoff for the user**: (a) the device takes the CPU's limit, so the results are equal and the estimate
-  only sizes the workspace; one lane may then run up to 2^26 steps, against the launch bound and the GPU's
-  watchdog. (b) The CPU takes the device's estimate, so both fail alike: a clause the CPU answers today fails.
-  (c) A task over its estimate goes back to the CPU, or to a later launch with the full limit: equal results,
-  and no lane runs long, at the cost of a second path. Recommended: (c), if a lane's run time must stay bounded;
-  else (a).
-- **Keep**: the device's roots equal the CPU's on every clause the device takes; a refused launch stays a refusal.
-- **Done when**: the D416 clause's work is accounted (a limit too small for its walk, or a walk that loops), and
-  the coverage test's count is explained (the pack's clauses) or met; both gates pass.
-- **Also held back by it** (2026-11-16, 0324): 16 of Metal's semantic fixtures, moved from the grid to the packed
-  JIT and ignored with "Q19". In each, the device stops a task at its estimate (`WorkLimit`) where the CPU
-  interpreter does not:
-  - `accepted_witness_limits_follow_shared_predicates_and_preserve_duplicate_captures`
-  - `finite_literals_filter_before_witness_limits_across_register_and_dynamic_branches`
-  - `late_failures_invalidate_only_their_evaluation_even_after_the_witness_limit`
-  - `metal_inline_text_values_compare_long_literals_and_regexes_before_capturing`
-  - `metal_inline_text_work_is_inherited_across_successful_values_before_later_errors`
-  - `mime_properties_use_source_snapshots_and_reject_missing_captures_before_witness_limits`
-  - `operand_failures_follow_logical_paths_and_source_root_order_instead_of_arrival_or_pc_order`
-  - `ordinary_capture_operators_apply_the_complete_truth_table_at_the_assertion`
-  - `query_inline_text_values_preserve_false_paths_and_inherited_work_before_later_operands`
-  - `query_predicate_counts_preserve_complete_layouts_when_entries_are_equal`
-  - `query_text_quantifiers_preserve_empty_groups_duplicate_captures_and_transform_order`
-  - `shared_capture_operators_compare_long_utf8_spans_and_chunk_crossing_needles`
-  - `shared_capture_operators_preserve_pairing_quantifiers_empty_groups_and_properties`
-  - `shared_query_capture_text_batches_programs_and_files_without_output_directives`
-  - `transformed_candidate_rejection_precedes_accepted_witness_limits`
-  - `typed_output_preserves_late_operand_failures_without_publishing_failed_evaluations`
+- **Fixed** (2026-11-17, decision 0334). The device read each task's workspace estimate as its work limit, where
+  the CPU's is 2^26 a task and 2^20 a path; the ABI's own comment said the estimate only sizes. The estimate and
+  the budget are now two fields, and the budget is a mode (`RERAIL_DEVICE_BUDGET`: `full`, the CPU's limits, the
+  default; `estimate`, the old stop). `lowered_clauses_find_the_same_roots_on_the_resident_interpreter` passes.
+- The 16 semantic fixtures listed here under Q19 were mostly not the work limit: a result limit was applied as the
+  result capacity, so an evaluation past its witness limit failed (`WorkLimit` on Metal, `BackendCapacity` on the
+  CPU JIT). It is now a selection at compaction (0334 §3). 13 of them pass; 3 differ in what they find (Q22).
+- **Open**: `metal_catches_a_widened_walk` catches 2 widened clauses of the 3 it wants; Metal and the CPU agree on
+  every one. Over its CPU twin's tapes (every fourth file of the pack, 16 a launch) it still catches 2.
+- **Open**: the replanning of over-long jobs (0334, "Over-long jobs are replanned"), awaiting the user's answers.
 
 ### Q20. The CPU JIT's capture pairs compare and scan a byte a step
 
@@ -531,24 +497,28 @@ Their siblings, found later the same day (0310 steps 4 and 5):
 ### Q21. The farm's mirror never removes a deleted file
 
 Found 2026-11-16 (0324, retiring the grid). A checkout's changes reach a host's copy through the farm's mirror,
-which sends changed and new files and never removes one the checkout deleted. After the grid's 151 files went
-(staged `git rm`), the host's copy still held all of them. Nothing mounted them, so builds were right. But
-`executors_are_shared`, which reads every source file, failed on the stale grid files. A deleted file that is still
-mounted somewhere would build on the host and fail here.
+which sends changed and new files and never removed one the checkout deleted. After the grid's 151 files went,
+the host's copy still held them, and `executors_are_shared` (which reads every source file) failed on them.
 
-- **Keep**: the mirror's incremental sends.
-- **Done when**: a file the checkout deleted (tracked at the host's copy's last sync, now gone) is removed from the
-  host's copy before the command runs, and a test of the mirror covers it.
+- **Written** (2026-11-17, farm version 8): `test-remote` and `live-test-remote` ask the agent to prune. It removes
+  each file under the host's copy of the checkout that the mirror wrote (its attribute) and the checkout no longer
+  has; files a command wrote, `--tree` directories and `.git` stay. `scripts/build/farm/test-agent` checks it.
+- **Not installed**: the installed farm (version 7) is another worktree's line, newer than this branch's in
+  `farm.py`, `farm-agent`, `diagnose`, `status` and `clean-target`. Installing from here would undo that. It goes in
+  when the two lines merge.
+- **Done when**: installed, and `executors_are_shared` passes on a host.
 
-### Q22. Metal's semantic fixtures on the packed JIT: refusals, failures and different results
+### Q22. Metal's semantic fixtures on the packed JIT: refusals and different results
 
-Found 2026-11-16 (0324, retiring the grid). Metal's semantic fixtures (`metal_semantic_conformance` and the phase-four
-files) compare Metal with the CPU interpreter. They ran only on the grid machine. On the packed JIT, which the
-product runs, 79 of 115 pass, 18 fail on Q19's work limit, and 18 fail in the ways below. Each is ignored with
-"Q22". The JIT itself did not change with the grid's retirement, so these differences were there before.
+Found 2026-11-16 (0324, retiring the grid). Metal's semantic fixtures compare the packed JIT with the CPU
+interpreter. 2026-11-17 (0334): 15 of the 36 ignored pass now (the result limit and the work budget, Q19; the two
+output-directive failures were a stale rejected slot and a failed task's early results). 21 stay ignored, "Q22":
 
-- **Refused (`BackendCapacity`)**, where the CPU runs the batch (15). The cause is not traced: it may be Q19's
-  estimate sizing the workspace, or another of the JIT's caps.
+- **Refused (`BackendCapacity`)**, where the CPU runs the batch (15). The cause: the workspace is sized from the
+  workspace estimate, a step count (subtree × words × 4,096), as up to 65,536 states a kind a task, times the
+  lanes. `finite_literal_register_work_stays_broad_across_programs_and_files` (3 three-word programs, 128 files of
+  three lines) plans 471 MB, which the Metal buffer pool refuses (`metal_buffer_limit`). The fix is 0334 §9: size
+  from the plan, restart an overflowing evaluation with twice the states. It waits on the user's answers to 0334.
   - `corpus_optional_test_bodies_and_regex_injections_match_cpu`
   - `finite_literal_register_work_stays_broad_across_programs_and_files`
   - `inputs_absent_field_uses_shared_facts_for_wide_and_file_local_inputs`
@@ -564,38 +534,13 @@ product runs, 79 of 115 pass, 18 fail on Q19's work limit, and 18 fail in the wa
   - `inputs_shared_root_predicates_intern_values_and_need_no_frontier_records`
   - `inputs_small_automata_defer_long_inputs_into_shared_value_frontiers`
   - `shared_ancestor_sets_exclude_self_cross_scan_groups_and_file_boundaries`
-- **Failed (`BackendFailure`)** in output directives (2): transformed text snapshots, and a selection with
-  zero-length MIME values.
-  - `selection_handles_empty_groups_missing_targets_and_zero_length_mime_values`
-  - `transformed_text_snapshots_and_utf8_offsets_preserve_directive_order`
-- **Different results** (3): the same outputs up to a point, then a difference (not yet read).
+- **Different results** (6): the JIT finds other results than the CPU interpreter: a result missing in an
+  evaluation, or other candidates (other local ordinals, a capture fewer). Not yet read one by one.
   - `bounded_body_admission_preserves_guarded_capture_identity_and_multiplicity`
+  - `finite_literals_filter_before_witness_limits_across_register_and_dynamic_branches`
   - `inputs_captured_membership_contains_and_ancestors_yield_with_exact_quantifiers`
   - `inputs_repeated_disjoint_alternatives_share_a_bounded_capture_tail`
+  - `ordinary_capture_operators_apply_the_complete_truth_table_at_the_assertion`
+  - `shared_capture_operators_preserve_pairing_quantifiers_empty_groups_and_properties`
+- **Done when**: every fixture passes on the packed JIT, or is shown to test the grid's own machinery and goes.
 
-- **Keep**: the fixtures' CPU results as the oracle.
-- **Done when**: each fixture passes on the packed JIT, or its difference is shown to be the CPU's error.
-
-## Questions for the user
-
-1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
-   (`executor_call(n, t) :- …, node_text(f, t)`, then `contains("x", t)`) stays per row. Making it native too would
-   keep the copy whole (no factorized store, no export cut) and move its `node_text` reads to the cross-file part.
-   Measured on 47 data-layer programs, per row vs native costs the same (+0.6%). Options: (a) leave copies per row
-   (as built); (b) teach the factorized store and the export cut to see through a row-filter native, so copies can
-   be native too (more work, no measured gain at 50 files).
-2. **Q2/Q5: a node's text read in the cross-file part is empty (a wrong result).** A cross-file reader
-   (`passes(f) :- uses(_, f), node_text(f, t), …`, `uses` cross-file) asks for the text of another file's node.
-   `@rr_node_text_any` reads only batches still held, and each chunk's batch is dropped when the chunk is done, so
-   the answer is empty (0174 §6 lists it as open). In a session the unchanged files have no batch at all. Options:
-   (a) a request that would be derived in the cross-file part is widened to its file-local literals
-   (`rr_node_text_req(f) :- def(f, _)`): answered and kept per file, exported like any file-local relation; exact
-   in sessions, at the cost of more texts answered and interned (0144 §5's trade, measured before keeping);
-   (b) the cross-file part reads the asked documents back from the tape cache (exact rows, a tape read per asked
-   unchanged document, in sessions too); (c) keep every batch held to the end of the run (memory grows with the
-   corpus; does not cover sessions). Recommended: (a), the magic-sets widening 0174 already does, and no new
-   mechanism.
-   **Answered (2026-11-15): (a).** Built on sync-integration-hub-tape as decision 0286 (numbered 0264 when written)
-   (`corpus::requests_file_local`, `file_local::requests_file_local`), with the test
-   `a_cross_file_reader_finds_the_text_of_another_files_node`; `a_cross_file_text_test_is_maintained_as_a_filter`
-   runs again.

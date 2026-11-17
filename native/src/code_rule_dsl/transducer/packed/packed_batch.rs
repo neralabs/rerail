@@ -114,6 +114,9 @@ pub struct PackedBatch {
     /// ...): 65,536 where `None`. A lane reserves the most of its evaluations' up front, so the
     /// cap bounds a dispatch's lanes (`metal_label_passes`).
     pub state_cap: Option<u32>,
+    /// Each program's result limit (`assign_workspace_with_result_limits`), empty for none: a selection of the
+    /// evaluation's first results in their order, made as the page is compacted, never a capacity.
+    pub(super) result_limits: Vec<u32>,
 }
 
 fn checked_u32(value: usize) -> Result<u32, Error> {
@@ -229,6 +232,7 @@ impl PackedBatch {
             nfa_data: super::value_packing::unicode_word_data(),
             ..Self::default()
         };
+        let budget = super::WorkBudget::current();
         let mut navigation = [0usize; 4];
         // Per file, its first node and its derived classes' bits, copied as shifted words after
         // every file is placed (06 S7: bit by bit, 0.7 s of 1.3 s of roots).
@@ -597,6 +601,7 @@ impl PackedBatch {
                         program: checked_u32(program)?,
                         root,
                         workspace_work_estimate,
+                        work_limit: budget.task_limit(workspace_work_estimate),
                         ..BatchTask::default()
                     });
                 }
@@ -944,6 +949,7 @@ impl PackedBatch {
     /// workspace is lanes times that, whatever the roots.
     pub fn assign_resident(&mut self, programs: &[Program], specs: &[[u32; 5]], lanes: usize) -> Result<super::packed_workspace::WorkspaceTotals, Error> {
         let total = specs.iter().try_fold(0_u32, |total, spec| total.checked_add(spec[4])).ok_or(Error::BackendCapacity)?;
+        let budget = super::WorkBudget::current();
         self.tasks = specs
             .iter()
             .enumerate()
@@ -953,6 +959,7 @@ impl PackedBatch {
                     file: spec[1],
                     program: spec[0],
                     workspace_work_estimate: super::MAX_WORK_PER_TASK as u32,
+                    work_limit: super::MAX_WORK_PER_TASK as u32,
                     ..BatchTask::default()
                 })
             })
@@ -973,9 +980,12 @@ impl PackedBatch {
             evaluation.file = spec[1];
             evaluation.root_rule = spec[2];
             evaluation.root_reserved = spec[3];
-            // The work per node of a task's subtree (`resident_work` on the device).
-            evaluation.workspace_work_estimate =
-                checked_u32(program.words.len().saturating_mul(4_096).min(0x7fff_ffff))? | u32::from(repeats) << 31;
+            // The work per node of a task's subtree (`resident_work` on the device): under the full budget, the
+            // CPU's limit whatever the subtree (`resident_work` clamps a node's 2^26 to 2^26).
+            evaluation.workspace_work_estimate = match budget {
+                super::WorkBudget::Full => super::MAX_WORK_PER_TASK as u32,
+                super::WorkBudget::Estimate => checked_u32(program.words.len().saturating_mul(4_096).min(0x7fff_ffff))? | u32::from(repeats) << 31,
+            };
             start += spec[4];
         }
         self.tasks.clear();
@@ -1006,24 +1016,10 @@ impl PackedBatch {
         self.tasks = shared.tasks;
         self.evaluations = shared.evaluations;
         self.global_arenas = shared.global;
-        if let Some(result_limits) = result_limits {
-            let mut result_capacity = 0_u32;
-            for evaluation in &mut self.evaluations {
-                let program = self.tasks[evaluation.task_start as usize].program as usize;
-                let quota = &mut evaluation.quotas[ArenaKind::Result as usize];
-                quota.limit = quota.limit.min(result_limits[program]);
-                result_capacity = if lanes_per_evaluation > 0 {
-                    result_capacity
-                        .saturating_add(quota.limit)
-                        .min(DURABLE_RESULT_PAGE_CAPACITY)
-                } else {
-                    result_capacity
-                        .checked_add(quota.limit)
-                        .ok_or(Error::BackendCapacity)?
-                };
-            }
-            self.global_arenas.arenas[ArenaKind::Result as usize].capacity = result_capacity;
-        }
+        // A result limit selects the evaluation's first results (`PackedResultPage::compact`), as the CPU
+        // interpreter's: every result is still found, so a later failure of the evaluation is never hidden, and
+        // the results' order (by root, then start and capture) is known only once all are. It sizes nothing.
+        self.result_limits = result_limits.map(<[u32]>::to_vec).unwrap_or_default();
         let transient_kinds = [
             ArenaKind::Pending,
             ArenaKind::Capture,
@@ -1263,19 +1259,28 @@ impl<'a> PackedResults<'a> {
         let mut result_property_counts = vec![(0_u32, 0_u32); result_range.len()];
         let mut capture_files = vec![None; capture_range.len()];
         let mut capture_property_counts = vec![0_u32; capture_range.len()];
+        // Results no evaluation keeps: a slot whose candidate its output directives rejected (`NONE`), and a
+        // failed task's results published before it failed (its evaluation publishes none). Their captures and
+        // properties are left unowned.
+        let mut dropped = vec![false; result_range.len()];
         for (offset, result) in self.results[result_range.clone()].iter().enumerate() {
+            if result.task_ordinal == NONE {
+                dropped[offset] = true;
+                continue;
+            }
             let task_index = task_by_ordinal
                 .get(result.task_ordinal as usize)
                 .and_then(|index| *index)
                 .ok_or(Error::BackendFailure)?;
+            if self.statuses[task_index].error != 0 {
+                dropped[offset] = true;
+                continue;
+            }
             result_counts[task_index] = result_counts[task_index]
                 .checked_add(1)
                 .ok_or(Error::BackendFailure)?;
             result_tasks[offset] = Some(task_index);
             let task = &self.batch.tasks[task_index];
-            if self.statuses[task_index].error != 0 {
-                return Err(Error::BackendFailure);
-            }
             let file = self
                 .batch
                 .files
@@ -1330,6 +1335,7 @@ impl<'a> PackedResults<'a> {
                 }
             }
         }
+        let any_dropped = dropped.contains(&true);
         for property in &self.properties[property_range] {
             match property.kind {
                 0 | 2 => {
@@ -1339,6 +1345,9 @@ impl<'a> PackedResults<'a> {
                         .map(|offset| offset as usize)
                         .filter(|offset| *offset < result_tasks.len())
                         .ok_or(Error::BackendFailure)?;
+                    if dropped[offset] {
+                        continue;
+                    }
                     let task_index = result_tasks[offset].ok_or(Error::BackendFailure)?;
                     let counts = &mut result_property_counts[offset];
                     if property.kind == 0 {
@@ -1392,6 +1401,10 @@ impl<'a> PackedResults<'a> {
                         .map(|offset| offset as usize)
                         .filter(|offset| *offset < capture_files.len())
                         .ok_or(Error::BackendFailure)?;
+                    // A dropped result's capture: no result owns it.
+                    if capture_files[offset].is_none() && any_dropped {
+                        continue;
+                    }
                     capture_files[offset].ok_or(Error::BackendFailure)?;
                     capture_property_counts[offset] = capture_property_counts[offset]
                         .checked_add(1)
@@ -1401,19 +1414,19 @@ impl<'a> PackedResults<'a> {
             }
         }
         for (offset, result) in self.results[result_range.clone()].iter().enumerate() {
-            if result_property_counts[offset] != (result.property_count, result.dynamic_count) {
+            if !dropped[offset] && result_property_counts[offset] != (result.property_count, result.dynamic_count) {
                 return Err(Error::BackendFailure);
             }
         }
         for (offset, capture) in self.final_captures[capture_range].iter().enumerate() {
-            if capture_property_counts[offset] != capture.property_count {
+            if (capture_files[offset].is_some() || !any_dropped) && capture_property_counts[offset] != capture.property_count {
                 return Err(Error::BackendFailure);
             }
         }
         if result_counts
             .iter()
             .zip(self.statuses)
-            .any(|(count, status)| *count != status.result_count)
+            .any(|(count, status)| status.error == 0 && *count != status.result_count)
         {
             return Err(Error::BackendFailure);
         }
@@ -2372,6 +2385,10 @@ impl PackedResultPage {
         };
         let mut result_evaluations = Vec::new();
         for (result_offset, source_result) in results[result_range.clone()].iter().enumerate() {
+            // A slot whose candidate its output directives rejected (the device reserves before it applies them).
+            if source_result.task_ordinal == NONE {
+                continue;
+            }
             let task_index = task_by_ordinal[source_result.task_ordinal as usize]
                 .ok_or(Error::BackendFailure)?;
             let task = &batch.tasks[task_index];
@@ -2481,6 +2498,16 @@ impl PackedResultPage {
                 result.local_ordinal,
             )
         });
+        // Each (file, program)'s first results, to its limit, in their order.
+        if !batch.result_limits.is_empty() {
+            let mut kept = BTreeMap::<(u32, u32), u32>::new();
+            page.result_order.retain(|&index| {
+                let task = &batch.tasks[task_by_ordinal[page.results[index as usize].task_ordinal as usize].unwrap()];
+                let count = kept.entry((task.file, task.program)).or_default();
+                *count += 1;
+                *count <= batch.result_limits[task.program as usize]
+            });
+        }
         for &result in &page.result_order {
             page.evaluation_results
                 .push(result_evaluations[result as usize] as usize, result)?;
@@ -2781,6 +2808,7 @@ pub mod tests {
         batch.evaluations.push(evaluation);
         batch.source.push(b'x');
         batch.root_spans.push(1);
+        batch.header.node_count = 1;
         batch
     }
 
@@ -2868,7 +2896,7 @@ pub mod tests {
     }
 
     #[test]
-    fn production_result_limit_caps_evaluation_and_global_result_capacity() {
+    fn production_result_limit_selects_results_and_sizes_nothing() {
         let program = Program::new(
             vec![word(STOP, 0, 0), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
@@ -2879,14 +2907,19 @@ pub mod tests {
         .unwrap();
         let programs = [program];
         let mut batch = batch();
+        let mut unlimited = batch.clone();
+        let unlimited_totals = unlimited.assign_workspace_with_result_limits(&programs, None).unwrap();
         let totals = batch
             .assign_workspace_with_result_limits(&programs, Some(&[0]))
             .unwrap();
-        assert_eq!(totals.results, 0);
+        // A limit selects results as the page is compacted: the workspace is the unlimited one's.
+        assert_eq!(totals.results, unlimited_totals.results);
         assert_eq!(
             batch.evaluations[0].quotas[ArenaKind::Result as usize].limit,
-            0
+            unlimited.evaluations[0].quotas[ArenaKind::Result as usize].limit
         );
+        assert_eq!(batch.result_limits, [0]);
+        assert!(unlimited.result_limits.is_empty());
     }
 
     #[test]
@@ -3039,6 +3072,51 @@ pub mod tests {
         assert_eq!(page.decode_outcomes(&batch).unwrap(), expected);
         assert_eq!(page.results.len(), 1);
         assert_eq!(page.results[0].local_ordinal, 3);
+    }
+
+    #[test]
+    fn compact_result_page_keeps_each_evaluations_first_results_to_its_limit() {
+        let mut batch = batch();
+        batch.evaluations[0].quotas[ArenaKind::Result as usize].limit = 3;
+        batch.global_arenas.arenas[ArenaKind::Result as usize].capacity = 3;
+        batch.global_arenas.arenas[ArenaKind::Result as usize].cursor = 3;
+        batch.result_limits = vec![1];
+        let statuses = [TaskStatus {
+            result_count: 2,
+            ..TaskStatus::default()
+        }];
+        // Published out of order, with a slot its output directives rejected between them.
+        let results = [
+            ResultRecord {
+                task_ordinal: 0,
+                local_ordinal: 1,
+                ..ResultRecord::default()
+            },
+            ResultRecord {
+                task_ordinal: NONE,
+                ..ResultRecord::default()
+            },
+            ResultRecord {
+                task_ordinal: 0,
+                local_ordinal: 0,
+                ..ResultRecord::default()
+            },
+        ];
+        let page = PackedResultPage::compact(
+            &batch,
+            &statuses,
+            &results,
+            &[FinalCaptureRecord::default()],
+            &[PropertyRecord::default()],
+            &[0],
+        )
+        .unwrap();
+        let outcome = page.decode_outcomes(&batch).unwrap();
+        assert_eq!(outcome.errors, vec![vec![None]]);
+        assert_eq!(
+            outcome.outputs[0][0].iter().map(|output| output.local_ordinal).collect::<Vec<_>>(),
+            [0]
+        );
     }
 
     #[test]

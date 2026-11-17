@@ -411,7 +411,6 @@ fn metal_inline_work_failures_compete_with_operand_failures_in_logical_execution
 }
 
 #[test]
-#[ignore = "Q19: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
 fn metal_inline_text_values_compare_long_literals_and_regexes_before_capturing() {
     let full = format!("# {}END", "a".repeat(128));
     let prefix = format!("# {}", "a".repeat(128));
@@ -486,7 +485,6 @@ fn metal_inline_text_values_compare_long_literals_and_regexes_before_capturing()
 }
 
 #[test]
-#[ignore = "Q19: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
 fn metal_inline_text_work_is_inherited_across_successful_values_before_later_errors() {
     let pattern = "^# (?:a|aa)*$";
     let nfa = value::ByteNfa::compile(pattern).unwrap();

@@ -35,7 +35,6 @@ fn observe_output<T>(
 }
 
 #[test]
-#[ignore = "Q22: the packed Metal JIT fails this batch's output directives (BackendFailure) where the CPU interpreter runs them"]
 fn selection_handles_empty_groups_missing_targets_and_zero_length_mime_values() {
     let make = |capture, directives| {
         let mut words = Vec::new();
@@ -248,7 +247,6 @@ fn adjacent_capture_selection_preserves_properties_and_mime_snapshots_in_directi
 }
 
 #[test]
-#[ignore = "Q19: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
 fn mime_properties_use_source_snapshots_and_reject_missing_captures_before_witness_limits() {
     let base = Program::new(
         vec![word(CAPTURE, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
