@@ -392,7 +392,42 @@ pub struct Ticket {
     items: Vec<Item>,
     queued: Instant,
     started: Option<Instant>,
-    cpu0: f64,
+    /// The CPU seconds counted so far, on every thread the job ran on.
+    cpu: f64,
+    /// The thread it runs on now and its clock then: `None` while it is handed between threads.
+    cpu0: Option<(std::thread::ThreadId, f64)>,
+    /// Its phases so far, gathered from each thread it ran on.
+    phases: Vec<(&'static str, u64, f64, f64)>,
+}
+
+impl Ticket {
+    /// The job leaves this thread: its CPU and phases here are counted. A device job begins on its lane's thread and
+    /// runs its host work on the lanes' pool; reading one thread's clock at the start and another's at the end gave
+    /// a difference of two unrelated clocks (158 ms a job, the lane's total past the process's).
+    pub fn pause(&mut self) {
+        // On another thread than the one that resumed it, the clock is not this job's: nothing is counted.
+        if let Some((at, c0)) = self.cpu0.take()
+            && at == std::thread::current().id()
+        {
+            self.cpu += thread_cpu() - c0;
+        }
+        for (name, n, c, w) in take_phases() {
+            match self.phases.iter_mut().find(|e| e.0 == name) {
+                Some(e) => {
+                    e.1 += n;
+                    e.2 += c;
+                    e.3 += w;
+                }
+                None => self.phases.push((name, n, c, w)),
+            }
+        }
+    }
+
+    /// The job runs on this thread from now: its clock is read here, and what the thread counted before is not its.
+    pub fn resume(&mut self) {
+        take_phases();
+        self.cpu0 = Some((std::thread::current().id(), thread_cpu()));
+    }
 }
 
 /// An executor's scoreboard.
@@ -470,15 +505,14 @@ impl Scoreboard {
             u.queued += 1;
             u.outstanding += est;
         });
-        Ticket { id: NEXT.fetch_add(1, Ordering::Relaxed), lane, items, queued: Instant::now(), started: None, cpu0: 0.0 }
+        Ticket { id: NEXT.fetch_add(1, Ordering::Relaxed), lane, items, queued: Instant::now(), started: None, cpu: 0.0, cpu0: None, phases: Vec::new() }
     }
 
     /// A worker took the job.
     pub fn start(&self, t: &mut Ticket) {
-        take_phases();
         let now = Instant::now();
         t.started = Some(now);
-        t.cpu0 = thread_cpu();
+        t.resume();
         self.with(|s| {
             let u = &mut s.units[t.lane.index()];
             u.queued -= 1;
@@ -490,10 +524,11 @@ impl Scoreboard {
     }
 
     /// The job ended, well or not: its seconds run.
-    pub fn finish(&self, t: Ticket, ok: bool) -> f64 {
+    pub fn finish(&self, mut t: Ticket, ok: bool) -> f64 {
         let end = Instant::now();
-        let cpu = thread_cpu() - t.cpu0;
-        let phases = take_phases();
+        t.pause();
+        let cpu = t.cpu;
+        let phases = std::mem::take(&mut t.phases);
         let start = t.started.unwrap_or(end);
         let ran = end.duration_since(start).as_secs_f64();
         let waited = start.saturating_duration_since(t.queued).as_secs_f64();
@@ -717,5 +752,55 @@ mod tests {
         // The submission's time shared by the estimates: a quarter to the probe.
         assert!((s.forms[&(Lane::Gpu, "probe")].actual - ran / 4.0).abs() < 1e-12);
         assert!(s.to_string().contains("gpu"));
+    }
+
+    /// A device job begins on its lane's thread and ends on a pool thread: its CPU is the work it did on each, never
+    /// the difference of two threads' clocks, and its phases are its own, wherever they were counted.
+    #[test]
+    fn a_job_handed_between_threads_counts_only_its_own_cpu() {
+        fn spin(s: f64) {
+            let c0 = thread_cpu();
+            while thread_cpu() - c0 < s {
+                std::hint::black_box(0u64);
+            }
+        }
+        let b = Scoreboard::new([1, 0, 1, 0, 0]);
+        // The finishing thread has run long before the job: under one clock read at each end, that would be counted.
+        let (send, take) = std::sync::mpsc::channel::<Ticket>();
+        let finisher = std::thread::spawn(move || {
+            spin(0.2);
+            add("before", 0.2, 0.2);
+            let mut t = take.recv().unwrap();
+            t.resume();
+            spin(0.01);
+            add("read", 0.01, 0.01);
+            t.pause();
+            t
+        });
+        let mut t = b.queue(Lane::Gpu, vec![Item { form: "probe", units: 1.0, estimate: 0.01, host: 0.0 }]);
+        b.start(&mut t);
+        spin(0.01);
+        add("encode", 0.01, 0.01);
+        t.pause();
+        send.send(t).unwrap();
+        let t = finisher.join().unwrap();
+        b.finish(t, true);
+        let s = b.score();
+        let cpu = s.units[Lane::Gpu.index()].cpu;
+        assert!((0.019..0.1).contains(&cpu), "the job's CPU was {cpu} s");
+        let names: Vec<_> = s.phases.keys().filter(|k| k.0 == Lane::Gpu).map(|k| k.1).collect();
+        assert!(names.contains(&"encode") && names.contains(&"read") && !names.contains(&"before"), "{names:?}");
+        // Resumed on one thread and ended on another: the other's clock is not read.
+        let mut t = b.queue(Lane::Gpu, vec![Item { form: "probe", units: 1.0, estimate: 0.01, host: 0.0 }]);
+        b.start(&mut t);
+        let t = std::thread::spawn(move || {
+            spin(0.2);
+            t
+        })
+        .join()
+        .unwrap();
+        b.finish(t, true);
+        let more = b.score().units[Lane::Gpu.index()].cpu - cpu;
+        assert!((0.0..0.1).contains(&more), "the second job's CPU was {more} s");
     }
 }

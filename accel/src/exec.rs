@@ -566,7 +566,8 @@ struct Flight<'a> {
 impl Flight<'_> {
     /// Waits for it and hands its outputs to the batch's waiter.
     fn end(self, board: &Scoreboard, lane: Lane) {
-        let Flight { claims, ids, ticket, start, pending } = self;
+        let Flight { claims, ids, mut ticket, start, pending } = self;
+        ticket.resume();
         let r = pending.and_then(|p| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| p.finish())).unwrap_or_else(|_| Err("its submission panicked".into())));
         board.finish(ticket, r.is_ok());
         claims.reply((lane, ids, (r, start, Instant::now())));
@@ -661,7 +662,15 @@ fn worker(backend: Arc<dyn Backend>, board: Arc<Scoreboard>) -> std::sync::mpsc:
                     let start = Instant::now();
                     let pending = {
                         let ks: Vec<&Kernel> = ids.iter().map(|&i| &claims.kernels[i]).collect();
-                        lane_host(lane, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.start(&ks))).unwrap_or_else(|_| Err("its submission panicked".into())))
+                        // The job's host work runs on the lanes' pool: its CPU is counted on the thread it ran on.
+                        ticket.pause();
+                        let (t, backend, ks) = (&mut ticket, &backend, &ks);
+                        lane_host(lane, move || {
+                            t.resume();
+                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| backend.start(ks))).unwrap_or_else(|_| Err("its submission panicked".into()));
+                            t.pause();
+                            r
+                        })
                     };
                     if let Some(f) = flight.replace(Flight { claims, ids, ticket, start, pending }) {
                         lane_host(lane, || f.end(&board, lane));
