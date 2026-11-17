@@ -1428,3 +1428,24 @@ fewer instructions than step 1, and the CPU binding is level. Left, in order:
 5. Step 7: the output's, frames' and memo's rows.
 
 The views (source views over a batch, 88 MB on hogql) are not relations in blocks, and still upload.
+
+### Q58. 0325's FACTS blocks raise a CPU run's footprint, and the memory line cuts a third more chunks
+
+- **Found** (2026-11-17, after merging Native-and-GPU-strata a3f9c49f2 at 49dad1939): PostHog cold on the M3, CPU
+  binding, profiled, alternated with the engine just before the merge (ec3a74a87): user CPU 210.8 and 204.1 s before,
+  224.6 and 224.6 s after, at the same instructions (2,810 and 2,691 G against 2,837 and 2,648 G). Findings the same.
+- **Cause**: the run evaluates 3,409 chunks against 2,563, every stratum and guest round once a chunk. Both builds
+  cut nearly every chunk to `MIN_CHUNK_NODES` once the footprint passes `RUN_MB` (1 GB), but the merged build gets
+  there sooner: its median footprint is 1,306–1,382 MB against 1,155–1,161. Its jemalloc heap is ~80 MB smaller;
+  the rise is the relations' FACTS blocks (`setfix::rows::lease`, 64 MB each, leased from the GPU pool's spare room as
+  pinned no-copy buffers): Metal driver memory 256–320 MB median (512 at most), relational leases 192–256 MB median
+  (688 at most), 64 MB idle. A block lives while any relation in it does, so a chunk's survivors keep blocks that
+  later chunks' rows left mostly empty, and the run's footprint counts them whole.
+- **Checked**: with the memory line lifted (`RERAIL_RUN_MB=8000`) both builds cut ~170 chunks, and the merged one is
+  cheaper: 196.7 s and 2,382 G against 208.6 s and 2,696 G (0325's in-place reads), at a peak of 2,917 MB against
+  2,297.
+- **Done when**: a CPU run's footprint is no higher than before 0325 at the same chunking, and the cold run's chunk
+  count is back to about 2,560. The shape the decisions already name: a chunk is a block (0289), so a chunk's
+  relations go in its own block, released with the chunk, and only what outlives it (exports, kept rows) is frozen
+  into a long-lived block; and a CPU-only run takes anonymous blocks, not pinned device buffers, which the memory
+  line can then count by what is touched.
