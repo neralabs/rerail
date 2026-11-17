@@ -1,7 +1,6 @@
 # 0334. Work budgets and result limits never change results
 
-Status: decided in part (2026-11-17); the replanning (§ "Over-long jobs are replanned") is proposed, awaiting the
-user. After 0324 (the grid retired). The user, on Q19: "Allow a mode where we let the kernels run over. The goal
+Status: decided (2026-11-17); the replanning is built for packed batches, the rest is listed under Progress. After 0324 (the grid retired). The user, on Q19: "Allow a mode where we let the kernels run over. The goal
 of stopping them is for a horribly misplanned kernel to not spend minutes or hours churning when replanning could
 make it fast (we need planning to be very fast, so we will not be able to always do it right). We need to re-plan
 over-long jobs, not just re-run them elsewhere. We still need to be able to do that. Help me think through the
@@ -47,7 +46,7 @@ operand or work failure in the original evaluation."
    late operand failure) made validation refuse the whole batch (`BackendFailure`). Its results are now dropped
    with its evaluation, which reports the task's error, as the CPU's does.
 
-## Over-long jobs are replanned (proposed)
+## Over-long jobs are replanned
 
 What the budget is for: a badly planned job must not churn for minutes when another plan would be fast. Planning
 must stay fast (0122: planning costs no more than running), so some plans will be wrong; an over-long job is
@@ -94,13 +93,39 @@ replanned, not just rerun elsewhere.
    expects, and a task that outgrows them ends "unfinished" (as an overrun, §3): its evaluation restarts with
    twice the states, up to the ceiling. Same restart, same bound on the waste.
 
-Questions for the user:
-- The unit of a replan: the evaluation (program × file) where it tripped, or the clause over the whole wave?
-  Recommended: the evaluation trips and is replanned, and its misprediction reprices the clause for the wave's
-  chunks not yet started.
-- The slack k, and whether the budget counts steps (recommended) rather than seconds.
-- `full` is the default until `replan` exists. A GPU lane may then run up to 2^26 steps.
+The user's answers (2026-11-17, the recommendations taken):
+- The unit is the evaluation (program × file) where a task tripped; its misprediction reprices the clause for the
+  wave's chunks not yet started.
+- The budget counts steps, with a slack of 8 (`REPLAN_SLACK`).
+- `full` stays the default until the replanning is the default (below).
 
 ## Progress
 
-Done: §1 to §5 of the decision (Q19's cause). Next: the replanning, once the user settles its questions.
+Done:
+- §1 to §5 of the decision (Q19's cause).
+- **The replanning of packed batches** (the CPU JIT's and Metal's, `execute_planned`):
+  - `WorkBudget::Replan { slack, doublings }` (`RERAIL_DEVICE_BUDGET=replan`): a task's budget is its estimate
+    times the slack, doubled per restart, below the ceiling.
+  - A task stopped below the ceiling is `Error::OverBudget`, its evaluation unfinished (`status_error` reads the
+    task's budget). At the ceiling it stays `WorkLimit`.
+  - The CPU JIT holds a task, its paths and its values to the same budget as the device (its task limit was
+    always the ceiling): one mechanism.
+  - `execute_planned_budgeted` takes the unfinished evaluations (`PackedExecution::over_budget`), records the
+    misprediction (a profile decision), and restarts them alone, with the same programs and files (so the same
+    compiled binding) and twice the budget, until they finish or reach the ceiling. The restart's results stand
+    for theirs (`with_restarted`: its pages, its task ordinals moved to the batch's).
+  - The test plans an evaluation badly on purpose (slack 1 under a long string's regex): it restarts and gives
+    `Full`'s results, on the CPU JIT and on Metal
+    (`a_misplanned_evaluation_is_restarted_and_gives_the_full_budgets_results`).
+
+Next, in order:
+1. **Another plan before the ceiling.** The wave answers an evaluation at the ceiling with W's matcher
+   (`WaveRun::limited`). It is to choose by cost at the first overrun: W's matcher at the candidate roots
+   against the doubled budget. That needs W's cost per root in the cost store.
+2. **The planner's estimate as the budget's basis.** Today it is the workspace formula (subtree × words × 4,096),
+   which is a bound, not a prediction.
+3. **The label sweep** (`assign_resident`) is not replanned yet: under `Replan` it runs as `Full`.
+4. **The misprediction into the cost store**, where the planner reads it (today a profile decision).
+5. **§9, memory**: a task whose states overflow restarts with twice the states, through the same restart
+   (Q22's 15 refusals).
+6. **`replan` as the default**, once 1 and 2 hold on the corpus.

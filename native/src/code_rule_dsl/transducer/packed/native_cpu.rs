@@ -2623,8 +2623,31 @@ pub fn execute_batch_packed_with_work_limit(
     result_limits: Option<&[u32]>,
     work_limit: u32,
 ) -> Result<PackedExecution, Error> {
+    execute_batch_packed_inner(programs, files, anchors, result_limits, work_limit, super::WorkBudget::current())
+}
+
+/// The batch with each task held to `budget` (decision 0334): a task past it stops `OverBudget`.
+pub(super) fn execute_batch_packed_budgeted(
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+    budget: super::WorkBudget,
+) -> Result<PackedExecution, Error> {
+    execute_batch_packed_inner(programs, files, anchors, result_limits, super::MAX_STEPS_PER_PATH as u32, budget)
+}
+
+fn execute_batch_packed_inner(
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+    work_limit: u32,
+    budget: super::WorkBudget,
+) -> Result<PackedExecution, Error> {
     let stage = crate::code_rule_dsl::prof::Stage::start("jit.batch");
     let mut batch = PackedBatch::new_in_place(programs, files, anchors)?;
+    batch.apply_budget(budget);
     drop(stage);
     crate::code_rule_dsl::prof::count("jit.tasks", batch.tasks.len());
     if batch.tasks.is_empty() {
@@ -2752,8 +2775,10 @@ pub fn execute_batch_packed_with_work_limit(
                 .add(arena_starts[ArenaKind::Pending as usize] as usize)
         };
         context.pending_quota_limit = batch.evaluation_limit(task, ArenaKind::Pending);
-        context.task_work_limit = super::MAX_WORK_PER_TASK as u32;
-        context.path_work_limit = work_limit;
+        // The task's budget, as the device's (decision 0334): the ceiling unless replanned.
+        context.task_work_limit = task.work_limit;
+        // A path's and a value's steps, held to the task's budget too, as the device's (`step_limit`).
+        context.path_work_limit = work_limit.min(task.work_limit);
         context.captures = unsafe {
             captures
                 .as_mut_ptr()

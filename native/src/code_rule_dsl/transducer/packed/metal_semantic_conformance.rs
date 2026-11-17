@@ -20,7 +20,7 @@ pub(super) fn metal_packed(
     anchors: &[Vec<Vec<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<PackedExecution, Error> {
-    device::matcher().ok_or(Error::UnsupportedBackend)?.execute_packed(device::Engine::Jit, programs, files, anchors, result_limits)
+    device::matcher().ok_or(Error::UnsupportedBackend)?.execute_packed(device::Engine::Jit, programs, files, anchors, result_limits, crate::code_rule_dsl::transducer::packed::WorkBudget::current())
 }
 
 #[cfg(test)]
@@ -4074,5 +4074,41 @@ fn long_interpolated_query_oracles(complete_cpu: bool, metal: bool) {
                 && r.completed
                 && r.peak_application_buffer_bytes <= metal_backend::metal_buffer_limit()));
         }
+    }
+}
+
+/// Decision 0334: a badly planned evaluation (a budget of its estimate alone, where a long string's regex costs
+/// far more than a small root's estimate, as Q19's clause) stops over its budget, is restarted with twice the
+/// budget until it finishes, and gives the full budget's results, on the CPU JIT and on Metal.
+#[test]
+fn a_misplanned_evaluation_is_restarted_and_gives_the_full_budgets_results() {
+    use crate::code_rule_dsl::transducer::packed::{
+        CAPTURE, EMIT, PlanId, TEXT, TextPredicate, WorkBudget, execute_planned_budgeted,
+    };
+    let source = format!("x = '{}'\ny = 'short b'\n", "a".repeat(40_000));
+    let files = [tape(&source)];
+    let pattern = "b";
+    let programs = [Program::new(
+        vec![word(TEXT, 0, 0), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+        vec![b"match".to_vec(), pattern.as_bytes().to_vec()],
+        vec![TextPredicate::Regex { source: 1, compiled: regex::Regex::new(pattern).unwrap() }],
+        vec![0],
+        Vec::new(),
+    )
+    .unwrap()];
+    let anchors = [vec![(0..files[0].transducer_len() as u32).collect::<Vec<_>>()]];
+    let plan = PlanId::of_programs(&programs);
+    let misplanned = WorkBudget::Replan { slack: 1, doublings: 0 };
+    for backend in [ExecutionBackend::CpuJit, ExecutionBackend::MetalJit] {
+        let full = execute_planned_budgeted(backend, plan, &programs, &files, &anchors, None, WorkBudget::Full)
+            .and_then(|execution| execution.into_outcome())
+            .map(|outcome| (outcome.outputs, outcome.errors))
+            .unwrap();
+        assert_eq!(full.1, [vec![None]], "{backend:?}");
+        assert!(!full.0[0][0].is_empty(), "{backend:?}");
+        let replanned = execute_planned_budgeted(backend, plan, &programs, &files, &anchors, None, misplanned).unwrap();
+        assert!(replanned.restarted_evaluations() > 0, "{backend:?}: the misplanned evaluation stops over its budget");
+        let replanned = replanned.into_outcome().map(|outcome| (outcome.outputs, outcome.errors)).unwrap();
+        assert_eq!(replanned, full, "{backend:?}");
     }
 }

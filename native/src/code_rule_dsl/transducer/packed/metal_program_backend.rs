@@ -728,6 +728,18 @@ pub fn execute_packed_with_result_limits(
     anchors: &[Vec<Vec<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<PackedExecution, Error> {
+    execute_packed_budgeted(engine, programs, files, anchors, result_limits, super::WorkBudget::current())
+}
+
+/// The batch with each task held to `budget` (decision 0334): a task past it stops `OverBudget`.
+pub fn execute_packed_budgeted(
+    engine: &Engine,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+    budget: super::WorkBudget,
+) -> Result<PackedExecution, Error> {
     let _evaluation = super::metal_backend::metal_execution_guard()?;
     if matches!(engine, Engine::Jit { programs: count, .. } if *count != programs.len()) {
         return Err(Error::InvalidAnchor);
@@ -739,6 +751,7 @@ pub fn execute_packed_with_result_limits(
         }
         error
     })?;
+    batch.apply_budget(budget);
     if batch.tasks.is_empty() {
         return Ok(PackedExecution::new(batch, PackedResultPage::empty()));
     }

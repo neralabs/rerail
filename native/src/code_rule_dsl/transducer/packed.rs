@@ -155,32 +155,58 @@ pub const MAX_FINITE_JOB_INSTRUCTIONS: usize = 256;
 pub const MAX_STEPS_PER_PATH: usize = 1 << 20;
 pub const MAX_WORK_PER_TASK: usize = 1 << 26;
 
-/// What a task may spend on the device before it stops (decision 0334). The workspace estimate sizes a task's
-/// states either way; the budget alone stops it.
+/// What a task may spend before it stops (decision 0334), on the device and on the CPU JIT alike. The workspace
+/// estimate sizes a task's states either way; the budget alone stops it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkBudget {
     /// The CPU's limits: `MAX_WORK_PER_TASK` a task, `MAX_STEPS_PER_PATH` a path. A task runs past its estimate, and
     /// its results are the CPU's. The default.
     Full,
     /// The workspace estimate: a task stops at it (`WorkLimit`), where the CPU's may run on. `RERAIL_DEVICE_BUDGET=estimate`.
+    /// Kept until `Replan` is the default; it changes results.
     Estimate,
+    /// The estimate times `slack`, doubled `doublings` times, below the ceiling. A task past it stops `OverBudget`,
+    /// unfinished: its evaluation is replanned (`execute_planned`) and restarted with twice the budget, never an error
+    /// until the ceiling. Results are `Full`'s. `RERAIL_DEVICE_BUDGET=replan`.
+    Replan { slack: u32, doublings: u32 },
 }
 
+/// A replanned budget's slack over the estimate: a well-planned task never reaches it.
+pub const REPLAN_SLACK: u32 = 8;
+
 impl WorkBudget {
-    /// The process's budget: `RERAIL_DEVICE_BUDGET` (`full`, the default, or `estimate`).
+    /// The process's budget: `RERAIL_DEVICE_BUDGET` (`full`, the default, `estimate` or `replan`).
     pub fn current() -> Self {
         match std::env::var("RERAIL_DEVICE_BUDGET").as_deref() {
             Ok("estimate") => Self::Estimate,
+            Ok("replan") => Self::Replan { slack: REPLAN_SLACK, doublings: 0 },
             _ => Self::Full,
         }
     }
 
-    /// A task's limit, from its workspace estimate.
+    /// A task's budget from its workspace estimate.
     pub fn task_limit(self, estimate: u32) -> u32 {
+        let ceiling = MAX_WORK_PER_TASK as u64;
         match self {
-            Self::Full => MAX_WORK_PER_TASK as u32,
+            Self::Full => ceiling as u32,
             Self::Estimate => estimate,
+            Self::Replan { slack, doublings } => {
+                let base = (u64::from(estimate & 0x7fff_ffff) * u64::from(slack.max(1))).max(1);
+                base.checked_shl(doublings).filter(|limit| *limit < ceiling).unwrap_or(ceiling) as u32
+            }
         }
+    }
+
+    /// The budget a restart runs with: twice this one.
+    pub fn doubled(self) -> Self {
+        match self {
+            Self::Replan { slack, doublings } => Self::Replan { slack, doublings: doublings + 1 },
+            other => other,
+        }
+    }
+
+    pub fn replans(self) -> bool {
+        matches!(self, Self::Replan { .. })
     }
 }
 
@@ -3980,6 +4006,52 @@ pub fn execute_planned(
     anchors: &[Vec<Vec<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<packed_batch::PackedExecution, Error> {
+    execute_planned_budgeted(backend, plan, programs, files, anchors, result_limits, WorkBudget::current())
+}
+
+/// [`execute_planned`] with each task held to `budget` (decision 0334). Under `WorkBudget::Replan`, an evaluation a
+/// task of which stops at its budget is unfinished, not failed: it is replanned here. The misprediction is recorded
+/// (the evaluation, its budget), and the evaluation restarts, alone, with twice the budget, until it finishes or
+/// reaches the ceiling (`WorkLimit`, which callers answer with another plan: W's matcher, `WaveRun::limited`).
+/// Restarts begin again from the roots, never from the stopped state. The restart keeps the plan (the same programs
+/// and files, so its compiled binding), and its results are the evaluation's: every budget gives `Full`'s.
+pub fn execute_planned_budgeted(
+    backend: ExecutionBackend,
+    plan: PlanId,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+    budget: WorkBudget,
+) -> Result<packed_batch::PackedExecution, Error> {
+    let execution = execute_planned_once(backend, plan, programs, files, anchors, result_limits, budget)?;
+    if !budget.replans() {
+        return Ok(execution);
+    }
+    let unfinished = execution.over_budget();
+    if unfinished.is_empty() {
+        return Ok(execution);
+    }
+    crate::code_rule_dsl::logic::profile::decision("evaluations over their budget, restarted with twice the budget (0334)", || {
+        format!("{} evaluations at {budget:?}", unfinished.len())
+    });
+    let mut rerun = vec![vec![Vec::new(); programs.len()]; files.len()];
+    for &(file, program) in &unfinished {
+        rerun[file][program] = anchors[file][program].clone();
+    }
+    let restarted = execute_planned_budgeted(backend, plan, programs, files, &rerun, result_limits, budget.doubled())?;
+    execution.with_restarted(restarted, &unfinished)
+}
+
+fn execute_planned_once(
+    backend: ExecutionBackend,
+    plan: PlanId,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+    budget: WorkBudget,
+) -> Result<packed_batch::PackedExecution, Error> {
     if anchors.len() != files.len() || anchors.iter().any(|file| file.len() != programs.len()) {
         return Err(Error::InvalidAnchor);
     }
@@ -3988,17 +4060,18 @@ pub fn execute_planned(
             let limits = result_limits.map_or_else(|| vec![u32::MAX; programs.len()], <[u32]>::to_vec);
             packed_batch::PackedExecution::interpret(programs, files, anchors, &limits)
         }
-        ExecutionBackend::CpuJit => native_cpu::execute_batch_packed_with_result_limits(
+        ExecutionBackend::CpuJit => native_cpu::execute_batch_packed_budgeted(
             programs,
             files,
             anchors,
             result_limits,
+            budget,
         ),
         ExecutionBackend::MetalInterpreter => {
-            device::required()?.execute_packed(device::Engine::Interpreter, programs, files, anchors, result_limits)
+            device::required()?.execute_packed(device::Engine::Interpreter, programs, files, anchors, result_limits, budget)
         }
         ExecutionBackend::MetalJit => {
-            device::required()?.execute_packed(device::Engine::Jit, programs, files, anchors, result_limits)
+            device::required()?.execute_packed(device::Engine::Jit, programs, files, anchors, result_limits, budget)
         }
         ExecutionBackend::CpuBackground | ExecutionBackend::MetalBackground => {
             Err(Error::UnsupportedBackend)
@@ -4235,7 +4308,7 @@ pub fn execute_production_corpus(
         .map(|file| file.iter().map(|roots| roots.to_vec()).collect())
         .collect::<Vec<_>>();
     if let Some(device) = device::matcher() {
-        return device.execute_packed(device::Engine::Jit, programs, files, &anchors, Some(result_limits));
+        return device.execute_packed(device::Engine::Jit, programs, files, &anchors, Some(result_limits), WorkBudget::current());
     }
     execute_with_backend_packed_result_limits(ExecutionBackend::CpuJit, programs, files, &anchors, Some(result_limits))
 }

@@ -476,7 +476,10 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
 - `metal_catches_a_widened_walk` caught 2 widened clauses of the 3 it wanted, and so does its CPU twin
   (`the_gate_catches_a_widened_walk`, in the slow tier, failing unseen): the pack's clauses give 2. Both now read
   the same tapes (`widened_tapes`, Metal 16 a launch) and want 2 (`WIDENED_CAUGHT`); both pass.
-- **Open**: the replanning of over-long jobs (0334, "Over-long jobs are replanned"), awaiting the user's answers.
+- The replanning of over-long jobs is built for packed batches (2026-11-17, 0334 Progress): `replan` budgets,
+  `OverBudget`, the unfinished evaluations restarted with twice the budget on the CPU JIT and Metal. **Open**, in
+  0334's order: another plan (W's matcher) chosen by cost before the ceiling; the planner's estimate as the basis;
+  the label sweep; the misprediction in the cost store; memory (§9); `replan` as the default.
 
 ### Q20. The CPU JIT's capture pairs compare and scan a byte a step
 

@@ -217,6 +217,13 @@ impl PackedBatch {
         Self::build_tapes(programs, files, anchors, true, Layout::Resident)
     }
 
+    /// Every task's budget from its workspace estimate (decision 0334): the batch as `budget` runs it.
+    pub fn apply_budget(&mut self, budget: super::WorkBudget) {
+        for task in &mut self.tasks {
+            task.work_limit = budget.task_limit(task.workspace_work_estimate);
+        }
+    }
+
     fn build_tapes(
         programs: &[Program],
         files: &[TapeDoc],
@@ -983,7 +990,8 @@ impl PackedBatch {
             // The work per node of a task's subtree (`resident_work` on the device): under the full budget, the
             // CPU's limit whatever the subtree (`resident_work` clamps a node's 2^26 to 2^26).
             evaluation.workspace_work_estimate = match budget {
-                super::WorkBudget::Full => super::MAX_WORK_PER_TASK as u32,
+                // The label sweep is not replanned yet: under `Replan` it runs as `Full`.
+                super::WorkBudget::Full | super::WorkBudget::Replan { .. } => super::MAX_WORK_PER_TASK as u32,
                 super::WorkBudget::Estimate => checked_u32(program.words.len().saturating_mul(4_096).min(0x7fff_ffff))? | u32::from(repeats) << 31,
             };
             start += spec[4];
@@ -1150,13 +1158,16 @@ impl PackedBatch {
 // mechanism; kept as copied (open item O21).
 #[allow(dead_code)]
 pub(super) fn stable_status_error(statuses: &[TaskStatus]) -> Option<Error> {
-    statuses.iter().find_map(status_error)
+    statuses.iter().find_map(|status| status_error(status, super::MAX_WORK_PER_TASK as u32))
 }
 
-fn status_error(status: &TaskStatus) -> Option<Error> {
+/// A task's status as its evaluation's error. A work stop below the ceiling is the task's budget
+/// (`WorkBudget::Replan`): `OverBudget`, unfinished; at the ceiling it is `WorkLimit`.
+fn status_error(status: &TaskStatus, work_limit: u32) -> Option<Error> {
     (status.error != 0).then_some(match status.error {
         1 | 3 | 5 | 6 => Error::InvalidOpcode(status.program_counter as usize),
         2 => Error::BackendCapacity,
+        4 if work_limit < super::MAX_WORK_PER_TASK as u32 => Error::OverBudget,
         4 => Error::WorkLimit,
         7 => Error::InvalidOperand(status.program_counter as usize),
         _ => Error::BackendFailure,
@@ -1434,6 +1445,13 @@ impl<'a> PackedResults<'a> {
     }
 }
 
+/// A batch's restarted evaluations (`PackedExecution::with_restarted`): the restart's execution (the same programs
+/// and files, those evaluations' anchors alone) and, per (file, program), whether it is taken from there.
+struct Restarts {
+    execution: PackedExecution,
+    taken: Vec<bool>,
+}
+
 #[derive(Clone)]
 pub struct PackedExecution {
     pub batch: Arc<PackedBatch>,
@@ -1441,6 +1459,9 @@ pub struct PackedExecution {
     evaluation_indexes: Arc<Vec<Option<usize>>>,
     file_task_ordinal_bases: Arc<Vec<u32>>,
     grid_errors: Option<Arc<Vec<Option<Error>>>>,
+    /// The evaluations restarted with twice the budget after a task of theirs stopped at it (decision 0334): their
+    /// results and errors are the restart's, as if they had run here.
+    restarts: Option<Arc<Restarts>>,
     file_start: usize,
     file_count: usize,
     program_start: usize,
@@ -1460,6 +1481,46 @@ fn grid_result_failure() -> Error {
 }
 
 impl PackedExecution {
+    /// The (file, program) evaluations a task of which stopped at its budget, below the ceiling (decision 0334):
+    /// unfinished, to be replanned.
+    pub(super) fn over_budget(&self) -> Vec<(usize, usize)> {
+        let Ok(page) = self.single_page() else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        for (task, status) in self.batch.tasks.iter().zip(&page.statuses) {
+            let at = (task.file as usize, task.program as usize);
+            if matches!(status_error(status, task.work_limit), Some(Error::OverBudget)) && found.last() != Some(&at) {
+                found.push(at);
+            }
+        }
+        found.dedup();
+        found
+    }
+
+    /// This execution with `evaluations` taken from `restarted`: the same programs and files, run again for those
+    /// evaluations alone with twice the budget (`execute_planned`).
+    pub(super) fn with_restarted(mut self, restarted: PackedExecution, evaluations: &[(usize, usize)]) -> Result<Self, Error> {
+        let programs = self.batch.programs.len();
+        if restarted.batch.programs.len() != programs || restarted.batch.files.len() != self.batch.files.len() || self.restarts.is_some() {
+            return Err(Error::BackendFailure);
+        }
+        let mut taken = vec![false; self.batch.files.len() * programs];
+        for &(file, program) in evaluations {
+            taken[file * programs + program] = true;
+        }
+        self.restarts = Some(Arc::new(Restarts { execution: restarted, taken }));
+        Ok(self)
+    }
+
+    /// The evaluations restarted, here and in the restarts' own restarts.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn restarted_evaluations(&self) -> usize {
+        self.restarts.as_ref().map_or(0, |restarts| {
+            restarts.taken.iter().filter(|taken| **taken).count() + restarts.execution.restarted_evaluations()
+        })
+    }
+
     fn single_page(&self) -> Result<&PackedResultPage, Error> {
         match self.pages.as_slice() {
             [page] => Ok(page),
@@ -1641,6 +1702,7 @@ impl PackedExecution {
             evaluation_indexes: Arc::new(evaluation_indexes),
             file_task_ordinal_bases: Arc::new(file_task_ordinal_bases),
             grid_errors: None,
+            restarts: None,
             file_start: 0,
             file_count,
             program_start: 0,
@@ -1689,7 +1751,7 @@ impl PackedExecution {
         {
             return Err(Error::InvalidAnchor);
         }
-        if self.grid_errors.is_some() {
+        if self.grid_errors.is_some() || self.restarts.is_some() {
             let mut outputs = vec![vec![Vec::new(); self.program_count]; self.file_count];
             let mut errors = vec![vec![None; self.program_count]; self.file_count];
             for file in 0..self.file_count {
@@ -1698,7 +1760,8 @@ impl PackedExecution {
                     errors[file][program] = error;
                     for result in results {
                         outputs[file][program].push(Output {
-                            task_ordinal: result.record.task_ordinal,
+                            // The batch's ordinal, a restarted evaluation's too (`program_results`).
+                            task_ordinal: result.task_ordinal().wrapping_add(self.file_task_ordinal_bases[file]),
                             local_ordinal: result.local_ordinal(),
                             start: result.start_node(),
                             label: result.label(),
@@ -1797,6 +1860,28 @@ impl PackedExecution {
         let Some(evaluation) = evaluation else {
             return Ok((Vec::new(), None));
         };
+        if let Some(restarts) = &self.restarts
+            && restarts.taken[file * self.batch.programs.len() + program]
+        {
+            let restart = &restarts.execution;
+            let (mut results, error) = restart.program_results(file, program)?;
+            // The restart's task ordinals as this batch's: an evaluation's tasks are its roots in order, here and
+            // there, so a result's ordinal moves by the gap between the two evaluations' first tasks (each from
+            // its file's first task).
+            let first = |execution: &PackedExecution| -> Option<u32> {
+                let at = execution.evaluation_indexes[file * execution.batch.programs.len() + program]?;
+                let task = execution.batch.evaluations[at].task_start as usize;
+                Some(execution.batch.tasks[task].batch_ordinal.wrapping_sub(execution.file_task_ordinal_bases[file]))
+            };
+            let (Some(here), Some(there)) = (first(self), first(restart)) else {
+                return Err(Error::BackendFailure);
+            };
+            let shift = here.wrapping_sub(there);
+            for result in &mut results {
+                result.task_ordinal_base = result.task_ordinal_base.wrapping_sub(shift);
+            }
+            return Ok((results, error));
+        }
         if let Some(errors) = &self.grid_errors {
             if let Some(error) = &errors[evaluation] {
                 return Ok((Vec::new(), Some(error.clone())));
@@ -1805,7 +1890,9 @@ impl PackedExecution {
             let record = &self.batch.evaluations[evaluation];
             let statuses = &self.single_page()?.statuses
                 [record.task_start as usize..(record.task_start + record.task_count) as usize];
-            if let Some(error) = statuses.iter().find_map(status_error) {
+            let tasks = &self.batch.tasks
+                [record.task_start as usize..(record.task_start + record.task_count) as usize];
+            if let Some(error) = statuses.iter().zip(tasks).find_map(|(status, task)| status_error(status, task.work_limit)) {
                 return Ok((Vec::new(), Some(error)));
             }
         }
@@ -1878,7 +1965,8 @@ pub struct PackedResultView<'a> {
 
 impl<'a> PackedResultView<'a> {
     pub fn task_ordinal(self) -> u32 {
-        self.record.task_ordinal - self.task_ordinal_base
+        // Wrapping: a restarted evaluation's base is shifted to this batch's ordinals (`program_results`).
+        self.record.task_ordinal.wrapping_sub(self.task_ordinal_base)
     }
 
     pub fn local_ordinal(self) -> u32 {
@@ -2043,6 +2131,7 @@ impl GridPublication {
                 evaluation_indexes: Arc::new(evaluation_indexes),
                 file_task_ordinal_bases: Arc::new(file_bases),
                 grid_errors: Some(Arc::new(errors)),
+                restarts: None,
                 file_start: 0,
                 file_count,
                 program_start: 0,
@@ -2529,7 +2618,7 @@ impl PackedResultPage {
             .map(|_| batch.programs.iter().map(|_| None).collect::<Vec<_>>())
             .collect::<Vec<_>>();
         for (task, status) in batch.tasks.iter().zip(&self.statuses) {
-            if let Some(error) = status_error(status) {
+            if let Some(error) = status_error(status, task.work_limit) {
                 errors[task.file as usize][task.program as usize].get_or_insert(error);
                 outputs[task.file as usize][task.program as usize].clear();
                 continue;
@@ -2647,7 +2736,7 @@ impl PackedBatch {
             .map(|_| self.programs.iter().map(|_| None).collect::<Vec<_>>())
             .collect::<Vec<_>>();
         for (task, status) in packed.batch.tasks.iter().zip(packed.statuses) {
-            if let Some(error) = status_error(status) {
+            if let Some(error) = status_error(status, task.work_limit) {
                 errors[task.file as usize][task.program as usize].get_or_insert(error);
                 outputs[task.file as usize][task.program as usize].clear();
                 continue;

@@ -12,6 +12,9 @@ pub enum Error {
     Phase(usize),
     InvalidGreedyRegion(usize),
     WorkLimit,
+    /// A task stopped at its budget, below the ceiling (`WorkBudget::Replan`): unfinished, not failed. Its
+    /// evaluation is replanned and restarted (decision 0334).
+    OverBudget,
     UnsupportedPattern,
     UnsupportedFeature(&'static str),
     UnknownNodeKind(String),
