@@ -161,6 +161,64 @@ fn a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A run stopped after it wrote its first entries (killed, out of memory, a strict abort) leaves the statistics as the
+/// last finished run kept them, valid: it ran the same program, whose entries it wrote are of the contents it read,
+/// and the contents the keeper counted are still in the memo. The next edit is a steady one. Before, the stopped run's
+/// mark ("a run is under way", of no program) emptied the keeper, and the next edit counted every file in, decoding
+/// every hit whole.
+#[test]
+fn an_edit_after_a_stopped_run_of_the_same_program_is_steady() {
+    let marker = format!("{:?}", std::time::SystemTime::now());
+    let dir = corpus("stopped", &marker, FILES);
+    let program = program("try_statement");
+    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 200_000_000));
+    let edit = |tail: &str| std::fs::write(dir.join("c.py"), format!("# {marker}\n{}{tail}", FILES[2].1)).unwrap();
+    let (cold, _) = run(&dir, &program, OUTPUTS);
+    assert_eq!(cold.stats_kept, Some(Ok((3, 0))), "a cold run counts every file in");
+    edit("\nhelper(4)\n");
+    super::STOP_AFTER_ENTRIES.with(|s| s.set(true));
+    let out = dir.join(".out");
+    let stopped = super::run(&program, &dir, None, &out, "program", Binding::Cpu, 1 << 18);
+    assert!(stopped.is_err_and(|e| e.to_string().contains("stopped after its first entries")), "the run stops where the hook stops it");
+    assert!(!super::STOP_AFTER_ENTRIES.with(std::cell::Cell::get), "the hook was reached");
+    edit("\nhelper(5)\n");
+    let (next, rows) = run(&dir, &program, OUTPUTS);
+    assert_steady(&next, "the edit after a stopped run");
+    let c = format!("{}\nhelper(5)\n", FILES[2].1);
+    let fresh = corpus("stopped-fresh", &format!("{marker} fresh"), &[FILES[0], FILES[1], ("c.py", &c)]);
+    let (_, expected) = run(&fresh, &program, OUTPUTS);
+    assert_eq!(rows, expected, "the rows of a full run");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The other side of the last test: a stopped run of another program (a rule edited) rewrote some of the entries
+/// the statistics count (its partial hits, decision 0225 §2), so the next run of the first program trusts none of
+/// what was kept: it counts every file in, and its rows are a full run's.
+#[test]
+fn a_stopped_run_of_another_program_leaves_nothing_kept_trusted() {
+    let marker = format!("{:?}", std::time::SystemTime::now());
+    let dir = corpus("stopped-other", &marker, FILES);
+    let (first, edited) = (program("try_statement"), program("while_statement"));
+    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 200_000_000));
+    let (cold, _) = run(&dir, &first, OUTPUTS);
+    assert_eq!(cold.stats_kept, Some(Ok((3, 0))), "a cold run counts every file in");
+    super::STOP_AFTER_ENTRIES.with(|s| s.set(true));
+    let stopped = super::run(&edited, &dir, None, &dir.join(".out"), "program", Binding::Cpu, 1 << 18);
+    assert!(stopped.is_err_and(|e| e.to_string().contains("stopped after its first entries")), "the edited program's run stops where the hook stops it");
+    let tail = "\nhelper(4)\n";
+    std::fs::write(dir.join("c.py"), format!("# {marker}\n{}{tail}", FILES[2].1)).unwrap();
+    let (next, rows) = run(&dir, &first, OUTPUTS);
+    assert_eq!(next.memo_kept.0, 0, "no hit is read for its outputs alone: what was kept is not trusted");
+    assert_eq!(next.stats_kept, Some(Ok((3, 0))), "every file counted in again");
+    let c = format!("{}{tail}", FILES[2].1);
+    let fresh = corpus("stopped-other-fresh", &format!("{marker} fresh"), &[FILES[0], FILES[1], ("c.py", &c)]);
+    let (_, expected) = run(&fresh, &first, OUTPUTS);
+    assert_eq!(rows, expected, "the rows of a full run");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 const COMMENTED: &[(&str, &str)] = &[
     ("a.py", "def helper(x):\n    assert x\n    return x\n\ndef other(y):\n    while y:\n        assert y\n    return y\n"),
     ("b.py", "from a import helper\n\n# helper\ndef main():\n    assert True  # other\n    return helper(1)\n\nhelper\n"),

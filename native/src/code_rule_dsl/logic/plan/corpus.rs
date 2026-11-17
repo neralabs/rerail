@@ -2181,6 +2181,9 @@ pub mod test_store;
 thread_local! {
     /// A test's own store, so that another test's collection in the shared default store does not evict its rows.
     pub static TEST_TAPE_CACHE: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) };
+    /// The thread's next memoised run of a program (not of a phase it reads) stops with an error once its first
+    /// entries are published (and written), as a run killed then would: what it leaves is a stopped run's.
+    pub static STOP_AFTER_ENTRIES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 
@@ -6526,9 +6529,19 @@ fn run_observed(
                     && !publish.is_empty()
                     && last_unmarked.replace(false)
                 {
-                    memo::set_last_program(store, &memo_program, None);
+                    // This run started from what the last run of its program kept (`last_unmarked`): a stop leaves it
+                    // valid for the next.
+                    memo::set_under_way(store, &memo_program, memo_whole);
                 }
                 memo.remember_all_but(&memo_plan, publish).map_err(|e| Error::Plan(format!("memo publication of {n} documents: {e}")))?;
+                #[cfg(any(test, feature = "test-hooks"))]
+                if phases::current().is_none() && STOP_AFTER_ENTRIES.with(|s| s.replace(false)) {
+                    // As a run killed after its first entries: they and the marker reach the store, nothing after.
+                    if let memo::Memo::Stored(store) = memo {
+                        store.written().map_err(|e| Error::Plan(e.to_string()))?;
+                    }
+                    return Err(Error::Plan("stopped after its first entries (a test's)".into()));
+                }
             }
         } else if memoised {
             memo_unattributed += 1;

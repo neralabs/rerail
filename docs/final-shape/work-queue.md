@@ -1335,12 +1335,34 @@ pass.
   10-file cold, warm and edit byte-identical; the warm run writes nothing; warm-writes and session tests pass.
 - **Open**: a keeper given up for another reason (an entry the memo dropped within a build) still leaves the next
   run counting every file in by decoding every hit whole, though the kept inputs hold those rows.
+- **Open, done** (2026-11-17). Which runs start with no valid keeper while the memo has hits, within a build:
+  - *An entry dropped*: not reached. The memo keeps a path's newest `MEMO_CONTENTS` (4) contents, and every ended
+    run's keeper counts the newest; a plan's entries go only with the plan.
+  - *A stopped run* (killed, out of memory, a strict abort): its mark, "a run is under way" of no program, emptied the
+    keeper, so the next edit decoded every hit whole. A run that started from what an ended run of its program kept
+    now marks itself under way *of that program* (`memo::set_under_way`), and the next run of it keeps the keeper:
+    the stopped run's entries are of that program and of the contents it read, and the contents counted are still in
+    the memo. The kept part's frames are queued after the run's "ended" mark, so no such stop has written any.
+  - *A run of another program* (a rule edited, decision 0225 §2): it rewrites entries the keeper counts, so the next
+    run of the first counts every file in. Kept as it is; it is tested now.
+  - Tests: `an_edit_after_a_stopped_run_of_the_same_program_is_steady` (failed before the fix: no hit read for its
+    outputs alone) and `a_stopped_run_of_another_program_leaves_nothing_kept_trusted`, through a test hook,
+    `corpus::STOP_AFTER_ENTRIES` (the program's run stops once its first entries are written). Partial-hit tests 12/12;
+    strict 10-file cold, warm and edit byte-identical.
+  - Left: such a run of another program (and a lost blob) still counts every file in by decoding every hit whole. The
+    kept inputs could give those rows if the kept part recorded which content each document's rows are of; it does
+    not today (a new process's `Retained::docs` is empty).
 
 ### Q53. 50 unused re-exports in the engine's `code_rule_dsl/mod.rs`
 
 - **Found** (2026-11-17, a `--bin rerail-engine --features test-hooks` build): 50 `unused import` warnings for the
   language crates' re-exports in `native/src/code_rule_dsl/mod.rs` (e.g. line 9, `rerail_lang_php::…::forte::tree::*`),
-  from the crate split. Not this branch's change; left for the split's owner to sweep, with the re-exports' users.
+  from the crate split.
+- **Cause**: re-exports gated on `any(test, feature = "test-hooks")` that only the library's own tests use: a
+  test-hooks build that is not a test build reaches none of them (no crate depends on rerail-engine).
+- **Fix**: those 50 gated on `test` alone (four Metal ones on `all(test, target_os = "macos")`; the
+  `component_loop` glob on `any(test, feature = "headless")`, its module's other build). The CLI's test-hooks build
+  has no compiler warning; the test target builds and its partial-hit tests pass. Done (2026-11-17).
 
 ## Questions for the user
 
