@@ -790,26 +790,26 @@ describe("gitStartEnvironment", () => {
     return { exists: (path: string) => files.includes(path), runnable: (path: string) => files.includes(path), developerDir: () => undefined };
   };
   const person = { Path: [String.raw`C:\WINDOWS\system32`, win32.join(git, "cmd")].join(";"), USERPROFILE: String.raw`C:\Users\me`, HOMEDRIVE: "H:", HOMEPATH: String.raw`\people\me` };
-  /** What the launcher puts first on PATH: the build's bin, the install's usr\bin, and the home's bin when there is a home. */
-  const first = (system: string, home?: string) => [win32.join(git, system, "bin"), win32.join(git, "usr", "bin"), ...(home === undefined ? [] : [win32.join(home, "bin")])];
+  /** What the launcher puts first on PATH, spelled as it spells them: the build's bin, the install's usr\bin, and the home's bin when there is one. */
+  const first = (build: string, home?: string) => [win32.join(git, build, "bin"), win32.join(git, "usr", "bin"), ...(home === undefined ? [] : [win32.join(home, "bin")])];
 
   it("gives a Git for Windows build's own git.exe what its launcher gives it: MSYSTEM, PATH led by Git's folders, HOME and PLINK_PROTOCOL", () => {
     // MSYSTEM set by the person's own MSYS2 set-up, and no sh.exe on PATH: the launcher's child gets its build's MSYSTEM.
     expect(gitStartEnvironment(ucrt, { ...person, MSYSTEM: "MINGW64", HOME: String.raw`D:\home` }, install(ucrt))).toEqual({
-      ...person, HOME: String.raw`D:\home`, MSYSTEM: "UCRT64", PLINK_PROTOCOL: "ssh", Path: [...first("UCRT64", String.raw`D:\home`), person.Path].join(";"),
+      ...person, HOME: String.raw`D:\home`, MSYSTEM: "UCRT64", PLINK_PROTOCOL: "ssh", Path: [...first("ucrt64", String.raw`D:\home`), person.Path].join(";"),
     });
     const mingw = win32.join(git, "mingw64", "bin", "git.exe");
     const started = gitStartEnvironment(mingw, { PATH: "C:\\WINDOWS", HOME: "C:\\h", PLINK_PROTOCOL: "plink" }, install(mingw));
-    expect(started).toEqual({ PATH: [...first("MINGW64", "C:\\h"), "C:\\WINDOWS"].join(";"), HOME: "C:\\h", PLINK_PROTOCOL: "plink", MSYSTEM: "MINGW64" });
+    expect(started).toEqual({ PATH: [...first("mingw64", "C:\\h"), "C:\\WINDOWS"].join(";"), HOME: "C:\\h", PLINK_PROTOCOL: "plink", MSYSTEM: "MINGW64" });
   });
 
   it("sets HOME as the launcher does when it is unset: HOMEDRIVE and HOMEPATH when that folder exists, else USERPROFILE", () => {
     const onShare = gitStartEnvironment(ucrt, person, install(ucrt, share));
-    expect([onShare.HOME, onShare.Path]).toEqual([share, [...first("UCRT64", share), person.Path].join(";")]);
+    expect([onShare.HOME, onShare.Path]).toEqual([share, [...first("ucrt64", share), person.Path].join(";")]);
     const inProfile = gitStartEnvironment(ucrt, person, install(ucrt));
-    expect([inProfile.HOME, inProfile.Path]).toEqual([person.USERPROFILE, [...first("UCRT64", person.USERPROFILE), person.Path].join(";")]);
+    expect([inProfile.HOME, inProfile.Path]).toEqual([person.USERPROFILE, [...first("ucrt64", person.USERPROFILE), person.Path].join(";")]);
     const { USERPROFILE: _profile, HOMEPATH: _path, ...bare } = person;
-    expect(gitStartEnvironment(ucrt, bare, install(ucrt))).toEqual({ ...bare, MSYSTEM: "UCRT64", PLINK_PROTOCOL: "ssh", Path: [...first("UCRT64"), bare.Path].join(";") });
+    expect(gitStartEnvironment(ucrt, bare, install(ucrt))).toEqual({ ...bare, MSYSTEM: "UCRT64", PLINK_PROTOCOL: "ssh", Path: [...first("ucrt64"), bare.Path].join(";") });
   });
 
   it("gives any other Git the environment as it is: the launchers, a git.exe in no build folder or outside a Git for Windows install, a Git elsewhere", () => {

@@ -302,11 +302,12 @@ function gitForWindowsBuild(path: string, probe: GitProbe): GitForWindowsBuild |
  * The environment a start of the Git at `path` gets from `env`: as it is, unless `path` is a Git for Windows build's own
  * git.exe ({@link gitForWindowsBuild}). Rerail starts that one without the launcher that would start it
  * ({@link gitBehindLauncher}), so it gets what the launcher gives it, `git-wrapper.c`'s `setup_environment`: `HOME` set
- * when unset ({@link launcherHome}), `PLINK_PROTOCOL` set to `ssh` when unset, `MSYSTEM` named for the build, and `PATH`
- * led by the build's `bin`, the install's `usr\bin` and the home's `bin`, in that order. Git looks on that `PATH` for
- * every program it runs: `sh.exe` for a command it runs through its shell (a filter, a textconv, an alias, a credential
- * helper), then the programs that command names. Started with `MSYSTEM` set and no `sh.exe` on `PATH`, Git for
- * Windows' git.exe crashes there; with `MSYSTEM` unset it puts its own folders first, but not the home's `bin`.
+ * when unset ({@link launcherHome}), `PLINK_PROTOCOL` set to `ssh` when unset, `MSYSTEM` named for the build whatever it
+ * was, and `PATH` led by the build's `bin`, the install's `usr\bin` and the home's `bin`, in that order and spelled as
+ * the launcher spells them. Git looks on that `PATH` for every program it runs: `sh.exe` for a command it runs through
+ * its shell (a filter, a textconv, an alias, a credential helper), then the programs that command names. Started
+ * without it, git.exe with `MSYSTEM` set and no `sh.exe` on `PATH` crashes there, and with `MSYSTEM` unset puts the
+ * home's `bin` before its own folders, so a program of the person's of the same name runs in place of Git's.
  */
 export function gitStartEnvironment(path: string, env: NodeJS.ProcessEnv = process.env, probe: GitProbe = machine): NodeJS.ProcessEnv {
   const install = gitForWindowsBuild(path, probe);
@@ -316,11 +317,10 @@ export function gitStartEnvironment(path: string, env: NodeJS.ProcessEnv = proce
 /** {@link gitStartEnvironment}'s environment for `install`. */
 function launcherEnvironment({ root, build }: GitForWindowsBuild, env: NodeJS.ProcessEnv, probe: GitProbe): NodeJS.ProcessEnv {
   const home = launcherHome(env, probe);
-  const system = build.toUpperCase();
-  const first = [win32.join(root, system), win32.join(root, "usr"), ...(home === undefined ? [] : [home])].map(folder => win32.join(folder, "bin"));
+  const first = [win32.join(root, build), win32.join(root, "usr"), ...(home === undefined ? [] : [home])].map(folder => win32.join(folder, "bin"));
   const plink = variable(env, "PLINK_PROTOCOL");
   return withVariables(env, {
-    MSYSTEM: system,
+    MSYSTEM: build.toUpperCase(),
     PLINK_PROTOCOL: plink === undefined || plink === "" ? "ssh" : plink,
     ...(home === undefined ? {} : { HOME: home }),
     PATH: [...first, variable(env, "PATH") ?? ""].join(";"),
