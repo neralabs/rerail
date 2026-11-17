@@ -16,6 +16,7 @@ import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js
 import { worktreeRegistry } from "../catalog/repository-identity.js";
 import { loadNativeBinding, type NativeGitIgnoreMatcher } from "../native/native.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
+import type { GitIgnoreMatchers } from "../native/git-ignore-matchers.js";
 import type {
   AuditorCloseOptions,
   CodeRuleEdit,
@@ -50,6 +51,8 @@ export interface CheckoutCodeRuleRouterOptions {
   readonly followGitignore?: boolean;
   /** The shell the session's coding agent runs commands in, which every lane's steers are written for (`steerShell`). */
   readonly steerShell?: SteerShell | undefined;
+  /** The daemon's Git ignore matchers, one per checkout for every session (`GitIgnoreMatchers`); the router's own without it. */
+  readonly gitIgnoreMatchers?: GitIgnoreMatchers | undefined;
 }
 
 interface Lane {

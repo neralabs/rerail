@@ -26,6 +26,7 @@ import { symlinkOrSkip } from "../../support/platform/links.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 import { loadNativeBinding } from "../../../src/engine/native/native.js";
 import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
+import { GitIgnoreMatchers } from "../../../src/engine/native/git-ignore-matchers.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -109,6 +110,7 @@ function router(
   ruleCatalog?: RuleCatalog,
   followGitignore = false,
   requestSteer: () => Promise<undefined> = async () => undefined,
+  gitIgnoreMatchers?: GitIgnoreMatchers,
 ): CheckoutCodeRuleRouter {
   const owners = new CheckoutOwners();
   const catalogs = new CheckoutCatalogs(databasePath, ruleCatalog === undefined ? {} : { ruleCatalog });
@@ -120,6 +122,7 @@ function router(
     steerDelivery: { requestSteer },
     audits: recorder,
     followGitignore,
+    gitIgnoreMatchers,
   });
   cleanups.push(async () => {
     await auditor.close();
@@ -726,6 +729,34 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     await auditor.settleGeneratedEdits();
     expect(closed).not.toHaveBeenCalled();
     expect(audits.map(audit => [audit.mode, audit.paths])).toEqual([["steer", ["api/x.py"]], ["log", ["api/y.py"]]]);
+  });
+
+  it("opens one Git ignore matcher for a worktree that sessions in two other worktrees audit, and drops it when both close", async () => {
+    const { databasePath, session, worktree, root } = await repositoryWithWorktree(outside);
+    git(session, "worktree", "add", "--quiet", "-b", "second", join(root, "elsewhere", "second"));
+    const second = await realpath(join(root, "elsewhere", "second"));
+    const matchers = new GitIgnoreMatchers();
+    const opened = vi.spyOn(loadNativeBinding(), "openGitIgnoreMatcher");
+    cleanups.push(async () => { opened.mockRestore(); });
+    const { recorder, audits } = recordingAudits();
+    const sessions = [
+      { id: "first", auditor: router(session, databasePath, recorder, undefined, true, undefined, matchers) },
+      { id: "second", auditor: router(second, databasePath, recorder, undefined, true, undefined, matchers) },
+    ];
+    const edits = [{ path: join(worktree, "api", "x.py"), language: "python" as const, generatedText: "NEEDLE\n" }];
+    for (const { id, auditor } of sessions) {
+      await auditor.openWorkspace(id);
+      await auditor.auditGeneratedEdits(id, { revision: 1, checkpoints: ["edit"], mode: "log", edits });
+      await auditor.settleGeneratedEdits();
+    }
+    expect(violations(audits)).toEqual([
+      { checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" },
+      { checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" },
+    ]);
+    // A matcher holds its checkout's index, and its answers are the checkout's: the two sessions share one.
+    expect(opened.mock.calls.filter(([path]) => path === worktree)).toHaveLength(1);
+    for (const { auditor } of sessions) await auditor.close();
+    expect(matchers.size).toBe(0);
   });
 
   it("keeps the stopped value a worktree outside the checkout has of its own", async () => {
