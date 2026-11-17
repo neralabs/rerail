@@ -21,6 +21,7 @@
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
+pub mod join_steps;
 pub mod sql_plans;
 
 /// The samples kept per machine: older ones are deleted past this.
@@ -87,6 +88,7 @@ pub fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
            failed INTEGER, missing TEXT, first_at REAL, last_at REAL, PRIMARY KEY(machine, kind, key));",
     )?;
     sql_plans::create(&db)?;
+    join_steps::create(&db)?;
     Ok(db)
 }
 
@@ -108,7 +110,8 @@ fn write() {
     let (samples, dropped) = rerail_accel::score::take_samples();
     let plans = sql_plans::take();
     let forms = rerail_accel::forms::drain();
-    if samples.is_empty() && plans.is_empty() && forms.is_empty() {
+    let steps = join_steps::take();
+    if samples.is_empty() && plans.is_empty() && forms.is_empty() && steps.is_empty() {
         return;
     }
     // What the stored statistics say first (the samples since the model, its age): a run that measured something
@@ -131,6 +134,7 @@ fn write() {
             if let Some(cut) = cut {
                 let _ = db.execute("DELETE FROM samples WHERE machine = ?1 AND at < ?2", rusqlite::params![machine(), cut]);
             }
+            join_steps::trim(db, &machine());
         }
     }
     let Some(db) = w.as_mut() else {
@@ -152,6 +156,8 @@ fn write() {
         } else {
             sql_plans::insert(&tx, &machine, threads, at, &plans)?
         };
+        // The join steps' estimates and what they made (decision 0354).
+        join_steps::insert(&tx, &machine, at, &steps)?;
         // The forms' record, summed over runs (decision 0202).
         if !forms.is_empty() {
             let mut up = tx.prepare_cached(
@@ -176,7 +182,7 @@ fn write() {
             }
         }
         Err(e) => {
-            crate::code_rule_dsl::logic::profile::decision("cost statistics", || format!("{} job samples and {} SQL reports not written: {e}", samples.len(), plans.len()));
+            crate::code_rule_dsl::logic::profile::decision("cost statistics", || format!("{} job samples, {} SQL reports and {} join steps not written: {e}", samples.len(), plans.len(), steps.len()));
             sql_plans::retry(plans);
         }
     }
@@ -683,6 +689,36 @@ pub mod tests {
         eprintln!("{} samples; trained in {:.2} s wall {:.2} s CPU; {model:?}", samples.len(), t.elapsed().as_secs_f64(), rerail_accel::exec::process_cpu() - cpu);
         eprintln!("{c}");
         eprintln!("model wins: {}", c.model_wins());
+    }
+
+    /// Decision 0354, step 1 (the shadow): the join steps' learned correction against the planner's estimates, on
+    /// this machine's steps in the store at `RERAIL_COSTS` (read only): trained on all but the newest fifth, compared
+    /// on it. Prints the comparison, and the held-out steps' misses by basis; asserts nothing about who wins.
+    #[test]
+    #[ignore = "reads the cost store: RERAIL_COSTS=<costs.sqlite> --ignored --nocapture"]
+    fn the_join_model_against_the_planners_estimates() {
+        let path = super::path().expect("RERAIL_COSTS");
+        let db = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let limit: i64 = std::env::var("COSTS_READ").ok().and_then(|v| v.parse().ok()).unwrap_or(super::join_steps::READ);
+        let steps = super::join_steps::read(&db, &super::machine(), limit).unwrap();
+        let config = rerail_accel::cost_model::CostConfig::default().forest;
+        let (cpu, t) = (rerail_accel::exec::process_cpu(), std::time::Instant::now());
+        let (c, model) = rerail_accel::join_model::compare(&steps, &config).unwrap();
+        eprintln!("{} steps; trained in {:.2} s wall {:.2} s CPU; {model:?}", steps.len(), t.elapsed().as_secs_f64(), rerail_accel::exec::process_cpu() - cpu);
+        eprintln!("{c}");
+        eprintln!("model wins: {}", c.model_wins());
+        // By basis, over the held-out steps: the planner's and the model's weighted misses.
+        let held = &steps[steps.len() - steps.len() / 5..];
+        let mut by: std::collections::BTreeMap<&str, (Vec<rerail_accel::join_model::StepSample>, Vec<f64>)> = Default::default();
+        for s in held {
+            let e = by.entry(s.basis.as_str()).or_default();
+            e.0.push(s.clone());
+            e.1.push(model.correction(s).unwrap());
+        }
+        for (basis, (ss, cs)) in by {
+            let c = rerail_accel::join_model::compared(&ss, &cs, 0);
+            eprintln!("  {basis:<22} {:>6} steps, {:>12.0} rows of work: planner ×{:.2}, model ×{:.2}", ss.len(), ss.iter().map(|s| s.work()).sum::<f64>(), c.planner_weighted, c.model_weighted);
+        }
     }
 
     /// Training on the store's samples saves a model that wins, and a saved model reads back and is put in place

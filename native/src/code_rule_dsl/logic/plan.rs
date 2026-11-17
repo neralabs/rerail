@@ -9037,6 +9037,50 @@ impl<'a> Run<'a, '_> {
                     Model::ran(*key, work(line));
                 }
             }
+            // Decision 0354: each joined step's estimate and what it made, for the learned correction of the
+            // estimates. A line whose order was replaced (its counts split between orders) or whose record is not of
+            // the order it ran is left out.
+            if super::costs::join_steps::enabled() {
+                let mut sampled = Vec::new();
+                let lines = orders.iter().map(|(_, o)| (true, o.as_slice())).chain(probes.iter().map(|p| (false, p.2.as_slice())));
+                'line: for (line, (seed, order)) in lines.enumerate() {
+                    if earlier.get(line).is_some_and(|e| !e.is_empty()) || (!seed && wholes.contains_key(&(line - nseeds))) {
+                        continue;
+                    }
+                    let (Some(c), Some(Some(x)), Some(b)) = (counted.get(line), explained.get(line).map(|e| e.2.as_ref()), line_bodies.get(line)) else { continue };
+                    if x.steps.len() != order.len() || c.len() != order.len() {
+                        continue;
+                    }
+                    let mut steps = Vec::new();
+                    for (i, (s, &(n_in, n_out))) in x.steps.iter().zip(c).enumerate() {
+                        if s.literal != b.show(order[i].at) {
+                            continue 'line;
+                        }
+                        let before = if i == 0 { 1.0 } else { x.steps[i - 1].rows };
+                        if i == 0 || n_in == 0 || before <= 0.0 {
+                            continue;
+                        }
+                        let rel = b.atom(order[i].at).map(|a| b.rel(a));
+                        steps.push(super::costs::join_steps::StepSample {
+                            basis: super::costs::join_steps::category(&s.basis, 4),
+                            access: super::costs::join_steps::category(&s.access, 1),
+                            source: super::costs::join_steps::category(&s.source, 4),
+                            bound: super::costs::join_steps::bound_columns(&s.access),
+                            step: i as u32,
+                            steps: order.len() as u32,
+                            est_in: before,
+                            est_fan: s.rows / before,
+                            card: rel.map_or(0.0, |r| self.model.card(r)),
+                            solving: rel.is_some_and(|r| self.model.stats.solving.contains(r)),
+                            seed,
+                            actual_in: n_in as f64,
+                            actual_out: n_out as f64,
+                        });
+                    }
+                    sampled.append(&mut steps);
+                }
+                super::costs::join_steps::submit(sampled);
+            }
             // Decision 0203 §4: each line's work, its order and its price for the rows it read, for the run's
             // critical path; a line heavy enough is searched wider in the background.
             if joins::on() && PLANS.with(|p| p.borrow().is_some()) {

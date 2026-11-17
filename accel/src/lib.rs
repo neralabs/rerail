@@ -21,6 +21,7 @@ pub mod cost_model;
 pub mod cpu;
 pub mod exec;
 pub mod forms;
+pub mod join_model;
 pub mod kernel;
 pub mod lanes;
 pub mod price;
