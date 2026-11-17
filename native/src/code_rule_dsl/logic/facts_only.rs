@@ -59,6 +59,10 @@ const FACT_STORE: &[&str] = &[
     // packs. They replace the memo's frames (`local`, `local_out`): the same entries, no new cache.
     "memo_entries",
     "memo_packs",
+    // The mapped segment files (decision 0295 step 5) the sources, tapes and frames are read from in place: each
+    // segment's number, which the rows naming bytes in it point at. Where facts live, as `memo_packs`.
+    "object_segments",
+    "frame_segments",
     // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
     "samples",
     // The SQL executor's planning observations (`costs::sql_plans`), its plan model's data: measurements, as `samples`.
@@ -381,6 +385,15 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),
     ("content_store/write_back.rs", "WRITERS"),
+    // The record kinds (decision 0306): each kind's apply, registered once a process, a registry of code; and a
+    // test's log of the records it applied.
+    ("content_store/record.rs", "KINDS"),
+    ("content_store/record.rs", "LOG"),
+    // The component's own columns whose values are arena texts (decision 0307), set while its plans compile: state
+    // of the compilation, not a result kept.
+    ("code_rule_dsl/logic/native/setfix/device.rs", "OWN_TEXTS"),
+    // A count of the trees this thread decoded from versions, and where the last was (0281's measure): a counter.
+    ("code_rule_dsl/logic/program_image/version.rs", "DECODED"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "BOUND"),
     // The rule files' entries read on this thread before its run, which the outermost run names in its manifest
