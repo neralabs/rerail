@@ -6,7 +6,7 @@ Rerail 0.1.5 has 383 places where time passing decides something: a sleep, a pol
 
 | Read | Open in the browser | File |
 |---|---|---|
-| The full report: the map, the state maps, the ten categories, the plan | [open](https://htmlpreview.github.io/?https://github.com/neralabs/rerail/blob/JeanFrancoisGagne/pr-reports/timers-to-facts/rerail-timers-map.html) | [rerail-timers-map.html](rerail-timers-map.html) |
+| The full report: the map, the state maps, the ten categories, the plan, where each timer came from, how each replacement is judged | [open](https://htmlpreview.github.io/?https://github.com/neralabs/rerail/blob/JeanFrancoisGagne/pr-reports/timers-to-facts/rerail-timers-map.html) | [rerail-timers-map.html](rerail-timers-map.html) |
 | Every timer that stays, and why | [open](https://htmlpreview.github.io/?https://github.com/neralabs/rerail/blob/JeanFrancoisGagne/pr-reports/timers-to-facts/rerail-timers-kept.html) | [rerail-timers-kept.html](rerail-timers-kept.html) |
 
 Each page is one self-standing file with no outside request: if the browser view does not load, download the file and open it.
@@ -34,6 +34,23 @@ Every part of Rerail that runs and every link between two parts. An arrow points
 A solid blue arrow is a change of state fired by a fact. A dashed orange arrow with a clock is fired by time passing; its label says what it becomes: a fact, a fact with one bound left, or a clock that stays. The report has one such map for each of a checkout, the daemon, a session, a hook event, the content store and the databases.
 
 ![The daemon's states and what fires each change](daemon-states.png)
+
+## Where each timer came from
+
+Git's history names the commit that introduced each of the 207 timers a change replaces: 170 came with a stated purpose, and 144 still do what that commit put them there for. The other 63 drifted from their purpose or never had one, and for 46 of them that costs a person or the software today: the change that replaces each of those repairs the cause, and every replacement keeps what its timer was for. 31 pull requests introduced them; the port that began the repository (#1) brought 67, and 28 of the 46 that hurt today.
+
+The report's part "Where each timer came from" (after the plan) draws them by pull request, by area and by week, lists the 46 one by one (the commit and pull request that introduced each, the intent then, what went wrong since, what the replacing change must restore or define), and gives every traced timer under the change that replaces it. Each change in the plan's table says what it keeps.
+
+![Where each timer came from: the traced timers by today's state, by stated purpose and by harm today, then by the pull request that introduced them](where-each-timer-came-from.png)
+
+## How each replacement is judged
+
+Every change of the branch meets four requirements before it joins it:
+
+1. The intent kept, or its root cause fixed: each timer is traced to the commit that introduced it, and the replacement keeps what that commit wanted; where the intent was never stated or drifted, and that hurts today, the change fixes the cause and says what it now defines.
+2. One owner for the fact that replaces the clock: three designs ranked, each judged for its design, its code and its performance; one module owns the fact, with a small interface, and its callers stop knowing about time.
+3. A measured net gain: the wait in the state the timer guarded is better; the common path and the idle cost are no worse. A change that is not a net gain is dropped, with its figures.
+4. A guard, with a case that fails without it, for each thing the clock protected against: a holder that never finishes, a process that died, a disk that stalls, a peer of an older version, a machine that slept.
 
 ## The ten categories of use, and the practice that replaces each
 
