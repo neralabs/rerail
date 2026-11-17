@@ -102,6 +102,10 @@ pub enum TokenRule {
 pub struct Parts {
     pub parts: Vec<(String, Expr, PartLen)>,
     pub content: String,
+    /// `closes { K = E bytes N }`: a closer where `E` holds is a token of kind `K`, `N` bytes
+    /// from the closer's first; the others are the reader's kind (Kotlin's string, closed by
+    /// a `"` or by a template's `${`).
+    pub closes: Vec<(String, Expr, u8)>,
 }
 
 /// How far a part of a region read in parts runs (`Parts`): `bytes N`, or `last L`, through the
@@ -123,6 +127,35 @@ impl Parts {
     ///          (`last L`: its bytes fill(ps, prev(L)), its last L & those bytes)
     /// content: x = body & ~(each part's bytes);   start x & ~prev(x), last x & ~next(x)
     /// ```
+    /// With `closes`: the closers' last bytes, as one mask (`ReadArm::last`); `None`, every
+    /// closer the region's length.
+    pub fn closer_last(&self, r: &Region) -> Option<Expr> {
+        if self.closes.is_empty() {
+            return None;
+        }
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        let prev = |e: Expr, k: u8| match k {
+            0 => e,
+            1 => Expr::Call("prev".into(), vec![Arg::E(e)]),
+            k => Expr::Call("prev".into(), vec![Arg::E(e), Arg::N(u64::from(k))]),
+        };
+        let f = Expr::Name(format!("f_{}", r.kind));
+        let closer = and(prev(f.clone(), 1), not(f));
+        let mut own = closer.clone();
+        let mut last: Option<Expr> = None;
+        for (_, e, n) in &self.closes {
+            let c = prev(and(closer.clone(), e.clone()), n - 1);
+            last = Some(match last {
+                Some(x) => or(x, c),
+                None => c,
+            });
+            own = and(own, not(e.clone()));
+        }
+        Some(or(last.expect("one or more"), prev(own, r.bytes - 1)))
+    }
+
     pub fn rows(&self, kind: &str, r: &Region, s: &Expr) -> Vec<Stmt> {
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
         let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
@@ -137,8 +170,16 @@ impl Parts {
         let body = and(f.clone(), not(s.clone()));
         let closer = and(prev(f.clone(), 1), not(f));
         let token = |kind: &str, start: Expr, last: Expr| Stmt::Token { kind: kind.to_owned(), start, through: None, last: Some(last.clone()), rule: Some(TokenRule::Inside(last)) };
-        // The reader's own row is its token's, the opener; the closer is its kind's too.
-        let mut out = vec![token(kind, closer.clone(), prev(closer, r.bytes - 1))];
+        // The reader's own row is its token's, the opener; the closer is its kind's too, but
+        // where a `closes` mask holds: that one's kind's, its bytes.
+        let mut own = closer.clone();
+        let mut out = vec![];
+        for (k, e, n) in &self.closes {
+            let c = and(closer.clone(), e.clone());
+            out.push(token(k, c.clone(), prev(c, n - 1)));
+            own = and(own, not(e.clone()));
+        }
+        out.insert(0, token(kind, own.clone(), prev(own, r.bytes - 1)));
         let mut covered: Option<Expr> = None;
         let mut cover = |c: Expr| {
             covered = Some(match covered.take() {
@@ -1749,7 +1790,28 @@ impl P {
                         }
                         self.want_kw("else")?;
                         let content = self.kind()?;
-                        Some(TokenRule::ReadParts(r.clone(), Parts { parts, content }))
+                        let mut closes = vec![];
+                        if self.eat_kw("closes") {
+                            self.want_p("{")?;
+                            loop {
+                                self.nls();
+                                if self.eat_p("}") {
+                                    break;
+                                }
+                                let k = self.kind()?;
+                                self.want_p("=")?;
+                                let e = self.expr()?;
+                                self.want_kw("bytes")?;
+                                let n = u8::try_from(self.int()?).map_err(|_| "a closer of at most 255 bytes".to_owned())?;
+                                if n == 0 {
+                                    return self.err("a closer of one byte or more");
+                                }
+                                closes.push((k, e, n));
+                                self.nls();
+                                let _ = self.eat_p(",");
+                            }
+                        }
+                        Some(TokenRule::ReadParts(r.clone(), Parts { parts, content, closes }))
                     } else {
                         Some(TokenRule::Read(regions))
                     }

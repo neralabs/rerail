@@ -3217,7 +3217,7 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // The parts by their lengths: at one byte, the shortest part's, as `read_parts`' `min`.
     let mut parts: Vec<crate::records::ReadPart> = reader.parts.clone();
     parts.sort_by_key(|p| (p.bytes, p.start));
-    let limit = if std::iter::once(a.closer).chain(parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))).all(|o| rd.bytewise(o)) { None } else { limit };
+    let limit = if std::iter::once(a.closer).chain(a.last).chain(parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))).all(|o| rd.bytewise(o)) { None } else { limit };
     let (walk, join) = (f.create_block(), f.create_block());
     f.append_block_param(join, types::I64);
     f.append_block_param(join, types::I64);
@@ -3308,7 +3308,7 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let kc = f.block_params(after)[0];
     // Each: its bits, its last's offset (or the output its last is the first bit of), and its
     // bytes where it is a part.
-    let mut checks: Vec<(Value, i64, Option<i64>, Option<u16>)> = vec![(xc, i64::from(a.off), None, None)];
+    let mut checks: Vec<(Value, i64, Option<i64>, Option<u16>)> = vec![(xc, i64::from(a.off), None, a.last)];
     checks.extend(parts.iter().zip(&xp).map(|(pt, &x)| (x, i64::from(pt.bytes) - 1, Some(i64::from(pt.bytes)), pt.last)));
     let n = checks.len();
     for (j, (x, off, part, to_last)) in checks.into_iter().enumerate() {
@@ -3357,7 +3357,8 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             write_record(f, c, stores, kc, Some(pos), Some(l), code);
             let k2 = c.step(f, kc);
             let at2 = f.ins().iadd_imm(l, 1);
-            f.ins().jump(tok, &[k2.into(), at2.into()]);
+            // A part: the next token; the closer (`ReadArm::last`): the region's end.
+            f.ins().jump(if part.is_some() { tok } else { join }, &[k2.into(), at2.into()]);
             if let Some(o) = other {
                 f.switch_to_block(o);
             }

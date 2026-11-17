@@ -187,6 +187,43 @@ The corpus test now names, for a grammar refusal, the text at the token the inte
 refused (`stream::Refused::at`). The reference evaluator's furthest token came from paths it
 backtracked out of, and misled.
 
+## Kotlin, step 8 (`08-templates.bitlex`)
+
+Step 8 reads `${…}` templates:
+
+```text
+val s = "x${a.b}z"
+  string_literal
+    string_content "x"
+    interpolation_expression_start "${"
+    interpolated_expression          a.b, read as any code
+    interpolation_expression_end "}"
+    string_content "z"
+```
+
+A string's region now ends at a `"` or at a template's `$`. A second region, the tail, opens at
+the template's `}` and ends the same way. The template's code between them is code, read as
+anywhere else.
+
+The regions find a template from its bytes alone: `${`, then code up to the first `}` on its
+line. A `${` is a template only where its `$` ends a string's region, so one in a comment is
+not. These are refused for now:
+
+- a template whose code holds a quote, a brace, a comment or a line break;
+- an empty `${}`;
+- a `$` in code.
+
+The tail is a reader of its own. It starts at `}`, and the compiler moves its kind to a byte
+of its own (item 7's kind bytes).
+
+A first cut made the string's tokens mask tokens, as JSON's are. Its content could then start
+at any byte, so every state had to test start masks, and tier 2 went past 64K words. Reading
+the string in parts keeps those rows inside the region.
+
+Corpus: 62 the same, 429 refused, 0 differ. 25 files are refused for a template's quote, brace,
+comment or line break. Most of the 90 template files now fail on the features further down
+the ladder.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
@@ -287,6 +324,24 @@ backtracked out of, and misled.
     had been refused at `lateinit`: the called `user_type` ended there, and `modifiers`, two
     levels up, takes the mark.
 16. **The interpreter names where it refuses** (`Refused::at`: the first byte of the token).
+17. **A region read in parts closes in more than one way** (`closes { K = E bytes N }`,
+    `Parts::closes`, `ReadArm::last`). Where `E` holds, the closer is a token of kind `K`, `N`
+    bytes long. A Kotlin string's closer is its `"` (one byte), or a template's `${` (two
+    bytes). The reader finds the closer's last byte as the first bit of an output (`recarm …
+    last O`), as a part to a `last` does. This is supported by the interpreter's
+    `read_parts`, the CPU tier 1's `read_in_parts`, and the `recarm` text form. A region that
+    tier 2 splits refuses it, as it refuses a part to a last.
+18. **A moved reader's kind is met by its kind.** The interpreter switched on a token's
+    first byte. A reader moved to a byte no token begins with (item 2) is met at that byte's
+    target, which the compiled tier 2 reaches through the record's kind. The interpreter now
+    switches as the compiled code does: on the record's kind, at that kind's least byte.
+    Comments were the only moved readers before, and as extras they never reached a switch.
+19. **A moved byte is its kind's alone.** The rows read inside a region can start with any
+    byte, the moved one included, so tier 2 saw two rows at that byte and tested the reader's
+    start mask (`ROW`). The CPU tier 1 makes no such mask: its reader gives the kind. Every
+    other row now drops the moved bytes from its first bytes.
+20. **The size check runs before the return entries.** A saturated place (`pc`) read as a
+    state with no `TOKEN`, which hid the real error.
 
 Single-extra grammars compile as before: rr's tests and the compiler's targeted tests pass.
 
@@ -300,7 +355,7 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
 
 ## Next
 
-Kotlin's ladder goes on. Next: `${…}` templates, numbers, `init`, `companion object`, `super`,
+Kotlin's ladder goes on. Next: numbers, `init`, `companion object`, `super`,
 `when`, `try`, extension receivers (a region whose
 code nests: a count of braces), `::`, numbers, then lambdas, `when` and `try`, then enums,
 companions, accessors and the remaining operators. Swift and Scala start the same way, in their own crates: their step 1 is

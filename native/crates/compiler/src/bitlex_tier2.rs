@@ -810,7 +810,7 @@ impl Emit<'_> {
         self.entry[s] = self.pc();
         self.marked[s] = self.pc();
         if nested && mine.is_empty() {
-            let Some(c) = st.end else { return Err(format!("state {s} takes no token and may not end")) };
+            let Some(c) = st.end else { return Err(format!("state {s} takes no token and may not end: {st:?}")) };
             // A nested choice's level has no node of its own to close. Its nodes end at the
             // token taken (`CLOSE m=1`); after a mark's arm, which took none, at the last token
             // taken (`m=0`).
@@ -1130,34 +1130,11 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     for s in 0..states.len() {
         e.state(s)?;
     }
-    // A return lands on a state's `TOKEN` (`RETURN m=0`, the token taken) or its `SWITCH`
-    // (`m=1`, to switch on it again). A state that takes no token, which closes at once, gets a
-    // return entry of that shape: `TOKEN`, a `SWITCH` whose every way is the end, and the end,
-    // its closes at the end of the token before and a return to switch on this one again.
-    let mut returns: HashMap<u16, u16> = HashMap::new();
-    for p in arms.iter().flat_map(|a| a.push.iter().copied()) {
-        if e.words[usize::from(e.entry[usize::from(p)])].0 == "TOKEN" || returns.contains_key(&p) {
-            continue;
-        }
-        let st = &states[usize::from(p)];
-        let Some(c) = st.end else { return Err(format!("state {p} takes no token and may not end")) };
-        e.rule = st.rule;
-        let at = e.pc();
-        let any = e.any_mark.map_or(0, |k| k as u8 + 1) | if e.token_extras { crate::program::TOKEN_EXTRAS } else { 0 };
-        e.push("TOKEN", any, Arg::Num(STARTS));
-        e.returned_field(st);
-        let t = e.switches.len();
-        e.push("SWITCH", 0, Arg::Table(t as u16));
-        let end = e.pc();
-        e.switches.push(ByteSwitch { offset: 0, targets: vec![end; 256], end, words: Vec::new() });
-        for _ in 0..c + u8::from(st.own) {
-            e.push("CLOSE", 0, Arg::None);
-        }
-        e.push("RETURN", 1, Arg::None);
-        returns.insert(p, at);
-    }
     // A word's place is a `u16`: a program past them refused, with what made it so big.
-    if e.words.len() >= usize::from(u16::MAX) - 1 {
+    let too_big = |e: &Emit| -> Result<(), String> {
+        if e.words.len() < usize::from(u16::MAX) - 1 {
+            return Ok(());
+        }
         // The words of each rule, the most first: what made it so big.
         let mut by_rule: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
         for r in &e.rule_of {
@@ -1173,7 +1150,39 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         let mut ops: Vec<_> = ops.into_iter().collect();
         ops.sort_by(|a, b| b.1.cmp(&a.1));
         return Err(format!("tier 2's program is past {} words: {} states, {} arms; by opcode {:?}; words, level kind and states by rule: {:?}", u16::MAX - 2, states.len(), arms.len(), &ops[..ops.len().min(10)], &top[..top.len().min(12)]));
+    };
+    // A saturated place (`pc`) would read as a state with no `TOKEN`: the size first.
+    too_big(&e)?;
+    // A return lands on a state's `TOKEN` (`RETURN m=0`, the token taken) or its `SWITCH`
+    // (`m=1`, to switch on it again). A state that takes no token, which closes at once, gets a
+    // return entry of that shape: `TOKEN`, a `SWITCH` whose every way is the end, and the end,
+    // its closes at the end of the token before and a return to switch on this one again.
+    let mut returns: HashMap<u16, u16> = HashMap::new();
+    for p in arms.iter().flat_map(|a| a.push.iter().copied()) {
+        if e.words[usize::from(e.entry[usize::from(p)])].0 == "TOKEN" || returns.contains_key(&p) {
+            continue;
+        }
+        let st = &states[usize::from(p)];
+        let Some(c) = st.end else {
+            let callers: Vec<&ArmRow> = arms.iter().filter(|a| a.push.contains(&p)).take(3).collect();
+            return Err(format!("state {p} takes no token and may not end: {st:?}; returned to by {callers:?}"));
+        };
+        e.rule = st.rule;
+        let at = e.pc();
+        let any = e.any_mark.map_or(0, |k| k as u8 + 1) | if e.token_extras { crate::program::TOKEN_EXTRAS } else { 0 };
+        e.push("TOKEN", any, Arg::Num(STARTS));
+        e.returned_field(st);
+        let t = e.switches.len();
+        e.push("SWITCH", 0, Arg::Table(t as u16));
+        let end = e.pc();
+        e.switches.push(ByteSwitch { offset: 0, targets: vec![end; 256], end, words: Vec::new() });
+        for _ in 0..c + u8::from(st.own) {
+            e.push("CLOSE", 0, Arg::None);
+        }
+        e.push("RETURN", 1, Arg::None);
+        returns.insert(p, at);
     }
+    too_big(&e)?;
     // Every target as a word's place, then the words that behave alike shared (`merge_words`).
     let place = |a: Arg| match a {
         Arg::State(s) => Arg::Pc(e.entry[usize::from(s)]),

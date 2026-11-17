@@ -311,6 +311,8 @@ pub struct Lowering {
     /// The tokens read by a reader (`read K | …`, `records::Reader`): each region's opener,
     /// closer, last byte's offset from the closer, and what no closer means.
     pub token_reads: HashMap<String, Vec<(Val, Val, i8, crate::records::ReadNone)>>,
+    /// A region read in parts with `closes`: its closer's last (`ReadArm::last`).
+    pub token_closer_last: HashMap<String, Val>,
     /// A kind read in parts (`read K parts { … }`): each part's start mask and bytes, in order.
     /// Each part's start, and its bytes or its last (`ReadPart`).
     pub token_parts: HashMap<String, Vec<(Val, u8, Option<Val>)>>,
@@ -448,6 +450,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         token_rules: HashMap::new(),
         token_pairs: HashMap::new(),
         token_reads: HashMap::new(),
+        token_closer_last: HashMap::new(),
         token_parts: HashMap::new(),
         token_fills: HashMap::new(),
         inside: Vec::new(),
@@ -618,7 +621,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                 t.o = low.program.outputs.iter().position(|&o| o == v).ok_or("a reader's start mask not an output")? as u16;
             }
             for a in r.readers.iter_mut().flat_map(|rd| rd.arms.iter_mut()) {
-                for k in [&mut a.opener, &mut a.closer] {
+                for k in [&mut a.opener, &mut a.closer].into_iter().chain(a.last.as_mut()) {
                     let v = low.program.masks[usize::from(*k)];
                     *k = low.program.outputs.iter().position(|&o| o == v).ok_or("a reader's mask not an output")? as u16;
                 }
@@ -780,6 +783,10 @@ impl Lowering {
                         Some(::bitlex::syntax::TokenRule::ReadParts(r, parts)) => {
                             let (opener, closer) = (self.expr(&r.opener)?, self.expr(&r.closer)?);
                             self.token_reads.insert(kind.clone(), vec![(opener, closer, r.bytes as i8 - 1, crate::records::ReadNone::Refuse)]);
+                            if let Some(l) = parts.closer_last(r) {
+                                let l = self.expr(&l)?;
+                                self.token_closer_last.insert(kind.clone(), l);
+                            }
                             let mut ps = Vec::new();
                             for (_, e, len) in &parts.parts {
                                 let start = self.expr(e)?;
@@ -2861,6 +2868,17 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             rows[r].first = [0; 4];
             rows[r].first[usize::from(f) / 64] |= 1 << (f % 64);
         }
+        // A moved kind's byte is its alone: tier 2 switches on a record's kind (its least
+        // byte's target), so a row read inside a region, whose bytes may be any, never meets
+        // a state there.
+        for r in 0..rows.len() {
+            if moved.iter().any(|&(m, _)| m == r) {
+                continue;
+            }
+            for &(_, f) in &moved {
+                rows[r].first[usize::from(f) / 64] &= !(1 << (f % 64));
+            }
+        }
     }
     let meets = row_modes(low, &token_rows, &rows, &states, &arms, &mark_kinds)?;
     // The totals are one flag (`BlockRun::totals`), tested once: `EMPTY 0`.
@@ -3200,7 +3218,13 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 // Its kind's own, where its rows were moved (above).
                 let retag_of = |k: &String| moved.iter().find(|&&(r, _)| token_rows[r].0 == *k).map(|&(_, f)| (kinds[usize::from(f)], extra_marks(k)));
                 let retag = retag_of(&kind);
-                let mut arms: Vec<crate::records::ReadArm> = low.token_reads[&kind].clone().into_iter().map(|(o, c, off, none)| crate::records::ReadArm { opener: mask_of(low, o, &mut mark_masks), closer: mask_of(low, c, &mut mark_masks), off, none, retag: None }).collect();
+                // An output of its own: one shared with a mark's may be the token loop's alone
+                // (`loop_marks`), not stored.
+                let last = low.token_closer_last.get(&kind).copied().map(|l| {
+                    mark_masks.push(l);
+                    (mark_masks.len() - 1) as u16
+                });
+                let mut arms: Vec<crate::records::ReadArm> = low.token_reads[&kind].clone().into_iter().map(|(o, c, off, none)| crate::records::ReadArm { opener: mask_of(low, o, &mut mark_masks), closer: mask_of(low, c, &mut mark_masks), off, last, none, retag: None }).collect();
                 for k in &also {
                     // A kind's own tag tells its tokens from the reader's: it needs one, as does
                     // the reader's kind, and neither is read in parts.
@@ -3211,7 +3235,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         return Err(format!("two kinds read by readers start at byte {b:#x}, one in parts"));
                     }
                     for (o, c, off, none) in low.token_reads[k].clone() {
-                        arms.push(crate::records::ReadArm { opener: mask_of(low, o, &mut mark_masks), closer: mask_of(low, c, &mut mark_masks), off, none, retag: Some(tag) });
+                        arms.push(crate::records::ReadArm { opener: mask_of(low, o, &mut mark_masks), closer: mask_of(low, c, &mut mark_masks), off, last: None, none, retag: Some(tag) });
                     }
                 }
                 // A region read in parts: each part's start, a mask output.

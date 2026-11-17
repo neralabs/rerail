@@ -359,6 +359,9 @@ pub struct ReadArm {
     pub opener: u16,
     pub closer: u16,
     pub off: i8,
+    /// A region read in parts whose closers differ in length (Kotlin's `"` and a template's
+    /// `${`): the output whose first bit at or after the closer is its last; `None`, `off`.
+    pub last: Option<u16>,
     pub none: ReadNone,
     /// Where the reader reads the regions of several kinds (Kotlin's line and block comments,
     /// both at `/`): this region's kind and marks, as `Reader::retag` says them for the reader's
@@ -412,7 +415,11 @@ pub fn read_parts(reader: &Reader, s: usize, outputs: &[Vec<u64>]) -> Result<Vec
                 at = l + 1;
             }
             None => {
-                out.push((c, c.wrapping_add_signed(isize::from(a.off))));
+                let l = match a.last {
+                    Some(o) => first_bit(outputs, o, c).ok_or(())?,
+                    None => c.wrapping_add_signed(isize::from(a.off)),
+                };
+                out.push((c, l));
                 return Ok(out);
             }
         }

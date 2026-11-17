@@ -1768,7 +1768,8 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                         crate::records::ReadNone::Bytes(m) => format!("bytes{m}"),
                     };
                     let retag = a.retag.map_or(String::new(), |(kind, marks)| format!(" retag {kind} {marks}"));
-                    let _ = writeln!(out, "  block {at} recarm {k} {} {} {} {none}{retag}", a.opener, a.closer, a.off);
+                    let last = a.last.map_or(String::new(), |o| format!(" last {o}"));
+                    let _ = writeln!(out, "  block {at} recarm {k} {} {} {} {none}{retag}{last}", a.opener, a.closer, a.off);
                 }
                 // `block N recpart K START BYTES [last O]` each part of a region read in parts.
                 for p in &rd.parts {

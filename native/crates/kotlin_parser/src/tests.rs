@@ -184,8 +184,21 @@ fn annotations_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 8: `${…}` templates.
 #[test]
-fn what_step_7_does_not_read_is_refused() {
+fn templates_are_the_lean_parsers() {
+    same(&[
+        "val a = \"x${y}z\"\n",
+        "val b = \"${f(1)} and ${a.b}\"\n",
+        "val c = \"$a ${b + 1}$ $\"\n",
+        "val d = \"${m[k]}!\"\n",
+        "val e = \"a // b ${c} /* d */\"\n",
+        "val f = \"\\${x} \\$y\"\n",
+    ]);
+}
+
+#[test]
+fn what_step_8_does_not_read_is_refused() {
     refused(&[
         "val a = b to f<T>()\n",
         "val a = x + f<T>(1)\n",
@@ -194,7 +207,9 @@ fn what_step_7_does_not_read_is_refused() {
         "import a.b import c\n",
         "val s = 'x\n",
         "val s = \"a\nb\"\n",
-        "val s = \"${x}\"\n",
+        "val s = \"${\"x\"}\"\n",
+        "val s = \"${ {x} }\"\n",
+        "val s = \"${}\"\n",
         "val s = \"\"\"raw\"\"\"\n",
         "val s = \"open\n",
         "/* /* nested */ */\npackage a\n",
@@ -289,12 +304,21 @@ fn show() {
                         eprintln!("reference tree: {:?}", ::bitlex::tree::nodes(tree, &out.tokens, text.len()).map(|n| n.len()));
                     }
                     if let Some(r) = &c.program.block_programs[0].records {
+                        // `RERAIL_KOTLIN_MASK=K`: mask K's output, from either tier 1.
+                        if let Ok(m) = std::env::var("RERAIL_KOTLIN_MASK") {
+                            let b = &c.program.block_programs[0];
+                            let o = b.mask_outputs()[m.parse::<usize>().unwrap()];
+                            let run = b.run(text.as_bytes());
+                            let cpu = c.parser.tier1.extract(text.as_bytes());
+                            let w = |v: &Vec<Vec<u64>>| v.get(o).and_then(|x| x.first()).map(|x| format!("{:064b}", x.reverse_bits()));
+                            eprintln!("mask {m} output {o}: interp {:?}\n  cpu {:?} (cpu outputs {})", w(&run.outputs), w(&cpu.outputs), cpu.outputs.len());
+                        }
                         for rd in r.readers.iter().filter(|rd| !rd.parts.is_empty()) {
                             eprintln!("reader {:?}", rd);
                         }
                         let run = c.program.block_programs[0].run(text.as_bytes());
                         for rd in r.readers.iter().filter(|rd| !rd.parts.is_empty()) {
-                            for o in rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last)).chain([rd.arms[0].closer]) {
+                            for o in rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last)).chain([rd.arms[0].closer]).chain(rd.arms[0].last) {
                                 eprintln!("output {o}: {:064b}", run.outputs[usize::from(o)].first().copied().unwrap_or(0).reverse_bits());
                             }
                         }

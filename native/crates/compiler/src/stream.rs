@@ -354,6 +354,11 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
     let starts: &[u32] = words.iter().map(|&w| split(w)).find(|&(o, _, _)| o == TOKEN).map_or(&none, |(_, _, x)| &tier1.positions[usize::from(x)]);
     let records = program.block_programs.first().and_then(|b| b.records.as_ref());
     let lasts: &[u32] = records.map_or(&none, |r| &tier1.positions[usize::from(r.lasts)]);
+    // Each kind's least byte: a switch on the first byte is one on the record's kind.
+    let kind_reps: Option<Vec<u8>> = records.map(|r| {
+        let n = r.kinds.iter().copied().max().map_or(0, |m| usize::from(m) + 1);
+        (0..n).map(|k| r.kinds.iter().position(|&x| usize::from(x) == k).unwrap_or(0) as u8).collect()
+    });
     let mut pc = 0usize;
     // The token's record: its start, its end (one past its last byte) and its code. `end` is
     // `start` until its bytes are taken (`SPAN`).
@@ -486,10 +491,17 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     // A word the switch names: its target. Else zeros past the file, as every
                     // executor reads them.
                     let word = crate::records::word_of(code).checked_sub(1).and_then(|w| s.word(w as u16));
+                    // On the first byte with records: on the record's kind, its least byte's
+                    // target, as the compiled switch's jump table (a reader moved to a byte of
+                    // its own is met there, not at its first byte).
+                    let byte = match kind_reps.as_ref() {
+                        Some(reps) if s.offset == 0 => reps.get((code & 0xff) as usize).copied().unwrap_or(0),
+                        _ => bytes.get(at).copied().unwrap_or(0),
+                    };
                     match word {
                         Some(t) if s.offset == 0 => t,
                         _ if at >= rec_end as usize => REFUSE,
-                        _ => s.targets[usize::from(bytes.get(at).copied().unwrap_or(0))],
+                        _ => s.targets[usize::from(byte)],
                     }
                 };
                 if t == REFUSE {
