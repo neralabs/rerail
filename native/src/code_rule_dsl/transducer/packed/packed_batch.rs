@@ -65,6 +65,17 @@ struct OutputInstructionRecord {
     fifth: u32,
 }
 
+/// What a batch packs of its documents' trees.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Layout {
+    /// Node records, children and class pairs, with the source and line starts (`new`).
+    Packed,
+    /// The source and line starts alone: the executor reads each document's tape in place (`new_in_place`).
+    InPlace,
+    /// Nothing: the device reads the documents resident in the slabs (`new_resident`).
+    Resident,
+}
+
 #[derive(Clone, Default)]
 pub struct PackedBatch {
     pub header: MetalBatchHeader,
@@ -97,8 +108,8 @@ pub struct PackedBatch {
     pub evaluations: Vec<MetalEvaluation>,
     pub evaluation_lanes: Vec<MetalEvaluation>,
     pub global_arenas: MetalGlobalArenas,
-    /// A resident batch's (`new_resident`): each task's root's source length, as the nodes a
-    /// packed batch holds give it.
+    /// A batch without node records' (`new_resident`, `new_in_place`): each task's root's source length, as the
+    /// nodes a packed batch holds give it.
     pub(super) root_spans: Vec<u32>,
     /// A resident label batch's tasks (decision 0033), with no task records: lanes are sized
     /// from them (`assign_resident`).
@@ -190,6 +201,16 @@ impl PackedBatch {
         Self::build(programs, files, anchors, true)
     }
 
+    /// The tasks of `programs` over `files` for an executor that reads each document's tape in place (the CPU
+    /// JIT, decision 0310): `new`'s batch without its node records, children or class pairs.
+    pub fn new_in_place(
+        programs: &[Program],
+        files: &[TapeDoc],
+        anchors: &[Vec<Vec<u32>>],
+    ) -> Result<Self, Error> {
+        Self::build_tapes(programs, files.len(), anchors, true, Layout::InPlace, |file| Ok(std::borrow::Cow::Borrowed(&files[file])), |_| Ok(()))
+    }
+
     /// The tasks of `programs` over `files` resident in the slabs (decision 0032): each file's
     /// record in the batch's numbering and the tasks, with no nodes, children, source, line starts
     /// or class pairs packed (the device reads the documents in place).
@@ -198,7 +219,7 @@ impl PackedBatch {
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
     ) -> Result<Self, Error> {
-        Self::build_tapes(programs, files.len(), anchors, true, true, |file| Ok(std::borrow::Cow::Borrowed(&files[file])), |_| Ok(()))
+        Self::build_tapes(programs, files.len(), anchors, true, Layout::Resident, |file| Ok(std::borrow::Cow::Borrowed(&files[file])), |_| Ok(()))
     }
 
     pub fn new_grid_inputs(
@@ -271,7 +292,7 @@ impl PackedBatch {
         load: impl FnMut(usize) -> Result<std::borrow::Cow<'a, TapeDoc>, Error>,
         after_file: impl FnMut(&mut Self) -> Result<(), Error>,
     ) -> Result<Self, Error> {
-        Self::build_tapes(programs, file_count, anchors, materialize_tasks, false, load, after_file)
+        Self::build_tapes(programs, file_count, anchors, materialize_tasks, Layout::Packed, load, after_file)
     }
 
     fn build_tapes<'a, R: AsRef<[u32]>>(
@@ -279,7 +300,7 @@ impl PackedBatch {
         file_count: usize,
         anchors: &[Vec<R>],
         materialize_tasks: bool,
-        resident: bool,
+        layout: Layout,
         mut load: impl FnMut(usize) -> Result<std::borrow::Cow<'a, TapeDoc>, Error>,
         mut after_file: impl FnMut(&mut Self) -> Result<(), Error>,
     ) -> Result<Self, Error> {
@@ -295,13 +316,13 @@ impl PackedBatch {
         // every file is placed (06 S7: bit by bit, 0.7 s of 1.3 s of roots).
         let mut derived: Vec<(u32, Arc<Vec<Vec<u64>>>)> = Vec::new();
         let stage = crate::code_rule_dsl::prof::Stage::start("batch.files");
-        // A resident batch keeps its documents for its tasks' sizes, and its source and line
-        // counters in place of the bytes.
+        // A batch without node records keeps its documents for its tasks' sizes; a resident one also keeps its
+        // source and line counters in place of the bytes.
         let mut documents = Vec::new();
         let (mut source_length, mut line_length) = (0usize, 0usize);
         for file in 0..file_count {
             let tape = load(file)?;
-            if resident {
+            if layout == Layout::Resident {
                 let source = tape.transducer_source();
                 let lines = 1 + source.iter().filter(|&&byte| byte == b'\n').count();
                 let nodes = tape.transducer_len();
@@ -337,6 +358,29 @@ impl PackedBatch {
                     .filter(|(_, byte)| **byte == b'\n')
                     .map(|(index, _)| source_start + index as u32 + 1),
             );
+            if !tape.transducer_labels().is_empty() {
+                derived.push((node_start, tape.transducer_labels_shared()));
+            }
+            if layout == Layout::InPlace {
+                // The source and line starts are the batch's; the nodes are read on the tape.
+                let nodes = tape.transducer_len();
+                navigation[0] += nodes;
+                navigation[1] += nodes.saturating_sub(1);
+                navigation[3] += batch.line_starts.len() - first_line;
+                batch.files.push(BatchFile {
+                    node_start,
+                    node_count: checked_u32(nodes)?,
+                    source_start,
+                    source_length: checked_u32(source.len())?,
+                    line_start,
+                    line_count: checked_u32(batch.line_starts.len() - first_line)?,
+                    supertype_start: 0,
+                    supertype_count: 0,
+                });
+                documents.push(tape);
+                after_file(&mut batch)?;
+                continue;
+            }
             let supertype_start = checked_u32(navigation[2])?;
             let first_supertype = batch.supertypes.len();
             batch
@@ -348,9 +392,6 @@ impl PackedBatch {
                             kind: u32::from(kind),
                         }),
                 );
-            if !tape.transducer_labels().is_empty() {
-                derived.push((node_start, tape.transducer_labels_shared()));
-            }
             // One pass over the tape in preorder (decision 0293): a node's children, read off its subtree, set
             // their parent and next siblings, so no parent or sibling is searched for.
             let mut local_children = Vec::new();
@@ -685,7 +726,7 @@ impl PackedBatch {
                         .node_start
                         .checked_add(root)
                         .ok_or(Error::BackendFailure)?;
-                    let task_nodes = if resident {
+                    let task_nodes = if layout != Layout::Packed {
                         let local = root - batch.files[file].node_start;
                         let document = &documents[file];
                         let span = document.transducer_span(local);
@@ -1060,8 +1101,8 @@ impl PackedBatch {
     }
 
     /// A resident label batch's evaluations (decision 0033): one per `spec` {program, file, its
-    /// rule's segment header, its first root's index in the rule, its roots}, whose tasks are
-    /// those roots, with no task records (the device takes each from its evaluation). Each
+    /// roots' rule, 0, its file's groups of 64 nodes}, whose tasks are those groups, with no task
+    /// records (the device finds each group's roots from the rule, `root_mask`). Each
     /// evaluation is sized by a stand-in task whose root spans its file's source (a bound on any
     /// root's) and whose work estimate is the most, so its states are the state cap: the lanes'
     /// workspace is lanes times that, whatever the roots.
@@ -1094,8 +1135,8 @@ impl PackedBatch {
             evaluation.task_count = spec[4];
             evaluation.program = spec[0];
             evaluation.file = spec[1];
-            evaluation.root_segment = spec[2];
-            evaluation.root_base = spec[3];
+            evaluation.root_rule = spec[2];
+            evaluation.root_reserved = spec[3];
             // The work per node of a task's subtree (`resident_work` on the device).
             evaluation.workspace_work_estimate =
                 checked_u32(program.words.len().saturating_mul(4_096).min(0x7fff_ffff))? | u32::from(repeats) << 31;
@@ -1412,7 +1453,7 @@ impl<'a> PackedResults<'a> {
                 .source_start
                 .checked_add(file.source_length)
                 .ok_or(Error::BackendFailure)?;
-            if file_node_end as usize > self.batch.nodes.len()
+            if file_node_end > self.batch.header.node_count
                 || file_source_end as usize > self.batch.source.len()
             {
                 return Err(Error::BackendFailure);

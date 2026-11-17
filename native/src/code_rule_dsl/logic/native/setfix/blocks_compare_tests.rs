@@ -141,7 +141,7 @@ fn blocks_compare_baseline() {
         for i in 0..PROBES {
             for id in ix.find(&kept.rows, K, &[probe_key(i)], None).ids() {
                 if !is_dead(&kept.dead, id) {
-                    n += kept.rows.row(id, K)[0] as u64 & 1;
+                    n += kept.rows.value(id, K, 0) as u64 & 1;
                 }
             }
         }
@@ -151,7 +151,7 @@ fn blocks_compare_baseline() {
         let mut s = 0i64;
         for id in 0..kept.n as u32 {
             if !is_dead(&kept.dead, id) {
-                s = s.wrapping_add(kept.rows.row(id, K)[1]);
+                s = s.wrapping_add(kept.rows.value(id, K, 1));
             }
         }
         s

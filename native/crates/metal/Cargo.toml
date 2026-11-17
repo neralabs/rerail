@@ -10,6 +10,8 @@ description = "The engine's Metal runtime: device, buffer budget, mapped buffers
 test-hooks = ["rerail-compiler/test-hooks", "rerail-prof/test-hooks"]
 
 [dependencies]
+# The view a document is read by (decision 0310), without the reads' IR.
+rerail-clif = { path = "../clif", default-features = false }
 rerail-accel = { path = "../../../accel" }
 rerail-blocks = { path = "../blocks" }
 rerail-compiler = { path = "../compiler" }
