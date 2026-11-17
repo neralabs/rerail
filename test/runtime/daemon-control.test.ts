@@ -1040,15 +1040,19 @@ describe("a record whose live pid is not the home's daemon", () => {
   });
 
   // A daemon of a release before the home's lock holds none; one whose lock file did not open holds none either; one
-  // that could not write its holder record holds the lock unrecorded.
+  // that could not write its holder record holds the lock unrecorded, beside the record an earlier holder left when it
+  // could not remove that either.
   it.each([
-    ["linux", "no lock", false],
-    ["win32", "no lock", false],
-    ["linux", "the lock, unrecorded", true],
-    ["win32", "the lock, unrecorded", true],
-  ] as const)("keeps a busy daemon that holds %s when it started before its record, and its stop ends it (%s, %s)", async (platform, _holds, lockHeld) => {
+    ["linux", "no lock", false, undefined],
+    ["win32", "no lock", false, undefined],
+    ["linux", "the lock, unrecorded", true, undefined],
+    ["win32", "the lock, unrecorded", true, undefined],
+    ["linux", "the lock, recorded by a holder that is gone", true, DEAD_PID],
+    ["win32", "the lock, recorded by a holder that is gone", true, DEAD_PID],
+  ] as const)("keeps a busy daemon that started before its record, and its stop ends it (%s, holding %s)", async (platform, _holds, lockHeld, holder) => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const signals: Array<string | number | undefined> = [];
+    if (holder !== undefined) await holdHome(home, holder);
     await writeFile(stateFile, JSON.stringify(state(platform)));
     const machine = (): DaemonMachine => machineWith(platform, signals, () => lockHeld, () => STARTED_AT - 500);
     expect(await lookupDaemon(home, machine())).toEqual({ status: "unresponsive", state: state(platform) });
@@ -1066,7 +1070,7 @@ describe("a record whose live pid is not the home's daemon", () => {
     ["win32", "cannot be read", unread],
     ["linux", "falls within the slack after the record", withinTheSlack],
     ["win32", "falls within the slack after the record", withinTheSlack],
-  ] as const)("keeps a busy daemon nothing proves, and its stop ends nothing and says so, when its start %s (%s)", async (platform, _start, started) => {
+  ] as const)("keeps a busy daemon nothing proves, and its stop ends nothing and says so (%s, its start %s)", async (platform, _start, started) => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const signals: Array<string | number | undefined> = [];
     await writeFile(stateFile, JSON.stringify(state(platform)));
