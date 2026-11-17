@@ -67,6 +67,18 @@ pub enum Life {
 /// The blocks new relations go in, while they have room: one a `Life`.
 static OPEN: [Mutex<Option<Arc<Facts>>>; 2] = [Mutex::new(None), Mutex::new(None)];
 
+/// Every block leased, by `Life`, while it lives: what a profile reads (`held`).
+static LIVE: Mutex<[Vec<std::sync::Weak<Facts>>; 2]> = Mutex::new([Vec::new(), Vec::new()]);
+
+/// Per `Life`, the blocks held now, their bytes written and their bytes reserved: a profile's account of the rows
+/// outside the heap.
+pub fn held() -> [(usize, usize, usize); 2] {
+    let live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    std::array::from_fn(|l| {
+        live[l].iter().filter_map(std::sync::Weak::upgrade).fold((0, 0, 0), |(n, u, r), f| (n + 1, u + f.block.used(), r + f.block.reserved()))
+    })
+}
+
 /// A block of at least `bytes`: the pool's when it has room to spare (nothing evicted for it, and half the Metal
 /// budget left to the device's own buffers), else anonymous. Either is read by the device in place.
 fn lease(bytes: usize, life: Life) -> Block {
@@ -92,11 +104,45 @@ pub struct Part {
     /// Each column resolved once (its directory, which never moves while the relation is in its block): a read pays
     /// the chunk arithmetic and two loads, not the descriptor's walk too.
     cols: Arc<[ColRead]>,
+    /// The relation's claim on its block, shared by every copy of the part: the last copy's drop gives its chunks'
+    /// pages back (`Owned`).
+    own: Arc<Owned>,
 }
 
 // SAFETY: the relation lies in `facts`' block, which the part keeps; its writer is the one `Rows` holding it.
 unsafe impl Send for Part {}
 unsafe impl Sync for Part {}
+
+/// A relation's hold on its block's pages. A block is given back with its last relation, so before this a chunk's
+/// dead relations (a stratum's deltas, rows moved to a bigger block, a finished stratum's rows) kept their pages
+/// resident until every relation sharing the block went: on a 300-file cold run that was about 500 MB of the
+/// footprint (Q76, 0325 step 2's open item). The last holder gives the relation's chunks back to the OS; the block's
+/// room is not reused.
+struct Owned {
+    facts: Arc<Facts>,
+    rel: *const Relation,
+}
+
+// SAFETY: as `Part`'s: the relation lies in `facts`' block, which this keeps.
+unsafe impl Send for Owned {}
+unsafe impl Sync for Owned {}
+
+/// The bytes given back so far (`Owned`'s drop), for a profile.
+static GIVEN_BACK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The bytes of dead relations' chunks given back to the OS so far.
+pub fn given_back() -> usize {
+    GIVEN_BACK.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+impl Drop for Owned {
+    fn drop(&mut self) {
+        // SAFETY: the relation lies in the block this keeps, and every part (and `InBlock`) that reads it held this.
+        let rel = unsafe { &*self.rel };
+        let bytes = unsafe { self.facts.block.give_back_rows(&rel.rows) + self.facts.block.give_back_rows(&rel.killed) };
+        GIVEN_BACK.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
+    }
+}
 
 impl Part {
     /// An empty relation of `k` columns with room for `rows` rows, in the open block or a new one.
@@ -109,6 +155,9 @@ impl Part {
                 Some(f) if !fresh && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => f.clone(),
                 _ => {
                     let f = Arc::new(Facts { block: lease(2 * need + MARGIN, life) });
+                    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+                    live[life as usize].retain(|w| w.strong_count() > 0);
+                    live[life as usize].push(Arc::downgrade(&f));
                     *open = Some(f.clone());
                     f
                 }
@@ -118,7 +167,8 @@ impl Part {
             {
                 let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
                 let rel = std::ptr::from_ref(rel);
-                return Part { facts, life, rel, cols };
+                let own = Arc::new(Owned { facts: facts.clone(), rel });
+                return Part { facts, life, rel, cols, own };
             }
         }
         unreachable!("a new block of {} bytes holds a relation of {need}", 2 * need + MARGIN)
@@ -215,8 +265,11 @@ pub struct Rows {
 
 /// Where a relation's rows lie for a reader that binds its block (the device, decision 0325): the block, kept while
 /// this lives, and the relation's descriptor's offset in it.
+#[derive(Clone)]
 pub struct InBlock {
     pub facts: Arc<Facts>,
+    /// The relation's pages, kept while a reader (the device's entry) holds this.
+    own: Arc<Owned>,
     pub at: usize,
     pub rows: u32,
     /// The offset of a delta of it whose dead bits mark its dead rows (`Relation::try_kills`); 0 when none is.
@@ -355,7 +408,7 @@ impl Rows {
     /// and kept while these rows are). `None` for no rows.
     pub fn in_block(&self) -> Option<InBlock> {
         let one = self.one()?;
-        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: 0 })
+        Some(InBlock { facts: one.facts.clone(), own: one.own.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: 0 })
     }
 
     /// `in_block`, with the rows `dead` marks (bit `id`, as setfix keeps them) dead in it: a delta of the one
@@ -367,7 +420,7 @@ impl Rows {
             let block = &one.facts.block;
             Relation::try_kills(block, &spec(self.k), one.rel(), dead).map(|r| block.offset_of(r))
         }))?;
-        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: at })
+        Some(InBlock { facts: one.facts.clone(), own: one.own.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: at })
     }
 
     /// The rows as one relation: the one part, or every part merged into one (made once and kept).

@@ -6174,7 +6174,15 @@ fn run_observed(
             #[cfg(target_os = "macos")]
             crate::code_rule_dsl::logic::profile::decision("chunk size: the device pool", || {
                 let (live, idle) = rerail_accel::gpu::shared::held_bytes();
-                format!("{} MB leased, {} MB idle, under a footprint of {start_mb} MB", live >> 20, idle >> 20)
+                let h = crate::code_rule_dsl::facts::rows::held();
+                format!(
+                    "{} MB leased, {} MB idle; rows' blocks: a run's {} ({} MB written of {} MB), sources' {} ({} MB of {} MB); {} MB of dead relations' pages given back; under a footprint of {start_mb} MB",
+                    live >> 20,
+                    idle >> 20,
+                    h[0].0, h[0].1 >> 20, h[0].2 >> 20,
+                    h[1].0, h[1].1 >> 20, h[1].2 >> 20,
+                    crate::code_rule_dsl::facts::rows::given_back() >> 20,
+                )
             });
             crate::code_rule_dsl::logic::profile::decision("chunk size", || if credible {
                 format!("a chunk of {chunk_nodes_built} nodes added {added} MB ({measured:.0} bytes a node, {per_node:.0} the most this run); the next are about {next} nodes, {allowed} at once ({budget} MB a chunk: the least of {chunk} MB and three quarters of the run's headroom above {start_mb} MB shared by the chunks at once; at most {chunk_nodes})")

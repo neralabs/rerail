@@ -136,6 +136,8 @@ Step by step, each leaving the engine working (see the commits that name this de
   - Open: a block is given back when its last part goes, so a long session's kept relations hold the blocks they
     were made in, with whatever else died there. If the memory profile shows it, a freeze copies a kept segment
     out of a block that is mostly dead.
+  - Built for anonymous blocks (2026-11-17, Q76): a relation's last holder gives its chunks' pages back to the OS,
+    so a dead relation no longer holds memory while its block lives (about 500 MB at a 300-file cold peak).
   - Compares read the columns they compare (`RowData::value`, `cmp_ids`), not the row copied. A `Row` keeps 16
     values on the stack, and a wider one goes on the heap. On posthog/hogql the CPU binding is then level with
     step 1.

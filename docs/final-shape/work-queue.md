@@ -1455,6 +1455,36 @@ pass.
   part's sorted-column indexes about 190 MB (`Sorted::of`), its evaluation 67 MB, the writer's transaction 75 MB.
   Next: inputs read in place (the tape, not copies of its columns) so a late reader does not pin a copy; indexes on
   derived relations let go with them; the allocator's 0.45 GB between live heap and footprint.
+- **After the trunk merge (3cd2ecdb4)**: 3.6 GB. Q75 and Q76 below bring it to 1.77–1.90 GB (five runs, unprofiled);
+  the rest over 1.56 GB is 0325's relation storage (below). 18 of 31 chunk sizings cut by the memory line, as before
+  the merge (it was 21 of 32 at 3.6 GB).
+
+### Q75. A kind-set axis built its code set once a document (done, 5efa8f1a7)
+
+Format 16 numbers a tape's codes in its language's table, so `Within::set` built a copy of the same whole-table set
+for every document: 734 MB live at the 300-file cold peak after the trunk merge, which made one chunk add 2.65 GB.
+The sets are shared by table and dialect for the batch. Peak 3.6 → 2.0–2.7 GB.
+
+The 20× fan-out the profile names in that chunk (`rr_agg56`, 80 K → 1.6 M rows) is not a regression: the rule pairs
+every child with every earlier sibling, and the pre-merge plan (`kind`, `child` in place of `rr_ctx57`) made 1.48 M
+rows at the same step. A nearest-earlier-sibling aggregate written as an ordered walk would remove it (rule shape,
+not planning).
+
+### Q76. A dead relation kept its block's pages until every relation sharing the block went (done)
+
+0325 step 2's open item, measured: setfix's relations share 64 MB blocks, given back with their last relation, so a
+chunk's dead relations (a stratum's deltas, a tail moved to a bigger block, finished strata) stayed resident: about
+500 MB of anonymous block pages at the cold peak, and the heaviest chunk 1.35 GB against 0.95 GB before the merge.
+
+- A relation's last holder (`rows::Owned`, shared by a part's copies and the device's `InBlock`) gives its chunks'
+  whole pages back to the OS (`Block::give_back_rows`); the block's room is not reused. Anonymous blocks only: a
+  pooled slab's pages are the device buffer's.
+- macOS keeps `MADV_FREE` pages in the footprint; `MADV_FREE_REUSABLE` takes them out at once (measured: 512 MB
+  touched, then 9 MB of footprint after it, 521 MB after `MADV_FREE`). The scratch regions' `free_pages` uses it now,
+  with `MADV_FREE_REUSE` before a region's pages are taken again.
+- Measured: 2.0–2.7 GB → 1.77–1.90 GB; the heaviest chunk 1.35 → 1.09 GB. Findings the same relation by relation.
+- Open: the device pool holds 262 MB of row blocks throughout (Metal buffers, which give no page back); with the pool
+  too small for them (`RERAIL_METAL_MB=200`) the peak is only about 50 MB lower, so the rows themselves are the rest.
 
 ### Q49. (Q19 at 3b6f4355b; Q55 on final-rerail-shape at 64ef54cb0) The matcher's `metal-tests` gates: one clause past its work limit, one coverage count short
 
