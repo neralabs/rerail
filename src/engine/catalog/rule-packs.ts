@@ -79,7 +79,7 @@ export const HELD_OFF_SINCE = "0.1.5";
  * validation's check 5).
  */
 export const LANGUAGE_SINCE: ReadonlyMap<string, string> = new Map(
-  ["csharp", "css", "eslint-directive", "html", "java", "json", "markdown", "python-format", "rr"]
+  ["c", "cpp", "csharp", "css", "eslint-directive", "go", "html", "java", "json", "markdown", "python-format", "rr"]
     .map(id => [id, "0.1.5"] as const),
 );
 
