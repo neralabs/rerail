@@ -68,8 +68,8 @@ export interface EngineService {
  * asked for it opens it again to run (`resumeSession`), and its next event opens it again from
  * its ledger, where its source walks stood (`RerailRuntime.closeIdleSession`). A session waiting on a tool call, holding
  * a steer or a finding for its agent, or running a check stays as it is for up to a day (`OWING_SESSION_IDLE_MS`). A
- * reopened session's code-rule boundaries wait for its rules to open again (`REOPENED_RULES_WAIT_MS` in runtime.ts), so
- * its first edit is still steered at its own result.
+ * reopened session's first edit or command waits for its rules to open again (`REOPENED_RULES_WAIT_MS` in runtime.ts),
+ * so that edit is still steered at its own result.
  */
 export const IDLE_SESSION_MS = 30 * 60_000;
 /**
@@ -78,10 +78,10 @@ export const IDLE_SESSION_MS = 30 * 60_000;
  * something, as Claude Code closed at a permission prompt is, sends no end and no result: without a bound its session
  * kept its source walk, its evaluator and its checkout's runtime until the daemon stopped. The bound is a day, not
  * `IDLE_SESSION_MS`, because an agent waiting on a person at a permission prompt can be left for hours while they are
- * away, and the session its next event opened again would hold the agent's next tool call while its rules compile again
- * (`REOPENED_RULES_WAIT_MS` in runtime.ts), or check its edit a turn later in a host that does not wait. Past the bound,
- * the steers and findings the session holds wait in its ledger for its next event, and the edit of the call it waited
- * on is checked once its rules are open again (`#takeOwed`, `#checkWhenOpen` in runtime.ts).
+ * away, and the session its next event opened again would hold the agent's next edit or command while its rules compile
+ * again (`REOPENED_RULES_WAIT_MS` in runtime.ts), or check its edit a turn later in a host that does not wait. Past the
+ * bound, the steers and findings the session holds wait in its ledger for its next event, and the edit of the call it
+ * waited on is checked once its rules are open again (`#takeOwed`, `#checkWhenOpen` in runtime.ts).
  */
 const OWING_SESSION_IDLE_MS = 24 * 60 * 60_000;
 /** How often the engine service looks for idle sessions. */

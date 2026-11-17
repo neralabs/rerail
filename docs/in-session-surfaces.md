@@ -229,9 +229,10 @@ The daemon frees what a session that sends nothing for 30 minutes holds in memor
 minutes after no session there holds them. The session stays open, since its agent may be too: the dashboard shows it
 live, a scan asked for it runs, and its next event opens it again. Its rules may then compile again (about 12 s of CPU
 for a TypeScript repository's five packs on a Windows laptop). In Claude Code, Codex and Cursor, a reopened session's
-tool calls and turn end wait up to 20 seconds for its rules, so its first edit is checked and steered at its own result
-as every later one is. A daemon restart or a resumed session reopens the same way. Rules still not open after 20 seconds
-are not waited for further: that edit is checked by the first pass once they open.
+edits, shell commands and turn end wait up to 20 seconds for its rules, so its first edit is checked and steered at its
+own result as every later one is; a tool call that writes nothing Rerail checks at its result, such as a read or a
+search, does not wait. A daemon restart or a resumed session reopens the same way. Rules still not open after 20 seconds
+are not waited for further, by that step or any later one: those edits are checked by the first pass once they open.
 
 - A command that rewrites a file the agent edited before the quiet is measured from the text the agent left there, so
   a rule that judges only the agent's lines judges only those.

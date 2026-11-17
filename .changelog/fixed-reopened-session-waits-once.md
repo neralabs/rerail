@@ -1,0 +1,1 @@
+A session that opens again after 30 quiet minutes, a daemon restart or a resume no longer holds a read, a search or another tool call that writes nothing for up to 20 seconds while its rules compile again, and once one step has waited 20 seconds for them, no later step waits again.

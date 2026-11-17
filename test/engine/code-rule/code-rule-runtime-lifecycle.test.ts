@@ -816,7 +816,15 @@ describe("source-scoped steers", () => {
   });
 
   describe("a Claude Code session reopened while its rules open again", () => {
-    it("waits at its first tool call for its rules, so the edit's steer rides its own result", async () => {
+    /** The steer the needle rule gives for `file`. */
+    const needle = (file: string) => expect.objectContaining({ content: expect.stringContaining(`- ${file}:1:1 — No needle [`) });
+
+    /**
+     * A Claude Code session whose rules opened, then a runtime of its own: `restart` gives the session to a second one,
+     * as a daemon restart does. `reopen` sends the person's prompt to `runtime` after the idle close, which opens the
+     * session again; either way its rules then stay held in their storage attach until the test releases them.
+     */
+    async function reopenedFixture() {
       const root = await realpath(await temporaryDirectory());
       const databasePath = join(root, "rerail.sqlite");
       const attachments = gateStorageAttachments();
@@ -824,7 +832,7 @@ describe("source-scoped steers", () => {
       // The engine service's store of suspended sessions: the idle close keeps the session's owner claim there, and its
       // reopen takes it back.
       const suspended = new Map<string, SessionSuspension>();
-      const runtime = new RerailRuntime({
+      const runtimes = [0, 1].map(() => new RerailRuntime({
         storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
         createAuditor: options => new NativeCodeRuleEnforcer(needleCatalog(), options),
         suspendedSessions: {
@@ -836,32 +844,148 @@ describe("source-scoped steers", () => {
             return suspension;
           },
         },
-      });
+      }));
+      let runtime = runtimes[0]!;
       const session = { host: "claude-code" as const, sessionId: "reopened", cwd: root };
-      try {
-        await runtime.ingest({ kind: "session-start", eventId: "start", session });
-        await runtime.codeRulesOpened(session.sessionId);
-        await runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId: session.sessionId, text: "" });
-        expect(await runtime.closeIdleSession(session.sessionId)).toMatchObject({ kind: "suspended" });
-        // The daemon's idle close: the next event, the person's prompt, opens the session again, and its rules with it.
-        attachments.gated = true;
-        await runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId: session.sessionId, session, text: "go on" });
+      const reopened = async () => {
         await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(2));
-        const call = runtime.ingest({
-          kind: "call", eventId: "call", sessionId: session.sessionId, session, toolCallId: "write", toolName: "Write",
-          input: { file_path: join(root, "edited.py"), content: "NEEDLE\n" },
-        });
+      };
+      const ids = { sessionId: session.sessionId, session };
+      const test = {
+        root, attachments,
+        get runtime() { return runtime; },
+        call: (toolCallId: string, toolName: string, input: unknown) =>
+          runtime.ingest({ kind: "call", eventId: `call-${toolCallId}`, ...ids, toolCallId, toolName, input }),
+        result: (toolCallId: string, toolName: string) =>
+          runtime.ingest({ kind: "result", eventId: `result-${toolCallId}`, ...ids, toolCallId, toolName, output: "done" }),
+        write: (toolCallId: string, file: string) => test.call(toolCallId, "Write", { file_path: join(root, file), content: "NEEDLE\n" }),
+        turnEnd: (eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId: session.sessionId, text: "done" }),
+        /** The person's prompt after the idle close opens the session again. */
+        reopen: async () => {
+          expect(await runtime.closeIdleSession(session.sessionId)).toMatchObject({ kind: "suspended" });
+          attachments.gated = true;
+          await runtime.ingest({ kind: "user-prompt", eventId: "prompt", ...ids, text: "go on" });
+          await reopened();
+        },
+        /**
+         * The daemon restarts: the second runtime takes the session, which its next event, `next`, opens again; `answer`
+         * is that event's answer, still to come.
+         */
+        restart: async (next: () => Promise<readonly AdapterDelivery[]>) => {
+          await runtime.closeSession(session.sessionId);
+          attachments.gated = true;
+          runtime = runtimes[1]!;
+          const answer = next();
+          await reopened();
+          return { answer };
+        },
+        close: async () => {
+          vi.useRealTimers();
+          for (const workspace of attachments.workspaces) workspace.release();
+          attachments.restore();
+          for (const each of runtimes) await each.dispose();
+        },
+      };
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await runtime.codeRulesOpened(session.sessionId);
+      await test.turnEnd("baseline");
+      return test;
+    }
+
+    it("waits at its first tool call for its rules, so the edit's steer rides its own result", async () => {
+      const test = await reopenedFixture();
+      try {
+        // The daemon's idle close: the next event, the person's prompt, opens the session again, and its rules with it.
+        await test.reopen();
+        const call = test.write("write", "edited.py");
         // The call waits for the rules; their storage attaches once the test lets it.
-        attachments.workspaces[1]!.release();
+        test.attachments.workspaces[1]!.release();
         expect(await call).toEqual([]);
-        await writeFile(join(root, "edited.py"), "NEEDLE\n");
-        expect(await runtime.ingest({
-          kind: "result", eventId: "result", sessionId: session.sessionId, session, toolCallId: "write", toolName: "Write", output: "written",
-        })).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
+        await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
+        expect(await test.result("write", "Write")).toEqual([needle("edited.py")]);
       } finally {
-        for (const workspace of attachments.workspaces) workspace.release();
-        attachments.restore();
-        await runtime.dispose();
+        await test.close();
+      }
+    }, 30_000);
+
+    it("answers a call that writes nothing, and its result, while its rules open, and still waits at its first edit", async () => {
+      const test = await reopenedFixture();
+      try {
+        await test.reopen();
+        // The bound never fires here, so a boundary that waited for the rules would not answer.
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        expect(await test.call("read", "Read", { file_path: join(test.root, "edited.py") })).toEqual([]);
+        expect(await test.result("read", "Read")).toEqual([]);
+        vi.useRealTimers();
+        // The read spent nothing: the edit's call still waits, and its steer rides its own result.
+        const call = test.write("write", "edited.py");
+        test.attachments.workspaces[1]!.release();
+        expect(await call).toEqual([]);
+        await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
+        expect(await test.result("write", "Write")).toEqual([needle("edited.py")]);
+      } finally {
+        await test.close();
+      }
+    }, 30_000);
+
+    it("waits its bound out once: no later boundary of the opening waits again, and what they skipped is checked once the rules open", async () => {
+      const test = await reopenedFixture();
+      try {
+        await test.reopen();
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        let answered = false;
+        const first = test.write("first", "first.py").finally(() => { answered = true; });
+        // The call waits for the rules within the bound, and the bound runs out before they open.
+        await vi.waitFor(async () => {
+          await vi.advanceTimersByTimeAsync(60_000);
+          expect(answered).toBe(true);
+        }, { timeout: 10_000 });
+        expect(await first).toEqual([]);
+        await writeFile(join(test.root, "first.py"), "NEEDLE\n");
+        // Each later boundary answers with the bound never firing again.
+        expect(await test.result("first", "Write")).toEqual([]);
+        expect(await test.write("second", "second.py")).toEqual([]);
+        await writeFile(join(test.root, "second.py"), "NEEDLE\n");
+        expect(await test.result("second", "Write")).toEqual([]);
+        vi.useRealTimers();
+        test.attachments.workspaces[1]!.release();
+        await test.runtime.codeRulesOpened("reopened");
+        // The first pass once they are open checks both edits, and the turn's end carries their steers.
+        expect(await test.turnEnd("turn")).toEqual(expect.arrayContaining([needle("first.py"), needle("second.py")]));
+      } finally {
+        await test.close();
+      }
+    }, 30_000);
+
+    it("waits at the result of an edit whose call its ledger held across a daemon restart, so the edit is steered there", async () => {
+      const test = await reopenedFixture();
+      try {
+        expect(await test.write("write", "edited.py")).toEqual([]);
+        await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
+        // The person allows the write after the daemon restarted: its result opens the session again.
+        const { answer } = await test.restart(() => test.result("write", "Write"));
+        test.attachments.workspaces[1]!.release();
+        expect(await answer).toEqual([needle("edited.py")]);
+      } finally {
+        await test.close();
+      }
+    }, 30_000);
+
+    it("waits at the turn's end, so an edit by a tool Rerail does not know as a writer is steered in the same turn", async () => {
+      const test = await reopenedFixture();
+      try {
+        await test.reopen();
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        const input = { target: "edited.py" };
+        expect(await test.call("mcp", "mcp__files__save", input)).toEqual([]);
+        await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
+        expect(await test.result("mcp", "mcp__files__save")).toEqual([]);
+        vi.useRealTimers();
+        const stop = test.turnEnd("turn");
+        test.attachments.workspaces[1]!.release();
+        expect(await stop).toEqual([needle("edited.py")]);
+      } finally {
+        await test.close();
       }
     }, 30_000);
   });
