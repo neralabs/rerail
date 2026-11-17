@@ -611,6 +611,13 @@ step 3 replaces what is under the writer.
      The combine's tail too: `answers_where_documents_are` undoes its rounds on the version (by `FileLocal`), and
      `requests_file_local` is a program pass (`file_local::RequestsFileLocal`) that writes each narrowed request from
      its pieces, literals of several rules renamed apart, through the builder: no tree on the combine's path.
+     `whole()`'s tail, its last pass first: a text's program is made a version before `widen_cyclic_contexts`
+     (`lower::link_seeded_front`), which runs on it as `preparation::lowering_tail::WidenCyclicContexts`, a round per
+     run of the pass as the tree's loop has them; the scope's declarations come out of its header after
+     (`lower::unseed`, `rr::link_seeded_version`). The version half lives in the logic crate, as `rr::lower` is
+     compiled below the program image. ep2's 317 policies over 10 files, fresh stores, debug: 0 rows, every check
+     passes. Next: the sets of rules and facts, the literals once, a rule that is its own body, `unit`, aggregate
+     demand, each moving the version one pass earlier.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.

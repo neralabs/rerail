@@ -946,11 +946,17 @@ pub fn link_in(m: Module, scope: &[&Module], core: &BTreeSet<String>) -> Result<
 /// `link_in`, in a scope seeded already.
 pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>) -> Result<Program, Error> {
     let mut l = seeds.l.clone();
-    let seeded = &seeds.seeded;
     l.violations.clear();
     l.append(m);
     let mut program = whole(l)?;
     crate::code_rule_dsl::logic::front::declared(&program)?;
+    unseed(&mut program, seeds, core);
+    Ok(program)
+}
+
+/// The scope's own declarations taken out of a module's program linked in it (`link_seeded`), but for `core`'s.
+pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
+    let seeded = &seeds.seeded;
     let gone = |r: &str| !core.contains(r);
     program.decls.retain(|r, _| !(seeded.decls.contains(r.as_str()) && gone(r)));
     program.inputs.retain(|r| !(seeded.inputs.contains(r) && gone(r)));
@@ -958,11 +964,29 @@ pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>) -> Result<
     program.lattice.retain(|r, _| !(seeded.lattice.contains(r) && gone(r)));
     program.tapes.retain(|r, _| !(seeded.tapes.contains(r) && gone(r)));
     program.qualifiers.retain(|r, _| !(seeded.qualifiers.contains(r) && gone(r)));
+}
+
+/// `link_seeded` up to `whole()`'s tail: the program `rr::link_seeded_version` makes a version of, `declared`
+/// checked. The tail drops only literals of relations the program derives, and adds `node` only where it is
+/// declared, so the check before it refuses what the check after it does.
+pub fn link_seeded_front(m: Module, seeds: &Seeds) -> Result<Program, Error> {
+    let mut l = seeds.l.clone();
+    l.violations.clear();
+    l.append(m);
+    let program = whole_front(l)?;
+    crate::code_rule_dsl::logic::front::declared(&program)?;
     Ok(program)
 }
 
 /// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.
-fn whole(mut l: Lowerer) -> Result<Program, Error> {
+fn whole(l: Lowerer) -> Result<Program, Error> {
+    let mut program = whole_front(l)?;
+    widen_cyclic_contexts(&mut program);
+    Ok(program)
+}
+
+/// `whole` up to its last pass, `widen_cyclic_contexts`, which `link_seeded_version` runs on the version.
+fn whole_front(mut l: Lowerer) -> Result<Program, Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
     l.three_valued();
     l.findings()?;
@@ -1050,7 +1074,6 @@ fn whole(mut l: Lowerer) -> Result<Program, Error> {
         *rows = kept;
     }
     drop(demand);
-    widen_cyclic_contexts(&mut program);
     Ok(program)
 }
 
@@ -1062,7 +1085,7 @@ fn whole(mut l: Lowerer) -> Result<Program, Error> {
 /// component, and of the comparisons and negations only those whose variables the rest still binds (an aggregate is left out). A node
 /// column the rest leaves unbound ranges over the nodes (`node(_, v, _, _, _)`). The context then holds more rows than before,
 /// never fewer, and every rule that reads it joins it with its own literals, so no row it gives changes.
-fn widen_cyclic_contexts(program: &mut Program) {
+pub fn widen_cyclic_contexts(program: &mut Program) {
     let ctx_prefix = format!("{}ctx", crate::code_rule_dsl::logic::front::RESERVED);
     for _ in 0..16 {
         let mut changed = false;

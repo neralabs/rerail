@@ -3900,3 +3900,25 @@ fn a_cone_copied_onto_the_version_is_the_trees() {
     assert!(heads.contains(&"rr_value_req") && heads.contains(&"value"), "{heads:?}");
     assert!(!heads.contains(&"dunder_all"), "a library reader of `value` outside the cone is not copied: {heads:?}");
 }
+
+/// A modular text's program is made a version before `whole()`'s tail, which runs on it (decision 0281's path, step
+/// 7b): a context in a negation's cycle (`a_context_in_a_negations_cycle_is_widened`) is widened on the version, and
+/// a debug build checks the image against the tree's tail (`link_seeded_version`).
+#[test]
+fn a_context_in_a_cycle_is_widened_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl e(n: node, x: symbol, s: number)\n.decl seed(n: node)\n.input e, seed\n",
+        ".decl ask(n: node)\n.decl cb(n: node)\n.output cb\n",
+        "ask(n) :- seed(n).\n",
+        "ask(m) :- cb(n), e(n, x, s), e(m, x, s).\n",
+        "cb(n) :- ask(n), count : { e(m, \"x\", _), m > n } = 0.\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    assert!(cfg!(debug_assertions), "the check is a debug build's");
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let ctx: Vec<String> = v.rules().filter(|r| v.rel_name(r.head().rel()).starts_with("rr_ctx")).map(|r| v.show_rule(r)).collect();
+    assert!(!ctx.is_empty() && ctx.iter().all(|r| !r.contains("ask(")), "{ctx:?}");
+}
