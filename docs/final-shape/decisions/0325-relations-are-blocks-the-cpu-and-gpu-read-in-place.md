@@ -72,6 +72,19 @@ GPU read and write those blocks in place, through reads written once in CLIF.
 5. **Indexes are the relation's.** The device's probe reads the relation's index in its block (`rel_group`), made
    once by the first reader that needs it, the CPU's or the GPU's, and kept with the relation. `rel_hash` per
    upload goes. The key hash is one (`blocks::mix`), in the CPU's probe and the device's.
+   - **Every device relation is a blocks relation first** (the user, 2026-11-17: "Blocks first, one form"). The
+     device's own relations (the views it makes from a chunk, the fixpoint's totals and deltas, a lattice's total,
+     an upload) were column-major buffers with no descriptor, so a probe of them could not read `rel_group`. They
+     become relations in blocks of their own life (`Life::Device`: they die with the device's run or its resident
+     entries, and do not keep a run's blocks alive), written through `clif_rows_at` (a group's room is at most a
+     quarter of it). The column-major form (`at == 0`) goes, so every read and write of a relation on the device
+     is one form. A fixpoint's total is then its head's part, with no copy at the end.
+   - An index is added to a relation after it is made (`Relation::try_add_index`): its directory, buckets and
+     rows in the relation's block, built by the host or the device, rows in id order within a bucket, so a
+     probe's answer has one order. A key has up to 8 columns (`Index::key`), as the device's probes. A block with
+     no room for the index has the relation copied once into one that has (as `in_block`'s merged copy is).
+   - The key hash is a read written once (`rel_key_mix`), so the host's builder, the device's builder and every
+     probe hash a key alike.
 6. **Placement prices no copies.** The device's price loses the upload and row-back terms (`DEVICE_ROW_BACK`).
    A submission is priced per wave, not per stratum. `GPU_BIAS` is refitted on the new runs.
 7. **The other row stores follow** (0266 step 4's rest): the output's rows, the frames' rows and the memo's
