@@ -398,6 +398,8 @@ data-layer-eager-resolve fails (rc 1), on 50 sampled data-layer files.
     (farm.py 503), so nothing sees a hit's output. Waiting for the crates to compile again does not end it while
     the entries hit. To decide (question 3 below). Also: `diagnose` says this checkout pins rustc 1.95.0; it pins
     1.99.1 (c88acc0e7): the farm's check reads something stale.
+  - **Done** (2026-11-16): no code warning is left; the jobserver lines are left to age out of the cache (question 3,
+    answered (c)). The linker's `__eh_frame` note is the engine test binary's size, not a code warning.
 
 ### Q14. Plan-time switches and the plan cache
 
@@ -726,6 +728,7 @@ pass.
    Measured on 47 data-layer programs, per row vs native costs the same (+0.6%). Options: (a) leave copies per row
    (as built); (b) teach the factorized store and the export cut to see through a row-filter native, so copies can
    be native too (more work, no measured gain at 50 files).
+   **Answered (2026-11-16): leave them per row** (as built); no change.
 2. **Q2/Q5: a node's text read in the cross-file part is empty (a wrong result).** A cross-file reader
    (`passes(f) :- uses(_, f), node_text(f, t), …`, `uses` cross-file) asks for the text of another file's node.
    `@rr_node_text_any` reads only batches still held, and each chunk's batch is dropped when the chunk is done, so
@@ -749,3 +752,4 @@ pass.
    diagnostic from what sccache prints: a pipe through the wrapper on every compile, and it hides the line rather
    than removing its cause; (c) leave it until the cache evicts those entries (LRU at the 100 GiB cap).
    Recommended: (a), run once at nice 19.
+   **Answered (2026-11-16): (c), leave it.** The cause is fixed in the farm; the replays end as the entries age out.
