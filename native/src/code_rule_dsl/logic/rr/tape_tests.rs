@@ -375,6 +375,58 @@ fn a_batchs_policies_of_one_language_run_as_one_pack() {
     assert!(any(&w1, "rules/a.rr"), "{w1:?}");
 }
 
+/// A batch's policies of a language of several dialects (`.language typescript`) run as one pack a dialect, as a
+/// policy alone runs once a dialect (`tools::run_program`): each policy's findings are its run alone's, from every
+/// dialect, and a policy whose scope gives other dialects runs in a pack of its own. Before, such policies ran alone.
+#[test]
+fn a_batchs_policies_of_several_dialects_run_as_one_pack_a_dialect() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrdialectpack");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.ts"), "let a = 1;\nf(a);\n").unwrap();
+    std::fs::write(dir.join("b.js"), "\nlet b = 2;\ng(b);\n").unwrap();
+    std::fs::write(dir.join("c.tsx"), "\n\nlet c = <p/>;\nh(c);\n").unwrap();
+    let policy = |name: &str, scope: &str, body: &str| {
+        let path = dir.join(format!("{name}.rr"));
+        std::fs::write(&path, format!(".policy \"t:{name}\" revision 1\n.language typescript\n.scope include \"{scope}\"\n{body}\n")).unwrap();
+        path
+    };
+    let lets = policy("lets", "**/*", ".violation Let(at: node, name: symbol) code \"let\" \"{name}\"\nLet(d, x) :- kind(d, \"variable_declarator\"), field(d, \"name\", n), text(n, x).");
+    let calls = policy("calls", "**/*", ".violation Call(at: node, name: symbol) code \"call\" \"{name}\"\nCall(c, x) :- kind(c, \"call_expression\"), field(c, \"function\", f), text(f, x).");
+    let js = policy("js", "**/*.js", ".violation Js(at: node, name: symbol) code \"js\" \"{name}\"\nJs(d, x) :- kind(d, \"variable_declarator\"), field(d, \"name\", n), text(n, x).");
+    let paths = [lets.clone(), js.clone(), calls.clone()];
+    let batch = crate::code_rule_dsl::tools::run_policies(&paths, &dir, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    let found = |report: &serde_json::Value| -> Vec<(String, String)> {
+        let mut found: Vec<(String, String)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| (d["code"].as_str().unwrap_or("").to_owned(), d["message"].as_str().unwrap_or("").to_owned()))
+            .collect();
+        found.sort();
+        found
+    };
+    let alone: Vec<serde_json::Value> = paths
+        .iter()
+        .enumerate()
+        .map(|(k, p)| crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(p), &dir, &dir.join(format!("alone{k}")), &serde_json::Value::Null).unwrap())
+        .collect();
+    let together: Vec<u64> = batch["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect();
+    // `calls`' findings in its own directory, every dialect's, as the CLI reports them (`tools::diagnostics`).
+    let written: Vec<String> = crate::code_rule_dsl::tools::diagnostics(&dir.join("out/2")).unwrap_or_default().iter().map(|d| d.to_string()).collect();
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut each: Vec<(String, String)> = alone.iter().flat_map(found).collect();
+    each.sort();
+    assert_eq!(found(&batch), each, "{batch:#}");
+    let e = |c: &str, m: &str| (c.to_owned(), m.to_owned());
+    assert_eq!(found(&alone[0]), [e("let", "a"), e("let", "b"), e("let", "c")]);
+    assert_eq!(found(&alone[1]), [e("js", "b")]);
+    assert_eq!(found(&alone[2]), [e("call", "f"), e("call", "g"), e("call", "h")]);
+    // `lets` and `calls` read the three dialects, one pack each; `js` reads JavaScript alone.
+    assert_eq!(together, [2, 1, 2], "{batch:#}");
+    assert_eq!(written.len(), 3, "{written:?}");
+    assert!(written.iter().all(|w| w.contains("\"call\"")), "{written:?}");
+}
+
 /// O-pha000-kept-part: a reader whose body is only a negation of a demanded relation (`PHA000 :- !allow_status(
 /// "plan_helpers", "valid")`) demands nothing, so the relation is built whole: computed only for its other readers'
 /// keys, it held no row for this one, and the constant finding was reported though the status is valid. The run
