@@ -3694,3 +3694,49 @@ What is left of the words gap is the lookup's: ours 2.6 cycles a word
 Tests: `class_pack`'s `a_lexers_sets_are_one_table` (one compare at
 most, the word's bytes bits) and `a_lexers_classes_are_one_lookup`; AOT
 `the_refill_is_leans_window` (4 compares of the bytes at most, lean's).
+
+## A word's slot is lean's `(key, len, code)`
+
+Lean's `WORDS` entry is three fields, each loaded by itself:
+
+```rust
+static WORDS: [(u64, u8, u8); 128] = …;
+let (k, l, code) = WORDS[word_slot(w, len)];
+```
+
+Ours packed the slot's second word as one `u64` meta: the length in its
+low byte, the code bits above it, the ninth byte (or the long-word flag)
+at its top. The meta was read once and cut: an `ldp` of key and meta, an
+`and` for the length, a `lsr #8` for the code. Each cut sat on the path
+from the slot's load to the record. Now the meta's fields have places of
+their own (`META_TOP`, `META_CODE`):
+
+| Byte | Field |
+|---|---|
+| 0 | the length (`ldrb`) |
+| 1 | the ninth byte (`WordRest::Ninth`) or `LONG_WORD` (`WordRest::Tails`) |
+| 4–7 | the code bits, a `u32` (`ldr w`) |
+
+The code is the record's code word itself (kind, word, marks), so no
+shift. The punctuation table is derived from the slots
+(`punct_codes`). Its decode had to move with the layout: decoding
+`m >> 8` left every punctuation's bits past 32, so no byte took its code
+from the table. The tapes stayed right, only slower (punctuation 47.2 →
+66.6 instructions a token). `rrs_records_are_rows_on_the_cpu` checks
+those bytes. It had been stale since `/` (the comment's reader's
+first byte) came into the table, and now expects it.
+
+Measured, as information. Lines of 3-letter words ours and lean both look
+up, each lexer's fastest of six runs, with the lookup minus without:
+
+| Tokens a block | Before | After | Lean |
+|---|---|---|---|
+| 8 | 3.5 | 2.9 | 2.9 |
+| 16 | 3.4 | 2.8 | 2.6 |
+
+Instructions are unchanged: the lookup is ours 20.7 a word against lean's 16.3. The rest are the
+`orr` of the code with the token's kind, which is the record format's, and the
+lookup's block, which is out of line with a branch back.
+
+Test: `a_words_lookup_is_leans` (no meta read whole; the code a `u32` of
+its own).

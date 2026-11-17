@@ -1707,7 +1707,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
 pub enum WordRest {
     /// No word past eight bytes: nothing.
     None,
-    /// Nine bytes at most: the ninth, in its slot's meta's top byte (`NINTH_SHIFT`), compared
+    /// Nine bytes at most: the ninth, in its slot's meta's second byte (`META_TOP`), compared
     /// where the token is nine bytes (lean's `(len != 9) | (ninth == b'n')`).
     Ninth,
     /// Sixteen at most: the second eight, in the slot's third word, straight-line.
@@ -1716,19 +1716,23 @@ pub enum WordRest {
     Tails,
 }
 
-/// A slot's ninth byte in its meta (`WordRest::Ninth`): the top byte, above the code bits.
-const NINTH_SHIFT: i64 = 56;
+/// A slot's meta, as the lean lexer's `WORDS` entry `(key, len, code)`: each field a load of
+/// its own, none cut from a wider word. Byte 0 the length; byte `META_TOP` the ninth byte
+/// (`WordRest::Ninth`) or `LONG_WORD` (`WordRest::Tails`); the code bits, a `u32`, at
+/// `META_CODE`.
+const META_TOP: i32 = 1;
+const META_CODE: i32 = 4;
 
 /// The record pass's tables (`records::WordTable`), in one buffer the code reads by address:
 /// each byte's kind (256 bytes), the slots' keys, the slots' `len | code << 8`, each long word's
 /// tails (seven words). Byte offsets of each part.
 /// A record table's meta bit (`RecordTables::new`): the slot's word is past eight bytes.
-const LONG_WORD: u64 = 1 << 63;
+const LONG_WORD: u64 = 1;
 
 pub struct RecordTables {
     pub words: Vec<u64>,
-    /// The word slots, 16 bytes each: the key (the word's first eight bytes), then its meta.
-    /// A token takes both with one pair load, as the lean lexer's `WORDS` entry. Where a word
+    /// The word slots, 16 bytes each: the key (the word's first eight bytes), then its meta
+    /// (`META_TOP`, `META_CODE`), each field a load, as the lean lexer's `WORDS` entry. Where a word
     /// is past nine bytes and none past 16 (`WordRest::Second`), 32 bytes each: then its bytes
     /// 8 to 16, and a zero.
     pub slots: usize,
@@ -1866,12 +1870,14 @@ impl RecordTables {
             let top = match rest {
                 WordRest::Ninth => {
                     let code = (m >> 8) as usize;
-                    if len == 9 { (table.tails[code - 1][0] & 0xff) << NINTH_SHIFT } else { 0 }
+                    if len == 9 { table.tails[code - 1][0] & 0xff } else { 0 }
                 }
                 _ if len > 8 => LONG_WORD,
                 _ => 0,
             };
-            u64::from(len) | (word << crate::records::KIND_BITS | alone << crate::records::MARK_SHIFT) << 8 | top
+            let bits = word << crate::records::KIND_BITS | alone << crate::records::MARK_SHIFT;
+            assert!(bits >> 32 == 0, "a word's code bits past 32");
+            u64::from(len) | top << (8 * META_TOP) | bits << (8 * META_CODE)
         }).collect();
         let second = rest == WordRest::Second;
         for (&k, (&m, &w)) in table.keys.iter().zip(metas.iter().zip(&table.meta)) {
@@ -1926,7 +1932,7 @@ impl RecordTables {
             let key = text.iter().take(8).enumerate().fold(0u64, |a, (i, &b)| a | u64::from(b) << (8 * i));
             let slot = table.slot(key, len);
             match (table.keys.get(slot), metas.get(slot)) {
-                (Some(&k), Some(&m)) if k == key && m & 0xff == len => m >> 8,
+                (Some(&k), Some(&m)) if k == key && m & 0xff == len => m >> (8 * META_CODE),
                 _ => 0,
             }
         };
@@ -5958,14 +5964,13 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let h1 = f.ins().bxor(key, len);
     let h1 = f.ins().imul(h1, c.mult);
     let slot = f.ins().ushr_imm(h1, i64::from(64 - t.table.bits));
-    // The slot's key and meta, side by side: one pair load.
+    // The slot's key, then each field of its meta a load of its own (`META_TOP`, `META_CODE`),
+    // as lean's `ldr` and `ldrb`s: a field cut from a wider load is an instruction more on the
+    // way to the hit and the record.
     let off = f.ins().ishl_imm(slot, if t.rest == WordRest::Second { 5 } else { 4 });
     let sa = f.ins().iadd(c.slots, off);
     let kk = f.ins().load(types::I64, ro, sa, 0);
-    let meta = f.ins().load(types::I64, ro, sa, 8);
     let same_key = f.ins().icmp(IntCC::Equal, kk, key);
-    // The slot's length and ninth byte are bytes of its meta, each loaded alone (lean's
-    // `ldrb`s): a byte load is as soon as the meta's, a field cut from it an instruction later.
     let mlen = f.ins().uload8(types::I64, ro, sa, 8);
     let same_len = f.ins().icmp(IntCC::Equal, mlen, len);
     let mut hit = f.ins().band(same_key, same_len);
@@ -5973,7 +5978,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         // Its ninth byte, where it has nine, as the slot's (lean's `(len != 9) | (ninth ==
         // b'n')`): read past the token where it is shorter, in the padding at the file's end.
         let ninth = f.ins().uload8(types::I64, fl, from, 8);
-        let want = f.ins().uload8(types::I64, ro, sa, 8 + (NINTH_SHIFT / 8) as i32);
+        let want = f.ins().uload8(types::I64, ro, sa, 8 + META_TOP);
         let same = f.ins().icmp(IntCC::Equal, ninth, want);
         let other = f.ins().icmp_imm(IntCC::NotEqual, len, 9);
         let ok = f.ins().bor(same, other);
@@ -5994,10 +5999,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let same = f.ins().icmp(IntCC::Equal, chunk, want);
         hit = f.ins().band(hit, same);
     }
-    // The word's code bits (its word and the marks of it alone, `RecordTables`), on a hit; not
-    // the ninth byte above them.
-    let w = f.ins().ushr_imm(meta, 8);
-    let w = if t.rest == WordRest::Ninth { f.ins().band_imm(w, (1i64 << (NINTH_SHIFT - 8)) - 1) } else { w };
+    // The word's code bits (its word and the marks of it alone, `RecordTables`), on a hit.
+    let w = f.ins().uload32(ro, sa, 8 + META_CODE);
     let bits = f.ins().select(hit, w, zero);
     let mut code = f.ins().bor(kind, bits);
     // The word itself, where a mark or a long word's tail needs it.
@@ -6040,7 +6043,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     if t.rest != WordRest::Tails {
         f.ins().jump(coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), code.into(), hits.into()]);
     } else {
-        let check = f.ins().ushr_imm(bits, 55);
+        let flag = f.ins().uload8(types::I64, ro, sa, 8 + META_TOP);
+        let check = f.ins().select(hit, flag, zero);
         f.ins().brif(check, long, &[], coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), code.into(), hits.into()]);
     }
 

@@ -141,6 +141,10 @@ fn a_words_lookup_is_leans() {
         // The slot's length and ninth byte loaded alone (lean's `ldrb`s), not cut from its
         // meta word an instruction after its load.
         assert!(look.contains("wrapping_add(8isize as usize)) as *const u8)") && !look.contains(".wrapping_shr(56)"), "the slot's length and ninth as bytes: {look}");
+        // Each field of the slot's meta a load of its own, as lean's `(key, len, code)`: no
+        // eight bytes read at the meta, the code a `u32` taken whole (no shift, no mask).
+        assert!(!look.contains("wrapping_add(8isize as usize)) as *const u64)"), "the meta read whole: {look}");
+        assert!(look.contains("wrapping_add(12isize as usize)) as *const u32)"), "the code a u32 of its own: {look}");
     }
     // The key cut to its length as lean's `u64::MAX >> (64 - 8 * len)`: a shift by 64 less
     // its bits, not by their negation (`(56 * n) & 56` to LLVM).

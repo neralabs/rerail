@@ -1773,10 +1773,13 @@ pub mod tests {
         assert_eq!(t.layout, rerail_compiler::records::RecordLayout::Rows);
         // Every first byte of the fused pair rule (punctuation, most of rr's tokens) takes its
         // code from the table, as the lean lexer's `TOKEN`: no word looked up. But `<`, whose
-        // two pairs (`<=`, `<:`) are two words: its two-byte tokens look theirs up.
+        // two pairs (`<=`, `<:`) are two words: its two-byte tokens look theirs up. And `/`,
+        // the comment's reader's first byte, whose tokens not a comment are a pair rule's.
         let r = c.native.records.as_ref().expect("records");
         let (kn, _) = t.fused.expect("the fused rules");
-        let pair_bytes: Vec<u8> = (0..=255u8).filter(|&b| r.ends.get(usize::from(b)).is_some_and(|&e| usize::from(e) == kn) && b != b'<').collect();
+        let pairs = |e: u8| usize::from(e) == kn || matches!(r.rules.get(usize::from(e)), Some(&rerail_compiler::records::EndRule::Read(i)) if matches!(r.rules.get(usize::from(r.readers[usize::from(i)].other)), Some(rerail_compiler::records::EndRule::Next(_))));
+        let pair_bytes: Vec<u8> = (0..=255u8).filter(|&b| r.ends.get(usize::from(b)).is_some_and(|&e| pairs(e)) && b != b'<').collect();
+        assert!(pair_bytes.contains(&b'/'), "the comment's reader's byte: {pair_bytes:?}");
         assert_eq!(c.parser.tier1.punct_bytes(), pair_bytes);
         // Their codes fit their entries: no load beside the entry's.
         assert!(c.parser.tier1.punct_in_entry());
