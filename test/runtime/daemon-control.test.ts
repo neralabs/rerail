@@ -966,6 +966,8 @@ describe("a state file Windows left behind", () => {
 describe("a record whose live pid is not the home's daemon", () => {
   const PIPE = enginePipeName(String.raw`C:\Users\me\.rerail\rerail.sqlite`);
   const LIVE_PID = 4242;
+  /** Another daemon of the home, which runs. */
+  const OTHER_PID = LIVE_PID + 1;
   let home: string;
   beforeEach(async () => {
     home = await mkdtemp(join(tmpdir(), "rerail-not-daemon-"));
@@ -980,14 +982,21 @@ describe("a record whose live pid is not the home's daemon", () => {
   });
 
   /**
-   * A machine on `platform` where `LIVE_PID` runs until a SIGTERM or SIGKILL reaches it, the home's lock is held while
-   * `lockHeld` says so, every signal goes to `signals`, and on Windows the engine pipe is there and silent to the proof.
+   * A machine on `platform` where `LIVE_PID` runs until a SIGTERM or SIGKILL reaches it and `OTHER_PID` runs, the home's
+   * lock is held while `lockHeld` says so, `LIVE_PID` started at `started()` (undefined: it cannot be read), every signal
+   * goes to `signals`, and on Windows the engine pipe is there and silent to the proof.
    */
-  function machineWith(platform: NodeJS.Platform, signals: Array<string | number | undefined>, lockHeld: () => boolean): DaemonMachine {
+  function machineWith(
+    platform: NodeJS.Platform,
+    signals: Array<string | number | undefined>,
+    lockHeld: () => boolean | undefined,
+    started: () => number | undefined = () => undefined,
+  ): DaemonMachine {
     let running = true;
     return fakeMachine(platform, {
       env: { RERAIL_HOME: home },
       kill: (pid, signal) => {
+        if (pid === OTHER_PID && signal === 0) return true;
         if (pid !== LIVE_PID || !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
         if (signal !== 0) signals.push(signal);
         if (signal === "SIGTERM" || signal === "SIGKILL") running = false;
@@ -996,32 +1005,76 @@ describe("a record whose live pid is not the home's daemon", () => {
       pipes: () => [pipeNameOf(PIPE)],
       capabilityProof: async () => "silent",
       homeDaemonLockHeld: () => lockHeld(),
+      processStartedAt: pid => (pid === LIVE_PID ? started() : undefined),
     });
   }
 
+  const STARTED_AT = 1_700_000_000_000;
   const state = (platform: NodeJS.Platform): DaemonState => stateFor({
     pid: LIVE_PID,
     kernelSocketPath: platform === "win32" ? PIPE : "/nowhere/engine.sock",
     accessToken: "capability",
+    startedAt: STARTED_AT,
   });
+  /** A process that took the dead daemon's pid an hour after the daemon stamped its record. */
+  const anHourLater = (): number => STARTED_AT + 3_600_000;
 
-  it.each(["linux", "win32"] as const)("ends nothing and removes the record when the pid it names holds no lock of the home (%s)", async platform => {
+  it.each(["linux", "win32"] as const)("ends nothing and removes the record when the pid it names started after the record (%s)", async platform => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const signals: Array<string | number | undefined> = [];
-    // The daemon was killed: both its records still name its pid, which another process has now, and its lock is free.
+    // The daemon was killed: both its records still name its pid, which a process started since has now, and its lock
+    // is free.
     await holdHome(home, LIVE_PID);
     await writeFile(stateFile, JSON.stringify(state(platform)));
-    expect(await lookupDaemon(home, machineWith(platform, signals, () => false))).toEqual({ status: "absent", notDaemon: LIVE_PID });
+    expect(await lookupDaemon(home, machineWith(platform, signals, () => false, anHourLater))).toEqual({ status: "absent", notDaemon: LIVE_PID });
     expect(existsSync(stateFile)).toBe(false);
     await writeFile(stateFile, JSON.stringify(state(platform)));
-    expect(await stopDaemon(home, machineWith(platform, signals, () => false))).toBe("not-daemon");
+    expect(await stopDaemon(home, machineWith(platform, signals, () => false, anHourLater))).toBe("not-daemon");
     expect(signals).toEqual([]);
     expect(existsSync(stateFile)).toBe(false);
-    // Another daemon holds the home and recorded itself: the pid daemon.json names is still not it.
-    await holdHome(home, LIVE_PID + 1);
+    // Another daemon holds the home and recorded itself: the pid daemon.json names is not it, whenever it started.
+    await holdHome(home, OTHER_PID);
     await writeFile(stateFile, JSON.stringify(state(platform)));
-    expect(await lookupDaemon(home, machineWith(platform, signals, () => true))).toEqual({ status: "absent", notDaemon: LIVE_PID });
+    expect(await lookupDaemon(home, machineWith(platform, signals, () => true, () => STARTED_AT - 500))).toEqual({ status: "absent", notDaemon: LIVE_PID });
     expect(signals).toEqual([]);
+  });
+
+  // A daemon of a release before the home's lock holds none; one whose lock file did not open holds none either; one
+  // that could not write its holder record holds the lock unrecorded.
+  it.each([
+    ["linux", "no lock", false],
+    ["win32", "no lock", false],
+    ["linux", "the lock, unrecorded", true],
+    ["win32", "the lock, unrecorded", true],
+  ] as const)("keeps a busy daemon that holds %s when it started before its record, and its stop ends it (%s, %s)", async (platform, _holds, lockHeld) => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    const machine = (): DaemonMachine => machineWith(platform, signals, () => lockHeld, () => STARTED_AT - 500);
+    expect(await lookupDaemon(home, machine())).toEqual({ status: "unresponsive", state: state(platform) });
+    expect(existsSync(stateFile)).toBe(true);
+    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }, machine())).rejects.toThrow(/alive but not answering/u);
+    expect(await stopDaemon(home, machine())).toBe("stopped");
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(existsSync(stateFile)).toBe(false);
+  });
+
+  const unread = (): number | undefined => undefined;
+  const withinTheSlack = (): number | undefined => STARTED_AT + 5_000;
+  it.each([
+    ["linux", "cannot be read", unread],
+    ["win32", "cannot be read", unread],
+    ["linux", "falls within the slack after the record", withinTheSlack],
+    ["win32", "falls within the slack after the record", withinTheSlack],
+  ] as const)("keeps a busy daemon nothing proves, and its stop ends nothing and says so, when its start %s (%s)", async (platform, _start, started) => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    const machine = (): DaemonMachine => machineWith(platform, signals, () => undefined, started);
+    expect(await lookupDaemon(home, machine())).toEqual({ status: "unresponsive", state: state(platform) });
+    await expect(stopDaemon(home, machine())).rejects.toThrow(new RegExp(`could not prove that pid ${LIVE_PID}, which .* names, is this home's daemon, so it ended nothing`, "u"));
+    expect(signals).toEqual([]);
+    expect(existsSync(stateFile)).toBe(true);
   });
 
   it.each(["linux", "win32"] as const)("keeps and stops a daemon that holds the home's lock and is not answering (%s)", async platform => {
@@ -1061,7 +1114,8 @@ describe("a record whose live pid is not the home's daemon", () => {
     const signals: Array<string | number | undefined> = [];
     await holdHome(home, LIVE_PID);
     await writeFile(stateFile, JSON.stringify(state(platform)));
-    const machine = machineWith(platform, signals, heldFor(1));
+    // Its pid is another process's by then, started since.
+    const machine = machineWith(platform, signals, heldFor(1), anHourLater);
     const found = await lookupDaemon(home, machine);
     if (found.status === "absent") throw new Error("the daemon that holds the home was not found");
     expect(await stopFoundDaemon(home, found, machine)).toBe("not-daemon");
