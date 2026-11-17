@@ -1107,6 +1107,22 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(signals).toEqual([]);
   });
 
+  it.each(["linux", "win32"] as const)("ends nothing and says so when daemon.json cannot be read just before the signal (%s)", async platform => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    await holdHome(home, LIVE_PID);
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    const machine = machineWith(platform, signals, () => true);
+    const found = await lookupDaemon(home, machine);
+    if (found.status === "absent") throw new Error("the daemon that holds the home was not found");
+    // A folder now stands where daemon.json was: no read gets a record from it, so nothing says whether it still names
+    // the pid.
+    await rm(stateFile);
+    await mkdir(stateFile);
+    await expect(stopFoundDaemon(home, found, machine)).rejects.toThrow(new RegExp(`could not prove that pid ${LIVE_PID}`, "u"));
+    expect(signals).toEqual([]);
+  });
+
   /** The home's lock as held for the first `asks` times it is asked, and free after: a daemon that ends meanwhile. */
   const heldFor = (asks: number): (() => boolean) => {
     let asked = 0;

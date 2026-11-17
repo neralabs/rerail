@@ -1430,12 +1430,21 @@ async function requestDaemonShutdown(state: DaemonState, machine: DaemonMachine)
   }
 }
 
-/** Whether daemon.json in `home` still names `pid`. */
-function recordNames(home: string, pid: number): boolean {
+/**
+ * Whether daemon.json in `home` still names `pid`: false once it is gone or names another; undefined when it cannot be
+ * read or parsed, which tells neither.
+ */
+function recordNames(home: string, pid: number): boolean | undefined {
+  let text: string;
   try {
-    return (JSON.parse(readFileSync(join(home, DAEMON_STATE_FILE), "utf8")) as { pid?: unknown }).pid === pid;
+    text = readFileSync(join(home, DAEMON_STATE_FILE), "utf8");
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? false : undefined;
+  }
+  try {
+    return (JSON.parse(text) as { pid?: unknown } | null)?.pid === pid;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -1444,12 +1453,15 @@ function recordNames(home: string, pid: number): boolean {
  * is refused. The signal goes only while `mayEnd` says the pid is still the daemon and daemon.json still names it, both
  * read just before it is sent; false, and nothing sent, when daemon.json names it no longer: a start removes a record
  * that names no daemon of the home before it launches one, which takes the home's lock an instant before it records
- * its own pid beside it, so the lock's record may still name the pid daemon.json named.
+ * its own pid beside it, so the lock's record may still name the pid daemon.json named. A daemon.json that cannot be read
+ * tells neither, and the stop ends nothing and says so ({@link unprovenDaemonMessage}).
  */
 async function askDaemonToStop(state: DaemonState, mayEnd: () => boolean, home: string, machine: DaemonMachine): Promise<boolean> {
   if (machine.platform === "win32" && (await requestDaemonShutdown(state, machine))) return true;
   if (!mayEnd()) return true;
-  if (!recordNames(home, state.pid)) return false;
+  const named = recordNames(home, state.pid);
+  if (named === undefined) throw new Error(unprovenDaemonMessage(home, state.pid, machine.platform));
+  if (!named) return false;
   signalDaemon(state.pid, "SIGTERM", machine);
   return true;
 }
