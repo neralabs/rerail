@@ -1367,6 +1367,62 @@ fn a_rule_pass_run_again_visits_the_edits_rules_alone() {
     }
 }
 
+/// A pipeline's run kept in a store (decision 0333) and opened in a new process reruns on an edit there as it does
+/// in its own: the edit rebased onto the stored run's input by rule hash, each rule pass visits the edit's added
+/// rules alone, the analyses it asked for are read back from the store for the last input, not computed, and the
+/// output is a run from scratch's.
+#[test]
+fn a_stored_run_reruns_on_an_edit_in_a_new_process() {
+    use super::manager::{Pipeline, Ran, Runs, analysis, rebase};
+    use crate::code_rule_dsl::logic::program_text::StoredRuns;
+    use crate::content_store::ContentStore;
+    let v0 = managed();
+    let e = v0.rel("e").unwrap();
+    let readers: Vec<RuleId> = v0.readers(e).map(|(r, _)| r.id()).collect();
+    let r3 = v0.rules().nth(6).unwrap().id();
+    let v1 = edited(&v0, &[readers[0], r3], &[reads_e("q"), r_of_f(20)]);
+    // Each process reads its program afresh: no version of the last process's is shared.
+    let fresh = |v: &Arc<Version>| Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
+    let scratch = |v: &Arc<Version>| {
+        let mut p = Pipeline::new("scratch", v.clone());
+        p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
+        p.finish().unwrap().0
+    };
+    let path = crate::code_rule_dsl::fixtures::temp();
+    let key = [7u8; 32];
+    // The first process: a run from scratch, kept.
+    {
+        let store = ContentStore::open(&path).unwrap();
+        let mut p = Pipeline::keeping("test", fresh(&v0));
+        // An analysis of the input, kept with the run.
+        p.get::<super::analyses::Needed>().unwrap();
+        let mut pass = RenameAll { from: "e", to: "e2", needs: false, seen: 0 };
+        p.rules(&mut pass);
+        assert_eq!(pass.seen, 12);
+        StoredRuns(&store).keep(&key, &p.done().unwrap()).unwrap();
+        drop(store);
+        ContentStore::forget(&path);
+    }
+    // The next: the run opened, the edit rebased onto its input, run again.
+    let store = ContentStore::open(&path).unwrap();
+    let last = StoredRuns(&store).open(&key, "test").unwrap().expect("the run kept");
+    let input = last.input().clone();
+    let v = rebase(&input, &fresh(&v1)).unwrap().expect("an edit of the last input");
+    assert_eq!(super::manager::Delta::of(&input, &v).size(), 4, "two rules out, two in");
+    let mut p = Pipeline::again(last, v.clone());
+    let mut pass = RenameAll { from: "e", to: "e2", needs: false, seen: 0 };
+    p.rules(&mut pass);
+    assert_eq!(pass.seen, 2, "visits the edit's added rules alone");
+    let run = p.done().unwrap();
+    assert_eq!(run.stages()[0].ran, Ran::Delta);
+    analysis::<super::analyses::Needed>(&input).unwrap();
+    assert_eq!((input.analyses().loaded("needed"), input.analyses().computed("needed")), (1, 0), "the last input's analysis read back, not computed");
+    let want = scratch(&v1);
+    assert_eq!((run.output().digest(), run.output().size()), (want.digest(), want.size()), "the program a run from scratch makes");
+    drop(store);
+    ContentStore::forget(&path);
+}
+
 /// A rerun runs a step whole when it cannot run on the edit alone: a program pass, a rule pass that keeps the
 /// default `WHOLE`, and a rule pass whose analyses the edit changed. Across the edit, the analyses the last input
 /// held are carried to the new input.

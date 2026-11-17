@@ -31,6 +31,13 @@ pub enum Version {
     Overlay { parent: Arc<Version>, delta: Arc<Image>, size: usize, depth: usize, digest: u64, analyses: Store },
 }
 
+/// What a version is made of over its parent (`Version::layer`).
+pub enum Layer<'v> {
+    Base(&'v [u8]),
+    Overlay(&'v Arc<Version>, &'v [u8]),
+    View(&'v Arc<Version>, &'v [(u32, u32)]),
+}
+
 /// What made a version: which form an edit took.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Made {
@@ -226,6 +233,19 @@ impl Version {
             Version::Base { image, .. } => Some(image.bytes()),
             _ => None,
         }
+    }
+    /// What it is made of over its parent (decision 0333 §2): a base's image bytes, an overlay's parent and delta
+    /// bytes, or a view's parent and ranges.
+    pub fn layer(&self) -> Layer<'_> {
+        match self {
+            Version::Base { image, .. } => Layer::Base(image.bytes()),
+            Version::Overlay { parent, delta, .. } => Layer::Overlay(parent, delta.bytes()),
+            Version::View { parent, ranges, .. } => Layer::View(parent, ranges),
+        }
+    }
+    /// The view of `parent` less its rules `removed` (ascending): a view stored by what it leaves out, reopened.
+    pub fn view_without(parent: &Arc<Version>, removed: &[u32]) -> Result<Arc<Version>, String> {
+        super::build::view(parent, removed).ok_or_else(|| bad("a stored view is more ranges than a view holds"))
     }
     /// One past the last id of each id space: atoms, relations, rules.
     pub fn atom_end(&self) -> u32 {

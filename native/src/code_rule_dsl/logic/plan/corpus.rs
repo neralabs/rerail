@@ -3165,6 +3165,20 @@ fn run_observed(
         program_plans.push(prepared_key);
     }
     let part_keys: std::sync::Mutex<Vec<[u8; 32]>> = Default::default();
+    // The pipelines' runs the run keeps (decision 0333): the manifest names them, and the next run finds them so.
+    let kept_runs: std::sync::Mutex<Vec<[u8; 32]>> = Default::default();
+    // The last run's, found through the root's newest manifest, which named them.
+    let last_named: Vec<[u8; 32]> = if durable.is_some() {
+        let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        store.corpus_run_also(&root.to_string_lossy()).map_err(|e| Error::Plan(e.to_string()))?
+    } else {
+        Vec::new()
+    };
+    let last_run = |name: &'static str| -> Option<crate::code_rule_dsl::logic::program_image::manager::Run> {
+        use crate::code_rule_dsl::logic::program_image::manager::Runs as _;
+        let _opening = crate::code_rule_dsl::logic::profile::span(|| format!("the last run of {name} (decision 0333)"));
+        last_named.iter().find_map(|d| crate::code_rule_dsl::logic::program_text::StoredRuns(store).open(&preparation::run_key(name, d), name).ok().flatten())
+    };
     // The combined program's entry (`combined`), when the store keeps it: the manifest names it too.
     // Their sources found (or stored) by the store's writer: the manifest, queued after, reads them.
     // The pins the combine made (`combined::remember`), released once the run's manifest names the entry.
@@ -3316,7 +3330,7 @@ fn run_observed(
             // closure the demand put in a cycle of other relations rows again; the `ast` atoms as the matchers'
             // relations, text tests as the vocabulary's (step 6c).
             let preparing = crate::code_rule_dsl::logic::profile::span(|| "prune, simplify, reach, demand, text".into());
-            let (version, preparation::Front { reaches: (reaches, throughs), demanded, demand, undone, matchers, vocabulary }) = preparation::front(version, dialect, &mut check).map_err(Error::Plan)?;
+            let (version, preparation::Front { reaches: (reaches, throughs), demanded, demand, undone, matchers, vocabulary }, front_run) = preparation::front(version, dialect, last_run(preparation::FRONT), &mut check).map_err(Error::Plan)?;
             drop(preparing);
             #[cfg_attr(not(debug_assertions), allow(dropping_copy_types))]
             drop(check);
@@ -3371,7 +3385,17 @@ fn run_observed(
                 (std::mem::take(&mut given.program), sets)
             };
             let _step = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's passes".into());
-            let (version, found) = preparation::run(version, factorizing, bound).map_err(Error::Plan)?;
+            let (version, found, prepared_run) = preparation::run(version, factorizing, last_run(preparation::PREPARATION), bound).map_err(Error::Plan)?;
+            // Both runs kept behind the run, under one digest of this one's, which its manifest names (decision 0333).
+            if durable.is_some() {
+                let named = preparation::runs_digest(&front_run);
+                kept_runs.lock().expect("the kept runs").push(named);
+                store.write_back_syms(crate::content_store::write_back::Syms::None, "the pipelines' runs", 0, Vec::new(), Box::new(move |store| {
+                    use crate::code_rule_dsl::logic::program_image::manager::Runs as _;
+                    let runs = crate::code_rule_dsl::logic::program_text::StoredRuns(store);
+                    runs.keep(&preparation::run_key(preparation::FRONT, &named), &front_run).and_then(|()| runs.keep(&preparation::run_key(preparation::PREPARATION, &named), &prepared_run)).map_err(crate::content_store::StoreError::Invalid)
+                }));
+            }
             let sets = found.sets.clone();
             #[cfg(debug_assertions)]
             assert_eq!(tree_sets, sets, "the version's nearest sets are the tree's");
@@ -3417,6 +3441,7 @@ fn run_observed(
                 assert_eq!(lower::domains(&program)?, lowered.domains, "the version's domains are the tree's");
                 crate::code_rule_dsl::typing::file_local::programs_over(&program, version.clone()).map_err(Error::Plan)?;
             }
+            #[cfg(debug_assertions)]
             drop(program);
             // The run's program: the image alone; no tree is kept.
             let lowered = lower::Lowered::of_placed(super::body::Placed::whole(version), lowered.domains, lowered.ops, lowered.dialect);
@@ -6982,7 +7007,7 @@ fn run_observed(
     // before it, a phase's or phase 0's cross part was named by no manifest, and collected after every cold run.
     let mut publish_later = None;
     let mut collecting = if recording && cross_plan.is_none() && durable.is_none() {
-        record_run(store, root, &run_sources, &memo_program, &program_plans.iter().chain(&nested_plans).chain(part_keys.lock().expect("the parts' keys").iter()).copied().collect::<Vec<_>>(), Some(lane), &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?
+        record_run(store, root, &run_sources, &memo_program, &program_plans.iter().chain(&nested_plans).chain(part_keys.lock().expect("the parts' keys").iter()).chain(kept_runs.lock().expect("the kept runs").iter()).copied().collect::<Vec<_>>(), Some(lane), &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?
     } else if recording {
         publish_later = Some((relations, reading));
         None
@@ -8541,7 +8566,7 @@ fn run_observed(
     }
     if let Some((relations, reading)) = publish_later {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "record the run in the store".into());
-        collecting = record_run(store, root, &run_sources, &memo_program, &program_plans.iter().chain(&nested_plans).chain(part_keys.lock().expect("the parts' keys").iter()).copied().collect::<Vec<_>>(), Some(lane), &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?;
+        collecting = record_run(store, root, &run_sources, &memo_program, &program_plans.iter().chain(&nested_plans).chain(part_keys.lock().expect("the parts' keys").iter()).chain(kept_runs.lock().expect("the kept runs").iter()).copied().collect::<Vec<_>>(), Some(lane), &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?;
     }
     // The cross part's writes are one wave: its kept strata's frames, retained rows, rounds and statistics.
     crate::content_store::write_back::end_wave(crate::content_store::write_back::Boundary::Cross);

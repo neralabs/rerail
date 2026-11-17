@@ -536,3 +536,158 @@ impl crate::code_rule_dsl::logic::program_image::manager::Steps for StoredSteps<
 fn str_value(s: &str) -> Value {
     Value::Str(s.to_owned().into())
 }
+
+/// A pipeline's last run (decision 0333 §2), kept in `store` as facts beside the images of its versions, under its
+/// key (`Runs::keep`): `pipeline_run(input, output)`, `pipeline_run_version(i, kind, parent, image, removed)` (a base
+/// or an overlay's delta by its image, a view by the rules it leaves out), `pipeline_run_step(j, pass, input, output,
+/// form, select kind, select ids, asked, own end)`, `pipeline_run_decision(j, pass, what, detail)`, and each step
+/// input's analyses, `pipeline_run_analysis(version, name, tag, …row)`, read with the run and handed to its version.
+/// 0103's two rules: the key names the run, and the run its versions. A run whose image the store lost is not found.
+pub struct StoredRuns<'s>(pub &'s ContentStore);
+
+fn run_alias(key: &[u8; 32]) -> HashKey {
+    let format = crate::code_rule_dsl::logic::program_image::FORMAT;
+    HashKey::sha256(&[format!("rerail pipeline run {format}\0").as_bytes(), key.as_slice()].concat())
+}
+
+fn ids_text(ids: &[u32]) -> Value {
+    str_value(&ids.iter().map(u32::to_string).collect::<Vec<_>>().join(","))
+}
+
+fn text_ids(v: &Value) -> Result<Vec<u32>, String> {
+    let Value::Str(s) = v else { return Err(bad("a stored run's ids are not text")) };
+    if s.is_empty() {
+        return Ok(Vec::new());
+    }
+    s.split(',').map(|x| x.parse::<u32>().map_err(|e| bad(e))).collect()
+}
+
+impl crate::code_rule_dsl::logic::program_image::manager::Runs for StoredRuns<'_> {
+    fn keep(&self, key: &[u8; 32], run: &crate::code_rule_dsl::logic::program_image::manager::Run) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::program_image::manager::StoredVersion;
+        let e = |e: crate::content_store::StoreError| e.to_string();
+        let store = self.0;
+        let alias = run_alias(key);
+        if store.source_by_alias(alias).map_err(e)?.is_some() {
+            return Ok(());
+        }
+        let parts = run.parts();
+        let mut facts = Facts::new();
+        let mut held = Vec::new();
+        let int = |n: i64| Value::Int(n);
+        facts.entry("pipeline_run".into()).or_default().push([int(parts.input as i64), int(parts.output as i64)].into());
+        for (i, v) in parts.versions.iter().enumerate() {
+            let row: [Value; 5] = match v {
+                StoredVersion::Base(bytes) => {
+                    let (image, ids) = store_image(store, bytes).map_err(e)?;
+                    held.extend(ids);
+                    [int(i as i64), int(0), int(-1), str_value(&hex32(&image)), str_value("")]
+                }
+                StoredVersion::Overlay { parent, delta } => {
+                    let (image, ids) = store_image(store, delta).map_err(e)?;
+                    held.extend(ids);
+                    [int(i as i64), int(1), int(*parent as i64), str_value(&hex32(&image)), str_value("")]
+                }
+                StoredVersion::View { parent, removed } => [int(i as i64), int(2), int(*parent as i64), str_value(""), ids_text(removed)],
+            };
+            facts.entry("pipeline_run_version".into()).or_default().push(row.into());
+        }
+        for (j, s) in parts.steps.iter().enumerate() {
+            let (kind, ids, asked, own_end) = match &s.rule {
+                Some(r) => (i64::from(r.select.0), ids_text(&r.select.1), str_value(&r.asked.join(",")), i64::from(r.own_end)),
+                None => (-1, str_value(""), str_value(""), -1),
+            };
+            facts.entry("pipeline_run_step".into()).or_default().push(
+                [int(j as i64), str_value(&s.pass), int(s.input as i64), int(s.output as i64), int(i64::from(s.form.code())), int(kind), ids, asked, int(own_end)].into(),
+            );
+        }
+        for (j, d) in parts.decided.iter().enumerate() {
+            facts.entry("pipeline_run_decision".into()).or_default().push([int(j as i64), str_value(&d.pass), str_value(&d.what), str_value(&d.detail)].into());
+        }
+        for (i, name, tag, rows) in &parts.analyses {
+            let head = [int(*i as i64), str_value(name), int(i64::from(*tag))];
+            facts.entry("pipeline_run_analysis".into()).or_default().extend(rows.iter().map(|r| head.iter().cloned().chain(r.iter().cloned()).collect::<Vec<_>>().into()));
+        }
+        held.push(store.put_source(&program_facts::encode(&facts), &[alias]).map_err(e)?);
+        store.pin_held_sources(&held).map_err(e)
+    }
+
+    fn open(&self, key: &[u8; 32], name: &'static str) -> Result<Option<crate::code_rule_dsl::logic::program_image::manager::Run>, String> {
+        use crate::code_rule_dsl::logic::program_image::manager::{Decided, Form, Run, StoredRule, StoredStep};
+        use crate::code_rule_dsl::logic::program_image::Version;
+        let e = |e: crate::content_store::StoreError| e.to_string();
+        let store = self.0;
+        let Some(id) = store.source_by_alias(run_alias(key)).map_err(e)? else { return Ok(None) };
+        let facts = program_facts::decode(&store.get_source(id).map_err(e)?)?;
+        let rows = |rel: &str| facts.get(rel).cloned().unwrap_or_default();
+        let int = |v: &Value| match v {
+            Value::Int(n) => Ok(*n),
+            _ => Err(bad("a stored run's number is not one")),
+        };
+        let text = |v: &Value| match v {
+            Value::Str(s) => Ok(s.to_string()),
+            _ => Err(bad("a stored run's text is not one")),
+        };
+        let mut held = vec![id];
+        let mut by_index: Vec<crate::code_rule_dsl::logic::front::List<Value>> = rows("pipeline_run_version");
+        by_index.sort_by_key(|r| int(&r[0]).unwrap_or(i64::MAX));
+        let mut versions: Vec<std::sync::Arc<Version>> = Vec::new();
+        for r in &by_index {
+            let (kind, parent) = (int(&r[1])?, int(&r[2])?);
+            let parent = || usize::try_from(parent).ok().and_then(|p| versions.get(p).cloned()).ok_or_else(|| bad("a stored run's version names no parent before it"));
+            let bytes = || -> Result<Option<Vec<u8>>, String> {
+                let image = unhex32(&text(&r[3])?).ok_or_else(|| bad("a stored run's image is not a digest"))?;
+                let Some(image_id) = store.source_by_alias(image_key(&image)).map_err(e)? else { return Ok(None) };
+                Ok(Some(store.get_source(image_id).map_err(e)?))
+            };
+            let v = match kind {
+                0 => match bytes()? {
+                    Some(b) => Version::open(&b)?,
+                    None => return Ok(None),
+                },
+                1 => match bytes()? {
+                    Some(b) => Version::over(&parent()?, &b)?,
+                    None => return Ok(None),
+                },
+                2 => Version::view_without(&parent()?, &text_ids(&r[4])?)?,
+                _ => return Err(bad("a stored run's version is of no kind")),
+            };
+            versions.push(v);
+        }
+        // Each version's analyses, by name and tag, handed to it to read before computing one.
+        let mut analyses: std::collections::BTreeMap<i64, std::collections::HashMap<(String, u32), Vec<Vec<Value>>>> = Default::default();
+        for r in rows("pipeline_run_analysis") {
+            let (at, name, tag) = (int(&r[0])?, text(&r[1])?, u32::try_from(int(&r[2])?).map_err(|e| bad(e))?);
+            analyses.entry(at).or_default().entry((name, tag)).or_default().push(r[3..].to_vec());
+        }
+        for (at, held) in analyses {
+            let v = usize::try_from(at).ok().and_then(|i| versions.get(i)).ok_or_else(|| bad("a stored analysis names no version"))?;
+            let held = std::sync::Arc::new(held);
+            v.analyses().read_stored(std::sync::Arc::new(move |name: &str, tag: u32| held.get(&(name.to_owned(), tag)).cloned()));
+        }
+        let mut steps: Vec<(i64, StoredStep)> = Vec::new();
+        for r in rows("pipeline_run_step") {
+            let kind = int(&r[5])?;
+            let rule = (kind >= 0).then(|| -> Result<StoredRule, String> {
+                let asked = text(&r[7])?;
+                Ok(StoredRule {
+                    select: (u8::try_from(kind).map_err(|e| bad(e))?, text_ids(&r[6])?),
+                    asked: if asked.is_empty() { Vec::new() } else { asked.split(',').map(str::to_owned).collect() },
+                    own_end: u32::try_from(int(&r[8])?).map_err(|e| bad(e))?,
+                })
+            });
+            let form = Form::of_code(u8::try_from(int(&r[4])?).map_err(|e| bad(e))?).ok_or_else(|| bad("a stored step's form is not one"))?;
+            steps.push((int(&r[0])?, StoredStep { pass: text(&r[1])?, input: int(&r[2])? as usize, output: int(&r[3])? as usize, form, rule: rule.transpose()? }));
+        }
+        steps.sort_by_key(|(j, _)| *j);
+        let mut decided: Vec<(i64, Decided)> = Vec::new();
+        for r in rows("pipeline_run_decision") {
+            decided.push((int(&r[0])?, Decided { pass: text(&r[1])?.into(), what: text(&r[2])?.into(), detail: text(&r[3])? }));
+        }
+        decided.sort_by_key(|(j, _)| *j);
+        let Some(head) = rows("pipeline_run").into_iter().next() else { return Ok(None) };
+        held.dedup();
+        store.pin_held_sources(&held).map_err(e)?;
+        Run::assemble(name, &versions, int(&head[0])? as usize, int(&head[1])? as usize, steps.into_iter().map(|(_, s)| s).collect(), decided.into_iter().map(|(_, d)| d).collect()).map(Some)
+    }
+}

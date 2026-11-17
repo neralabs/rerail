@@ -62,7 +62,7 @@ pub use grouped::Grouped;
 pub use handles::{AggRef, AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
 pub use strings::Strings;
 pub use tree::Tree;
-pub use version::{DeclRef, FactsRef, Made, Version, differences, forget_trees_decoded, trees_decoded};
+pub use version::{DeclRef, FactsRef, Layer, Made, Version, differences, forget_trees_decoded, trees_decoded};
 
 pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x04";
 /// 3: every relation the program names has an id, those its declarations, facts, inputs, outputs and about rows

@@ -357,6 +357,20 @@ impl ContentStore {
         Ok(Some((plan, decode_ids(&sources)?, relations)))
     }
 
+    /// The digests the newest run of `root` named besides its plan (`record_corpus_run_naming`'s `also`): among them,
+    /// what it kept for the next run to find by them (its pipelines' runs, decision 0333).
+    pub fn corpus_run_also(&self, root: &str) -> StoreResult<Vec<[u8; 32]>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let rows = connection
+            .prepare_cached(
+                "SELECT plan_digest FROM corpus_manifest_plans WHERE manifest_id = (SELECT m.manifest_id FROM corpus_manifests m \
+                 JOIN corpus_roots r USING (root_id) WHERE r.path = ?1 ORDER BY m.last_run DESC LIMIT 1)",
+            )?
+            .query_map([root], |r| r.get::<_, Vec<u8>>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows.into_iter().filter_map(|d| d.try_into().ok()).collect())
+    }
+
     /// The sources the newest run of lane `lane` over `root` read (`record_corpus_run_lane`), whichever build ran it:
     /// empty if the lane has no run. A run reads before its first wave the tapes of those its waves will load
     /// (decision 0104), as it reads its own files' before.

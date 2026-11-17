@@ -2,7 +2,7 @@
 //! program's version, run in one pipeline after the program's one image, from the last of the tree's passes
 //! backward as they move.
 
-use crate::code_rule_dsl::logic::program_image::manager::{Cx, Pipeline, ProgramPass, ProgramW};
+use crate::code_rule_dsl::logic::program_image::manager::{Run, Cx, Pipeline, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::Version;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -131,8 +131,8 @@ pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
 /// tests, the program's own demand (`RERAIL_DEMAND=off` computes the listed relations in full) and a prune after
 /// it, the reaches in cycles made rows again, then the text passes. Their decisions reach the run's profile, as the
 /// tree's passes made them. `check` is called after each of `STAGES` with the version so far.
-pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, check: &mut dyn FnMut(&'static str, &Arc<Version>)) -> Result<(Arc<Version>, Front), String> {
-    let mut p = Pipeline::new("before lowering", version);
+pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, last: Option<Run>, check: &mut dyn FnMut(&'static str, &Arc<Version>)) -> Result<(Arc<Version>, Front, Run), String> {
+    let mut p = kept(FRONT, version, last)?;
     let mut at = |p: &mut Pipeline<'_>, stage: &'static str| -> Result<(), String> {
         let v = p.current()?.clone();
         check(stage, &v);
@@ -180,9 +180,9 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
     for d in p.decisions() {
         crate::code_rule_dsl::logic::profile::decision(&d.what, || d.detail.clone());
     }
-    let (v, _) = p.finish()?;
+    let run = p.done()?;
     let demand = own.outcome.map(|o| (own.listed, o));
-    Ok((v, Front { reaches: (reach.reaches, reach.throughs), demanded: negated.demanded, demand, undone: undo.undone, matchers, vocabulary }))
+    Ok((run.output().clone(), Front { reaches: (reach.reaches, reach.throughs), demanded: negated.demanded, demand, undone: undo.undone, matchers, vocabulary }, run))
 }
 
 /// The passes that follow the program's image, over `version`: the program that runs, a base (what the store keeps),
@@ -191,8 +191,8 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
 /// them, before the program splits. The merges (`merge`) run as `corpus::merge_and_drop_repeats`
 /// runs them, or the merge alone with `RERAIL_SAME=off`.
 /// `bound` checks every relation read is bound, after `nearest` is read from the transducer.
-pub fn run(version: Arc<Version>, factorize: bool, bound: impl FnMut(&Version) -> Result<(), String>) -> Result<(Arc<Version>, Found), String> {
-    let mut p = Pipeline::new("preparation", version);
+pub fn run(version: Arc<Version>, factorize: bool, last: Option<Run>, bound: impl FnMut(&Version) -> Result<(), String>) -> Result<(Arc<Version>, Found, Run), String> {
+    let mut p = kept(PREPARATION, version, last)?;
     let mut nearest = Nearest::default();
     p.rules(&mut nearest);
     p.program(&mut Check(bound));
@@ -225,8 +225,9 @@ pub fn run(version: Arc<Version>, factorize: bool, bound: impl FnMut(&Version) -
     if let Ok(order) = std::env::var("RERAIL_RULE_ORDER") {
         p.program(&mut RuleOrder(order));
     }
-    let (out, stages) = p.finish()?;
-    for s in &stages {
+    let run = p.done()?;
+    let (out, stages) = (run.output().clone(), run.stages());
+    for s in stages {
         crate::code_rule_dsl::logic::profile::decision("preparation pass (decision 0281)", || format!("{}: {:?}, {:?}", s.pass, s.ran, s.form));
     }
     // The store keeps a base's bytes (`program_text::store_version`): an edit's version is folded into one.
@@ -234,7 +235,36 @@ pub fn run(version: Arc<Version>, factorize: bool, bound: impl FnMut(&Version) -
         Some(_) => out,
         None => out.fold()?,
     };
-    Ok((out, found))
+    Ok((out, found, run))
+}
+
+/// The pipelines a run keeps, by name (decision 0333 §5): the passes before lowering, and those after.
+pub const FRONT: &str = "before lowering";
+pub const PREPARATION: &str = "preparation";
+
+/// The key a pipeline's run is kept under (decision 0333 §2): its name, and the digest the run's manifest names.
+pub fn run_key(name: &str, named: &[u8; 32]) -> [u8; 32] {
+    use sha2::Digest as _;
+    sha2::Sha256::new().chain_update(b"rerail pipeline run\0").chain_update(name.as_bytes()).chain_update(b"\0").chain_update(named).finalize().into()
+}
+
+/// The digest a run's manifest names its pipelines' runs by: of the first pipeline's input, so two runs of one
+/// program name one.
+pub fn runs_digest(front: &Run) -> [u8; 32] {
+    use sha2::Digest as _;
+    sha2::Sha256::new().chain_update(b"rerail pipeline runs\0").chain_update(crate::code_rule_dsl::logic::program_image::manager::identity(front.input())).finalize().into()
+}
+
+/// A pipeline named `name` over `version`, kept to be stored: run `again` from `last` when `version` is an edit of
+/// its input (`rebase`), else from scratch.
+fn kept(name: &'static str, version: Arc<Version>, last: Option<Run>) -> Result<Pipeline<'static>, String> {
+    if let Some(last) = last
+        && let Some(v) = crate::code_rule_dsl::logic::program_image::manager::rebase(last.input(), &version)?
+    {
+        crate::code_rule_dsl::logic::profile::decision("the last run (decision 0333)", || format!("{name}: run again over an edit of the last run's input ({} rules)", crate::code_rule_dsl::logic::program_image::manager::Delta::of(last.input(), &v).size()));
+        return Ok(Pipeline::again(last, v));
+    }
+    Ok(Pipeline::keeping(name, version))
 }
 
 #[cfg(test)]
@@ -251,7 +281,7 @@ mod tests {
         )
         .unwrap();
         let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
-        let (out, _) = run(v.clone(), true, |_| Ok(())).unwrap();
+        let (out, _, _) = run(v.clone(), true, None, |_| Ok(())).unwrap();
         assert!(out.base_bytes().is_some(), "a base");
         let inputs: Vec<&str> = out.inputs().map(|a| out.text(a)).collect();
         assert_eq!(inputs, ["a", "c"], "b is read by no rule; c is an output");

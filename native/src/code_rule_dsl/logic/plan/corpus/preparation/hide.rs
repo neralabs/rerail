@@ -202,9 +202,9 @@ impl ProgramPass for Hide {
                                 changed = true;
                                 continue;
                             }
+                            // Read negated too (`!def_or_class(k)`), as the tree's: the host's rows name the host's kinds.
                             L::Atom(a)
-                                if !a.neg
-                                    && !a.rel.starts_with("rr_in_")
+                                if !a.rel.starts_with("rr_in_")
                                     && !ruled.contains_key(a.rel.as_str())
                                     && let [S::Var(x)] = a.args.as_slice()
                                     && let Some(g) = kind_of.get(x)

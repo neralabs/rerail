@@ -497,7 +497,7 @@ impl<'p> Builder<'p> {
 
 /// The view of `parent` less rules `removed` (its rules), if it is few enough ranges (`max_ranges`). A view of a view
 /// is of that view's parent, its ranges that view's less `removed`.
-fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
+pub(super) fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
     let (over, ranges): (&Arc<Version>, Vec<(u32, u32)>) = match &**parent {
         Version::View { parent: over, ranges, .. } => (over, ranges.clone()),
         _ => (parent, vec![(0, parent.rule_end())]),
