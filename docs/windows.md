@@ -251,6 +251,9 @@ folders that version records itself. Where a folder already has a row under the 
 as it is and only the records it lacks are copied in, so each version reads it there as a version without the step
 does. The step records each spelling it copied from in the table `path_key_spellings`, and this version's list of
 repositories and their checkouts leaves the copies under those spellings out, so each folder is listed once there.
+The daemon's pass that forgets checkouts Git no longer lists looks at a row kept under such a spelling as the folder
+this version keys it by: the row stays while that folder is a checkout, even where the spelling no longer reaches it,
+and goes with the folder.
 What redacts, deletes or reads history by checkout still reads every spelling a folder was recorded under: the support
 bundle replaces each of them, and `rerail scrub`, `rerail reset` and `rerail install --remove --delete-data` reach each.
 Removing a presentation preference here also removes the earlier version's rows of that folder for the same coding
