@@ -1259,19 +1259,21 @@ fn large_file_roundtrips_parent_and_subtree_overflow() {
 fn a_node_reached_without_its_parent_reads_the_kept_parents() {
     let source = format!("class C:\n{}", "    def m(self, a):\n        return [a + 1 for b in a if b]\n".repeat(200));
     let (_, tape, _, _) = fixture(&source, GrammarDialect::Python);
-    let walked: Vec<(u32, u32)> = tape.root_node().dfs().map(|node| (node.index, node.up)).collect();
+    // The walk knows each node's parent (`dfs`: the subtrees open around it), so it keeps none.
+    let id = |node: TapeNode<'_>| node.node_id() as u32;
+    let walked: Vec<(u32, u32)> = tape.root_node().dfs().map(|node| (id(node), node.parent().map_or(NONE, id))).collect();
     assert_eq!(walked.len(), tape.transducer_len());
     let before = tape.doc_tape().bytes();
     for &(index, up) in &walked {
         let node = tape.node(index);
-        assert_eq!(node.parent().map_or(NONE, |parent| parent.index), up, "parent of {index}");
+        assert_eq!(node.parent().map_or(NONE, id), up, "parent of {index}");
         let mut climb = Vec::new();
         let mut at = up;
         while at != NONE {
             climb.push(at);
             at = walked[at as usize].1;
         }
-        assert_eq!(node.ancestors(tape.root_node()).map(|a| a.index).collect::<Vec<_>>(), climb, "ancestors of {index}");
+        assert_eq!(node.ancestors(tape.root_node()).map(id).collect::<Vec<_>>(), climb, "ancestors of {index}");
         assert_eq!(tape.transducer_parent(index), (up != NONE).then_some(up), "transducer parent of {index}");
     }
     assert_eq!(tape.doc_tape().bytes(), before + 4 * walked.len(), "the parents are kept once");

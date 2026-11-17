@@ -2589,6 +2589,8 @@ impl TapeDoc {
         Ok((image, self.source.as_str(), &self.grammar))
     }
 
+    // A tape lookup's reads (`NodeRef::find_in_tape`), from the matcher's crate (rerail-w).
+    #[inline]
     pub fn transducer_kind(&self, node: u32) -> u16 {
         read!("kind");
         kind_of(self.entry(node))
@@ -2613,6 +2615,7 @@ impl TapeDoc {
             | (u8::from(e.flags & CODE_ERROR != 0) << 3)
     }
 
+    #[inline]
     pub fn transducer_span(&self, node: u32) -> Range<usize> {
         read!("span");
         read_at!("tape span", node);
@@ -2622,6 +2625,7 @@ impl TapeDoc {
 
     /// The node's start byte alone: for a search by start (`NodeRef::find_in_tape`), as format 15's end is read
     /// from the start of the subtree's last node.
+    #[inline]
     pub fn transducer_start(&self, node: u32) -> usize {
         read!("span");
         read_at!("tape span", node);
