@@ -33,6 +33,13 @@ pub(super) fn base_key(rel: &str) -> String {
 /// takes more of them kept over it (`identities_of`, decision 0280).
 pub(super) const COVERED: &str = "own:covered";
 
+/// What a hit read for its outputs alone decodes besides its outputs (decision 0117 step 1): its `own:` rows (its tree
+/// counts and `COVERED`), not its export or base rows, which the kept inputs hold. An entry is one image (decision
+/// 0240 §4), so it is held whole and only these are decoded; `Found::whole` decodes the rest if the kept inputs fail.
+pub(super) fn outputs_alone(rel: &str) -> bool {
+    rel.starts_with("own:")
+}
+
 /// The prefix of an entry's `lines` keys that hold its guests' requests (decision 0225 §2): the embed slice's output
 /// lines of each round that ask at a location of the file (`guests::asked_at`), under `guests:<round>:<relation>`. A
 /// chunk of partial hits whose entries hold them under the slice's identities makes its guests from them, without
@@ -431,6 +438,25 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stor
         Ok(())
     }
     cache.record("a source the manifest names", Vec::new(), &(text, store), None, apply);
+}
+
+/// The sources of contents the run named by their digests (`Content::Unstored`: read in the waves, where the store is
+/// not asked, by files the stat index does not trust yet), for the run's manifest: looked up together in the run's
+/// record (decision 0306), behind the writes queued before (a new content's tape stores its source), and named there
+/// (`Apply::name`), kept from collection by the run's lease until the manifest names them (0306 step 4). A second run
+/// in one process finds those files' tapes held and writes none, so only this names them (Q24).
+pub(super) fn named_digests(cache: &ContentStore, digests: Vec<[u8; 32]>) {
+    if digests.is_empty() {
+        return;
+    }
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+        let digests: Vec<[u8; 32]> = crate::content_store::record::codec::from_body("the sources the manifest names by digest", body)?;
+        let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
+        let found: Vec<SourceId> = cx.store.sources_by_hashes(&hashes)?.into_iter().flatten().collect();
+        cx.name(found);
+        Ok(())
+    }
+    cache.record("the sources the manifest names by digest", Vec::new(), &digests, None, apply);
 }
 
 /// How many contents of one path the memo keeps (decision 0117): the newest, by their last use. Worktrees or

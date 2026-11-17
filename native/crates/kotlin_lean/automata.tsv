@@ -1,0 +1,6634 @@
+K	annotation
+S	0	0
+M	0	t@	1
+S	1	0
+M	1	nconstructor_invocation	3
+M	1	nuse_site_target	2
+M	1	nuser_type	3
+M	1	t[	4
+S	2	0
+M	2	nconstructor_invocation	3
+M	2	nuser_type	3
+M	2	t[	4
+S	3	1
+S	4	0
+M	4	nconstructor_invocation	5
+M	4	nuser_type	5
+S	5	0
+M	5	nconstructor_invocation	5
+M	5	nuser_type	5
+M	5	t]	6
+S	6	1
+I	0	nconstructor_invocation	t@
+I	0	nuse_site_target	t@
+I	0	nuser_type	t@
+I	1	nconstructor_invocation	
+I	1	nuse_site_target	
+I	1	nuser_type	
+I	2	nconstructor_invocation	
+I	2	nuser_type	
+I	4	nconstructor_invocation	
+I	4	nuser_type	
+I	5	nconstructor_invocation	
+I	5	nuser_type	
+E	3	
+E	5	t]
+E	6	
+P	t@
+K	anonymous_function
+S	0	0
+M	0	tfun	2
+M	0	tsuspend	1
+S	1	0
+M	1	tfun	2
+S	2	0
+M	2	nfunction_value_parameters	4
+M	2	ntype_identifier	3
+S	3	0
+M	3	ntype_arguments	5
+M	3	t.	6
+S	4	1
+M	4	nfunction_body	7
+M	4	t:	8
+S	5	0
+M	5	t.	6
+S	6	0
+M	6	nfunction_value_parameters	4
+M	6	ntype_identifier	9
+S	7	1
+S	8	0
+M	8	nfunction_type	10
+M	8	nnot_nullable_type	10
+M	8	nnullable_type	10
+M	8	nparenthesized_type	10
+M	8	ntype_modifiers	11
+M	8	nuser_type	10
+M	8	tdynamic	10
+S	9	0
+M	9	ntype_arguments	12
+M	9	t.	6
+S	10	1
+M	10	nfunction_body	7
+S	11	0
+M	11	nfunction_type	10
+M	11	nnot_nullable_type	10
+M	11	nnullable_type	10
+M	11	nparenthesized_type	10
+M	11	nuser_type	10
+M	11	tdynamic	10
+S	12	0
+M	12	t.	6
+I	0	nfunction_value_parameters	tfun
+I	0	ntype_identifier	tfun
+I	1	nfunction_value_parameters	tfun
+I	1	ntype_identifier	tfun
+I	2	nfunction_value_parameters	
+I	2	ntype_identifier	
+I	3	nfunction_value_parameters	t.
+I	3	ntype_arguments	
+I	3	ntype_identifier	t.
+I	4	nfunction_body	
+I	4	nfunction_type	t:
+I	4	nnot_nullable_type	t:
+I	4	nnullable_type	t:
+I	4	nparenthesized_type	t:
+I	4	ntype_modifiers	t:
+I	4	nuser_type	t:
+I	5	nfunction_value_parameters	t.
+I	5	ntype_identifier	t.
+I	6	nfunction_value_parameters	
+I	6	ntype_identifier	
+I	8	nfunction_body	tdynamic
+I	8	nfunction_type	
+I	8	nnot_nullable_type	
+I	8	nnullable_type	
+I	8	nparenthesized_type	
+I	8	ntype_modifiers	
+I	8	nuser_type	
+I	9	nfunction_value_parameters	t.
+I	9	ntype_arguments	
+I	9	ntype_identifier	t.
+I	10	nfunction_body	
+I	11	nfunction_body	tdynamic
+I	11	nfunction_type	
+I	11	nnot_nullable_type	
+I	11	nnullable_type	
+I	11	nparenthesized_type	
+I	11	nuser_type	
+I	12	nfunction_value_parameters	t.
+I	12	ntype_identifier	t.
+E	4	
+E	7	
+E	8	tdynamic
+E	10	
+E	11	tdynamic
+P	t:
+P	tdynamic
+P	tfun
+P	tsuspend
+K	anonymous_initializer
+S	0	0
+M	0	tinit	1
+S	1	0
+M	1	t{	2
+S	2	0
+M	2	nstatements	3
+M	2	t}	4
+S	3	0
+M	3	t}	4
+S	4	1
+I	0	nstatements	tinitt{
+I	1	nstatements	t{
+I	2	nstatements	
+E	0	tinitt{t}
+E	1	t{t}
+E	2	t}
+E	3	t}
+E	4	
+K	callable_reference
+S	0	0
+M	0	ntype_identifier	1
+M	0	t::	2
+S	1	0
+M	1	t::	2
+S	2	0
+M	2	nsimple_identifier	3
+M	2	tclass	3
+S	3	1
+I	0	nsimple_identifier	t::
+I	0	ntype_identifier	
+I	1	nsimple_identifier	t::
+I	2	nsimple_identifier	
+E	0	t::tclass
+E	1	t::tclass
+E	2	tclass
+E	3	
+K	catch_block
+S	0	0
+M	0	tcatch	1
+S	1	0
+M	1	t(	2
+S	2	0
+M	2	nannotation	4
+M	2	nsimple_identifier	3
+S	3	0
+M	3	t:	5
+S	4	0
+M	4	nannotation	4
+M	4	nsimple_identifier	3
+S	5	0
+M	5	nfunction_type	6
+M	5	nnot_nullable_type	6
+M	5	nnullable_type	6
+M	5	nparenthesized_type	6
+M	5	ntype_modifiers	7
+M	5	nuser_type	6
+M	5	tdynamic	6
+S	6	0
+M	6	t)	8
+S	7	0
+M	7	nfunction_type	6
+M	7	nnot_nullable_type	6
+M	7	nnullable_type	6
+M	7	nparenthesized_type	6
+M	7	nuser_type	6
+M	7	tdynamic	6
+S	8	0
+M	8	t{	9
+S	9	0
+M	9	nstatements	10
+M	9	t}	11
+S	10	0
+M	10	t}	11
+S	11	1
+I	0	nannotation	tcatcht(
+I	0	nsimple_identifier	tcatcht(
+I	1	nannotation	t(
+I	1	nsimple_identifier	t(
+I	2	nannotation	
+I	2	nsimple_identifier	
+I	3	nfunction_type	t:
+I	3	nnot_nullable_type	t:
+I	3	nnullable_type	t:
+I	3	nparenthesized_type	t:
+I	3	nstatements	t:tdynamict)t{
+I	3	ntype_modifiers	t:
+I	3	nuser_type	t:
+I	4	nannotation	
+I	4	nsimple_identifier	
+I	5	nfunction_type	
+I	5	nnot_nullable_type	
+I	5	nnullable_type	
+I	5	nparenthesized_type	
+I	5	nstatements	tdynamict)t{
+I	5	ntype_modifiers	
+I	5	nuser_type	
+I	6	nstatements	t)t{
+I	7	nfunction_type	
+I	7	nnot_nullable_type	
+I	7	nnullable_type	
+I	7	nparenthesized_type	
+I	7	nstatements	tdynamict)t{
+I	7	nuser_type	
+I	8	nstatements	t{
+I	9	nstatements	
+E	3	t:tdynamict)t{t}
+E	5	tdynamict)t{t}
+E	6	t)t{t}
+E	7	tdynamict)t{t}
+E	8	t{t}
+E	9	t}
+E	10	t}
+E	11	
+K	character_literal
+S	0	0
+M	0	t'	1
+S	1	0
+M	1	ncharacter_escape_seq	2
+M	1	t'	3
+S	2	0
+M	2	t'	3
+S	3	1
+I	0	ncharacter_escape_seq	t'
+I	1	ncharacter_escape_seq	
+E	0	t't'
+E	1	t'
+E	2	t'
+E	3	
+K	class_body
+S	0	0
+M	0	t{	1
+S	1	0
+M	1	nanonymous_initializer	2
+M	1	nclass_declaration	2
+M	1	ncompanion_object	2
+M	1	ndestructuring_declaration	2
+M	1	nfunction_declaration	2
+M	1	ngetter	2
+M	1	nobject_declaration	2
+M	1	nproperty_declaration	2
+M	1	nsecondary_constructor	2
+M	1	nsetter	2
+M	1	ntype_alias	2
+M	1	t}	3
+S	2	0
+M	2	nanonymous_initializer	2
+M	2	nclass_declaration	2
+M	2	ncompanion_object	2
+M	2	ndestructuring_declaration	2
+M	2	nfunction_declaration	2
+M	2	ngetter	2
+M	2	nobject_declaration	2
+M	2	nproperty_declaration	2
+M	2	nsecondary_constructor	2
+M	2	nsetter	2
+M	2	ntype_alias	2
+M	2	t}	3
+S	3	1
+I	0	nanonymous_initializer	t{
+I	0	nclass_declaration	t{
+I	0	ncompanion_object	t{
+I	0	ndestructuring_declaration	t{
+I	0	nfunction_declaration	t{
+I	0	ngetter	t{
+I	0	nobject_declaration	t{
+I	0	nproperty_declaration	t{
+I	0	nsecondary_constructor	t{
+I	0	nsetter	t{
+I	0	ntype_alias	t{
+I	1	nanonymous_initializer	
+I	1	nclass_declaration	
+I	1	ncompanion_object	
+I	1	ndestructuring_declaration	
+I	1	nfunction_declaration	
+I	1	ngetter	
+I	1	nobject_declaration	
+I	1	nproperty_declaration	
+I	1	nsecondary_constructor	
+I	1	nsetter	
+I	1	ntype_alias	
+I	2	nanonymous_initializer	
+I	2	nclass_declaration	
+I	2	ncompanion_object	
+I	2	ndestructuring_declaration	
+I	2	nfunction_declaration	
+I	2	ngetter	
+I	2	nobject_declaration	
+I	2	nproperty_declaration	
+I	2	nsecondary_constructor	
+I	2	nsetter	
+I	2	ntype_alias	
+E	0	t{t}
+E	1	t}
+E	2	t}
+E	3	
+K	class_declaration
+S	0	0
+M	0	nmodifiers	1
+M	0	tclass	3
+M	0	tenum	5
+M	0	tfun	2
+M	0	tinterface	4
+S	1	0
+M	1	tclass	3
+M	1	tenum	5
+M	1	tfun	2
+M	1	tinterface	4
+S	2	0
+M	2	tinterface	4
+S	3	0
+M	3	ntype_identifier	6
+S	4	0
+M	4	ntype_identifier	6
+S	5	0
+M	5	tclass	7
+S	6	1
+M	6	nclass_body	8
+M	6	nprimary_constructor	10
+M	6	ntype_constraints	11
+M	6	ntype_parameters	9
+M	6	t:	12
+S	7	0
+M	7	ntype_identifier	13
+S	8	1
+S	9	1
+M	9	nclass_body	8
+M	9	nprimary_constructor	10
+M	9	ntype_constraints	11
+M	9	t:	12
+S	10	1
+M	10	nclass_body	8
+M	10	ntype_constraints	11
+M	10	t:	12
+S	11	1
+M	11	nclass_body	8
+S	12	0
+M	12	ndelegation_specifier	14
+S	13	1
+M	13	nenum_class_body	18
+M	13	nprimary_constructor	16
+M	13	ntype_constraints	17
+M	13	ntype_parameters	15
+M	13	t:	19
+S	14	1
+M	14	nclass_body	8
+M	14	ntype_constraints	11
+M	14	t,	20
+S	15	1
+M	15	nenum_class_body	18
+M	15	nprimary_constructor	16
+M	15	ntype_constraints	17
+M	15	t:	19
+S	16	1
+M	16	nenum_class_body	18
+M	16	ntype_constraints	17
+M	16	t:	19
+S	17	1
+M	17	nenum_class_body	18
+S	18	1
+S	19	0
+M	19	ndelegation_specifier	21
+S	20	0
+M	20	ndelegation_specifier	22
+S	21	1
+M	21	nenum_class_body	18
+M	21	ntype_constraints	17
+M	21	t,	23
+S	22	1
+M	22	nclass_body	8
+M	22	ntype_constraints	11
+M	22	t,	20
+S	23	0
+M	23	ndelegation_specifier	24
+S	24	1
+M	24	nenum_class_body	18
+M	24	ntype_constraints	17
+M	24	t,	23
+I	0	nmodifiers	
+I	2	ntype_identifier	tinterface
+I	3	ntype_identifier	
+I	4	ntype_identifier	
+I	5	ntype_identifier	tclass
+I	6	nclass_body	
+I	6	ndelegation_specifier	t:
+I	6	nprimary_constructor	
+I	6	ntype_constraints	
+I	6	ntype_parameters	
+I	7	ntype_identifier	
+I	9	nclass_body	
+I	9	ndelegation_specifier	t:
+I	9	nprimary_constructor	
+I	9	ntype_constraints	
+I	10	nclass_body	
+I	10	ndelegation_specifier	t:
+I	10	ntype_constraints	
+I	11	nclass_body	
+I	12	ndelegation_specifier	
+I	13	ndelegation_specifier	t:
+I	13	nenum_class_body	
+I	13	nprimary_constructor	
+I	13	ntype_constraints	
+I	13	ntype_parameters	
+I	14	nclass_body	
+I	14	ndelegation_specifier	t,
+I	14	ntype_constraints	
+I	15	ndelegation_specifier	t:
+I	15	nenum_class_body	
+I	15	nprimary_constructor	
+I	15	ntype_constraints	
+I	16	ndelegation_specifier	t:
+I	16	nenum_class_body	
+I	16	ntype_constraints	
+I	17	nenum_class_body	
+I	19	ndelegation_specifier	
+I	20	ndelegation_specifier	
+I	21	ndelegation_specifier	t,
+I	21	nenum_class_body	
+I	21	ntype_constraints	
+I	22	nclass_body	
+I	22	ndelegation_specifier	t,
+I	22	ntype_constraints	
+I	23	ndelegation_specifier	
+I	24	ndelegation_specifier	t,
+I	24	nenum_class_body	
+I	24	ntype_constraints	
+E	6	
+E	8	
+E	9	
+E	10	
+E	11	
+E	13	
+E	14	
+E	15	
+E	16	
+E	17	
+E	18	
+E	21	
+E	22	
+E	24	
+P	tclass
+P	tenum
+P	tfun
+P	tinterface
+K	class_parameter
+S	0	0
+M	0	nbinding_pattern_kind	2
+M	0	nmodifiers	3
+M	0	nsimple_identifier	1
+S	1	0
+M	1	t:	4
+S	2	0
+M	2	nsimple_identifier	1
+S	3	0
+M	3	nbinding_pattern_kind	2
+M	3	nsimple_identifier	1
+S	4	0
+M	4	nfunction_type	5
+M	4	nnot_nullable_type	5
+M	4	nnullable_type	5
+M	4	nparenthesized_type	5
+M	4	ntype_modifiers	6
+M	4	nuser_type	5
+M	4	tdynamic	5
+S	5	1
+M	5	t=	7
+S	6	0
+M	6	nfunction_type	5
+M	6	nnot_nullable_type	5
+M	6	nnullable_type	5
+M	6	nparenthesized_type	5
+M	6	nuser_type	5
+M	6	tdynamic	5
+S	7	0
+M	7	nadditive_expression	8
+M	7	nanonymous_function	8
+M	7	nas_expression	8
+M	7	nbin_literal	8
+M	7	nboolean_literal	8
+M	7	ncall_expression	8
+M	7	ncallable_reference	8
+M	7	ncharacter_literal	8
+M	7	ncheck_expression	8
+M	7	ncollection_literal	8
+M	7	ncomparison_expression	8
+M	7	nconjunction_expression	8
+M	7	ndisjunction_expression	8
+M	7	nelvis_expression	8
+M	7	nequality_expression	8
+M	7	nhex_literal	8
+M	7	nif_expression	8
+M	7	nindexing_expression	8
+M	7	ninfix_expression	8
+M	7	ninteger_literal	8
+M	7	njump_expression	8
+M	7	nlambda_literal	8
+M	7	nlong_literal	8
+M	7	nmultiplicative_expression	8
+M	7	nnavigation_expression	8
+M	7	nnull_literal	8
+M	7	nobject_literal	8
+M	7	nparenthesized_expression	8
+M	7	npostfix_expression	8
+M	7	nprefix_expression	8
+M	7	nrange_expression	8
+M	7	nreal_literal	8
+M	7	nsimple_identifier	8
+M	7	nspread_expression	8
+M	7	nstring_literal	8
+M	7	nsuper_expression	8
+M	7	nthis_expression	8
+M	7	ntry_expression	8
+M	7	nunsigned_literal	8
+M	7	nwhen_expression	8
+S	8	1
+I	0	nbinding_pattern_kind	
+I	0	nmodifiers	
+I	0	nsimple_identifier	
+I	1	nadditive_expression	t:tdynamict=
+I	1	nanonymous_function	t:tdynamict=
+I	1	nas_expression	t:tdynamict=
+I	1	nbin_literal	t:tdynamict=
+I	1	nboolean_literal	t:tdynamict=
+I	1	ncall_expression	t:tdynamict=
+I	1	ncallable_reference	t:tdynamict=
+I	1	ncharacter_literal	t:tdynamict=
+I	1	ncheck_expression	t:tdynamict=
+I	1	ncollection_literal	t:tdynamict=
+I	1	ncomparison_expression	t:tdynamict=
+I	1	nconjunction_expression	t:tdynamict=
+I	1	ndisjunction_expression	t:tdynamict=
+I	1	nelvis_expression	t:tdynamict=
+I	1	nequality_expression	t:tdynamict=
+I	1	nfunction_type	t:
+I	1	nhex_literal	t:tdynamict=
+I	1	nif_expression	t:tdynamict=
+I	1	nindexing_expression	t:tdynamict=
+I	1	ninfix_expression	t:tdynamict=
+I	1	ninteger_literal	t:tdynamict=
+I	1	njump_expression	t:tdynamict=
+I	1	nlambda_literal	t:tdynamict=
+I	1	nlong_literal	t:tdynamict=
+I	1	nmultiplicative_expression	t:tdynamict=
+I	1	nnavigation_expression	t:tdynamict=
+I	1	nnot_nullable_type	t:
+I	1	nnull_literal	t:tdynamict=
+I	1	nnullable_type	t:
+I	1	nobject_literal	t:tdynamict=
+I	1	nparenthesized_expression	t:tdynamict=
+I	1	nparenthesized_type	t:
+I	1	npostfix_expression	t:tdynamict=
+I	1	nprefix_expression	t:tdynamict=
+I	1	nrange_expression	t:tdynamict=
+I	1	nreal_literal	t:tdynamict=
+I	1	nsimple_identifier	t:tdynamict=
+I	1	nspread_expression	t:tdynamict=
+I	1	nstring_literal	t:tdynamict=
+I	1	nsuper_expression	t:tdynamict=
+I	1	nthis_expression	t:tdynamict=
+I	1	ntry_expression	t:tdynamict=
+I	1	ntype_modifiers	t:
+I	1	nunsigned_literal	t:tdynamict=
+I	1	nuser_type	t:
+I	1	nwhen_expression	t:tdynamict=
+I	2	nsimple_identifier	
+I	3	nbinding_pattern_kind	
+I	3	nsimple_identifier	
+I	4	nadditive_expression	tdynamict=
+I	4	nanonymous_function	tdynamict=
+I	4	nas_expression	tdynamict=
+I	4	nbin_literal	tdynamict=
+I	4	nboolean_literal	tdynamict=
+I	4	ncall_expression	tdynamict=
+I	4	ncallable_reference	tdynamict=
+I	4	ncharacter_literal	tdynamict=
+I	4	ncheck_expression	tdynamict=
+I	4	ncollection_literal	tdynamict=
+I	4	ncomparison_expression	tdynamict=
+I	4	nconjunction_expression	tdynamict=
+I	4	ndisjunction_expression	tdynamict=
+I	4	nelvis_expression	tdynamict=
+I	4	nequality_expression	tdynamict=
+I	4	nfunction_type	
+I	4	nhex_literal	tdynamict=
+I	4	nif_expression	tdynamict=
+I	4	nindexing_expression	tdynamict=
+I	4	ninfix_expression	tdynamict=
+I	4	ninteger_literal	tdynamict=
+I	4	njump_expression	tdynamict=
+I	4	nlambda_literal	tdynamict=
+I	4	nlong_literal	tdynamict=
+I	4	nmultiplicative_expression	tdynamict=
+I	4	nnavigation_expression	tdynamict=
+I	4	nnot_nullable_type	
+I	4	nnull_literal	tdynamict=
+I	4	nnullable_type	
+I	4	nobject_literal	tdynamict=
+I	4	nparenthesized_expression	tdynamict=
+I	4	nparenthesized_type	
+I	4	npostfix_expression	tdynamict=
+I	4	nprefix_expression	tdynamict=
+I	4	nrange_expression	tdynamict=
+I	4	nreal_literal	tdynamict=
+I	4	nsimple_identifier	tdynamict=
+I	4	nspread_expression	tdynamict=
+I	4	nstring_literal	tdynamict=
+I	4	nsuper_expression	tdynamict=
+I	4	nthis_expression	tdynamict=
+I	4	ntry_expression	tdynamict=
+I	4	ntype_modifiers	
+I	4	nunsigned_literal	tdynamict=
+I	4	nuser_type	
+I	4	nwhen_expression	tdynamict=
+I	5	nadditive_expression	t=
+I	5	nanonymous_function	t=
+I	5	nas_expression	t=
+I	5	nbin_literal	t=
+I	5	nboolean_literal	t=
+I	5	ncall_expression	t=
+I	5	ncallable_reference	t=
+I	5	ncharacter_literal	t=
+I	5	ncheck_expression	t=
+I	5	ncollection_literal	t=
+I	5	ncomparison_expression	t=
+I	5	nconjunction_expression	t=
+I	5	ndisjunction_expression	t=
+I	5	nelvis_expression	t=
+I	5	nequality_expression	t=
+I	5	nhex_literal	t=
+I	5	nif_expression	t=
+I	5	nindexing_expression	t=
+I	5	ninfix_expression	t=
+I	5	ninteger_literal	t=
+I	5	njump_expression	t=
+I	5	nlambda_literal	t=
+I	5	nlong_literal	t=
+I	5	nmultiplicative_expression	t=
+I	5	nnavigation_expression	t=
+I	5	nnull_literal	t=
+I	5	nobject_literal	t=
+I	5	nparenthesized_expression	t=
+I	5	npostfix_expression	t=
+I	5	nprefix_expression	t=
+I	5	nrange_expression	t=
+I	5	nreal_literal	t=
+I	5	nsimple_identifier	t=
+I	5	nspread_expression	t=
+I	5	nstring_literal	t=
+I	5	nsuper_expression	t=
+I	5	nthis_expression	t=
+I	5	ntry_expression	t=
+I	5	nunsigned_literal	t=
+I	5	nwhen_expression	t=
+I	6	nadditive_expression	tdynamict=
+I	6	nanonymous_function	tdynamict=
+I	6	nas_expression	tdynamict=
+I	6	nbin_literal	tdynamict=
+I	6	nboolean_literal	tdynamict=
+I	6	ncall_expression	tdynamict=
+I	6	ncallable_reference	tdynamict=
+I	6	ncharacter_literal	tdynamict=
+I	6	ncheck_expression	tdynamict=
+I	6	ncollection_literal	tdynamict=
+I	6	ncomparison_expression	tdynamict=
+I	6	nconjunction_expression	tdynamict=
+I	6	ndisjunction_expression	tdynamict=
+I	6	nelvis_expression	tdynamict=
+I	6	nequality_expression	tdynamict=
+I	6	nfunction_type	
+I	6	nhex_literal	tdynamict=
+I	6	nif_expression	tdynamict=
+I	6	nindexing_expression	tdynamict=
+I	6	ninfix_expression	tdynamict=
+I	6	ninteger_literal	tdynamict=
+I	6	njump_expression	tdynamict=
+I	6	nlambda_literal	tdynamict=
+I	6	nlong_literal	tdynamict=
+I	6	nmultiplicative_expression	tdynamict=
+I	6	nnavigation_expression	tdynamict=
+I	6	nnot_nullable_type	
+I	6	nnull_literal	tdynamict=
+I	6	nnullable_type	
+I	6	nobject_literal	tdynamict=
+I	6	nparenthesized_expression	tdynamict=
+I	6	nparenthesized_type	
+I	6	npostfix_expression	tdynamict=
+I	6	nprefix_expression	tdynamict=
+I	6	nrange_expression	tdynamict=
+I	6	nreal_literal	tdynamict=
+I	6	nsimple_identifier	tdynamict=
+I	6	nspread_expression	tdynamict=
+I	6	nstring_literal	tdynamict=
+I	6	nsuper_expression	tdynamict=
+I	6	nthis_expression	tdynamict=
+I	6	ntry_expression	tdynamict=
+I	6	nunsigned_literal	tdynamict=
+I	6	nuser_type	
+I	6	nwhen_expression	tdynamict=
+I	7	nadditive_expression	
+I	7	nanonymous_function	
+I	7	nas_expression	
+I	7	nbin_literal	
+I	7	nboolean_literal	
+I	7	ncall_expression	
+I	7	ncallable_reference	
+I	7	ncharacter_literal	
+I	7	ncheck_expression	
+I	7	ncollection_literal	
+I	7	ncomparison_expression	
+I	7	nconjunction_expression	
+I	7	ndisjunction_expression	
+I	7	nelvis_expression	
+I	7	nequality_expression	
+I	7	nhex_literal	
+I	7	nif_expression	
+I	7	nindexing_expression	
+I	7	ninfix_expression	
+I	7	ninteger_literal	
+I	7	njump_expression	
+I	7	nlambda_literal	
+I	7	nlong_literal	
+I	7	nmultiplicative_expression	
+I	7	nnavigation_expression	
+I	7	nnull_literal	
+I	7	nobject_literal	
+I	7	nparenthesized_expression	
+I	7	npostfix_expression	
+I	7	nprefix_expression	
+I	7	nrange_expression	
+I	7	nreal_literal	
+I	7	nsimple_identifier	
+I	7	nspread_expression	
+I	7	nstring_literal	
+I	7	nsuper_expression	
+I	7	nthis_expression	
+I	7	ntry_expression	
+I	7	nunsigned_literal	
+I	7	nwhen_expression	
+E	1	t:tdynamic
+E	4	tdynamic
+E	5	
+E	6	tdynamic
+E	8	
+K	collection_literal
+S	0	0
+M	0	t[	1
+S	1	0
+M	1	nadditive_expression	2
+M	1	nanonymous_function	2
+M	1	nas_expression	2
+M	1	nbin_literal	2
+M	1	nboolean_literal	2
+M	1	ncall_expression	2
+M	1	ncallable_reference	2
+M	1	ncharacter_literal	2
+M	1	ncheck_expression	2
+M	1	ncollection_literal	2
+M	1	ncomparison_expression	2
+M	1	nconjunction_expression	2
+M	1	ndisjunction_expression	2
+M	1	nelvis_expression	2
+M	1	nequality_expression	2
+M	1	nhex_literal	2
+M	1	nif_expression	2
+M	1	nindexing_expression	2
+M	1	ninfix_expression	2
+M	1	ninteger_literal	2
+M	1	njump_expression	2
+M	1	nlambda_literal	2
+M	1	nlong_literal	2
+M	1	nmultiplicative_expression	2
+M	1	nnavigation_expression	2
+M	1	nnull_literal	2
+M	1	nobject_literal	2
+M	1	nparenthesized_expression	2
+M	1	npostfix_expression	2
+M	1	nprefix_expression	2
+M	1	nrange_expression	2
+M	1	nreal_literal	2
+M	1	nsimple_identifier	2
+M	1	nspread_expression	2
+M	1	nstring_literal	2
+M	1	nsuper_expression	2
+M	1	nthis_expression	2
+M	1	ntry_expression	2
+M	1	nunsigned_literal	2
+M	1	nwhen_expression	2
+S	2	0
+M	2	t,	4
+M	2	t]	3
+S	3	1
+S	4	0
+M	4	nadditive_expression	5
+M	4	nanonymous_function	5
+M	4	nas_expression	5
+M	4	nbin_literal	5
+M	4	nboolean_literal	5
+M	4	ncall_expression	5
+M	4	ncallable_reference	5
+M	4	ncharacter_literal	5
+M	4	ncheck_expression	5
+M	4	ncollection_literal	5
+M	4	ncomparison_expression	5
+M	4	nconjunction_expression	5
+M	4	ndisjunction_expression	5
+M	4	nelvis_expression	5
+M	4	nequality_expression	5
+M	4	nhex_literal	5
+M	4	nif_expression	5
+M	4	nindexing_expression	5
+M	4	ninfix_expression	5
+M	4	ninteger_literal	5
+M	4	njump_expression	5
+M	4	nlambda_literal	5
+M	4	nlong_literal	5
+M	4	nmultiplicative_expression	5
+M	4	nnavigation_expression	5
+M	4	nnull_literal	5
+M	4	nobject_literal	5
+M	4	nparenthesized_expression	5
+M	4	npostfix_expression	5
+M	4	nprefix_expression	5
+M	4	nrange_expression	5
+M	4	nreal_literal	5
+M	4	nsimple_identifier	5
+M	4	nspread_expression	5
+M	4	nstring_literal	5
+M	4	nsuper_expression	5
+M	4	nthis_expression	5
+M	4	ntry_expression	5
+M	4	nunsigned_literal	5
+M	4	nwhen_expression	5
+M	4	t]	3
+S	5	0
+M	5	t,	4
+M	5	t]	3
+I	0	nadditive_expression	t[
+I	0	nanonymous_function	t[
+I	0	nas_expression	t[
+I	0	nbin_literal	t[
+I	0	nboolean_literal	t[
+I	0	ncall_expression	t[
+I	0	ncallable_reference	t[
+I	0	ncharacter_literal	t[
+I	0	ncheck_expression	t[
+I	0	ncollection_literal	t[
+I	0	ncomparison_expression	t[
+I	0	nconjunction_expression	t[
+I	0	ndisjunction_expression	t[
+I	0	nelvis_expression	t[
+I	0	nequality_expression	t[
+I	0	nhex_literal	t[
+I	0	nif_expression	t[
+I	0	nindexing_expression	t[
+I	0	ninfix_expression	t[
+I	0	ninteger_literal	t[
+I	0	njump_expression	t[
+I	0	nlambda_literal	t[
+I	0	nlong_literal	t[
+I	0	nmultiplicative_expression	t[
+I	0	nnavigation_expression	t[
+I	0	nnull_literal	t[
+I	0	nobject_literal	t[
+I	0	nparenthesized_expression	t[
+I	0	npostfix_expression	t[
+I	0	nprefix_expression	t[
+I	0	nrange_expression	t[
+I	0	nreal_literal	t[
+I	0	nsimple_identifier	t[
+I	0	nspread_expression	t[
+I	0	nstring_literal	t[
+I	0	nsuper_expression	t[
+I	0	nthis_expression	t[
+I	0	ntry_expression	t[
+I	0	nunsigned_literal	t[
+I	0	nwhen_expression	t[
+I	1	nadditive_expression	
+I	1	nanonymous_function	
+I	1	nas_expression	
+I	1	nbin_literal	
+I	1	nboolean_literal	
+I	1	ncall_expression	
+I	1	ncallable_reference	
+I	1	ncharacter_literal	
+I	1	ncheck_expression	
+I	1	ncollection_literal	
+I	1	ncomparison_expression	
+I	1	nconjunction_expression	
+I	1	ndisjunction_expression	
+I	1	nelvis_expression	
+I	1	nequality_expression	
+I	1	nhex_literal	
+I	1	nif_expression	
+I	1	nindexing_expression	
+I	1	ninfix_expression	
+I	1	ninteger_literal	
+I	1	njump_expression	
+I	1	nlambda_literal	
+I	1	nlong_literal	
+I	1	nmultiplicative_expression	
+I	1	nnavigation_expression	
+I	1	nnull_literal	
+I	1	nobject_literal	
+I	1	nparenthesized_expression	
+I	1	npostfix_expression	
+I	1	nprefix_expression	
+I	1	nrange_expression	
+I	1	nreal_literal	
+I	1	nsimple_identifier	
+I	1	nspread_expression	
+I	1	nstring_literal	
+I	1	nsuper_expression	
+I	1	nthis_expression	
+I	1	ntry_expression	
+I	1	nunsigned_literal	
+I	1	nwhen_expression	
+I	2	nadditive_expression	t,
+I	2	nanonymous_function	t,
+I	2	nas_expression	t,
+I	2	nbin_literal	t,
+I	2	nboolean_literal	t,
+I	2	ncall_expression	t,
+I	2	ncallable_reference	t,
+I	2	ncharacter_literal	t,
+I	2	ncheck_expression	t,
+I	2	ncollection_literal	t,
+I	2	ncomparison_expression	t,
+I	2	nconjunction_expression	t,
+I	2	ndisjunction_expression	t,
+I	2	nelvis_expression	t,
+I	2	nequality_expression	t,
+I	2	nhex_literal	t,
+I	2	nif_expression	t,
+I	2	nindexing_expression	t,
+I	2	ninfix_expression	t,
+I	2	ninteger_literal	t,
+I	2	njump_expression	t,
+I	2	nlambda_literal	t,
+I	2	nlong_literal	t,
+I	2	nmultiplicative_expression	t,
+I	2	nnavigation_expression	t,
+I	2	nnull_literal	t,
+I	2	nobject_literal	t,
+I	2	nparenthesized_expression	t,
+I	2	npostfix_expression	t,
+I	2	nprefix_expression	t,
+I	2	nrange_expression	t,
+I	2	nreal_literal	t,
+I	2	nsimple_identifier	t,
+I	2	nspread_expression	t,
+I	2	nstring_literal	t,
+I	2	nsuper_expression	t,
+I	2	nthis_expression	t,
+I	2	ntry_expression	t,
+I	2	nunsigned_literal	t,
+I	2	nwhen_expression	t,
+I	4	nadditive_expression	
+I	4	nanonymous_function	
+I	4	nas_expression	
+I	4	nbin_literal	
+I	4	nboolean_literal	
+I	4	ncall_expression	
+I	4	ncallable_reference	
+I	4	ncharacter_literal	
+I	4	ncheck_expression	
+I	4	ncollection_literal	
+I	4	ncomparison_expression	
+I	4	nconjunction_expression	
+I	4	ndisjunction_expression	
+I	4	nelvis_expression	
+I	4	nequality_expression	
+I	4	nhex_literal	
+I	4	nif_expression	
+I	4	nindexing_expression	
+I	4	ninfix_expression	
+I	4	ninteger_literal	
+I	4	njump_expression	
+I	4	nlambda_literal	
+I	4	nlong_literal	
+I	4	nmultiplicative_expression	
+I	4	nnavigation_expression	
+I	4	nnull_literal	
+I	4	nobject_literal	
+I	4	nparenthesized_expression	
+I	4	npostfix_expression	
+I	4	nprefix_expression	
+I	4	nrange_expression	
+I	4	nreal_literal	
+I	4	nsimple_identifier	
+I	4	nspread_expression	
+I	4	nstring_literal	
+I	4	nsuper_expression	
+I	4	nthis_expression	
+I	4	ntry_expression	
+I	4	nunsigned_literal	
+I	4	nwhen_expression	
+I	5	nadditive_expression	t,
+I	5	nanonymous_function	t,
+I	5	nas_expression	t,
+I	5	nbin_literal	t,
+I	5	nboolean_literal	t,
+I	5	ncall_expression	t,
+I	5	ncallable_reference	t,
+I	5	ncharacter_literal	t,
+I	5	ncheck_expression	t,
+I	5	ncollection_literal	t,
+I	5	ncomparison_expression	t,
+I	5	nconjunction_expression	t,
+I	5	ndisjunction_expression	t,
+I	5	nelvis_expression	t,
+I	5	nequality_expression	t,
+I	5	nhex_literal	t,
+I	5	nif_expression	t,
+I	5	nindexing_expression	t,
+I	5	ninfix_expression	t,
+I	5	ninteger_literal	t,
+I	5	njump_expression	t,
+I	5	nlambda_literal	t,
+I	5	nlong_literal	t,
+I	5	nmultiplicative_expression	t,
+I	5	nnavigation_expression	t,
+I	5	nnull_literal	t,
+I	5	nobject_literal	t,
+I	5	nparenthesized_expression	t,
+I	5	npostfix_expression	t,
+I	5	nprefix_expression	t,
+I	5	nrange_expression	t,
+I	5	nreal_literal	t,
+I	5	nsimple_identifier	t,
+I	5	nspread_expression	t,
+I	5	nstring_literal	t,
+I	5	nsuper_expression	t,
+I	5	nthis_expression	t,
+I	5	ntry_expression	t,
+I	5	nunsigned_literal	t,
+I	5	nwhen_expression	t,
+E	2	t]
+E	3	
+E	4	t]
+E	5	t]
+K	companion_object
+S	0	0
+M	0	nmodifiers	1
+M	0	tcompanion	2
+S	1	0
+M	1	tcompanion	2
+S	2	0
+M	2	tobject	3
+S	3	1
+M	3	nclass_body	5
+M	3	ntype_identifier	4
+M	3	t:	6
+S	4	1
+M	4	nclass_body	5
+M	4	t:	6
+S	5	1
+S	6	0
+M	6	ndelegation_specifier	7
+S	7	1
+M	7	nclass_body	5
+M	7	t,	8
+S	8	0
+M	8	ndelegation_specifier	9
+S	9	1
+M	9	nclass_body	5
+M	9	t,	8
+I	0	nclass_body	tcompaniontobject
+I	0	ndelegation_specifier	tcompaniontobjectt:
+I	0	nmodifiers	
+I	0	ntype_identifier	tcompaniontobject
+I	1	nclass_body	tcompaniontobject
+I	1	ndelegation_specifier	tcompaniontobjectt:
+I	1	ntype_identifier	tcompaniontobject
+I	2	nclass_body	tobject
+I	2	ndelegation_specifier	tobjectt:
+I	2	ntype_identifier	tobject
+I	3	nclass_body	
+I	3	ndelegation_specifier	t:
+I	3	ntype_identifier	
+I	4	nclass_body	
+I	4	ndelegation_specifier	t:
+I	6	ndelegation_specifier	
+I	7	nclass_body	
+I	7	ndelegation_specifier	t,
+I	8	ndelegation_specifier	
+I	9	nclass_body	
+I	9	ndelegation_specifier	t,
+E	0	tcompaniontobject
+E	1	tcompaniontobject
+E	2	tobject
+E	3	
+E	4	
+E	5	
+E	7	
+E	9	
+K	conjunction_expression
+S	0	0
+M	0	nadditive_expression	1
+M	0	nanonymous_function	1
+M	0	nas_expression	1
+M	0	nbin_literal	1
+M	0	nboolean_literal	1
+M	0	ncall_expression	1
+M	0	ncallable_reference	1
+M	0	ncharacter_literal	1
+M	0	ncheck_expression	1
+M	0	ncollection_literal	1
+M	0	ncomparison_expression	1
+M	0	nconjunction_expression	1
+M	0	ndisjunction_expression	1
+M	0	nelvis_expression	1
+M	0	nequality_expression	1
+M	0	nhex_literal	1
+M	0	nif_expression	1
+M	0	nindexing_expression	1
+M	0	ninfix_expression	1
+M	0	ninteger_literal	1
+M	0	njump_expression	1
+M	0	nlambda_literal	1
+M	0	nlong_literal	1
+M	0	nmultiplicative_expression	1
+M	0	nnavigation_expression	1
+M	0	nnull_literal	1
+M	0	nobject_literal	1
+M	0	nparenthesized_expression	1
+M	0	npostfix_expression	1
+M	0	nprefix_expression	1
+M	0	nrange_expression	1
+M	0	nreal_literal	1
+M	0	nsimple_identifier	1
+M	0	nspread_expression	1
+M	0	nstring_literal	1
+M	0	nsuper_expression	1
+M	0	nthis_expression	1
+M	0	ntry_expression	1
+M	0	nunsigned_literal	1
+M	0	nwhen_expression	1
+S	1	0
+M	1	t&&	2
+S	2	0
+M	2	nadditive_expression	3
+M	2	nanonymous_function	3
+M	2	nas_expression	3
+M	2	nbin_literal	3
+M	2	nboolean_literal	3
+M	2	ncall_expression	3
+M	2	ncallable_reference	3
+M	2	ncharacter_literal	3
+M	2	ncheck_expression	3
+M	2	ncollection_literal	3
+M	2	ncomparison_expression	3
+M	2	nconjunction_expression	3
+M	2	ndisjunction_expression	3
+M	2	nelvis_expression	3
+M	2	nequality_expression	3
+M	2	nhex_literal	3
+M	2	nif_expression	3
+M	2	nindexing_expression	3
+M	2	ninfix_expression	3
+M	2	ninteger_literal	3
+M	2	njump_expression	3
+M	2	nlambda_literal	3
+M	2	nlong_literal	3
+M	2	nmultiplicative_expression	3
+M	2	nnavigation_expression	3
+M	2	nnull_literal	3
+M	2	nobject_literal	3
+M	2	nparenthesized_expression	3
+M	2	npostfix_expression	3
+M	2	nprefix_expression	3
+M	2	nrange_expression	3
+M	2	nreal_literal	3
+M	2	nsimple_identifier	3
+M	2	nspread_expression	3
+M	2	nstring_literal	3
+M	2	nsuper_expression	3
+M	2	nthis_expression	3
+M	2	ntry_expression	3
+M	2	nunsigned_literal	3
+M	2	nwhen_expression	3
+S	3	1
+I	0	nadditive_expression	
+I	0	nanonymous_function	
+I	0	nas_expression	
+I	0	nbin_literal	
+I	0	nboolean_literal	
+I	0	ncall_expression	
+I	0	ncallable_reference	
+I	0	ncharacter_literal	
+I	0	ncheck_expression	
+I	0	ncollection_literal	
+I	0	ncomparison_expression	
+I	0	nconjunction_expression	
+I	0	ndisjunction_expression	
+I	0	nelvis_expression	
+I	0	nequality_expression	
+I	0	nhex_literal	
+I	0	nif_expression	
+I	0	nindexing_expression	
+I	0	ninfix_expression	
+I	0	ninteger_literal	
+I	0	njump_expression	
+I	0	nlambda_literal	
+I	0	nlong_literal	
+I	0	nmultiplicative_expression	
+I	0	nnavigation_expression	
+I	0	nnull_literal	
+I	0	nobject_literal	
+I	0	nparenthesized_expression	
+I	0	npostfix_expression	
+I	0	nprefix_expression	
+I	0	nrange_expression	
+I	0	nreal_literal	
+I	0	nsimple_identifier	
+I	0	nspread_expression	
+I	0	nstring_literal	
+I	0	nsuper_expression	
+I	0	nthis_expression	
+I	0	ntry_expression	
+I	0	nunsigned_literal	
+I	0	nwhen_expression	
+I	1	nadditive_expression	t&&
+I	1	nanonymous_function	t&&
+I	1	nas_expression	t&&
+I	1	nbin_literal	t&&
+I	1	nboolean_literal	t&&
+I	1	ncall_expression	t&&
+I	1	ncallable_reference	t&&
+I	1	ncharacter_literal	t&&
+I	1	ncheck_expression	t&&
+I	1	ncollection_literal	t&&
+I	1	ncomparison_expression	t&&
+I	1	nconjunction_expression	t&&
+I	1	ndisjunction_expression	t&&
+I	1	nelvis_expression	t&&
+I	1	nequality_expression	t&&
+I	1	nhex_literal	t&&
+I	1	nif_expression	t&&
+I	1	nindexing_expression	t&&
+I	1	ninfix_expression	t&&
+I	1	ninteger_literal	t&&
+I	1	njump_expression	t&&
+I	1	nlambda_literal	t&&
+I	1	nlong_literal	t&&
+I	1	nmultiplicative_expression	t&&
+I	1	nnavigation_expression	t&&
+I	1	nnull_literal	t&&
+I	1	nobject_literal	t&&
+I	1	nparenthesized_expression	t&&
+I	1	npostfix_expression	t&&
+I	1	nprefix_expression	t&&
+I	1	nrange_expression	t&&
+I	1	nreal_literal	t&&
+I	1	nsimple_identifier	t&&
+I	1	nspread_expression	t&&
+I	1	nstring_literal	t&&
+I	1	nsuper_expression	t&&
+I	1	nthis_expression	t&&
+I	1	ntry_expression	t&&
+I	1	nunsigned_literal	t&&
+I	1	nwhen_expression	t&&
+I	2	nadditive_expression	
+I	2	nanonymous_function	
+I	2	nas_expression	
+I	2	nbin_literal	
+I	2	nboolean_literal	
+I	2	ncall_expression	
+I	2	ncallable_reference	
+I	2	ncharacter_literal	
+I	2	ncheck_expression	
+I	2	ncollection_literal	
+I	2	ncomparison_expression	
+I	2	nconjunction_expression	
+I	2	ndisjunction_expression	
+I	2	nelvis_expression	
+I	2	nequality_expression	
+I	2	nhex_literal	
+I	2	nif_expression	
+I	2	nindexing_expression	
+I	2	ninfix_expression	
+I	2	ninteger_literal	
+I	2	njump_expression	
+I	2	nlambda_literal	
+I	2	nlong_literal	
+I	2	nmultiplicative_expression	
+I	2	nnavigation_expression	
+I	2	nnull_literal	
+I	2	nobject_literal	
+I	2	nparenthesized_expression	
+I	2	npostfix_expression	
+I	2	nprefix_expression	
+I	2	nrange_expression	
+I	2	nreal_literal	
+I	2	nsimple_identifier	
+I	2	nspread_expression	
+I	2	nstring_literal	
+I	2	nsuper_expression	
+I	2	nthis_expression	
+I	2	ntry_expression	
+I	2	nunsigned_literal	
+I	2	nwhen_expression	
+E	3	
+K	control_structure_body
+S	0	0
+M	0	nadditive_expression	1
+M	0	nannotation	2
+M	0	nanonymous_function	1
+M	0	nas_expression	1
+M	0	nassignment	1
+M	0	nbin_literal	1
+M	0	nboolean_literal	1
+M	0	ncall_expression	1
+M	0	ncallable_reference	1
+M	0	ncharacter_literal	1
+M	0	ncheck_expression	1
+M	0	nclass_declaration	3
+M	0	ncollection_literal	1
+M	0	ncomparison_expression	1
+M	0	nconjunction_expression	1
+M	0	ndestructuring_declaration	3
+M	0	ndisjunction_expression	1
+M	0	ndo_while_statement	1
+M	0	nelvis_expression	1
+M	0	nequality_expression	1
+M	0	nfor_statement	1
+M	0	nfunction_declaration	3
+M	0	ngetter	3
+M	0	nhex_literal	1
+M	0	nif_expression	1
+M	0	nindexing_expression	1
+M	0	ninfix_expression	1
+M	0	ninteger_literal	1
+M	0	njump_expression	1
+M	0	nlabel	2
+M	0	nlambda_literal	1
+M	0	nlong_literal	1
+M	0	nmultiplicative_expression	1
+M	0	nnavigation_expression	1
+M	0	nnull_literal	1
+M	0	nobject_declaration	3
+M	0	nobject_literal	1
+M	0	nparenthesized_expression	1
+M	0	npostfix_expression	1
+M	0	nprefix_expression	1
+M	0	nproperty_declaration	3
+M	0	nrange_expression	1
+M	0	nreal_literal	1
+M	0	nsetter	3
+M	0	nsimple_identifier	1
+M	0	nspread_expression	1
+M	0	nstring_literal	1
+M	0	nsuper_expression	1
+M	0	nthis_expression	1
+M	0	ntry_expression	1
+M	0	ntype_alias	3
+M	0	nunsigned_literal	1
+M	0	nwhen_expression	1
+M	0	nwhile_statement	1
+M	0	t{	4
+S	1	1
+S	2	0
+M	2	nadditive_expression	1
+M	2	nannotation	2
+M	2	nanonymous_function	1
+M	2	nas_expression	1
+M	2	nassignment	1
+M	2	nbin_literal	1
+M	2	nboolean_literal	1
+M	2	ncall_expression	1
+M	2	ncallable_reference	1
+M	2	ncharacter_literal	1
+M	2	ncheck_expression	1
+M	2	ncollection_literal	1
+M	2	ncomparison_expression	1
+M	2	nconjunction_expression	1
+M	2	ndisjunction_expression	1
+M	2	ndo_while_statement	1
+M	2	nelvis_expression	1
+M	2	nequality_expression	1
+M	2	nfor_statement	1
+M	2	nhex_literal	1
+M	2	nif_expression	1
+M	2	nindexing_expression	1
+M	2	ninfix_expression	1
+M	2	ninteger_literal	1
+M	2	njump_expression	1
+M	2	nlabel	2
+M	2	nlambda_literal	1
+M	2	nlong_literal	1
+M	2	nmultiplicative_expression	1
+M	2	nnavigation_expression	1
+M	2	nnull_literal	1
+M	2	nobject_literal	1
+M	2	nparenthesized_expression	1
+M	2	npostfix_expression	1
+M	2	nprefix_expression	1
+M	2	nrange_expression	1
+M	2	nreal_literal	1
+M	2	nsimple_identifier	1
+M	2	nspread_expression	1
+M	2	nstring_literal	1
+M	2	nsuper_expression	1
+M	2	nthis_expression	1
+M	2	ntry_expression	1
+M	2	nunsigned_literal	1
+M	2	nwhen_expression	1
+M	2	nwhile_statement	1
+S	3	1
+S	4	0
+M	4	nstatements	5
+M	4	t}	6
+S	5	0
+M	5	t}	6
+S	6	1
+I	0	nadditive_expression	
+I	0	nannotation	
+I	0	nanonymous_function	
+I	0	nas_expression	
+I	0	nassignment	
+I	0	nbin_literal	
+I	0	nboolean_literal	
+I	0	ncall_expression	
+I	0	ncallable_reference	
+I	0	ncharacter_literal	
+I	0	ncheck_expression	
+I	0	nclass_declaration	
+I	0	ncollection_literal	
+I	0	ncomparison_expression	
+I	0	nconjunction_expression	
+I	0	ndestructuring_declaration	
+I	0	ndisjunction_expression	
+I	0	ndo_while_statement	
+I	0	nelvis_expression	
+I	0	nequality_expression	
+I	0	nfor_statement	
+I	0	nfunction_declaration	
+I	0	ngetter	
+I	0	nhex_literal	
+I	0	nif_expression	
+I	0	nindexing_expression	
+I	0	ninfix_expression	
+I	0	ninteger_literal	
+I	0	njump_expression	
+I	0	nlabel	
+I	0	nlambda_literal	
+I	0	nlong_literal	
+I	0	nmultiplicative_expression	
+I	0	nnavigation_expression	
+I	0	nnull_literal	
+I	0	nobject_declaration	
+I	0	nobject_literal	
+I	0	nparenthesized_expression	
+I	0	npostfix_expression	
+I	0	nprefix_expression	
+I	0	nproperty_declaration	
+I	0	nrange_expression	
+I	0	nreal_literal	
+I	0	nsetter	
+I	0	nsimple_identifier	
+I	0	nspread_expression	
+I	0	nstatements	t{
+I	0	nstring_literal	
+I	0	nsuper_expression	
+I	0	nthis_expression	
+I	0	ntry_expression	
+I	0	ntype_alias	
+I	0	nunsigned_literal	
+I	0	nwhen_expression	
+I	0	nwhile_statement	
+I	2	nadditive_expression	
+I	2	nannotation	
+I	2	nanonymous_function	
+I	2	nas_expression	
+I	2	nassignment	
+I	2	nbin_literal	
+I	2	nboolean_literal	
+I	2	ncall_expression	
+I	2	ncallable_reference	
+I	2	ncharacter_literal	
+I	2	ncheck_expression	
+I	2	ncollection_literal	
+I	2	ncomparison_expression	
+I	2	nconjunction_expression	
+I	2	ndisjunction_expression	
+I	2	ndo_while_statement	
+I	2	nelvis_expression	
+I	2	nequality_expression	
+I	2	nfor_statement	
+I	2	nhex_literal	
+I	2	nif_expression	
+I	2	nindexing_expression	
+I	2	ninfix_expression	
+I	2	ninteger_literal	
+I	2	njump_expression	
+I	2	nlabel	
+I	2	nlambda_literal	
+I	2	nlong_literal	
+I	2	nmultiplicative_expression	
+I	2	nnavigation_expression	
+I	2	nnull_literal	
+I	2	nobject_literal	
+I	2	nparenthesized_expression	
+I	2	npostfix_expression	
+I	2	nprefix_expression	
+I	2	nrange_expression	
+I	2	nreal_literal	
+I	2	nsimple_identifier	
+I	2	nspread_expression	
+I	2	nstring_literal	
+I	2	nsuper_expression	
+I	2	nthis_expression	
+I	2	ntry_expression	
+I	2	nunsigned_literal	
+I	2	nwhen_expression	
+I	2	nwhile_statement	
+I	4	nstatements	
+E	0	t{t}
+E	1	
+E	3	
+E	4	t}
+E	5	t}
+E	6	
+K	delegation_specifier
+S	0	0
+M	0	nconstructor_invocation	1
+M	0	nexplicit_delegation	1
+M	0	nfunction_type	1
+M	0	nuser_type	1
+M	0	t(	3
+M	0	tsuspend	2
+S	1	1
+S	2	0
+M	2	nfunction_type	4
+S	3	0
+M	3	nfunction_type	5
+S	4	1
+S	5	0
+M	5	t)	6
+S	6	1
+I	0	nconstructor_invocation	
+I	0	nexplicit_delegation	
+I	0	nfunction_type	
+I	0	nuser_type	
+I	2	nfunction_type	
+I	3	nfunction_type	
+E	1	
+E	4	
+E	5	t)
+E	6	
+P	tsuspend
+K	destructuring_declaration
+S	0	0
+M	0	nmodifiers	1
+M	0	nmulti_variable_declaration	2
+S	1	0
+M	1	nmulti_variable_declaration	2
+S	2	0
+M	2	ntype_constraints	3
+M	2	t=	4
+S	3	0
+M	3	t=	4
+S	4	0
+M	4	nadditive_expression	5
+M	4	nanonymous_function	5
+M	4	nas_expression	5
+M	4	nbin_literal	5
+M	4	nboolean_literal	5
+M	4	ncall_expression	5
+M	4	ncallable_reference	5
+M	4	ncharacter_literal	5
+M	4	ncheck_expression	5
+M	4	ncollection_literal	5
+M	4	ncomparison_expression	5
+M	4	nconjunction_expression	5
+M	4	ndisjunction_expression	5
+M	4	nelvis_expression	5
+M	4	nequality_expression	5
+M	4	nhex_literal	5
+M	4	nif_expression	5
+M	4	nindexing_expression	5
+M	4	ninfix_expression	5
+M	4	ninteger_literal	5
+M	4	njump_expression	5
+M	4	nlambda_literal	5
+M	4	nlong_literal	5
+M	4	nmultiplicative_expression	5
+M	4	nnavigation_expression	5
+M	4	nnull_literal	5
+M	4	nobject_literal	5
+M	4	nparenthesized_expression	5
+M	4	npostfix_expression	5
+M	4	nprefix_expression	5
+M	4	nrange_expression	5
+M	4	nreal_literal	5
+M	4	nsimple_identifier	5
+M	4	nspread_expression	5
+M	4	nstring_literal	5
+M	4	nsuper_expression	5
+M	4	nthis_expression	5
+M	4	ntry_expression	5
+M	4	nunsigned_literal	5
+M	4	nwhen_expression	5
+S	5	1
+M	5	t;	6
+S	6	1
+I	0	nmodifiers	
+I	0	nmulti_variable_declaration	
+I	1	nmulti_variable_declaration	
+I	2	nadditive_expression	t=
+I	2	nanonymous_function	t=
+I	2	nas_expression	t=
+I	2	nbin_literal	t=
+I	2	nboolean_literal	t=
+I	2	ncall_expression	t=
+I	2	ncallable_reference	t=
+I	2	ncharacter_literal	t=
+I	2	ncheck_expression	t=
+I	2	ncollection_literal	t=
+I	2	ncomparison_expression	t=
+I	2	nconjunction_expression	t=
+I	2	ndisjunction_expression	t=
+I	2	nelvis_expression	t=
+I	2	nequality_expression	t=
+I	2	nhex_literal	t=
+I	2	nif_expression	t=
+I	2	nindexing_expression	t=
+I	2	ninfix_expression	t=
+I	2	ninteger_literal	t=
+I	2	njump_expression	t=
+I	2	nlambda_literal	t=
+I	2	nlong_literal	t=
+I	2	nmultiplicative_expression	t=
+I	2	nnavigation_expression	t=
+I	2	nnull_literal	t=
+I	2	nobject_literal	t=
+I	2	nparenthesized_expression	t=
+I	2	npostfix_expression	t=
+I	2	nprefix_expression	t=
+I	2	nrange_expression	t=
+I	2	nreal_literal	t=
+I	2	nsimple_identifier	t=
+I	2	nspread_expression	t=
+I	2	nstring_literal	t=
+I	2	nsuper_expression	t=
+I	2	nthis_expression	t=
+I	2	ntry_expression	t=
+I	2	ntype_constraints	
+I	2	nunsigned_literal	t=
+I	2	nwhen_expression	t=
+I	3	nadditive_expression	t=
+I	3	nanonymous_function	t=
+I	3	nas_expression	t=
+I	3	nbin_literal	t=
+I	3	nboolean_literal	t=
+I	3	ncall_expression	t=
+I	3	ncallable_reference	t=
+I	3	ncharacter_literal	t=
+I	3	ncheck_expression	t=
+I	3	ncollection_literal	t=
+I	3	ncomparison_expression	t=
+I	3	nconjunction_expression	t=
+I	3	ndisjunction_expression	t=
+I	3	nelvis_expression	t=
+I	3	nequality_expression	t=
+I	3	nhex_literal	t=
+I	3	nif_expression	t=
+I	3	nindexing_expression	t=
+I	3	ninfix_expression	t=
+I	3	ninteger_literal	t=
+I	3	njump_expression	t=
+I	3	nlambda_literal	t=
+I	3	nlong_literal	t=
+I	3	nmultiplicative_expression	t=
+I	3	nnavigation_expression	t=
+I	3	nnull_literal	t=
+I	3	nobject_literal	t=
+I	3	nparenthesized_expression	t=
+I	3	npostfix_expression	t=
+I	3	nprefix_expression	t=
+I	3	nrange_expression	t=
+I	3	nreal_literal	t=
+I	3	nsimple_identifier	t=
+I	3	nspread_expression	t=
+I	3	nstring_literal	t=
+I	3	nsuper_expression	t=
+I	3	nthis_expression	t=
+I	3	ntry_expression	t=
+I	3	nunsigned_literal	t=
+I	3	nwhen_expression	t=
+I	4	nadditive_expression	
+I	4	nanonymous_function	
+I	4	nas_expression	
+I	4	nbin_literal	
+I	4	nboolean_literal	
+I	4	ncall_expression	
+I	4	ncallable_reference	
+I	4	ncharacter_literal	
+I	4	ncheck_expression	
+I	4	ncollection_literal	
+I	4	ncomparison_expression	
+I	4	nconjunction_expression	
+I	4	ndisjunction_expression	
+I	4	nelvis_expression	
+I	4	nequality_expression	
+I	4	nhex_literal	
+I	4	nif_expression	
+I	4	nindexing_expression	
+I	4	ninfix_expression	
+I	4	ninteger_literal	
+I	4	njump_expression	
+I	4	nlambda_literal	
+I	4	nlong_literal	
+I	4	nmultiplicative_expression	
+I	4	nnavigation_expression	
+I	4	nnull_literal	
+I	4	nobject_literal	
+I	4	nparenthesized_expression	
+I	4	npostfix_expression	
+I	4	nprefix_expression	
+I	4	nrange_expression	
+I	4	nreal_literal	
+I	4	nsimple_identifier	
+I	4	nspread_expression	
+I	4	nstring_literal	
+I	4	nsuper_expression	
+I	4	nthis_expression	
+I	4	ntry_expression	
+I	4	nunsigned_literal	
+I	4	nwhen_expression	
+E	5	
+E	6	
+K	disjunction_expression
+S	0	0
+M	0	nadditive_expression	1
+M	0	nanonymous_function	1
+M	0	nas_expression	1
+M	0	nbin_literal	1
+M	0	nboolean_literal	1
+M	0	ncall_expression	1
+M	0	ncallable_reference	1
+M	0	ncharacter_literal	1
+M	0	ncheck_expression	1
+M	0	ncollection_literal	1
+M	0	ncomparison_expression	1
+M	0	nconjunction_expression	1
+M	0	ndisjunction_expression	1
+M	0	nelvis_expression	1
+M	0	nequality_expression	1
+M	0	nhex_literal	1
+M	0	nif_expression	1
+M	0	nindexing_expression	1
+M	0	ninfix_expression	1
+M	0	ninteger_literal	1
+M	0	njump_expression	1
+M	0	nlambda_literal	1
+M	0	nlong_literal	1
+M	0	nmultiplicative_expression	1
+M	0	nnavigation_expression	1
+M	0	nnull_literal	1
+M	0	nobject_literal	1
+M	0	nparenthesized_expression	1
+M	0	npostfix_expression	1
+M	0	nprefix_expression	1
+M	0	nrange_expression	1
+M	0	nreal_literal	1
+M	0	nsimple_identifier	1
+M	0	nspread_expression	1
+M	0	nstring_literal	1
+M	0	nsuper_expression	1
+M	0	nthis_expression	1
+M	0	ntry_expression	1
+M	0	nunsigned_literal	1
+M	0	nwhen_expression	1
+S	1	0
+M	1	t||	2
+S	2	0
+M	2	nadditive_expression	3
+M	2	nanonymous_function	3
+M	2	nas_expression	3
+M	2	nbin_literal	3
+M	2	nboolean_literal	3
+M	2	ncall_expression	3
+M	2	ncallable_reference	3
+M	2	ncharacter_literal	3
+M	2	ncheck_expression	3
+M	2	ncollection_literal	3
+M	2	ncomparison_expression	3
+M	2	nconjunction_expression	3
+M	2	ndisjunction_expression	3
+M	2	nelvis_expression	3
+M	2	nequality_expression	3
+M	2	nhex_literal	3
+M	2	nif_expression	3
+M	2	nindexing_expression	3
+M	2	ninfix_expression	3
+M	2	ninteger_literal	3
+M	2	njump_expression	3
+M	2	nlambda_literal	3
+M	2	nlong_literal	3
+M	2	nmultiplicative_expression	3
+M	2	nnavigation_expression	3
+M	2	nnull_literal	3
+M	2	nobject_literal	3
+M	2	nparenthesized_expression	3
+M	2	npostfix_expression	3
+M	2	nprefix_expression	3
+M	2	nrange_expression	3
+M	2	nreal_literal	3
+M	2	nsimple_identifier	3
+M	2	nspread_expression	3
+M	2	nstring_literal	3
+M	2	nsuper_expression	3
+M	2	nthis_expression	3
+M	2	ntry_expression	3
+M	2	nunsigned_literal	3
+M	2	nwhen_expression	3
+S	3	1
+I	0	nadditive_expression	
+I	0	nanonymous_function	
+I	0	nas_expression	
+I	0	nbin_literal	
+I	0	nboolean_literal	
+I	0	ncall_expression	
+I	0	ncallable_reference	
+I	0	ncharacter_literal	
+I	0	ncheck_expression	
+I	0	ncollection_literal	
+I	0	ncomparison_expression	
+I	0	nconjunction_expression	
+I	0	ndisjunction_expression	
+I	0	nelvis_expression	
+I	0	nequality_expression	
+I	0	nhex_literal	
+I	0	nif_expression	
+I	0	nindexing_expression	
+I	0	ninfix_expression	
+I	0	ninteger_literal	
+I	0	njump_expression	
+I	0	nlambda_literal	
+I	0	nlong_literal	
+I	0	nmultiplicative_expression	
+I	0	nnavigation_expression	
+I	0	nnull_literal	
+I	0	nobject_literal	
+I	0	nparenthesized_expression	
+I	0	npostfix_expression	
+I	0	nprefix_expression	
+I	0	nrange_expression	
+I	0	nreal_literal	
+I	0	nsimple_identifier	
+I	0	nspread_expression	
+I	0	nstring_literal	
+I	0	nsuper_expression	
+I	0	nthis_expression	
+I	0	ntry_expression	
+I	0	nunsigned_literal	
+I	0	nwhen_expression	
+I	1	nadditive_expression	t||
+I	1	nanonymous_function	t||
+I	1	nas_expression	t||
+I	1	nbin_literal	t||
+I	1	nboolean_literal	t||
+I	1	ncall_expression	t||
+I	1	ncallable_reference	t||
+I	1	ncharacter_literal	t||
+I	1	ncheck_expression	t||
+I	1	ncollection_literal	t||
+I	1	ncomparison_expression	t||
+I	1	nconjunction_expression	t||
+I	1	ndisjunction_expression	t||
+I	1	nelvis_expression	t||
+I	1	nequality_expression	t||
+I	1	nhex_literal	t||
+I	1	nif_expression	t||
+I	1	nindexing_expression	t||
+I	1	ninfix_expression	t||
+I	1	ninteger_literal	t||
+I	1	njump_expression	t||
+I	1	nlambda_literal	t||
+I	1	nlong_literal	t||
+I	1	nmultiplicative_expression	t||
+I	1	nnavigation_expression	t||
+I	1	nnull_literal	t||
+I	1	nobject_literal	t||
+I	1	nparenthesized_expression	t||
+I	1	npostfix_expression	t||
+I	1	nprefix_expression	t||
+I	1	nrange_expression	t||
+I	1	nreal_literal	t||
+I	1	nsimple_identifier	t||
+I	1	nspread_expression	t||
+I	1	nstring_literal	t||
+I	1	nsuper_expression	t||
+I	1	nthis_expression	t||
+I	1	ntry_expression	t||
+I	1	nunsigned_literal	t||
+I	1	nwhen_expression	t||
+I	2	nadditive_expression	
+I	2	nanonymous_function	
+I	2	nas_expression	
+I	2	nbin_literal	
+I	2	nboolean_literal	
+I	2	ncall_expression	
+I	2	ncallable_reference	
+I	2	ncharacter_literal	
+I	2	ncheck_expression	
+I	2	ncollection_literal	
+I	2	ncomparison_expression	
+I	2	nconjunction_expression	
+I	2	ndisjunction_expression	
+I	2	nelvis_expression	
+I	2	nequality_expression	
+I	2	nhex_literal	
+I	2	nif_expression	
+I	2	nindexing_expression	
+I	2	ninfix_expression	
+I	2	ninteger_literal	
+I	2	njump_expression	
+I	2	nlambda_literal	
+I	2	nlong_literal	
+I	2	nmultiplicative_expression	
+I	2	nnavigation_expression	
+I	2	nnull_literal	
+I	2	nobject_literal	
+I	2	nparenthesized_expression	
+I	2	npostfix_expression	
+I	2	nprefix_expression	
+I	2	nrange_expression	
+I	2	nreal_literal	
+I	2	nsimple_identifier	
+I	2	nspread_expression	
+I	2	nstring_literal	
+I	2	nsuper_expression	
+I	2	nthis_expression	
+I	2	ntry_expression	
+I	2	nunsigned_literal	
+I	2	nwhen_expression	
+E	3	
+K	do_while_statement
+S	0	0
+M	0	tdo	1
+S	1	0
+M	1	ncontrol_structure_body	2
+M	1	twhile	3
+S	2	0
+M	2	twhile	3
+S	3	0
+M	3	t(	4
+S	4	0
+M	4	nadditive_expression	5
+M	4	nanonymous_function	5
+M	4	nas_expression	5
+M	4	nbin_literal	5
+M	4	nboolean_literal	5
+M	4	ncall_expression	5
+M	4	ncallable_reference	5
+M	4	ncharacter_literal	5
+M	4	ncheck_expression	5
+M	4	ncollection_literal	5
+M	4	ncomparison_expression	5
+M	4	nconjunction_expression	5
+M	4	ndisjunction_expression	5
+M	4	nelvis_expression	5
+M	4	nequality_expression	5
+M	4	nhex_literal	5
+M	4	nif_expression	5
+M	4	nindexing_expression	5
+M	4	ninfix_expression	5
+M	4	ninteger_literal	5
+M	4	njump_expression	5
+M	4	nlambda_literal	5
+M	4	nlong_literal	5
+M	4	nmultiplicative_expression	5
+M	4	nnavigation_expression	5
+M	4	nnull_literal	5
+M	4	nobject_literal	5
+M	4	nparenthesized_expression	5
+M	4	npostfix_expression	5
+M	4	nprefix_expression	5
+M	4	nrange_expression	5
+M	4	nreal_literal	5
+M	4	nsimple_identifier	5
+M	4	nspread_expression	5
+M	4	nstring_literal	5
+M	4	nsuper_expression	5
+M	4	nthis_expression	5
+M	4	ntry_expression	5
+M	4	nunsigned_literal	5
+M	4	nwhen_expression	5
+S	5	0
+M	5	t)	6
+S	6	1
+I	0	nadditive_expression	tdotwhilet(
+I	0	nanonymous_function	tdotwhilet(
+I	0	nas_expression	tdotwhilet(
+I	0	nbin_literal	tdotwhilet(
+I	0	nboolean_literal	tdotwhilet(
+I	0	ncall_expression	tdotwhilet(
+I	0	ncallable_reference	tdotwhilet(
+I	0	ncharacter_literal	tdotwhilet(
+I	0	ncheck_expression	tdotwhilet(
+I	0	ncollection_literal	tdotwhilet(
+I	0	ncomparison_expression	tdotwhilet(
+I	0	nconjunction_expression	tdotwhilet(
+I	0	ncontrol_structure_body	tdo
+I	0	ndisjunction_expression	tdotwhilet(
+I	0	nelvis_expression	tdotwhilet(
+I	0	nequality_expression	tdotwhilet(
+I	0	nhex_literal	tdotwhilet(
+I	0	nif_expression	tdotwhilet(
+I	0	nindexing_expression	tdotwhilet(
+I	0	ninfix_expression	tdotwhilet(
+I	0	ninteger_literal	tdotwhilet(
+I	0	njump_expression	tdotwhilet(
+I	0	nlambda_literal	tdotwhilet(
+I	0	nlong_literal	tdotwhilet(
+I	0	nmultiplicative_expression	tdotwhilet(
+I	0	nnavigation_expression	tdotwhilet(
+I	0	nnull_literal	tdotwhilet(
+I	0	nobject_literal	tdotwhilet(
+I	0	nparenthesized_expression	tdotwhilet(
+I	0	npostfix_expression	tdotwhilet(
+I	0	nprefix_expression	tdotwhilet(
+I	0	nrange_expression	tdotwhilet(
+I	0	nreal_literal	tdotwhilet(
+I	0	nsimple_identifier	tdotwhilet(
+I	0	nspread_expression	tdotwhilet(
+I	0	nstring_literal	tdotwhilet(
+I	0	nsuper_expression	tdotwhilet(
+I	0	nthis_expression	tdotwhilet(
+I	0	ntry_expression	tdotwhilet(
+I	0	nunsigned_literal	tdotwhilet(
+I	0	nwhen_expression	tdotwhilet(
+I	1	nadditive_expression	twhilet(
+I	1	nanonymous_function	twhilet(
+I	1	nas_expression	twhilet(
+I	1	nbin_literal	twhilet(
+I	1	nboolean_literal	twhilet(
+I	1	ncall_expression	twhilet(
+I	1	ncallable_reference	twhilet(
+I	1	ncharacter_literal	twhilet(
+I	1	ncheck_expression	twhilet(
+I	1	ncollection_literal	twhilet(
+I	1	ncomparison_expression	twhilet(
+I	1	nconjunction_expression	twhilet(
+I	1	ncontrol_structure_body	
+I	1	ndisjunction_expression	twhilet(
+I	1	nelvis_expression	twhilet(
+I	1	nequality_expression	twhilet(
+I	1	nhex_literal	twhilet(
+I	1	nif_expression	twhilet(
+I	1	nindexing_expression	twhilet(
+I	1	ninfix_expression	twhilet(
+I	1	ninteger_literal	twhilet(
+I	1	njump_expression	twhilet(
+I	1	nlambda_literal	twhilet(
+I	1	nlong_literal	twhilet(
+I	1	nmultiplicative_expression	twhilet(
+I	1	nnavigation_expression	twhilet(
+I	1	nnull_literal	twhilet(
+I	1	nobject_literal	twhilet(
+I	1	nparenthesized_expression	twhilet(
+I	1	npostfix_expression	twhilet(
+I	1	nprefix_expression	twhilet(
+I	1	nrange_expression	twhilet(
+I	1	nreal_literal	twhilet(
+I	1	nsimple_identifier	twhilet(
+I	1	nspread_expression	twhilet(
+I	1	nstring_literal	twhilet(
+I	1	nsuper_expression	twhilet(
+I	1	nthis_expression	twhilet(
+I	1	ntry_expression	twhilet(
+I	1	nunsigned_literal	twhilet(
+I	1	nwhen_expression	twhilet(
+I	2	nadditive_expression	twhilet(
+I	2	nanonymous_function	twhilet(
+I	2	nas_expression	twhilet(
+I	2	nbin_literal	twhilet(
+I	2	nboolean_literal	twhilet(
+I	2	ncall_expression	twhilet(
+I	2	ncallable_reference	twhilet(
+I	2	ncharacter_literal	twhilet(
+I	2	ncheck_expression	twhilet(
+I	2	ncollection_literal	twhilet(
+I	2	ncomparison_expression	twhilet(
+I	2	nconjunction_expression	twhilet(
+I	2	ndisjunction_expression	twhilet(
+I	2	nelvis_expression	twhilet(
+I	2	nequality_expression	twhilet(
+I	2	nhex_literal	twhilet(
+I	2	nif_expression	twhilet(
+I	2	nindexing_expression	twhilet(
+I	2	ninfix_expression	twhilet(
+I	2	ninteger_literal	twhilet(
+I	2	njump_expression	twhilet(
+I	2	nlambda_literal	twhilet(
+I	2	nlong_literal	twhilet(
+I	2	nmultiplicative_expression	twhilet(
+I	2	nnavigation_expression	twhilet(
+I	2	nnull_literal	twhilet(
+I	2	nobject_literal	twhilet(
+I	2	nparenthesized_expression	twhilet(
+I	2	npostfix_expression	twhilet(
+I	2	nprefix_expression	twhilet(
+I	2	nrange_expression	twhilet(
+I	2	nreal_literal	twhilet(
+I	2	nsimple_identifier	twhilet(
+I	2	nspread_expression	twhilet(
+I	2	nstring_literal	twhilet(
+I	2	nsuper_expression	twhilet(
+I	2	nthis_expression	twhilet(
+I	2	ntry_expression	twhilet(
+I	2	nunsigned_literal	twhilet(
+I	2	nwhen_expression	twhilet(
+I	3	nadditive_expression	t(
+I	3	nanonymous_function	t(
+I	3	nas_expression	t(
+I	3	nbin_literal	t(
+I	3	nboolean_literal	t(
+I	3	ncall_expression	t(
+I	3	ncallable_reference	t(
+I	3	ncharacter_literal	t(
+I	3	ncheck_expression	t(
+I	3	ncollection_literal	t(
+I	3	ncomparison_expression	t(
+I	3	nconjunction_expression	t(
+I	3	ndisjunction_expression	t(
+I	3	nelvis_expression	t(
+I	3	nequality_expression	t(
+I	3	nhex_literal	t(
+I	3	nif_expression	t(
+I	3	nindexing_expression	t(
+I	3	ninfix_expression	t(
+I	3	ninteger_literal	t(
+I	3	njump_expression	t(
+I	3	nlambda_literal	t(
+I	3	nlong_literal	t(
+I	3	nmultiplicative_expression	t(
+I	3	nnavigation_expression	t(
+I	3	nnull_literal	t(
+I	3	nobject_literal	t(
+I	3	nparenthesized_expression	t(
+I	3	npostfix_expression	t(
+I	3	nprefix_expression	t(
+I	3	nrange_expression	t(
+I	3	nreal_literal	t(
+I	3	nsimple_identifier	t(
+I	3	nspread_expression	t(
+I	3	nstring_literal	t(
+I	3	nsuper_expression	t(
+I	3	nthis_expression	t(
+I	3	ntry_expression	t(
+I	3	nunsigned_literal	t(
+I	3	nwhen_expression	t(
+I	4	nadditive_expression	
+I	4	nanonymous_function	
+I	4	nas_expression	
+I	4	nbin_literal	
+I	4	nboolean_literal	
+I	4	ncall_expression	
+I	4	ncallable_reference	
+I	4	ncharacter_literal	
+I	4	ncheck_expression	
+I	4	ncollection_literal	
+I	4	ncomparison_expression	
+I	4	nconjunction_expression	
+I	4	ndisjunction_expression	
+I	4	nelvis_expression	
+I	4	nequality_expression	
+I	4	nhex_literal	
+I	4	nif_expression	
+I	4	nindexing_expression	
+I	4	ninfix_expression	
+I	4	ninteger_literal	
+I	4	njump_expression	
+I	4	nlambda_literal	
+I	4	nlong_literal	
+I	4	nmultiplicative_expression	
+I	4	nnavigation_expression	
+I	4	nnull_literal	
+I	4	nobject_literal	
+I	4	nparenthesized_expression	
+I	4	npostfix_expression	
+I	4	nprefix_expression	
+I	4	nrange_expression	
+I	4	nreal_literal	
+I	4	nsimple_identifier	
+I	4	nspread_expression	
+I	4	nstring_literal	
+I	4	nsuper_expression	
+I	4	nthis_expression	
+I	4	ntry_expression	
+I	4	nunsigned_literal	
+I	4	nwhen_expression	
+E	5	t)
+E	6	
+K	elvis_expression
+S	0	0
+M	0	nadditive_expression	1
+M	0	nanonymous_function	1
+M	0	nas_expression	1
+M	0	nbin_literal	1
+M	0	nboolean_literal	1
+M	0	ncall_expression	1
+M	0	ncallable_reference	1
+M	0	ncharacter_literal	1
+M	0	ncheck_expression	1
+M	0	ncollection_literal	1
+M	0	ncomparison_expression	1
+M	0	nconjunction_expression	1
+M	0	ndisjunction_expression	1
+M	0	nelvis_expression	1
+M	0	nequality_expression	1
+M	0	nhex_literal	1
+M	0	nif_expression	1
+M	0	nindexing_expression	1
+M	0	ninfix_expression	1
+M	0	ninteger_literal	1
+M	0	njump_expression	1
+M	0	nlambda_literal	1
+M	0	nlong_literal	1
+M	0	nmultiplicative_expression	1
+M	0	nnavigation_expression	1
+M	0	nnull_literal	1
+M	0	nobject_literal	1
+M	0	nparenthesized_expression	1
+M	0	npostfix_expression	1
+M	0	nprefix_expression	1
+M	0	nrange_expression	1
+M	0	nreal_literal	1
+M	0	nsimple_identifier	1
+M	0	nspread_expression	1
+M	0	nstring_literal	1
+M	0	nsuper_expression	1
+M	0	nthis_expression	1
+M	0	ntry_expression	1
+M	0	nunsigned_literal	1
+M	0	nwhen_expression	1
+S	1	0
+M	1	t?:	2
+S	2	0
+M	2	nadditive_expression	3
+M	2	nanonymous_function	3
+M	2	nas_expression	3
+M	2	nbin_literal	3
+M	2	nboolean_literal	3
+M	2	ncall_expression	3
+M	2	ncallable_reference	3
+M	2	ncharacter_literal	3
+M	2	ncheck_expression	3
+M	2	ncollection_literal	3
+M	2	ncomparison_expression	3
+M	2	nconjunction_expression	3
+M	2	ndisjunction_expression	3
+M	2	nelvis_expression	3
+M	2	nequality_expression	3
+M	2	nhex_literal	3
+M	2	nif_expression	3
+M	2	nindexing_expression	3
+M	2	ninfix_expression	3
+M	2	ninteger_literal	3
+M	2	njump_expression	3
+M	2	nlambda_literal	3
+M	2	nlong_literal	3
+M	2	nmultiplicative_expression	3
+M	2	nnavigation_expression	3
+M	2	nnull_literal	3
+M	2	nobject_literal	3
+M	2	nparenthesized_expression	3
+M	2	npostfix_expression	3
+M	2	nprefix_expression	3
+M	2	nrange_expression	3
+M	2	nreal_literal	3
+M	2	nsimple_identifier	3
+M	2	nspread_expression	3
+M	2	nstring_literal	3
+M	2	nsuper_expression	3
+M	2	nthis_expression	3
+M	2	ntry_expression	3
+M	2	nunsigned_literal	3
+M	2	nwhen_expression	3
+S	3	1
+I	0	nadditive_expression	
+I	0	nanonymous_function	
+I	0	nas_expression	
+I	0	nbin_literal	
+I	0	nboolean_literal	
+I	0	ncall_expression	
+I	0	ncallable_reference	
+I	0	ncharacter_literal	
+I	0	ncheck_expression	
+I	0	ncollection_literal	
+I	0	ncomparison_expression	
+I	0	nconjunction_expression	
+I	0	ndisjunction_expression	
+I	0	nelvis_expression	
+I	0	nequality_expression	
+I	0	nhex_literal	
+I	0	nif_expression	
+I	0	nindexing_expression	
+I	0	ninfix_expression	
+I	0	ninteger_literal	
+I	0	njump_expression	
+I	0	nlambda_literal	
+I	0	nlong_literal	
+I	0	nmultiplicative_expression	
+I	0	nnavigation_expression	
+I	0	nnull_literal	
+I	0	nobject_literal	
+I	0	nparenthesized_expression	
+I	0	npostfix_expression	
+I	0	nprefix_expression	
+I	0	nrange_expression	
+I	0	nreal_literal	
+I	0	nsimple_identifier	
+I	0	nspread_expression	
+I	0	nstring_literal	
+I	0	nsuper_expression	
+I	0	nthis_expression	
+I	0	ntry_expression	
+I	0	nunsigned_literal	
+I	0	nwhen_expression	
+I	1	nadditive_expression	t?:
+I	1	nanonymous_function	t?:
+I	1	nas_expression	t?:
+I	1	nbin_literal	t?:
+I	1	nboolean_literal	t?:
+I	1	ncall_expression	t?:
+I	1	ncallable_reference	t?:
+I	1	ncharacter_literal	t?:
+I	1	ncheck_expression	t?:
+I	1	ncollection_literal	t?:
+I	1	ncomparison_expression	t?:
+I	1	nconjunction_expression	t?:
+I	1	ndisjunction_expression	t?:
+I	1	nelvis_expression	t?:
+I	1	nequality_expression	t?:
+I	1	nhex_literal	t?:
+I	1	nif_expression	t?:
+I	1	nindexing_expression	t?:
+I	1	ninfix_expression	t?:
+I	1	ninteger_literal	t?:
+I	1	njump_expression	t?:
+I	1	nlambda_literal	t?:
+I	1	nlong_literal	t?:
+I	1	nmultiplicative_expression	t?:
+I	1	nnavigation_expression	t?:
+I	1	nnull_literal	t?:
+I	1	nobject_literal	t?:
+I	1	nparenthesized_expression	t?:
+I	1	npostfix_expression	t?:
+I	1	nprefix_expression	t?:
+I	1	nrange_expression	t?:
+I	1	nreal_literal	t?:
+I	1	nsimple_identifier	t?:
+I	1	nspread_expression	t?:
+I	1	nstring_literal	t?:
+I	1	nsuper_expression	t?:
+I	1	nthis_expression	t?:
+I	1	ntry_expression	t?:
+I	1	nunsigned_literal	t?:
+I	1	nwhen_expression	t?:
+I	2	nadditive_expression	
+I	2	nanonymous_function	
+I	2	nas_expression	
+I	2	nbin_literal	
+I	2	nboolean_literal	
+I	2	ncall_expression	
+I	2	ncallable_reference	
+I	2	ncharacter_literal	
+I	2	ncheck_expression	
+I	2	ncollection_literal	
+I	2	ncomparison_expression	
+I	2	nconjunction_expression	
+I	2	ndisjunction_expression	
+I	2	nelvis_expression	
+I	2	nequality_expression	
+I	2	nhex_literal	
+I	2	nif_expression	
+I	2	nindexing_expression	
+I	2	ninfix_expression	
+I	2	ninteger_literal	
+I	2	njump_expression	
+I	2	nlambda_literal	
+I	2	nlong_literal	
+I	2	nmultiplicative_expression	
+I	2	nnavigation_expression	
+I	2	nnull_literal	
+I	2	nobject_literal	
+I	2	nparenthesized_expression	
+I	2	npostfix_expression	
+I	2	nprefix_expression	
+I	2	nrange_expression	
+I	2	nreal_literal	
+I	2	nsimple_identifier	
+I	2	nspread_expression	
+I	2	nstring_literal	
+I	2	nsuper_expression	
+I	2	nthis_expression	
+I	2	ntry_expression	
+I	2	nunsigned_literal	
+I	2	nwhen_expression	
+E	3	
+K	enum_class_body
+S	0	0
+M	0	t{	1
+S	1	0
+M	1	nenum_entry	2
+M	1	t;	4
+M	1	t}	3
+S	2	0
+M	2	t,	5
+M	2	t;	4
+M	2	t}	3
+S	3	1
+S	4	0
+M	4	nanonymous_initializer	6
+M	4	nclass_declaration	6
+M	4	ncompanion_object	6
+M	4	ndestructuring_declaration	6
+M	4	nfunction_declaration	6
+M	4	ngetter	6
+M	4	nobject_declaration	6
+M	4	nproperty_declaration	6
+M	4	nsecondary_constructor	6
+M	4	nsetter	6
+M	4	ntype_alias	6
+M	4	t}	3
+S	5	0
+M	5	nenum_entry	7
+M	5	t;	4
+M	5	t}	3
+S	6	0
+M	6	nanonymous_initializer	6
+M	6	nclass_declaration	6
+M	6	ncompanion_object	6
+M	6	ndestructuring_declaration	6
+M	6	nfunction_declaration	6
+M	6	ngetter	6
+M	6	nobject_declaration	6
+M	6	nproperty_declaration	6
+M	6	nsecondary_constructor	6
+M	6	nsetter	6
+M	6	ntype_alias	6
+M	6	t}	3
+S	7	0
+M	7	t,	5
+M	7	t;	4
+M	7	t}	3
+I	0	nanonymous_initializer	t{t;
+I	0	nclass_declaration	t{t;
+I	0	ncompanion_object	t{t;
+I	0	ndestructuring_declaration	t{t;
+I	0	nenum_entry	t{
+I	0	nfunction_declaration	t{t;
+I	0	ngetter	t{t;
+I	0	nobject_declaration	t{t;
+I	0	nproperty_declaration	t{t;
+I	0	nsecondary_constructor	t{t;
+I	0	nsetter	t{t;
+I	0	ntype_alias	t{t;
+I	1	nanonymous_initializer	t;
+I	1	nclass_declaration	t;
+I	1	ncompanion_object	t;
+I	1	ndestructuring_declaration	t;
+I	1	nenum_entry	
+I	1	nfunction_declaration	t;
+I	1	ngetter	t;
+I	1	nobject_declaration	t;
+I	1	nproperty_declaration	t;
+I	1	nsecondary_constructor	t;
+I	1	nsetter	t;
+I	1	ntype_alias	t;
+I	2	nanonymous_initializer	t;
+I	2	nclass_declaration	t;
+I	2	ncompanion_object	t;
+I	2	ndestructuring_declaration	t;
+I	2	nenum_entry	t,
+I	2	nfunction_declaration	t;
+I	2	ngetter	t;
+I	2	nobject_declaration	t;
+I	2	nproperty_declaration	t;
+I	2	nsecondary_constructor	t;
+I	2	nsetter	t;
+I	2	ntype_alias	t;
+I	4	nanonymous_initializer	
+I	4	nclass_declaration	
+I	4	ncompanion_object	
+I	4	ndestructuring_declaration	
+I	4	nfunction_declaration	
+I	4	ngetter	
+I	4	nobject_declaration	
+I	4	nproperty_declaration	
+I	4	nsecondary_constructor	
+I	4	nsetter	
+I	4	ntype_alias	
+I	5	nanonymous_initializer	t;
+I	5	nclass_declaration	t;
+I	5	ncompanion_object	t;
+I	5	ndestructuring_declaration	t;
+I	5	nenum_entry	
+I	5	nfunction_declaration	t;
+I	5	ngetter	t;
+I	5	nobject_declaration	t;
+I	5	nproperty_declaration	t;
+I	5	nsecondary_constructor	t;
+I	5	nsetter	t;
+I	5	ntype_alias	t;
+I	6	nanonymous_initializer	
+I	6	nclass_declaration	
+I	6	ncompanion_object	
+I	6	ndestructuring_declaration	
+I	6	nfunction_declaration	
+I	6	ngetter	
+I	6	nobject_declaration	
+I	6	nproperty_declaration	
+I	6	nsecondary_constructor	
+I	6	nsetter	
+I	6	ntype_alias	
+I	7	nanonymous_initializer	t;
+I	7	nclass_declaration	t;
+I	7	ncompanion_object	t;
+I	7	ndestructuring_declaration	t;
+I	7	nenum_entry	t,
+I	7	nfunction_declaration	t;
+I	7	ngetter	t;
+I	7	nobject_declaration	t;
+I	7	nproperty_declaration	t;
+I	7	nsecondary_constructor	t;
+I	7	nsetter	t;
+I	7	ntype_alias	t;
+E	0	t{t}
+E	1	t}
+E	2	t}
+E	3	
+E	4	t}
+E	5	t}
+E	6	t}
+E	7	t}
+K	explicit_delegation
+S	0	0
+M	0	nfunction_type	1
+M	0	nuser_type	1
+S	1	0
+M	1	tby	2
+S	2	0
+M	2	nadditive_expression	3
+M	2	nanonymous_function	3
+M	2	nas_expression	3
+M	2	nbin_literal	3
+M	2	nboolean_literal	3
+M	2	ncall_expression	3
+M	2	ncallable_reference	3
+M	2	ncharacter_literal	3
+M	2	ncheck_expression	3
+M	2	ncollection_literal	3
+M	2	ncomparison_expression	3
+M	2	nconjunction_expression	3
+M	2	ndisjunction_expression	3
+M	2	nelvis_expression	3
+M	2	nequality_expression	3
+M	2	nhex_literal	3
+M	2	nif_expression	3
+M	2	nindexing_expression	3
+M	2	ninfix_expression	3
+M	2	ninteger_literal	3
+M	2	njump_expression	3
+M	2	nlambda_literal	3
+M	2	nlong_literal	3
+M	2	nmultiplicative_expression	3
+M	2	nnavigation_expression	3
+M	2	nnull_literal	3
+M	2	nobject_literal	3
+M	2	nparenthesized_expression	3
+M	2	npostfix_expression	3
+M	2	nprefix_expression	3
+M	2	nrange_expression	3
+M	2	nreal_literal	3
+M	2	nsimple_identifier	3
+M	2	nspread_expression	3
+M	2	nstring_literal	3
+M	2	nsuper_expression	3
+M	2	nthis_expression	3
+M	2	ntry_expression	3
+M	2	nunsigned_literal	3
+M	2	nwhen_expression	3
+S	3	1
+I	0	nfunction_type	
+I	0	nuser_type	
+I	1	nadditive_expression	tby
+I	1	nanonymous_function	tby
+I	1	nas_expression	tby
+I	1	nbin_literal	tby
+I	1	nboolean_literal	tby
+I	1	ncall_expression	tby
+I	1	ncallable_reference	tby
+I	1	ncharacter_literal	tby
+I	1	ncheck_expression	tby
+I	1	ncollection_literal	tby
+I	1	ncomparison_expression	tby
+I	1	nconjunction_expression	tby
+I	1	ndisjunction_expression	tby
+I	1	nelvis_expression	tby
+I	1	nequality_expression	tby
+I	1	nhex_literal	tby
+I	1	nif_expression	tby
+I	1	nindexing_expression	tby
+I	1	ninfix_expression	tby
+I	1	ninteger_literal	tby
+I	1	njump_expression	tby
+I	1	nlambda_literal	tby
+I	1	nlong_literal	tby
+I	1	nmultiplicative_expression	tby
+I	1	nnavigation_expression	tby
+I	1	nnull_literal	tby
+I	1	nobject_literal	tby
+I	1	nparenthesized_expression	tby
+I	1	npostfix_expression	tby
+I	1	nprefix_expression	tby
+I	1	nrange_expression	tby
+I	1	nreal_literal	tby
+I	1	nsimple_identifier	tby
+I	1	nspread_expression	tby
+I	1	nstring_literal	tby
+I	1	nsuper_expression	tby
+I	1	nthis_expression	tby
+I	1	ntry_expression	tby
+I	1	nunsigned_literal	tby
+I	1	nwhen_expression	tby
+I	2	nadditive_expression	
+I	2	nanonymous_function	
+I	2	nas_expression	
+I	2	nbin_literal	
+I	2	nboolean_literal	
+I	2	ncall_expression	
+I	2	ncallable_reference	
+I	2	ncharacter_literal	
+I	2	ncheck_expression	
+I	2	ncollection_literal	
+I	2	ncomparison_expression	
+I	2	nconjunction_expression	
+I	2	ndisjunction_expression	
+I	2	nelvis_expression	
+I	2	nequality_expression	
+I	2	nhex_literal	
+I	2	nif_expression	
+I	2	nindexing_expression	
+I	2	ninfix_expression	
+I	2	ninteger_literal	
+I	2	njump_expression	
+I	2	nlambda_literal	
+I	2	nlong_literal	
+I	2	nmultiplicative_expression	
+I	2	nnavigation_expression	
+I	2	nnull_literal	
+I	2	nobject_literal	
+I	2	nparenthesized_expression	
+I	2	npostfix_expression	
+I	2	nprefix_expression	
+I	2	nrange_expression	
+I	2	nreal_literal	
+I	2	nsimple_identifier	
+I	2	nspread_expression	
+I	2	nstring_literal	
+I	2	nsuper_expression	
+I	2	nthis_expression	
+I	2	ntry_expression	
+I	2	nunsigned_literal	
+I	2	nwhen_expression	
+E	3	
+K	file_annotation
+S	0	0
+M	0	t@	1
+S	1	0
+M	1	tfile	2
+S	2	0
+M	2	t:	3
+S	3	0
+M	3	nconstructor_invocation	4
+M	3	nuser_type	4
+M	3	t[	5
+S	4	1
+S	5	0
+M	5	nconstructor_invocation	6
+M	5	nuser_type	6
+S	6	0
+M	6	nconstructor_invocation	6
+M	6	nuser_type	6
+M	6	t]	7
+S	7	1
+I	0	nconstructor_invocation	t@tfilet:
+I	0	nuser_type	t@tfilet:
+I	1	nconstructor_invocation	tfilet:
+I	1	nuser_type	tfilet:
+I	2	nconstructor_invocation	t:
+I	2	nuser_type	t:
+I	3	nconstructor_invocation	
+I	3	nuser_type	
+I	5	nconstructor_invocation	
+I	5	nuser_type	
+I	6	nconstructor_invocation	
+I	6	nuser_type	
+E	4	
+E	6	t]
+E	7	
+P	t:
+P	t@
+P	tfile
+K	finally_block
+S	0	0
+M	0	tfinally	1
+S	1	0
+M	1	t{	2
+S	2	0
+M	2	nstatements	3
+M	2	t}	4
+S	3	0
+M	3	t}	4
+S	4	1
+I	0	nstatements	tfinallyt{
+I	1	nstatements	t{
+I	2	nstatements	
+E	0	tfinallyt{t}
+E	1	t{t}
+E	2	t}
+E	3	t}
+E	4	
+K	for_statement
+S	0	0
+M	0	tfor	1
+S	1	0
+M	1	t(	2
+S	2	0
+M	2	nannotation	3
+M	2	nmulti_variable_declaration	4
+M	2	nvariable_declaration	4
+S	3	0
+M	3	nannotation	3
+M	3	nmulti_variable_declaration	4
+M	3	nvariable_declaration	4
+S	4	0
+M	4	tin	5
+S	5	0
+M	5	nadditive_expression	6
+M	5	nanonymous_function	6
+M	5	nas_expression	6
+M	5	nbin_literal	6
+M	5	nboolean_literal	6
+M	5	ncall_expression	6
+M	5	ncallable_reference	6
+M	5	ncharacter_literal	6
+M	5	ncheck_expression	6
+M	5	ncollection_literal	6
+M	5	ncomparison_expression	6
+M	5	nconjunction_expression	6
+M	5	ndisjunction_expression	6
+M	5	nelvis_expression	6
+M	5	nequality_expression	6
+M	5	nhex_literal	6
+M	5	nif_expression	6
+M	5	nindexing_expression	6
+M	5	ninfix_expression	6
+M	5	ninteger_literal	6
+M	5	njump_expression	6
+M	5	nlambda_literal	6
+M	5	nlong_literal	6
+M	5	nmultiplicative_expression	6
+M	5	nnavigation_expression	6
+M	5	nnull_literal	6
+M	5	nobject_literal	6
+M	5	nparenthesized_expression	6
+M	5	npostfix_expression	6
+M	5	nprefix_expression	6
+M	5	nrange_expression	6
+M	5	nreal_literal	6
+M	5	nsimple_identifier	6
+M	5	nspread_expression	6
+M	5	nstring_literal	6
+M	5	nsuper_expression	6
+M	5	nthis_expression	6
+M	5	ntry_expression	6
+M	5	nunsigned_literal	6
+M	5	nwhen_expression	6
+S	6	0
+M	6	t)	7
+S	7	1
+M	7	ncontrol_structure_body	8
+S	8	1
+I	0	nannotation	tfort(
+I	0	nmulti_variable_declaration	tfort(
+I	0	nvariable_declaration	tfort(
+I	1	nannotation	t(
+I	1	nmulti_variable_declaration	t(
+I	1	nvariable_declaration	t(
+I	2	nannotation	
+I	2	nmulti_variable_declaration	
+I	2	nvariable_declaration	
+I	3	nannotation	
+I	3	nmulti_variable_declaration	
+I	3	nvariable_declaration	
+I	4	nadditive_expression	tin
+I	4	nanonymous_function	tin
+I	4	nas_expression	tin
+I	4	nbin_literal	tin
+I	4	nboolean_literal	tin
+I	4	ncall_expression	tin
+I	4	ncallable_reference	tin
+I	4	ncharacter_literal	tin
+I	4	ncheck_expression	tin
+I	4	ncollection_literal	tin
+I	4	ncomparison_expression	tin
+I	4	nconjunction_expression	tin
+I	4	ndisjunction_expression	tin
+I	4	nelvis_expression	tin
+I	4	nequality_expression	tin
+I	4	nhex_literal	tin
+I	4	nif_expression	tin
+I	4	nindexing_expression	tin
+I	4	ninfix_expression	tin
+I	4	ninteger_literal	tin
+I	4	njump_expression	tin
+I	4	nlambda_literal	tin
+I	4	nlong_literal	tin
+I	4	nmultiplicative_expression	tin
+I	4	nnavigation_expression	tin
+I	4	nnull_literal	tin
+I	4	nobject_literal	tin
+I	4	nparenthesized_expression	tin
+I	4	npostfix_expression	tin
+I	4	nprefix_expression	tin
+I	4	nrange_expression	tin
+I	4	nreal_literal	tin
+I	4	nsimple_identifier	tin
+I	4	nspread_expression	tin
+I	4	nstring_literal	tin
+I	4	nsuper_expression	tin
+I	4	nthis_expression	tin
+I	4	ntry_expression	tin
+I	4	nunsigned_literal	tin
+I	4	nwhen_expression	tin
+I	5	nadditive_expression	
+I	5	nanonymous_function	
+I	5	nas_expression	
+I	5	nbin_literal	
+I	5	nboolean_literal	
+I	5	ncall_expression	
+I	5	ncallable_reference	
+I	5	ncharacter_literal	
+I	5	ncheck_expression	
+I	5	ncollection_literal	
+I	5	ncomparison_expression	
+I	5	nconjunction_expression	
+I	5	ndisjunction_expression	
+I	5	nelvis_expression	
+I	5	nequality_expression	
+I	5	nhex_literal	
+I	5	nif_expression	
+I	5	nindexing_expression	
+I	5	ninfix_expression	
+I	5	ninteger_literal	
+I	5	njump_expression	
+I	5	nlambda_literal	
+I	5	nlong_literal	
+I	5	nmultiplicative_expression	
+I	5	nnavigation_expression	
+I	5	nnull_literal	
+I	5	nobject_literal	
+I	5	nparenthesized_expression	
+I	5	npostfix_expression	
+I	5	nprefix_expression	
+I	5	nrange_expression	
+I	5	nreal_literal	
+I	5	nsimple_identifier	
+I	5	nspread_expression	
+I	5	nstring_literal	
+I	5	nsuper_expression	
+I	5	nthis_expression	
+I	5	ntry_expression	
+I	5	nunsigned_literal	
+I	5	nwhen_expression	
+I	6	ncontrol_structure_body	t)
+I	7	ncontrol_structure_body	
+E	6	t)
+E	7	
+E	8	
+K	function_body
+S	0	0
+M	0	t=	2
+M	0	t{	1
+S	1	0
+M	1	nstatements	3
+M	1	t}	4
+S	2	0
+M	2	nadditive_expression	5
+M	2	nanonymous_function	5
+M	2	nas_expression	5
+M	2	nbin_literal	5
+M	2	nboolean_literal	5
+M	2	ncall_expression	5
+M	2	ncallable_reference	5
+M	2	ncharacter_literal	5
+M	2	ncheck_expression	5
+M	2	ncollection_literal	5
+M	2	ncomparison_expression	5
+M	2	nconjunction_expression	5
+M	2	ndisjunction_expression	5
+M	2	nelvis_expression	5
+M	2	nequality_expression	5
+M	2	nhex_literal	5
+M	2	nif_expression	5
+M	2	nindexing_expression	5
+M	2	ninfix_expression	5
+M	2	ninteger_literal	5
+M	2	njump_expression	5
+M	2	nlambda_literal	5
+M	2	nlong_literal	5
+M	2	nmultiplicative_expression	5
+M	2	nnavigation_expression	5
+M	2	nnull_literal	5
+M	2	nobject_literal	5
+M	2	nparenthesized_expression	5
+M	2	npostfix_expression	5
+M	2	nprefix_expression	5
+M	2	nrange_expression	5
+M	2	nreal_literal	5
+M	2	nsimple_identifier	5
+M	2	nspread_expression	5
+M	2	nstring_literal	5
+M	2	nsuper_expression	5
+M	2	nthis_expression	5
+M	2	ntry_expression	5
+M	2	nunsigned_literal	5
+M	2	nwhen_expression	5
+S	3	0
+M	3	t}	4
+S	4	1
+S	5	1
+I	0	nadditive_expression	t=
+I	0	nanonymous_function	t=
+I	0	nas_expression	t=
+I	0	nbin_literal	t=
+I	0	nboolean_literal	t=
+I	0	ncall_expression	t=
+I	0	ncallable_reference	t=
+I	0	ncharacter_literal	t=
+I	0	ncheck_expression	t=
+I	0	ncollection_literal	t=
+I	0	ncomparison_expression	t=
+I	0	nconjunction_expression	t=
+I	0	ndisjunction_expression	t=
+I	0	nelvis_expression	t=
+I	0	nequality_expression	t=
+I	0	nhex_literal	t=
+I	0	nif_expression	t=
+I	0	nindexing_expression	t=
+I	0	ninfix_expression	t=
+I	0	ninteger_literal	t=
+I	0	njump_expression	t=
+I	0	nlambda_literal	t=
+I	0	nlong_literal	t=
+I	0	nmultiplicative_expression	t=
+I	0	nnavigation_expression	t=
+I	0	nnull_literal	t=
+I	0	nobject_literal	t=
+I	0	nparenthesized_expression	t=
+I	0	npostfix_expression	t=
+I	0	nprefix_expression	t=
+I	0	nrange_expression	t=
+I	0	nreal_literal	t=
+I	0	nsimple_identifier	t=
+I	0	nspread_expression	t=
+I	0	nstatements	t{
+I	0	nstring_literal	t=
+I	0	nsuper_expression	t=
+I	0	nthis_expression	t=
+I	0	ntry_expression	t=
+I	0	nunsigned_literal	t=
+I	0	nwhen_expression	t=
+I	1	nstatements	
+I	2	nadditive_expression	
+I	2	nanonymous_function	
+I	2	nas_expression	
+I	2	nbin_literal	
+I	2	nboolean_literal	
+I	2	ncall_expression	
+I	2	ncallable_reference	
+I	2	ncharacter_literal	
+I	2	ncheck_expression	
+I	2	ncollection_literal	
+I	2	ncomparison_expression	
+I	2	nconjunction_expression	
+I	2	ndisjunction_expression	
+I	2	nelvis_expression	
+I	2	nequality_expression	
+I	2	nhex_literal	
+I	2	nif_expression	
+I	2	nindexing_expression	
+I	2	ninfix_expression	
+I	2	ninteger_literal	
+I	2	njump_expression	
+I	2	nlambda_literal	
+I	2	nlong_literal	
+I	2	nmultiplicative_expression	
+I	2	nnavigation_expression	
+I	2	nnull_literal	
+I	2	nobject_literal	
+I	2	nparenthesized_expression	
+I	2	npostfix_expression	
+I	2	nprefix_expression	
+I	2	nrange_expression	
+I	2	nreal_literal	
+I	2	nsimple_identifier	
+I	2	nspread_expression	
+I	2	nstring_literal	
+I	2	nsuper_expression	
+I	2	nthis_expression	
+I	2	ntry_expression	
+I	2	nunsigned_literal	
+I	2	nwhen_expression	
+E	0	t{t}
+E	1	t}
+E	3	t}
+E	4	
+E	5	
+K	function_declaration
+S	0	0
+M	0	nmodifiers	1
+M	0	tfun	2
+S	1	0
+M	1	tfun	2
+S	2	0
+M	2	nreceiver_typereceiver	5
+M	2	nsimple_identifier	3
+M	2	ntype_parameters	4
+S	3	0
+M	3	nfunction_value_parameters	6
+S	4	0
+M	4	nreceiver_typereceiver	5
+M	4	nsimple_identifier	3
+S	5	0
+M	5	nsimple_identifier	3
+M	5	t.	7
+S	6	1
+M	6	nfunction_body	8
+M	6	ntype_constraints	9
+M	6	t:	10
+S	7	0
+M	7	nsimple_identifier	3
+S	8	1
+S	9	1
+M	9	nfunction_body	8
+S	10	0
+M	10	nfunction_type	11
+M	10	nnot_nullable_type	11
+M	10	nnullable_type	11
+M	10	nparenthesized_type	11
+M	10	ntype_modifiers	12
+M	10	nuser_type	11
+M	10	tdynamic	11
+S	11	1
+M	11	nfunction_body	8
+M	11	ntype_constraints	9
+S	12	0
+M	12	nfunction_type	11
+M	12	nnot_nullable_type	11
+M	12	nnullable_type	11
+M	12	nparenthesized_type	11
+M	12	nuser_type	11
+M	12	tdynamic	11
+I	0	nmodifiers	
+I	0	nreceiver_typereceiver	tfun
+I	0	nsimple_identifier	tfun
+I	0	ntype_parameters	tfun
+I	1	nreceiver_typereceiver	tfun
+I	1	nsimple_identifier	tfun
+I	1	ntype_parameters	tfun
+I	2	nreceiver_typereceiver	
+I	2	nsimple_identifier	
+I	2	ntype_parameters	
+I	3	nfunction_value_parameters	
+I	4	nreceiver_typereceiver	
+I	4	nsimple_identifier	
+I	5	nsimple_identifier	
+I	6	nfunction_body	
+I	6	nfunction_type	t:
+I	6	nnot_nullable_type	t:
+I	6	nnullable_type	t:
+I	6	nparenthesized_type	t:
+I	6	ntype_constraints	
+I	6	ntype_modifiers	t:
+I	6	nuser_type	t:
+I	7	nsimple_identifier	
+I	9	nfunction_body	
+I	10	nfunction_body	tdynamic
+I	10	nfunction_type	
+I	10	nnot_nullable_type	
+I	10	nnullable_type	
+I	10	nparenthesized_type	
+I	10	ntype_constraints	tdynamic
+I	10	ntype_modifiers	
+I	10	nuser_type	
+I	11	nfunction_body	
+I	11	ntype_constraints	
+I	12	nfunction_body	tdynamic
+I	12	nfunction_type	
+I	12	nnot_nullable_type	
+I	12	nnullable_type	
+I	12	nparenthesized_type	
+I	12	ntype_constraints	tdynamic
+I	12	nuser_type	
+E	6	
+E	8	
+E	9	
+E	10	tdynamic
+E	11	
+E	12	tdynamic
+P	t.
+P	t:
+P	tdynamic
+K	function_type
+S	0	0
+M	0	nfunction_type_parameters	2
+M	0	nreceiver_typereceiver	1
+S	1	0
+M	1	t.	3
+S	2	0
+M	2	t->	4
+S	3	0
+M	3	nfunction_type_parameters	2
+S	4	0
+M	4	nfunction_type	5
+M	4	nnot_nullable_type	5
+M	4	nnullable_type	5
+M	4	nparenthesized_type	5
+M	4	ntype_modifiers	6
+M	4	nuser_type	5
+M	4	tdynamic	5
+S	5	1
+S	6	0
+M	6	nfunction_type	5
+M	6	nnot_nullable_type	5
+M	6	nnullable_type	5
+M	6	nparenthesized_type	5
+M	6	nuser_type	5
+M	6	tdynamic	5
+I	0	nfunction_type_parameters	
+I	0	nreceiver_typereceiver	
+I	1	nfunction_type_parameters	t.
+I	2	nfunction_type	t->
+I	2	nnot_nullable_type	t->
+I	2	nnullable_type	t->
+I	2	nparenthesized_type	t->
+I	2	ntype_modifiers	t->
+I	2	nuser_type	t->
+I	3	nfunction_type_parameters	
+I	4	nfunction_type	
+I	4	nnot_nullable_type	
+I	4	nnullable_type	
+I	4	nparenthesized_type	
+I	4	ntype_modifiers	
+I	4	nuser_type	
+I	6	nfunction_type	
+I	6	nnot_nullable_type	
+I	6	nnullable_type	
+I	6	nparenthesized_type	
+I	6	nuser_type	
+E	2	t->tdynamic
+E	4	tdynamic
+E	5	
+E	6	tdynamic
+K	function_type_parameters
+S	0	0
+M	0	t(	1
+S	1	0
+M	1	nfunction_type	2
+M	1	nnot_nullable_type	2
+M	1	nnullable_type	2
+M	1	nparameter	4
+M	1	nparenthesized_type	2
+M	1	ntype_modifiers	3
+M	1	nuser_type	2
+M	1	t)	5
+M	1	tdynamic	2
+S	2	0
+M	2	t)	5
+M	2	t,	6
+S	3	0
+M	3	nfunction_type	2
+M	3	nnot_nullable_type	2
+M	3	nnullable_type	2
+M	3	nparenthesized_type	2
+M	3	nuser_type	2
+M	3	tdynamic	2
+S	4	0
+M	4	t)	5
+M	4	t,	6
+S	5	1
+S	6	0
+M	6	nfunction_type	7
+M	6	nnot_nullable_type	7
+M	6	nnullable_type	7
+M	6	nparameter	9
+M	6	nparenthesized_type	7
+M	6	ntype_modifiers	8
+M	6	nuser_type	7
+M	6	t)	5
+M	6	tdynamic	7
+S	7	0
+M	7	t)	5
+M	7	t,	6
+S	8	0
+M	8	nfunction_type	7
+M	8	nnot_nullable_type	7
+M	8	nnullable_type	7
+M	8	nparenthesized_type	7
+M	8	nuser_type	7
+M	8	tdynamic	7
+S	9	0
+M	9	t)	5
+M	9	t,	6
+I	0	nfunction_type	t(
+I	0	nnot_nullable_type	t(
+I	0	nnullable_type	t(
+I	0	nparameter	t(
+I	0	nparenthesized_type	t(
+I	0	ntype_modifiers	t(
+I	0	nuser_type	t(
+I	1	nfunction_type	
+I	1	nnot_nullable_type	
+I	1	nnullable_type	
+I	1	nparameter	
+I	1	nparenthesized_type	
+I	1	ntype_modifiers	
+I	1	nuser_type	
+I	2	nfunction_type	t,
+I	2	nnot_nullable_type	t,
+I	2	nnullable_type	t,
+I	2	nparameter	t,
+I	2	nparenthesized_type	t,
+I	2	ntype_modifiers	t,
+I	2	nuser_type	t,
+I	3	nfunction_type	
+I	3	nnot_nullable_type	
+I	3	nnullable_type	
+I	3	nparameter	tdynamict,
+I	3	nparenthesized_type	
+I	3	ntype_modifiers	tdynamict,
+I	3	nuser_type	
+I	4	nfunction_type	t,
+I	4	nnot_nullable_type	t,
+I	4	nnullable_type	t,
+I	4	nparameter	t,
+I	4	nparenthesized_type	t,
+I	4	ntype_modifiers	t,
+I	4	nuser_type	t,
+I	6	nfunction_type	
+I	6	nnot_nullable_type	
+I	6	nnullable_type	
+I	6	nparameter	
+I	6	nparenthesized_type	
+I	6	ntype_modifiers	
+I	6	nuser_type	
+I	7	nfunction_type	t,
+I	7	nnot_nullable_type	t,
+I	7	nnullable_type	t,
+I	7	nparameter	t,
+I	7	nparenthesized_type	t,
+I	7	ntype_modifiers	t,
+I	7	nuser_type	t,
+I	8	nfunction_type	
+I	8	nnot_nullable_type	
+I	8	nnullable_type	
+I	8	nparameter	tdynamict,
+I	8	nparenthesized_type	
+I	8	ntype_modifiers	tdynamict,
+I	8	nuser_type	
+I	9	nfunction_type	t,
+I	9	nnot_nullable_type	t,
+I	9	nnullable_type	t,
+I	9	nparameter	t,
+I	9	nparenthesized_type	t,
+I	9	ntype_modifiers	t,
+I	9	nuser_type	t,
+E	0	t(t)
+E	1	t)
+E	2	t)
+E	3	tdynamict)
+E	4	t)
+E	5	
+E	6	t)
+E	7	t)
+E	8	tdynamict)
+E	9	t)
+P	tdynamic
+K	function_value_parameters
+S	0	0
+M	0	t(	1
+S	1	0
+M	1	nparameter	2
+M	1	nparameter_modifiers	3
+M	1	t)	4
+M	1	t,	5
+S	2	0
+M	2	t)	4
+M	2	t,	7
+M	2	t=	6
+S	3	0
+M	3	nparameter	2
+S	4	1
+S	5	0
+M	5	t)	4
+S	6	0
+M	6	nadditive_expression	8
+M	6	nanonymous_function	8
+M	6	nas_expression	8
+M	6	nbin_literal	8
+M	6	nboolean_literal	8
+M	6	ncall_expression	8
+M	6	ncallable_reference	8
+M	6	ncharacter_literal	8
+M	6	ncheck_expression	8
+M	6	ncollection_literal	8
+M	6	ncomparison_expression	8
+M	6	nconjunction_expression	8
+M	6	ndisjunction_expression	8
+M	6	nelvis_expression	8
+M	6	nequality_expression	8
+M	6	nhex_literal	8
+M	6	nif_expression	8
+M	6	nindexing_expression	8
+M	6	ninfix_expression	8
+M	6	ninteger_literal	8
+M	6	njump_expression	8
+M	6	nlambda_literal	8
+M	6	nlong_literal	8
+M	6	nmultiplicative_expression	8
+M	6	nnavigation_expression	8
+M	6	nnull_literal	8
+M	6	nobject_literal	8
+M	6	nparenthesized_expression	8
+M	6	npostfix_expression	8
+M	6	nprefix_expression	8
+M	6	nrange_expression	8
+M	6	nreal_literal	8
+M	6	nsimple_identifier	8
+M	6	nspread_expression	8
+M	6	nstring_literal	8
+M	6	nsuper_expression	8
+M	6	nthis_expression	8
+M	6	ntry_expression	8
+M	6	nunsigned_literal	8
+M	6	nwhen_expression	8
+S	7	0
+M	7	nparameter	9
+M	7	nparameter_modifiers	10
+M	7	t)	4
+S	8	0
+M	8	t)	4
+M	8	t,	7
+S	9	0
+M	9	t)	4
+M	9	t,	7
+M	9	t=	11
+S	10	0
+M	10	nparameter	9
+S	11	0
+M	11	nadditive_expression	12
+M	11	nanonymous_function	12
+M	11	nas_expression	12
+M	11	nbin_literal	12
+M	11	nboolean_literal	12
+M	11	ncall_expression	12
+M	11	ncallable_reference	12
+M	11	ncharacter_literal	12
+M	11	ncheck_expression	12
+M	11	ncollection_literal	12
+M	11	ncomparison_expression	12
+M	11	nconjunction_expression	12
+M	11	ndisjunction_expression	12
+M	11	nelvis_expression	12
+M	11	nequality_expression	12
+M	11	nhex_literal	12
+M	11	nif_expression	12
+M	11	nindexing_expression	12
+M	11	ninfix_expression	12
+M	11	ninteger_literal	12
+M	11	njump_expression	12
+M	11	nlambda_literal	12
+M	11	nlong_literal	12
+M	11	nmultiplicative_expression	12
+M	11	nnavigation_expression	12
+M	11	nnull_literal	12
+M	11	nobject_literal	12
+M	11	nparenthesized_expression	12
+M	11	npostfix_expression	12
+M	11	nprefix_expression	12
+M	11	nrange_expression	12
+M	11	nreal_literal	12
+M	11	nsimple_identifier	12
+M	11	nspread_expression	12
+M	11	nstring_literal	12
+M	11	nsuper_expression	12
+M	11	nthis_expression	12
+M	11	ntry_expression	12
+M	11	nunsigned_literal	12
+M	11	nwhen_expression	12
+S	12	0
+M	12	t)	4
+M	12	t,	7
+I	0	nparameter	t(
+I	0	nparameter_modifiers	t(
+I	1	nparameter	
+I	1	nparameter_modifiers	
+I	2	nadditive_expression	t=
+I	2	nanonymous_function	t=
+I	2	nas_expression	t=
+I	2	nbin_literal	t=
+I	2	nboolean_literal	t=
+I	2	ncall_expression	t=
+I	2	ncallable_reference	t=
+I	2	ncharacter_literal	t=
+I	2	ncheck_expression	t=
+I	2	ncollection_literal	t=
+I	2	ncomparison_expression	t=
+I	2	nconjunction_expression	t=
+I	2	ndisjunction_expression	t=
+I	2	nelvis_expression	t=
+I	2	nequality_expression	t=
+I	2	nhex_literal	t=
+I	2	nif_expression	t=
+I	2	nindexing_expression	t=
+I	2	ninfix_expression	t=
+I	2	ninteger_literal	t=
+I	2	njump_expression	t=
+I	2	nlambda_literal	t=
+I	2	nlong_literal	t=
+I	2	nmultiplicative_expression	t=
+I	2	nnavigation_expression	t=
+I	2	nnull_literal	t=
+I	2	nobject_literal	t=
+I	2	nparameter	t,
+I	2	nparameter_modifiers	t,
+I	2	nparenthesized_expression	t=
+I	2	npostfix_expression	t=
+I	2	nprefix_expression	t=
+I	2	nrange_expression	t=
+I	2	nreal_literal	t=
+I	2	nsimple_identifier	t=
+I	2	nspread_expression	t=
+I	2	nstring_literal	t=
+I	2	nsuper_expression	t=
+I	2	nthis_expression	t=
+I	2	ntry_expression	t=
+I	2	nunsigned_literal	t=
+I	2	nwhen_expression	t=
+I	3	nparameter	
+I	6	nadditive_expression	
+I	6	nanonymous_function	
+I	6	nas_expression	
+I	6	nbin_literal	
+I	6	nboolean_literal	
+I	6	ncall_expression	
+I	6	ncallable_reference	
+I	6	ncharacter_literal	
+I	6	ncheck_expression	
+I	6	ncollection_literal	
+I	6	ncomparison_expression	
+I	6	nconjunction_expression	
+I	6	ndisjunction_expression	
+I	6	nelvis_expression	
+I	6	nequality_expression	
+I	6	nhex_literal	
+I	6	nif_expression	
+I	6	nindexing_expression	
+I	6	ninfix_expression	
+I	6	ninteger_literal	
+I	6	njump_expression	
+I	6	nlambda_literal	
+I	6	nlong_literal	
+I	6	nmultiplicative_expression	
+I	6	nnavigation_expression	
+I	6	nnull_literal	
+I	6	nobject_literal	
+I	6	nparenthesized_expression	
+I	6	npostfix_expression	
+I	6	nprefix_expression	
+I	6	nrange_expression	
+I	6	nreal_literal	
+I	6	nsimple_identifier	
+I	6	nspread_expression	
+I	6	nstring_literal	
+I	6	nsuper_expression	
+I	6	nthis_expression	
+I	6	ntry_expression	
+I	6	nunsigned_literal	
+I	6	nwhen_expression	
+I	7	nparameter	
+I	7	nparameter_modifiers	
+I	8	nparameter	t,
+I	8	nparameter_modifiers	t,
+I	9	nadditive_expression	t=
+I	9	nanonymous_function	t=
+I	9	nas_expression	t=
+I	9	nbin_literal	t=
+I	9	nboolean_literal	t=
+I	9	ncall_expression	t=
+I	9	ncallable_reference	t=
+I	9	ncharacter_literal	t=
+I	9	ncheck_expression	t=
+I	9	ncollection_literal	t=
+I	9	ncomparison_expression	t=
+I	9	nconjunction_expression	t=
+I	9	ndisjunction_expression	t=
+I	9	nelvis_expression	t=
+I	9	nequality_expression	t=
+I	9	nhex_literal	t=
+I	9	nif_expression	t=
+I	9	nindexing_expression	t=
+I	9	ninfix_expression	t=
+I	9	ninteger_literal	t=
+I	9	njump_expression	t=
+I	9	nlambda_literal	t=
+I	9	nlong_literal	t=
+I	9	nmultiplicative_expression	t=
+I	9	nnavigation_expression	t=
+I	9	nnull_literal	t=
+I	9	nobject_literal	t=
+I	9	nparameter	t,
+I	9	nparameter_modifiers	t,
+I	9	nparenthesized_expression	t=
+I	9	npostfix_expression	t=
+I	9	nprefix_expression	t=
+I	9	nrange_expression	t=
+I	9	nreal_literal	t=
+I	9	nsimple_identifier	t=
+I	9	nspread_expression	t=
+I	9	nstring_literal	t=
+I	9	nsuper_expression	t=
+I	9	nthis_expression	t=
+I	9	ntry_expression	t=
+I	9	nunsigned_literal	t=
+I	9	nwhen_expression	t=
+I	10	nparameter	
+I	11	nadditive_expression	
+I	11	nanonymous_function	
+I	11	nas_expression	
+I	11	nbin_literal	
+I	11	nboolean_literal	
+I	11	ncall_expression	
+I	11	ncallable_reference	
+I	11	ncharacter_literal	
+I	11	ncheck_expression	
+I	11	ncollection_literal	
+I	11	ncomparison_expression	
+I	11	nconjunction_expression	
+I	11	ndisjunction_expression	
+I	11	nelvis_expression	
+I	11	nequality_expression	
+I	11	nhex_literal	
+I	11	nif_expression	
+I	11	nindexing_expression	
+I	11	ninfix_expression	
+I	11	ninteger_literal	
+I	11	njump_expression	
+I	11	nlambda_literal	
+I	11	nlong_literal	
+I	11	nmultiplicative_expression	
+I	11	nnavigation_expression	
+I	11	nnull_literal	
+I	11	nobject_literal	
+I	11	nparenthesized_expression	
+I	11	npostfix_expression	
+I	11	nprefix_expression	
+I	11	nrange_expression	
+I	11	nreal_literal	
+I	11	nsimple_identifier	
+I	11	nspread_expression	
+I	11	nstring_literal	
+I	11	nsuper_expression	
+I	11	nthis_expression	
+I	11	ntry_expression	
+I	11	nunsigned_literal	
+I	11	nwhen_expression	
+I	12	nparameter	t,
+I	12	nparameter_modifiers	t,
+E	0	t(t)
+E	1	t)
+E	2	t)
+E	4	
+E	5	t)
+E	7	t)
+E	8	t)
+E	9	t)
+E	12	t)
+K	getter
+S	0	0
+M	0	nmodifiers	1
+M	0	tget	2
+S	1	0
+M	1	tget	2
+S	2	1
+M	2	t(	3
+S	3	0
+M	3	t)	4
+S	4	0
+M	4	nfunction_body	5
+M	4	t:	6
+S	5	1
+S	6	0
+M	6	nfunction_type	7
+M	6	nnot_nullable_type	7
+M	6	nnullable_type	7
+M	6	nparenthesized_type	7
+M	6	ntype_modifiers	8
+M	6	nuser_type	7
+M	6	tdynamic	7
+S	7	0
+M	7	nfunction_body	5
+S	8	0
+M	8	nfunction_type	7
+M	8	nnot_nullable_type	7
+M	8	nnullable_type	7
+M	8	nparenthesized_type	7
+M	8	nuser_type	7
+M	8	tdynamic	7
+I	0	nfunction_body	tgett(t)
+I	0	nfunction_type	tgett(t)t:
+I	0	nmodifiers	
+I	0	nnot_nullable_type	tgett(t)t:
+I	0	nnullable_type	tgett(t)t:
+I	0	nparenthesized_type	tgett(t)t:
+I	0	ntype_modifiers	tgett(t)t:
+I	0	nuser_type	tgett(t)t:
+I	1	nfunction_body	tgett(t)
+I	1	nfunction_type	tgett(t)t:
+I	1	nnot_nullable_type	tgett(t)t:
+I	1	nnullable_type	tgett(t)t:
+I	1	nparenthesized_type	tgett(t)t:
+I	1	ntype_modifiers	tgett(t)t:
+I	1	nuser_type	tgett(t)t:
+I	2	nfunction_body	t(t)
+I	2	nfunction_type	t(t)t:
+I	2	nnot_nullable_type	t(t)t:
+I	2	nnullable_type	t(t)t:
+I	2	nparenthesized_type	t(t)t:
+I	2	ntype_modifiers	t(t)t:
+I	2	nuser_type	t(t)t:
+I	3	nfunction_body	t)
+I	3	nfunction_type	t)t:
+I	3	nnot_nullable_type	t)t:
+I	3	nnullable_type	t)t:
+I	3	nparenthesized_type	t)t:
+I	3	ntype_modifiers	t)t:
+I	3	nuser_type	t)t:
+I	4	nfunction_body	
+I	4	nfunction_type	t:
+I	4	nnot_nullable_type	t:
+I	4	nnullable_type	t:
+I	4	nparenthesized_type	t:
+I	4	ntype_modifiers	t:
+I	4	nuser_type	t:
+I	6	nfunction_body	tdynamic
+I	6	nfunction_type	
+I	6	nnot_nullable_type	
+I	6	nnullable_type	
+I	6	nparenthesized_type	
+I	6	ntype_modifiers	
+I	6	nuser_type	
+I	7	nfunction_body	
+I	8	nfunction_body	tdynamic
+I	8	nfunction_type	
+I	8	nnot_nullable_type	
+I	8	nnullable_type	
+I	8	nparenthesized_type	
+I	8	nuser_type	
+E	0	tget
+E	1	tget
+E	2	
+E	5	
+P	t:
+P	tdynamic
+P	tget
+K	guard_condition
+S	0	0
+M	0	tif	1
+S	1	0
+M	1	nadditive_expression	2
+M	1	nanonymous_function	2
+M	1	nas_expression	2
+M	1	nbin_literal	2
+M	1	nboolean_literal	2
+M	1	ncall_expression	2
+M	1	ncallable_reference	2
+M	1	ncharacter_literal	2
+M	1	ncheck_expression	2
+M	1	ncollection_literal	2
+M	1	ncomparison_expression	2
+M	1	nconjunction_expression	2
+M	1	ndisjunction_expression	2
+M	1	nelvis_expression	2
+M	1	nequality_expression	2
+M	1	nhex_literal	2
+M	1	nif_expression	2
+M	1	nindexing_expression	2
+M	1	ninfix_expression	2
+M	1	ninteger_literal	2
+M	1	njump_expression	2
+M	1	nlambda_literal	2
+M	1	nlong_literal	2
+M	1	nmultiplicative_expression	2
+M	1	nnavigation_expression	2
+M	1	nnull_literal	2
+M	1	nobject_literal	2
+M	1	nparenthesized_expression	2
+M	1	npostfix_expression	2
+M	1	nprefix_expression	2
+M	1	nrange_expression	2
+M	1	nreal_literal	2
+M	1	nsimple_identifier	2
+M	1	nspread_expression	2
+M	1	nstring_literal	2
+M	1	nsuper_expression	2
+M	1	nthis_expression	2
+M	1	ntry_expression	2
+M	1	nunsigned_literal	2
+M	1	nwhen_expression	2
+S	2	1
+I	0	nadditive_expression	tif
+I	0	nanonymous_function	tif
+I	0	nas_expression	tif
+I	0	nbin_literal	tif
+I	0	nboolean_literal	tif
+I	0	ncall_expression	tif
+I	0	ncallable_reference	tif
+I	0	ncharacter_literal	tif
+I	0	ncheck_expression	tif
+I	0	ncollection_literal	tif
+I	0	ncomparison_expression	tif
+I	0	nconjunction_expression	tif
+I	0	ndisjunction_expression	tif
+I	0	nelvis_expression	tif
+I	0	nequality_expression	tif
+I	0	nhex_literal	tif
+I	0	nif_expression	tif
+I	0	nindexing_expression	tif
+I	0	ninfix_expression	tif
+I	0	ninteger_literal	tif
+I	0	njump_expression	tif
+I	0	nlambda_literal	tif
+I	0	nlong_literal	tif
+I	0	nmultiplicative_expression	tif
+I	0	nnavigation_expression	tif
+I	0	nnull_literal	tif
+I	0	nobject_literal	tif
+I	0	nparenthesized_expression	tif
+I	0	npostfix_expression	tif
+I	0	nprefix_expression	tif
+I	0	nrange_expression	tif
+I	0	nreal_literal	tif
+I	0	nsimple_identifier	tif
+I	0	nspread_expression	tif
+I	0	nstring_literal	tif
+I	0	nsuper_expression	tif
+I	0	nthis_expression	tif
+I	0	ntry_expression	tif
+I	0	nunsigned_literal	tif
+I	0	nwhen_expression	tif
+I	1	nadditive_expression	
+I	1	nanonymous_function	
+I	1	nas_expression	
+I	1	nbin_literal	
+I	1	nboolean_literal	
+I	1	ncall_expression	
+I	1	ncallable_reference	
+I	1	ncharacter_literal	
+I	1	ncheck_expression	
+I	1	ncollection_literal	
+I	1	ncomparison_expression	
+I	1	nconjunction_expression	
+I	1	ndisjunction_expression	
+I	1	nelvis_expression	
+I	1	nequality_expression	
+I	1	nhex_literal	
+I	1	nif_expression	
+I	1	nindexing_expression	
+I	1	ninfix_expression	
+I	1	ninteger_literal	
+I	1	njump_expression	
+I	1	nlambda_literal	
+I	1	nlong_literal	
+I	1	nmultiplicative_expression	
+I	1	nnavigation_expression	
+I	1	nnull_literal	
+I	1	nobject_literal	
+I	1	nparenthesized_expression	
+I	1	npostfix_expression	
+I	1	nprefix_expression	
+I	1	nrange_expression	
+I	1	nreal_literal	
+I	1	nsimple_identifier	
+I	1	nspread_expression	
+I	1	nstring_literal	
+I	1	nsuper_expression	
+I	1	nthis_expression	
+I	1	ntry_expression	
+I	1	nunsigned_literal	
+I	1	nwhen_expression	
+E	2	
+K	if_expression
+S	0	0
+M	0	tif	1
+S	1	0
+M	1	t(	2
+S	2	0
+M	2	nadditive_expressioncondition	3
+M	2	nanonymous_functioncondition	3
+M	2	nas_expressioncondition	3
+M	2	nbin_literalcondition	3
+M	2	nboolean_literalcondition	3
+M	2	ncall_expressioncondition	3
+M	2	ncallable_referencecondition	3
+M	2	ncharacter_literalcondition	3
+M	2	ncheck_expressioncondition	3
+M	2	ncollection_literalcondition	3
+M	2	ncomparison_expressioncondition	3
+M	2	nconjunction_expressioncondition	3
+M	2	ndisjunction_expressioncondition	3
+M	2	nelvis_expressioncondition	3
+M	2	nequality_expressioncondition	3
+M	2	nhex_literalcondition	3
+M	2	nif_expressioncondition	3
+M	2	nindexing_expressioncondition	3
+M	2	ninfix_expressioncondition	3
+M	2	ninteger_literalcondition	3
+M	2	njump_expressioncondition	3
+M	2	nlambda_literalcondition	3
+M	2	nlong_literalcondition	3
+M	2	nmultiplicative_expressioncondition	3
+M	2	nnavigation_expressioncondition	3
+M	2	nnull_literalcondition	3
+M	2	nobject_literalcondition	3
+M	2	nparenthesized_expressioncondition	3
+M	2	npostfix_expressioncondition	3
+M	2	nprefix_expressioncondition	3
+M	2	nrange_expressioncondition	3
+M	2	nreal_literalcondition	3
+M	2	nsimple_identifiercondition	3
+M	2	nspread_expressioncondition	3
+M	2	nstring_literalcondition	3
+M	2	nsuper_expressioncondition	3
+M	2	nthis_expressioncondition	3
+M	2	ntry_expressioncondition	3
+M	2	nunsigned_literalcondition	3
+M	2	nwhen_expressioncondition	3
+S	3	0
+M	3	t)	4
+S	4	0
+M	4	ncontrol_structure_bodyconsequence	5
+M	4	t;	6
+M	4	telse	7
+S	5	1
+M	5	t;	8
+M	5	telse	7
+S	6	1
+M	6	telse	7
+S	7	0
+M	7	ncontrol_structure_bodyalternative	9
+M	7	t;	9
+S	8	0
+M	8	telse	7
+S	9	1
+I	0	nadditive_expressioncondition	tift(
+I	0	nanonymous_functioncondition	tift(
+I	0	nas_expressioncondition	tift(
+I	0	nbin_literalcondition	tift(
+I	0	nboolean_literalcondition	tift(
+I	0	ncall_expressioncondition	tift(
+I	0	ncallable_referencecondition	tift(
+I	0	ncharacter_literalcondition	tift(
+I	0	ncheck_expressioncondition	tift(
+I	0	ncollection_literalcondition	tift(
+I	0	ncomparison_expressioncondition	tift(
+I	0	nconjunction_expressioncondition	tift(
+I	0	ndisjunction_expressioncondition	tift(
+I	0	nelvis_expressioncondition	tift(
+I	0	nequality_expressioncondition	tift(
+I	0	nhex_literalcondition	tift(
+I	0	nif_expressioncondition	tift(
+I	0	nindexing_expressioncondition	tift(
+I	0	ninfix_expressioncondition	tift(
+I	0	ninteger_literalcondition	tift(
+I	0	njump_expressioncondition	tift(
+I	0	nlambda_literalcondition	tift(
+I	0	nlong_literalcondition	tift(
+I	0	nmultiplicative_expressioncondition	tift(
+I	0	nnavigation_expressioncondition	tift(
+I	0	nnull_literalcondition	tift(
+I	0	nobject_literalcondition	tift(
+I	0	nparenthesized_expressioncondition	tift(
+I	0	npostfix_expressioncondition	tift(
+I	0	nprefix_expressioncondition	tift(
+I	0	nrange_expressioncondition	tift(
+I	0	nreal_literalcondition	tift(
+I	0	nsimple_identifiercondition	tift(
+I	0	nspread_expressioncondition	tift(
+I	0	nstring_literalcondition	tift(
+I	0	nsuper_expressioncondition	tift(
+I	0	nthis_expressioncondition	tift(
+I	0	ntry_expressioncondition	tift(
+I	0	nunsigned_literalcondition	tift(
+I	0	nwhen_expressioncondition	tift(
+I	1	nadditive_expressioncondition	t(
+I	1	nanonymous_functioncondition	t(
+I	1	nas_expressioncondition	t(
+I	1	nbin_literalcondition	t(
+I	1	nboolean_literalcondition	t(
+I	1	ncall_expressioncondition	t(
+I	1	ncallable_referencecondition	t(
+I	1	ncharacter_literalcondition	t(
+I	1	ncheck_expressioncondition	t(
+I	1	ncollection_literalcondition	t(
+I	1	ncomparison_expressioncondition	t(
+I	1	nconjunction_expressioncondition	t(
+I	1	ndisjunction_expressioncondition	t(
+I	1	nelvis_expressioncondition	t(
+I	1	nequality_expressioncondition	t(
+I	1	nhex_literalcondition	t(
+I	1	nif_expressioncondition	t(
+I	1	nindexing_expressioncondition	t(
+I	1	ninfix_expressioncondition	t(
+I	1	ninteger_literalcondition	t(
+I	1	njump_expressioncondition	t(
+I	1	nlambda_literalcondition	t(
+I	1	nlong_literalcondition	t(
+I	1	nmultiplicative_expressioncondition	t(
+I	1	nnavigation_expressioncondition	t(
+I	1	nnull_literalcondition	t(
+I	1	nobject_literalcondition	t(
+I	1	nparenthesized_expressioncondition	t(
+I	1	npostfix_expressioncondition	t(
+I	1	nprefix_expressioncondition	t(
+I	1	nrange_expressioncondition	t(
+I	1	nreal_literalcondition	t(
+I	1	nsimple_identifiercondition	t(
+I	1	nspread_expressioncondition	t(
+I	1	nstring_literalcondition	t(
+I	1	nsuper_expressioncondition	t(
+I	1	nthis_expressioncondition	t(
+I	1	ntry_expressioncondition	t(
+I	1	nunsigned_literalcondition	t(
+I	1	nwhen_expressioncondition	t(
+I	2	nadditive_expressioncondition	
+I	2	nanonymous_functioncondition	
+I	2	nas_expressioncondition	
+I	2	nbin_literalcondition	
+I	2	nboolean_literalcondition	
+I	2	ncall_expressioncondition	
+I	2	ncallable_referencecondition	
+I	2	ncharacter_literalcondition	
+I	2	ncheck_expressioncondition	
+I	2	ncollection_literalcondition	
+I	2	ncomparison_expressioncondition	
+I	2	nconjunction_expressioncondition	
+I	2	ndisjunction_expressioncondition	
+I	2	nelvis_expressioncondition	
+I	2	nequality_expressioncondition	
+I	2	nhex_literalcondition	
+I	2	nif_expressioncondition	
+I	2	nindexing_expressioncondition	
+I	2	ninfix_expressioncondition	
+I	2	ninteger_literalcondition	
+I	2	njump_expressioncondition	
+I	2	nlambda_literalcondition	
+I	2	nlong_literalcondition	
+I	2	nmultiplicative_expressioncondition	
+I	2	nnavigation_expressioncondition	
+I	2	nnull_literalcondition	
+I	2	nobject_literalcondition	
+I	2	nparenthesized_expressioncondition	
+I	2	npostfix_expressioncondition	
+I	2	nprefix_expressioncondition	
+I	2	nrange_expressioncondition	
+I	2	nreal_literalcondition	
+I	2	nsimple_identifiercondition	
+I	2	nspread_expressioncondition	
+I	2	nstring_literalcondition	
+I	2	nsuper_expressioncondition	
+I	2	nthis_expressioncondition	
+I	2	ntry_expressioncondition	
+I	2	nunsigned_literalcondition	
+I	2	nwhen_expressioncondition	
+I	3	ncontrol_structure_bodyalternative	t)telse
+I	3	ncontrol_structure_bodyconsequence	t)
+I	4	ncontrol_structure_bodyalternative	telse
+I	4	ncontrol_structure_bodyconsequence	
+I	5	ncontrol_structure_bodyalternative	telse
+I	6	ncontrol_structure_bodyalternative	telse
+I	7	ncontrol_structure_bodyalternative	
+I	8	ncontrol_structure_bodyalternative	telse
+E	3	t)t;
+E	4	t;
+E	5	
+E	6	
+E	7	t;
+E	8	telset;
+E	9	
+P	telse
+K	import_alias
+S	0	0
+M	0	tas	1
+S	1	0
+M	1	ntype_identifier	2
+S	2	1
+I	0	ntype_identifier	tas
+I	1	ntype_identifier	
+E	2	
+K	import_header
+S	0	0
+M	0	timport	1
+S	1	0
+M	1	nidentifier	2
+S	2	1
+M	2	nimport_alias	3
+M	2	nwildcard_import	4
+S	3	1
+S	4	1
+I	0	nidentifier	timport
+I	1	nidentifier	
+I	2	nimport_alias	
+I	2	nwildcard_import	
+E	2	
+E	3	
+E	4	
+K	indexing_suffix
+S	0	0
+M	0	t[	1
+S	1	0
+M	1	nadditive_expression	2
+M	1	nanonymous_function	2
+M	1	nas_expression	2
+M	1	nbin_literal	2
+M	1	nboolean_literal	2
+M	1	ncall_expression	2
+M	1	ncallable_reference	2
+M	1	ncharacter_literal	2
+M	1	ncheck_expression	2
+M	1	ncollection_literal	2
+M	1	ncomparison_expression	2
+M	1	nconjunction_expression	2
+M	1	ndisjunction_expression	2
+M	1	nelvis_expression	2
+M	1	nequality_expression	2
+M	1	nhex_literal	2
+M	1	nif_expression	2
+M	1	nindexing_expression	2
+M	1	ninfix_expression	2
+M	1	ninteger_literal	2
+M	1	njump_expression	2
+M	1	nlambda_literal	2
+M	1	nlong_literal	2
+M	1	nmultiplicative_expression	2
+M	1	nnavigation_expression	2
+M	1	nnull_literal	2
+M	1	nobject_literal	2
+M	1	nparenthesized_expression	2
+M	1	npostfix_expression	2
+M	1	nprefix_expression	2
+M	1	nrange_expression	2
+M	1	nreal_literal	2
+M	1	nsimple_identifier	2
+M	1	nspread_expression	2
+M	1	nstring_literal	2
+M	1	nsuper_expression	2
+M	1	nthis_expression	2
+M	1	ntry_expression	2
+M	1	nunsigned_literal	2
+M	1	nwhen_expression	2
+S	2	0
+M	2	t,	4
+M	2	t]	3
+S	3	1
+S	4	0
+M	4	nadditive_expression	5
+M	4	nanonymous_function	5
+M	4	nas_expression	5
+M	4	nbin_literal	5
+M	4	nboolean_literal	5
+M	4	ncall_expression	5
+M	4	ncallable_reference	5
+M	4	ncharacter_literal	5
+M	4	ncheck_expression	5
+M	4	ncollection_literal	5
+M	4	ncomparison_expression	5
+M	4	nconjunction_expression	5
+M	4	ndisjunction_expression	5
+M	4	nelvis_expression	5
+M	4	nequality_expression	5
+M	4	nhex_literal	5
+M	4	nif_expression	5
+M	4	nindexing_expression	5
+M	4	ninfix_expression	5
+M	4	ninteger_literal	5
+M	4	njump_expression	5
+M	4	nlambda_literal	5
+M	4	nlong_literal	5
+M	4	nmultiplicative_expression	5
+M	4	nnavigation_expression	5
+M	4	nnull_literal	5
+M	4	nobject_literal	5
+M	4	nparenthesized_expression	5
+M	4	npostfix_expression	5
+M	4	nprefix_expression	5
+M	4	nrange_expression	5
+M	4	nreal_literal	5
+M	4	nsimple_identifier	5
+M	4	nspread_expression	5
+M	4	nstring_literal	5
+M	4	nsuper_expression	5
+M	4	nthis_expression	5
+M	4	ntry_expression	5
+M	4	nunsigned_literal	5
+M	4	nwhen_expression	5
+M	4	t]	3
+S	5	0
+M	5	t,	4
+M	5	t]	3
+I	0	nadditive_expression	t[
+I	0	nanonymous_function	t[
+I	0	nas_expression	t[
+I	0	nbin_literal	t[
+I	0	nboolean_literal	t[
+I	0	ncall_expression	t[
+I	0	ncallable_reference	t[
+I	0	ncharacter_literal	t[
+I	0	ncheck_expression	t[
+I	0	ncollection_literal	t[
+I	0	ncomparison_expression	t[
+I	0	nconjunction_expression	t[
+I	0	ndisjunction_expression	t[
+I	0	nelvis_expression	t[
+I	0	nequality_expression	t[
+I	0	nhex_literal	t[
+I	0	nif_expression	t[
+I	0	nindexing_expression	t[
+I	0	ninfix_expression	t[
+I	0	ninteger_literal	t[
+I	0	njump_expression	t[
+I	0	nlambda_literal	t[
+I	0	nlong_literal	t[
+I	0	nmultiplicative_expression	t[
+I	0	nnavigation_expression	t[
+I	0	nnull_literal	t[
+I	0	nobject_literal	t[
+I	0	nparenthesized_expression	t[
+I	0	npostfix_expression	t[
+I	0	nprefix_expression	t[
+I	0	nrange_expression	t[
+I	0	nreal_literal	t[
+I	0	nsimple_identifier	t[
+I	0	nspread_expression	t[
+I	0	nstring_literal	t[
+I	0	nsuper_expression	t[
+I	0	nthis_expression	t[
+I	0	ntry_expression	t[
+I	0	nunsigned_literal	t[
+I	0	nwhen_expression	t[
+I	1	nadditive_expression	
+I	1	nanonymous_function	
+I	1	nas_expression	
+I	1	nbin_literal	
+I	1	nboolean_literal	
+I	1	ncall_expression	
+I	1	ncallable_reference	
+I	1	ncharacter_literal	
+I	1	ncheck_expression	
+I	1	ncollection_literal	
+I	1	ncomparison_expression	
+I	1	nconjunction_expression	
+I	1	ndisjunction_expression	
+I	1	nelvis_expression	
+I	1	nequality_expression	
+I	1	nhex_literal	
+I	1	nif_expression	
+I	1	nindexing_expression	
+I	1	ninfix_expression	
+I	1	ninteger_literal	
+I	1	njump_expression	
+I	1	nlambda_literal	
+I	1	nlong_literal	
+I	1	nmultiplicative_expression	
+I	1	nnavigation_expression	
+I	1	nnull_literal	
+I	1	nobject_literal	
+I	1	nparenthesized_expression	
+I	1	npostfix_expression	
+I	1	nprefix_expression	
+I	1	nrange_expression	
+I	1	nreal_literal	
+I	1	nsimple_identifier	
+I	1	nspread_expression	
+I	1	nstring_literal	
+I	1	nsuper_expression	
+I	1	nthis_expression	
+I	1	ntry_expression	
+I	1	nunsigned_literal	
+I	1	nwhen_expression	
+I	2	nadditive_expression	t,
+I	2	nanonymous_function	t,
+I	2	nas_expression	t,
+I	2	nbin_literal	t,
+I	2	nboolean_literal	t,
+I	2	ncall_expression	t,
+I	2	ncallable_reference	t,
+I	2	ncharacter_literal	t,
+I	2	ncheck_expression	t,
+I	2	ncollection_literal	t,
+I	2	ncomparison_expression	t,
+I	2	nconjunction_expression	t,
+I	2	ndisjunction_expression	t,
+I	2	nelvis_expression	t,
+I	2	nequality_expression	t,
+I	2	nhex_literal	t,
+I	2	nif_expression	t,
+I	2	nindexing_expression	t,
+I	2	ninfix_expression	t,
+I	2	ninteger_literal	t,
+I	2	njump_expression	t,
+I	2	nlambda_literal	t,
+I	2	nlong_literal	t,
+I	2	nmultiplicative_expression	t,
+I	2	nnavigation_expression	t,
+I	2	nnull_literal	t,
+I	2	nobject_literal	t,
+I	2	nparenthesized_expression	t,
+I	2	npostfix_expression	t,
+I	2	nprefix_expression	t,
+I	2	nrange_expression	t,
+I	2	nreal_literal	t,
+I	2	nsimple_identifier	t,
+I	2	nspread_expression	t,
+I	2	nstring_literal	t,
+I	2	nsuper_expression	t,
+I	2	nthis_expression	t,
+I	2	ntry_expression	t,
+I	2	nunsigned_literal	t,
+I	2	nwhen_expression	t,
+I	4	nadditive_expression	
+I	4	nanonymous_function	
+I	4	nas_expression	
+I	4	nbin_literal	
+I	4	nboolean_literal	
+I	4	ncall_expression	
+I	4	ncallable_reference	
+I	4	ncharacter_literal	
+I	4	ncheck_expression	
+I	4	ncollection_literal	
+I	4	ncomparison_expression	
+I	4	nconjunction_expression	
+I	4	ndisjunction_expression	
+I	4	nelvis_expression	
+I	4	nequality_expression	
+I	4	nhex_literal	
+I	4	nif_expression	
+I	4	nindexing_expression	
+I	4	ninfix_expression	
+I	4	ninteger_literal	
+I	4	njump_expression	
+I	4	nlambda_literal	
+I	4	nlong_literal	
+I	4	nmultiplicative_expression	
+I	4	nnavigation_expression	
+I	4	nnull_literal	
+I	4	nobject_literal	
+I	4	nparenthesized_expression	
+I	4	npostfix_expression	
+I	4	nprefix_expression	
+I	4	nrange_expression	
+I	4	nreal_literal	
+I	4	nsimple_identifier	
+I	4	nspread_expression	
+I	4	nstring_literal	
+I	4	nsuper_expression	
+I	4	nthis_expression	
+I	4	ntry_expression	
+I	4	nunsigned_literal	
+I	4	nwhen_expression	
+I	5	nadditive_expression	t,
+I	5	nanonymous_function	t,
+I	5	nas_expression	t,
+I	5	nbin_literal	t,
+I	5	nboolean_literal	t,
+I	5	ncall_expression	t,
+I	5	ncallable_reference	t,
+I	5	ncharacter_literal	t,
+I	5	ncheck_expression	t,
+I	5	ncollection_literal	t,
+I	5	ncomparison_expression	t,
+I	5	nconjunction_expression	t,
+I	5	ndisjunction_expression	t,
+I	5	nelvis_expression	t,
+I	5	nequality_expression	t,
+I	5	nhex_literal	t,
+I	5	nif_expression	t,
+I	5	nindexing_expression	t,
+I	5	ninfix_expression	t,
+I	5	ninteger_literal	t,
+I	5	njump_expression	t,
+I	5	nlambda_literal	t,
+I	5	nlong_literal	t,
+I	5	nmultiplicative_expression	t,
+I	5	nnavigation_expression	t,
+I	5	nnull_literal	t,
+I	5	nobject_literal	t,
+I	5	nparenthesized_expression	t,
+I	5	npostfix_expression	t,
+I	5	nprefix_expression	t,
+I	5	nrange_expression	t,
+I	5	nreal_literal	t,
+I	5	nsimple_identifier	t,
+I	5	nspread_expression	t,
+I	5	nstring_literal	t,
+I	5	nsuper_expression	t,
+I	5	nthis_expression	t,
+I	5	ntry_expression	t,
+I	5	nunsigned_literal	t,
+I	5	nwhen_expression	t,
+E	2	t]
+E	3	
+E	4	t]
+E	5	t]
+K	interpolation_expression_end
+S	0	0
+M	0	t}	1
+S	1	1
+E	0	t}
+E	1	
+K	lambda_literal
+S	0	0
+M	0	t{	1
+S	1	0
+M	1	nlambda_parameters	3
+M	1	nstatements	2
+M	1	t->	5
+M	1	t}	4
+S	2	0
+M	2	t}	4
+S	3	0
+M	3	t->	5
+S	4	1
+S	5	0
+M	5	nstatements	2
+M	5	t}	4
+I	0	nlambda_parameters	t{
+I	0	nstatements	t{
+I	1	nlambda_parameters	
+I	1	nstatements	
+I	3	nstatements	t->
+I	5	nstatements	
+E	0	t{t}
+E	1	t}
+E	2	t}
+E	3	t->t}
+E	4	
+E	5	t}
+P	t->
+K	lambda_parameters
+S	0	0
+M	0	nmulti_variable_declaration	1
+M	0	nvariable_declaration	2
+S	1	1
+M	1	t,	4
+M	1	t:	3
+S	2	1
+M	2	t,	4
+S	3	0
+M	3	nfunction_type	5
+M	3	nnot_nullable_type	5
+M	3	nnullable_type	5
+M	3	nparenthesized_type	5
+M	3	ntype_modifiers	6
+M	3	nuser_type	5
+M	3	tdynamic	5
+S	4	1
+M	4	nmulti_variable_declaration	7
+M	4	nvariable_declaration	8
+S	5	1
+M	5	t,	4
+S	6	0
+M	6	nfunction_type	5
+M	6	nnot_nullable_type	5
+M	6	nnullable_type	5
+M	6	nparenthesized_type	5
+M	6	nuser_type	5
+M	6	tdynamic	5
+S	7	1
+M	7	t,	4
+M	7	t:	9
+S	8	1
+M	8	t,	4
+S	9	0
+M	9	nfunction_type	10
+M	9	nnot_nullable_type	10
+M	9	nnullable_type	10
+M	9	nparenthesized_type	10
+M	9	ntype_modifiers	11
+M	9	nuser_type	10
+M	9	tdynamic	10
+S	10	1
+M	10	t,	4
+S	11	0
+M	11	nfunction_type	10
+M	11	nnot_nullable_type	10
+M	11	nnullable_type	10
+M	11	nparenthesized_type	10
+M	11	nuser_type	10
+M	11	tdynamic	10
+I	0	nmulti_variable_declaration	
+I	0	nvariable_declaration	
+I	1	nfunction_type	t:
+I	1	nmulti_variable_declaration	t,
+I	1	nnot_nullable_type	t:
+I	1	nnullable_type	t:
+I	1	nparenthesized_type	t:
+I	1	ntype_modifiers	t:
+I	1	nuser_type	t:
+I	1	nvariable_declaration	t,
+I	2	nmulti_variable_declaration	t,
+I	2	nvariable_declaration	t,
+I	3	nfunction_type	
+I	3	nmulti_variable_declaration	tdynamict,
+I	3	nnot_nullable_type	
+I	3	nnullable_type	
+I	3	nparenthesized_type	
+I	3	ntype_modifiers	
+I	3	nuser_type	
+I	3	nvariable_declaration	tdynamict,
+I	4	nmulti_variable_declaration	
+I	4	nvariable_declaration	
+I	5	nmulti_variable_declaration	t,
+I	5	nvariable_declaration	t,
+I	6	nfunction_type	
+I	6	nmulti_variable_declaration	tdynamict,
+I	6	nnot_nullable_type	
+I	6	nnullable_type	
+I	6	nparenthesized_type	
+I	6	nuser_type	
+I	6	nvariable_declaration	tdynamict,
+I	7	nfunction_type	t:
+I	7	nmulti_variable_declaration	t,
+I	7	nnot_nullable_type	t:
+I	7	nnullable_type	t:
+I	7	nparenthesized_type	t:
+I	7	ntype_modifiers	t:
+I	7	nuser_type	t:
+I	7	nvariable_declaration	t,
+I	8	nmulti_variable_declaration	t,
+I	8	nvariable_declaration	t,
+I	9	nfunction_type	
+I	9	nmulti_variable_declaration	tdynamict,
+I	9	nnot_nullable_type	
+I	9	nnullable_type	
+I	9	nparenthesized_type	
+I	9	ntype_modifiers	
+I	9	nuser_type	
+I	9	nvariable_declaration	tdynamict,
+I	10	nmulti_variable_declaration	t,
+I	10	nvariable_declaration	t,
+I	11	nfunction_type	
+I	11	nmulti_variable_declaration	tdynamict,
+I	11	nnot_nullable_type	
+I	11	nnullable_type	
+I	11	nparenthesized_type	
+I	11	nuser_type	
+I	11	nvariable_declaration	tdynamict,
+E	1	
+E	2	
+E	3	tdynamic
+E	4	
+E	5	
+E	6	tdynamic
+E	7	
+E	8	
+E	9	tdynamic
+E	10	
+E	11	tdynamic
+P	t:
+P	tdynamic
+K	line_string_expression
+S	0	0
+M	0	t${	1
+S	1	0
+M	1	nadditive_expression	2
+M	1	nanonymous_function	2
+M	1	nas_expression	2
+M	1	nbin_literal	2
+M	1	nboolean_literal	2
+M	1	ncall_expression	2
+M	1	ncallable_reference	2
+M	1	ncharacter_literal	2
+M	1	ncheck_expression	2
+M	1	ncollection_literal	2
+M	1	ncomparison_expression	2
+M	1	nconjunction_expression	2
+M	1	ndisjunction_expression	2
+M	1	nelvis_expression	2
+M	1	nequality_expression	2
+M	1	nhex_literal	2
+M	1	nif_expression	2
+M	1	nindexing_expression	2
+M	1	ninfix_expression	2
+M	1	ninteger_literal	2
+M	1	njump_expression	2
+M	1	nlambda_literal	2
+M	1	nlong_literal	2
+M	1	nmultiplicative_expression	2
+M	1	nnavigation_expression	2
+M	1	nnull_literal	2
+M	1	nobject_literal	2
+M	1	nparenthesized_expression	2
+M	1	npostfix_expression	2
+M	1	nprefix_expression	2
+M	1	nrange_expression	2
+M	1	nreal_literal	2
+M	1	nsimple_identifier	2
+M	1	nspread_expression	2
+M	1	nstring_literal	2
+M	1	nsuper_expression	2
+M	1	nthis_expression	2
+M	1	ntry_expression	2
+M	1	nunsigned_literal	2
+M	1	nwhen_expression	2
+S	2	0
+M	2	t}	3
+S	3	1
+I	0	nadditive_expression	t${
+I	0	nanonymous_function	t${
+I	0	nas_expression	t${
+I	0	nbin_literal	t${
+I	0	nboolean_literal	t${
+I	0	ncall_expression	t${
+I	0	ncallable_reference	t${
+I	0	ncharacter_literal	t${
+I	0	ncheck_expression	t${
+I	0	ncollection_literal	t${
+I	0	ncomparison_expression	t${
+I	0	nconjunction_expression	t${
+I	0	ndisjunction_expression	t${
+I	0	nelvis_expression	t${
+I	0	nequality_expression	t${
+I	0	nhex_literal	t${
+I	0	nif_expression	t${
+I	0	nindexing_expression	t${
+I	0	ninfix_expression	t${
+I	0	ninteger_literal	t${
+I	0	njump_expression	t${
+I	0	nlambda_literal	t${
+I	0	nlong_literal	t${
+I	0	nmultiplicative_expression	t${
+I	0	nnavigation_expression	t${
+I	0	nnull_literal	t${
+I	0	nobject_literal	t${
+I	0	nparenthesized_expression	t${
+I	0	npostfix_expression	t${
+I	0	nprefix_expression	t${
+I	0	nrange_expression	t${
+I	0	nreal_literal	t${
+I	0	nsimple_identifier	t${
+I	0	nspread_expression	t${
+I	0	nstring_literal	t${
+I	0	nsuper_expression	t${
+I	0	nthis_expression	t${
+I	0	ntry_expression	t${
+I	0	nunsigned_literal	t${
+I	0	nwhen_expression	t${
+I	1	nadditive_expression	
+I	1	nanonymous_function	
+I	1	nas_expression	
+I	1	nbin_literal	
+I	1	nboolean_literal	
+I	1	ncall_expression	
+I	1	ncallable_reference	
+I	1	ncharacter_literal	
+I	1	ncheck_expression	
+I	1	ncollection_literal	
+I	1	ncomparison_expression	
+I	1	nconjunction_expression	
+I	1	ndisjunction_expression	
+I	1	nelvis_expression	
+I	1	nequality_expression	
+I	1	nhex_literal	
+I	1	nif_expression	
+I	1	nindexing_expression	
+I	1	ninfix_expression	
+I	1	ninteger_literal	
+I	1	njump_expression	
+I	1	nlambda_literal	
+I	1	nlong_literal	
+I	1	nmultiplicative_expression	
+I	1	nnavigation_expression	
+I	1	nnull_literal	
+I	1	nobject_literal	
+I	1	nparenthesized_expression	
+I	1	npostfix_expression	
+I	1	nprefix_expression	
+I	1	nrange_expression	
+I	1	nreal_literal	
+I	1	nsimple_identifier	
+I	1	nspread_expression	
+I	1	nstring_literal	
+I	1	nsuper_expression	
+I	1	nthis_expression	
+I	1	ntry_expression	
+I	1	nunsigned_literal	
+I	1	nwhen_expression	
+E	2	t}
+E	3	
+K	long_literal
+S	0	0
+M	0	nbin_literal	1
+M	0	nhex_literal	1
+M	0	ninteger_literal	1
+S	1	0
+M	1	tL	2
+S	2	1
+I	0	nbin_literal	
+I	0	nhex_literal	
+I	0	ninteger_literal	
+E	1	tL
+E	2	
+K	multi_variable_declaration
+S	0	0
+M	0	t(	2
+M	0	t[	1
+S	1	0
+M	1	nvariable_declaration	3
+S	2	0
+M	2	nvariable_declaration	4
+S	3	0
+M	3	t,	6
+M	3	t]	5
+S	4	0
+M	4	t)	7
+M	4	t,	8
+S	5	1
+S	6	0
+M	6	nvariable_declaration	9
+M	6	t]	5
+S	7	1
+S	8	0
+M	8	nvariable_declaration	10
+M	8	t)	7
+S	9	0
+M	9	t,	6
+M	9	t]	5
+S	10	0
+M	10	t)	7
+M	10	t,	8
+I	1	nvariable_declaration	
+I	2	nvariable_declaration	
+I	3	nvariable_declaration	t,
+I	4	nvariable_declaration	t,
+I	6	nvariable_declaration	
+I	8	nvariable_declaration	
+I	9	nvariable_declaration	t,
+I	10	nvariable_declaration	t,
+E	3	t]
+E	4	t)
+E	5	
+E	6	t]
+E	7	
+E	8	t)
+E	9	t]
+E	10	t)
+K	not_nullable_type
+S	0	0
+M	0	nparenthesized_user_type	1
+M	0	ntype_modifiers	2
+M	0	nuser_type	1
+S	1	0
+M	1	t&	3
+S	2	0
+M	2	nparenthesized_user_type	1
+M	2	nuser_type	1
+S	3	0
+M	3	nparenthesized_user_type	4
+M	3	ntype_modifiers	5
+M	3	nuser_type	4
+S	4	1
+S	5	0
+M	5	nparenthesized_user_type	4
+M	5	nuser_type	4
+I	0	nparenthesized_user_type	
+I	0	ntype_modifiers	
+I	0	nuser_type	
+I	1	nparenthesized_user_type	t&
+I	1	ntype_modifiers	t&
+I	1	nuser_type	t&
+I	2	nparenthesized_user_type	
+I	2	nuser_type	
+I	3	nparenthesized_user_type	
+I	3	ntype_modifiers	
+I	3	nuser_type	
+I	5	nparenthesized_user_type	
+I	5	nuser_type	
+E	4	
+K	nullable_type
+S	0	0
+M	0	nparenthesized_type	1
+M	0	nuser_type	1
+M	0	tdynamic	1
+S	1	0
+M	1	nquest	2
+S	2	1
+M	2	nquest	2
+I	0	nparenthesized_type	
+I	0	nquest	tdynamic
+I	0	nuser_type	
+I	1	nquest	
+I	2	nquest	
+E	2	
+K	object_declaration
+S	0	0
+M	0	nmodifiers	1
+M	0	tobject	2
+S	1	0
+M	1	tobject	2
+S	2	0
+M	2	ntype_identifier	3
+S	3	1
+M	3	nclass_body	4
+M	3	t:	5
+S	4	1
+S	5	0
+M	5	ndelegation_specifier	6
+S	6	1
+M	6	nclass_body	4
+M	6	t,	7
+S	7	0
+M	7	ndelegation_specifier	8
+S	8	1
+M	8	nclass_body	4
+M	8	t,	7
+I	0	nmodifiers	
+I	0	ntype_identifier	tobject
+I	1	ntype_identifier	tobject
+I	2	ntype_identifier	
+I	3	nclass_body	
+I	3	ndelegation_specifier	t:
+I	5	ndelegation_specifier	
+I	6	nclass_body	
+I	6	ndelegation_specifier	t,
+I	7	ndelegation_specifier	
+I	8	nclass_body	
+I	8	ndelegation_specifier	t,
+E	3	
+E	4	
+E	6	
+E	8	
+K	object_literal
+S	0	0
+M	0	tdata	1
+M	0	tobject	2
+S	1	0
+M	1	tobject	2
+S	2	1
+M	2	nclass_body	3
+M	2	t:	4
+S	3	1
+S	4	0
+M	4	ndelegation_specifier	5
+S	5	1
+M	5	nclass_body	3
+M	5	t,	6
+S	6	0
+M	6	ndelegation_specifier	7
+S	7	1
+M	7	nclass_body	3
+M	7	t,	6
+I	0	nclass_body	tobject
+I	0	ndelegation_specifier	tobjectt:
+I	1	nclass_body	tobject
+I	1	ndelegation_specifier	tobjectt:
+I	2	nclass_body	
+I	2	ndelegation_specifier	t:
+I	4	ndelegation_specifier	
+I	5	nclass_body	
+I	5	ndelegation_specifier	t,
+I	6	ndelegation_specifier	
+I	7	nclass_body	
+I	7	ndelegation_specifier	t,
+E	0	tobject
+E	1	tobject
+E	2	
+E	3	
+E	5	
+E	7	
+P	t:
+P	tdata
+P	tobject
+K	package_header
+S	0	0
+M	0	tpackage	1
+S	1	0
+M	1	nidentifier	2
+S	2	1
+I	0	nidentifier	tpackage
+I	1	nidentifier	
+E	2	
+K	parameter
+S	0	0
+M	0	nsimple_identifier	1
+S	1	0
+M	1	t:	2
+S	2	0
+M	2	nfunction_type	3
+M	2	nnot_nullable_type	3
+M	2	nnullable_type	3
+M	2	nparenthesized_type	3
+M	2	ntype_modifiers	4
+M	2	nuser_type	3
+M	2	tdynamic	3
+S	3	1
+S	4	0
+M	4	nfunction_type	3
+M	4	nnot_nullable_type	3
+M	4	nnullable_type	3
+M	4	nparenthesized_type	3
+M	4	nuser_type	3
+M	4	tdynamic	3
+I	0	nsimple_identifier	
+I	1	nfunction_type	t:
+I	1	nnot_nullable_type	t:
+I	1	nnullable_type	t:
+I	1	nparenthesized_type	t:
+I	1	ntype_modifiers	t:
+I	1	nuser_type	t:
+I	2	nfunction_type	
+I	2	nnot_nullable_type	
+I	2	nnullable_type	
+I	2	nparenthesized_type	
+I	2	ntype_modifiers	
+I	2	nuser_type	
+I	4	nfunction_type	
+I	4	nnot_nullable_type	
+I	4	nnullable_type	
+I	4	nparenthesized_type	
+I	4	nuser_type	
+E	1	t:tdynamic
+E	2	tdynamic
+E	3	
+E	4	tdynamic
+K	parameters_with_optional_type
+S	0	0
+M	0	t(	1
+S	1	0
+M	1	nparameter_with_optional_type	2
+S	2	0
+M	2	t)	3
+M	2	t,	4
+S	3	1
+S	4	0
+M	4	nparameter_with_optional_type	5
+S	5	0
+M	5	t)	3
+M	5	t,	4
+I	0	nparameter_with_optional_type	t(
+I	1	nparameter_with_optional_type	
+I	2	nparameter_with_optional_type	t,
+I	4	nparameter_with_optional_type	
+I	5	nparameter_with_optional_type	t,
+E	2	t)
+E	3	
+E	5	t)
+K	parenthesized_expression
+S	0	0
+M	0	t(	1
+S	1	0
+M	1	nadditive_expression	2
+M	1	nanonymous_function	2
+M	1	nas_expression	2
+M	1	nbin_literal	2
+M	1	nboolean_literal	2
+M	1	ncall_expression	2
+M	1	ncallable_reference	2
+M	1	ncharacter_literal	2
+M	1	ncheck_expression	2
+M	1	ncollection_literal	2
+M	1	ncomparison_expression	2
+M	1	nconjunction_expression	2
+M	1	ndisjunction_expression	2
+M	1	nelvis_expression	2
+M	1	nequality_expression	2
+M	1	nhex_literal	2
+M	1	nif_expression	2
+M	1	nindexing_expression	2
+M	1	ninfix_expression	2
+M	1	ninteger_literal	2
+M	1	njump_expression	2
+M	1	nlambda_literal	2
+M	1	nlong_literal	2
+M	1	nmultiplicative_expression	2
+M	1	nnavigation_expression	2
+M	1	nnull_literal	2
+M	1	nobject_literal	2
+M	1	nparenthesized_expression	2
+M	1	npostfix_expression	2
+M	1	nprefix_expression	2
+M	1	nrange_expression	2
+M	1	nreal_literal	2
+M	1	nsimple_identifier	2
+M	1	nspread_expression	2
+M	1	nstring_literal	2
+M	1	nsuper_expression	2
+M	1	nthis_expression	2
+M	1	ntry_expression	2
+M	1	nunsigned_literal	2
+M	1	nwhen_expression	2
+S	2	0
+M	2	t)	3
+S	3	1
+I	0	nadditive_expression	t(
+I	0	nanonymous_function	t(
+I	0	nas_expression	t(
+I	0	nbin_literal	t(
+I	0	nboolean_literal	t(
+I	0	ncall_expression	t(
+I	0	ncallable_reference	t(
+I	0	ncharacter_literal	t(
+I	0	ncheck_expression	t(
+I	0	ncollection_literal	t(
+I	0	ncomparison_expression	t(
+I	0	nconjunction_expression	t(
+I	0	ndisjunction_expression	t(
+I	0	nelvis_expression	t(
+I	0	nequality_expression	t(
+I	0	nhex_literal	t(
+I	0	nif_expression	t(
+I	0	nindexing_expression	t(
+I	0	ninfix_expression	t(
+I	0	ninteger_literal	t(
+I	0	njump_expression	t(
+I	0	nlambda_literal	t(
+I	0	nlong_literal	t(
+I	0	nmultiplicative_expression	t(
+I	0	nnavigation_expression	t(
+I	0	nnull_literal	t(
+I	0	nobject_literal	t(
+I	0	nparenthesized_expression	t(
+I	0	npostfix_expression	t(
+I	0	nprefix_expression	t(
+I	0	nrange_expression	t(
+I	0	nreal_literal	t(
+I	0	nsimple_identifier	t(
+I	0	nspread_expression	t(
+I	0	nstring_literal	t(
+I	0	nsuper_expression	t(
+I	0	nthis_expression	t(
+I	0	ntry_expression	t(
+I	0	nunsigned_literal	t(
+I	0	nwhen_expression	t(
+I	1	nadditive_expression	
+I	1	nanonymous_function	
+I	1	nas_expression	
+I	1	nbin_literal	
+I	1	nboolean_literal	
+I	1	ncall_expression	
+I	1	ncallable_reference	
+I	1	ncharacter_literal	
+I	1	ncheck_expression	
+I	1	ncollection_literal	
+I	1	ncomparison_expression	
+I	1	nconjunction_expression	
+I	1	ndisjunction_expression	
+I	1	nelvis_expression	
+I	1	nequality_expression	
+I	1	nhex_literal	
+I	1	nif_expression	
+I	1	nindexing_expression	
+I	1	ninfix_expression	
+I	1	ninteger_literal	
+I	1	njump_expression	
+I	1	nlambda_literal	
+I	1	nlong_literal	
+I	1	nmultiplicative_expression	
+I	1	nnavigation_expression	
+I	1	nnull_literal	
+I	1	nobject_literal	
+I	1	nparenthesized_expression	
+I	1	npostfix_expression	
+I	1	nprefix_expression	
+I	1	nrange_expression	
+I	1	nreal_literal	
+I	1	nsimple_identifier	
+I	1	nspread_expression	
+I	1	nstring_literal	
+I	1	nsuper_expression	
+I	1	nthis_expression	
+I	1	ntry_expression	
+I	1	nunsigned_literal	
+I	1	nwhen_expression	
+E	2	t)
+E	3	
+K	parenthesized_type
+S	0	0
+M	0	t(	1
+S	1	0
+M	1	nfunction_type	2
+M	1	nnot_nullable_type	2
+M	1	nnullable_type	2
+M	1	nparenthesized_type	2
+M	1	ntype_modifiers	3
+M	1	nuser_type	2
+M	1	tdynamic	2
+S	2	0
+M	2	t)	4
+S	3	0
+M	3	nfunction_type	2
+M	3	nnot_nullable_type	2
+M	3	nnullable_type	2
+M	3	nparenthesized_type	2
+M	3	nuser_type	2
+M	3	tdynamic	2
+S	4	1
+I	0	nfunction_type	t(
+I	0	nnot_nullable_type	t(
+I	0	nnullable_type	t(
+I	0	nparenthesized_type	t(
+I	0	ntype_modifiers	t(
+I	0	nuser_type	t(
+I	1	nfunction_type	
+I	1	nnot_nullable_type	
+I	1	nnullable_type	
+I	1	nparenthesized_type	
+I	1	ntype_modifiers	
+I	1	nuser_type	
+I	3	nfunction_type	
+I	3	nnot_nullable_type	
+I	3	nnullable_type	
+I	3	nparenthesized_type	
+I	3	nuser_type	
+E	0	t(tdynamict)
+E	1	tdynamict)
+E	2	t)
+E	3	tdynamict)
+E	4	
+K	parenthesized_user_type
+S	0	0
+M	0	t(	1
+S	1	0
+M	1	nparenthesized_user_type	2
+M	1	nuser_type	2
+S	2	0
+M	2	t)	3
+S	3	1
+I	0	nparenthesized_user_type	t(
+I	0	nuser_type	t(
+I	1	nparenthesized_user_type	
+I	1	nuser_type	
+E	2	t)
+E	3	
+K	primary_constructor
+S	0	0
+M	0	nmodifiers	1
+M	0	t(	2
+S	1	0
+M	1	t(	2
+S	2	0
+M	2	nclass_parameter	3
+M	2	t)	4
+M	2	t,	5
+S	3	0
+M	3	t)	4
+M	3	t,	6
+S	4	1
+S	5	0
+M	5	t)	4
+S	6	0
+M	6	nclass_parameter	7
+M	6	t)	4
+S	7	0
+M	7	t)	4
+M	7	t,	6
+I	0	nclass_parameter	t(
+I	0	nmodifiers	
+I	1	nclass_parameter	t(
+I	2	nclass_parameter	
+I	3	nclass_parameter	t,
+I	6	nclass_parameter	
+I	7	nclass_parameter	t,
+E	0	t(t)
+E	1	t(t)
+E	2	t)
+E	3	t)
+E	4	
+E	5	t)
+E	6	t)
+E	7	t)
+K	property_declaration
+S	0	0
+M	0	nbinding_pattern_kind	1
+M	0	nmodifiers	2
+S	1	0
+M	1	nmulti_variable_declaration	4
+M	1	nreceiver_typereceiver	5
+M	1	ntype_parameters	3
+M	1	nvariable_declaration	4
+S	2	0
+M	2	nbinding_pattern_kind	1
+S	3	0
+M	3	nmulti_variable_declaration	4
+M	3	nreceiver_typereceiver	5
+M	3	nvariable_declaration	4
+S	4	1
+M	4	ngetter	6
+M	4	nproperty_delegate	9
+M	4	nsetter	7
+M	4	ntype_constraints	8
+M	4	t;	11
+M	4	t=	10
+S	5	0
+M	5	nmulti_variable_declaration	4
+M	5	nvariable_declaration	4
+M	5	t.	12
+S	6	1
+M	6	nsetter	13
+S	7	1
+M	7	ngetter	14
+S	8	1
+M	8	ngetter	6
+M	8	nproperty_delegate	9
+M	8	nsetter	7
+M	8	t;	11
+M	8	t=	10
+S	9	1
+M	9	ngetter	6
+M	9	nsetter	7
+M	9	t;	11
+S	10	0
+M	10	nadditive_expression	15
+M	10	nanonymous_function	15
+M	10	nas_expression	15
+M	10	nbin_literal	15
+M	10	nboolean_literal	15
+M	10	ncall_expression	15
+M	10	ncallable_reference	15
+M	10	ncharacter_literal	15
+M	10	ncheck_expression	15
+M	10	ncollection_literal	15
+M	10	ncomparison_expression	15
+M	10	nconjunction_expression	15
+M	10	ndisjunction_expression	15
+M	10	nelvis_expression	15
+M	10	nequality_expression	15
+M	10	nhex_literal	15
+M	10	nif_expression	15
+M	10	nindexing_expression	15
+M	10	ninfix_expression	15
+M	10	ninteger_literal	15
+M	10	njump_expression	15
+M	10	nlambda_literal	15
+M	10	nlong_literal	15
+M	10	nmultiplicative_expression	15
+M	10	nnavigation_expression	15
+M	10	nnull_literal	15
+M	10	nobject_literal	15
+M	10	nparenthesized_expression	15
+M	10	npostfix_expression	15
+M	10	nprefix_expression	15
+M	10	nrange_expression	15
+M	10	nreal_literal	15
+M	10	nsimple_identifier	15
+M	10	nspread_expression	15
+M	10	nstring_literal	15
+M	10	nsuper_expression	15
+M	10	nthis_expression	15
+M	10	ntry_expression	15
+M	10	nunsigned_literal	15
+M	10	nwhen_expression	15
+S	11	1
+M	11	ngetter	6
+M	11	nsetter	7
+S	12	0
+M	12	nmulti_variable_declaration	4
+M	12	nvariable_declaration	4
+S	13	1
+S	14	1
+S	15	1
+M	15	ngetter	6
+M	15	nsetter	7
+M	15	t;	11
+I	0	nbinding_pattern_kind	
+I	0	nmodifiers	
+I	1	nmulti_variable_declaration	
+I	1	nreceiver_typereceiver	
+I	1	ntype_parameters	
+I	1	nvariable_declaration	
+I	2	nbinding_pattern_kind	
+I	3	nmulti_variable_declaration	
+I	3	nreceiver_typereceiver	
+I	3	nvariable_declaration	
+I	4	nadditive_expression	t=
+I	4	nanonymous_function	t=
+I	4	nas_expression	t=
+I	4	nbin_literal	t=
+I	4	nboolean_literal	t=
+I	4	ncall_expression	t=
+I	4	ncallable_reference	t=
+I	4	ncharacter_literal	t=
+I	4	ncheck_expression	t=
+I	4	ncollection_literal	t=
+I	4	ncomparison_expression	t=
+I	4	nconjunction_expression	t=
+I	4	ndisjunction_expression	t=
+I	4	nelvis_expression	t=
+I	4	nequality_expression	t=
+I	4	ngetter	
+I	4	nhex_literal	t=
+I	4	nif_expression	t=
+I	4	nindexing_expression	t=
+I	4	ninfix_expression	t=
+I	4	ninteger_literal	t=
+I	4	njump_expression	t=
+I	4	nlambda_literal	t=
+I	4	nlong_literal	t=
+I	4	nmultiplicative_expression	t=
+I	4	nnavigation_expression	t=
+I	4	nnull_literal	t=
+I	4	nobject_literal	t=
+I	4	nparenthesized_expression	t=
+I	4	npostfix_expression	t=
+I	4	nprefix_expression	t=
+I	4	nproperty_delegate	
+I	4	nrange_expression	t=
+I	4	nreal_literal	t=
+I	4	nsetter	
+I	4	nsimple_identifier	t=
+I	4	nspread_expression	t=
+I	4	nstring_literal	t=
+I	4	nsuper_expression	t=
+I	4	nthis_expression	t=
+I	4	ntry_expression	t=
+I	4	ntype_constraints	
+I	4	nunsigned_literal	t=
+I	4	nwhen_expression	t=
+I	5	nmulti_variable_declaration	
+I	5	nvariable_declaration	
+I	6	nsetter	
+I	7	ngetter	
+I	8	nadditive_expression	t=
+I	8	nanonymous_function	t=
+I	8	nas_expression	t=
+I	8	nbin_literal	t=
+I	8	nboolean_literal	t=
+I	8	ncall_expression	t=
+I	8	ncallable_reference	t=
+I	8	ncharacter_literal	t=
+I	8	ncheck_expression	t=
+I	8	ncollection_literal	t=
+I	8	ncomparison_expression	t=
+I	8	nconjunction_expression	t=
+I	8	ndisjunction_expression	t=
+I	8	nelvis_expression	t=
+I	8	nequality_expression	t=
+I	8	ngetter	
+I	8	nhex_literal	t=
+I	8	nif_expression	t=
+I	8	nindexing_expression	t=
+I	8	ninfix_expression	t=
+I	8	ninteger_literal	t=
+I	8	njump_expression	t=
+I	8	nlambda_literal	t=
+I	8	nlong_literal	t=
+I	8	nmultiplicative_expression	t=
+I	8	nnavigation_expression	t=
+I	8	nnull_literal	t=
+I	8	nobject_literal	t=
+I	8	nparenthesized_expression	t=
+I	8	npostfix_expression	t=
+I	8	nprefix_expression	t=
+I	8	nproperty_delegate	
+I	8	nrange_expression	t=
+I	8	nreal_literal	t=
+I	8	nsetter	
+I	8	nsimple_identifier	t=
+I	8	nspread_expression	t=
+I	8	nstring_literal	t=
+I	8	nsuper_expression	t=
+I	8	nthis_expression	t=
+I	8	ntry_expression	t=
+I	8	nunsigned_literal	t=
+I	8	nwhen_expression	t=
+I	9	ngetter	
+I	9	nsetter	
+I	10	nadditive_expression	
+I	10	nanonymous_function	
+I	10	nas_expression	
+I	10	nbin_literal	
+I	10	nboolean_literal	
+I	10	ncall_expression	
+I	10	ncallable_reference	
+I	10	ncharacter_literal	
+I	10	ncheck_expression	
+I	10	ncollection_literal	
+I	10	ncomparison_expression	
+I	10	nconjunction_expression	
+I	10	ndisjunction_expression	
+I	10	nelvis_expression	
+I	10	nequality_expression	
+I	10	nhex_literal	
+I	10	nif_expression	
+I	10	nindexing_expression	
+I	10	ninfix_expression	
+I	10	ninteger_literal	
+I	10	njump_expression	
+I	10	nlambda_literal	
+I	10	nlong_literal	
+I	10	nmultiplicative_expression	
+I	10	nnavigation_expression	
+I	10	nnull_literal	
+I	10	nobject_literal	
+I	10	nparenthesized_expression	
+I	10	npostfix_expression	
+I	10	nprefix_expression	
+I	10	nrange_expression	
+I	10	nreal_literal	
+I	10	nsimple_identifier	
+I	10	nspread_expression	
+I	10	nstring_literal	
+I	10	nsuper_expression	
+I	10	nthis_expression	
+I	10	ntry_expression	
+I	10	nunsigned_literal	
+I	10	nwhen_expression	
+I	11	ngetter	
+I	11	nsetter	
+I	12	nmulti_variable_declaration	
+I	12	nvariable_declaration	
+I	15	ngetter	
+I	15	nsetter	
+E	4	
+E	6	
+E	7	
+E	8	
+E	9	
+E	11	
+E	13	
+E	14	
+E	15	
+P	t.
+K	property_delegate
+S	0	0
+M	0	tby	1
+S	1	0
+M	1	nadditive_expression	2
+M	1	nanonymous_function	2
+M	1	nas_expression	2
+M	1	nbin_literal	2
+M	1	nboolean_literal	2
+M	1	ncall_expression	2
+M	1	ncallable_reference	2
+M	1	ncharacter_literal	2
+M	1	ncheck_expression	2
+M	1	ncollection_literal	2
+M	1	ncomparison_expression	2
+M	1	nconjunction_expression	2
+M	1	ndisjunction_expression	2
+M	1	nelvis_expression	2
+M	1	nequality_expression	2
+M	1	nhex_literal	2
+M	1	nif_expression	2
+M	1	nindexing_expression	2
+M	1	ninfix_expression	2
+M	1	ninteger_literal	2
+M	1	njump_expression	2
+M	1	nlambda_literal	2
+M	1	nlong_literal	2
+M	1	nmultiplicative_expression	2
+M	1	nnavigation_expression	2
+M	1	nnull_literal	2
+M	1	nobject_literal	2
+M	1	nparenthesized_expression	2
+M	1	npostfix_expression	2
+M	1	nprefix_expression	2
+M	1	nrange_expression	2
+M	1	nreal_literal	2
+M	1	nsimple_identifier	2
+M	1	nspread_expression	2
+M	1	nstring_literal	2
+M	1	nsuper_expression	2
+M	1	nthis_expression	2
+M	1	ntry_expression	2
+M	1	nunsigned_literal	2
+M	1	nwhen_expression	2
+S	2	1
+I	0	nadditive_expression	tby
+I	0	nanonymous_function	tby
+I	0	nas_expression	tby
+I	0	nbin_literal	tby
+I	0	nboolean_literal	tby
+I	0	ncall_expression	tby
+I	0	ncallable_reference	tby
+I	0	ncharacter_literal	tby
+I	0	ncheck_expression	tby
+I	0	ncollection_literal	tby
+I	0	ncomparison_expression	tby
+I	0	nconjunction_expression	tby
+I	0	ndisjunction_expression	tby
+I	0	nelvis_expression	tby
+I	0	nequality_expression	tby
+I	0	nhex_literal	tby
+I	0	nif_expression	tby
+I	0	nindexing_expression	tby
+I	0	ninfix_expression	tby
+I	0	ninteger_literal	tby
+I	0	njump_expression	tby
+I	0	nlambda_literal	tby
+I	0	nlong_literal	tby
+I	0	nmultiplicative_expression	tby
+I	0	nnavigation_expression	tby
+I	0	nnull_literal	tby
+I	0	nobject_literal	tby
+I	0	nparenthesized_expression	tby
+I	0	npostfix_expression	tby
+I	0	nprefix_expression	tby
+I	0	nrange_expression	tby
+I	0	nreal_literal	tby
+I	0	nsimple_identifier	tby
+I	0	nspread_expression	tby
+I	0	nstring_literal	tby
+I	0	nsuper_expression	tby
+I	0	nthis_expression	tby
+I	0	ntry_expression	tby
+I	0	nunsigned_literal	tby
+I	0	nwhen_expression	tby
+I	1	nadditive_expression	
+I	1	nanonymous_function	
+I	1	nas_expression	
+I	1	nbin_literal	
+I	1	nboolean_literal	
+I	1	ncall_expression	
+I	1	ncallable_reference	
+I	1	ncharacter_literal	
+I	1	ncheck_expression	
+I	1	ncollection_literal	
+I	1	ncomparison_expression	
+I	1	nconjunction_expression	
+I	1	ndisjunction_expression	
+I	1	nelvis_expression	
+I	1	nequality_expression	
+I	1	nhex_literal	
+I	1	nif_expression	
+I	1	nindexing_expression	
+I	1	ninfix_expression	
+I	1	ninteger_literal	
+I	1	njump_expression	
+I	1	nlambda_literal	
+I	1	nlong_literal	
+I	1	nmultiplicative_expression	
+I	1	nnavigation_expression	
+I	1	nnull_literal	
+I	1	nobject_literal	
+I	1	nparenthesized_expression	
+I	1	npostfix_expression	
+I	1	nprefix_expression	
+I	1	nrange_expression	
+I	1	nreal_literal	
+I	1	nsimple_identifier	
+I	1	nspread_expression	
+I	1	nstring_literal	
+I	1	nsuper_expression	
+I	1	nthis_expression	
+I	1	ntry_expression	
+I	1	nunsigned_literal	
+I	1	nwhen_expression	
+E	2	
+K	receiver_type
+S	0	0
+M	0	nnullable_type	1
+M	0	nparenthesized_type	1
+M	0	ntype_modifiers	2
+M	0	nuser_type	1
+M	0	tdynamic	1
+S	1	1
+S	2	0
+M	2	nnullable_type	1
+M	2	nparenthesized_type	1
+M	2	nuser_type	1
+M	2	tdynamic	1
+I	0	nnullable_type	
+I	0	nparenthesized_type	
+I	0	ntype_modifiers	
+I	0	nuser_type	
+I	2	nnullable_type	
+I	2	nparenthesized_type	
+I	2	nuser_type	
+E	0	tdynamic
+E	1	
+E	2	tdynamic
+K	secondary_constructor
+S	0	0
+M	0	nmodifiers	1
+M	0	tconstructor	2
+S	1	0
+M	1	tconstructor	2
+S	2	0
+M	2	nfunction_value_parameters	3
+S	3	1
+M	3	t:	4
+M	3	t{	5
+S	4	0
+M	4	nconstructor_delegation_call	6
+S	5	0
+M	5	nstatements	7
+M	5	t}	8
+S	6	1
+M	6	t{	5
+S	7	0
+M	7	t}	8
+S	8	1
+I	0	nfunction_value_parameters	tconstructor
+I	0	nmodifiers	
+I	1	nfunction_value_parameters	tconstructor
+I	2	nfunction_value_parameters	
+I	3	nconstructor_delegation_call	t:
+I	3	nstatements	t{
+I	4	nconstructor_delegation_call	
+I	5	nstatements	
+I	6	nstatements	t{
+E	3	
+E	5	t}
+E	6	
+E	7	t}
+E	8	
+K	setter
+S	0	0
+M	0	nmodifiers	1
+M	0	tset	2
+S	1	0
+M	1	tset	2
+S	2	1
+M	2	t(	3
+S	3	0
+M	3	nparameter_with_optional_type	4
+S	4	0
+M	4	t)	5
+S	5	0
+M	5	nfunction_body	6
+M	5	t:	7
+S	6	1
+S	7	0
+M	7	nfunction_type	8
+M	7	nnot_nullable_type	8
+M	7	nnullable_type	8
+M	7	nparenthesized_type	8
+M	7	ntype_modifiers	9
+M	7	nuser_type	8
+M	7	tdynamic	8
+S	8	0
+M	8	nfunction_body	6
+S	9	0
+M	9	nfunction_type	8
+M	9	nnot_nullable_type	8
+M	9	nnullable_type	8
+M	9	nparenthesized_type	8
+M	9	nuser_type	8
+M	9	tdynamic	8
+I	0	nmodifiers	
+I	0	nparameter_with_optional_type	tsett(
+I	1	nparameter_with_optional_type	tsett(
+I	2	nparameter_with_optional_type	t(
+I	3	nparameter_with_optional_type	
+I	4	nfunction_body	t)
+I	4	nfunction_type	t)t:
+I	4	nnot_nullable_type	t)t:
+I	4	nnullable_type	t)t:
+I	4	nparenthesized_type	t)t:
+I	4	ntype_modifiers	t)t:
+I	4	nuser_type	t)t:
+I	5	nfunction_body	
+I	5	nfunction_type	t:
+I	5	nnot_nullable_type	t:
+I	5	nnullable_type	t:
+I	5	nparenthesized_type	t:
+I	5	ntype_modifiers	t:
+I	5	nuser_type	t:
+I	7	nfunction_body	tdynamic
+I	7	nfunction_type	
+I	7	nnot_nullable_type	
+I	7	nnullable_type	
+I	7	nparenthesized_type	
+I	7	ntype_modifiers	
+I	7	nuser_type	
+I	8	nfunction_body	
+I	9	nfunction_body	tdynamic
+I	9	nfunction_type	
+I	9	nnot_nullable_type	
+I	9	nnullable_type	
+I	9	nparenthesized_type	
+I	9	nuser_type	
+E	0	tset
+E	1	tset
+E	2	
+E	6	
+P	t:
+P	tdynamic
+K	shebang_line
+S	0	0
+M	0	t#!	1
+S	1	1
+E	0	t#!
+E	1	
+K	spread_expression
+S	0	0
+M	0	t*	1
+S	1	0
+M	1	nadditive_expression	2
+M	1	nanonymous_function	2
+M	1	nas_expression	2
+M	1	nbin_literal	2
+M	1	nboolean_literal	2
+M	1	ncall_expression	2
+M	1	ncallable_reference	2
+M	1	ncharacter_literal	2
+M	1	ncheck_expression	2
+M	1	ncollection_literal	2
+M	1	ncomparison_expression	2
+M	1	nconjunction_expression	2
+M	1	ndisjunction_expression	2
+M	1	nelvis_expression	2
+M	1	nequality_expression	2
+M	1	nhex_literal	2
+M	1	nif_expression	2
+M	1	nindexing_expression	2
+M	1	ninfix_expression	2
+M	1	ninteger_literal	2
+M	1	njump_expression	2
+M	1	nlambda_literal	2
+M	1	nlong_literal	2
+M	1	nmultiplicative_expression	2
+M	1	nnavigation_expression	2
+M	1	nnull_literal	2
+M	1	nobject_literal	2
+M	1	nparenthesized_expression	2
+M	1	npostfix_expression	2
+M	1	nprefix_expression	2
+M	1	nrange_expression	2
+M	1	nreal_literal	2
+M	1	nsimple_identifier	2
+M	1	nspread_expression	2
+M	1	nstring_literal	2
+M	1	nsuper_expression	2
+M	1	nthis_expression	2
+M	1	ntry_expression	2
+M	1	nunsigned_literal	2
+M	1	nwhen_expression	2
+S	2	1
+I	0	nadditive_expression	t*
+I	0	nanonymous_function	t*
+I	0	nas_expression	t*
+I	0	nbin_literal	t*
+I	0	nboolean_literal	t*
+I	0	ncall_expression	t*
+I	0	ncallable_reference	t*
+I	0	ncharacter_literal	t*
+I	0	ncheck_expression	t*
+I	0	ncollection_literal	t*
+I	0	ncomparison_expression	t*
+I	0	nconjunction_expression	t*
+I	0	ndisjunction_expression	t*
+I	0	nelvis_expression	t*
+I	0	nequality_expression	t*
+I	0	nhex_literal	t*
+I	0	nif_expression	t*
+I	0	nindexing_expression	t*
+I	0	ninfix_expression	t*
+I	0	ninteger_literal	t*
+I	0	njump_expression	t*
+I	0	nlambda_literal	t*
+I	0	nlong_literal	t*
+I	0	nmultiplicative_expression	t*
+I	0	nnavigation_expression	t*
+I	0	nnull_literal	t*
+I	0	nobject_literal	t*
+I	0	nparenthesized_expression	t*
+I	0	npostfix_expression	t*
+I	0	nprefix_expression	t*
+I	0	nrange_expression	t*
+I	0	nreal_literal	t*
+I	0	nsimple_identifier	t*
+I	0	nspread_expression	t*
+I	0	nstring_literal	t*
+I	0	nsuper_expression	t*
+I	0	nthis_expression	t*
+I	0	ntry_expression	t*
+I	0	nunsigned_literal	t*
+I	0	nwhen_expression	t*
+I	1	nadditive_expression	
+I	1	nanonymous_function	
+I	1	nas_expression	
+I	1	nbin_literal	
+I	1	nboolean_literal	
+I	1	ncall_expression	
+I	1	ncallable_reference	
+I	1	ncharacter_literal	
+I	1	ncheck_expression	
+I	1	ncollection_literal	
+I	1	ncomparison_expression	
+I	1	nconjunction_expression	
+I	1	ndisjunction_expression	
+I	1	nelvis_expression	
+I	1	nequality_expression	
+I	1	nhex_literal	
+I	1	nif_expression	
+I	1	nindexing_expression	
+I	1	ninfix_expression	
+I	1	ninteger_literal	
+I	1	njump_expression	
+I	1	nlambda_literal	
+I	1	nlong_literal	
+I	1	nmultiplicative_expression	
+I	1	nnavigation_expression	
+I	1	nnull_literal	
+I	1	nobject_literal	
+I	1	nparenthesized_expression	
+I	1	npostfix_expression	
+I	1	nprefix_expression	
+I	1	nrange_expression	
+I	1	nreal_literal	
+I	1	nsimple_identifier	
+I	1	nspread_expression	
+I	1	nstring_literal	
+I	1	nsuper_expression	
+I	1	nthis_expression	
+I	1	ntry_expression	
+I	1	nunsigned_literal	
+I	1	nwhen_expression	
+E	2	
+K	super_expression
+S	0	0
+M	0	tsuper	1
+M	0	tsuper@	2
+S	1	1
+M	1	t<	3
+S	2	0
+M	2	ntype_identifier	4
+S	3	0
+M	3	nfunction_type	5
+M	3	nnot_nullable_type	5
+M	3	nnullable_type	5
+M	3	nparenthesized_type	5
+M	3	ntype_modifiers	6
+M	3	nuser_type	5
+M	3	tdynamic	5
+S	4	1
+S	5	0
+M	5	t>	7
+S	6	0
+M	6	nfunction_type	5
+M	6	nnot_nullable_type	5
+M	6	nnullable_type	5
+M	6	nparenthesized_type	5
+M	6	nuser_type	5
+M	6	tdynamic	5
+S	7	1
+M	7	t@	8
+S	8	0
+M	8	ntype_identifier	9
+S	9	1
+I	0	nfunction_type	tsupert<
+I	0	nnot_nullable_type	tsupert<
+I	0	nnullable_type	tsupert<
+I	0	nparenthesized_type	tsupert<
+I	0	ntype_identifier	tsuper@
+I	0	ntype_modifiers	tsupert<
+I	0	nuser_type	tsupert<
+I	1	nfunction_type	t<
+I	1	nnot_nullable_type	t<
+I	1	nnullable_type	t<
+I	1	nparenthesized_type	t<
+I	1	ntype_identifier	t<tdynamict>t@
+I	1	ntype_modifiers	t<
+I	1	nuser_type	t<
+I	2	ntype_identifier	
+I	3	nfunction_type	
+I	3	nnot_nullable_type	
+I	3	nnullable_type	
+I	3	nparenthesized_type	
+I	3	ntype_identifier	tdynamict>t@
+I	3	ntype_modifiers	
+I	3	nuser_type	
+I	5	ntype_identifier	t>t@
+I	6	nfunction_type	
+I	6	nnot_nullable_type	
+I	6	nnullable_type	
+I	6	nparenthesized_type	
+I	6	ntype_identifier	tdynamict>t@
+I	6	nuser_type	
+I	7	ntype_identifier	t@
+I	8	ntype_identifier	
+E	0	tsuper
+E	1	
+E	3	tdynamict>
+E	4	
+E	5	t>
+E	6	tdynamict>
+E	7	
+E	9	
+P	t@
+P	tdynamic
+P	tsuper
+K	this_expression
+S	0	0
+M	0	tthis	1
+M	0	tthis@	2
+S	1	1
+S	2	0
+M	2	ntype_identifier	3
+S	3	1
+I	0	ntype_identifier	tthis@
+I	2	ntype_identifier	
+E	0	tthis
+E	1	
+E	3	
+K	try_expression
+S	0	0
+M	0	ttry	1
+S	1	0
+M	1	t{	2
+S	2	0
+M	2	nstatements	3
+M	2	t}	4
+S	3	0
+M	3	t}	4
+S	4	0
+M	4	ncatch_block	5
+M	4	nfinally_block	6
+S	5	1
+M	5	ncatch_block	5
+M	5	nfinally_block	7
+S	6	1
+S	7	1
+I	0	ncatch_block	ttryt{t}
+I	0	nfinally_block	ttryt{t}
+I	0	nstatements	ttryt{
+I	1	ncatch_block	t{t}
+I	1	nfinally_block	t{t}
+I	1	nstatements	t{
+I	2	ncatch_block	t}
+I	2	nfinally_block	t}
+I	2	nstatements	
+I	3	ncatch_block	t}
+I	3	nfinally_block	t}
+I	4	ncatch_block	
+I	4	nfinally_block	
+I	5	ncatch_block	
+I	5	nfinally_block	
+E	5	
+E	6	
+E	7	
+K	type_alias
+S	0	0
+M	0	nmodifiers	1
+M	0	ttypealias	2
+S	1	0
+M	1	ttypealias	2
+S	2	0
+M	2	ntype_identifier	3
+S	3	0
+M	3	ntype_parameters	4
+M	3	t=	5
+S	4	0
+M	4	t=	5
+S	5	0
+M	5	nfunction_type	6
+M	5	nnot_nullable_type	6
+M	5	nnullable_type	6
+M	5	nparenthesized_type	6
+M	5	ntype_modifiers	7
+M	5	nuser_type	6
+M	5	tdynamic	6
+S	6	1
+S	7	0
+M	7	nfunction_type	6
+M	7	nnot_nullable_type	6
+M	7	nnullable_type	6
+M	7	nparenthesized_type	6
+M	7	nuser_type	6
+M	7	tdynamic	6
+I	0	nmodifiers	
+I	0	ntype_identifier	ttypealias
+I	1	ntype_identifier	ttypealias
+I	2	ntype_identifier	
+I	3	nfunction_type	t=
+I	3	nnot_nullable_type	t=
+I	3	nnullable_type	t=
+I	3	nparenthesized_type	t=
+I	3	ntype_modifiers	t=
+I	3	ntype_parameters	
+I	3	nuser_type	t=
+I	4	nfunction_type	t=
+I	4	nnot_nullable_type	t=
+I	4	nnullable_type	t=
+I	4	nparenthesized_type	t=
+I	4	ntype_modifiers	t=
+I	4	nuser_type	t=
+I	5	nfunction_type	
+I	5	nnot_nullable_type	
+I	5	nnullable_type	
+I	5	nparenthesized_type	
+I	5	ntype_modifiers	
+I	5	nuser_type	
+I	7	nfunction_type	
+I	7	nnot_nullable_type	
+I	7	nnullable_type	
+I	7	nparenthesized_type	
+I	7	nuser_type	
+E	3	t=tdynamic
+E	4	t=tdynamic
+E	5	tdynamic
+E	6	
+E	7	tdynamic
+K	type_arguments
+S	0	0
+M	0	t<	1
+S	1	0
+M	1	ntype_projection	2
+S	2	0
+M	2	t,	3
+M	2	t>	4
+S	3	0
+M	3	ntype_projection	5
+M	3	t>	4
+S	4	1
+S	5	0
+M	5	t,	3
+M	5	t>	4
+I	0	ntype_projection	t<
+I	1	ntype_projection	
+I	2	ntype_projection	t,
+I	3	ntype_projection	
+I	5	ntype_projection	t,
+E	2	t>
+E	3	t>
+E	4	
+E	5	t>
+K	type_constraint
+S	0	0
+M	0	nannotation	1
+M	0	ntype_identifier	2
+S	1	0
+M	1	nannotation	1
+M	1	ntype_identifier	2
+S	2	0
+M	2	t:	3
+S	3	0
+M	3	nfunction_type	4
+M	3	nnot_nullable_type	4
+M	3	nnullable_type	4
+M	3	nparenthesized_type	4
+M	3	ntype_modifiers	5
+M	3	nuser_type	4
+M	3	tdynamic	4
+S	4	1
+S	5	0
+M	5	nfunction_type	4
+M	5	nnot_nullable_type	4
+M	5	nnullable_type	4
+M	5	nparenthesized_type	4
+M	5	nuser_type	4
+M	5	tdynamic	4
+I	0	nannotation	
+I	0	ntype_identifier	
+I	1	nannotation	
+I	1	ntype_identifier	
+I	2	nfunction_type	t:
+I	2	nnot_nullable_type	t:
+I	2	nnullable_type	t:
+I	2	nparenthesized_type	t:
+I	2	ntype_modifiers	t:
+I	2	nuser_type	t:
+I	3	nfunction_type	
+I	3	nnot_nullable_type	
+I	3	nnullable_type	
+I	3	nparenthesized_type	
+I	3	ntype_modifiers	
+I	3	nuser_type	
+I	5	nfunction_type	
+I	5	nnot_nullable_type	
+I	5	nnullable_type	
+I	5	nparenthesized_type	
+I	5	nuser_type	
+E	2	t:tdynamic
+E	3	tdynamic
+E	4	
+E	5	tdynamic
+K	type_constraints
+S	0	0
+M	0	twhere	1
+S	1	0
+M	1	ntype_constraint	2
+S	2	1
+M	2	t,	3
+S	3	0
+M	3	ntype_constraint	4
+S	4	1
+M	4	t,	3
+I	0	ntype_constraint	twhere
+I	1	ntype_constraint	
+I	2	ntype_constraint	t,
+I	3	ntype_constraint	
+I	4	ntype_constraint	t,
+E	2	
+E	4	
+K	type_parameters
+S	0	0
+M	0	t<	1
+S	1	0
+M	1	ntype_parameter	2
+S	2	0
+M	2	t,	3
+M	2	t>	4
+S	3	0
+M	3	ntype_parameter	5
+M	3	t>	4
+S	4	1
+S	5	0
+M	5	t,	3
+M	5	t>	4
+I	0	ntype_parameter	t<
+I	1	ntype_parameter	
+I	2	ntype_parameter	t,
+I	3	ntype_parameter	
+I	5	ntype_parameter	t,
+E	2	t>
+E	3	t>
+E	4	
+E	5	t>
+K	user_type
+S	0	0
+M	0	ntype_identifier	1
+S	1	1
+M	1	ntype_arguments	2
+M	1	t.	3
+S	2	1
+M	2	t.	3
+S	3	0
+M	3	ntype_identifier	4
+S	4	1
+M	4	ntype_arguments	5
+M	4	t.	3
+S	5	1
+M	5	t.	3
+I	0	ntype_identifier	
+I	1	ntype_arguments	
+I	1	ntype_identifier	t.
+I	2	ntype_identifier	t.
+I	3	ntype_identifier	
+I	4	ntype_arguments	
+I	4	ntype_identifier	t.
+I	5	ntype_identifier	t.
+E	1	
+E	2	
+E	4	
+E	5	
+K	value_arguments
+S	0	0
+M	0	t(	1
+S	1	0
+M	1	nvalue_argument	2
+M	1	t)	3
+S	2	0
+M	2	t)	3
+M	2	t,	4
+S	3	1
+S	4	0
+M	4	nvalue_argument	5
+M	4	t)	3
+S	5	0
+M	5	t)	3
+M	5	t,	4
+I	0	nvalue_argument	t(
+I	1	nvalue_argument	
+I	2	nvalue_argument	t,
+I	4	nvalue_argument	
+I	5	nvalue_argument	t,
+E	0	t(t)
+E	1	t)
+E	2	t)
+E	3	
+E	4	t)
+E	5	t)
+K	when_entry
+S	0	0
+M	0	nwhen_condition	1
+M	0	telse	2
+S	1	0
+M	1	nguard_condition	3
+M	1	t,	4
+M	1	t->	5
+S	2	0
+M	2	t->	5
+S	3	0
+M	3	t,	6
+M	3	t->	5
+S	4	0
+M	4	nwhen_condition	7
+M	4	t->	5
+S	5	0
+M	5	ncontrol_structure_body	8
+S	6	0
+M	6	t->	5
+S	7	0
+M	7	t,	9
+M	7	t->	5
+S	8	1
+S	9	0
+M	9	nwhen_condition	7
+M	9	t->	5
+I	0	ncontrol_structure_body	telset->
+I	0	nwhen_condition	
+I	1	ncontrol_structure_body	t->
+I	1	nguard_condition	
+I	1	nwhen_condition	t,
+I	2	ncontrol_structure_body	t->
+I	3	ncontrol_structure_body	t->
+I	4	ncontrol_structure_body	t->
+I	4	nwhen_condition	
+I	5	ncontrol_structure_body	
+I	6	ncontrol_structure_body	t->
+I	7	ncontrol_structure_body	t->
+I	7	nwhen_condition	t,
+I	9	ncontrol_structure_body	t->
+I	9	nwhen_condition	
+E	8	
+P	t->
+K	when_expression
+S	0	0
+M	0	twhen	1
+S	1	0
+M	1	nwhen_subject	2
+M	1	t{	3
+S	2	0
+M	2	t{	3
+S	3	0
+M	3	nwhen_entry	4
+M	3	t}	5
+S	4	0
+M	4	nwhen_entry	4
+M	4	t}	5
+S	5	1
+I	0	nwhen_entry	twhent{
+I	0	nwhen_subject	twhen
+I	1	nwhen_entry	t{
+I	1	nwhen_subject	
+I	2	nwhen_entry	t{
+I	3	nwhen_entry	
+I	4	nwhen_entry	
+E	0	twhent{t}
+E	1	t{t}
+E	2	t{t}
+E	3	t}
+E	4	t}
+E	5	
+K	when_subject
+S	0	0
+M	0	t(	1
+S	1	0
+M	1	nadditive_expression	2
+M	1	nannotation	3
+M	1	nanonymous_function	2
+M	1	nas_expression	2
+M	1	nbin_literal	2
+M	1	nboolean_literal	2
+M	1	ncall_expression	2
+M	1	ncallable_reference	2
+M	1	ncharacter_literal	2
+M	1	ncheck_expression	2
+M	1	ncollection_literal	2
+M	1	ncomparison_expression	2
+M	1	nconjunction_expression	2
+M	1	ndisjunction_expression	2
+M	1	nelvis_expression	2
+M	1	nequality_expression	2
+M	1	nhex_literal	2
+M	1	nif_expression	2
+M	1	nindexing_expression	2
+M	1	ninfix_expression	2
+M	1	ninteger_literal	2
+M	1	njump_expression	2
+M	1	nlambda_literal	2
+M	1	nlong_literal	2
+M	1	nmultiplicative_expression	2
+M	1	nnavigation_expression	2
+M	1	nnull_literal	2
+M	1	nobject_literal	2
+M	1	nparenthesized_expression	2
+M	1	npostfix_expression	2
+M	1	nprefix_expression	2
+M	1	nrange_expression	2
+M	1	nreal_literal	2
+M	1	nsimple_identifier	2
+M	1	nspread_expression	2
+M	1	nstring_literal	2
+M	1	nsuper_expression	2
+M	1	nthis_expression	2
+M	1	ntry_expression	2
+M	1	nunsigned_literal	2
+M	1	nwhen_expression	2
+M	1	tval	4
+S	2	0
+M	2	t)	5
+S	3	0
+M	3	nannotation	3
+M	3	tval	4
+S	4	0
+M	4	nvariable_declaration	6
+S	5	1
+S	6	0
+M	6	t=	7
+S	7	0
+M	7	nadditive_expression	2
+M	7	nanonymous_function	2
+M	7	nas_expression	2
+M	7	nbin_literal	2
+M	7	nboolean_literal	2
+M	7	ncall_expression	2
+M	7	ncallable_reference	2
+M	7	ncharacter_literal	2
+M	7	ncheck_expression	2
+M	7	ncollection_literal	2
+M	7	ncomparison_expression	2
+M	7	nconjunction_expression	2
+M	7	ndisjunction_expression	2
+M	7	nelvis_expression	2
+M	7	nequality_expression	2
+M	7	nhex_literal	2
+M	7	nif_expression	2
+M	7	nindexing_expression	2
+M	7	ninfix_expression	2
+M	7	ninteger_literal	2
+M	7	njump_expression	2
+M	7	nlambda_literal	2
+M	7	nlong_literal	2
+M	7	nmultiplicative_expression	2
+M	7	nnavigation_expression	2
+M	7	nnull_literal	2
+M	7	nobject_literal	2
+M	7	nparenthesized_expression	2
+M	7	npostfix_expression	2
+M	7	nprefix_expression	2
+M	7	nrange_expression	2
+M	7	nreal_literal	2
+M	7	nsimple_identifier	2
+M	7	nspread_expression	2
+M	7	nstring_literal	2
+M	7	nsuper_expression	2
+M	7	nthis_expression	2
+M	7	ntry_expression	2
+M	7	nunsigned_literal	2
+M	7	nwhen_expression	2
+I	0	nadditive_expression	t(
+I	0	nannotation	t(
+I	0	nanonymous_function	t(
+I	0	nas_expression	t(
+I	0	nbin_literal	t(
+I	0	nboolean_literal	t(
+I	0	ncall_expression	t(
+I	0	ncallable_reference	t(
+I	0	ncharacter_literal	t(
+I	0	ncheck_expression	t(
+I	0	ncollection_literal	t(
+I	0	ncomparison_expression	t(
+I	0	nconjunction_expression	t(
+I	0	ndisjunction_expression	t(
+I	0	nelvis_expression	t(
+I	0	nequality_expression	t(
+I	0	nhex_literal	t(
+I	0	nif_expression	t(
+I	0	nindexing_expression	t(
+I	0	ninfix_expression	t(
+I	0	ninteger_literal	t(
+I	0	njump_expression	t(
+I	0	nlambda_literal	t(
+I	0	nlong_literal	t(
+I	0	nmultiplicative_expression	t(
+I	0	nnavigation_expression	t(
+I	0	nnull_literal	t(
+I	0	nobject_literal	t(
+I	0	nparenthesized_expression	t(
+I	0	npostfix_expression	t(
+I	0	nprefix_expression	t(
+I	0	nrange_expression	t(
+I	0	nreal_literal	t(
+I	0	nsimple_identifier	t(
+I	0	nspread_expression	t(
+I	0	nstring_literal	t(
+I	0	nsuper_expression	t(
+I	0	nthis_expression	t(
+I	0	ntry_expression	t(
+I	0	nunsigned_literal	t(
+I	0	nvariable_declaration	t(tval
+I	0	nwhen_expression	t(
+I	1	nadditive_expression	
+I	1	nannotation	
+I	1	nanonymous_function	
+I	1	nas_expression	
+I	1	nbin_literal	
+I	1	nboolean_literal	
+I	1	ncall_expression	
+I	1	ncallable_reference	
+I	1	ncharacter_literal	
+I	1	ncheck_expression	
+I	1	ncollection_literal	
+I	1	ncomparison_expression	
+I	1	nconjunction_expression	
+I	1	ndisjunction_expression	
+I	1	nelvis_expression	
+I	1	nequality_expression	
+I	1	nhex_literal	
+I	1	nif_expression	
+I	1	nindexing_expression	
+I	1	ninfix_expression	
+I	1	ninteger_literal	
+I	1	njump_expression	
+I	1	nlambda_literal	
+I	1	nlong_literal	
+I	1	nmultiplicative_expression	
+I	1	nnavigation_expression	
+I	1	nnull_literal	
+I	1	nobject_literal	
+I	1	nparenthesized_expression	
+I	1	npostfix_expression	
+I	1	nprefix_expression	
+I	1	nrange_expression	
+I	1	nreal_literal	
+I	1	nsimple_identifier	
+I	1	nspread_expression	
+I	1	nstring_literal	
+I	1	nsuper_expression	
+I	1	nthis_expression	
+I	1	ntry_expression	
+I	1	nunsigned_literal	
+I	1	nvariable_declaration	tval
+I	1	nwhen_expression	
+I	3	nannotation	
+I	3	nvariable_declaration	tval
+I	4	nvariable_declaration	
+I	6	nadditive_expression	t=
+I	6	nanonymous_function	t=
+I	6	nas_expression	t=
+I	6	nbin_literal	t=
+I	6	nboolean_literal	t=
+I	6	ncall_expression	t=
+I	6	ncallable_reference	t=
+I	6	ncharacter_literal	t=
+I	6	ncheck_expression	t=
+I	6	ncollection_literal	t=
+I	6	ncomparison_expression	t=
+I	6	nconjunction_expression	t=
+I	6	ndisjunction_expression	t=
+I	6	nelvis_expression	t=
+I	6	nequality_expression	t=
+I	6	nhex_literal	t=
+I	6	nif_expression	t=
+I	6	nindexing_expression	t=
+I	6	ninfix_expression	t=
+I	6	ninteger_literal	t=
+I	6	njump_expression	t=
+I	6	nlambda_literal	t=
+I	6	nlong_literal	t=
+I	6	nmultiplicative_expression	t=
+I	6	nnavigation_expression	t=
+I	6	nnull_literal	t=
+I	6	nobject_literal	t=
+I	6	nparenthesized_expression	t=
+I	6	npostfix_expression	t=
+I	6	nprefix_expression	t=
+I	6	nrange_expression	t=
+I	6	nreal_literal	t=
+I	6	nsimple_identifier	t=
+I	6	nspread_expression	t=
+I	6	nstring_literal	t=
+I	6	nsuper_expression	t=
+I	6	nthis_expression	t=
+I	6	ntry_expression	t=
+I	6	nunsigned_literal	t=
+I	6	nwhen_expression	t=
+I	7	nadditive_expression	
+I	7	nanonymous_function	
+I	7	nas_expression	
+I	7	nbin_literal	
+I	7	nboolean_literal	
+I	7	ncall_expression	
+I	7	ncallable_reference	
+I	7	ncharacter_literal	
+I	7	ncheck_expression	
+I	7	ncollection_literal	
+I	7	ncomparison_expression	
+I	7	nconjunction_expression	
+I	7	ndisjunction_expression	
+I	7	nelvis_expression	
+I	7	nequality_expression	
+I	7	nhex_literal	
+I	7	nif_expression	
+I	7	nindexing_expression	
+I	7	ninfix_expression	
+I	7	ninteger_literal	
+I	7	njump_expression	
+I	7	nlambda_literal	
+I	7	nlong_literal	
+I	7	nmultiplicative_expression	
+I	7	nnavigation_expression	
+I	7	nnull_literal	
+I	7	nobject_literal	
+I	7	nparenthesized_expression	
+I	7	npostfix_expression	
+I	7	nprefix_expression	
+I	7	nrange_expression	
+I	7	nreal_literal	
+I	7	nsimple_identifier	
+I	7	nspread_expression	
+I	7	nstring_literal	
+I	7	nsuper_expression	
+I	7	nthis_expression	
+I	7	ntry_expression	
+I	7	nunsigned_literal	
+I	7	nwhen_expression	
+E	2	t)
+E	5	
+K	while_statement
+S	0	0
+M	0	twhile	1
+S	1	0
+M	1	t(	2
+S	2	0
+M	2	nadditive_expression	3
+M	2	nanonymous_function	3
+M	2	nas_expression	3
+M	2	nbin_literal	3
+M	2	nboolean_literal	3
+M	2	ncall_expression	3
+M	2	ncallable_reference	3
+M	2	ncharacter_literal	3
+M	2	ncheck_expression	3
+M	2	ncollection_literal	3
+M	2	ncomparison_expression	3
+M	2	nconjunction_expression	3
+M	2	ndisjunction_expression	3
+M	2	nelvis_expression	3
+M	2	nequality_expression	3
+M	2	nhex_literal	3
+M	2	nif_expression	3
+M	2	nindexing_expression	3
+M	2	ninfix_expression	3
+M	2	ninteger_literal	3
+M	2	njump_expression	3
+M	2	nlambda_literal	3
+M	2	nlong_literal	3
+M	2	nmultiplicative_expression	3
+M	2	nnavigation_expression	3
+M	2	nnull_literal	3
+M	2	nobject_literal	3
+M	2	nparenthesized_expression	3
+M	2	npostfix_expression	3
+M	2	nprefix_expression	3
+M	2	nrange_expression	3
+M	2	nreal_literal	3
+M	2	nsimple_identifier	3
+M	2	nspread_expression	3
+M	2	nstring_literal	3
+M	2	nsuper_expression	3
+M	2	nthis_expression	3
+M	2	ntry_expression	3
+M	2	nunsigned_literal	3
+M	2	nwhen_expression	3
+S	3	0
+M	3	t)	4
+S	4	0
+M	4	ncontrol_structure_body	5
+M	4	t;	5
+S	5	1
+I	0	nadditive_expression	twhilet(
+I	0	nanonymous_function	twhilet(
+I	0	nas_expression	twhilet(
+I	0	nbin_literal	twhilet(
+I	0	nboolean_literal	twhilet(
+I	0	ncall_expression	twhilet(
+I	0	ncallable_reference	twhilet(
+I	0	ncharacter_literal	twhilet(
+I	0	ncheck_expression	twhilet(
+I	0	ncollection_literal	twhilet(
+I	0	ncomparison_expression	twhilet(
+I	0	nconjunction_expression	twhilet(
+I	0	ndisjunction_expression	twhilet(
+I	0	nelvis_expression	twhilet(
+I	0	nequality_expression	twhilet(
+I	0	nhex_literal	twhilet(
+I	0	nif_expression	twhilet(
+I	0	nindexing_expression	twhilet(
+I	0	ninfix_expression	twhilet(
+I	0	ninteger_literal	twhilet(
+I	0	njump_expression	twhilet(
+I	0	nlambda_literal	twhilet(
+I	0	nlong_literal	twhilet(
+I	0	nmultiplicative_expression	twhilet(
+I	0	nnavigation_expression	twhilet(
+I	0	nnull_literal	twhilet(
+I	0	nobject_literal	twhilet(
+I	0	nparenthesized_expression	twhilet(
+I	0	npostfix_expression	twhilet(
+I	0	nprefix_expression	twhilet(
+I	0	nrange_expression	twhilet(
+I	0	nreal_literal	twhilet(
+I	0	nsimple_identifier	twhilet(
+I	0	nspread_expression	twhilet(
+I	0	nstring_literal	twhilet(
+I	0	nsuper_expression	twhilet(
+I	0	nthis_expression	twhilet(
+I	0	ntry_expression	twhilet(
+I	0	nunsigned_literal	twhilet(
+I	0	nwhen_expression	twhilet(
+I	1	nadditive_expression	t(
+I	1	nanonymous_function	t(
+I	1	nas_expression	t(
+I	1	nbin_literal	t(
+I	1	nboolean_literal	t(
+I	1	ncall_expression	t(
+I	1	ncallable_reference	t(
+I	1	ncharacter_literal	t(
+I	1	ncheck_expression	t(
+I	1	ncollection_literal	t(
+I	1	ncomparison_expression	t(
+I	1	nconjunction_expression	t(
+I	1	ndisjunction_expression	t(
+I	1	nelvis_expression	t(
+I	1	nequality_expression	t(
+I	1	nhex_literal	t(
+I	1	nif_expression	t(
+I	1	nindexing_expression	t(
+I	1	ninfix_expression	t(
+I	1	ninteger_literal	t(
+I	1	njump_expression	t(
+I	1	nlambda_literal	t(
+I	1	nlong_literal	t(
+I	1	nmultiplicative_expression	t(
+I	1	nnavigation_expression	t(
+I	1	nnull_literal	t(
+I	1	nobject_literal	t(
+I	1	nparenthesized_expression	t(
+I	1	npostfix_expression	t(
+I	1	nprefix_expression	t(
+I	1	nrange_expression	t(
+I	1	nreal_literal	t(
+I	1	nsimple_identifier	t(
+I	1	nspread_expression	t(
+I	1	nstring_literal	t(
+I	1	nsuper_expression	t(
+I	1	nthis_expression	t(
+I	1	ntry_expression	t(
+I	1	nunsigned_literal	t(
+I	1	nwhen_expression	t(
+I	2	nadditive_expression	
+I	2	nanonymous_function	
+I	2	nas_expression	
+I	2	nbin_literal	
+I	2	nboolean_literal	
+I	2	ncall_expression	
+I	2	ncallable_reference	
+I	2	ncharacter_literal	
+I	2	ncheck_expression	
+I	2	ncollection_literal	
+I	2	ncomparison_expression	
+I	2	nconjunction_expression	
+I	2	ndisjunction_expression	
+I	2	nelvis_expression	
+I	2	nequality_expression	
+I	2	nhex_literal	
+I	2	nif_expression	
+I	2	nindexing_expression	
+I	2	ninfix_expression	
+I	2	ninteger_literal	
+I	2	njump_expression	
+I	2	nlambda_literal	
+I	2	nlong_literal	
+I	2	nmultiplicative_expression	
+I	2	nnavigation_expression	
+I	2	nnull_literal	
+I	2	nobject_literal	
+I	2	nparenthesized_expression	
+I	2	npostfix_expression	
+I	2	nprefix_expression	
+I	2	nrange_expression	
+I	2	nreal_literal	
+I	2	nsimple_identifier	
+I	2	nspread_expression	
+I	2	nstring_literal	
+I	2	nsuper_expression	
+I	2	nthis_expression	
+I	2	ntry_expression	
+I	2	nunsigned_literal	
+I	2	nwhen_expression	
+I	3	ncontrol_structure_body	t)
+I	4	ncontrol_structure_body	
+E	3	t)t;
+E	4	t;
+E	5	

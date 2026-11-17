@@ -103,7 +103,7 @@ impl Grammar {
         self.tag
     }
     fn role(&self, f: &Facts, id: u32) -> Role {
-        self.atom_role(f.kind[id as usize])
+        self.atom_role(f.kind(id))
     }
     fn atom_role(&self, atom: u32) -> Role {
         self.roles.get(usize::from(crate::code_rule_dsl::facts::core::kind_code(atom))).copied().unwrap_or(Role::Other)
@@ -122,7 +122,7 @@ pub struct Rows {
 
 /// The first child of `id` under `field` (the tape's `child_by_field_id`).
 fn field(f: &Facts, id: u32, field: u16) -> Option<u32> {
-    (field != 0).then(|| f.children(id).iter().copied().find(|&c| f.field[c as usize] == field)).flatten()
+    (field != 0).then(|| f.children(id).into_iter().find(|&c| f.field(c) == field)).flatten()
 }
 
 /// `node` less transparent parens: a parenthesized expression's first named child that is not a comment
@@ -142,40 +142,72 @@ fn named(g: &Grammar, f: &Facts, id: u32) -> bool {
     f.named(id) && g.role(f, id) != Role::Comment
 }
 
-/// The nearest execution boundary of `call`: the innermost function, class or lambda whose body holds
-/// it, and its context kind (an index of [`CONTEXTS`]); `(NONE, 0)` the module.
-fn context(g: &Grammar, f: &Facts, call: u32) -> (u32, u32) {
-    let mut at = f.parent(call);
-    while let Some(owner) = at {
-        let role = g.role(f, owner);
-        if matches!(role, Role::Function | Role::Class | Role::Lambda) {
-            if let Some(body) = field(f, owner, g.body) {
-                if body <= call && call < f.subtree_end[body as usize] {
-                    let kind = match role {
-                        Role::Class => 3,
-                        Role::Lambda => 4,
-                        _ if f.tokens(owner).iter().any(|t| g.atom_role(t.kind) == Role::Async) => 2,
-                        _ => 1,
-                    };
-                    return (owner, kind);
-                }
+/// A document's execution boundaries: each function's, class's and lambda's body, as its subtree's id range, with
+/// its owner and context kind (an index of [`CONTEXTS`]), ascending by start, and the body each lies in. Bodies are
+/// subtrees, so they nest: a call's context is the innermost body that holds it, found from the bodies (one scan of
+/// their codes) rather than a climb of the call's parents.
+pub(crate) struct Contexts {
+    /// `(start, end, owner, kind)`.
+    bodies: Vec<(u32, u32, u32, u32)>,
+    /// The body each body lies in, as an index; `usize::MAX` for one at the module's level.
+    within: Vec<usize>,
+}
+
+impl Contexts {
+    pub(crate) fn of(g: &Grammar, f: &Facts) -> Self {
+        let mut bodies = Vec::new();
+        for (code, &role) in g.roles.iter().enumerate() {
+            if !matches!(role, Role::Function | Role::Class | Role::Lambda) {
+                continue;
+            }
+            for owner in f.of_kind(kind_atom(g.tag, code as u16)) {
+                let Some(body) = field(f, owner, g.body) else { continue };
+                let kind = match role {
+                    Role::Class => 3,
+                    Role::Lambda => 4,
+                    _ if f.tokens(owner).iter().any(|t| g.atom_role(t.kind) == Role::Async) => 2,
+                    _ => 1,
+                };
+                bodies.push((body, f.subtree_end(body), owner, kind));
             }
         }
-        at = f.parent(owner);
+        bodies.sort_unstable();
+        let (mut within, mut open) = (Vec::with_capacity(bodies.len()), Vec::<usize>::new());
+        for (i, &(start, ..)) in bodies.iter().enumerate() {
+            while open.last().is_some_and(|&o| bodies[o].1 <= start) {
+                open.pop();
+            }
+            within.push(open.last().copied().unwrap_or(usize::MAX));
+            open.push(i);
+        }
+        Contexts { bodies, within }
     }
-    (NONE, 0)
+
+    /// The nearest execution boundary of `call`: the innermost function, class or lambda whose body holds it, and
+    /// its context kind; `(NONE, 0)` the module.
+    pub(crate) fn at(&self, call: u32) -> (u32, u32) {
+        let mut i = self.bodies.partition_point(|b| b.0 <= call).wrapping_sub(1);
+        while let Some(&(_, end, owner, kind)) = self.bodies.get(i) {
+            if call < end {
+                return (owner, kind);
+            }
+            i = self.within[i];
+        }
+        (NONE, 0)
+    }
 }
 
 /// The rows of one document's facts, from its calls' postings.
 pub fn rows(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,true) }
 pub fn structure(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,false) }
 fn collect_rows(g: &Grammar, f: &Facts, with_arguments: bool) -> Rows {
-    let mut calls: Vec<u32> = g.calls.iter().flat_map(|&atom| f.of_kind(atom).iter().copied()).collect();
+    let mut calls: Vec<u32> = g.calls.iter().flat_map(|&atom| f.of_kind(atom)).collect();
     calls.sort_unstable();
     let mut out = Rows::default();
+    let contexts = Contexts::of(g, f);
     for call in calls {
         let Some(callee) = field(f, call, g.function) else { continue };
-        let (owner, kind) = context(g, f, call);
+        let (owner, kind) = contexts.at(call);
         let report = unparen(g, f, callee);
         let reference = matches!(g.role(f, report), Role::Name | Role::Attribute).then_some(report).unwrap_or(NONE);
         out.call.push([call, callee]);
@@ -223,7 +255,7 @@ fn append_arguments(g:&Grammar,f:&Facts,call:u32,out:&mut Rows) {
             out.arg.push([call, arguments, 0, NONE, 0, arguments]);
             return;
         }
-        let listed = f.children(arguments).iter().copied().filter(|&a| named(g, f, a));
+        let listed = f.children(arguments).into_iter().filter(|&a| named(g, f, a));
         for (ordinal, argument) in listed.enumerate() {
             let role = g.role(f, argument);
             let spread = match role {

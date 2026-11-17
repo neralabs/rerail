@@ -43,7 +43,15 @@ pub fn define_function(
     for (_, function) in context.func.dfg.ext_funcs.iter_mut() {
         function.colocated = false;
     }
-    module.define_function(id, context)?;
+    // The function may have changed since its flow graph was made (`clif_fold`): made again.
+    context.cfg.clear();
+    context.domtree.clear();
+    if let Err(e) = module.define_function(id, context) {
+        if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
+            eprintln!("define {}: {e:?}\n{}", context.func.name, context.func.display());
+        }
+        return Err(Box::new(e));
+    }
     #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos", target_arch = "aarch64"))]
     relocations::record(id, context);
     Ok(())
@@ -61,6 +69,8 @@ pub fn define_functions(module: &mut JITModule, items: Vec<(FuncId, Context)>, n
     use cranelift_module::{Module, ModuleReloc};
     let mut items = items;
     for (_, context) in &mut items {
+        context.cfg.clear();
+        context.domtree.clear();
         for (_, function) in context.func.dfg.ext_funcs.iter_mut() {
             function.colocated = near && matches!(function.name, cranelift_codegen::ir::ExternalName::User(_));
         }

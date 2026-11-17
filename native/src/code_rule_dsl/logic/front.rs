@@ -468,18 +468,9 @@ impl Parser<'_> {
                     prog.demand.extend(names);
                 }
             }
-            // `.pragma "cross-rounds" "k"`, as `.rr` writes it (decision 0056).
+            // `.pragma "cross-rounds" "k"` (decision 0056) is refused: bounded cross-file rounds are retired: a program's cross-file part is one fixpoint (decisions 0065, 0276 §9).
             "pragma" => {
-                let (Tok::Str(key), Tok::Str(k)) = (self.peek().clone(), self.peek_at(1).clone()) else {
-                    return self.fail("a pragma's two strings");
-                };
-                self.i += 2;
-                if key != PRAGMA || k.parse::<usize>().is_err() {
-                    self.i -= 2;
-                    return self.fail("`.pragma \"cross-rounds\" \"k\"`");
-                } else {
-                    prog.settings.push(setting(&k));
-                }
+                return self.fail("no `.pragma`: bounded cross-file rounds are retired: a program's cross-file part is one fixpoint (decisions 0065, 0276 §9)");
             }
             "kindset" => {
                 let name = self.id()?;
@@ -1201,6 +1192,15 @@ pub fn prune(mut prog: Program) -> Program {
     // Native metadata owns real dependency edges. A dead producer must not keep its demands
     // alive in the file-local split or cause them to be exported across every chunk.
     prog.natives.retain(|rel, _| need.contains(rel));
+    // An attribute answered on request (decision 0174) whose readers were all pruned has no request and no answer
+    // left: it is an input again, as an attribute no rule reads stays one when lowered (734317304). Else a program
+    // lowered whole would prune to one without the input that the program lowered without its unreached clauses has.
+    for attr in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()) {
+        let derives = |rel: &str| prog.rules.iter().any(|r| r.head.rel == rel);
+        if prog.decls.contains_key(attr.rel) && !prog.inputs.iter().any(|i| i == attr.rel) && !derives(attr.rel) && !derives(attr.req) {
+            prog.inputs.push(attr.rel.to_owned());
+        }
+    }
     prog
 }
 
@@ -1247,16 +1247,8 @@ pub mod data_layer_census_tests;
 // cratify: `data_layer_tests` is rerail-logic's (it mounts it)
 pub mod yaml;
 
-/// The pragma by which a program asks for bounded rounds (decision 0056): `.pragma "cross-rounds" "4"`. A typing
-/// program declares it: its cross-file recursion is over interface summaries, cut at `k` file crossings, with the
-/// pending round when it also declares `unconverged`. A program that does not declare it (a rule) has its
-/// cross-file part run as one fixpoint, which no chain length cuts.
+/// The pragma by which a program asked for bounded rounds (decision 0056), refused: bounded cross-file rounds are retired: a program's cross-file part is one fixpoint (decisions 0065, 0276 §9).
 pub const PRAGMA: &str = "cross-rounds";
-
-/// The program setting `.pragma "cross-rounds" "k"` lowers to (from `.rr`, or the `.rdl` copies' same line).
-pub(crate) fn setting(k: &str) -> (String, String) {
-    ("pragma".to_owned(), format!("\"{PRAGMA}\" \"{k}\""))
-}
 
 /// A base relation's document column, including raw text views.
 pub fn document_column(relation: &str) -> Option<usize> {

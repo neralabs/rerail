@@ -2,7 +2,7 @@
     use super::super::storage::StorageContext;
     use super::super::tests::{WORKSPACE_TEST_SLOT, result_page};
     use crate::code_rule_dsl::CodeRuleDslRuntime;
-    use crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION;
+    use crate::code_rule_dsl::tape::formats::stored_version;
     use crate::code_rule_dsl::test_support::{CAPABILITIES, violation};
     use crate::content_store::{ContentStore, GitTree, HashKey};
     use napi::Task;
@@ -28,7 +28,7 @@
                 root_tree,
                 1,
                 HashKey::sha256(b"rerail-grammars-v1"),
-                i64::from(TAPE_FORMAT_VERSION),
+                i64::from(stored_version()),
             )
             .unwrap();
         let owner = format!("coverage-test:{root}:{}", std::process::id());

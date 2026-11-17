@@ -23,6 +23,8 @@ pub mod f16;
 pub mod f16w;
 #[cfg(feature = "grammar")]
 pub mod gcodes;
+#[cfg(feature = "grammar")]
+pub mod table;
 pub mod nofield;
 pub mod codec;
 pub mod disk;

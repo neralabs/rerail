@@ -1,6 +1,6 @@
 # 0258: A maintenance rule starts from its source rule's order
 
-Status: built (2026-11-15); off by default since the same day: a net cost in planning (see "Re-validated" and "The start inside the search"). Takes up decision 0230's first open item: a session's first-sight plans. Option one of
+Status: built (2026-11-15); off by default since the same day: a net cost in planning (see "Re-validated" and "The start inside the search"); `RERAIL_SOURCE_ORDERS=on` turns it on. Kept by the user as an escape hatch from inefficient rules. It was withdrawn and removed on cost-classifier the same day (49297f11e, see "Removed"); the hub merge into cost-classifier restored efcbd0717's form. Takes up decision 0230's first open item: a session's first-sight plans. Option one of
 0123 §5 ("carry the cold run's plans into the session"). `plan.rs` (`Model::started`, `source_order`,
 `RunPlans::orders`), `plan/body.rs` (`Body::origin`, `Body::source_map`), `maintain.rs` (`write_ir`),
 `program_image/build.rs` (`RuleBuilder::source`).
@@ -8,6 +8,11 @@ Status: built (2026-11-15); off by default since the same day: a net cost in pla
 Kept (the user, 2026-11-15): source orders stay. They are an escape hatch from inefficient rules. cost-classifier's
 withdrawal of this decision (49297f11e, "plan: remove source orders") is not taken when that branch is merged.
 django-bugs' form (efcbd0717: tried inside the search, `RERAIL_SOURCE_ORDERS` opt-in) is the form the hub takes.
+Off by default on data (django-bugs' "Re-validated" and "The start inside the search", O125 sessions 12-16): the
+plans are the same (join work at parity, "same as full: true" either way), and on plans for more: 47.7 ms against
+40.7 ms of first-sight planning thread CPU, alternating rounds; 65.5 against 59.0 ms in the start-first form. The
+rule's own work moves by noise only (34.19/33.98/34.43 G off, 33.82/34.19/34.19 G on). Nothing measured shows the
+case it is kept for, a rule the search plans badly; `RERAIL_SOURCE_ORDERS=on` is the hatch there.
 
 ## Intro
 
@@ -183,6 +188,16 @@ only greedy's other candidates.
 So source orders are **off by default** (`RERAIL_SOURCE_ORDERS=on` turns them on): the plans are the same either
 way (join work at parity, "same as full: true" with them on, steps 12 and 13), and off plans for less. With them
 off, no order is kept for them either (`orders_put`).
+
+## Removed (then restored)
+
+Restored at the hub merge into cost-classifier (2026-11-16): the user keeps source orders as an escape hatch, in
+the form of "The start inside the search" (off by default). What follows is what the removal did.
+
+2026-11-15. The mechanism is removed: `start_order`, `source_order`, the kept line orders (`RunPlans::orders`,
+`line_key`) and their carrying between a session's runs, `Body::origin` and `Body::source_map`, the rewrite's
+recording of a maintenance rule's source (`RuleBuilder::source`), `RERAIL_SOURCE_ORDERS`, and the plan cache's two
+"started" counts. What stays is the search's pricing of a kept order as one loop (`price` in `plan_search`).
 
 ## Open
 

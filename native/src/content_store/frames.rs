@@ -292,6 +292,18 @@ impl Admitted {
         of(&self.data)
     }
 
+    /// Its rows' width (their columns), where its rows were admitted: known without decoding them.
+    pub fn width(&self) -> Option<usize> {
+        fn of(data: &Data) -> Option<usize> {
+            match data {
+                Data::Encoded { types, .. } => Some(types.len()),
+                Data::Chain { base, .. } => of(base),
+                Data::Metadata => None,
+            }
+        }
+        of(&self.data)
+    }
+
     /// Its rows' count, where its rows were admitted.
     pub fn len(&self) -> Option<usize> {
         match &self.data {
@@ -332,6 +344,8 @@ struct Snapshot {
     preloaded: HashSet<[u8; 32]>,
     /// A dev trace's (`RERAIL_FRAMES_TRACE`): the space read by identity, and its frames' identities left out.
     left_out: Option<([u8; 32], HashSet<Rel>)>,
+    /// The (space, program) pairs known to hold there (`hold_frames`, decision 0302): each looked up once a process.
+    holding: HashSet<([u8; 32], [u8; 32])>,
 }
 
 /// A root's cross part's space, as a run reads it before its first wave (`preload_frames_live`, Q19).
@@ -492,6 +506,7 @@ impl ContentStore {
     /// The snapshot, read: every frame but the memo's of before decision 0240 (`MEMO_RELS`), which nothing reads,
     /// and, with `cross`, every recorded root's cross space (`CrossSpace::cross_of`) and the run's own.
     fn install_snapshot(&self, cross: Option<&CrossSpace<'_>>) -> StoreResult<(usize, usize)> {
+        let _span = rerail_prof::code_rule_dsl::logic::profile::span(|| "the store's frames, read once a process".into());
         let mut snapshot = Snapshot::default();
         let (mut frames, mut bytes) = (0, 0);
         {
@@ -541,8 +556,22 @@ impl ContentStore {
                 }
             }
             snapshot.confirmed = confirmed;
+            // Which programs hold which spaces (`hold_frames`, decision 0302): a few rows, read here, not in a wave.
+            {
+                let mut st = connection.prepare("SELECT space, program FROM frame_program_used WHERE run = 0")?;
+                let rows = st.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?)))?;
+                for row in rows {
+                    let (space, program) = row?;
+                    if let (Ok(space), Ok(program)) = (<[u8; 32]>::try_from(space.as_slice()), <[u8; 32]>::try_from(program.as_slice())) {
+                        snapshot.holding.insert((space, program));
+                    }
+                }
+            }
             drop(connection);
+            let _held = rerail_prof::code_rule_dsl::logic::profile::span(|| "their symbols held".into());
             hold_symbols(&self.atoms, read.iter())?;
+            drop(_held);
+            let _chains = rerail_prof::code_rule_dsl::logic::profile::span(|| "their delta chains composed".into());
             for (space, held) in snapshot.iter_mut() {
                 compose_chains(held, chains.get(space))?;
             }
@@ -557,6 +586,7 @@ impl ContentStore {
     /// (`RERAIL_FRAMES_TRACE`), the identities of the space's frames left out, so a read of one names a reader the set
     /// missed (`read_frame_parts_from`).
     fn read_cross_space(&self, cross: &CrossSpace<'_>) -> StoreResult<(HashMap<(Rel, i64), Arc<Admitted>>, Option<HashSet<Rel>>)> {
+        let _span = rerail_prof::code_rule_dsl::logic::profile::span(|| "the cross part's space, by identity (Q19)".into());
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let space = cross.space;
         let atoms = self.atoms_handle();
@@ -604,6 +634,7 @@ impl ContentStore {
             None => None,
         };
         drop(connection);
+        let _held = rerail_prof::code_rule_dsl::logic::profile::span(|| "their symbols held".into());
         hold_symbols(&self.atoms, got.values())?;
         compose_chains(&mut got, Some(&chains))?;
         Ok((got, left))
@@ -825,6 +856,21 @@ impl ContentStore {
 
     /// `queue_frames` of frames encoded as they were made (`Put::encoded`): a caller that makes many holds each one's
     /// rows only until it is encoded.
+    /// Records, behind the run, that `program` holds `rels` in `space` (`frame_program_used`, decision 0302), when
+    /// it does not hold there yet (the snapshot's, read before the first wave, and this process's writes since): a
+    /// program that reuses its predecessor's frames puts nothing, and the predecessor superseded, nothing else would
+    /// keep them. Whether it queued the holding. No snapshot (no run read the store): queued, and the writer writes
+    /// only what changed.
+    pub fn hold_frames(&self, space: [u8; 32], rels: Vec<Rel>, run: u64, program: [u8; 32]) -> bool {
+        if let Some(s) = self.snapshot()
+            && !s.lock().expect("the frames' snapshot").holding.insert((space, program))
+        {
+            return false;
+        }
+        self.queue_encoded(space, Vec::new(), Vec::new(), Some((rels, run, program)));
+        true
+    }
+
     pub fn queue_encoded(&self, space: [u8; 32], frames: Vec<Encoded>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
         self.queue_encoded_retagged(space, frames, Vec::new(), Vec::new(), gone, used)
     }
@@ -912,6 +958,9 @@ impl ContentStore {
         }
         let mut gone = gone;
         gone.extend(self.ended_deltas(&space, frames.iter().map(|f| (&f.rel, f.part))));
+        if let (Some((_, _, program)), Some(s)) = (&used, self.snapshot()) {
+            s.lock().expect("the frames' snapshot").holding.insert((space, *program));
+        }
         // Nothing to write is no write: a warm run's kept part queues no empty job (decision 0197).
         if frames.is_empty() && delta_frames.is_empty() && retags.is_empty() && heads.is_empty() && gone.is_empty() && used.is_none() {
             return;
@@ -1948,6 +1997,42 @@ mod tests {
         assert!(!again.any(), "nothing left to collect: {again:?}");
     }
 
+    /// Decision 0302: an edited program reuses its predecessor's frames and puts nothing (decision 0227: a warm run
+    /// writes nothing). Its predecessor superseded and dead, only its own holding keeps them: `hold_frames` records
+    /// it, queued once, and only when the store has none (a run of a program that holds queues nothing, 0197).
+    #[test]
+    fn a_program_that_reuses_frames_holds_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        let (old, new) = ([7u8; 32], [8u8; 32]);
+        let maintained = [9u8; 32];
+        let kept = rel("kept", 1);
+        {
+            let store = ContentStore::open(&path).unwrap();
+            let source = store.put_source(b"x = 1\n", &[]).unwrap();
+            // The edited run's manifest names `new`; `old`, its predecessor, no manifest names.
+            store.record_corpus_run_naming("/r", &[source], 1, 1, [5u8; 32], &[new], 1).unwrap();
+            let put = Put { rel: kept.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
+            store.keep_frames(&maintained, &[put], &[], Some((&[kept.clone()][..], 0, old))).unwrap();
+            // The run's read before its first wave (decision 0104).
+            store.preload_frames_live(None).unwrap();
+            assert!(store.hold_frames(maintained, vec![kept.clone()], 0, new), "no holding: queued");
+            assert!(!store.hold_frames(maintained, vec![kept.clone()], 0, new), "held, this process: nothing queued");
+            assert!(!store.hold_frames(maintained, vec![kept.clone()], 0, old), "the program that put the frame holds them");
+            store.written().unwrap();
+        }
+        forget_snapshot(path.to_str().unwrap());
+        let store = ContentStore::open(&path).unwrap();
+        store.preload_frames_live(None).unwrap();
+        assert!(!store.hold_frames(maintained, vec![kept.clone()], 0, new), "held, in the store: nothing queued");
+        let swept = {
+            let c = store.connection.lock().unwrap();
+            collect_unreachable_frames(&c).unwrap()
+        };
+        assert_eq!(swept.maintained, 0, "the reusing program holds the frame: {swept:?}");
+        assert!(store.frames(&maintained, &[kept.clone()], 0).unwrap().contains_key(&kept));
+    }
+
     fn rel(name: &str, i: u8) -> Rel {
         Rel { name: name.into(), ident: [i; 32] }
     }
@@ -2051,8 +2136,15 @@ mod tests {
     /// its programs can read (every part), not another identity's (an earlier build's, an earlier edit's); every
     /// other space whole. Whichever run reads first (phase 0's, a root of its own, on a rule edit), the store's first
     /// read leaves out every recorded root's cross space.
+    ///
+    /// Each read is under a span of its own, so the profile attributes it (it was the `parse` phase's own time: 2 s of
+    /// an edit, ep2).
     #[test]
     fn a_run_reads_its_cross_space_by_identity_whichever_run_reads_first() {
+        use rerail_prof::code_rule_dsl::logic::profile;
+        let _run = profile::one_run();
+        profile::reset();
+        profile::set(true);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("store.sqlite");
         let cross = [9u8; 32];
@@ -2082,6 +2174,58 @@ mod tests {
         assert_eq!((held(&cross, &kept, 0), held(&cross, &kept, 3)), (Some(vec![10]), Some(vec![11])));
         assert_eq!(held(&cross, &stale, 0), None, "an identity no program of the run reads is not read");
         assert_eq!(store.preload_frames_live(Some(own)).unwrap().0, 0, "once a process");
+        let spans: Vec<String> = profile::merged().spans.keys().cloned().collect();
+        profile::set(false);
+        for read in ["the store's frames, read once a process", "the cross part's space, by identity (Q19)"] {
+            assert!(spans.iter().any(|s| s == read), "{read}: {spans:?}");
+            assert!(spans.iter().any(|s| *s == format!("{read}/their symbols held")), "{read}: {spans:?}");
+        }
+    }
+
+    /// Q19: the read of a run's cross space reads the blobs of the frames it keeps, not those of every frame of the
+    /// space. A space holding an earlier run's big frame (2 MB of rows, about 500 overflow pages) costs the read its
+    /// keys alone: on ep2 the scan read 3.45 GB of blobs to keep 347 MB.
+    ///
+    /// Ignored: no read of this table does it. Its rows are its key records (`WITHOUT ROWID`), so a seek or a range
+    /// scan by `space` compares whole records, blobs and all, past their first page; a lookup by key reads its
+    /// neighbours' (ep2: 0.12 s to scan the space's keys by `frames_by_digest`, about 115 µs a lookup by key). The
+    /// blobs leave the key's b-tree first (work queue, Q19).
+    #[test]
+    #[ignore = "Q19: frames' blobs are in the key's b-tree; every seek reads them"]
+    fn a_cross_space_read_reads_no_blob_of_a_frame_it_leaves_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        let cross = [9u8; 32];
+        let (kept, stale) = (rel("x", 1), rel("x", 2));
+        let overflow: Vec<i64> = {
+            let store = ContentStore::open(&path).unwrap();
+            let small = Put { rel: kept.clone(), part: 0, digest: 1, reads: vec![("-".into(), 0)], rows: Rows { types: vec![0], rows: vec![7], n: 1 } };
+            let big: Vec<i64> = (0..250_000u64).map(|i| (i.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 1) as i64).collect();
+            let old = Put { rel: stale.clone(), part: 0, digest: 2, reads: vec![("-".into(), 0)], rows: Rows { types: vec![0], n: big.len(), rows: big } };
+            store.keep_frames(&cross, &[small, old], &[], None).unwrap();
+            let c = store.connection.lock().unwrap();
+            c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
+            // Only the stale frame's blob overflows its page.
+            let mut st = c.prepare("SELECT pageno FROM dbstat WHERE name = 'frames' AND pagetype = 'overflow' ORDER BY pageno").unwrap();
+            st.query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap()
+        };
+        assert!(overflow.len() > 100, "the stale frame's blob overflows: {} pages", overflow.len());
+        // Its overflow chain, broken: a page in its middle points past the file's end.
+        let mut file = std::fs::read(&path).unwrap();
+        let page = (overflow[overflow.len() / 2] as usize - 1) * 4096;
+        file[page..page + 4].copy_from_slice(&u32::MAX.to_be_bytes());
+        std::fs::write(&path, &file).unwrap();
+        fn cross_of(_: &std::path::Path) -> [u8; 32] {
+            [9; 32]
+        }
+        let store = ContentStore::open(&path).unwrap();
+        let whole = store.connection.lock().unwrap().query_row("SELECT sum(instr(data, x'00')) FROM frames", [], |r| r.get::<_, i64>(0)).map(|_| ());
+        assert!(whole.is_err(), "reading the stale blob fails");
+        let rels = HashSet::from([kept.clone()]);
+        let own = CrossSpace { space: cross, own: true, rels: Some(&rels), cross_of };
+        assert_eq!(store.preload_frames_live(Some(own)).unwrap().0, 1, "the kept frame, read without the stale one's blob");
+        let held = store.admit_frames(&cross, std::slice::from_ref(&kept), 0).unwrap();
+        assert_eq!(held[&kept].rows().unwrap().rows, vec![7]);
     }
 
     /// Decision 0280: what a later run keeps over an entry (its identities) is read with it, from the store and from

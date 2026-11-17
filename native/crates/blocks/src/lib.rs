@@ -37,7 +37,7 @@ pub mod sort;
 #[cfg(target_os = "macos")]
 pub mod gpu;
 
-pub use block::{Block, Frozen, Header};
+pub use block::{Block, Cells, Frozen, Header};
 pub use refs::{Ptr, Span};
 
 /// A type whose bytes are its value: no pointers, no padding the compiler chose (`structure!` checks).

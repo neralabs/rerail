@@ -94,7 +94,7 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
         let db=Connection::open(&path).unwrap();
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();
-        let got=run_atoms_native_over(&lowered,&db,"main",Stats::empty(&lowered.program),BTreeSet::new(),modes).unwrap();
+        let got=run_atoms_native_over(&lowered,&db,"main",Stats::empty_of_lowered(&lowered).unwrap(),BTreeSet::new(),modes).unwrap();
         if !modes.is_empty() {assert!(got.native.contains("result"),"scalar result must execute natively");}
         outputs.push(got.shown().clone());
     }
@@ -117,7 +117,7 @@ fn rules_of_one_body_and_two_heads_both_run_their_whole_plan() {
         let db=Connection::open(&path).unwrap();
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();
-        let got=run_atoms_native_over(&lowered,&db,"main",Stats::empty(&lowered.program),BTreeSet::new(),modes).unwrap();
+        let got=run_atoms_native_over(&lowered,&db,"main",Stats::empty_of_lowered(&lowered).unwrap(),BTreeSet::new(),modes).unwrap();
         assert_eq!(got.shown()["a"],vec![["1"], ["2"], ["3"], ["4"]],"modes {modes:?}");
         assert_eq!(got.shown()["b"],vec![["2"], ["3"], ["4"]],"modes {modes:?}");
     }
@@ -149,7 +149,7 @@ fn a_head_that_qualifies_by_a_constant_scope_runs_natively() {
         let db = Connection::open(&path).unwrap();
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();
-        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes).unwrap();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).unwrap(), BTreeSet::new(), modes).unwrap();
         if !modes.is_empty() {
             assert!(got.native.contains("q"), "q runs natively: {:?}", got.native);
         }
@@ -185,7 +185,7 @@ fn closures_of_one_level_launch_in_one_wave() {
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();
         let before = super::super::lanes::wave::flushed();
-        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes).unwrap();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).unwrap(), BTreeSet::new(), modes).unwrap();
         let after = super::super::lanes::wave::flushed();
         if !modes.is_empty() {
             for r in ["r1", "r2", "r3"] {
@@ -232,7 +232,7 @@ fn closures_of_a_level_wider_than_a_component_launch_in_one_wave() {
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();
         let before = super::super::lanes::wave::flushed();
-        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes).unwrap();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).unwrap(), BTreeSet::new(), modes).unwrap();
         let after = super::super::lanes::wave::flushed();
         if !modes.is_empty() {
             for k in 0..N {
@@ -271,7 +271,7 @@ fn a_probe_is_planned_when_its_delta_first_has_rows() {
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();
         let before = super::lazy_probes_counted();
-        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes).unwrap();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).unwrap(), BTreeSet::new(), modes).unwrap();
         let after = super::lazy_probes_counted();
         if !modes.is_empty() {
             assert!(got.native.iter().any(|c| c.split('/').any(|r| r == "r")), "r's component runs natively: {:?}", got.native);
@@ -558,13 +558,14 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
         let p = program(name);
-        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let given = lower::lower_tree(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let lowered = given.image().unwrap();
         let expected = run_atoms(&lowered, &db, "s").unwrap_or_else(|e| panic!("{name}: {e}"));
         // Planned from the estimates, then from the counts the first run's boundary recorded.
         let mut counts = None;
         let mut first: Option<Vec<String>> = None;
         for pass in ["estimates", "counts"] {
-            let emitted = emit::emit(&lowered, &db, "s", name, counts.as_ref(), &HashMap::new()).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let emitted = emit::emit(&given, &db, "s", name, counts.as_ref(), &HashMap::new()).unwrap_or_else(|e| panic!("{name}: {e}"));
             let backing = Backing::default();
             let scope = backing.enter(&store);
             let lease = scope.pool().take().unwrap();
@@ -632,10 +633,12 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
         atomized_statistics(&t, &db, &store, &first);
         for name in ["workload", "workload_demand", "calls"] {
             let p = program(name);
-            let mut lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
-            let sets = lowered.transduce_nearest();
+            let mut given = lower::lower_tree(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+            let sets = given.transduce_nearest();
+            let lowered = given.image().unwrap();
             assert!(!sets.is_empty(), "{name} reads nearest");
-            assert!(!lowered.program.rules.iter().flat_map(|r| &r.body).any(|l| matches!(l, Literal::Nearest { .. })));
+            let placed = lowered.placed().unwrap();
+            assert!(!placed.v.rules().flat_map(|r| r.body()).any(|l| matches!(l.view(), crate::code_rule_dsl::logic::program_image::Lit::Nearest { .. })));
             for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), binding, &Default::default()).unwrap() {
                 if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                     db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
@@ -680,8 +683,9 @@ fn t_programs_run_natively_over_atoms_like_t() {
     let mut ran = BTreeSet::new();
     for name in ["workload", "workload_demand", "calls"] {
         let p = program(name);
-        let mut lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
-        let sets = lowered.transduce_nearest();
+        let mut given = lower::lower_tree(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let sets = given.transduce_nearest();
+        let lowered = given.image().unwrap();
         for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), Binding::Cpu, &Default::default()).unwrap() {
             if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                 db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
@@ -806,10 +810,6 @@ fn own_ingestion_derives_what_t_facts_do() {
         let with_t = dir.join(format!("out-{name}-t"));
         let report = corpus::run(&src, &dir, Some(&facts), &with_t, "program", Binding::Cpu, 1 << 18).unwrap();
         assert!(report.rows.values().any(|&n| n > 0), "{name}: no outputs");
-        // The cross-file part is one fixpoint (decision 0065): one run, converged, nothing pending.
-        println!("{name}: cross-file rounds {:?}", report.rounds);
-        assert_eq!(report.rounds.run, 1, "{name}: {:?}", report.rounds);
-        assert!(report.rounds.converged && !report.rounds.pending, "{name}: {:?}", report.rounds);
         for chunk in [1_usize << 18, 1 << 12] {
             let own = dir.join(format!("out-{name}-own-{chunk}"));
             let got = corpus::run(&src, &dir, None, &own, "program", Binding::Cpu, chunk).unwrap();
@@ -953,9 +953,16 @@ fn a_second_corpus_run_deletes_and_creates_its_store_again() {
         .args(["--ignored", "--exact", "code_rule_dsl::logic::plan::tests::corpus_store_child", "--nocapture", "--test-threads=1"])
         .env(CORPUS_STORE_CHILD, &dir)
         .env("RERAIL_TAPE_CACHE", "off")
-        .status()
+        .output()
         .unwrap();
-    assert!(status.success() && dir.join("done").exists(), "the child failed: {status}");
+    // The child's own output, shown when it fails: a failure beside other tests says nothing without it (Q42).
+    assert!(
+        status.status.success() && dir.join("done").exists(),
+        "the child failed: {}\n--- stdout\n{}\n--- stderr\n{}",
+        status.status,
+        String::from_utf8_lossy(&status.stdout),
+        String::from_utf8_lossy(&status.stderr)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -2233,7 +2240,7 @@ fn join_keys_from_functions_derive_the_rules_rows() {
         let db = Connection::open(&path).unwrap();
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();
-        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes.unwrap_or("")).unwrap();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).unwrap(), BTreeSet::new(), modes.unwrap_or("")).unwrap();
         if modes.is_some() {
             assert!(got.native.contains("hit") && got.native.contains("rest"), "native: {:?}", got.native);
         }
@@ -2403,6 +2410,120 @@ fn a_cross_product_after_a_relation_empty_when_planned_is_not_free() {
     let (order, work, _) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
     let lead = r.body[order[0].at].atom().map(|a| a.rel.to_string());
     assert_eq!(lead.as_deref(), Some("ann_str"), "`doc_role`, empty when planned, does not lead a cross product: {work} {:?}", order.iter().map(|s| r.body[s.at].to_string()).collect::<Vec<_>>());
+}
+
+/// Decision 0297: an order's price is the executor's count of its work (`profile::plan_work`): each step costs the
+/// rows it passes on, a join and a filter alike, and a filter passes on its kind's measured share. A scan of 1,000
+/// rows, a test against a constant (`!=`: 0.97) and a bound of an id's range (0.98) cost 1,000 + 970 + 950.6.
+#[test]
+fn a_filter_is_priced_at_the_rows_it_passes_on() {
+    let p = parse(".decl a(x: number)\n.decl r(x: number)\nr(x) :- a(x), x != 3, x < 6917529027641081856.\n.output r\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    model.stats.card.insert("a", 1_000.0);
+    model.ndv.insert(("a", 0), 1_000.0);
+    model.stats.fan.insert(("a", 0), 1.0);
+    let r = &p.rules[0];
+    let (order, work, rows) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    let shown: Vec<String> = order.iter().map(|s| r.body[s.at].to_string()).collect();
+    let want = 1_000.0 + 1_000.0 * 0.97 + 1_000.0 * 0.97 * 0.98;
+    assert!((work - want).abs() < 1e-6 * want, "work {work}, wanted {want}: {shown:?}");
+    assert!((rows - 1_000.0 * 0.97 * 0.98).abs() < 1e-6 * rows, "rows out {rows}");
+}
+
+/// A model with no statistics but those each test sets (decision 0299's tests).
+fn bare_model(p: &Program) -> Model {
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()}
+}
+
+/// `(order shown, work)` of `p`'s first rule.
+fn priced_first_rule(model: &Model, p: &Program) -> (Vec<String>, f64) {
+    let r = &p.rules[0];
+    let (order, work, _) = model.plan_rule(body::Placed::of_program(p).unwrap().fields().unwrap(), &body::nth(&body::alone(&r).unwrap(), 0), None).unwrap();
+    (order.iter().map(|s| r.body[s.at].to_string()).collect(), work)
+}
+
+/// Decision 0299: `within(n, a)` read from its container yields the container's descendants: the mean size of a
+/// node with children (`Stats::subtree_fan`), not the view's fanout, which is of the lookups made so far.
+#[test]
+fn within_read_from_its_container_is_priced_by_subtree_size() {
+    let p = parse(".decl c(t: number)\n.decl within(n: number, a: number)\n.decl r(n: number)\nr(n) :- c(t), within(n, t).\n.output r\n").unwrap();
+    let mut model = bare_model(&p);
+    // 1,000 leaves and 10 nodes of 50.
+    model.stats.size = std::sync::Arc::new(HashMap::from([("1".to_owned(), 1.0), ("2".to_owned(), 50.0)]));
+    model.stats.kfreq = std::sync::Arc::new([("1".to_owned(), 1_000), ("2".to_owned(), 10)].into_iter().collect());
+    model.stats.nodes = 1_010.0;
+    assert_eq!(model.stats.subtree_fan(), Some(50.0));
+    model.stats.card.insert("c", 10.0);
+    model.ndv.insert(("c", 0), 10.0);
+    model.stats.fan.insert(("c", 0), 1.0);
+    model.stats.card.insert("within", 1_000.0);
+    for (c, ndv, fan) in [(0, 400.0, 2.5), (1, 70.0, 14.0)] {
+        model.ndv.insert(("within", c), ndv);
+        model.stats.fan.insert(("within", c), fan);
+    }
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order, ["c($t)", "within($n, $t)"]);
+    assert!((work - (10.0 + 10.0 * 50.0)).abs() < 1e-6, "work {work}");
+}
+
+/// Decision 0299: a relation of the program's facts alone has its rows, distinct values and counts before it is
+/// made, not the default size.
+#[test]
+fn a_relation_of_facts_is_sized_when_planned() {
+    let p = parse(".decl ck(k: number, g: number)\n.decl a(c: number, k: number)\n.decl r(c: number)\nck(5, 1). ck(6, 1). ck(7, 2).\nr(c) :- ck(k, _), a(c, k).\n.output r\n").unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let mut stats = Stats::empty(&p);
+    stats.card.insert("a", 1_000.0);
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(stats);
+    let model = make_plan(&body::Placed::of_program(&p).unwrap(), &db, inputs).unwrap();
+    assert_eq!(model.stats.card.get("ck").copied(), Some(3.0));
+    assert_eq!(model.ndv.at("ck", 1).copied(), Some(2.0));
+    let groups = model.stats.dfreq.at("ck", 1).expect("the facts' counts");
+    assert_eq!(groups.get(&Constant::Int(1)).copied(), Some(2));
+}
+
+/// Decision 0299: `kind($c, $k)` with `$k` bound by an atom whose values are counted reads those kinds' nodes,
+/// each as often as it binds: (10 + 30) / 2 a binding, not every node over the kinds.
+#[test]
+fn a_kind_bound_by_counted_values_reads_their_nodes() {
+    let p = parse(".decl ck(k: number)\n.decl kind(n: number, k: number)\n.decl r(c: number)\nr(c) :- ck(k), kind(c, k).\n.output r\n").unwrap();
+    let mut model = bare_model(&p);
+    model.stats.kfreq = std::sync::Arc::new([("5".to_owned(), 10), ("6".to_owned(), 30), ("7".to_owned(), 10_000)].into_iter().collect());
+    model.stats.card.insert("ck", 2.0);
+    model.ndv.insert(("ck", 0), 2.0);
+    model.stats.fan.insert(("ck", 0), 1.0);
+    model.stats.dfreq.insert(("ck".to_owned(), 0), HashMap::from([(Constant::Int(5), 1), (Constant::Int(6), 1)]));
+    model.stats.card.insert("kind", 10_040.0);
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order, ["ck($k)", "kind($c, $k)"]);
+    assert!((work - (2.0 + 2.0 * 20.0)).abs() < 1e-6, "work {work}");
+}
+
+/// Decision 0299: a probe on several bound columns reads at least the rows of one combination the relation holds.
+/// Independence divided `w`'s two rows a node by its 400 names, though a node has one name.
+#[test]
+fn a_probe_on_several_columns_reads_a_combinations_rows() {
+    let p = parse(".decl d(n: number, x: number)\n.decl w(n: number, x: number, s: number)\n.decl r(s: number)\nr(s) :- d(n, x), w(n, x, s).\n.output r\n").unwrap();
+    let mut model = bare_model(&p);
+    model.stats.card.insert("d", 100.0);
+    for c in 0..2 {
+        model.ndv.insert(("d", c), 100.0);
+        model.stats.fan.insert(("d", c), 1.0);
+    }
+    model.stats.card.insert("w", 1_000.0);
+    for (c, ndv, fan) in [(0, 500.0, 2.0), (1, 400.0, 2.5), (2, 50.0, 20.0)] {
+        model.ndv.insert(("w", c), ndv);
+        model.stats.fan.insert(("w", c), fan);
+    }
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order, ["d($n, $x)", "w($n, $x, $s)"]);
+    assert!((work - (100.0 + 100.0 * 1.0)).abs() < 1e-6, "work {work}");
 }
 
 #[test]

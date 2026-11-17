@@ -376,6 +376,9 @@ CREATE TABLE IF NOT EXISTS corpus_manifests (
     -- What the run was of (`record_corpus_run_lane`): a root's last runs are protected by lane. NULL: the root's one
     -- lane.
     lane BLOB CHECK(lane IS NULL OR length(lane) = 32),
+    -- The lane's policy set (`record_corpus_run_policy`, decision 0302): a set's newer lane supersedes its older. NULL:
+    -- a lane of no set. Additive (`ADDED_COLUMNS`): an older binary ignores it.
+    policy BLOB CHECK(policy IS NULL OR length(policy) = 32),
     UNIQUE (root_id, digest)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS corpus_manifests_by_run ON corpus_manifests(last_run);
@@ -854,6 +857,7 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 /// Each has a default, so an older binary's inserts, which do not name it, still apply.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0"),
+    ("corpus_manifests", "policy", "BLOB CHECK(policy IS NULL OR length(policy) = 32)"),
     ("memo_entries", "over_pack", "INTEGER NOT NULL DEFAULT 0"),
     ("memo_entries", "over_at", "INTEGER NOT NULL DEFAULT 0"),
     ("memo_entries", "over_len", "INTEGER NOT NULL DEFAULT 0"),

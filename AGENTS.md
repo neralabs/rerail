@@ -24,7 +24,28 @@ its test target compiles the whole crate a second time:
 So a run of the CLI builds `--bin rerail-engine` only, and the test target is built when
 tests are run, not with every build.
 
-The farm's wrapper runs `scripts/dev/clean-target` on each target directory hourly: it removes the
+Build the CLI for development with the tests' features:
+
+```
+nice -n 19 cargo build --bin rerail-engine --features test-hooks
+```
+
+The tests turn on `test-hooks` in every dependency crate (and a few registry features). A CLI
+build without it compiles each of those crates a second time, apart from the tests' build, and
+keeps a second set of incremental state: twice the CPU per edit, and about 2 GB of disk per crate
+variant. With it, an edit compiles each dependency crate once for both, and a crate's own tests
+(`cargo test -p rerail-logic`) build the crates below it the same way too. Product builds (release,
+wasm, the Node addon) and measurement builds (`--profile profiling`) stay without it.
+
+Keep to that one feature set in this worktree's target. The farm's wrapper tells any build that
+compiles a workspace crate with other features than a build of the last 2 hours did, names the
+features and the earlier command, and repeats it at the checkout's next builds for 3 hours. Run a
+build with other features (`metal-tests`, `headless`, `code-rule-profile`, `--no-default-features`)
+on a farm host with `scripts/dev/test-remote`. `scripts/check/check-dev-features.py` (pre-commit)
+keeps the manifests' features in line: a crate's `test-hooks` and `default` turn on those of the
+crates below it.
+
+The farm's wrapper runs `scripts/dev/clean-target` on each target directory every 15 minutes: it removes the
 builds no current build was made from, debug objects no binary names, and stale incremental state.
 Never run a full `cargo clean`.
 
@@ -39,6 +60,11 @@ nice -n 19 cargo nextest run --lib                             # the quick tier:
 nice -n 19 cargo nextest run --lib --profile gate              # everything: a phase gate only
 nice -n 19 cargo nextest run --lib --ignore-default-filter NAME  # one slow test by name
 ```
+
+On a machine with the build farm (below), run these through `scripts/dev/test-remote -- cargo nextest
+run …` by default: the hosts take several test commands each at once, in a warm target directory per
+checkout, and this machine stays free for the edit loop. A build here prints when a host has a free
+test slot. Run tests here only when no host is usable (test-remote then runs them here itself).
 
 A test that takes 20 s or more belongs in the slow tier (the default profile's
 `default-filter`). Tests that read the packs' test data need it pulled first
@@ -59,14 +85,11 @@ scripts/build/farm/diagnose [DIR | --all]          # why a checkout's builds mis
 scripts/dev/test-remote -- cargo nextest run --lib --profile gate
 scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'
 scripts/dev/live-test-remote PACKAGE --lib -- FILTER   # Relax's live loop on a host
-scripts/dev/quiet-run [--minutes N] -- COMMAND        # a benchmark on an idle host, 10 min at most
 ```
 
-Benchmark only through `quiet-run` (README, "Quiet runs"). It waits its turn, keeps the farm's work
-off a host, and runs COMMAND there for 10 minutes at most. When a build prints that this machine
-is leased for a benchmark, its compiles wait. Don't start tests, Relax or other heavy work here
-until the lease ends: send them with `test-remote`. Doing so is unfair to the benchmark, and the
-checkout is told so at its next builds.
+Benchmarks are ordinary commands: run them with `test-remote` (`--tree DIR` sends their inputs or a
+program built here) or here, without waiting for an idle machine, and note the machine's load with
+the result. There are no benchmark leases.
 
 `test-remote` sends this checkout's changes to a usable host and runs the command there, from
 `native/` (or `--dir`), in a warm target directory of its own on that host. A host can be asleep, gone,

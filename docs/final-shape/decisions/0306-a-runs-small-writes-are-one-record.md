@@ -19,7 +19,7 @@ encoded as one string at the run's end and applied by the writer in order.
 
 ## Measured (2026-11-16)
 
-corpus0's first 1, 10 and 50 files, 312 of the bench's 317 rules (the five Q29 stops left out), strict, cold, warm and
+corpus0's first 1, 10 and 50 files, 312 of the bench's 317 rules (the five Q46 stops left out), strict, cold, warm and
 a one-file edit (`scratchpad/wal/run.sh`, not kept):
 
 | 50 files | Cold | Warm | Edit |

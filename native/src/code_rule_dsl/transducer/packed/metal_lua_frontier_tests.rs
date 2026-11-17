@@ -542,6 +542,7 @@ fn lua_values_inherit_work_before_later_operands_and_share_one_code_owner() {
 
 #[test]
 fn lua_byte_chunks_resume_long_balances_atoms_backreferences_and_search_attempts() {
+    crate::test_languages();
     let balanced = format!("# ({})", "a".repeat(600));
     let atom = format!("# {}", "a".repeat(600));
     let backreference = format!("# {0} {0}", "a".repeat(600));

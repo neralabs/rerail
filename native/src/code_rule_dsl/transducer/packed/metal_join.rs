@@ -127,6 +127,8 @@ pub(in crate::code_rule_dsl) const TEXTFN_ASCII_LOWER: u32 = 8;
 pub(in crate::code_rule_dsl) const TEXTFN_ASCII_UPPER: u32 = 9;
 /// X's text whole: a cat's (operand `OPND_DOT` or `OPND_PLAIN`), made for the head or a text function.
 pub(in crate::code_rule_dsl) const TEXTFN_COPY: u32 = 10;
+/// `zero_pad(n, w)`: key 5's digits zero-padded to key 6's width (0 to 64), the sign first, never truncated.
+pub(in crate::code_rule_dsl) const TEXTFN_ZERO_PAD: u32 = 11;
 pub(in crate::code_rule_dsl) const TEXTFN_FULL: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 /// An operand that is an arena text (a text function's value).
@@ -260,17 +262,40 @@ inline long global_of(device const ChunkDoc& d, uint l) {
 }
 // The projection's parent (`Projected::parent`): a node left out of it has the root for parent.
 inline uint parent_of(device const ChunkDoc& d, uint l) {
-    uint id = items<uint>(d.core)[l];
-    uint p = items<uint>(d.parent)[id];
-    uint q = p == CH_NONE ? CH_NONE : items<uint>(d.local)[p];
+    uint q = items<uint>(d.up)[l];
     return (q == CH_NONE && l != 0u) ? 0u : q;
 }
-// The kind column (`Dialect::kind`): the canonical code's atom.
-inline long kind_of(device const ChunkDoc& d, uint id) {
-    uint code = items<uint>(d.kind)[id] % 1024u;
+// The kind column (`Dialect::kind`) of local `l`: the canonical code's atom.
+inline long kind_of(device const ChunkDoc& d, uint l) {
+    uint code = items<uint>(d.kind)[l] % 1024u;
     if (code == 0u) return long(d.tag * 1024u);
     uint c = code < uint(d.canonical.len) ? uint(items<ushort>(d.canonical)[code]) : code;
     return long(d.tag * 1024u + (c == 0xffffu ? 0u : c));
+}
+
+// A node's or span's id (`Projected::global`): past the locals with ids by definition, a span's (`granules::span_low`).
+inline long loc_global(device const ChunkDoc& d, uint l) {
+    uint low;
+    if (d.preorder != 0u) {
+        low = l;
+    } else if (l < uint(d.low.len)) {
+        low = items<uint>(d.low)[l];
+    } else {
+        uint i = l - uint(d.low.len);
+        uint slot = (GR_SLOTS - 1u) - min(i >> GR_INDEX_BITS, GR_SPAN_SLOTS - 1u);
+        low = slot << GR_INDEX_BITS | (i & ((1u << GR_INDEX_BITS) - 1u));
+    }
+    return long(ulong(d.key) << 32 | ulong(low));
+}
+// The lines starting at or before byte `at` (`core_rr::Lines::line`, before its `max(1)`).
+inline uint line_of(device const ChunkDoc& d, uint at) {
+    device const uint* st = items<uint>(d.lines);
+    uint lo = 0u, hi = uint(d.lines.len);
+    while (lo < hi) {
+        uint m = (lo + hi) / 2u;
+        if (st[m] <= at) lo = m + 1u; else hi = m;
+    }
+    return lo;
 }
 
 // The document holding node row `row` (of `node`): the last whose rows start at or before it.
@@ -302,6 +327,39 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
         }
         return;
     }
+    if (view >= 5u) {
+        // core.rr's places (`View::Loc`): the document whose `Loc` rows hold `r`, then its local's span.
+        uint lo = 0u, hi = root->ndocs;
+        while (hi - lo > 1u) {
+            uint m = (lo + hi) / 2u;
+            if (docs[m].loc_row <= r) lo = m; else hi = m;
+        }
+        device const ChunkDoc& d = docs[lo];
+        uint l = r - d.loc_row;
+        uint s, e;
+        if (l < d.nodes) {
+            s = items<uint>(d.start)[l];
+            e = items<uint>(d.end)[l];
+        } else {
+            s = items<uint>(d.spans)[2u * (l - d.nodes)];
+            e = items<uint>(d.spans)[2u * (l - d.nodes) + 1u];
+        }
+        for (uint c = 0u; c < p[3]; c++) {
+            long v;
+            if (p[5 + c] == 0u) {
+                v = loc_global(d, l);
+            } else if (view == 8u) {
+                v = long(d.key);
+            } else {
+                uint line = max(line_of(d, s), 1u);
+                if (view == 5u) v = long(line);
+                else if (view == 6u) v = long(e > s ? max(line_of(d, e - 1u), 1u) : line);
+                else v = long(s - items<uint>(d.lines)[line - 1u]);
+            }
+            out[ulong(c) * n + r] = v;
+        }
+        return;
+    }
     // The last document whose rows start at or before `r` holds it (an empty one starts where the next does).
     uint lo = 0u, hi = root->ndocs;
     while (hi - lo > 1u) {
@@ -320,11 +378,11 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
         } else if (view == 3u && col == 1u) {
             v = long(id);
         } else if (view == 0u && col == 2u) {
-            v = kind_of(d, id);
+            v = kind_of(d, l);
         } else if (view == 0u && col == 3u) {
-            v = long(items<uint>(d.start)[id]);
+            v = long(items<uint>(d.start)[l]);
         } else if (view == 0u && col == 4u) {
-            v = long(items<uint>(d.end)[id]);
+            v = long(items<uint>(d.end)[l]);
         } else if ((view == 1u || view == 2u) && col == 0u) {
             uint q = parent_of(d, l);
             v = q == CH_NONE ? -1 : global_of(d, q);
@@ -332,7 +390,7 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
             // `child`'s columns are parent, child, index (`Viewed::columns`).
             v = long(items<uint>(d.ord)[l]);
         } else if (view == 2u && col == 1u) {
-            v = long(d.tag << 16 | uint(items<ushort>(d.field)[id]));
+            v = long(d.tag << 16 | uint(items<ushort>(d.field)[l]));
         } else {
             v = global_of(d, l);
         }
@@ -345,7 +403,7 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
 // (`inside`, containment) or 0 for the nearest. The climb is bounded by the document's nodes.
 inline bool axis_member(device const char* B, uint bits_at, device const ChunkDoc& d, uint l) {
     if (bits_at == 0u) return true;
-    uint at = d.tag * 1024u + items<uint>(d.kind)[items<uint>(d.core)[l]] % 1024u;
+    uint at = d.tag * 1024u + items<uint>(d.kind)[l] % 1024u;
     return ((((device const uint*)(B + bits_at))[at >> 5] >> (at & 31u)) & 1u) != 0u;
 }
 
@@ -371,10 +429,11 @@ kernel void axis_count(device const char* B [[buffer(0)]], device uint* start [[
     start[v] = count;
 }
 
-// Each node row's rows from its start (the scanned counts): inner << 32 | outer, nearest first.
+// Each node row's rows from its start (the scanned counts): inner << 32 | outer, nearest first. p[4] is the rows
+// the pairs' space holds: when the total (`start[n]`) is more, nothing is written, and the host writes again.
 kernel void axis_write(device const char* B [[buffer(0)]], device const uint* start [[buffer(1)]], device ulong* pairs [[buffer(2)]],
                        constant uint* p [[buffer(3)]], uint v [[thread_position_in_grid]]) {
-    if (v >= p[1]) return;
+    if (v >= p[1] || start[p[1]] > p[4]) return;
     device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
     device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
     device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, v)];
@@ -1230,7 +1289,7 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
         }
         Txt y = txt_of(s, L, row, R, A, 2, s.agg[1] >> 4), z = y;
         uint f = (s.agg[0] >> 16) & 255;
-        uint lx = txt_len(x), len = 0, dot = 0, from = 0, to = 0, ndig = 0;
+        uint lx = txt_len(x), len = 0, dot = 0, from = 0, to = 0, ndig = 0, pad = 0;
         ulong u = 0;
         bool neg = false;
         if (op == 0 || op == 1) {
@@ -1238,14 +1297,20 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
             len = lx + dot + txt_len(y);
         } else if (op == 2) {
             len = rx_replace_txt(G, x, y, false, (device uchar*)A, fs, lane);
-        } else if (f == 5) {
-            // to_string(n): its decimal digits, a lane each (at most 20).
+        } else if (f == 5 || f == 11) {
+            // to_string(n): its decimal digits, a lane each (at most 20). zero_pad(n, w): zeros after the sign up to
+            // w columns (0 to 64, as the host's `{:0w$}`).
             long n0 = key_value(s, L, row, 5);
             neg = n0 < 0;
             u = neg ? ulong(-(n0 + 1)) + 1 : ulong(n0);
             ndig = 1;
             while (ndig < 20 && u >= POW10[ndig]) ndig++;
             len = ndig + (neg ? 1 : 0);
+            if (f == 11) {
+                uint w = uint(clamp(key_value(s, L, row, 6), 0l, 64l));
+                pad = w > len ? w - len : 0;
+                len += pad;
+            }
         } else if (f == 6) {
             // replace_all of a literal pattern (key 2) by key 4's text.
             y = txt_of(s, L, row, R, A, 2, 0);
@@ -1275,10 +1340,11 @@ kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[
             if (op == 2) rx_replace_txt(G, x, y, true, o, fs, lane);
             else if (op <= 1) for (uint i = lane; i < len; i += 32) o[i] = i < lx ? txt_byte(x, i) : (i < lx + dot ? uchar('.') : txt_byte(y, i - lx - dot));
             else if (f == 6) lit_replace_txt(x, y, z, true, o, lane);
-            else if (f == 5) {
+            else if (f == 5 || f == 11) {
+                uint sign = neg ? 1 : 0;
                 for (uint i = lane; i < len; i += 32) {
-                    uint d = i - (neg ? 1 : 0);
-                    o[i] = neg && i == 0 ? uchar('-') : uchar('0' + (u / POW10[ndig - 1 - d]) % 10);
+                    uint d = i - sign - pad;
+                    o[i] = neg && i == 0 ? uchar('-') : i < sign + pad ? uchar('0') : uchar('0' + (u / POW10[ndig - 1 - d]) % 10);
                 }
             } else {
                 for (uint i = lane; i < len; i += 32) {
@@ -1503,7 +1569,9 @@ kernel void rel_hash(device const long* R [[buffer(0)]], device uint* out [[buff
 // (min and max select one of their values), `flags` a flat key's conflict. A held key's row is updated in place; a
 // new key's row goes to `N` (as `R`'s columns), found next by `H` (key to `R`'s row, kept from round to round). Each
 // changed key's row (key and value) goes to `D`, the next round's delta: `counters[0]` of them, `counters[1]` new.
-struct LatP { long top; uint n; uint had; uint nkeys; uint code; uint after; uint pmask; uint hmask; uint pad; };
+// `level`: the round, written to a changed or new key's level column (`nkeys + 2`) where the relation keeps levels
+// (decision 0311); 0: no level column.
+struct LatP { long top; uint n; uint had; uint nkeys; uint code; uint after; uint pmask; uint hmask; uint level; };
 
 static inline uint lat_hash(thread const long* key, uint nk, uint mask) {
     ulong h = 0x9E3779B97F4A7C15ul;
@@ -1573,17 +1641,38 @@ static inline uint lat_place(device const long* U, device const uint* P, constan
     return 0xffffffffu;
 }
 
-// Whether value `a` (of row `ra`) is chosen over `b` (of `rb`): the top absorbs; min the least, max the greatest;
-// a tie to the first row.
-static inline bool lat_better(constant LatP& p, long a, uint ra, long b, uint rb) {
+// Code 3 (`shortlex_min`, decision 0307): whether arena text `a` is before `b`, by their characters, then their
+// bytes (as `ShortlexMin`: `(chars, bytes)`), a word of eight at a time.
+static inline bool lat_text_less(device atomic_uint* A, long a, long b) {
+    ulong ua = ulong(a), ub = ulong(b);
+    Txt x = txt_raw(arena_bytes(A) + uint((ua & 0x7ffffffffffffffful) >> 24), uint(ua & 0xfffffful));
+    Txt y = txt_raw(arena_bytes(A) + uint((ub & 0x7ffffffffffffffful) >> 24), uint(ub & 0xfffffful));
+    uint cx = txt_chars(x), cy = txt_chars(y);
+    if (cx != cy) return cx < cy;
+    uint lx = txt_len(x), ly = txt_len(y), m = min(lx, ly);
+    for (uint at = 0; at < m; at += 8) {
+        ulong u = txt_word(x, at, m), v = txt_word(y, at, m);
+        if (u != v) return u < v;
+    }
+    return lx < ly;
+}
+
+// Whether value `a` (of row `ra`) is chosen over `b` (of `rb`): the top absorbs; min the least, max the greatest,
+// shortlex the least text (code 3, over the arena `A`); a tie to the first row.
+static inline bool lat_better(constant LatP& p, device atomic_uint* A, long a, uint ra, long b, uint rb) {
     if (b == p.top) return false;
     if (a == p.top) return true;
     if (a == b) return ra < rb;
+    if (p.code == 3) {
+        if (lat_text_less(A, a, b)) return true;
+        return !lat_text_less(A, b, a) && ra < rb;
+    }
     return p.code == 0 ? a < b : a > b;
 }
 
 kernel void lat_best(device const long* U [[buffer(0)]], device const uint* P [[buffer(1)]], device atomic_uint* best [[buffer(2)]],
-                     device atomic_uint* flags [[buffer(3)]], constant LatP& p [[buffer(4)]], uint x [[thread_position_in_grid]]) {
+                     device atomic_uint* flags [[buffer(3)]], device atomic_uint* A [[buffer(4)]], constant LatP& p [[buffer(5)]],
+                     uint x [[thread_position_in_grid]]) {
     if (x >= p.n) return;
     uint s = lat_place(U, P, p, x);
     if (s == 0xffffffffu) return;
@@ -1594,20 +1683,23 @@ kernel void lat_best(device const long* U [[buffer(0)]], device const uint* P [[
     }
     uint cur = atomic_load_explicit(&best[s], memory_order_relaxed);
     for (uint k = 0; k < 4 * p.n + 8; k++) {
-        if (cur != 0xffffffffu && !lat_better(p, v, x, U[ulong(p.nkeys) * p.n + cur], cur)) return;
+        if (cur != 0xffffffffu && !lat_better(p, A, v, x, U[ulong(p.nkeys) * p.n + cur], cur)) return;
         if (atomic_compare_exchange_weak_explicit(&best[s], &cur, x, memory_order_relaxed, memory_order_relaxed)) return;
     }
 }
 
-// The join of two present values (`code`: 0 min, 1 max, 2 flat), the top absorbing.
-static inline long lat_lub(constant LatP& p, long a, long b) {
+// The join of two present values (`code`: 0 min, 1 max, 2 flat, 3 shortlex over the arena `A`, a tie to `a`), the
+// top absorbing.
+static inline long lat_lub(constant LatP& p, device atomic_uint* A, long a, long b) {
     if (a == p.top || b == p.top) return p.top;
+    if (p.code == 3) return lat_text_less(A, b, a) ? b : a;
     if (p.code == 0) return min(a, b);
     if (p.code == 1) return max(a, b);
     return a == b ? a : p.top;
 }
 
-// A key changed past `after` times: min's or max's value moving on is its top (a finite chain); flat's is kept.
+// A key changed past `after` times: min's or max's value moving on is its top (a finite chain); flat's and
+// shortlex's are kept (finite lattices: `widen` keeps the route, decision 0124).
 static inline long lat_widen(constant LatP& p, long old, long now) {
     if (p.code == 0 && now < old) return p.top;
     if (p.code == 1 && now > old) return p.top;
@@ -1617,7 +1709,7 @@ static inline long lat_widen(constant LatP& p, long old, long now) {
 kernel void lat_merge(device const long* U [[buffer(0)]], device const uint* P [[buffer(1)]], device const uint* best [[buffer(2)]],
                       device const uint* flags [[buffer(3)]], device long* R [[buffer(4)]], device atomic_uint* H [[buffer(5)]],
                       device long* N [[buffer(6)]], device long* D [[buffer(7)]], device atomic_uint* counters [[buffer(8)]],
-                      constant LatP& p [[buffer(9)]], uint s [[thread_position_in_grid]]) {
+                      device atomic_uint* A [[buffer(9)]], constant LatP& p [[buffer(10)]], uint s [[thread_position_in_grid]]) {
     if (s > p.pmask) return;
     uint rep = P[s];
     if (rep == 0xffffffffu) return;
@@ -1639,7 +1731,7 @@ kernel void lat_merge(device const long* U [[buffer(0)]], device const uint* P [
     }
     if (held != 0xffffffffu) {
         long o = R[ulong(p.nkeys) * p.had + held];
-        long m = lat_lub(p, o, v);
+        long m = lat_lub(p, A, o, v);
         if (m == o) return;
         long changes = R[ulong(k) * p.had + held];
         if (p.after != 0xffffffffu && changes >= long(p.after)) {
@@ -1648,12 +1740,14 @@ kernel void lat_merge(device const long* U [[buffer(0)]], device const uint* P [
         }
         R[ulong(p.nkeys) * p.had + held] = m;
         R[ulong(k) * p.had + held] = changes + 1;
+        if (p.level != 0) R[ulong(k + 1) * p.had + held] = long(p.level);
         v = m;
     } else {
         uint a = atomic_fetch_add_explicit(&counters[1], 1u, memory_order_relaxed);
         for (uint c = 0; c < p.nkeys && c < 8; c++) N[ulong(c) * p.n + a] = key[c];
         N[ulong(p.nkeys) * p.n + a] = v;
         N[ulong(k) * p.n + a] = 1;
+        if (p.level != 0) N[ulong(k + 1) * p.n + a] = long(p.level);
         uint id = p.had + a;
         uint place = lat_hash(key, p.nkeys, p.hmask);
         for (uint i = 0; i < 2 * (p.hmask + 1); i++) {
@@ -1686,11 +1780,24 @@ pub(in crate::code_rule_dsl) fn hash_keys(kv: &[i64], mask: u32) -> u32 {
 }
 
 /// A kind-set axis's batch solve on the device, written into `chunk` (decision 0289 §2, `facts::nearest::ChunkAxis`):
-/// each node's rows counted by a climb of its ancestors, the counts scanned into the starts, then the pairs written.
-/// Two submissions, since the pairs' space is allocated once their count is read. The starts and the pairs are
-/// page-aligned in the block, each bound as a buffer of its own with no copy.
+/// each node's rows counted by a climb of its ancestors, the counts scanned into the starts, then the pairs written,
+/// in one submission. The pairs' space is sized before the count: a nearest axis has at most a row per node, so its
+/// bound is exact; containment's is `INSIDE_ROWS` a node, and the rare batch past it writes again once its total is
+/// read. The space past the total is given back to the block. The starts and the pairs are page-aligned in the
+/// block, each bound as a buffer of its own with no copy; the block reserves address space, so the bound's pages
+/// the device never writes are never memory.
 pub fn axis_in_chunk(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk, bits: Option<&[u32]>, inside: bool)
                      -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String> {
+    axis_in_chunk_bounded(chunk, bits, inside, INSIDE_ROWS)
+}
+
+/// Containment's rows a node that the pairs' space is sized for before the count.
+const INSIDE_ROWS: usize = 8;
+
+/// `axis_in_chunk`, with containment's space sized for `inside_rows` a node (a test makes it 0, to write again).
+pub(in crate::code_rule_dsl) fn axis_in_chunk_bounded(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk,
+                                                      bits: Option<&[u32]>, inside: bool, inside_rows: usize)
+                                                      -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String> {
     use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::ChunkRoot;
     const PAGE: usize = 16384;
     let b = &chunk.block;
@@ -1708,32 +1815,46 @@ pub fn axis_in_chunk(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_c
     };
     let start_bytes = (4 * (n + 1)).next_multiple_of(PAGE);
     let start_at = b.try_alloc(start_bytes, PAGE).ok_or_else(full)?;
+    let cap = if inside { inside_rows * n } else { n }.min(u32::MAX as usize);
+    let cap_bytes = (8 * cap).max(8).next_multiple_of(PAGE);
+    let pairs_at = b.try_alloc(cap_bytes, PAGE).ok_or_else(full)?;
     let device = rerail_accel::gpu::join::device()?;
     let whole = b.gpu_buffer(device);
     let part = |at: usize, bytes: usize| {
         device.new_buffer_with_bytes_no_copy(b.ptr::<u8>(at) as *const std::ffi::c_void, bytes as u64, metal::MTLResourceOptions::StorageModeShared, None)
     };
     let starts = part(start_at, start_bytes);
+    let pairs = part(pairs_at, cap_bytes);
     let count = pipeline("chunk_views", "axis_count", chunk_views_source)?;
     let write = pipeline("chunk_views", "axis_write", chunk_views_source)?;
     let at = |o: usize| u32::try_from(o).map_err(|_| "the axis lies past 4 GB of its chunk".to_string());
-    let p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside)];
+    let p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), cap as u32];
     let scan = Scan::owned(n + 1)?;
     let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
-    let pass = batch.pass(16).map_err(|e| format!("{e:?}"))?;
+    let pass = batch.pass(17).map_err(|e| format!("{e:?}"))?;
     pass.run(&count, &[&whole, &starts], &p, &[], groups(n + 1));
     scan.encode(pass, &starts)?;
+    if n > 0 {
+        pass.run(&write, &[&whole, &starts, &pairs], &p, &[], groups(n));
+    }
     batch.finish().map_err(|e| format!("{e:?}"))?;
     // SAFETY: the scan completed: its last value is the total.
     let len = unsafe { *b.ptr::<u32>(start_at + 4 * n) } as usize;
-    let pairs_bytes = (8 * len).max(8).next_multiple_of(PAGE);
+    if len <= cap {
+        b.shrink_last(pairs_at, cap_bytes, (8 * len).max(8).next_multiple_of(PAGE));
+        return Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: start_at, pairs: pairs_at, len });
+    }
+    // Past the bound: the write was skipped, and is made again into space of the total's size.
+    let _span = crate::code_rule_dsl::logic::profile::span(|| format!("containment past {inside_rows} rows a node: written again"));
+    b.shrink_last(pairs_at, cap_bytes, 0);
+    let pairs_bytes = (8 * len).next_multiple_of(PAGE);
     let pairs_at = b.try_alloc(pairs_bytes, PAGE).ok_or_else(full)?;
     let pairs = part(pairs_at, pairs_bytes);
+    let whole = b.gpu_buffer(device);
+    let p = [p[0], p[1], p[2], p[3], len as u32];
     let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
-    if n > 0 {
-        let pass = batch.pass(1).map_err(|e| format!("{e:?}"))?;
-        pass.run(&write, &[&whole, &starts, &pairs], &p, &[], groups(n));
-    }
+    let pass = batch.pass(1).map_err(|e| format!("{e:?}"))?;
+    pass.run(&write, &[&whole, &starts, &pairs], &p, &[], groups(n));
     batch.finish().map_err(|e| format!("{e:?}"))?;
     Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: start_at, pairs: pairs_at, len })
 }
@@ -2032,6 +2153,23 @@ impl Arena {
         unsafe { *self.buffer.buffer.contents().cast::<u32>() as usize }
     }
 
+    /// `bytes` put into the arena by the host, between batches (no command buffer writing it is pending): their
+    /// value, or none when it has no room.
+    pub(in crate::code_rule_dsl) fn put(&self, bytes: &[u8]) -> Option<i64> {
+        let off = self.wanted();
+        if off + bytes.len() > self.cap || bytes.len() > 0xff_ffff {
+            return None;
+        }
+        // SAFETY: the header's first word and `bytes.len()` bytes within `cap` past the header; no command buffer is
+        // using the arena (the caller's between batches).
+        unsafe {
+            let base = self.buffer.buffer.contents().cast::<u8>();
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), base.add(16 + off), bytes.len());
+            *base.cast::<u32>() = (off + bytes.len()) as u32;
+        }
+        Some(ARENA_TEXT | ((off as i64) << 24) | bytes.len() as i64)
+    }
+
     /// The text of arena value `v` (`ARENA_TEXT`'s), once the command buffers that made it completed.
     pub(in crate::code_rule_dsl) fn text(&self, v: i64) -> Option<&[u8]> {
         if v & ARENA_TEXT == 0 || v == -1 {
@@ -2095,6 +2233,14 @@ impl Batch {
         self.held.push(what);
     }
 
+    /// A batch whose text arena is `arena`, kept across batches: a recursive component's rounds (decision 0307),
+    /// whose texts one round makes the next reads.
+    pub(in crate::code_rule_dsl) fn with_shared_arena(arena: std::rc::Rc<Arena>) -> Result<Batch, Error> {
+        let mut b = Batch::with_arena(arena.cap)?;
+        b.arena = Some(arena);
+        Ok(b)
+    }
+
     /// Its text arena, shared by its jobs.
     pub(in crate::code_rule_dsl) fn arena(&mut self) -> Result<std::rc::Rc<Arena>, Error> {
         if self.arena.is_none() {
@@ -2129,6 +2275,12 @@ impl Batch {
         self.committed.push(s);
         self.done.submissions += 1;
         Ok(())
+    }
+
+    /// Commits what is open without waiting: the work encoded so far runs before any command buffer committed after
+    /// it on the one queue (a batch that reads what this one's work writes).
+    pub(in crate::code_rule_dsl) fn commit_open(&mut self) -> Result<(), Error> {
+        self.submit_open()
     }
 
     /// Commits what is open and waits for every command buffer.
@@ -2669,7 +2821,8 @@ pub(in crate::code_rule_dsl) struct LatKeys {
     places: usize,
 }
 
-/// A lattice the device folds by (`Batch::lattice_fold`): 0 min, 1 max, 2 flat; its top; `widen`'s count.
+/// A lattice the device folds by (`Batch::lattice_fold`): 0 min, 1 max, 2 flat, 3 shortlex (its values arena texts,
+/// decision 0307); its top; `widen`'s count.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::code_rule_dsl) struct LatCode {
     pub(in crate::code_rule_dsl) code: u32,
@@ -2679,21 +2832,25 @@ pub(in crate::code_rule_dsl) struct LatCode {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct LatParams { top: i64, n: u32, had: u32, nkeys: u32, code: u32, after: u32, pmask: u32, hmask: u32, pad: u32 }
+struct LatParams { top: i64, n: u32, had: u32, nkeys: u32, code: u32, after: u32, pmask: u32, hmask: u32, level: u32 }
 
 impl Batch {
     /// A lattice relation's round (decision 0124): the `n` rows of `u` (its key's `nkeys` columns, then the value)
     /// folded by key into `total` (the relation's `nkeys + 2` columns, its last a key's changes; `had` rows): a held
     /// key's row updated in place, a new key's row into `new_keys` (as `total`'s columns), each changed key's row (key
-    /// and value) into `delta`. `counters`: `[changed, new]`.
+    /// and value) into `delta`. `counters`: `[changed, new]`. `level`: where the relation keeps levels (decision
+    /// 0311), the round, written to a changed or new key's row in a column after its changes (`total` and `new_keys`
+    /// then have one more).
     #[allow(clippy::too_many_arguments)]
+    /// Code 3 compares its values' texts in `arena`, which holds every value the fold reads.
     pub(in crate::code_rule_dsl) fn lattice_fold(&mut self, u: &Table, n: usize, total: Option<&DevRel>, nkeys: usize, lat: LatCode, keys: &mut LatKeys,
-                                                 counters: &Words, new_keys: &Table, delta: &Table) -> Result<(), Error> {
+                                                 counters: &Words, new_keys: &Table, delta: &Table, arena: Option<&Arena>, level: Option<u32>) -> Result<(), Error> {
+        assert!(lat.code != 3 || arena.is_some(), "a shortlex fold reads its values' texts");
         assert!(nkeys + 1 <= MAX_KEYS && u.cap == n && new_keys.cap == n && delta.cap == n);
         let had = total.map_or(0, |t| t.rows);
         let pplaces = (2 * n).next_power_of_two().max(16);
         let want = (2 * (had + n)).next_power_of_two().max(16);
-        let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32, hmask: 0, pad: 0 };
+        let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32, hmask: 0, level: level.unwrap_or(0) };
         let r: metal::Buffer = total.map_or_else(|| self.dummy.buffer.to_owned(), |t| t.buffer.buffer.to_owned());
         if keys.places < want {
             // Grown: every held row placed again.
@@ -2722,12 +2879,13 @@ impl Batch {
         let chosen = Held::new(4 * pplaces)?;
         let flags = Held::new(4 * pplaces)?;
         let h: metal::Buffer = keys.table.as_ref().expect("a key table").buffer.to_owned();
+        let a: metal::Buffer = arena.map_or_else(|| self.dummy.buffer.to_owned(), |a| a.buffer.buffer.to_owned());
         let pass = self.pass(4)?;
         let ub: &BufferRef = &u.buffer.buffer;
         pass.run_bytes(&clear, &[&places.buffer, &chosen.buffer, &flags.buffer], bytes, groups(pplaces));
         pass.run_bytes(&claim, &[ub, &places.buffer], bytes, groups(n));
-        pass.run_bytes(&best, &[ub, &places.buffer, &chosen.buffer, &flags.buffer], bytes, groups(n));
-        pass.run_bytes(&merge, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &r, &h, &new_keys.buffer.buffer, &delta.buffer.buffer, &counters.buffer.buffer], bytes, groups(pplaces));
+        pass.run_bytes(&best, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &a], bytes, groups(n));
+        pass.run_bytes(&merge, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &r, &h, &new_keys.buffer.buffer, &delta.buffer.buffer, &counters.buffer.buffer, &a], bytes, groups(pplaces));
         self.keep.extend([places, chosen, flags]);
         Ok(())
     }

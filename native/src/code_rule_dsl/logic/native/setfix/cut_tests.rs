@@ -128,6 +128,27 @@ fn a_whole_plan_is_cut_and_a_finished_trial_keeps_its_rows() {
     closure::semi_naive_here(false);
 }
 
+/// Decision 0203 §3 at a whole plan's cut: the planner's statistics are of the whole plan's order, so its steps' histograms
+/// are read in the whole join, not the delta join, whose step at the same place is another atom. Read there, a key
+/// column past that atom's width was out of bounds (a panic in the cross-file part over PostHog).
+#[test]
+fn a_whole_plans_step_histograms_are_read_in_its_whole_join() {
+    let db = connection();
+    db.execute_batch("CREATE TABLE edge(c0, c1); INSERT INTO edge VALUES (1, 2), (2, 3), (3, 3);\nCREATE TABLE path(c0, c1); INSERT INTO path SELECT c0, c1 FROM edge;\nCREATE TABLE node(c0); INSERT INTO node VALUES (2), (3);").unwrap();
+    let input = format!("t:b:{}:{}:ii", hex("edge"), hex("c0, c1"));
+    let node = format!("t:b:{}:{}:i", hex("node"), hex("c0"));
+    let delta = format!("pos d0 v0 v1\npos {input} v1 v2\npos {node} v2\nhead v0 v2");
+    let whole = format!("pos {node} v2\npos {input} v1 v2\npos c0 v0 v1\nhead v0 v2");
+    open(&db, &format!("name whist\nrel path ii\njoin 0 0 {} {}", hex(&delta), hex(&whole))).unwrap();
+    // Step 0 by column 0: the whole plan's is `node` (one column, 2 rows); the delta join's is `path` (3 rows).
+    let of = |whole: bool, wanted: &[(usize, Vec<usize>)]| step_histograms(&db, "whist", 0, whole, wanted, 1 << 20).unwrap();
+    assert_eq!(of(true, &[(0, vec![0])])[0].as_ref().map(|h| h.0), Some(2));
+    assert_eq!(of(false, &[(0, vec![0])])[0].as_ref().map(|h| h.0), Some(3));
+    // The whole plan's step 2 is `path`, by its second column: in the delta join that step is `node`, of one column.
+    assert_eq!(of(true, &[(2, vec![1])])[0].as_ref().map(|h| (h.0, h.1.len())), Some((3, 2)));
+    close(&db, "whist").unwrap();
+}
+
 /// Decision 0206, a first step fused with its filters (`rowcode`): a cut inside a chunk stops the chunk at the row it
 /// is at, so the rows after it are left and read by the wave going on. Before, the chunk's loop went on naming each
 /// row it passed over as reached: the cut left one row, and the fixpoint lost what the rest derive.
@@ -259,8 +280,19 @@ fn a_scan_walked_in_morsels_makes_one_walks_rows_and_cuts_within_its_budget() {
     assert!(morsels_walked() > before, "the cut walk ran in morsels");
     let cut = take_cut(&db, "mors").unwrap().expect("a cut");
     assert!(cut.led && cut.done > 0 && cut.left > 0 && cut.done + cut.left == 40_000, "{cut:?}");
+    // The walk's work is what the planner counts of it, and its counts reach the budget (decision 0294), as one
+    // walk's: each morsel's own entry into the first step counted once for the walk, and the one step a cut walk is
+    // refused once. Short of it, the planner gave the line a budget of a few rows more, and judged its work so far
+    // by the few rows that walk read.
+    let counted = crate::code_rule_dsl::logic::profile::plan_work(&step_counts(&db, "mors").unwrap()[0].iter().map(|&(a, b)| (a as u64, b as u64)).collect::<Vec<_>>());
+    assert_eq!(cut.work, counted + 1, "{cut:?}");
+    assert!(counted >= 30_000, "{cut:?}: {counted}");
     set_budgets(&db, "mors", &[(0, None)]).unwrap();
+    // The walk going on reads the rows left in the order the cut walk was to read them, which is its scan's key
+    // order: none sorted again (decision 0294).
+    let in_order = left_read_in_order();
     assert_eq!(run(&db, "mors", 0).unwrap().split_whitespace().last(), Some("1"));
+    assert_eq!(left_read_in_order() - in_order, cut.left, "{cut:?}");
     close(&db, "mors").unwrap();
     assert_eq!(rows(&db), one, "the fixpoint is the unlimited run's");
     closure::semi_naive_here(false);
@@ -317,4 +349,54 @@ fn a_join_that_reads_texts_or_makes_atoms_walks_in_morsels_and_makes_one_walks_a
     assert_eq!(made, whole, "the same rows");
     assert!(whole_atoms.iter().any(|(t, v)| t != v), "the parts are atoms");
     assert_eq!(made_atoms, whole_atoms, "the same atom for each text: interned in one walk's order");
+}
+
+/// Q36: a profiled walk times each of its steps, and last its head's rows made (`StepClock`), scaled to its
+/// thread's CPU; `step_cpu` takes them as `step_counts` takes the counts. Unprofiled, nothing is timed.
+#[test]
+fn a_profiled_walk_times_each_step_and_its_heads_rows() {
+    let edges: Vec<String> = (0..300).flat_map(|i| [format!("({i}, {})", i + 1), format!("({i}, {})", (i * 7) % 300)]).collect();
+    let setup = |db: &Connection| {
+        db.execute_batch(&format!("CREATE TABLE edge(c0, c1); INSERT INTO edge VALUES {};\nCREATE TABLE path(c0, c1); INSERT INTO path SELECT c0, c1 FROM edge;\nCREATE TABLE node(c0); INSERT INTO node SELECT DISTINCT c1 FROM edge;", edges.join(", "))).unwrap();
+    };
+    let input = format!("t:b:{}:{}:ii", hex("edge"), hex("c0, c1"));
+    closure::semi_naive_here(true);
+    let node = format!("t:b:{}:{}:i", hex("node"), hex("c0"));
+    let body = format!("pos d0 v0 v1\npos {input} v1 v2\npos {node} v2\nhead v0 v2");
+    let spec = format!("name clock\nrel path ii\njoin 0 0 {}", hex(&body));
+    for profiled in [false, true] {
+        crate::code_rule_dsl::logic::profile::set(profiled);
+        let db = connection();
+        setup(&db);
+        open(&db, &spec).unwrap();
+        assert_eq!(run(&db, "clock", 0).unwrap().split_whitespace().last(), Some("1"));
+        let counts = step_counts(&db, "clock").unwrap();
+        let cpu = step_cpu(&db, "clock").unwrap();
+        assert_eq!(cpu[0].len(), counts[0].len() + 1, "each step and the head's rows: {cpu:?}");
+        assert!(cpu[0].iter().all(|c| c.is_finite() && *c >= 0.0), "{cpu:?}");
+        if profiled {
+            assert!(cpu[0].iter().sum::<f64>() > 0.0, "a walk of {counts:?} took no time: {cpu:?}");
+            assert!(step_cpu(&db, "clock").unwrap()[0].iter().all(|&c| c == 0.0), "taken, the clocks start again");
+        } else {
+            assert!(cpu[0].iter().all(|&c| c == 0.0), "unprofiled, nothing is timed: {cpu:?}");
+        }
+        close(&db, "clock").unwrap();
+    }
+    crate::code_rule_dsl::logic::profile::set(false);
+}
+
+/// A literal that makes two steps (`$k = @sub(@strlen($d), 1)`) is one plan step: its counts are the bindings into
+/// its first step and out of its last, its CPU both steps'; the head's computed terms' steps go to the head, and a
+/// plan step that made no step passes its rows on. Zipped by place, the steps after it were their neighbours'.
+#[test]
+fn counts_and_cpu_are_reported_by_the_plan_step_that_made_the_steps() {
+    // Plan steps: 0 (an atom), 1 (two steps), 2 (none), 3 (an atom); then a head's `@pkg_up` (one step).
+    let from = [0, 1, 1, 3, 4];
+    let counts = [(1, 10), (10, 10), (10, 8), (8, 3), (3, 3)];
+    assert_eq!(plan_counts(&from, 4, &counts), vec![(1, 10), (10, 8), (8, 8), (8, 3)]);
+    let cpu = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0];
+    assert_eq!(plan_cpu(&from, 4, &cpu), vec![1.0, 6.0, 0.0, 8.0, 48.0]);
+    // A spec read from text: each step its own plan step.
+    let from: Vec<usize> = (0..3).collect();
+    assert_eq!(plan_counts(&from, 3, &counts[..3]), counts[..3].to_vec());
 }

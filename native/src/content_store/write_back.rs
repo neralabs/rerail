@@ -60,6 +60,12 @@ pub const JOB_DEADLINE: Duration = Duration::from_secs(120);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Key(pub [u8; 32]);
 
+/// The WAL's size past which the writer's checkpointer copies it into the database (decision 0308).
+const CHECKPOINT_WAL_BYTES: u64 = 64 << 20;
+
+/// The writer's page cache, KiB (decision 0308): a wave's changed pages, where the readers' connections keep 1 MB.
+const WRITER_CACHE_KIB: i64 = 32 << 10;
+
 impl Key {
     /// The key of `parts` (a table's name, then its key's bytes).
     pub fn of(parts: &[&[u8]]) -> Key {
@@ -225,6 +231,12 @@ pub enum Boundary {
     Chunk,
     /// A round of the cone (decision 0145).
     ConeRound,
+    /// The file-local part done, before the cross part: what it left queued (the files' stats) is written while the
+    /// cross part runs (decision 0296).
+    Local,
+    /// The cross part's rows derived: its new atoms (names it made) are written while its kept part is framed
+    /// (decision 0296).
+    CrossDerived,
     /// The cross part done: its kept strata's frames, retained rows, rounds, statistics.
     Cross,
     /// The run's end: the cross memo, the manifest, the atoms, the kept plans.
@@ -385,6 +397,13 @@ struct Wave {
 }
 
 /// The bytes under which a job is queued past the cap (back-pressure holds only a job of this size or more).
+/// `RERAIL_WRITES` (a measurement aid): seconds since the writer's first use in this process, for its timeline.
+fn writes_trace() -> Option<f64> {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_WRITES").is_some());
+    static T0: std::sync::LazyLock<Instant> = std::sync::LazyLock::new(Instant::now);
+    (*ON).then(|| T0.elapsed().as_secs_f64())
+}
+
 fn small_job() -> usize {
     cap_bytes() / 64
 }
@@ -425,6 +444,9 @@ impl Writer {
             }
             s.sealed_bytes += jobs.iter().map(|q| q.1).sum::<usize>();
             s.sealed += 1;
+            if let Some(t) = writes_trace() {
+                eprintln!("RERAIL_WRITES t={t:.2} seal {} jobs, {:.1} MB; queued {:.1} MB, sealed {:.1} MB", jobs.len(), jobs.iter().map(|q| q.1).sum::<usize>() as f64 / 1048576.0, s.bytes as f64 / 1048576.0, s.sealed_bytes as f64 / 1048576.0);
+            }
             jobs
         };
         // A writer with a wave open has its lane: the wave's first job started it (`queue`).
@@ -697,6 +719,9 @@ impl ContentStore {
                 s.dropped = (s.dropped.0 + 1, s.dropped.1 + bytes);
                 return false;
             }
+            if bytes >= small_job() && let Some(t) = writes_trace() {
+                eprintln!("RERAIL_WRITES t={t:.2} queue {what} {:.1} MB; queued {:.1} MB, sealed {:.1} MB", bytes as f64 / 1048576.0, s.bytes as f64 / 1048576.0, s.sealed_bytes as f64 / 1048576.0);
+            }
             let t = full(&s).then(std::time::Instant::now);
             // The first hold says what fills the queue (a strict run ends at it).
             static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -785,17 +810,34 @@ impl ContentStore {
         // job meanwhile (3.0 s of a cold run's 7.7 s on the writer). A checkpoint is `PASSIVE` on a connection of
         // its own: in WAL mode it neither blocks the writer nor waits for it, and it copies only what is committed:
         // whole waves. Told after each wave; signals that come while it checkpoints are one.
+        //
+        // Decision 0308: only once the WAL holds `CHECKPOINT_WAL_BYTES`, and once more as the writer ends. A
+        // checkpoint after every wave copied and synced again each page that consecutive waves change (the indexes'),
+        // 10.8 thread-s of a cold PostHog run's 24 s in the store's I/O.
         let (mut told, tells) = mpsc::channel::<()>();
         let checkpointer = self.sibling();
+        let wal = { let mut p = self.database_path.clone().into_os_string(); p.push("-wal"); PathBuf::from(p) };
         let checkpoints = rerail_accel::exec::service("rerail-store-checkpoint", None, move || {
             super::hazards::behind_the_run();
-            while tells.recv().is_ok() {
-                while tells.try_recv().is_ok() {}
-                let Ok(connection) = checkpointer.connection.lock() else { break };
+            let checkpoint = || {
+                let Ok(connection) = checkpointer.connection.lock() else { return false };
                 if let Err(e) = connection.query_row_cached("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(())) {
                     eprintln!("rerail: the store's checkpoint failed: {e}");
                 }
+                true
+            };
+            while tells.recv().is_ok() {
+                while tells.try_recv().is_ok() {}
+                if std::fs::metadata(&wal).is_ok_and(|m| m.len() < CHECKPOINT_WAL_BYTES) {
+                    continue;
+                }
+                if !checkpoint() {
+                    return;
+                }
             }
+            // The writer has ended: what it committed since the last checkpoint, so a later run reads it through the
+            // map of the database file, not from the WAL.
+            checkpoint();
         })
         .expect("the store's checkpoint thread");
         // Joined by the writer as it ends (below): a checkpoint after the store's last handle is gone touched its
@@ -804,9 +846,12 @@ impl ContentStore {
         let thread = rerail_accel::exec::service("rerail-store-writer", None, move || {
                 // What this thread sends to SQLite no wave waits for.
                 super::hazards::behind_the_run();
-                // Its commits leave the WAL to the checkpointer (above).
+                // Its commits leave the WAL to the checkpointer (above). Its page cache holds a wave's changed pages
+                // (decision 0308): at the readers' 1 MB, a wave spilled them into the WAL before its commit
+                // (`pagerStress`) and read them back from it as it changed them again.
                 if let Ok(connection) = store.connection.lock() {
                     let _ = connection.pragma_update(None, "wal_autocheckpoint", 0);
+                    let _ = connection.pragma_update(None, "cache_size", -WRITER_CACHE_KIB);
                 }
                 while let Ok(Wave { jobs: mut batch, alone, run: of, finished }) = rx.recv() {
                     let before = thread_cpu();
@@ -872,8 +917,11 @@ impl ContentStore {
                     let started = Instant::now();
                     let mut backoff = JOB_BACKOFF_FIRST;
                     let mut forked_in = false;
+                    let mut tries = 0usize;
+                    let jobs_wall = std::cell::Cell::new(0.0f64);
                     let outcomes = loop {
-                        match store.in_one_transaction(|| run(&mut batch)) {
+                        tries += 1;
+                        match store.in_one_transaction(|| { let t = Instant::now(); let o = run(&mut batch); jobs_wall.set(jobs_wall.get() + t.elapsed().as_secs_f64()); o }) {
                             Ok(outcomes) => break outcomes,
                             Err(StoreError::Busy) if started.elapsed() < JOB_DEADLINE => {
                                 std::thread::sleep(super::connection::jittered(backoff));
@@ -887,6 +935,10 @@ impl ContentStore {
                     };
                     drop(warm_scope);
                     drop(batch_span);
+                    if let Some(t) = writes_trace() {
+                        let wall = started.elapsed().as_secs_f64();
+                        eprintln!("RERAIL_WRITES t={t:.2} wave {} jobs, {:.1} MB: {wall:.3} s wall, jobs {:.3} s, begin+commit {:.3} s, CPU {:.3} s, {tries} tries", batch.len(), batch.iter().map(|q| q.1).sum::<usize>() as f64 / 1048576.0, jobs_wall.get(), wall - jobs_wall.get(), thread_cpu() - before);
+                    }
                     let _ = told.send(());
                     let cpu = (thread_cpu() - before) / batch.len().max(1) as f64;
                     w.shared.state.lock().expect("the writer's state").batches += 1;

@@ -73,10 +73,10 @@ impl Semantics {
         for &n in &missing {
             let tape = root.get_doc();
             let span = tape.transducer_span(n);
-            if span.start != p.facts.start[n as usize] as usize
-                || span.end != p.facts.end[n as usize] as usize
+            if span.start != p.facts.start(n) as usize
+                || span.end != p.facts.end(n) as usize
                 || tape.transducer_kind(n)
-                    != crate::code_rule_dsl::facts::core::kind_code(p.facts.kind[n as usize])
+                    != crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(n))
             {
                 return Err("semantic tape node identity differs from demanded core node".into());
             }

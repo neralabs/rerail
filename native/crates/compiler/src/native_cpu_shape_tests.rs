@@ -1,5 +1,6 @@
 //! The shape guard on hand-built functions: a loop a byte at a time and a call out are refused;
 //! the same loop named as a progress point is not, nor a call of the program's own function.
+//! A loop named `Step::Bytes` passes only as lean's run of bytes.
 
 use super::*;
 use cranelift_codegen::ir::{AbiParam, ExtFuncData, ExternalName, InstBuilder, Signature, UserExternalName, UserFuncName, condcodes::IntCC, types};
@@ -98,4 +99,59 @@ fn a_call_of_the_programs_own_function_is_allowed() {
     for colocated in [false, true] {
         assert_eq!(check(&calling(user(), colocated), &[], &[UserExternalName::new(0, 7)]), Ok(()));
     }
+}
+
+/// `while b[end] in '0'..='9' { end += 1 }`, or with `step` and `on_byte` changed, a loop that
+/// steps `step` bytes or ends by `end < n` instead of by the byte. Returns it and its head.
+fn run_loop(step: i64, on_byte: bool) -> (Function, Block) {
+    let mut sig = Signature::new(CallConv::SystemV);
+    sig.params.push(AbiParam::new(types::I64));
+    sig.params.push(AbiParam::new(types::I64));
+    sig.returns.push(AbiParam::new(types::I64));
+    let mut func = Function::with_name_signature(UserFuncName::default(), sig);
+    let mut ctx = FunctionBuilderContext::new();
+    let head;
+    {
+        let mut f = FunctionBuilder::new(&mut func, &mut ctx);
+        let (entry, top, done) = (f.create_block(), f.create_block(), f.create_block());
+        head = top;
+        f.append_block_params_for_function_params(entry);
+        f.append_block_param(top, types::I64);
+        f.append_block_param(done, types::I64);
+        f.switch_to_block(entry);
+        let (bytes, n) = (f.block_params(entry)[0], f.block_params(entry)[1]);
+        let zero = f.ins().iconst(types::I64, 0);
+        f.ins().jump(top, &[zero.into()]);
+        f.switch_to_block(top);
+        let end = f.block_params(top)[0];
+        let at = f.ins().iadd(bytes, end);
+        let b = f.ins().uload8(types::I64, cranelift_codegen::ir::MemFlags::trusted(), at, 0);
+        let off = f.ins().iadd_imm(b, -48);
+        let digit = f.ins().icmp_imm(IntCC::UnsignedLessThan, off, 10);
+        let next = f.ins().iadd_imm(end, step);
+        let more = if on_byte { digit } else { f.ins().icmp(IntCC::UnsignedLessThan, next, n) };
+        f.ins().brif(more, top, &[next.into()], done, &[end.into()]);
+        f.switch_to_block(done);
+        let r = f.block_params(done)[0];
+        f.ins().return_(&[r]);
+        f.seal_all_blocks();
+        f.finalize();
+    }
+    (func, head)
+}
+
+#[test]
+fn only_a_run_of_bytes_is_a_bytes_loop() {
+    // Lean's loop: one byte read a turn, and it ends at the first not in the set.
+    let (func, head) = run_loop(1, true);
+    assert!(matches!(check(&func, &[], &[]), Err(Refusal::Loop(_))));
+    assert_eq!(check(&func, &[(head, Step::Bytes)], &[]), Ok(()));
+    // Ended by a count, not by its byte; or stepping two bytes: not a run.
+    let (func, head) = run_loop(1, false);
+    assert!(matches!(check(&func, &[(head, Step::Bytes)], &[]), Err(Refusal::Bytes(_))));
+    let (func, head) = run_loop(2, true);
+    assert!(matches!(check(&func, &[(head, Step::Bytes)], &[]), Err(Refusal::Bytes(_))));
+    // A sum over the bytes carries more than its position.
+    let (func, head) = byte_loop();
+    assert!(matches!(check(&func, &[(head, Step::Bytes)], &[]), Err(Refusal::Bytes(_))));
 }

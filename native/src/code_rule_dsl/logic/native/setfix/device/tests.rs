@@ -146,6 +146,72 @@
         assert!(gpu_jobs() > jobs0, "the device's rounds are a job on the GPU lane's scoreboard");
     }
 
+    /// A recursive component that keeps levels (decision 0311): the device's rows and each row's level are the CPU's,
+    /// for a set head (its rows appended a round at a time) and a `min` lattice head (its values improved in place,
+    /// the level column `lat_merge` writes).
+    #[test]
+    fn a_leveled_recursion_on_the_device_has_the_cpus_levels() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let mut x = 5u64;
+        let mut next = |m: i64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((x >> 33) as i64).rem_euclid(m)
+        };
+        db.execute_batch("CREATE TEMP TABLE e (c0, c1);").unwrap();
+        // Chains with shortcuts: a node is reached first by a long route, then by a shorter one in a later round.
+        for v in 0..80 {
+            db.execute("INSERT INTO e VALUES (?1, ?2)", [v, v + 1]).unwrap();
+            if next(4) == 0 {
+                db.execute("INSERT INTO e VALUES (?1, ?2)", [v, v + 2 + next(6)]).unwrap();
+            }
+        }
+        let e = format!("t:x:{}:{}:ii", hex("temp.e"), hex("c0, c1"));
+        // reach(x, y) :- e(x, y).  reach(x, z) :- reach(x, y), e(y, z).
+        let reach = (None, format!("pos {e} v0 v1\nhead v0 v1"), format!("pos d0 v0 v1\npos {e} v1 v2\nhead v0 v2"));
+        // dist(y, 1) :- e(0, y).  dist(z, d + 1) :- dist(y, d), e(y, z).  (`min` by y)
+        let dist = (Some(format!("lattice 0 1 {} -", hex("min"))), format!("pos {e} i:0 v0\nhead v0 i:1"), format!("pos d0 v0 v1\npos {e} v0 v2\nfunc rr_add v3 v1 i:1\nhead v2 v3"));
+        for (lattice, seed, join) in [reach, dist] {
+            let mut got: Vec<Vec<(i64, i64, u32)>> = Vec::new();
+            for device in [false, true] {
+                db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+                let mut spec = vec!["name dev_lev".to_owned()];
+                if device {
+                    spec.push("device".into());
+                }
+                spec.push("rel h0 ii empty".into());
+                spec.extend(lattice.clone());
+                spec.push("leveled 0".into());
+                spec.push(format!("seed 0 {}", hex(&seed)));
+                spec.push(format!("join 0 0 {}", hex(&join)));
+                super::super::open(&db, &spec.join("\n")).unwrap();
+                super::super::run(&db, "dev_lev", 0).unwrap();
+                let report = super::take_report();
+                if device {
+                    let r = report.as_ref().expect("a device report");
+                    assert!(r.refused.is_none(), "{r:?}");
+                    assert!(r.rounds > 3, "the recursion takes rounds: {r:?}");
+                }
+                super::super::close(&db, "dev_lev").unwrap();
+                let held = super::super::held(&db, "h0").expect("the relation held");
+                let rows = held.live_rows().expect("its rows");
+                let levels = held.live_levels().expect("a level per row");
+                let mut rows: Vec<(i64, i64, u32)> = rows.chunks(2).zip(levels).map(|(r, l)| (r[0], r[1], l)).collect();
+                rows.sort_unstable();
+                got.push(rows);
+            }
+            assert!(got[0].len() > 50, "{} rows", got[0].len());
+            assert!(got[0].iter().any(|r| r.2 > 3), "rows of later rounds");
+            assert_eq!(got[0], got[1], "the device's rows and levels are the CPU's ({lattice:?})");
+        }
+    }
+
     /// Text tests on the device: each test's verdicts per distinct symbol made by its automaton, the same rows as
     /// the CPU's matcher gives (names past one chunk of 32 bytes among them).
     #[test]
@@ -317,6 +383,76 @@
             got.push(rows);
         }
         assert_eq!(got[1], got[0], "the strata's rows after the wave are their own runs'");
+    }
+
+    /// Q48: a stratum run on its own (its driver cannot wait) beside an open wave on its thread. The wave's stratum
+    /// made the relation's verdicts and its sort in the wave's batch, and the resident cache hands them to the next
+    /// stratum at once. The stratum run apart commits its own batch before the wave is flushed: unless the wave's
+    /// work goes first, it reads them unwritten (the verdicts all false: no rows).
+    #[test]
+    fn a_stratum_run_apart_beside_an_open_wave_reads_what_the_wave_made() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        use crate::code_rule_dsl::logic::lanes::wave;
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE n (c0, c1);").unwrap();
+        for k in 0..3000_i64 {
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![format!("{}{}", ["foo", "bar", "baz"][(k % 3) as usize], k % 7), k]).unwrap();
+        }
+        let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let foo = format!("x:{}", hex("foo"));
+        // Both read `n`'s verdicts for one text test and its sort by `v0`.
+        let waved = format!("pos {n} v0 v1\ntest prefix v0 {foo} 1\npos {n} v0 v2\nlt v1 v2\nlt v2 i:200\nhead v1 v2");
+        let apart = format!("pos {n} v0 v1\ntest prefix v0 {foo} 1\npos {n} v0 v2\nlt v2 v1\nlt v1 i:300\nhead v1 v2");
+        fn rows(db: &Connection, h: &str) -> Vec<(i64, i64)> {
+            let mut r: Vec<(i64, i64)> = db.prepare(&format!("SELECT c0, c1 FROM temp.{h}")).unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            r.sort_unstable();
+            r
+        }
+        fn open(db: &Connection, name: &str, h: &str, rule: &str) {
+            db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{h}; CREATE TEMP TABLE {h} (c0, c1);")).unwrap();
+            super::super::open(db, &format!("name {name}\ndevice\nrel {h} si empty\nseed 0 {}", hex(rule))).unwrap();
+        }
+        // The stratum run apart, alone, on a thread of its own (the device's resident copies are a thread's): its
+        // rows.
+        let apart2 = apart.clone();
+        let (db, want) = std::thread::spawn(move || {
+            open(&db, "alone", "h1", &apart2);
+            super::super::run(&db, "alone", 0).unwrap();
+            assert!(super::take_report().is_some_and(|r| r.refused.is_none()));
+            super::super::close(&db, "alone").unwrap();
+            let want = rows(&db, "h1");
+            (db, want)
+        })
+        .join()
+        .unwrap();
+        assert!(want.len() > 100, "{} rows", want.len());
+        // Here no relation is resident yet: the wave's stratum makes the verdicts and the sort.
+        open(&db, "in_wave", "h0", &waved);
+        open(&db, "beside", "h2", &apart);
+        {
+            let _w = wave::suspendable();
+            let status = super::super::run(&db, "in_wave", 0).unwrap();
+            assert!(status.ends_with(" 3"), "it waits for its wave: {status}");
+        }
+        // Its driver cannot wait: it runs in a batch of its own, the wave still open.
+        let status = super::super::run(&db, "beside", 0).unwrap();
+        assert!(!status.ends_with(" 3"), "it ran apart: {status}");
+        let report = super::take_report().expect("a device report");
+        assert!(report.refused.is_none() && report.waved == 0 && report.resident_hits + report.sort_hits > 0, "it read the resident copy: {report:?}");
+        super::super::close(&db, "beside").unwrap();
+        wave::flush(1).unwrap();
+        super::super::run(&db, "in_wave", 0).unwrap();
+        super::super::close(&db, "in_wave").unwrap();
+        let got = rows(&db, "h2");
+        let waved_rows = rows(&db, "h0");
+        assert_eq!(got, want, "the stratum run apart reads the verdicts and the sort the wave made");
+        assert!(!waved_rows.is_empty());
     }
 
     /// Text functions on the device: their texts made into the batch's arena (an arena too small run again in one
@@ -586,19 +722,15 @@
         if !mj::available() {
             return;
         }
-        {
-            use crate::code_rule_dsl::language::{self, Family, adapter::pack::{Pack, register}};
-            use rerail_lang_python::code_rule_dsl::language::adapter::python::Python;
-            register(Family::Python, &Pack::<Python>::NEW);
-            language::register_base(Family::Python, &Pack::<Python>::NEW);
-        }
+        crate::test_languages();
         let texts = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "def f(a, b:\n    return [a for\n", "", "@d\ndef g():\n    try:\n        pass\n    except E as e:\n        raise\n"];
-        let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
+        let make = || -> Vec<Document> { texts.iter().enumerate().map(|(at, source)| {
             let path = format!("d{at}.py");
             let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned()), None, None, "core").unwrap();
             let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
             Document { key: (7 + 3 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
-        }).collect();
+        }).collect() };
+        let docs = make();
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         let store_path = std::env::temp_dir().join(format!("rerail-chunk-views-{}-{nonce}.sqlite", std::process::id()));
         let store = crate::content_store::ContentStore::open(&store_path).unwrap();
@@ -625,6 +757,28 @@
             }
         }
         assert_eq!(seen, 8);
+        // core.rr's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
+        {
+            use crate::code_rule_dsl::facts::vtab::syntax::{Projection, shaped};
+            let core_views = shaped(&store, make(), &Projection::core()).unwrap();
+            for name in ["line", "end_line", "col", "docof"] {
+                let src = &core_views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
+                let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));
+                let n = src.len();
+                assert_eq!(d.rows, n, "{name}");
+                assert!(n > 0, "{name}: rows");
+                for cols in [vec![0, 1], vec![1]] {
+                    let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                    let mut batch = mj::Batch::new().expect("the device");
+                    batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &cols, &out).unwrap();
+                    batch.finish().unwrap();
+                    for (j, &c) in cols.iter().enumerate() {
+                        let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                        assert_eq!(out.column(j), &host[..], "{name}: column {c}");
+                    }
+                }
+            }
+        }
         // The kind-set axes and containment, read whole: the batch's solve, its pairs made ids on the device.
         use crate::code_rule_dsl::facts::vtab::syntax::within::{Axis, Mode, Within};
         use crate::code_rule_dsl::facts::nearest::Binding;
@@ -680,6 +834,18 @@
             batch.finish().unwrap();
             assert_eq!(out.column(1), &(0..n).map(|r| host.value(r, 1)).collect::<Vec<_>>()[..]);
         }
+        // Containment over every kind, in one submission (space sized before the count) and past a bound of no rows
+        // (written again once the total is read): the same pairs, as many as the host's containment.
+        let chunk = batch.chunk();
+        let read = |c: &crate::code_rule_dsl::facts::nearest::InChunk| -> Vec<u64> {
+            // SAFETY: the solve completed; `len` pairs at `pairs`.
+            unsafe { std::slice::from_raw_parts(chunk.block.ptr::<u64>(c.pairs), c.len) }.to_vec()
+        };
+        let once = mj::axis_in_chunk_bounded(chunk, None, true, 8).unwrap();
+        let again = mj::axis_in_chunk_bounded(chunk, None, true, 0).unwrap();
+        assert!(once.len > 0);
+        assert_eq!(once.len, Within::new(Arc::clone(&batch), Mode::Tree).len());
+        assert_eq!(read(&again), read(&once));
         // `has` is made per looked-up node, not by the batch's solve: uploaded as before.
         assert!(Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu).device_view().is_none());
         let _ = std::fs::remove_file(&store_path);
