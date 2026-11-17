@@ -1617,14 +1617,28 @@ block is given back only with its last part (0325, step 2's open item).
     answer rules into `rr_in_<g>_token`. It is now undone before hiding (4117281bb), with the test
     `programs_hidden_alone_keep_their_attribute_copies_declared`.
 
+  After the merge of Native-and-GPU-strata (05c9366c7), cold instructions in G, 15 / 16 / 16z, same findings
+  each:
+
+  | workload | before the fixes | after |
+  |---|---|---|
+  | B-now, py10 | 135 / 1150 / – | 110 / 113 / – |
+  | B-now, py50 (213 findings) | 455 / panic, then 486 / 531 | 316 / 317 / 392 |
+  | data-layer, n10 (35 findings) | – | 140 / 139 / 143 |
+
+  The fixes: kind tests on format 16 read the table's index and a per-document summary, and scan codes past the
+  cutoff in order (0336, "Kind tests on the language's table"). A probe of the held `kind` reads its language's
+  documents, and a join step reuses its last probe's candidates (0329, "Probes by kind"). The planner's plans are
+  published in shards (0301). On py50, format 16's first scan of side list 0 panicked on a part with no entries;
+  that case now has a test (`escapes_and_codes_past_the_cutoff_read_from_their_side_lists`).
+
   **Left**:
   - 16z's cold runs cost 10–14% more instructions than 15. This is the writer's LZ4 HC compression; reads are
     level, and warm runs are equal.
   - Format 16's cold parse phase writes the newline index and regions: about +0.2 s on 50 files ("issued
     components").
-  - `Facts::of_kind`, `of_class`, `histogram` and `transducer_nodes_where` still build a set over the whole table
-    per call. On format 16 that is the language's table (about 140k Python entries, against a document's own on
-    format 15). It is not measurable in these runs. The fix is an index of the table's codes by kind, in the table.
+  - Format 15 on B-now's 50 files: 316 G after the merge of Native-and-GPU-strata (05c9366c7) and the fixes
+    below, against 287 G before. Not yet traced; the next samples' top is the join's own work.
   - The Metal binding's side-by-side runs.
   - The full data-layer repo (9,010 files), which is past the 2-minute cap per run.
   - `.rr`'s format 16 table.

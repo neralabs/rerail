@@ -102,3 +102,24 @@ form. This decision says which of them go and what replaces them.
   §1–§3 are work queue items, not merge steps.
 - 16z's block index and a decoded block's layout become what the reads address through: whichever answer §4
   gets, a view says where a node's bytes are, whole or by block.
+
+## Kind tests on the language's table (2026-11-17)
+
+On format 16 a document's codes are numbers of its language's table (§7), about 140k entries for Python. Format
+15's table is the document's own, so a kind test of a document without the kind found an empty set and stopped.
+On format 16 every test scanned the document, and each built its set from the whole table. After the merge of
+Native-and-GPU-strata, the B-now rules on 10 Python files took 1,150 G instructions on format 16 against 135 G on
+15. What the reads do now:
+
+- **The table indexes its codes** (`CodeTable`'s index, made once per table): by kind (those without the ERROR
+  flag), by class, ERROR, MISSING, and the two together, each as the `CodeSet` a test reads. A test borrows it.
+- **A document holds a summary of what it holds** (`Facts::held`, on the first kind or class test): its codes,
+  their kinds and their classes, ascending. This is per document, not per node. A test of a kind or class the
+  document lacks is one binary search and no scan, as on format 15.
+- **A scan reads codes past the cutoff in order.** Below the cutoff a code byte is looked up in a 256-entry table,
+  built from the set's members. Past the cutoff the scan walks side list 0's entries for each part
+  (`f16::part_codes`): each entry once, in node order, instead of a search for each node. A part with no entries
+  is no bytes and is skipped.
+
+B-now on 10 files is now 113 G on format 16 against 110 G on 15. On 50 files it is 317 G against 316 G, with the
+same 213 findings on 15, 16 and 16z, cold and warm.

@@ -1492,8 +1492,48 @@ impl Entry {
     }
 }
 
-/// The run's plans by key, as published (`RunPlans::kept`).
-type Plans = rustc_hash::FxHashMap<PlanKey, Arc<Entry>>;
+/// The run's plans by key, as published (`RunPlans::kept`): in shards by the key's hash, each shared, so a
+/// publication copies the shards its plans fall in, not every plan (a run publishes on every stratum's entry that
+/// planned anew: on 50 files of 317 programs, copying the whole map each time was the run's largest cost).
+#[derive(Clone)]
+struct Plans {
+    shards: [Arc<rustc_hash::FxHashMap<PlanKey, Arc<Entry>>>; PLAN_SHARDS],
+}
+
+const PLAN_SHARDS: usize = 64;
+
+impl Default for Plans {
+    fn default() -> Self {
+        Plans { shards: std::array::from_fn(|_| Arc::default()) }
+    }
+}
+
+impl Plans {
+    fn shard(key: &PlanKey) -> usize {
+        use std::hash::BuildHasher;
+        (rustc_hash::FxBuildHasher.hash_one(key) % PLAN_SHARDS as u64) as usize
+    }
+    fn get(&self, key: &PlanKey) -> Option<&Arc<Entry>> {
+        self.shards[Self::shard(key)].get(key)
+    }
+    fn iter(&self) -> impl Iterator<Item = (&PlanKey, &Arc<Entry>)> {
+        self.shards.iter().flat_map(|m| m.iter())
+    }
+    /// Adds `entries`, copying each shard they fall in once (while an earlier map shares it).
+    fn extend(&mut self, entries: impl IntoIterator<Item = (PlanKey, Arc<Entry>)>) {
+        for (k, e) in entries {
+            Arc::make_mut(&mut self.shards[Self::shard(&k)]).insert(k, e);
+        }
+    }
+}
+
+impl FromIterator<(PlanKey, Arc<Entry>)> for Plans {
+    fn from_iter<I: IntoIterator<Item = (PlanKey, Arc<Entry>)>>(entries: I) -> Self {
+        let mut plans = Plans::default();
+        plans.extend(entries);
+        plans
+    }
+}
 
 /// Publications of new plans and of new orders (decision 0301), and the entries they carried: for the profile.
 static PUBLISHED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];

@@ -2112,6 +2112,9 @@ pub struct Batch {
     /// read off it at the first request; empty where no program asks for values.
     valued: Vec<Option<Valued>>,
     pub dialects: Dialects,
+    /// The documents of each tape tag, ascending: a probe by kind reads its language's documents alone (a batch's
+    /// guests are documents of other languages, most of a Python batch's).
+    of_tag: [Vec<u32>; 256],
     pub nodes: Vec<usize>,
     children: Vec<usize>,
     fields: Vec<usize>,
@@ -3470,10 +3473,15 @@ impl Batch {
         } else {
             Vec::new()
         };
+        let mut of_tag: [Vec<u32>; 256] = std::array::from_fn(|_| Vec::new());
+        for (doc, p) in docs.iter().enumerate() {
+            of_tag[usize::from(p.tag)].push(doc as u32);
+        }
         let batch = Arc::new(Batch {
             docs,
             valued,
             dialects,
+            of_tag,
             nodes,
             children,
             fields,
@@ -3866,7 +3874,8 @@ impl Viewed {
                 };
                 let Some(dialect) = b.dialects.get(tag).filter(|_| v >= 0) else { continue };
                 let atoms: Vec<u32> = dialect.codes.get(&code).map_or(&[][..], Vec::as_slice).iter().map(|&c| kind_atom(tag, c)).collect();
-                for (doc, p) in b.docs.iter().enumerate().filter(|(doc, p)| p.tag == tag && kept(doc)) {
+                for doc in b.of_tag[usize::from(tag)].iter().map(|&d| d as usize).filter(kept) {
+                    let p = &b.docs[doc];
                     for &kind in &atoms {
                         rows.extend(p.facts.of_kind(kind).iter().map(|&id| p.local[id as usize]).filter(|&l| l != NONE).map(|l| b.nodes[doc] + l as usize));
                     }
