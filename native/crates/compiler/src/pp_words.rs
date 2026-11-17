@@ -30,7 +30,7 @@ use std::collections::HashMap;
 
 /// Whether a word is one of the preprocessing words.
 pub fn is_pp(opcode: u8) -> bool {
-    (READ..=PRAGMA).contains(&opcode)
+    (READ..=LINEDIR).contains(&opcode)
 }
 
 // A token's kind.
@@ -62,7 +62,8 @@ pub const PLACEMARKER: u8 = 16;
 /// An `EOF` that is a stop source's end.
 pub const STOP: u8 = 32;
 
-/// A token: its kind, flags and spelling (`buf` 0: the scratch bytes; `f + 1`: file `f`'s).
+/// A token: its kind, flags and spelling (`buf` 0: the scratch bytes; `f + 1`: file `f`'s), and
+/// the expansion it came from (`exp`: 0 none, else an index + 1 of `Expanded::exps`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Tok {
     pub kind: u8,
@@ -70,6 +71,73 @@ pub struct Tok {
     pub buf: u32,
     pub start: u32,
     pub end: u32,
+    pub exp: u32,
+}
+
+/// The built-in macros (the lean pass's, `rerail_c_pp::macros::BUILTINS`, in its order): name,
+/// and whether it takes an operand.
+pub const BUILTINS: &[(&str, bool)] = &[
+    ("__LINE__", false),
+    ("__FILE__", false),
+    ("__FILE_NAME__", false),
+    ("__BASE_FILE__", false),
+    ("__COUNTER__", false),
+    ("__INCLUDE_LEVEL__", false),
+    ("__DATE__", false),
+    ("__TIME__", false),
+    ("__TIMESTAMP__", false),
+    ("_Pragma", true),
+    ("__has_include", true),
+    ("__has_include_next", true),
+    ("__has_embed", true),
+    ("__has_feature", true),
+    ("__has_extension", true),
+    ("__has_builtin", true),
+    ("__has_attribute", true),
+    ("__has_cpp_attribute", true),
+    ("__has_c_attribute", true),
+    ("__has_declspec_attribute", true),
+    ("__has_warning", true),
+    ("__is_identifier", true),
+    ("__is_target_arch", true),
+    ("__is_target_vendor", true),
+    ("__is_target_os", true),
+    ("__is_target_environment", true),
+    ("__is_target_variant_os", true),
+    ("__is_target_variant_environment", true),
+    ("__has_constexpr_builtin", true),
+    ("__building_module", true),
+];
+
+/// `BUILTINS`' indexes the words tell apart (the rest from `__has_feature` on are features).
+const B_LINE: u8 = 0;
+const B_FILE: u8 = 1;
+const B_FILE_NAME: u8 = 2;
+const B_BASE_FILE: u8 = 3;
+const B_COUNTER: u8 = 4;
+const B_INCLUDE_LEVEL: u8 = 5;
+const B_DATE: u8 = 6;
+const B_TIME: u8 = 7;
+const B_TIMESTAMP: u8 = 8;
+const B_PRAGMA: u8 = 9;
+const B_HAS_INCLUDE: u8 = 10;
+const B_HAS_INCLUDE_NEXT: u8 = 11;
+const B_HAS_EMBED: u8 = 12;
+
+/// The configuration the built-ins read: `__DATE__`, `__TIME__` and `__TIMESTAMP__`, fixed so
+/// runs are deterministic (`c_fixed`), and the `__has_feature` family's answers (`c_feature`:
+/// built-in, operand, value; a test not there is 0, but for `__is_identifier`, 1).
+#[derive(Clone, Copy)]
+pub struct Env<'a> {
+    pub date: &'a [u8],
+    pub time: &'a [u8],
+    pub timestamp: &'a [u8],
+    pub features: &'a [(&'a [u8], &'a [u8], i64)],
+}
+
+impl Env<'static> {
+    /// The lean pass's defaults (`rerail_c_pp::Config::new`).
+    pub const DEFAULT: Env<'static> = Env { date: b"Jan  1 1970", time: b"00:00:00", timestamp: b"Thu Jan  1 00:00:00 1970", features: &[] };
 }
 
 /// A file of the TU: its bytes, its token tape (`buf` its index + 1), its conditionals' chains
@@ -78,7 +146,11 @@ pub struct Tok {
 /// not found, rising), and those whose name is made by expanding their line, by name.
 #[derive(Clone, Copy, Default)]
 pub struct File<'a> {
+    /// Its path, as `__FILE__` spells it (before a `#line`).
+    pub path: &'a [u8],
     pub bytes: &'a [u8],
+    /// Its newlines' offsets (`__LINE__`'s, `#line`'s).
+    pub lines: &'a [u32],
     pub toks: &'a [Tok],
     pub chains: &'a [(u32, u32)],
     pub includes: &'a [(u32, u32)],
@@ -128,6 +200,10 @@ pub struct Expanded {
     pub toks: Vec<Tok>,
     pub scratch: Vec<u8>,
     pub wanted: Vec<(u32, Named)>,
+    /// The expansions (`Tok::exp`): each call's name and its last token (its `)`, or the name).
+    pub exps: Vec<(Tok, Tok)>,
+    /// The `__has_feature` family's tests `Env` does not answer: built-in and operand.
+    pub unanswered: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
 impl Expanded {
@@ -151,7 +227,7 @@ const VA_OPT: &[u8] = b"__VA_OPT__";
 
 /// Whether a word is a test (it runs the next word where it holds, skips it where not).
 fn is_test(opcode: u8, mode: u8) -> bool {
-    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == INCLUDE && mode <= 1) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) || (opcode == IF && mode == 1)
+    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == INCLUDE && mode <= 1) || (opcode == BUILTIN && mode >= 1) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) || (opcode == IF && mode == 1)
 }
 
 /// A preprocessing program's rules: only these words, `GOTO`, `PUSH` (each followed by its
@@ -176,7 +252,9 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             COND => mode <= 6 && operand == 0,
             IF => mode <= 2 && operand == 0,
             PEEK => mode == 1 && string(operand),
-            MACRO => mode <= 1 && operand == 0,
+            MACRO => mode <= 2 && operand == 0,
+            BUILTIN => mode <= 4 && operand == 0,
+            LINEDIR => mode <= 1 && operand == 0,
             ARG => mode <= 5 && operand == 0,
             PRE => mode <= 1 && operand == 0,
             PUSH => mode == 0 && usize::from(operand) < n && words.get(pc + 1).is_some_and(|&w| split(w).0 == GOTO),
@@ -293,6 +371,20 @@ struct Src {
     stop: bool,
     /// A file's: the token index of the `#` of the directive read last.
     hash: u32,
+    /// A file's, as `#line` set them: its presumed line less its physical line, and its
+    /// presumed name (scratch bytes; `NONE`: its path).
+    delta: i32,
+    presumed: (u32, u32),
+}
+
+impl Src {
+    fn file(file: u32, end: u32) -> Src {
+        Src { file, pos: 0, end, def: NONE, stop: false, hash: NONE, delta: 0, presumed: (NONE, NONE) }
+    }
+
+    fn arena(pos: u32, end: u32, def: u32, stop: bool) -> Src {
+        Src { file: NONE, pos, end, def, stop, hash: NONE, delta: 0, presumed: (NONE, NONE) }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -308,6 +400,8 @@ struct Def {
     /// The arguments to expand before substitution, in the order it asks: `uses[pre.0..pre.1]`.
     pre: (u32, u32),
     disabled: bool,
+    /// A built-in's index in `BUILTINS` + 1, or 0.
+    builtin: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -329,6 +423,8 @@ struct Frame {
     next_use: u32,
     /// Its arguments are being read (to its `)`).
     open: bool,
+    /// Its last token: its `)`, or its name.
+    end: Tok,
 }
 
 struct Machine<'a> {
@@ -370,12 +466,22 @@ struct Machine<'a> {
     /// The include read last: its word (0 `include`, 1 `include_next`, 2 `import`) and file.
     inc: (u8, u32),
     wanted: Vec<(u32, Named)>,
+    env: &'a Env<'a>,
+    exps: Vec<(Tok, Tok)>,
+    unanswered: Vec<(Vec<u8>, Vec<u8>)>,
+    counter: u32,
+    /// The built-in whose operand is read: its index and name, and the operand's depth.
+    bi: (u8, Tok, u32),
+    /// The line marker's number (`LINEDIR m=0`).
+    marker: Option<Tok>,
+    /// The directive line's token read last.
+    line_last: Tok,
 }
 
 type R<T> = Result<T, &'static str>;
 
 fn eof(flags: u8) -> Tok {
-    Tok { kind: EOF, flags, buf: 0, start: 0, end: 0 }
+    Tok { kind: EOF, flags, ..Tok::default() }
 }
 
 /// A name's key: its bytes eight at a time, and its length.
@@ -394,7 +500,7 @@ fn word_byte(c: u8) -> bool {
 }
 
 /// Runs a preprocessing program over a TU (file 0 its main file), in bounds.
-pub fn run(program: &Words, files: &[File], bounds: &Bounds) -> Result<Expanded, Refused> {
+pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Result<Expanded, Refused> {
     let table = bounds.macros.next_power_of_two() * 2;
     let mut m = Machine {
         program,
@@ -402,7 +508,7 @@ pub fn run(program: &Words, files: &[File], bounds: &Bounds) -> Result<Expanded,
         bounds,
         arena: Vec::new(),
         scratch: Vec::new(),
-        sources: vec![Src { file: 0, pos: 0, end: files.first().map_or(0, |f| f.toks.len() as u32), def: NONE, stop: false, hash: NONE }],
+        sources: vec![Src::file(0, files.first().map_or(0, |f| f.toks.len() as u32))],
         defs: Vec::new(),
         marks: Vec::new(),
         uses: Vec::new(),
@@ -424,7 +530,15 @@ pub fn run(program: &Words, files: &[File], bounds: &Bounds) -> Result<Expanded,
         pushed: Vec::new(),
         inc: (0, NONE),
         wanted: Vec::new(),
+        env,
+        exps: Vec::new(),
+        unanswered: Vec::new(),
+        counter: 0,
+        bi: (0, eof(0), 0),
+        marker: None,
+        line_last: eof(0),
     };
+    m.install_builtins().map_err(|why| Refused { pc: 0, why })?;
     let words = &program.words;
     let mut returns: Vec<usize> = Vec::new();
     let mut pc = 0usize;
@@ -454,7 +568,7 @@ pub fn run(program: &Words, files: &[File], bounds: &Bounds) -> Result<Expanded,
                 pc = returns.pop().ok_or_else(|| fail("a return with no call"))?;
                 None
             }
-            ACCEPT => return Ok(Expanded { toks: m.out, scratch: m.scratch, wanted: m.wanted }),
+            ACCEPT => return Ok(Expanded { toks: m.out, scratch: m.scratch, wanted: m.wanted, exps: m.exps, unanswered: m.unanswered }),
             STOP => return Err(fail("the program stopped")),
             READ => {
                 m.read();
@@ -489,7 +603,16 @@ pub fn run(program: &Words, files: &[File], bounds: &Bounds) -> Result<Expanded,
             DEFINED => Some(m.defined().map_err(fail)?),
             PEEK => Some(m.peek(&program.strings[usize::from(operand)])),
             LOOKUP => Some(m.lookup().map_err(fail)?),
-            MACRO => Some(if mode == 0 { m.defs[m.d as usize].disabled } else { m.defs[m.d as usize].fnlike }),
+            MACRO => Some(match mode {
+                0 => m.defs[m.d as usize].disabled,
+                1 => m.defs[m.d as usize].fnlike,
+                _ => m.defs[m.d as usize].builtin != 0,
+            }),
+            BUILTIN => m.builtin(mode).map_err(fail)?,
+            LINEDIR => {
+                m.linedir(mode).map_err(fail)?;
+                None
+            }
             PAINT => {
                 m.t.flags |= NOEXP;
                 None
@@ -597,6 +720,7 @@ impl Machine<'_> {
             return Ok(false);
         }
         self.t = t;
+        self.line_last = t;
         self.sources.last_mut().unwrap().pos += 1;
         Ok(true)
     }
@@ -651,7 +775,7 @@ impl Machine<'_> {
             return Err("past the frames' bound");
         }
         let def = self.defs[self.d as usize];
-        self.frames.push(Frame { def: self.d, name: self.t, args: self.argv.len() as u32, pres: self.pres.len() as u32, depth: 0, next_use: 0, open: def.fnlike });
+        self.frames.push(Frame { def: self.d, name: self.t, args: self.argv.len() as u32, pres: self.pres.len() as u32, depth: 0, next_use: 0, open: def.fnlike, end: self.t });
         self.collecting += u32::from(def.fnlike);
         self.pres.extend(std::iter::repeat_n((NONE, NONE), usize::from(def.params)));
         if def.fnlike {
@@ -697,6 +821,7 @@ impl Machine<'_> {
             }
             2 => {
                 if f.depth == 0 {
+                    self.frames.last_mut().unwrap().end = self.t;
                     self.close_args();
                     return Ok(Some(true));
                 }
@@ -786,7 +911,7 @@ impl Machine<'_> {
             if self.sources.len() >= self.bounds.depth || self.levels.len() >= self.bounds.depth {
                 return Err("past the sources' bound");
             }
-            self.sources.push(Src { file: NONE, pos: a, end: b, def: NONE, stop: true, hash: NONE });
+            self.sources.push(Src::arena(a, b, NONE, true));
             self.levels.push((p as u16, self.kept.len() as u32));
             return Ok(true);
         }
@@ -861,7 +986,7 @@ impl Machine<'_> {
     }
 
     /// The body's tokens `lo..hi` with the top frame's arguments substituted.
-    fn substitute(&mut self, f: &Frame, lo: u32, hi: u32) -> R<Vec<Tok>> {
+    fn substitute(&mut self, f: &Frame, lo: u32, hi: u32, id: u32) -> R<Vec<Tok>> {
         let def = self.defs[f.def as usize];
         let va = def.variadic.then(|| usize::from(def.params) - 1);
         let mut out: Vec<Tok> = Vec::new();
@@ -873,18 +998,18 @@ impl Machine<'_> {
                 if let Some(p) = next_param {
                     let toks = self.arena_toks(self.arg_range(f, p));
                     let t = self.stringized(&toks, &bt)?;
-                    out.push(t);
+                    out.push(Tok { exp: id, ..t });
                     i += 2;
                     continue;
                 }
                 if va.is_some() && i + 1 < hi && self.mark(&def, i + 1) == VA_OPT_MARK {
                     // `#__VA_OPT__(…)`: the content, substituted and pasted, stringized.
                     let (clo, chi, end) = self.va_opt_content(&def, i + 1, hi);
-                    let mut c = if self.va_present(f) { self.substitute(f, clo, chi)? } else { Vec::new() };
-                    self.paste_all(&mut c)?;
+                    let mut c = if self.va_present(f) { self.substitute(f, clo, chi, id)? } else { Vec::new() };
+                    self.paste_all(&mut c, id)?;
                     c.retain(|t| t.flags & PLACEMARKER == 0);
                     let t = self.stringized(&c, &bt)?;
-                    out.push(t);
+                    out.push(Tok { exp: id, ..t });
                     i = end;
                     continue;
                 }
@@ -892,7 +1017,7 @@ impl Machine<'_> {
             if va.is_some() && self.mark(&def, i) == VA_OPT_MARK {
                 let (clo, chi, end) = self.va_opt_content(&def, i, hi);
                 if self.va_present(f) {
-                    let mut c = self.substitute(f, clo, chi)?;
+                    let mut c = self.substitute(f, clo, chi, id)?;
                     if let Some(x) = c.first_mut() {
                         x.flags = (x.flags & !SPACE) | (bt.flags & SPACE);
                     }
@@ -938,7 +1063,7 @@ impl Machine<'_> {
                 i += 1;
                 continue;
             }
-            out.push(bt);
+            out.push(Tok { exp: id, ..bt });
             i += 1;
         }
         Ok(out)
@@ -950,7 +1075,7 @@ impl Machine<'_> {
         }
         let start = self.scratch.len() as u32;
         self.scratch.extend_from_slice(text);
-        Ok(Tok { kind, flags, buf: 0, start, end: self.scratch.len() as u32 })
+        Ok(Tok { kind, flags, buf: 0, start, end: self.scratch.len() as u32, exp: 0 })
     }
 
     /// `#`'s literal of `toks` (C17 §6.10.3.2): a blank where there was white space, `"` and `\`
@@ -981,7 +1106,7 @@ impl Machine<'_> {
     }
 
     /// The pastes of `out`, left to right.
-    fn paste_all(&mut self, out: &mut Vec<Tok>) -> R<()> {
+    fn paste_all(&mut self, out: &mut Vec<Tok>, id: u32) -> R<()> {
         if !out.iter().any(|t| t.flags & PASTE != 0) {
             return Ok(());
         }
@@ -992,7 +1117,7 @@ impl Machine<'_> {
             if t.flags & PASTE != 0 && !res.is_empty() && i + 1 < out.len() {
                 let l = res.pop().unwrap();
                 let r = out[i + 1];
-                match self.paste(l, r)? {
+                match self.paste(l, r, id)? {
                     Some(m) => res.push(m),
                     None => {
                         res.push(l);
@@ -1010,7 +1135,7 @@ impl Machine<'_> {
     }
 
     /// `l ## r`: one token, or `None` where the two spell no one token.
-    fn paste(&mut self, l: Tok, r: Tok) -> R<Option<Tok>> {
+    fn paste(&mut self, l: Tok, r: Tok, id: u32) -> R<Option<Tok>> {
         if r.flags & PLACEMARKER != 0 {
             return Ok(Some(l));
         }
@@ -1021,7 +1146,7 @@ impl Machine<'_> {
         let mut text = lb.clone();
         text.extend_from_slice(&rb);
         let Some(kind) = self.pasted_kind(&l, &r, &lb, &rb, &text)? else { return Ok(None) };
-        Ok(Some(self.scratch_tok(kind, &text, l.flags & (BOL | SPACE))?))
+        Ok(Some(Tok { exp: id, ..self.scratch_tok(kind, &text, l.flags & (BOL | SPACE))? }))
     }
 
     /// The kind of the one token `l`'s and `r`'s bytes spell, `None` where they spell none.
@@ -1059,8 +1184,13 @@ impl Machine<'_> {
     fn subst(&mut self) -> R<()> {
         let f = *self.frames.last().ok_or("a substitution with no frame")?;
         let def = self.defs[f.def as usize];
-        let mut out = self.substitute(&f, 0, def.end - def.first)?;
-        self.paste_all(&mut out)?;
+        if self.exps.len() >= self.bounds.output {
+            return Err("past the expansions' bound");
+        }
+        self.exps.push((f.name, f.end));
+        let id = self.exps.len() as u32;
+        let mut out = self.substitute(&f, 0, def.end - def.first, id)?;
+        self.paste_all(&mut out, id)?;
         out.retain(|t| t.flags & PLACEMARKER == 0);
         if let Some(x) = out.first_mut() {
             x.flags = (x.flags & !(BOL | SPACE)) | (f.name.flags & (BOL | SPACE));
@@ -1074,7 +1204,7 @@ impl Machine<'_> {
             return Err("past the sources' bound");
         }
         self.defs[f.def as usize].disabled = true;
-        self.sources.push(Src { file: NONE, pos: a, end: self.arena.len() as u32, def: f.def, stop: false, hash: NONE });
+        self.sources.push(Src::arena(a, self.arena.len() as u32, f.def, false));
         Ok(())
     }
 
@@ -1137,7 +1267,7 @@ impl Machine<'_> {
         if self.sources.len() >= self.bounds.depth || self.levels.len() >= self.bounds.depth {
             return Err("past the sources' bound");
         }
-        self.sources.push(Src { file: NONE, pos: a, end: self.arena.len() as u32, def: NONE, stop: true, hash: NONE });
+        self.sources.push(Src::arena(a, self.arena.len() as u32, NONE, true));
         self.levels.push((u16::MAX, self.kept.len() as u32));
         self.in_if = in_if;
         Ok(())
@@ -1231,7 +1361,7 @@ impl Machine<'_> {
                     return Err("past the sources' bound");
                 }
                 let end = self.files[f as usize].toks.len() as u32;
-                self.sources.push(Src { file: f, pos: 0, end, def: NONE, stop: false, hash: NONE });
+                self.sources.push(Src::file(f, end));
                 Ok(None)
             }
         }
@@ -1270,32 +1400,20 @@ impl Machine<'_> {
                 toks.push(t);
             }
         }
-        let word = |k: usize| toks.get(k).filter(|t| t.kind == IDENT).map_or(&b""[..], |t| self.text(t));
-        if word(0) == b"once" {
+        let word = toks.first().filter(|t| t.kind == IDENT).map_or(Vec::new(), |t| self.text(t).to_vec());
+        // The lean pass's string argument: `( "…" )`, a string literal, not a raw one.
+        let arg = toks.get(1).filter(|t| self.spelled(t, b"(")).and(toks.get(2)).filter(|t| t.kind == LITERAL).and_then(|t| destringize(self.text(t)));
+        self.pragma_do(file, &word, arg)
+    }
+
+    /// A pragma carried out: its first word, and its string argument destringized.
+    fn pragma_do(&mut self, file: u32, word: &[u8], arg: Option<Vec<u8>>) -> R<()> {
+        if word == b"once" {
             self.once[file as usize] = true;
             return Ok(());
         }
-        let (push, pop) = (word(0) == b"push_macro", word(0) == b"pop_macro");
-        if !(push || pop) || toks.get(1).is_none_or(|t| !self.spelled(t, b"(")) {
-            return Ok(());
-        }
-        // The lean pass's string argument: a string literal, not a raw one.
-        let Some(st) = toks.get(2).filter(|t| t.kind == LITERAL) else { return Ok(()) };
-        let s = self.text(st);
-        let Some(q) = s.iter().position(|&c| c == b'"' || c == b'\'') else { return Ok(()) };
-        if s[q] != b'"' || s[..q].contains(&b'R') {
-            return Ok(());
-        }
-        let body = &s[q + 1..s.len().saturating_sub(1).max(q + 1)];
-        let mut name = Vec::with_capacity(body.len());
-        let mut k = 0;
-        while k < body.len() {
-            if body[k] == b'\\' && matches!(body.get(k + 1), Some(b'"' | b'\\')) {
-                k += 1;
-            }
-            name.push(body[k]);
-            k += 1;
-        }
+        let (push, pop) = (word == b"push_macro", word == b"pop_macro");
+        let Some(name) = arg.filter(|_| push || pop) else { return Ok(()) };
         let slot = match self.find(&name)? {
             Ok(i) => i,
             Err(i) if push => {
@@ -1313,6 +1431,239 @@ impl Machine<'_> {
         } else if let Some(k) = self.pushed.iter().rposition(|p| p.0 == slot as u32) {
             let (_, d) = self.pushed.remove(k);
             self.table[slot].as_mut().unwrap().def = d;
+        }
+        Ok(())
+    }
+
+    // The built-ins.
+
+    fn install_builtins(&mut self) -> R<()> {
+        for (k, &(name, fnlike)) in BUILTINS.iter().enumerate() {
+            let n = self.scratch_tok(IDENT, name.as_bytes(), 0)?;
+            self.defs.push(Def { fnlike, variadic: false, params: 0, file: 0, first: 0, end: 0, marks: 0, pre: (0, 0), disabled: false, builtin: k as u8 + 1 });
+            let d = (self.defs.len() - 1) as u32;
+            match self.find(name.as_bytes())? {
+                Err(i) => self.table[i] = Some(Slot { key: key(name.as_bytes()), name: n, def: d }),
+                Ok(_) => return Err("a built-in twice"),
+            }
+        }
+        Ok(())
+    }
+
+    fn builtin(&mut self, mode: u8) -> R<Option<bool>> {
+        let b = self.defs[self.d as usize].builtin.wrapping_sub(1);
+        match mode {
+            0 => {
+                let t = self.t;
+                self.t = self.builtin_value(b, &t, &[])?;
+                Ok(None)
+            }
+            1 => {
+                if !self.in_if && matches!(b, B_HAS_INCLUDE | B_HAS_INCLUDE_NEXT | B_HAS_EMBED) {
+                    return Ok(Some(false));
+                }
+                self.bi = (b, self.t, 0);
+                self.levels.push((u16::MAX, self.kept.len() as u32));
+                self.collecting += 1;
+                Ok(Some(true))
+            }
+            2 => {
+                let t = self.t;
+                if self.spelled(&t, b")") && t.kind == PUNCT {
+                    if self.bi.2 == 0 {
+                        return Ok(Some(true));
+                    }
+                    self.bi.2 -= 1;
+                } else if self.spelled(&t, b"(") && t.kind == PUNCT {
+                    self.bi.2 += 1;
+                }
+                if self.kept.len() >= self.bounds.arena {
+                    return Err("past the arena's bound");
+                }
+                self.kept.push(t);
+                Ok(Some(false))
+            }
+            3 => {
+                self.collecting -= 1;
+                let (_, at) = self.levels.pop().ok_or("no level open")?;
+                let op: Vec<Tok> = self.kept.drain(at as usize..).collect();
+                let (b, name, _) = self.bi;
+                let header = matches!(b, B_HAS_INCLUDE | B_HAS_INCLUDE_NEXT | B_HAS_EMBED);
+                let starts = |m: &Self| op.first().is_some_and(|t| (t.kind == LITERAL && m.text(t).first() == Some(&b'"')) || (t.kind == PUNCT && m.spelled(t, b"<")));
+                if b == B_PRAGMA || (header && !starts(self)) {
+                    // The operand expanded first: a stop source of its tokens, and a level.
+                    let a = self.arena.len() as u32;
+                    for t in op {
+                        self.push_arena(t)?;
+                    }
+                    if self.sources.len() >= self.bounds.depth || self.levels.len() >= self.bounds.depth {
+                        return Err("past the sources' bound");
+                    }
+                    self.sources.push(Src::arena(a, self.arena.len() as u32, NONE, true));
+                    self.levels.push((u16::MAX, self.kept.len() as u32));
+                    return Ok(Some(true));
+                }
+                self.t = self.builtin_value(b, &name, &op)?;
+                Ok(Some(false))
+            }
+            _ => {
+                let toks = self.line_close()?;
+                let (b, name, _) = self.bi;
+                if b != B_PRAGMA {
+                    self.t = self.builtin_value(b, &name, &toks)?;
+                    return Ok(Some(true));
+                }
+                // `_Pragma("…")`: one string literal, its text the pragma's.
+                if let [s] = toks.as_slice()
+                    && s.kind == LITERAL
+                    && let Some(text) = destringize(self.text(s))
+                {
+                    let file = self.cur_file();
+                    let (word, arg) = pragma_words(&text);
+                    self.pragma_do(file, &word, arg)?;
+                }
+                Ok(Some(false))
+            }
+        }
+    }
+
+    /// The file on top: the innermost file source's.
+    fn cur_file(&self) -> u32 {
+        self.sources.iter().rev().find(|s| s.file != NONE).map_or(0, |s| s.file)
+    }
+
+    /// A file token's presumed line: its physical line, moved by the innermost `#line` of its
+    /// file.
+    fn line_of(&self, t: &Tok) -> u32 {
+        if t.buf == 0 || t.buf as usize > self.files.len() {
+            return 0;
+        }
+        let f = t.buf - 1;
+        let phys = self.files[f as usize].lines.partition_point(|&n| n < t.start) as i64 + 1;
+        let delta = self.sources.iter().rev().find(|s| s.file == f).map_or(0, |s| s.delta);
+        (phys + i64::from(delta)) as u32
+    }
+
+    fn presumed_path(&self) -> Vec<u8> {
+        match self.sources.iter().rev().find(|s| s.file != NONE) {
+            Some(s) if s.presumed.0 != NONE => self.scratch[s.presumed.0 as usize..s.presumed.1 as usize].to_vec(),
+            Some(s) => self.files[s.file as usize].path.to_vec(),
+            None => Vec::new(),
+        }
+    }
+
+    fn number_tok(&mut self, v: i64, like: &Tok) -> R<Tok> {
+        let t = self.scratch_tok(NUMBER, v.to_string().as_bytes(), like.flags & (BOL | SPACE))?;
+        Ok(Tok { exp: like.exp, ..t })
+    }
+
+    /// A string literal of `s`, its `"` and `\` escaped.
+    fn string_tok(&mut self, s: &[u8], like: &Tok) -> R<Tok> {
+        let mut q = vec![b'"'];
+        for &c in s {
+            if c == b'"' || c == b'\\' {
+                q.push(b'\\');
+            }
+            q.push(c);
+        }
+        q.push(b'"');
+        let t = self.scratch_tok(LITERAL, &q, like.flags & (BOL | SPACE))?;
+        Ok(Tok { exp: like.exp, ..t })
+    }
+
+    /// Built-in `b`'s value for its use `t` and its operand `op`.
+    fn builtin_value(&mut self, b: u8, t: &Tok, op: &[Tok]) -> R<Tok> {
+        match b {
+            B_LINE => {
+                // The line of the outermost call's end (clang's: its expansion range's end).
+                let mut r = *t;
+                while r.exp != 0 {
+                    r = self.exps[r.exp as usize - 1].1;
+                }
+                let line = self.line_of(&r);
+                self.number_tok(i64::from(line), t)
+            }
+            B_FILE | B_FILE_NAME | B_BASE_FILE => {
+                let path = if b == B_BASE_FILE { self.files.first().map_or(Vec::new(), |f| f.path.to_vec()) } else { self.presumed_path() };
+                let path = if b == B_FILE_NAME { path.rsplit(|&c| c == b'/').next().unwrap_or(b"").to_vec() } else { path };
+                self.string_tok(&path, t)
+            }
+            B_COUNTER => {
+                self.counter += 1;
+                self.number_tok(i64::from(self.counter) - 1, t)
+            }
+            B_INCLUDE_LEVEL => {
+                let n = self.sources.iter().filter(|s| s.file != NONE).count() as i64 - 1;
+                self.number_tok(n, t)
+            }
+            B_DATE | B_TIME | B_TIMESTAMP => {
+                let s = match b {
+                    B_DATE => self.env.date,
+                    B_TIME => self.env.time,
+                    _ => self.env.timestamp,
+                };
+                self.string_tok(s, t)
+            }
+            B_HAS_INCLUDE | B_HAS_INCLUDE_NEXT | B_HAS_EMBED => {
+                let file = self.cur_file();
+                let v = match self.header_name(op) {
+                    Some((name, angle)) => {
+                        let next = b == B_HAS_INCLUDE_NEXT && file != 0;
+                        let named = self.files[file as usize].named;
+                        match named.iter().find(|n| n.name == name && n.angle == angle && n.next == next) {
+                            Some(n) if n.to == NONE => 0,
+                            // 1: found, and not empty; 2: found and empty (`__STDC_EMBED_EMPTY__`).
+                            Some(n) if b == B_HAS_EMBED && self.files[n.to as usize].bytes.is_empty() => 2,
+                            Some(_) => 1,
+                            None => {
+                                self.wanted.push((file, Named { name, angle, next, to: NONE }));
+                                0
+                            }
+                        }
+                    }
+                    None => 0,
+                };
+                self.number_tok(v, t)
+            }
+            _ => {
+                let builtin = BUILTINS[usize::from(b)].0.as_bytes();
+                let mut name = Vec::new();
+                for x in op {
+                    name.extend_from_slice(self.text(x));
+                }
+                let v = match self.env.features.iter().find(|f| f.0 == builtin && f.1 == &name[..]) {
+                    Some(f) => f.2,
+                    None => {
+                        self.unanswered.push((builtin.to_vec(), name));
+                        i64::from(builtin == b"__is_identifier")
+                    }
+                };
+                self.number_tok(v, t)
+            }
+        }
+    }
+
+    /// `#line N "file"` and `# N "file" flags`: the next line is line `N` (of `file`).
+    fn linedir(&mut self, mode: u8) -> R<()> {
+        if mode == 0 {
+            self.marker = Some(self.t);
+            return Ok(());
+        }
+        let last = self.line_last;
+        let mut toks = self.line_close()?;
+        if let Some(m) = self.marker.take() {
+            toks.insert(0, m);
+        }
+        let i = self.file_src()?;
+        let Some(n) = toks.first().filter(|t| t.kind == NUMBER).and_then(|t| crate::pp_expr::number(self.text(t))) else { return Ok(()) };
+        let path = toks.get(1).filter(|t| t.kind == LITERAL).and_then(|t| destringize(self.text(t)));
+        // The directive's last line: the line after it is line `n`.
+        let s = self.sources[i];
+        let phys = self.files[s.file as usize].lines.partition_point(|&k| k < last.end) as i64 + 2;
+        self.sources[i].delta = (n.bits as i64 - phys) as i32;
+        if let Some(p) = path {
+            let t = self.scratch_tok(LITERAL, &p, 0)?;
+            self.sources[i].presumed = (t.start, t.end);
         }
         Ok(())
     }
@@ -1398,7 +1749,7 @@ impl Machine<'_> {
             }
             self.marks.push(m);
         }
-        let mut def = Def { fnlike, variadic, params: def_params.len() as u16, file, first: first_at, end, marks, pre: (0, 0), disabled: false };
+        let mut def = Def { fnlike, variadic, params: def_params.len() as u16, file, first: first_at, end, marks, pre: (0, 0), disabled: false, builtin: 0 };
         let u0 = self.uses.len() as u32;
         if fnlike {
             self.walk_uses(&def, 0, n, false);
@@ -1469,4 +1820,63 @@ impl Machine<'_> {
         while self.line()? {}
         Ok(())
     }
+}
+
+/// A string literal's characters, its `\"` and `\\` unescaped (the lean pass's `destringize`):
+/// `None` where it is no string literal (a character constant, a raw string).
+fn destringize(s: &[u8]) -> Option<Vec<u8>> {
+    let q = s.iter().position(|&c| c == b'"' || c == b'\'')?;
+    if s[q] != b'"' || s[..q].contains(&b'R') || s.len() < q + 2 {
+        return None;
+    }
+    let body = &s[q + 1..s.len() - 1];
+    let mut out = Vec::with_capacity(body.len());
+    let mut k = 0;
+    while k < body.len() {
+        if body[k] == b'\\' && matches!(body.get(k + 1), Some(b'"' | b'\\')) {
+            k += 1;
+        }
+        out.push(body[k]);
+        k += 1;
+    }
+    Some(out)
+}
+
+/// A pragma's text (`_Pragma`'s) read as `#pragma`'s tokens are: its first word, and the string
+/// literal of `( "…" )` after it.
+fn pragma_words(text: &[u8]) -> (Vec<u8>, Option<Vec<u8>>) {
+    let blank = |c: u8| c == b' ' || c == b'\t' || c == b'\x0b' || c == b'\x0c';
+    let mut k = 0;
+    let skip = |k: &mut usize| {
+        while *k < text.len() && blank(text[*k]) {
+            *k += 1;
+        }
+    };
+    skip(&mut k);
+    let w = k;
+    while k < text.len() && word_byte(text[k]) {
+        k += 1;
+    }
+    let word = text[w..k].to_vec();
+    skip(&mut k);
+    if text.get(k) != Some(&b'(') {
+        return (word, None);
+    }
+    k += 1;
+    skip(&mut k);
+    let s = k;
+    while k < text.len() && word_byte(text[k]) {
+        k += 1;
+    }
+    if text.get(k) != Some(&b'"') {
+        return (word, None);
+    }
+    k += 1;
+    while k < text.len() && text[k] != b'"' {
+        k += if text[k] == b'\\' { 2 } else { 1 };
+    }
+    if k >= text.len() {
+        return (word, None);
+    }
+    (word, destringize(&text[s..=k]))
 }

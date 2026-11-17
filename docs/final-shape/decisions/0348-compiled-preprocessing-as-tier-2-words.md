@@ -250,6 +250,25 @@ lines).
 - **Also fixed:** the verifier counted `DEFINED` as a read on both sides; where it does not
   hold it reads nothing.
 
+## Stage 3, third part: built-ins, `#line`, `_Pragma`
+
+- **Built-ins are definitions** in the macro table (`pp_words::BUILTINS`, the lean pass's
+  list, checked by a test), so `defined`, `#undef` and `#define` treat them as the lean pass
+  does. `MACRO m=2` tells one apart; `BUILTIN` makes its value, reading an operand raw to its
+  `)` (a file's end held, as for arguments) and expanding it where it asks (`_Pragma`'s, a header
+  name that is neither `"…"` nor `<…>`).
+- **Expansions are recorded:** a token carries `exp` (its expansion + 1, as the lean pass's
+  `Tk::exp`), and `Expanded::exps` each call's name and last token. `__LINE__` is the line of
+  the outermost call's end. These records are also what origins (`c_pp_expansion`) need.
+- **`#line` and line markers** (`LINEDIR`): the file source's presumed line and name.
+  `File::lines` gives a token's physical line.
+- **`Env`:** `__DATE__`, `__TIME__`, `__TIMESTAMP__` fixed (`c_fixed`); the `__has_feature`
+  family answered from `c_feature` rows, and the tests not answered returned
+  (`Expanded::unanswered`). `__has_include` and `__has_embed` look the name up in the file's
+  `named` table: a name not there is wanted, as an include's is.
+- **Corpus:** 3,059 of 3,135 files equal the lean pass, 0 differ (the 57 files with built-ins
+  among them). Not run: 75 a grammar refuses, 1 `#embed`.
+
 ## Open
 
 - **Header units:** a header expanded once per entry macro state (0327, open).

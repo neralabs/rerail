@@ -83,6 +83,8 @@ pub const OPCODES: &[(u8, &str)] = &[
     (DEFINED, "DEFINED"),
     (INCLUDE, "INCLUDE"),
     (PRAGMA, "PRAGMA"),
+    (BUILTIN, "BUILTIN"),
+    (LINEDIR, "LINEDIR"),
 ];
 
 /// How an opcode's operand prints.

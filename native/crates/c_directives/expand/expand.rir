@@ -21,67 +21,67 @@ program - ir=7 grammar=none
   string 14 "include_next"
   string 15 "import"
   string 16 "pragma"
-  string 17 "<<="
-  string 18 ">>="
-  string 19 "..."
-  string 20 "->*"
-  string 21 "<=>"
-  string 22 "->"
-  string 23 "++"
-  string 24 "--"
-  string 25 "<<"
-  string 26 ">>"
-  string 27 "<="
-  string 28 ">="
-  string 29 "=="
-  string 30 "!="
-  string 31 "&&"
-  string 32 "||"
-  string 33 "*="
-  string 34 "/="
-  string 35 "%="
-  string 36 "+="
-  string 37 "-="
-  string 38 "&="
-  string 39 "^="
-  string 40 "|="
-  string 41 "::"
-  string 42 ".*"
-  string 43 "<:"
-  string 44 ":>"
-  string 45 "<%"
-  string 46 "%>"
-  string 47 "%:"
-  string 48 "%:%:"
-  string 49 "##"
-  string 50 "#"
-  string 51 "["
-  string 52 "]"
-  string 53 "{"
-  string 54 "}"
-  string 55 ";"
-  string 56 "~"
-  string 57 "?"
-  string 58 ":"
-  string 59 "."
-  string 60 "="
-  string 61 "!"
-  string 62 "+"
-  string 63 "-"
-  string 64 "*"
-  string 65 "/"
-  string 66 "%"
-  string 67 "^"
-  string 68 "&"
-  string 69 "|"
-  string 70 "<"
-  string 71 ">"
-  ppop s17
+  string 17 "line"
+  string 18 "<<="
+  string 19 ">>="
+  string 20 "..."
+  string 21 "->*"
+  string 22 "<=>"
+  string 23 "->"
+  string 24 "++"
+  string 25 "--"
+  string 26 "<<"
+  string 27 ">>"
+  string 28 "<="
+  string 29 ">="
+  string 30 "=="
+  string 31 "!="
+  string 32 "&&"
+  string 33 "||"
+  string 34 "*="
+  string 35 "/="
+  string 36 "%="
+  string 37 "+="
+  string 38 "-="
+  string 39 "&="
+  string 40 "^="
+  string 41 "|="
+  string 42 "::"
+  string 43 ".*"
+  string 44 "<:"
+  string 45 ":>"
+  string 46 "<%"
+  string 47 "%>"
+  string 48 "%:"
+  string 49 "%:%:"
+  string 50 "##"
+  string 51 "#"
+  string 52 "["
+  string 53 "]"
+  string 54 "{"
+  string 55 "}"
+  string 56 ";"
+  string 57 "~"
+  string 58 "?"
+  string 59 ":"
+  string 60 "."
+  string 61 "="
+  string 62 "!"
+  string 63 "+"
+  string 64 "-"
+  string 65 "*"
+  string 66 "/"
+  string 67 "%"
+  string 68 "^"
+  string 69 "&"
+  string 70 "|"
+  string 71 "<"
+  string 72 ">"
   ppop s18
   ppop s19
-  ppop s20  ; C++ only
+  ppop s20
   ppop s21  ; C++ only
-  ppop s22
+  ppop s22  ; C++ only
   ppop s23
   ppop s24
   ppop s25
@@ -101,8 +101,8 @@ program - ir=7 grammar=none
   ppop s39
   ppop s40
   ppop s41
-  ppop s42  ; C++ only
-  ppop s43
+  ppop s42
+  ppop s43  ; C++ only
   ppop s44
   ppop s45
   ppop s46
@@ -110,15 +110,15 @@ program - ir=7 grammar=none
   ppop s48
   ppop s49
   ppop s50
+  ppop s51
   ppop s0
   ppop s1
-  ppop s51
   ppop s52
   ppop s53
   ppop s54
   ppop s55
-  ppop s2
   ppop s56
+  ppop s2
   ppop s57
   ppop s58
   ppop s59
@@ -134,6 +134,7 @@ program - ir=7 grammar=none
   ppop s69
   ppop s70
   ppop s71
+  ppop s72
   ppsuffix  ; C++ only
   ppcpp  ; C++ only
   ; main: the TU's tokens, macros expanded, onto the output tape.
@@ -146,7 +147,7 @@ program - ir=7 grammar=none
   0006 ACCEPT 0
   ; one: T <- the next token, macros expanded (lean `Pp::next`).
   0007 PUSH @0009
-  0008 GOTO @0067
+  0008 GOTO @0099
   0009 IS m=4 0  ; in an `#if`'s line, `defined` is an operator
   0010 GOTO @0014
   0011 LOOKUP 0  ; an identifier, not painted, naming a macro
@@ -156,225 +157,272 @@ program - ir=7 grammar=none
   0015 RETURN 0
   0016 GOTO @0011
   0017 MACRO m=0 0  ; being expanded: painted
-  0018 GOTO @0023
-  0019 MACRO m=1 0
-  0020 GOTO @0025
-  0021 FRAME 0  ; object-like
-  0022 GOTO @0054
-  0023 PAINT 0
-  0024 RETURN 0
-  0025 PEEK m=1 s0  ; a call only where `(` follows
-  0026 GOTO @0028
-  0027 RETURN 0
-  0028 FRAME 0
-  0029 READ 0  ; the `(`
+  0018 GOTO @0025
+  0019 MACRO m=2 0  ; a built-in
+  0020 GOTO @0027
+  0021 MACRO m=1 0
+  0022 GOTO @0057
+  0023 FRAME 0  ; object-like
+  0024 GOTO @0086
+  0025 PAINT 0
+  0026 RETURN 0
+  ; A built-in: its value, its operand read raw to its `)` (and expanded where it asks).
+  0027 MACRO m=1 0
+  0028 GOTO @0031
+  0029 BUILTIN m=0 0
+  0030 RETURN 0
+  0031 PEEK m=1 s0
+  0032 GOTO @0034
+  0033 RETURN 0
+  0034 BUILTIN m=1 0  ; an operator here: its operand's level opened
+  0035 GOTO @0037
+  0036 RETURN 0
+  0037 READ 0  ; its `(`
+  0038 PUSH @0040
+  0039 GOTO @0099
+  0040 IS m=0 8
+  0041 GOTO @0045
+  0042 BUILTIN m=2 0
+  0043 GOTO @0045
+  0044 GOTO @0038
+  0045 BUILTIN m=3 0  ; the operand to be expanded, else T its value
+  0046 GOTO @0048
+  0047 RETURN 0
+  0048 PUSH @0050
+  0049 GOTO @0007
+  0050 IS m=0 8
+  0051 GOTO @0054
+  0052 KEEP 0
+  0053 GOTO @0048
+  0054 BUILTIN m=4 0  ; T its value, or `_Pragma` carried out
+  0055 RETURN 0
+  0056 GOTO @0007
+  0057 PEEK m=1 s0  ; a call only where `(` follows
+  0058 GOTO @0060
+  0059 RETURN 0
+  0060 FRAME 0
+  0061 READ 0  ; the `(`
   ; args: the call's arguments, unexpanded, to its `)`.
-  0030 PUSH @0032
-  0031 GOTO @0067
-  0032 IS m=0 8  ; EOF (or a stop source's end): no `)`
-  0033 GOTO @0052
-  0034 IS m=1 s0
-  0035 GOTO @0042
-  0036 IS m=1 s1
-  0037 GOTO @0044
-  0038 IS m=1 s2
-  0039 GOTO @0047
-  0040 ARG m=0 0
-  0041 GOTO @0030
-  0042 ARG m=1 0
-  0043 GOTO @0030
-  0044 ARG m=2 0  ; the call's `)`, at depth 0
-  0045 GOTO @0049
-  0046 GOTO @0030
-  0047 ARG m=3 0
-  0048 GOTO @0030
-  0049 ARG m=4 0  ; the count right
-  0050 GOTO @0054
-  0051 RETURN 0  ; else T is the call's name, painted
-  0052 ARG m=5 0
-  0053 GOTO @0007
+  0062 PUSH @0064
+  0063 GOTO @0099
+  0064 IS m=0 8  ; EOF (or a stop source's end): no `)`
+  0065 GOTO @0084
+  0066 IS m=1 s0
+  0067 GOTO @0074
+  0068 IS m=1 s1
+  0069 GOTO @0076
+  0070 IS m=1 s2
+  0071 GOTO @0079
+  0072 ARG m=0 0
+  0073 GOTO @0062
+  0074 ARG m=1 0
+  0075 GOTO @0062
+  0076 ARG m=2 0  ; the call's `)`, at depth 0
+  0077 GOTO @0081
+  0078 GOTO @0062
+  0079 ARG m=3 0
+  0080 GOTO @0062
+  0081 ARG m=4 0  ; the count right
+  0082 GOTO @0086
+  0083 RETURN 0  ; else T is the call's name, painted
+  0084 ARG m=5 0
+  0085 GOTO @0007
   ; pre: each argument substitution expands, expanded in isolation, in the order it asks.
-  0054 PRE m=0 0
-  0055 GOTO @0057
-  0056 GOTO @0065
-  0057 PUSH @0059
-  0058 GOTO @0007
-  0059 IS m=0 8  ; the argument's end
-  0060 GOTO @0063
-  0061 KEEP 0
-  0062 GOTO @0057
-  0063 PRE m=1 0
-  0064 GOTO @0054
-  0065 SUBST 0  ; read next, its macro disabled while it is
-  0066 GOTO @0007
+  0086 PRE m=0 0
+  0087 GOTO @0089
+  0088 GOTO @0097
+  0089 PUSH @0091
+  0090 GOTO @0007
+  0091 IS m=0 8  ; the argument's end
+  0092 GOTO @0095
+  0093 KEEP 0
+  0094 GOTO @0089
+  0095 PRE m=1 0
+  0096 GOTO @0086
+  0097 SUBST 0  ; read next, its macro disabled while it is
+  0098 GOTO @0007
   ; raw: T <- the next token, unexpanded; directives carried out as their `#` is read.
-  0067 READ 0
-  0068 IS m=3 0
-  0069 GOTO @0071
-  0070 RETURN 0
-  0071 LINE 0
-  0072 GOTO @0074
-  0073 GOTO @0067  ; the null directive
-  0074 IS m=1 s3
-  0075 GOTO @0120
-  0076 IS m=1 s4
-  0077 GOTO @0122
-  0078 IS m=1 s5
-  0079 GOTO @0150
-  0080 IS m=1 s6
-  0081 GOTO @0124
-  0082 IS m=1 s7
-  0083 GOTO @0134
-  0084 IS m=1 s8
-  0085 GOTO @0163
-  0086 IS m=1 s9
-  0087 GOTO @0163
-  0088 IS m=1 s10
-  0089 GOTO @0163
-  0090 IS m=1 s11
-  0091 GOTO @0163
-  0092 IS m=1 s12
-  0093 GOTO @0171
-  0094 IS m=1 s13
-  0095 GOTO @0106
-  0096 IS m=1 s14
-  0097 GOTO @0106
-  0098 IS m=1 s15
-  0099 GOTO @0106
-  0100 IS m=1 s16
-  0101 GOTO @0104
-  0102 SKIPLINE 0
-  0103 GOTO @0067
-  0104 PRAGMA 0
-  0105 GOTO @0067
+  0099 READ 0
+  0100 IS m=3 0
+  0101 GOTO @0103
+  0102 RETURN 0
+  0103 LINE 0
+  0104 GOTO @0106
+  0105 GOTO @0099  ; the null directive
+  0106 IS m=0 1  ; a number: GNU's line marker
+  0107 GOTO @0140
+  0108 IS m=1 s3
+  0109 GOTO @0166
+  0110 IS m=1 s4
+  0111 GOTO @0168
+  0112 IS m=1 s5
+  0113 GOTO @0196
+  0114 IS m=1 s6
+  0115 GOTO @0170
+  0116 IS m=1 s7
+  0117 GOTO @0180
+  0118 IS m=1 s8
+  0119 GOTO @0209
+  0120 IS m=1 s9
+  0121 GOTO @0209
+  0122 IS m=1 s10
+  0123 GOTO @0209
+  0124 IS m=1 s11
+  0125 GOTO @0209
+  0126 IS m=1 s12
+  0127 GOTO @0217
+  0128 IS m=1 s13
+  0129 GOTO @0152
+  0130 IS m=1 s14
+  0131 GOTO @0152
+  0132 IS m=1 s15
+  0133 GOTO @0152
+  0134 IS m=1 s16
+  0135 GOTO @0150
+  0136 IS m=1 s17
+  0137 GOTO @0141
+  0138 SKIPLINE 0
+  0139 GOTO @0099
+  0140 LINEDIR m=0 0
+  0141 IF m=2 0  ; its line expanded
+  0142 PUSH @0144
+  0143 GOTO @0007
+  0144 IS m=0 8
+  0145 GOTO @0148
+  0146 KEEP 0
+  0147 GOTO @0142
+  0148 LINEDIR m=1 0
+  0149 GOTO @0099
+  0150 PRAGMA 0
+  0151 GOTO @0099
   ; An include: its header name as mode (a) read it, or made of its line expanded.
-  0106 INCLUDE m=0 0
-  0107 GOTO @0118
-  0108 IF m=2 0
-  0109 PUSH @0111
-  0110 GOTO @0007
-  0111 IS m=0 8
-  0112 GOTO @0115
-  0113 KEEP 0
-  0114 GOTO @0109
-  0115 INCLUDE m=1 0
-  0116 GOTO @0118
-  0117 GOTO @0067  ; malformed, or a name the host resolves for the next round
-  0118 INCLUDE m=2 0
-  0119 GOTO @0067
-  0120 DEFINE 0
-  0121 GOTO @0067
-  0122 UNDEF 0
-  0123 GOTO @0067
-  ; `#ifdef` and `#ifndef`: no name is not defined (the lean pass's reading).
-  0124 LINE 0
-  0125 GOTO @0128
-  0126 COND m=0 0
-  0127 GOTO @0174
-  0128 IS m=0 0  ; an identifier
-  0129 GOTO @0131
-  0130 GOTO @0147
-  0131 LOOKUP 0
-  0132 GOTO @0144
-  0133 GOTO @0147
-  0134 LINE 0
-  0135 GOTO @0138
-  0136 COND m=1 0
-  0137 GOTO @0067
-  0138 IS m=0 0
-  0139 GOTO @0141
-  0140 GOTO @0144
-  0141 LOOKUP 0
-  0142 GOTO @0147
-  0143 GOTO @0144
-  0144 SKIPLINE 0
-  0145 COND m=1 0
-  0146 GOTO @0067
-  0147 SKIPLINE 0
-  0148 COND m=0 0
-  0149 GOTO @0174
-  ; `#if`: its line expanded, `defined` an operator, then evaluated.
-  0150 IF m=0 0
-  0151 PUSH @0153
-  0152 GOTO @0007
-  0153 IS m=0 8
-  0154 GOTO @0157
-  0155 KEEP 0
-  0156 GOTO @0151
-  0157 IF m=1 0
+  0152 INCLUDE m=0 0
+  0153 GOTO @0164
+  0154 IF m=2 0
+  0155 PUSH @0157
+  0156 GOTO @0007
+  0157 IS m=0 8
   0158 GOTO @0161
-  0159 COND m=0 0
-  0160 GOTO @0174
-  0161 COND m=1 0
-  0162 GOTO @0067
+  0159 KEEP 0
+  0160 GOTO @0155
+  0161 INCLUDE m=1 0
+  0162 GOTO @0164
+  0163 GOTO @0099  ; malformed, or a name the host resolves for the next round
+  0164 INCLUDE m=2 0
+  0165 GOTO @0099
+  0166 DEFINE 0
+  0167 GOTO @0099
+  0168 UNDEF 0
+  0169 GOTO @0099
+  ; `#ifdef` and `#ifndef`: no name is not defined (the lean pass's reading).
+  0170 LINE 0
+  0171 GOTO @0174
+  0172 COND m=0 0
+  0173 GOTO @0220
+  0174 IS m=0 0  ; an identifier
+  0175 GOTO @0177
+  0176 GOTO @0193
+  0177 LOOKUP 0
+  0178 GOTO @0190
+  0179 GOTO @0193
+  0180 LINE 0
+  0181 GOTO @0184
+  0182 COND m=1 0
+  0183 GOTO @0099
+  0184 IS m=0 0
+  0185 GOTO @0187
+  0186 GOTO @0190
+  0187 LOOKUP 0
+  0188 GOTO @0193
+  0189 GOTO @0190
+  0190 SKIPLINE 0
+  0191 COND m=1 0
+  0192 GOTO @0099
+  0193 SKIPLINE 0
+  0194 COND m=0 0
+  0195 GOTO @0220
+  ; `#if`: its line expanded, `defined` an operator, then evaluated.
+  0196 IF m=0 0
+  0197 PUSH @0199
+  0198 GOTO @0007
+  0199 IS m=0 8
+  0200 GOTO @0203
+  0201 KEEP 0
+  0202 GOTO @0197
+  0203 IF m=1 0
+  0204 GOTO @0207
+  0205 COND m=0 0
+  0206 GOTO @0220
+  0207 COND m=1 0
+  0208 GOTO @0099
   ; An `#elif…` or `#else` read: its chain was taken, so the rest of it is passed, to its `#endif`.
-  0163 COND m=2 0
-  0164 GOTO @0167
-  0165 SKIPLINE 0  ; no group open: unmatched
-  0166 GOTO @0067
-  0167 IS m=1 s11
-  0168 COND m=5 0
-  0169 SKIPLINE 0
-  0170 GOTO @0174
-  0171 SKIPLINE 0
-  0172 COND m=6 0
-  0173 GOTO @0067
+  0209 COND m=2 0
+  0210 GOTO @0213
+  0211 SKIPLINE 0  ; no group open: unmatched
+  0212 GOTO @0099
+  0213 IS m=1 s11
+  0214 COND m=5 0
+  0215 SKIPLINE 0
+  0216 GOTO @0220
+  0217 SKIPLINE 0
+  0218 COND m=6 0
+  0219 GOTO @0099
   ; skip: a group not taken, passed by its chain to the next directive of it (lean `skip_group`).
-  0174 SKIP 0
-  0175 READ 0  ; its `#`
-  0176 IS m=0 8  ; the file's end, the chain open
-  0177 GOTO @0067
-  0178 LINE 0
-  0179 GOTO @0181
-  0180 GOTO @0174
-  0181 IS m=1 s12
-  0182 GOTO @0171
-  0183 COND m=3 0  ; taken already, or past its `#else`: passed too
-  0184 GOTO @0194
-  0185 IS m=1 s11
-  0186 GOTO @0197
-  0187 IS m=1 s8
-  0188 GOTO @0201
-  0189 IS m=1 s9
-  0190 GOTO @0211
-  0191 IS m=1 s10
-  0192 GOTO @0220
-  0193 GOTO @0174
-  0194 IS m=1 s11
-  0195 COND m=5 0
-  0196 GOTO @0174
-  0197 SKIPLINE 0
-  0198 COND m=5 0
-  0199 COND m=4 0
-  0200 GOTO @0067
-  0201 IF m=0 0
-  0202 PUSH @0204
-  0203 GOTO @0007
-  0204 IS m=0 8
-  0205 GOTO @0208
-  0206 KEEP 0
-  0207 GOTO @0202
-  0208 IF m=1 0
-  0209 GOTO @0229
-  0210 GOTO @0174
-  0211 LINE 0
-  0212 GOTO @0214
-  0213 GOTO @0174
-  0214 IS m=0 0
-  0215 GOTO @0217
-  0216 GOTO @0174
-  0217 LOOKUP 0
-  0218 GOTO @0229
-  0219 GOTO @0174
-  0220 LINE 0
-  0221 GOTO @0223
-  0222 GOTO @0229
-  0223 IS m=0 0
-  0224 GOTO @0226
-  0225 GOTO @0229
-  0226 LOOKUP 0
-  0227 GOTO @0174
-  0228 GOTO @0229
-  0229 SKIPLINE 0
-  0230 COND m=4 0
-  0231 GOTO @0067
+  0220 SKIP 0
+  0221 READ 0  ; its `#`
+  0222 IS m=0 8  ; the file's end, the chain open
+  0223 GOTO @0099
+  0224 LINE 0
+  0225 GOTO @0227
+  0226 GOTO @0220
+  0227 IS m=1 s12
+  0228 GOTO @0217
+  0229 COND m=3 0  ; taken already, or past its `#else`: passed too
+  0230 GOTO @0240
+  0231 IS m=1 s11
+  0232 GOTO @0243
+  0233 IS m=1 s8
+  0234 GOTO @0247
+  0235 IS m=1 s9
+  0236 GOTO @0257
+  0237 IS m=1 s10
+  0238 GOTO @0266
+  0239 GOTO @0220
+  0240 IS m=1 s11
+  0241 COND m=5 0
+  0242 GOTO @0220
+  0243 SKIPLINE 0
+  0244 COND m=5 0
+  0245 COND m=4 0
+  0246 GOTO @0099
+  0247 IF m=0 0
+  0248 PUSH @0250
+  0249 GOTO @0007
+  0250 IS m=0 8
+  0251 GOTO @0254
+  0252 KEEP 0
+  0253 GOTO @0248
+  0254 IF m=1 0
+  0255 GOTO @0275
+  0256 GOTO @0220
+  0257 LINE 0
+  0258 GOTO @0260
+  0259 GOTO @0220
+  0260 IS m=0 0
+  0261 GOTO @0263
+  0262 GOTO @0220
+  0263 LOOKUP 0
+  0264 GOTO @0275
+  0265 GOTO @0220
+  0266 LINE 0
+  0267 GOTO @0269
+  0268 GOTO @0275
+  0269 IS m=0 0
+  0270 GOTO @0272
+  0271 GOTO @0275
+  0272 LOOKUP 0
+  0273 GOTO @0220
+  0274 GOTO @0275
+  0275 SKIPLINE 0
+  0276 COND m=4 0
+  0277 GOTO @0099

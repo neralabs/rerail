@@ -43,7 +43,7 @@ pub fn tape(src: &[u8], toks: &[tokens::Tok], file: u32, spelled: &mut Vec<u8>, 
     let flag = |t: &tokens::Tok, f: u8, to: u8| if t.flags & f != 0 { to } else { 0 };
     toks.iter()
         .map(|t| {
-            let mut x = Tok { kind: kind(t.kind), flags: flag(t, BOL, pp_words::BOL) | flag(t, SPACE, pp_words::SPACE), buf: file + 1, start: t.start, end: t.end };
+            let mut x = Tok { kind: kind(t.kind), flags: flag(t, BOL, pp_words::BOL) | flag(t, SPACE, pp_words::SPACE), buf: file + 1, start: t.start, end: t.end, exp: 0 };
             let b = &src[t.start as usize..t.end as usize];
             if x.kind == pp_words::LITERAL && b.windows(2).any(|w| w == b"\\\n" || w == b"\\\r") {
                 let start = spelled.len() as u32;
@@ -97,6 +97,7 @@ pub fn compiled_grammars() -> Grammars<'static> {
 struct Unit {
     path: String,
     src: Vec<u8>,
+    lines: Vec<u32>,
     found_by: Option<u32>,
     read: crate::Read,
     tape: Vec<Tok>,
@@ -129,7 +130,13 @@ impl<F: rerail_c_pp::files::Files> Tu<'_, F> {
         // The spelled buffer's index is set when the files are laid out (`run`).
         let tape = tape(&src, &toks, self.units.len() as u32, &mut self.spelled, u32::MAX - 1);
         let chains = chains(&read, &tape).ok_or("a directive's `#` is no token's")?;
-        self.units.push(Unit { path, src, found_by, read, tape, chains, includes: Vec::new(), named: Vec::new() });
+        let mut lines = Vec::new();
+        let mut i = 0;
+        while let Some(k) = rerail_simd8::micro::find(&src, i, b'\n') {
+            lines.push(k as u32);
+            i = k + 1;
+        }
+        self.units.push(Unit { path, src, lines, found_by, read, tape, chains, includes: Vec::new(), named: Vec::new() });
         Ok(self.units.len() as u32 - 1)
     }
 
@@ -183,9 +190,9 @@ pub fn expand_tu<F: rerail_c_pp::files::Files>(main: &str, io: &mut F, cpp: bool
         let n = tu.units.len() as u32;
         // The respelled literals' buffer is the file after the last.
         let tapes: Vec<Vec<Tok>> = tu.units.iter().map(|u| u.tape.iter().map(|t| if t.buf == u32::MAX { Tok { buf: n + 1, ..*t } } else { *t }).collect()).collect();
-        let mut files: Vec<File> = tu.units.iter().zip(&tapes).map(|(u, t)| File { bytes: &u.src, toks: t, chains: &u.chains, includes: &u.includes, named: &u.named }).collect();
+        let mut files: Vec<File> = tu.units.iter().zip(&tapes).map(|(u, t)| File { path: u.path.as_bytes(), bytes: &u.src, lines: &u.lines, toks: t, chains: &u.chains, includes: &u.includes, named: &u.named }).collect();
         files.push(File { bytes: &tu.spelled, ..File::default() });
-        let e = pp_words::run(program, &files, &Bounds::of(&files)).map_err(|r| format!("refused at word {}: {}", r.pc, r.why))?;
+        let e = pp_words::run(program, &files, &pp_words::Env::DEFAULT, &Bounds::of(&files)).map_err(|r| format!("refused at word {}: {}", r.pc, r.why))?;
         if e.wanted.is_empty() {
             return Ok(e.toks.iter().map(|t| (t.kind, t.flags & (pp_words::BOL | pp_words::SPACE), e.text(&files, t).to_vec())).collect());
         }

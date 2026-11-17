@@ -156,6 +156,34 @@ H5C(H5A())
     ),
     ("#elifdef, #elifndef", "#define A\n#ifdef Z\n#elifdef A\nyes\n#elifndef A\nno\n#endif\n#ifdef Z\n#elifndef Z\nyes2\n#else\nno\n#endif\n"),
     ("unmatched", "a\n#endif\nb\n#else\nc\n#elif 1\nd\n"),
+    (
+        "__LINE__, __FILE__, #line and the other built-ins",
+        concat!(
+            "#define L __LINE__\n#define F(x) x __LINE__\na __LINE__ L\nF(\n1\n)\n",
+            "__FILE__ __FILE_NAME__ __BASE_FILE__ __INCLUDE_LEVEL__ __COUNTER__ __COUNTER__\n",
+            "#line 100\n__LINE__\n#line 200 \"dir/other.c\"\n__LINE__ __FILE__ __FILE_NAME__\n",
+            "# 300 \"marker.c\" 1\n__LINE__ __FILE__\n#define N 400\n#line N\n__LINE__\n#line x\n__LINE__\n",
+            "__DATE__ __TIME__ __TIMESTAMP__\n#if defined(__LINE__) && __LINE__ > 400\ny\n#endif\n",
+            "#define S(x) #x\n#define X(x) S(x)\nX(__LINE__) S(__LINE__)\n",
+            "#undef __FILE__\n__FILE__\n#define __COUNTER__ c\n__COUNTER__\n",
+        ),
+    ),
+    (
+        "__has_include and the feature tests",
+        concat!(
+            "#if __has_include(\"main.c\")\nyes\n#endif\n#if __has_include(<none.h>) || __has_include_next(\"none.h\")\nno\n#endif\n",
+            "#if __has_feature(cxx_x) || __has_attribute(noreturn) || __has_cpp_attribute(nodiscard)\nno2\n#endif\n",
+            "#if __is_identifier(foo) && defined(__has_include)\nid\n#endif\n#define H \"main.c\"\n#if __has_include(H)\nyes2\n#endif\n",
+            "__has_builtin(x) __has_feature __has_include(\"main.c\") __has_embed(\"main.c\")\n",
+        ),
+    ),
+    (
+        "_Pragma",
+        concat!(
+            "#define M 1\n_Pragma(\"push_macro(\\\"M\\\")\")\n#undef M\nM\n_Pragma(\"pop_macro(\\\"M\\\")\")\nM\n",
+            "#define P(x) _Pragma(#x) after\nP(message(\"hi\"))\n_Pragma\nx\n_Pragma(1) y\n#define Q \"once\"\n_Pragma(Q) z\n",
+        ),
+    ),
     ("undefines and redefinitions", "#define A 1\nA\n#undef A\nA\n#define A 2\nA\n#undef B\n#define F(x) x\n#undef F\nF(1)\n# \n#pragma x\nA\n"),
 ];
 
@@ -211,6 +239,14 @@ const TUS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "built-ins across files",
+        &[
+            ("main.c", "#include \"h.h\"\n__FILE__ __LINE__ __INCLUDE_LEVEL__\n#if __has_include(\"h.h\") && !__has_include(\"no.h\")\nyes\n#endif\n#include \"h.h\"\n#include \"l.h\"\n__LINE__ __FILE__\n"),
+            ("h.h", "_Pragma(\"once\")\n__FILE__ __LINE__ __INCLUDE_LEVEL__ __BASE_FILE__\n#if __has_include_next(<h.h>)\nno\n#endif\n"),
+            ("l.h", "#line 50 \"elsewhere.h\"\n__LINE__ __FILE__\n"),
+        ],
+    ),
+    (
         "push_macro and pop_macro",
         &[(
             "main.c",
@@ -246,7 +282,23 @@ fn the_examples_expand_as_the_lean_pass_does() {
     assert!(failed.is_empty() && tus.is_empty(), "differ: {failed:?} {tus:?}");
 }
 
-/// Why the words do not run `src` yet, where they do not: `#embed` and the built-ins (stage 3).
+/// The built-ins' values, spelled out (the examples compare them with the lean pass's).
+#[test]
+fn the_builtins_have_their_values() {
+    let got = expand(b"#define L __LINE__\n__LINE__\n\nL __FILE__\n#line 10 \"x.c\"\n__LINE__ __FILE__ __COUNTER__ __COUNTER__\n", false).unwrap();
+    let words: Vec<String> = got.iter().map(|t| String::from_utf8_lossy(&t.2).into_owned()).collect();
+    assert_eq!(words, ["2", "4", "\"main.c\"", "10", "\"x.c\"", "0", "1"]);
+}
+
+/// The words' built-ins are the lean pass's, in its order.
+#[test]
+fn the_builtins_are_the_lean_passs() {
+    let words: Vec<(&str, bool)> = pp_words::BUILTINS.to_vec();
+    let lean: Vec<(&str, bool)> = rerail_c_pp::macros::BUILTINS.iter().map(|b| (b.0, b.2)).collect();
+    assert_eq!(words, lean);
+}
+
+/// Why the words do not run `src` yet, where they do not: `#embed` (stage 3).
 /// (An `#include` finds nothing here, in both passes: the TU is one file; `TUS` has includes.)
 fn outside_stage_2(src: &[u8], cpp: bool) -> Option<&'static str> {
     let toks = tokens::interpreted(src, cpp)?;
@@ -254,12 +306,9 @@ fn outside_stage_2(src: &[u8], cpp: bool) -> Option<&'static str> {
     for (k, t) in toks.iter().enumerate() {
         if t.kind == "hash" && t.flags & BOL != 0 {
             let name = toks.get(k + 1).filter(|n| n.flags & BOL == 0).map(text).unwrap_or(b"");
-            if !matches!(name, b"define" | b"undef" | b"" | b"error" | b"warning" | b"ident" | b"sccs" | b"include" | b"include_next" | b"import" | b"pragma" | b"line" | b"if" | b"ifdef" | b"ifndef" | b"elif" | b"elifdef" | b"elifndef" | b"else" | b"endif") {
+            if !matches!(name, b"define" | b"undef" | b"" | b"error" | b"warning" | b"ident" | b"sccs" | b"include" | b"include_next" | b"import" | b"pragma" | b"line" | b"if" | b"ifdef" | b"ifndef" | b"elif" | b"elifdef" | b"elifndef" | b"else" | b"endif") && !name.first().is_some_and(u8::is_ascii_digit) {
                 return Some("a directive the words do not read yet");
             }
-        }
-        if t.kind == "identifier" && rerail_c_pp::macros::BUILTINS.iter().any(|b| b.0.as_bytes() == text(t)) {
-            return Some("a built-in macro");
         }
     }
     None

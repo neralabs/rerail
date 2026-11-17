@@ -164,6 +164,16 @@ pub const DEFINED: u8 = 0x7a;
 pub const INCLUDE: u8 = 0x7b;
 /// A `#pragma`'s line, unexpanded: `once`, `push_macro("X")` and `pop_macro("X")` carried out.
 pub const PRAGMA: u8 = 0x7c;
+/// A built-in macro `D` (`pp_words::BUILTINS`), `T` its name: `m=0` `T` its value (one with no
+/// operand); `m=1`, a test: an operator here (`__has_include` and `__has_embed` only in `#if`),
+/// its operand's level opened; `m=2`, a test: `T` is the operand's `)` (else kept); `m=3`, a
+/// test: the operand is to be expanded (`_Pragma`'s, a header name that is neither `"…"` nor
+/// `<…>`), pushed as a stop source, else `T` its value; `m=4`, a test: the expanded operand's
+/// level closed, and `T` its value (else the pragma carried out: no token).
+pub const BUILTIN: u8 = 0x7d;
+/// `#line` and GNU's line marker: `m=0` `T` the marker's number; `m=1` the level `IF m=2` opened
+/// closed, the file's presumed line (and name) set from its tokens.
+pub const LINEDIR: u8 = 0x7e;
 
 pub const NAMED: u8 = 1;
 pub const GREEDY: u8 = 1;

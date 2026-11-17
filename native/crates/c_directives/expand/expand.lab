@@ -19,12 +19,45 @@ odef:   DEFINED 0
         GOTO @o2
 found:  MACRO m=0 0       ; being expanded: painted
         GOTO @paint
+        MACRO m=2 0       ; a built-in
+        GOTO @bi
         MACRO m=1 0
         GOTO @fn
         FRAME 0           ; object-like
         GOTO @pre
 paint:  PAINT 0
         RETURN 0
+; A built-in: its value, its operand read raw to its `)` (and expanded where it asks).
+bi:     MACRO m=1 0
+        GOTO @bifn
+        BUILTIN m=0 0
+        RETURN 0
+bifn:   PEEK m=1 "("
+        GOTO @bical
+        RETURN 0
+bical:  BUILTIN m=1 0     ; an operator here: its operand's level opened
+        GOTO @bop
+        RETURN 0
+bop:    READ 0            ; its `(`
+bl:     PUSH @b1
+        GOTO @raw
+b1:     IS m=0 8
+        GOTO @bend
+        BUILTIN m=2 0
+        GOTO @bend
+        GOTO @bl
+bend:   BUILTIN m=3 0     ; the operand to be expanded, else T its value
+        GOTO @bx
+        RETURN 0
+bx:     PUSH @bx1
+        GOTO @one
+bx1:    IS m=0 8
+        GOTO @bxe
+        KEEP 0
+        GOTO @bx
+bxe:    BUILTIN m=4 0     ; T its value, or `_Pragma` carried out
+        RETURN 0
+        GOTO @one
 fn:     PEEK m=1 "("      ; a call only where `(` follows
         GOTO @call
         RETURN 0
@@ -77,7 +110,9 @@ raw:    READ 0
 dir:    LINE 0
         GOTO @named
         GOTO @raw         ; the null directive
-named:  IS m=1 "define"
+named:  IS m=0 1          ; a number: GNU's line marker
+        GOTO @lmark
+        IS m=1 "define"
         GOTO @def
         IS m=1 "undef"
         GOTO @undef
@@ -105,7 +140,19 @@ named:  IS m=1 "define"
         GOTO @inc
         IS m=1 "pragma"
         GOTO @pragma
+        IS m=1 "line"
+        GOTO @line
         SKIPLINE 0
+        GOTO @raw
+lmark:  LINEDIR m=0 0
+line:   IF m=2 0          ; its line expanded
+ll:     PUSH @l1
+        GOTO @one
+l1:     IS m=0 8
+        GOTO @le
+        KEEP 0
+        GOTO @ll
+le:     LINEDIR m=1 0
         GOTO @raw
 pragma: PRAGMA 0
         GOTO @raw
