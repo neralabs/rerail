@@ -1,0 +1,1 @@
+A worktree made while a session is open, in a folder that session had already written or walked, is now checked by the worktree's own rules. Before, Rerail skipped edits there or judged them by the checkout around it.

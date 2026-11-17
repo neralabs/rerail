@@ -475,7 +475,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `audit_settings_update` | `PATCH /api/sessions/{sessionId}/audit-settings` | People only (`rerail settings`). Set defaults, which outlast the session: `mode` `steer`/`log`; `steerStrategy` `message`/`rewind`/`subagent`. |
 | `audit_requests_create` | `POST /api/sessions/{sessionId}/audit-requests` | Internal testing; experimental: the four audit-request and repository-audit operations answer `404 experimental-off`, and are no MCP tools, unless the daemon runs with `RERAIL_EXPERIMENTAL_REPOSITORY_SCAN=1`. Queue an audit for a session. |
 | `audit_requests_list` | `GET /api/sessions/{sessionId}/audit-requests` | Internal testing; experimental. `{ auditRequests }` with their `auditIds`. |
-| `audits_list` | `GET /api/audits?auditId=&sessionId=&status=&scope=&mode=` | `{ audits, total }` with `violations` and failures; `mode` is run mode. |
+| `audits_list` | `GET /api/audits?auditId=&sessionId=&status=&scope=&mode=&origin=` | `{ audits, total }` with `violations` and failures; `mode` is run mode, `origin` is `ongoing` or `scan`. |
 | `violations_list` | `GET /api/violations?since=&ruleId=&sessionId=&limit=&cursor=` | Violations newest first with `ruleId`, `clauseId`, session, `host`, `auditId`, and `logged` (the agent wasn't told: the audit or the rule was in Log mode); `total`, `nextCursor`. |
 | `repository_audits_list` | `GET /api/repository-audits` | Internal testing; experimental. Each repository's `repositoryAudit` and latest `audit` summary with `violationCount`. |
 | `repository_audit_entries_list` | `GET /api/repository-audits/{auditId}/entries?kind=&mode=&code=&path=&q=` | Internal testing; experimental. Paged entries; `kind` `violation`/`failure`, `mode` the rule's mode. |
@@ -611,12 +611,14 @@ Anything else, including `/native/*`, `/mcp`, `/healthz` and the page, gets `421
 
 ### Daemon state
 
-`~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) holds pid, port and database path; output goes to `daemon.log` beside it. Each line the daemon writes there starts with the UTC time it was written (`2026-11-11T15:33:02.123Z `); what Node or the engine write to the file directly, such as the report of a fatal error, has no time, nor do the lines of the `rerail daemon start` that a hook or session runs to start the daemon. `RERAIL_AUTOSTART=0` or `RERAIL_AUTOSTART=false` stops automatic daemon creation (any other value leaves it on): no hook, session or set-up starts the daemon, so command hooks need an existing daemon or explicit endpoint. A hook that finds none records nothing and logs no failure; `rerail status` says the daemon is not running and that `RERAIL_AUTOSTART=0` keeps hooks from starting it.
+`~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) holds pid, port and database path; output goes to `daemon.log` beside it. Each line the daemon writes there starts with the UTC time it was written (`2026-11-11T15:33:02.123Z `); what Node or the engine write to the file directly, such as the report of a fatal error, has no time, nor do the lines of the `rerail daemon start` that a hook or session runs to start the daemon. `RERAIL_AUTOSTART=0` or `RERAIL_AUTOSTART=false` stops automatic daemon creation (any other value leaves it on): no hook or set-up starts the daemon (OMP sessions, and Pi sessions of a managed install, start their own), so command hooks need an existing daemon or explicit endpoint. A hook that finds none records nothing and logs no failure; the session's start says so (Claude Code and Codex show the line, and Cursor's agent is asked to relay it), and `rerail status` says the same: the daemon is not running, and `RERAIL_AUTOSTART=0` keeps hooks from starting it, so nothing is recorded until it runs.
 
 <details>
 <summary>Ports, reuse and the kernel socket</summary>
 
 `daemon-port.json` remembers the last port (or `--port`), reused by a start without `--port` so dashboard links survive restarts. `rerail daemon start` reuses a running daemon and says where; stale state from a crash or reboot is cleared. `stop`, `status` and `manage` run from the launcher you invoked, not the managed version, so they work mid-update.
+
+A Rerail home has one daemon. The daemon holds `locks/daemon.lock` in the home for as long as it runs, and a second daemon started there stops after about a second, naming the first. The daemon also checks every second that `daemon.json` still holds what it wrote and writes it again when it is gone or changed, so `rerail daemon start` and `rerail daemon stop` find a running daemon even after its `daemon.json` was removed.
 
 `daemon.json` also records `kernelSocketPath` (Unix socket or Windows named pipe), which hooks reuse; when another process already holds the default pipe name, the daemon listens on that name with a random suffix and records that one; `RERAIL_ENGINE_SOCKET` selects an explicitly managed endpoint. Events there need `x-rerail-access`. For a `RERAIL_ENGINE_SOCKET` socket, hooks send the capability from the Rerail home's `daemon.json` if it names the same socket.
 
@@ -682,6 +684,8 @@ An audit runs code rules at one of three scopes, in one of two independent run m
 - **`log`** run mode records the same with no conversation output.
 
 Nothing is acknowledged, baselined or suppressed as already seen: changing relevant source can raise the same violation again.
+
+An audit someone asked for (`rerail scan --session`, an audit request, the first repository audit) is recorded with `origin: "scan"`; the audits of a session's own edits are `ongoing`. A scan finds what the checkout already holds, so the dashboard leaves it out: its violations are not the session's (no violation card, not counted as logged or steered) and it is no run of its rules. `rerail scan --wait` prints its run ids; read its findings with `GET /api/audits?auditId=<run id>`, or every scan with `?origin=scan`.
 
 #### Steer strategies (experimental)
 

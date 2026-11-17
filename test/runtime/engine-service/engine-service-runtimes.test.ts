@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CheckoutCatalogs, codeRuleSchema, type AdapterEvent } from "../../../src/engine/index.js";
+import { CheckoutCatalogs, codeRuleSchema, RepositoryWorktreeWalks, type AdapterEvent } from "../../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
+import { RerailRuntime } from "../../../src/runtime/runtime.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { setUpTestRepository, type TestRepositoryRules } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
@@ -135,6 +136,24 @@ describe("the engine service's runtimes", () => {
     expect(service.openRuntimes()).toBe(0);
     // Nothing in this test collects: the service does, once the runtime closed.
     await vi.waitFor(() => expect(compiled.deref()).toBeUndefined(), { timeout: 5_000 });
+  });
+
+  it("lets go of the engine's file-system watch though a runtime fails to close", async () => {
+    const { service, first, start } = await twoCheckouts(60_000);
+    await start("a", first);
+    const dispose = vi.spyOn(RerailRuntime.prototype, "dispose").mockRejectedValueOnce(new Error("the disk went away"));
+    const close = vi.spyOn(RepositoryWorktreeWalks.prototype, "close");
+    try {
+      services.splice(services.indexOf(service), 1);
+      await expect(service.close()).rejects.toThrow("the disk went away");
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      // The runtime whose close failed still runs its session's Git in the checkout.
+      const failed = [...dispose.mock.contexts] as RerailRuntime[];
+      dispose.mockRestore();
+      close.mockRestore();
+      await Promise.all(failed.map(runtime => runtime.dispose()));
+    }
   });
 });
 

@@ -22,10 +22,13 @@ import { commandLine, powershellLiteral, type Shell } from "../engine/command-li
 import { ENTRY_POINTS } from "../engine/package-root.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
 import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
+import { PACK_COMPILE_CHECKS_FILE } from "../engine/catalog/pack-compile-checks.js";
+import { MACHINE_ID_FILE, REMOTE_CONFIG_FILE, REMOTE_OUTBOX_FILE, REMOTE_TOKENS_FOLDER } from "../engine/storage/rerail-home.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
 import { LOCKS_DIR } from "../engine/native/file-lock.js";
 import { contentStoreOverride, legacyWindowsContentStoreDirectory, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import {
+  AUTOSTART_CLAIM_FILE,
   autostartOff,
   browserOff,
   DAEMON_ACCESS_TOKEN_FILE,
@@ -440,7 +443,9 @@ export const CONSENT_FILE = "consent.json";
 
 /**
  * What Rerail itself writes in its home, by the name its writer gives it: settings, records, locks, `rerail activate`'s
- * profiles and device secrets, `rules export`'s dump and the installation.
+ * profiles and device secrets, `rules export`'s dump, the pack verdicts a catalog read keeps, the remote sink's
+ * configuration, tokens and machine id, and the installation. A name a writer puts in the home and this list lacks is
+ * taken for someone else's file, so `--delete-data` keeps it and the home.
  */
 const RERAIL_HOME_ENTRIES: readonly string[] = [
   CONSENT_FILE,
@@ -451,11 +456,16 @@ const RERAIL_HOME_ENTRIES: readonly string[] = [
   DAEMON_ACCESS_TOKEN_FILE,
   LOCKS_DIR,
   START_LOCK_DIR,
+  AUTOSTART_CLAIM_FILE,
   RULES_DUMP_FILE,
   PROFILES_DIR,
   ACTIVE_PROFILE_FILE,
   DEVICE_SECRETS_DIR,
   INSTALLED_PACKS_DIR,
+  PACK_COMPILE_CHECKS_FILE,
+  REMOTE_CONFIG_FILE,
+  REMOTE_TOKENS_FOLDER,
+  MACHINE_ID_FILE,
   UPDATE_STATE_FILE,
   UPDATE_LOCK_DIR,
   VERSIONS_DIR,
@@ -465,7 +475,7 @@ const RERAIL_HOME_ENTRIES: readonly string[] = [
 ];
 
 /** What Rerail writes in its home under these names and longer ones: SQLite's `-wal` and `-shm`, `rerail update`'s `.pre-update` copy. */
-const RERAIL_HOME_ENTRY_PREFIXES: readonly string[] = [RERAIL_DATABASE_FILE, CLAUDE_STATUS_DATABASE_FILE, DAEMON_LOG_FILE, HOOK_FAILURES_FILE];
+const RERAIL_HOME_ENTRY_PREFIXES: readonly string[] = [RERAIL_DATABASE_FILE, CLAUDE_STATUS_DATABASE_FILE, REMOTE_OUTBOX_FILE, DAEMON_LOG_FILE, HOOK_FAILURES_FILE];
 
 /** The `.<pid>[.<uuid>].tmp` or `.old` a write cut short leaves beside what it writes. */
 const CUT_SHORT_WRITE = /\.\d+(?:\.[0-9a-f-]+)?\.(?:tmp|old)$/u;

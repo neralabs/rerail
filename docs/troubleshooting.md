@@ -446,8 +446,10 @@ shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in t
 `rerail update`; if the line stays, report it with `rerail support-bundle`.
 
 With `RERAIL_AUTOSTART=0` (or `false`) hooks start no daemon, and a hook that finds none logs nothing, since that is
-what you asked for. `rerail status` then says the daemon is not running and that `RERAIL_AUTOSTART=0` keeps hooks from
-starting it.
+what you asked for. A session that starts with no daemon running says so as it starts: Claude Code and Codex
+show the line under the session's start, and Cursor's agent is asked to begin its first reply with it. The line, which
+`rerail status` prints too, says the daemon is not running, that `RERAIL_AUTOSTART=0` keeps hooks from starting it, so
+nothing is recorded until it runs, and to start it with `rerail daemon start`.
 
 If `rerail status` instead names Claude Code hook scripts that are missing, Claude Code's settings point at a Rerail
 that is gone, and every hook fails before Rerail runs. Run `rerail install --refresh` and open a new session.
@@ -567,6 +569,20 @@ The following lines are what this start wrote to `~/.rerail/daemon.log`, and say
 
 A second daemon, from another `RERAIL_HOME` or left behind, holds Rerail's machine-wide lock. Stop it
 (`rerail daemon stop` from its home, or end its pid), then start again.
+
+### `Another Rerail daemon (pid …) runs in …`
+
+Another daemon holds this Rerail home's lock (`locks/daemon.lock`). A daemon started there waits a second for it, then
+writes this line to the home's `daemon.log` and exits; a `rerail daemon start` that launched it prints the line under
+`Rerail daemon exited with code 1 before it was ready`. While the daemon it names answers, the next
+`rerail daemon start` finds it. If it does not, `rerail daemon stop` stops it once `daemon.json` names it, or gives the
+pid to end; if the stop finds none and a start prints this line again, end the process it names and start again.
+
+### `this daemon (pid …) no longer holds the Rerail home at …`
+
+The Rerail home was moved or removed while its daemon ran. The daemon writes this line to `daemon.log` and stops
+writing `daemon.json`, so a home made again at that path never names it, but it still runs, recording into the
+database of the home it lost. End the pid it names, then run `rerail daemon start`.
 
 ### Containers: the dashboard does not open from the host
 
