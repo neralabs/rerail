@@ -2282,6 +2282,21 @@ Also left (from this branch's list): the views (source views over a batch, 88 MB
   the roots are watched before the first wave, and phase 0's graph image keeps its plans. Not fixed again here (a
   preload of the canonical root cleared the first fault alone): it comes with phased-facts' next merge.
 - **Done when**: that merge is in, and the test passes here.
+- **Still failing after the merge** (2026-11-17, at cf5f56a7f, under cargo on the m3): phased-facts' fix (the
+  graph image keeps its plans) is in, and the warm run still records two new manifests, of 9 and 8 sources where
+  the cold run's twins (same plan and lane) named 24 and 29. Decoded, each warm manifest leaves out one contiguous
+  block of the cold one's (ids 49..63 and 70..90), every one a source under one alias. The lead (not yet checked
+  source by source): they are the pipelines' runs the cold run kept (`program_text::record_runs`, each run's images
+  and facts, named through the record's item), which a warm run that takes the prepared program whole neither
+  records nor names, though its next edit runs again from them (0333). If so, the manifests differ, and collection may drop the runs
+  once the cold manifest is superseded. The fix names what the warm run would use: the run's kept runs by the
+  digest the prepared program was made under (`runs_digest`), their sources found by alias without reading them
+  (as `program_text::sources` does for texts); or, as f7e047997 did for phase 0's graphs, the cold run names them
+  under `also` alone. Not chosen yet.
+- **Under Relax only**, the warm run also settles every root the journal "could not speak for", with no cursor
+  stored ("no volume"): `FSEventsCopyUUIDForDevice` returns null in the Relax-hosted process, though the host
+  answers it for the same device (ctypes on the m3) and the cargo-built test does not hit it. A Relax FFI fault,
+  for the user to raise upstream; the tests that assert a warm run writes nothing fail under Relax for it.
 
 ### Q81. An edited include is read with its old digest in the same process (`programs_are_kept_by_the_hashes_of_what_they_read`)
 

@@ -1165,7 +1165,9 @@ fn the_run_after_a_cold_one_writes_nothing() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let lines: Vec<&str> = stderr.lines().collect();
         let faults: Vec<String> = lines.iter().enumerate().filter(|(_, l)| l.starts_with("rerail: RERAIL_WARM")).map(|(i, l)| format!("{l}{}", lines.get(i + 1).map_or(String::new(), |n| format!(" ({})", n.trim())))).collect();
-        assert!(output.status.success(), "the run's process: {}; {}", output.status, faults.join("; "));
+        // No fault named: the process failed some other way, and its stderr's tail says how.
+        let tail = if faults.is_empty() { lines[lines.len().saturating_sub(30)..].join("\n") } else { String::new() };
+        assert!(output.status.success(), "the run's process: {}; {}{tail}", output.status, faults.join("; "));
     };
     run(false);
     let cold = manifests();
