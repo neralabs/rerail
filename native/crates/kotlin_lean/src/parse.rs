@@ -50,6 +50,11 @@ pub(crate) struct P<'a> {
     no_lambda: bool,
     /// The token index of a receiver's `.`: a user type stops before it.
     type_stop: usize,
+    /// The expression depth where a keyword no expression starts with is a `simple_identifier`
+    /// (tree-sitter lexes it so where only a name is valid: `split_operand_reads`).
+    kw_depth: u32,
+    /// The token where an expression with `kw_depth` starts (the split's operand).
+    kw_at: usize,
 }
 
 /// `src` parsed.
@@ -78,6 +83,8 @@ pub fn parse(src: &[u8]) -> R<crate::Tape> {
             asi_memo: (u32::MAX, 0, Asi::No, 0),
             no_lambda: false,
             type_stop: usize::MAX,
+            kw_depth: u32::MAX,
+            kw_at: usize::MAX,
         };
         if let Err(r) = p.source_file() {
             return Err(match r {

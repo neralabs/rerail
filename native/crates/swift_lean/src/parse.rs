@@ -53,6 +53,9 @@ pub(crate) struct P<'a> {
     hack_calls: u32,
     /// The last semicolon asked: (from, flags, answer, where the scanner was last asked).
     semi_memo: (u32, u8, Semi),
+    /// A compilation condition stopped at a function's name not of the grammar's (`_runtime(…)`):
+    /// tree-sitter ends the directive there and reads the call as an expression's.
+    cc_call: bool,
 }
 
 /// `src` parsed.
@@ -83,6 +86,7 @@ pub fn parse(src: &[u8]) -> R<crate::Tape> {
             try_bang: false,
             hack_calls: 0,
             semi_memo: (u32::MAX, 0, Semi::No),
+            cc_call: false,
         };
         if let Err(r) = p.source_file() {
             return Err(match r {
@@ -391,6 +395,19 @@ impl<'a> P<'a> {
         self.t.mark(s)
     }
 
+    /// Whether `f` reads from here (a trial: the tape and the parser's state go back after it,
+    /// whatever it read). Tree-sitter's GLR keeps a reading where it holds: this asks whether one does.
+    fn trial(&mut self, f: impl FnOnce(&mut Self) -> R<()>) -> bool {
+        let saved = self.t.save();
+        let (i, depth, far, stmt, sx, no_lambda, if_true) = (self.i, self.depth, self.far, self.stmt, self.sx, self.no_lambda, self.if_true);
+        let (u_end, try_bang, hack_calls, semi_memo) = (self.u_end, self.try_bang, self.hack_calls, self.semi_memo);
+        let ok = f(self).is_ok();
+        self.t.rewind(saved);
+        (self.i, self.depth, self.far, self.stmt, self.sx, self.no_lambda, self.if_true) = (i, depth, far, stmt, sx, no_lambda, if_true);
+        (self.u_end, self.try_bang, self.hack_calls, self.semi_memo) = (u_end, try_bang, hack_calls, semi_memo);
+        ok
+    }
+
     fn deeper(&mut self) -> R<()> {
         self.depth += 1;
         if self.depth > MAX_DEPTH {
@@ -611,7 +628,17 @@ impl<'a> P<'a> {
             return self.diagnostic();
         }
         match t.kind {
-            T::Hash if matches!(self.word_at(1), w::IF | w::ELSEIF | w::ELSE | w::ENDIF) && self.adjacent(0) => return self.directive(),
+            T::Hash if matches!(self.word_at(1), w::IF | w::ELSEIF | w::ELSE | w::ENDIF) && self.adjacent(0) => {
+                let m = self.mark();
+                self.directive()?;
+                if std::mem::take(&mut self.cc_call) {
+                    // `#if _runtime(_ObjC) && os(macOS)`: the directive ends at the name, the
+                    // rest is an expression's, the directive the first call's function (probed).
+                    self.directive_call(m)?;
+                }
+                self.t.unmark(m);
+                return Ok(());
+            }
             T::Name if !t.tick => {
                 match t.word {
                     w::IF => return self.if_statement(),
@@ -1042,6 +1069,9 @@ impl<'a> P<'a> {
             T::LParen => {
                 self.tk(K::TLParen)?;
                 self.compilation_condition(0)?;
+                if self.cc_call {
+                    return self.refuse();
+                }
                 self.expect(T::RParen)?;
             }
             T::Name => {
@@ -1093,12 +1123,20 @@ impl<'a> P<'a> {
                     }
                     _ => {
                         self.simple_identifier()?;
+                        if call && self.touching() {
+                            self.cc_call = true;
+                            self.depth -= 1;
+                            return Ok(());
+                        }
                     }
                 }
             }
             _ => return self.refuse(),
         }
         loop {
+            if self.cc_call {
+                break;
+            }
             match self.peek() {
                 T::AmpAmp if min < 2 => {
                     self.tk(K::TAmpAmp)?;

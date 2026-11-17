@@ -56,16 +56,25 @@ a .kt file
   probed: a generic call's `<…>(…)` goes over a whole operation binding tighter than a comparison
   (`a ?: f<T>()` is `call(elvis(a, f), <T>())`; not over `<` or `==`); a statement's annotation
   before an expression is a `prefix_expression`'s, before a loop or assignment the statement's.
-- **Refused**: anything not read exactly, and one known GLR shape: an `as`/`is` type closing its
-  type arguments at a line end with a generic call (`name<`) on the next line (tree-sitter takes
-  the comparison reading for `as java.util.List<Int>` there, not for `as List<Int>`).
+- **`x as a.b.C<T>` at a line's end** (69 probes, `golden.rs`): where the next line starts with
+  an operand (a name, a literal, a prefix operator) and the comparisons read on to the line's end,
+  tree-sitter keeps `(x as a) . b . C < T > next`: the type is the first name, the dots navigate,
+  and `<`/`>` are comparisons with the next line's operand. Where the next line starts with `(` or
+  `{`, the type is the first name again and `.C<T>(…)` a generic call on the navigation. An
+  unqualified type, or a declaration's, keeps the whole type. Read with a trial (`Tw::save`,
+  `Tw::rewind`): the comparison reading is tried, and kept only where it ends at the line's end.
+  The next line's hard keywords (`for`, `while`, `as`, …) are names there, where only a name can
+  be, as tree-sitter's lexer reads them.
+- **Refused**: anything not read exactly.
 
 Oracle (`cargo test -p rerail-kotlin-lean -- oracle --ignored`, `RERAIL_KOTLIN_OUT` = the engine's
 expected tapes): 495 files from 25 repositories (`~/orca/rerail-shared/lean-corpus/kt`), 491
-without errors: **486 the same, 3 refused, 2 differ**; all 4 error texts refused. The 2 differ where
-tree-sitter reads `public open class Table { … }` as an infix expression whose right operand is a
-lambda; it reads the same text as a class when the file is cut just after it, so the choice
-depends on the GLR versions alive from the text after it. Left open.
+without errors: **489 the same, none refused, 2 differ**; all 4 error texts refused. The 2 differ
+where tree-sitter reads `public open class Table { … }` (and `private sealed interface I { … }`) as
+an infix expression (`public open class`, the name, a lambda). Probed: two modifiers before
+`class`/`interface`, and a function after the closing `}`, flip it (`fun y() = 2` after the class
+does; the class alone or with a property after does not); it is the GLR's choice between versions
+alive past the class, not read here. Left open.
 
 About 90 MB/s on one core of an M-series Mac under load (`kotlin_costs`, the corpus 20 times).
 
@@ -100,20 +109,31 @@ Swift's own:
   list), or an arithmetic operator follows the member, or a call on it is navigated, or it is the
   right operand of a product whose left one is such a type. `x is A.B` and `x as! A.B` before a `)`
   are a navigation of the check.
-- **Refused GLR shapes** (both readings seen, or a reading tree-sitter's version pruning picks):
-  an optional chain right after a call in `try`'s operand, `-.x` in a ternary's middle,
-  `.repeat(…)`, `@A (…)` with a space and no `->` after it, a names-only attribute argument (a
-  missing version in tree-sitter's tree), a binary chain over more than six calls (its nesting
-  flips from right to left where tree-sitter prunes versions). Also refused where tree-sitter
-  fails on valid Swift: a directive between switch entries, a `;` in a protocol's body, a
-  condition's `{` after `try`/`await`'s operand.
+- **GLR choices probed** (about 110 probe texts against tree-sitter, 15 in `golden.rs`):
+  - an optional chain right after a call in `try`'s or `await`'s operand: the operand goes on
+    through the chain's next call or subscript where the expression goes on after it on its line
+    (an operator, `.`, `[`, `?`, `!`, `as`; `.` on the next line), and then takes a ternary too;
+    it ends at the first call where the statement ends, a closure follows, or the chain has no call;
+  - `-.x` in a ternary's middle is a navigation of the operator, elsewhere prefixes;
+  - `.repeat(…)`, `.each(…)`: a prefix `.` over a value pack expansion, a value parameter pack;
+  - `@A (…) async`/`throws`/`rethrows` with a space: the attribute's arguments where the
+    parentheses read as arguments (a trial), and the function type's parameters are then a user
+    type named by the keyword; else (`inout T`, `A<B>`, `any P`) the function type's parameters;
+  - `A.B<C, D>(…)`, `A.B<C, D> { … }`: a constructor where the comparisons cannot parse;
+  - `#if _runtime(_ObjC) && …`: a function name not of the grammar ends the directive, and the
+    rest of the line is an expression statement whose first call has the directive as function;
+  - a binary chain over calls nests right for seven calls read into right operands, then left
+    inside the last (tree-sitter keeps six versions), counted per expression.
+- **Refused** where tree-sitter fails on valid Swift: a directive between switch entries, a `;` in
+  a protocol's body, a condition's `{` after `try`/`await`'s operand; and a names-only attribute
+  argument (a missing version in tree-sitter's tree).
 
 The writer gained two things for Swift, used by both crates' shape: `field_since` gives a hidden
 rule's field to the tokens held since a mark too (not only the nodes written), and `refield`.
 
 Oracle (`RERAIL_SWIFT_OUT`): 376 files from 25 repositories
-(`~/orca/rerail-shared/lean-corpus/swift`), 335 without errors: **325 the same, 10 refused, none
-differ**; all 41 error texts refused. Golden tests: 15 probe texts (`golden.rs`), the same.
+(`~/orca/rerail-shared/lean-corpus/swift`), 335 without errors: **335 the same, none refused, none
+differ**; all 41 error texts refused. Golden tests: 30 probe texts (`golden.rs`), the same.
 
 About 140 MB/s on one core under load (`swift_costs`, the corpus 20 times: 53.5 MB in 0.38 s of
 user time, 12 MB resident).

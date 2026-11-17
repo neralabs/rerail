@@ -28,6 +28,8 @@ mod parse;
 mod tw;
 
 #[cfg(test)]
+mod golden;
+#[cfg(test)]
 mod oracle;
 
 pub use kinds::{FIELDS, K, KINDS, f};
