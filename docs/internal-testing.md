@@ -52,8 +52,8 @@ running keeps the environment it started with: stop it and start it again with t
 Each is off unless it is turned on ([above](#turning-experimental-features-on)) for the process running Rerail's
 runtime.
 
-That is the daemon for OMP, Claude Code, Codex and Cursor. For a Pi session, which runs Rerail in process, it is the
-coding agent itself.
+That is the daemon for OMP, Claude Code, Codex, Cursor and Pi. Only a Pi session of a Rerail built from a checkout runs
+Rerail in process; for that one it is the coding agent itself.
 
 ### Missed-steer digest
 

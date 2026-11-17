@@ -1,1 +1,0 @@
-On Windows, Rerail's MCP tools find the folder an agent works in when its path is spelt with 8.3 short names (`C:\Users\JOHNSM~1\...`), as a temp folder often is, instead of acting on the checkout's top folder.

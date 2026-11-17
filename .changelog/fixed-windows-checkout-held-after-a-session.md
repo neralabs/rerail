@@ -1,1 +1,0 @@
-On Windows, a session's end and `rerail daemon stop` wait for every Git process Rerail started in your checkout to exit, so removing or renaming the folder right after, as `git worktree remove` does, no longer fails with "resource busy or locked".

@@ -4,6 +4,16 @@ Every notable change to this rule pack, latest first. Each release says how many
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
 
+## 0.1.10 (2026-11-17)
+
+537 rules, 316 of them on by default.
+
+### Changed
+
+- This version needs the Rerail released with it, or a newer one: update Rerail when you update the pack (`rerail update`). An older Rerail leaves the whole pack out.
+- The pack's summary line and its README now name the tool versions it matches.
+- `ruff-b009-get-attr-with-constant` and `ruff-b010-set-attr-with-constant` are now held off with their reason, so set-up never turns them on to match a Ruff config that runs B009 or B010.
+
 ## 0.1.9 (2026-11-12)
 
 537 rules, 316 of them on by default.
