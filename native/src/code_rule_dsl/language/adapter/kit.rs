@@ -5,18 +5,20 @@
 
 use super::value::kit as value_kit;
 use super::{
-    Adapter, ArgumentRules, CallRules, FormatArgRules, ScopeRules, ValueRules, has_import_targets, is_comment_kind,
-    is_paren_kind, parsed_by_forte,
+    Adapter, ArgumentRules, CallRules, FormatArgRules, ScopeRules, ValueRules, has_import_targets,
+    is_comment_kind, is_paren_kind, parsed_by_forte,
 };
-use super::{blade::Blade, ecma::Ecma, java::Java, php::Php, python::Python, rust::Rust, sql::Sql, vue::Vue};
+use super::{
+    blade::Blade, ecma::Ecma, java::Java, php::Php, python::Python, rust::Rust, sql::Sql, vue::Vue,
+};
 
 // `with_adapter!` (generated from the registry, `build_languages.rs`): every family's adapter by its module.
 include!(concat!(env!("OUT_DIR"), "/with_adapter.rs"));
 
 /// The scope concern's part of the kit: a family's scope rules against expected literals.
 mod scope_kit {
-    use crate::code_rule_dsl::language::adapter::{Adapter, ScopeFeature, ScopeRules};
     use crate::code_rule_dsl::language::adapter::Refusal;
+    use crate::code_rule_dsl::language::adapter::{Adapter, ScopeFeature, ScopeRules};
     use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
     use crate::code_rule_dsl::matcher::Unresolved;
     use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
@@ -349,7 +351,6 @@ fn identity<A: Adapter>(expect: &Identity) {
             assert_ne!(dialect.kind_id(kind), 0, "{kind} in {dialect:?}");
         }
     }
-
 }
 
 #[test]
@@ -1473,7 +1474,11 @@ fn shared_walks_read_the_kinds_they_named() {
                     is_comment_kind(name),
                     matches!(
                         name,
-                        "comment" | "html_comment" | "line_comment" | "block_comment" | "js_comment"
+                        "comment"
+                            | "html_comment"
+                            | "line_comment"
+                            | "block_comment"
+                            | "js_comment"
                     ),
                     "{name} in {dialect:?}"
                 );

@@ -7,32 +7,36 @@
 //! program it derives (`DerivedImage`), with a tape of its own over the program's text and the
 //! segments that map that text back to the document it was derived from. The store keeps each
 //! derived tape as a row of its own (`file_documents`); no tape holds another.
-use crate::code_rule_dsl::embed::segments::SegmentMap;
 use crate::code_rule_dsl::embed::Program;
+use crate::code_rule_dsl::embed::segments::SegmentMap;
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog, Via};
 use crate::code_rule_dsl::lines::LineTable;
 use crate::code_rule_dsl::lines::Terminators;
 use ast_grep_core::Position;
 use ast_grep_core::source::{Doc, Edit, SgNode};
 use ast_grep_language::LanguageExt;
+use rerail_tape_format::tape::{Entry, Tape};
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::{Arc, Weak};
-use rerail_tape_format::tape::{Entry, Tape};
 use tree_sitter::{Language, Node as TsNode, TreeCursor};
 
 /// v9np (decision 0025): structure-only, regular columns, no parent column; 10: supertype
 /// memberships folded into the codes; later formats: `rerail_tape_format::FORMAT_VERSION`.
 pub const TAPE_FORMAT_VERSION: u32 = rerail_tape_format::FORMAT_VERSION;
+pub use rerail_tape_format::CODE_EXTRA;
 /// The format's constants are `rerail_tape_format`'s: the parsers write tapes with its writer
 /// (decision 0140), and an image is one byte string however it was made.
-pub use rerail_tape_format::{CODE_ERROR, CODE_MISSING, COLUMN_ALIGN, ERROR_CODE, FIELD_LIMIT, HEADER_BYTES, KIND_LIMIT, MAGIC as TAPE_MAGIC, SENTINEL, TAIL_FROM_START, header, padded};
-pub use rerail_tape_format::CODE_EXTRA;
+pub use rerail_tape_format::{
+    CODE_ERROR, CODE_MISSING, COLUMN_ALIGN, ERROR_CODE, FIELD_LIMIT, HEADER_BYTES, KIND_LIMIT,
+    MAGIC as TAPE_MAGIC, SENTINEL, TAIL_FROM_START, header, padded,
+};
 /// The language tag (`language::tape_tag`) a stored tape image names in its header, if `bytes`
 /// starts like one (any format version): the store picks a frame's dictionary by it.
 pub fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {
-    (bytes.len() > header::LANGUAGE && bytes.starts_with(&TAPE_MAGIC[..6])).then(|| bytes[header::LANGUAGE])
+    (bytes.len() > header::LANGUAGE && bytes.starts_with(&TAPE_MAGIC[..6]))
+        .then(|| bytes[header::LANGUAGE])
 }
 pub const NONE: u32 = u32::MAX;
 pub const CHECKPOINT_LIMIT: usize = 0x00ff_ffff;
@@ -43,42 +47,42 @@ pub mod index;
 pub mod navigation;
 #[allow(unused_imports)]
 pub use index::IndexImage;
-pub mod wire;
-pub mod tokens;
 mod token_automata;
+pub mod tokens;
+pub mod wire;
 // tokens_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 // cratify: `token_readers` is rerail-w's (it mounts it)
-pub mod resident;
-pub mod validated;
-/// A document's tape through one API, in the run's format (decision 0293).
-pub mod formats;
-pub mod token_census;
-/// Python's tape from the lean parser (`rerail_python_lean`).
-pub mod python_lean;
-/// JavaScript's, TypeScript's and TSX's tapes from the lean parser (`rerail_ecma_lean`).
-pub mod ecma_lean;
-/// Rust's tape from the lean parser (`rerail_rust_lean`).
-pub mod rust_lean;
-/// Java's tape from the lean parser (`rerail_java_lean`).
-pub mod java_lean;
-/// Go's tape from the lean parser (`rerail_go_lean`).
-pub mod go_lean;
 /// C's and C++'s tapes from the lean parser (`rerail_c_lean`).
 pub mod c_lean;
 /// C#'s tape from the lean parser (`rerail_csharp_lean`).
 pub mod csharp_lean;
-/// PHP's tape from the lean parser (`rerail_php_lean`).
-pub mod php_lean;
-/// HTML's tape from the lean parser (`rerail_html_lean`).
-pub mod html_lean;
 /// CSS's tape from the lean parser (`rerail_css_lean`).
 pub mod css_lean;
-/// Markdown's tape from the lean parser (`rerail_markdown_lean`).
-pub mod markdown_lean;
+/// JavaScript's, TypeScript's and TSX's tapes from the lean parser (`rerail_ecma_lean`).
+pub mod ecma_lean;
+/// A document's tape through one API, in the run's format (decision 0293).
+pub mod formats;
+/// Go's tape from the lean parser (`rerail_go_lean`).
+pub mod go_lean;
+/// HTML's tape from the lean parser (`rerail_html_lean`).
+pub mod html_lean;
+/// Java's tape from the lean parser (`rerail_java_lean`).
+pub mod java_lean;
 /// Markdown's inline texts' tapes from the lean parser (`rerail_markdown_inline_lean`).
 pub mod markdown_inline_lean;
+/// Markdown's tape from the lean parser (`rerail_markdown_lean`).
+pub mod markdown_lean;
+/// PHP's tape from the lean parser (`rerail_php_lean`).
+pub mod php_lean;
+/// Python's tape from the lean parser (`rerail_python_lean`).
+pub mod python_lean;
+pub mod resident;
+/// Rust's tape from the lean parser (`rerail_rust_lean`).
+pub mod rust_lean;
 /// SQL's tape from the lean parser (`rerail_sql_lean`).
 pub mod sql_lean;
+pub mod token_census;
+pub mod validated;
 /// Vue's tape from the lean parser (`rerail_vue_lean`).
 pub mod vue_lean;
 pub use wire::index_span;
@@ -173,7 +177,9 @@ pub struct Grammar {
 }
 
 impl Grammar {
-    pub fn dialect(&self) -> GrammarDialect { self.lang }
+    pub fn dialect(&self) -> GrammarDialect {
+        self.lang
+    }
     /// The name of field `code` (M's facts-a, which read the private catalog directly).
     #[allow(dead_code)]
     pub fn field_name(&self, code: u16) -> Option<&'static str> {
@@ -257,7 +263,12 @@ pub type OwnTable = (&'static [&'static str], u16, &'static [&'static str]);
 pub trait TreeParser: Send + Sync {
     /// The file's documents: `None` where the parser leaves the file to tree-sitter, `Err(Parser)` where
     /// it stopped at a limit before it read the file.
-    fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>>;
+    fn parse(
+        &self,
+        grammar: &Grammar,
+        source: &str,
+        budget: &dyn Fn() -> bool,
+    ) -> Option<Result<FileImage, TemplateError>>;
 
     /// Its own kinds, where its trees are not a tree-sitter grammar's.
     fn kinds(&self) -> Option<OwnTable> {
@@ -322,13 +333,24 @@ pub fn install_parsers(registered: Vec<ParserImpl>) {
 /// `dialect`'s own parser, where its language registered one this host runs: the router's choice.
 pub fn tree_parser(dialect: GrammarDialect) -> Option<&'static dyn TreeParser> {
     let router = ROUTER.get()?;
-    router.chosen.iter().find(|(lang, _)| *lang == dialect).map(|&(_, i)| router.registered[i].parser)
+    router
+        .chosen
+        .iter()
+        .find(|(lang, _)| *lang == dialect)
+        .map(|&(_, i)| router.registered[i].parser)
 }
 
 /// Every registered implementation, in registration order, and whether the router took it.
 pub fn parser_routes() -> Vec<(&'static ParserImpl, bool)> {
-    let Some(router) = ROUTER.get() else { return Vec::new() };
-    router.registered.iter().enumerate().map(|(i, r)| (r, router.chosen.iter().any(|&(_, c)| c == i))).collect()
+    let Some(router) = ROUTER.get() else {
+        return Vec::new();
+    };
+    router
+        .registered
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (r, router.chosen.iter().any(|&(_, c)| c == i)))
+        .collect()
 }
 
 impl From<String> for TemplateError {
@@ -336,7 +358,6 @@ impl From<String> for TemplateError {
         Self::Encode(error)
     }
 }
-
 
 /// Owns only compact structure and a binding to the exact source and grammar.
 /// The first derived class id (`TapeDoc::with_labels`), above every grammar's kinds and supertypes
@@ -411,10 +432,23 @@ pub struct Code {
 impl Code {
     /// A code of `kind` under `field`, with no flags or alias, in the supertypes `classes` (ascending).
     pub fn plain(kind: u16, field: u16, classes: &[u16]) -> Result<Self, String> {
-        if kind as usize >= KIND_LIMIT || field as usize >= FIELD_LIMIT || kind == ERROR_CODE || classes.len() > MAX_NODE_SUPERTYPES {
-            return Err(format!("kind {kind}, field {field} or {} supertypes past the tape's codes", classes.len()));
+        if kind as usize >= KIND_LIMIT
+            || field as usize >= FIELD_LIMIT
+            || kind == ERROR_CODE
+            || classes.len() > MAX_NODE_SUPERTYPES
+        {
+            return Err(format!(
+                "kind {kind}, field {field} or {} supertypes past the tape's codes",
+                classes.len()
+            ));
         }
-        let mut code = Code { kf: kind | (field << 10), flags: 0, alias: SENTINEL, class_count: classes.len() as u8, classes: [0; MAX_NODE_SUPERTYPES] };
+        let mut code = Code {
+            kf: kind | (field << 10),
+            flags: 0,
+            alias: SENTINEL,
+            class_count: classes.len() as u8,
+            classes: [0; MAX_NODE_SUPERTYPES],
+        };
         code.classes[..classes.len()].copy_from_slice(classes);
         Ok(code)
     }
@@ -424,7 +458,13 @@ impl Code {
         if field as usize >= FIELD_LIMIT {
             return Err(format!("field {field} past the tape's codes"));
         }
-        Ok(Code { kf: ERROR_CODE | (field << 10), flags: CODE_ERROR, alias: SENTINEL, class_count: 0, classes: [0; MAX_NODE_SUPERTYPES] })
+        Ok(Code {
+            kf: ERROR_CODE | (field << 10),
+            flags: CODE_ERROR,
+            alias: SENTINEL,
+            class_count: 0,
+            classes: [0; MAX_NODE_SUPERTYPES],
+        })
     }
 
     /// Its supertype memberships, ascending.
@@ -585,7 +625,9 @@ impl DerivedImage {
                 Some(&program.segments),
                 budget,
             )?,
-            crate::code_rule_dsl::embed::Parse::Tape(tape) => tape.omitting(&program.segments, &grammar, &program.text, budget)?,
+            crate::code_rule_dsl::embed::Parse::Tape(tape) => {
+                tape.omitting(&program.segments, &grammar, &program.text, budget)?
+            }
         };
         Ok(Self {
             role: DocumentRole::derived(&program.text, &program.segments),
@@ -664,22 +706,36 @@ impl FileImage {
     /// The documents of the host tape `primary` of `source`: itself, and the programs its
     /// embedders build from it, one per `via` its dialect embeds. The tape is read in place
     /// (`embed::host`), so a lean parser's host embeds what tree-sitter's does.
-    pub fn embedding(primary: TapeImage, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Self, String> {
-        let mut image = FileImage { primary, derived: Vec::new() };
+    pub fn embedding(
+        primary: TapeImage,
+        grammar: &Grammar,
+        source: &str,
+        budget: &dyn Fn() -> bool,
+    ) -> Result<Self, String> {
+        let mut image = FileImage {
+            primary,
+            derived: Vec::new(),
+        };
         let embeds = grammar.lang.embeds();
         let mut programs = Vec::new();
-        if let Some(root) = crate::code_rule_dsl::embed::host::Host::new(&image.primary, grammar).root() {
+        if let Some(root) =
+            crate::code_rule_dsl::embed::host::Host::new(&image.primary, grammar).root()
+        {
             for (index, &(via, _)) in embeds.iter().enumerate() {
                 if embeds[..index].iter().any(|&(earlier, _)| earlier == via) {
                     continue;
                 }
-                if let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source, budget) {
+                if let Some(program) =
+                    crate::code_rule_dsl::embed::embedder(via).build(root, source, budget)
+                {
                     programs.push((via, program));
                 }
             }
         }
         for (via, program) in programs {
-            image.derived.push(DerivedImage::encode(via, program, 0, grammar, source, &budget)?);
+            image.derived.push(DerivedImage::encode(
+                via, program, 0, grammar, source, &budget,
+            )?);
         }
         // Each document in the format the run stores (decision 0293 §4), once the embedders have read the host.
         Ok(image.in_format(formats::Format::of_run()))
@@ -745,7 +801,9 @@ impl FileImage {
             }
             let host_errors = stored
                 .host_errors
-                .as_chunks::<8>().0.iter()
+                .as_chunks::<8>()
+                .0
+                .iter()
                 .map(|pair| {
                     (
                         u32::from_le_bytes(pair[..4].try_into().expect("u32 width")),
@@ -868,7 +926,10 @@ pub fn checked(budget: &impl Fn() -> bool) -> Result<(), String> {
 /// The store's identity of a tape (`HashKey::tape_identity`) whose source hashes to `source` and
 /// whose stored bytes are `tape`.
 pub fn tape_identity(source: &[u8; 32], tape: &[u8]) -> [u8; 32] {
-    let key = crate::content_store::HashKey::tape_identity(crate::content_store::HashKey::from_sha256_digest(*source), tape);
+    let key = crate::content_store::HashKey::tape_identity(
+        crate::content_store::HashKey::from_sha256_digest(*source),
+        tape,
+    );
     key.sha256_bytes().expect("a SHA-256 identity")
 }
 
@@ -992,10 +1053,14 @@ fn encode_tree(
             checked(budget)?;
         }
         visited += 1;
-        let implied = stored.as_ref().is_some_and(|stored| !stored.get(place).copied().unwrap_or(true));
+        let implied = stored
+            .as_ref()
+            .is_some_and(|stored| !stored.get(place).copied().unwrap_or(true));
         // An implied token has no record or descendants. Do not reconstruct its
         // TSNode (including its source position) merely to discard it.
-        let retained = (!implied).then(|| cursor.node()).filter(|node| !omitted.is_some_and(|segments| segments.omitted(node.byte_range())));
+        let retained = (!implied)
+            .then(|| cursor.node())
+            .filter(|node| !omitted.is_some_and(|segments| segments.omitted(node.byte_range())));
         if let Some(node) = retained {
             // The cursor's root is `root` itself, which has no field.
             // One status call gives the field and the supertypes (the field alone walks the stack again).
@@ -1013,7 +1078,13 @@ fn encode_tree(
                 above.push(parent);
                 parent = Some(index);
                 levels.push((stored.take(), place));
-                stored = filter.and_then(|filter| filter.stored_children_in(node, filter_cursor.as_mut().expect("a cursor for the filter"), &mut scratch));
+                stored = filter.and_then(|filter| {
+                    filter.stored_children_in(
+                        node,
+                        filter_cursor.as_mut().expect("a cursor for the filter"),
+                        &mut scratch,
+                    )
+                });
                 place = 0;
                 continue;
             }
@@ -1030,7 +1101,9 @@ fn encode_tree(
             cursor.goto_parent();
             above.pop();
             parent = grandparent;
-            if let Some(mask) = stored.take() { scratch.recycle(mask); }
+            if let Some(mask) = stored.take() {
+                scratch.recycle(mask);
+            }
             (stored, place) = levels.pop().unwrap_or_default();
         }
     }
@@ -1125,15 +1198,20 @@ impl TapeImage {
     fn to_bytes15(&self, c: &Columns15) -> Result<Vec<u8>, String> {
         let language =
             super::language::tape_tag(self.language).ok_or("unsupported tape language")?;
-        let alias_bytes = c.kind_aliases.iter().map(|(name, _)| 5 + name.len()).sum::<usize>();
+        let alias_bytes = c
+            .kind_aliases
+            .iter()
+            .map(|(name, _)| 5 + name.len())
+            .sum::<usize>();
         let code_bytes = c.codes.iter().map(Code::stored_len).sum::<usize>();
-        let lengths = [c.node_count(), c.codes.len(), code_bytes, c.kind_aliases.len(), alias_bytes];
-        let mut bytes = Vec::with_capacity(
-            HEADER_BYTES
-                + c.bytes.len()
-                + code_bytes
-                + alias_bytes,
-        );
+        let lengths = [
+            c.node_count(),
+            c.codes.len(),
+            code_bytes,
+            c.kind_aliases.len(),
+            alias_bytes,
+        ];
+        let mut bytes = Vec::with_capacity(HEADER_BYTES + c.bytes.len() + code_bytes + alias_bytes);
         bytes.extend_from_slice(TAPE_MAGIC);
         bytes.push(language);
         bytes.extend_from_slice(&c.widths);
@@ -1177,7 +1255,8 @@ impl TapeImage {
         if bytes[header::LANGUAGE] != tag {
             return Err("tape image grammar mismatch".into());
         }
-        let lang = rerail_tape_format::f16::lang(tag).ok_or("a format 16 tape of a language without its table")?;
+        let lang = rerail_tape_format::f16::lang(tag)
+            .ok_or("a format 16 tape of a language without its table")?;
         let held = if magic == MAGIC16 {
             let t = Tape16::from_bytes(bytes.to_vec())?;
             t.reader(lang)?;
@@ -1192,7 +1271,12 @@ impl TapeImage {
             Held::F16Z(t) => t.source_len(),
             Held::F15(_) => unreachable!(),
         };
-        let image = Self { held, language: grammar.lang, source_len: usize::try_from(source_len).map_err(|_| "source length overflow")?, source_digest: None };
+        let image = Self {
+            held,
+            language: grammar.lang,
+            source_len: usize::try_from(source_len).map_err(|_| "source length overflow")?,
+            source_digest: None,
+        };
         if image.node_count() == 0 {
             return Err("an empty tape".into());
         }
@@ -1200,9 +1284,29 @@ impl TapeImage {
     }
 
     /// An image of format 15's columns (code, size, base, off, tail), laid out in one buffer.
-    fn of15(columns: [&[u8]; 5], widths: [u8; 3], codes: Vec<Code>, kind_aliases: Vec<(String, bool)>, language: GrammarDialect, source_len: usize, source_digest: Option<[u8; 32]>) -> Self {
+    fn of15(
+        columns: [&[u8]; 5],
+        widths: [u8; 3],
+        codes: Vec<Code>,
+        kind_aliases: Vec<(String, bool)>,
+        language: GrammarDialect,
+        source_len: usize,
+        source_digest: Option<[u8; 32]>,
+    ) -> Self {
         let (bytes, at) = Columns15::laid(columns);
-        Self { held: Held::F15(Columns15 { bytes, at, widths, codes, kind_aliases, table: Default::default() }), language, source_len, source_digest }
+        Self {
+            held: Held::F15(Columns15 {
+                bytes,
+                at,
+                widths,
+                codes,
+                kind_aliases,
+                table: Default::default(),
+            }),
+            language,
+            source_len,
+            source_digest,
+        }
     }
 
     /// The tape as held.
@@ -1220,12 +1324,22 @@ impl TapeImage {
 
     /// Format 15's columns, or why a reader of them cannot read this image.
     pub fn columns15(&self) -> Result<&Columns15, String> {
-        self.f15().ok_or_else(|| format!("a format {} tape where format 15's columns are read", self.format().name()))
+        self.f15().ok_or_else(|| {
+            format!(
+                "a format {} tape where format 15's columns are read",
+                self.format().name()
+            )
+        })
     }
 
     /// The image a parser wrote as it parsed `source` (its bytes, the engine's: decision 0140), read as
     /// stored, with the source's digest (not stored since format 12), as `encode_rr`'s.
-    pub fn parsed(bytes: &[u8], grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
+    pub fn parsed(
+        bytes: &[u8],
+        grammar: &Grammar,
+        source: &str,
+        budget: &impl Fn() -> bool,
+    ) -> Result<Self, String> {
         let mut image = Self::read_image(bytes, grammar)?;
         image.source_digest = Some(source_digest(source, budget)?);
         Ok(image)
@@ -1240,7 +1354,10 @@ impl TapeImage {
         let language = super::language::from_tape_tag(reader.u8()?)
             .ok_or("unsupported tape image language")?;
         let widths: [u8; 3] = reader.take(3)?.try_into().expect("three widths");
-        if !matches!(widths[0], 2 | 4) || !matches!(widths[1], 2 | 4) || !matches!(widths[2] & !TAIL_FROM_START, 2 | 4) {
+        if !matches!(widths[0], 2 | 4)
+            || !matches!(widths[1], 2 | 4)
+            || !matches!(widths[2] & !TAIL_FROM_START, 2 | 4)
+        {
             return Err("noncanonical tape image header".into());
         }
         if reader.u32()? != TAPE_FORMAT_VERSION {
@@ -1257,8 +1374,17 @@ impl TapeImage {
         let alias_bytes = reader.length()?;
         // Every count must be backed by the bytes before a table is reserved for it.
         let column = |width: usize| nodes.checked_mul(width).ok_or("tape image length overflow");
-        let blocks = nodes.div_ceil(CHECKPOINT_STRIDE).checked_mul(4).ok_or("tape image length overflow")?;
-        let lengths = [column(2)?, column(usize::from(widths[0]))?, blocks, column(usize::from(widths[1]))?, column(usize::from(widths[2] & !TAIL_FROM_START))?];
+        let blocks = nodes
+            .div_ceil(CHECKPOINT_STRIDE)
+            .checked_mul(4)
+            .ok_or("tape image length overflow")?;
+        let lengths = [
+            column(2)?,
+            column(usize::from(widths[0]))?,
+            blocks,
+            column(usize::from(widths[1]))?,
+            column(usize::from(widths[2] & !TAIL_FROM_START))?,
+        ];
         let fixed = lengths
             .into_iter()
             .map(padded)
@@ -1269,19 +1395,29 @@ impl TapeImage {
             || nodes > u32::MAX as usize
             || code_count == 0
             || code_count > usize::from(u16::MAX) + 1
-            || code_count.checked_mul(6).is_none_or(|minimum| minimum > code_bytes)
+            || code_count
+                .checked_mul(6)
+                .is_none_or(|minimum| minimum > code_bytes)
             || fixed != bytes.len() - reader.offset
         {
             return Err("invalid tape image table lengths".into());
         }
-        if alias_count > usize::from(SENTINEL) || alias_count.checked_mul(5).is_none_or(|minimum| minimum > alias_bytes) {
+        if alias_count > usize::from(SENTINEL)
+            || alias_count
+                .checked_mul(5)
+                .is_none_or(|minimum| minimum > alias_bytes)
+        {
             return Err("invalid contextual grammar alias count".into());
         }
         // Each column, then its padding to `COLUMN_ALIGN`, which must be zero.
         let mut columns: [&[u8]; 5] = [&[]; 5];
         for (column, length) in columns.iter_mut().zip(lengths) {
             *column = reader.take(length)?;
-            if reader.take(padded(length) - length)?.iter().any(|&byte| byte != 0) {
+            if reader
+                .take(padded(length) - length)?
+                .iter()
+                .any(|&byte| byte != 0)
+            {
                 return Err("noncanonical tape column padding".to_owned());
             }
         }
@@ -1305,9 +1441,18 @@ impl TapeImage {
             for slot in classes.iter_mut().take(usize::from(class_count)) {
                 *slot = u16::from_le_bytes(reader.take(2)?.try_into().expect("u16 width"));
             }
-            let code = Code { kf, flags, alias, class_count, classes };
+            let code = Code {
+                kf,
+                flags,
+                alias,
+                class_count,
+                classes,
+            };
             if code.classes().windows(2).any(|pair| pair[0] >= pair[1])
-                || code.classes().iter().any(|&class| usize::from(class) >= grammar.kinds.kind_count())
+                || code
+                    .classes()
+                    .iter()
+                    .any(|&class| usize::from(class) >= grammar.kinds.kind_count())
             {
                 return Err("noncanonical supertype membership".into());
             }
@@ -1339,7 +1484,15 @@ impl TapeImage {
         if reader.offset != bytes.len() {
             return Err("trailing tape image bytes".into());
         }
-        Ok(Self::of15(columns, widths, codes, kind_aliases, language, source_len, None))
+        Ok(Self::of15(
+            columns,
+            widths,
+            codes,
+            kind_aliases,
+            language,
+            source_len,
+            None,
+        ))
     }
 
     /// Parses `source` as `grammar`'s dialect and encodes its documents: with tree-sitter (a PHP
@@ -1372,7 +1525,8 @@ impl TapeImage {
         if let Err(error) = parser.set_language(&grammar.lang.get_ts_language()) {
             return Some(Err(error.to_string()));
         }
-        let parsed = super::language::base(super::language::Family::of(grammar.lang)).parse_input(source);
+        let parsed =
+            super::language::base(super::language::Family::of(grammar.lang)).parse_input(source);
         let bytes = parsed.as_bytes();
         let mut input = |offset: usize, _: tree_sitter::Point| &bytes[offset..];
         let mut progress = |_: &tree_sitter::ParseState| {
@@ -1388,11 +1542,17 @@ impl TapeImage {
             None,
             Some(tree_sitter::ParseOptions::new().progress_callback(&mut progress)),
         )?;
-        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, bytes.len() as u64);
+        crate::code_rule_dsl::logic::profile::work(
+            crate::code_rule_dsl::logic::profile::Unit::SourceByte,
+            bytes.len() as u64,
+        );
         drop(parse);
         let _encode = crate::code_rule_dsl::logic::profile::span(|| "tape encode".into());
         if crate::code_rule_dsl::logic::profile::on() {
-            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, tree.root_node().descendant_count() as u64);
+            crate::code_rule_dsl::logic::profile::work(
+                crate::code_rule_dsl::logic::profile::Unit::Node,
+                tree.root_node().descendant_count() as u64,
+            );
         }
         Some(Self::encode(tree.root_node(), grammar, source, budget))
     }
@@ -1406,7 +1566,12 @@ impl TapeImage {
         source: &str,
         budget: &impl Fn() -> bool,
     ) -> Result<FileImage, String> {
-        FileImage::embedding(Self::encode_tree_image(root, grammar, source, None, budget)?, grammar, source, budget)
+        FileImage::embedding(
+            Self::encode_tree_image(root, grammar, source, None, budget)?,
+            grammar,
+            source,
+            budget,
+        )
     }
 
     /// The tape of a tree-sitter tree of `source` alone, leaving out the placeholders `omitted`
@@ -1435,15 +1600,31 @@ impl TapeImage {
         }
         let mut nodes = Vec::<Pending>::new();
         let mut supertypes = Vec::new();
-        let filter = if ALL_TOKENS.get() { None } else { tokens::TokenGrammar::of(grammar.lang, language) };
-        encode_tree(&mut nodes, &mut supertypes, root, language, filter.as_deref(), omitted, budget)?;
+        let filter = if ALL_TOKENS.get() {
+            None
+        } else {
+            tokens::TokenGrammar::of(grammar.lang, language)
+        };
+        encode_tree(
+            &mut nodes,
+            &mut supertypes,
+            root,
+            language,
+            filter.as_deref(),
+            omitted,
+            budget,
+        )?;
         Self::finish(nodes, supertypes, grammar, source, budget)
     }
 
     /// The tape of a `.rr` file: the tree `logic::rr::syntax` builds as it reads the statements, its comments as
     /// extras and each statement that does not parse an ERROR leaf (decision 0061). The lean parser writes it as
     /// the image's bytes as it parses (decision 0140), so nothing here packs a node: the image is read as stored.
-    pub fn encode_rr(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
+    pub fn encode_rr(
+        grammar: &Grammar,
+        source: &str,
+        budget: &impl Fn() -> bool,
+    ) -> Result<Self, String> {
         checked(budget)?;
         if grammar.lang != GrammarDialect::Rr {
             return Err("only a .rr file is encoded from its rule tree".into());
@@ -1459,7 +1640,9 @@ impl TapeImage {
                 image.source_digest = Some(source_digest(source, budget)?);
                 Ok(image)
             }
-            formats::RrTape::Written(written) => Self::written_16(written, grammar.lang, source, budget),
+            formats::RrTape::Written(written) => {
+                Self::written_16(written, grammar.lang, source, budget)
+            }
         }
     }
 
@@ -1490,13 +1673,25 @@ impl TapeImage {
                 _ => return Err("invalid preorder parent".into()),
             }
         }
-        Self::pack(&nodes, std::mem::take(&mut supertypes), grammar, source, budget)
+        Self::pack(
+            &nodes,
+            std::mem::take(&mut supertypes),
+            grammar,
+            source,
+            budget,
+        )
     }
 
     /// The image without the nodes, and their subtrees, whose spans `segments` omits (an embedded
     /// program's placeholders): the image of the tree `encode_tree_image` walks with the same
     /// `omitted`. The image itself where nothing is omitted.
-    pub fn omitting(&self, segments: &SegmentMap, grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
+    pub fn omitting(
+        &self,
+        segments: &SegmentMap,
+        grammar: &Grammar,
+        source: &str,
+        budget: &impl Fn() -> bool,
+    ) -> Result<Self, String> {
         // Read through the tape API, in the format the parser wrote (a lean parser's may be format 16, 0293 §7).
         let omitted = rerail_tape_format::with_tape!(self.tape(), |t| {
             (0..t.len()).any(|i| segments.omitted(t.start(i) as usize..t.end(i) as usize))
@@ -1504,12 +1699,17 @@ impl TapeImage {
         if !omitted {
             return Ok(self.clone());
         }
-        let (nodes, supertypes) = rerail_tape_format::with_tape!(self.tape(), |t| Self::kept(&t, segments, budget))?;
+        let (nodes, supertypes) =
+            rerail_tape_format::with_tape!(self.tape(), |t| Self::kept(&t, segments, budget))?;
         Self::finish(nodes, supertypes, grammar, source, budget)
     }
 
     /// The nodes of `t` that `segments` does not omit, nor any of their ancestors, as `finish` takes them.
-    fn kept<T: Tape>(t: &T, segments: &SegmentMap, budget: &impl Fn() -> bool) -> Result<(Vec<Pending>, Vec<(u32, u16)>), String> {
+    fn kept<T: Tape>(
+        t: &T,
+        segments: &SegmentMap,
+        budget: &impl Fn() -> bool,
+    ) -> Result<(Vec<Pending>, Vec<(u32, u16)>), String> {
         let count = t.len();
         let mut nodes = Vec::<Pending>::with_capacity(count);
         let mut supertypes = Vec::new();
@@ -1575,7 +1775,9 @@ impl TapeImage {
         let [size_width, off_width, tail_width] = widths.map(|w| usize::from(w & !TAIL_FROM_START));
         if count == 0
             || !code.len().is_multiple_of(2)
-            || ![size_width, off_width, tail_width].iter().all(|w| matches!(w, 2 | 4))
+            || ![size_width, off_width, tail_width]
+                .iter()
+                .all(|w| matches!(w, 2 | 4))
             || size.len() != count * size_width
             || off.len() != count * off_width
             || tail.len() != count * tail_width
@@ -1589,7 +1791,15 @@ impl TapeImage {
             Some(digest) => digest,
             None => source_digest(source, &budget)?,
         };
-        Ok(Self::of15([&code, &size, &base, &off, &tail], widths, codes, Vec::new(), grammar.lang, source.len(), Some(digest)))
+        Ok(Self::of15(
+            [&code, &size, &base, &off, &tail],
+            widths,
+            codes,
+            Vec::new(),
+            grammar.lang,
+            source.len(),
+            Some(digest),
+        ))
     }
 
     /// The columns of `nodes`, in preorder with their sizes set: codes folded and numbered by
@@ -1605,7 +1815,11 @@ impl TapeImage {
         if count == 0 || u32::try_from(count).is_err() {
             return Err("tape node count out of range".into());
         }
-        if nodes.iter().enumerate().any(|(i, n)| n.size == 0 || i + n.size as usize > count) {
+        if nodes
+            .iter()
+            .enumerate()
+            .any(|(i, n)| n.size == 0 || i + n.size as usize > count)
+        {
             return Err("a subtree size out of range".into());
         }
         supertypes.sort_unstable();
@@ -1622,26 +1836,43 @@ impl TapeImage {
             }
             let alias = match &node.kind_alias {
                 Some(alias) => {
-                    let id = kind_aliases.iter().position(|candidate| candidate == alias).unwrap_or_else(|| {
-                        kind_aliases.push(alias.clone());
-                        kind_aliases.len() - 1
-                    });
-                    u16::try_from(id).ok().filter(|&id| id != SENTINEL).ok_or("too many contextual grammar aliases")?
+                    let id = kind_aliases
+                        .iter()
+                        .position(|candidate| candidate == alias)
+                        .unwrap_or_else(|| {
+                            kind_aliases.push(alias.clone());
+                            kind_aliases.len() - 1
+                        });
+                    u16::try_from(id)
+                        .ok()
+                        .filter(|&id| id != SENTINEL)
+                        .ok_or("too many contextual grammar aliases")?
                 }
                 None => SENTINEL,
             };
-            let flags = (u8::from(node.extra) * CODE_EXTRA) | (u8::from(node.error) * CODE_ERROR) | (u8::from(node.missing) * CODE_MISSING);
+            let flags = (u8::from(node.extra) * CODE_EXTRA)
+                | (u8::from(node.error) * CODE_ERROR)
+                | (u8::from(node.missing) * CODE_MISSING);
             let mut classes = [0_u16; MAX_NODE_SUPERTYPES];
             let mut class_count = 0_usize;
             while let Some(&(_, class)) = memberships.next_if(|&&(at, _)| at as usize == index) {
-                *classes.get_mut(class_count).ok_or("too many supertype memberships")? = class;
+                *classes
+                    .get_mut(class_count)
+                    .ok_or("too many supertype memberships")? = class;
                 class_count += 1;
             }
-            let folded = Code { kf: node.kf, flags, alias, class_count: class_count as u8, classes };
+            let folded = Code {
+                kf: node.kf,
+                flags,
+                alias,
+                class_count: class_count as u8,
+                classes,
+            };
             let id = match code_ids.get(&folded) {
                 Some(&id) => id,
                 None => {
-                    let id = u16::try_from(codes.len()).map_err(|_| "too many folded tape codes")?;
+                    let id =
+                        u16::try_from(codes.len()).map_err(|_| "too many folded tape codes")?;
                     codes.push(folded);
                     code_ids.insert(folded, id);
                     id
@@ -1653,9 +1884,19 @@ impl TapeImage {
         // descendant's start.
         let bases = nodes
             .chunks(CHECKPOINT_STRIDE)
-            .map(|block| block.iter().map(|node| node.start).min().expect("nonempty block"))
+            .map(|block| {
+                block
+                    .iter()
+                    .map(|node| node.start)
+                    .min()
+                    .expect("nonempty block")
+            })
             .collect::<Vec<_>>();
-        let end = |node: &Pending| node.start.checked_add(node.length).ok_or("span end overflow");
+        let end = |node: &Pending| {
+            node.start
+                .checked_add(node.length)
+                .ok_or("span end overflow")
+        };
         let mut from_last = true;
         let (mut max_off, mut max_tail, mut max_length) = (0_u32, 0_u32, 0_u32);
         for (index, node) in nodes.iter().enumerate() {
@@ -1680,17 +1921,37 @@ impl TapeImage {
                 checked(budget)?;
             }
             put_cell(&mut size, node.size, size_width);
-            put_cell(&mut off, node.start - bases[index / CHECKPOINT_STRIDE], off_width);
-            let from = if from_last { nodes[index + node.size as usize - 1].start } else { node.start };
+            put_cell(
+                &mut off,
+                node.start - bases[index / CHECKPOINT_STRIDE],
+                off_width,
+            );
+            let from = if from_last {
+                nodes[index + node.size as usize - 1].start
+            } else {
+                node.start
+            };
             put_cell(&mut tail, end(node)? - from, tail_width);
         }
         if memberships.next().is_some() {
             return Err("supertype membership of no node".into());
         }
         checked(budget)?;
-        let widths = [size_width as u8, off_width as u8, tail_width as u8 | if from_last { 0 } else { TAIL_FROM_START }];
+        let widths = [
+            size_width as u8,
+            off_width as u8,
+            tail_width as u8 | if from_last { 0 } else { TAIL_FROM_START },
+        ];
         let base: Vec<u8> = bases.iter().flat_map(|base| base.to_le_bytes()).collect();
-        Ok(Self::of15([&code, &size, &base, &off, &tail], widths, codes, kind_aliases, grammar.lang, source.len(), Some(source_digest(source, budget)?)))
+        Ok(Self::of15(
+            [&code, &size, &base, &off, &tail],
+            widths,
+            codes,
+            kind_aliases,
+            grammar.lang,
+            source.len(),
+            Some(source_digest(source, budget)?),
+        ))
     }
 
     /// The format it is held in.
@@ -1705,7 +1966,10 @@ impl TapeImage {
     /// The tape, read in place in the format it is held in (decision 0293).
     pub fn tape(&self) -> rerail_tape_format::tape::AnyTape<'_> {
         use rerail_tape_format::tape::{AnyTape, F15};
-        let lang = |tag: u8| rerail_tape_format::f16::lang(tag).expect("a format 16 tape is held with its language's table");
+        let lang = |tag: u8| {
+            rerail_tape_format::f16::lang(tag)
+                .expect("a format 16 tape is held with its language's table")
+        };
         match &self.held {
             Held::F15(c) => AnyTape::F15(F15::over(c.laid_out().0, c.view(), self.code_table())),
             Held::F16(t) => AnyTape::F16(t.reader(lang(t.tag())).expect("checked when held")),
@@ -1717,7 +1981,10 @@ impl TapeImage {
     pub fn code_table(&self) -> &rerail_tape_format::tape::CodeTable {
         match &self.held {
             Held::F15(c) => c.table.get_or_init(|| c.code_table()),
-            _ => self.lang().expect("a format 16 tape is held with its language's table").table(),
+            _ => self
+                .lang()
+                .expect("a format 16 tape is held with its language's table")
+                .table(),
         }
     }
 
@@ -1725,7 +1992,10 @@ impl TapeImage {
     #[cfg(any(test, feature = "test-hooks"))]
     fn flagged(&self, flag: u8) -> Vec<u32> {
         use rerail_tape_format::tape::Tape;
-        rerail_tape_format::with_tape!(self.tape(), |t| (0..t.len()).filter(|&i| t.table().entry(t.code(i)).flags & flag != 0).map(|i| i as u32).collect())
+        rerail_tape_format::with_tape!(self.tape(), |t| (0..t.len())
+            .filter(|&i| t.table().entry(t.code(i)).flags & flag != 0)
+            .map(|i| i as u32)
+            .collect())
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
@@ -1747,14 +2017,18 @@ impl TapeImage {
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn membership_count(&self) -> usize {
         use rerail_tape_format::tape::Tape;
-        rerail_tape_format::with_tape!(self.tape(), |t| (0..t.len()).map(|i| t.table().entry(t.code(i)).classes.len()).sum())
+        rerail_tape_format::with_tape!(self.tape(), |t| (0..t.len())
+            .map(|i| t.table().entry(t.code(i)).classes.len())
+            .sum())
     }
 
     /// The nodes that carry a contextual alias.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn aliased_nodes(&self) -> usize {
         use rerail_tape_format::tape::Tape;
-        rerail_tape_format::with_tape!(self.tape(), |t| (0..t.len()).filter(|&i| t.table().entry(t.code(i)).alias.is_some()).count())
+        rerail_tape_format::with_tape!(self.tape(), |t| (0..t.len())
+            .filter(|&i| t.table().entry(t.code(i)).alias.is_some())
+            .count())
     }
 
     pub fn node_count(&self) -> usize {
@@ -1825,7 +2099,10 @@ impl Columns15 {
             bytes.resize(padded(bytes.len()), 0);
         }
         // The reads' offsets are u32s: a source's columns are far smaller.
-        assert!(u32::try_from(bytes.len()).is_ok(), "format 15's columns past 4 GiB");
+        assert!(
+            u32::try_from(bytes.len()).is_ok(),
+            "format 15's columns past 4 GiB"
+        );
         (bytes, at)
     }
 
@@ -1890,7 +2167,11 @@ impl Columns15 {
     }
 
     pub fn start_at(&self, i: usize) -> u32 {
-        cell(self.base(), i / CHECKPOINT_STRIDE, 4).saturating_add(cell(self.off(), i, self.off_width()))
+        cell(self.base(), i / CHECKPOINT_STRIDE, 4).saturating_add(cell(
+            self.off(),
+            i,
+            self.off_width(),
+        ))
     }
 
     pub fn tail_at(&self, i: usize) -> u32 {
@@ -1911,7 +2192,11 @@ impl Columns15 {
         self.bytes.capacity()
             + self.codes.capacity() * std::mem::size_of::<Code>()
             + self.kind_aliases.capacity() * std::mem::size_of::<(String, bool)>()
-            + self.kind_aliases.iter().map(|(name, _)| name.capacity()).sum::<usize>()
+            + self
+                .kind_aliases
+                .iter()
+                .map(|(name, _)| name.capacity())
+                .sum::<usize>()
     }
 }
 
@@ -1923,8 +2208,21 @@ pub mod reads {
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
     pub const PARTS: [&str; 15] = [
-        "kind", "field", "flags", "named", "span", "points", "parent", "children", "prev", "size", "classes",
-        "docs restored", "nodes restored", "facts docs", "facts nodes",
+        "kind",
+        "field",
+        "flags",
+        "named",
+        "span",
+        "points",
+        "parent",
+        "children",
+        "prev",
+        "size",
+        "classes",
+        "docs restored",
+        "nodes restored",
+        "facts docs",
+        "facts nodes",
     ];
     static COUNTS: [AtomicU64; PARTS.len()] = [const { AtomicU64::new(0) }; PARTS.len()];
 
@@ -1959,7 +2257,13 @@ pub mod reads {
     /// previous read of the same part on this thread: the same node, the next one, near (16 nodes or fewer
     /// away), or far (a point read). A slice of a column read whole is in order ("bulk", its length).
     pub const PATTERN_PARTS: [&str; 7] = [
-        "tape span", "tape parent", "tape size", "facts start", "facts end", "facts parent", "facts subtree_end",
+        "tape span",
+        "tape parent",
+        "tape size",
+        "facts start",
+        "facts end",
+        "facts parent",
+        "facts subtree_end",
     ];
     pub const CLASSES: [&str; 5] = ["same", "next", "near", "far", "bulk"];
     static PATTERNS: [[AtomicU64; CLASSES.len()]; PATTERN_PARTS.len()] =
@@ -1979,9 +2283,11 @@ pub mod reads {
     }
 
     /// With `E17_SITES` set, each read is also counted by its caller's source location (slow: a lock a read).
-    static SITES_ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("E17_SITES").is_some());
+    static SITES_ON: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| std::env::var_os("E17_SITES").is_some());
     type Site = (usize, &'static std::panic::Location<'static>);
-    static SITES: std::sync::Mutex<Option<std::collections::HashMap<Site, [u64; 4]>>> = std::sync::Mutex::new(None);
+    static SITES: std::sync::Mutex<Option<std::collections::HashMap<Site, [u64; 4]>>> =
+        std::sync::Mutex::new(None);
 
     #[inline]
     #[track_caller]
@@ -2002,7 +2308,12 @@ pub mod reads {
         PATTERNS[part][class].fetch_add(1, Relaxed);
         if *SITES_ON {
             let site = std::panic::Location::caller();
-            SITES.lock().expect("the sites").get_or_insert_default().entry((part, site)).or_default()[class] += 1;
+            SITES
+                .lock()
+                .expect("the sites")
+                .get_or_insert_default()
+                .entry((part, site))
+                .or_default()[class] += 1;
         }
     }
 
@@ -2030,24 +2341,50 @@ pub mod reads {
         eprintln!("tape reads (E7):");
         for (name, count) in PARTS.iter().zip(&COUNTS) {
             let count = count.load(Relaxed);
-            eprintln!("  {name:<16} {count:>14} {:>10.3} per restored node", count as f64 / nodes);
+            eprintln!(
+                "  {name:<16} {count:>14} {:>10.3} per restored node",
+                count as f64 / nodes
+            );
         }
         let facts = COUNTS[part("facts nodes")].load(Relaxed).max(1) as f64;
-        eprintln!("read patterns (E17), per facts node ({} facts nodes):", facts as u64);
-        eprintln!("  {:<18} {}", "", CLASSES.iter().map(|c| format!("{c:>12}")).collect::<String>());
+        eprintln!(
+            "read patterns (E17), per facts node ({} facts nodes):",
+            facts as u64
+        );
+        eprintln!(
+            "  {:<18} {}",
+            "",
+            CLASSES
+                .iter()
+                .map(|c| format!("{c:>12}"))
+                .collect::<String>()
+        );
         for (name, row) in PATTERN_PARTS.iter().zip(&PATTERNS) {
-            eprintln!("  {name:<18} {}", row.iter().map(|c| format!("{:>12.4}", c.load(Relaxed) as f64 / facts)).collect::<String>());
+            eprintln!(
+                "  {name:<18} {}",
+                row.iter()
+                    .map(|c| format!("{:>12.4}", c.load(Relaxed) as f64 / facts))
+                    .collect::<String>()
+            );
         }
         eprintln!("read patterns (E17), counts:");
         for (name, row) in PATTERN_PARTS.iter().zip(&PATTERNS) {
-            eprintln!("  {name:<18} {}", row.iter().map(|c| format!("{:>12}", c.load(Relaxed))).collect::<String>());
+            eprintln!(
+                "  {name:<18} {}",
+                row.iter()
+                    .map(|c| format!("{:>12}", c.load(Relaxed)))
+                    .collect::<String>()
+            );
         }
         if let Some(sites) = SITES.lock().expect("the sites").take() {
             let mut sites: Vec<_> = sites.into_iter().collect();
             sites.sort_by_key(|(_, c)| std::cmp::Reverse(c.iter().sum::<u64>()));
             eprintln!("read patterns (E17), top sites (same, next, near, far):");
             for ((part, site), c) in sites.iter().take(40) {
-                eprintln!("  {:<18} {:>11} {:>11} {:>11} {:>11}  {site}", PATTERN_PARTS[*part], c[0], c[1], c[2], c[3]);
+                eprintln!(
+                    "  {:<18} {:>11} {:>11} {:>11} {:>11}  {site}",
+                    PATTERN_PARTS[*part], c[0], c[1], c[2], c[3]
+                );
             }
         }
     }
@@ -2081,13 +2418,19 @@ macro_rules! read {
 /// A node's kind as the matchers name it: the code's, or `ERROR_SYMBOL` for an ERROR node.
 #[inline]
 fn kind_of(e: &Entry) -> u16 {
-    if e.flags & CODE_ERROR != 0 { ERROR_SYMBOL } else { e.kind }
+    if e.flags & CODE_ERROR != 0 {
+        ERROR_SYMBOL
+    } else {
+        e.kind
+    }
 }
 
 /// Whether a node of code `e` is named: its alias's flag, else its kind's.
 #[inline]
 fn named_of(grammar: &Grammar, e: &Entry) -> bool {
-    e.alias.as_ref().map_or_else(|| grammar.kind_is_named(kind_of(e)), |alias| alias.1)
+    e.alias
+        .as_ref()
+        .map_or_else(|| grammar.kind_is_named(kind_of(e)), |alias| alias.1)
 }
 
 /// A node whose parent the step that reached it did not know (`TapeNode::up`).
@@ -2160,12 +2503,20 @@ pub struct HostLink {
 /// it that is not white space (`implied`) is read as a leaf. Which tokens a run holds does not
 /// matter here (`TokenGrammar::gaps` would say): only whether its bytes stand for the file's.
 fn node_extents(doc: &TapeDoc, segments: &SegmentMap) -> Vec<(u32, u32)> {
-    rerail_tape_format::with_tape!(doc.tape(), |t| extents_of(&t, doc.source.as_bytes(), segments))
+    rerail_tape_format::with_tape!(doc.tape(), |t| extents_of(
+        &t,
+        doc.source.as_bytes(),
+        segments
+    ))
 }
 
 /// `node_extents` over the tape, read in place: one pass in preorder, each node's extent joined into its parent's
 /// as its subtree closes (the subtrees open around a node are its ancestors).
-fn extents_of<T: rerail_tape_format::tape::Tape>(t: &T, text: &[u8], segments: &SegmentMap) -> Vec<(u32, u32)> {
+fn extents_of<T: rerail_tape_format::tape::Tape>(
+    t: &T,
+    text: &[u8],
+    segments: &SegmentMap,
+) -> Vec<(u32, u32)> {
     const NONE_YET: (u32, u32) = (u32::MAX, 0);
     let join = |into: &mut (u32, u32), (start, end): (u32, u32)| {
         *into = (into.0.min(start), into.1.max(end));
@@ -2176,9 +2527,14 @@ fn extents_of<T: rerail_tape_format::tape::Tape>(t: &T, text: &[u8], segments: &
         let gap = text.get(start as usize..end as usize).unwrap_or_default();
         let mut at = 0;
         while at < gap.len() {
-            let Some(from) = gap[at..].iter().position(|b| !b.is_ascii_whitespace()) else { break };
+            let Some(from) = gap[at..].iter().position(|b| !b.is_ascii_whitespace()) else {
+                break;
+            };
             let from = at + from;
-            let to = gap[from..].iter().position(|b| b.is_ascii_whitespace()).map_or(gap.len(), |n| from + n);
+            let to = gap[from..]
+                .iter()
+                .position(|b| b.is_ascii_whitespace())
+                .map_or(gap.len(), |n| from + n);
             leaf(start + from as u32, start + to as u32);
             at = to;
         }
@@ -2188,7 +2544,10 @@ fn extents_of<T: rerail_tape_format::tape::Tape>(t: &T, text: &[u8], segments: &
     let mut standing = vec![NONE_YET; n];
     let mut all = vec![NONE_YET; n];
     // A closed subtree's extents, joined into its parent's (the subtree open around it).
-    let close = |node: usize, open: &[(usize, usize)], standing: &mut [(u32, u32)], all: &mut [(u32, u32)]| {
+    let close = |node: usize,
+                 open: &[(usize, usize)],
+                 standing: &mut [(u32, u32)],
+                 all: &mut [(u32, u32)]| {
         if let Some(&(parent, _)) = open.last() {
             let (leaves, standing_leaves) = (all[node], standing[node]);
             join(&mut all[parent], leaves);
@@ -2581,7 +2940,10 @@ impl TapeDoc {
 
     /// This document's image as stored (`image`, when the caller has it already), its source and
     /// its grammar: what residency admits.
-    pub fn resident_parts(&self, image: Option<Vec<u8>>) -> Result<(Vec<u8>, &str, &Arc<Grammar>), String> {
+    pub fn resident_parts(
+        &self,
+        image: Option<Vec<u8>>,
+    ) -> Result<(Vec<u8>, &str, &Arc<Grammar>), String> {
         let image = match image {
             Some(image) => image,
             None => self.image.to_bytes()?,
@@ -2622,7 +2984,9 @@ impl TapeDoc {
 
     /// The grammar's named kinds, ERROR included, ascending: what a rule ranges over.
     pub(in crate::code_rule_dsl) fn named_kinds(&self) -> Vec<u16> {
-        let mut kinds: Vec<u16> = (0..self.grammar.named.len() as u16).filter(|&kind| self.grammar.kind_is_named(kind)).collect();
+        let mut kinds: Vec<u16> = (0..self.grammar.named.len() as u16)
+            .filter(|&kind| self.grammar.kind_is_named(kind))
+            .collect();
         kinds.push(ERROR_SYMBOL);
         kinds
     }
@@ -2750,7 +3114,10 @@ impl TapeDoc {
     pub fn transducer_supertypes(&self) -> impl Iterator<Item = (u32, u16)> + '_ {
         (0..self.transducer_len() as u32).flat_map(move |node| {
             read!("classes", self.entry(node).classes.len());
-            self.entry(node).classes.iter().map(move |&class| (node, class))
+            self.entry(node)
+                .classes
+                .iter()
+                .map(move |&class| (node, class))
         })
     }
 
@@ -2793,7 +3160,10 @@ impl TapeDoc {
 
     /// This tape read at `path`: what a `filePath` test inside a matcher tests (`matcher::Fact::nth_bits`).
     pub fn with_path(&self, path: &str) -> Self {
-        Self { path: Some(Arc::from(path)), ..self.clone() }
+        Self {
+            path: Some(Arc::from(path)),
+            ..self.clone()
+        }
     }
 
     /// The path the run reads this tape at (`with_path`), if one was given.
@@ -2817,13 +3187,13 @@ impl TapeDoc {
     /// The node at a preorder ordinal: `root.adopt(doc.node(ordinal))` is the node ast-grep
     /// matches on.
     pub fn node(&self, ordinal: u32) -> TapeNode<'_> {
-        self.root_node().at(ordinal, if ordinal == 0 { NONE } else { UNKNOWN })
+        self.root_node()
+            .at(ordinal, if ordinal == 0 { NONE } else { UNKNOWN })
     }
 
     #[cfg(feature = "code-rule-profile")]
     pub fn navigation_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            + self.held.bytes()
+        std::mem::size_of::<Self>() + self.held.bytes()
     }
 }
 
@@ -2851,7 +3221,10 @@ impl<'a> TapeNode<'a> {
             return false;
         }
         let parent = self.up();
-        parent == NONE || self.siblings_before(parent).all(|c| self.tape.table().entry(self.tape.code(c)).field != field)
+        parent == NONE
+            || self
+                .siblings_before(parent)
+                .all(|c| self.tape.table().entry(self.tape.code(c)).field != field)
     }
 
     #[inline]
@@ -2878,7 +3251,9 @@ impl<'a> TapeNode<'a> {
         }
         read!("parent");
         read_at!("tape parent", self.index);
-        self.tape.parent(self.index as usize).map_or(NONE, |p| p as u32)
+        self.tape
+            .parent(self.index as usize)
+            .map_or(NONE, |p| p as u32)
     }
     /// The children of `parent` before this node, in order.
     fn siblings_before(&self, parent: u32) -> impl Iterator<Item = usize> + 'a {
@@ -2893,7 +3268,9 @@ impl<'a> TapeNode<'a> {
             return None;
         }
         let end = self.tape.subtree_end(parent as usize);
-        self.tape.next_sibling(self.index as usize, end).map(|n| self.at(n as u32, parent))
+        self.tape
+            .next_sibling(self.index as usize, end)
+            .map(|n| self.at(n as u32, parent))
     }
     fn prev_sibling(&self) -> Option<Self> {
         read!("prev");
@@ -2901,7 +3278,9 @@ impl<'a> TapeNode<'a> {
         if parent == NONE {
             return None;
         }
-        self.siblings_before(parent).last().map(|p| self.at(p as u32, parent))
+        self.siblings_before(parent)
+            .last()
+            .map(|p| self.at(p as u32, parent))
     }
     /// Where ast-grep's `next_all`/`prev_all` start: a cursor on the parent (the root for the
     /// root) moved to the first child that ends after this node's start byte.
@@ -2980,13 +3359,21 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
             });
             let at = path.len().checked_sub(1 + given)?;
             given += 1;
-            Some(me.at(path[at] as u32, if at == 0 { NONE } else { path[at - 1] as u32 }))
+            Some(me.at(
+                path[at] as u32,
+                if at == 0 { NONE } else { path[at - 1] as u32 },
+            ))
         })
     }
     fn children(&self) -> impl ExactSizeIterator<Item = Self> {
         let (tape, index) = (self.tape, self.index as usize);
         let end = tape.subtree_end(index);
-        Children { node: *self, next: tape.first_child(index), end, remaining: rerail_tape_format::tape::children(tape, index).count() }
+        Children {
+            node: *self,
+            next: tape.first_child(index),
+            end,
+            remaining: rerail_tape_format::tape::children(tape, index).count(),
+        }
     }
     /// The subtree in preorder, each node with its parent: the subtrees open around it.
     fn dfs(&self) -> impl Iterator<Item = Self> {
@@ -3042,7 +3429,14 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
             .walk_anchor()
             .map(|anchor| {
                 let parent = anchor.up();
-                if parent == NONE { Vec::new() } else { anchor.siblings_before(parent).map(|c| anchor.at(c as u32, parent)).collect() }
+                if parent == NONE {
+                    Vec::new()
+                } else {
+                    anchor
+                        .siblings_before(parent)
+                        .map(|c| anchor.at(c as u32, parent))
+                        .collect()
+                }
             })
             .unwrap_or_default();
         before.into_iter().rev()
@@ -3050,7 +3444,14 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     fn kind(&self) -> Cow<'_, str> {
         read!("kind");
         let e = self.entry();
-        Cow::Borrowed(e.alias.as_ref().map_or_else(|| self.grammar.kind_name(kind_of(e)).expect("validated grammar symbol"), |alias| alias.0.as_str()))
+        Cow::Borrowed(e.alias.as_ref().map_or_else(
+            || {
+                self.grammar
+                    .kind_name(kind_of(e))
+                    .expect("validated grammar symbol")
+            },
+            |alias| alias.0.as_str(),
+        ))
     }
     fn kind_id(&self) -> u16 {
         read!("kind");
@@ -3136,33 +3537,53 @@ impl Doc for TapeDoc {
         Err("replace the source-bound tape after editing".into())
     }
     fn root_node(&self) -> Self::Node<'_> {
-        TapeNode { tape: self.held.reader(), grammar: &self.grammar, points: &self.points, index: 0, up: NONE }
+        TapeNode {
+            tape: self.held.reader(),
+            grammar: &self.grammar,
+            points: &self.points,
+            index: 0,
+            up: NONE,
+        }
     }
     fn get_node_text<'a>(&'a self, node: &Self::Node<'a>) -> Cow<'a, str> {
         Cow::Borrowed(&self.source[node.range()])
     }
     /// The implied word the tape leaves out in the gap after `parent`'s child `child`
     /// (`tokens::stored_gaps`: the word before the next named child, or after the last), RER-131.
-    fn implied_after<'a>(&'a self, parent: &TapeNode<'a>, child: usize, word: &[&str]) -> Option<bool> {
+    fn implied_after<'a>(
+        &'a self,
+        parent: &TapeNode<'a>,
+        child: usize,
+        word: &[&str],
+    ) -> Option<bool> {
         let grammar = tokens::TokenGrammar::of_dialect(self.grammar.lang)?;
         // `stored_gaps` reads an ast-grep node: the parent's, rebuilt over a root of this document.
         let root = ast_grep_core::AstGrep::doc(self.clone());
         let parent = root.adopt(root.root().get_inner_node().at(parent.index, parent.up));
         let (children, gaps) = tokens::stored_gaps(&grammar, &parent)?;
-        let next = (child + 1..children.len()).find(|&at| children[at].is_named() && !children[at].is_extra());
+        let next = (child + 1..children.len())
+            .find(|&at| children[at].is_named() && !children[at].is_extra());
         let gap = next.map_or(&gaps.end, |at| &gaps.before[at]);
-        Some(gap.len() >= word.len() && gap.iter().zip(word).all(|((text, _), token)| text == token))
+        Some(
+            gap.len() >= word.len() && gap.iter().zip(word).all(|((text, _), token)| text == token),
+        )
     }
 }
-
 
 /// The children of `node` a tape of `lang` stores, in order: tree-sitter's, the tokens the grammar
 /// implies left out (`tokens::TokenGrammar::stored_children`). For tests that compare a tape with
 /// the tree it was written from.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn stored_children_for_test<'t>(lang: GrammarDialect, node: TsNode<'t>) -> Vec<(TsNode<'t>, u16)> {
+pub fn stored_children_for_test<'t>(
+    lang: GrammarDialect,
+    node: TsNode<'t>,
+) -> Vec<(TsNode<'t>, u16)> {
     let grammar = Grammar::new(lang).unwrap();
-    let stored = grammar.kinds.grammar().and_then(|language| tokens::TokenGrammar::of(lang, language)).and_then(|filter| filter.stored_children(node));
+    let stored = grammar
+        .kinds
+        .grammar()
+        .and_then(|language| tokens::TokenGrammar::of(lang, language))
+        .and_then(|filter| filter.stored_children(node));
     let mut cursor = node.walk();
     let mut children = Vec::new();
     if cursor.goto_first_child() {
@@ -3175,7 +3596,11 @@ pub fn stored_children_for_test<'t>(lang: GrammarDialect, node: TsNode<'t>) -> V
     }
     match stored {
         None => children,
-        Some(stored) => children.into_iter().zip(stored).filter_map(|(child, kept)| kept.then_some(child)).collect(),
+        Some(stored) => children
+            .into_iter()
+            .zip(stored)
+            .filter_map(|(child, kept)| kept.then_some(child))
+            .collect(),
     }
 }
 
@@ -3189,7 +3614,10 @@ pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, Patte
     let tree = ast_grep_core::tree_sitter::StrDoc::try_new(source, lang)?;
     let root = tree.tree.root_node();
     let image = TapeImage::encode_tree_image(root, &grammar, source, None, &|| false)?;
-    let filter = grammar.kinds.grammar().and_then(|language| tokens::TokenGrammar::of(lang, language));
+    let filter = grammar
+        .kinds
+        .grammar()
+        .and_then(|language| tokens::TokenGrammar::of(lang, language));
     // In the encoder's preorder: a record per stored node.
     let mut ends: Vec<Option<Vec<String>>> = Vec::new();
     let mut single = Vec::new();
@@ -3197,13 +3625,17 @@ pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, Patte
     while let Some(node) = stack.pop() {
         let at = ends.len();
         ends.push(None);
-        let stored = filter.as_deref().and_then(|filter| filter.stored_children(node));
+        let stored = filter
+            .as_deref()
+            .and_then(|filter| filter.stored_children(node));
         // `is_single_node` (ast-grep's `pattern.rs`) over tree-sitter's node, whose first child
         // the tape holds (the walk descends to it).
         single.push(
             match node.child_count() {
                 1 => true,
-                2 => node.child(1).is_some_and(|second| second.is_missing() || second.kind().is_empty()),
+                2 => node
+                    .child(1)
+                    .is_some_and(|second| second.is_missing() || second.kind().is_empty()),
                 _ => false,
             } && stored.as_ref().is_none_or(|stored| stored[0]),
         );
@@ -3211,13 +3643,20 @@ pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, Patte
         let children: Vec<TsNode<'_>> = node.children(&mut cursor).collect();
         let kept: Vec<TsNode<'_>> = match &stored {
             None => children.clone(),
-            Some(stored) => children.iter().zip(stored).filter_map(|(child, &kept)| kept.then_some(*child)).collect(),
+            Some(stored) => children
+                .iter()
+                .zip(stored)
+                .filter_map(|(child, &kept)| kept.then_some(*child))
+                .collect(),
         };
         if let Some(stored) = &stored {
             // The implied tokens after the last stored child: the pattern ends its children with
             // them, as one goal (`PatternNode::children_end`), which an ellipsis before it leaves.
             let last = stored.iter().rposition(|&kept| kept);
-            let word: Vec<String> = children.iter().zip(stored).skip(last.map_or(0, |last| last + 1))
+            let word: Vec<String> = children
+                .iter()
+                .zip(stored)
+                .skip(last.map_or(0, |last| last + 1))
                 .filter(|(_, kept)| !**kept)
                 .filter_map(|(child, _)| child.utf8_text(source.as_bytes()).ok().map(str::to_owned))
                 .collect();

@@ -8,17 +8,19 @@
 //! eslint-plugin-vue's template comment directives (`suppress::vue`).
 
 use super::QueryWhen;
-use super::syntax::QueryOptions;
 use super::ecma::Ecma;
+use super::syntax::QueryOptions;
 use super::{Adapter, Refusal, Refused, SyntaxFeature, SyntaxRules};
 use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::language::{Family, SourceType};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::matcher::{file_index};
+use crate::code_rule_dsl::matcher::file_index;
 use crate::code_rule_dsl::model::ViolationSpec;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::suppress::Suppress;
-use crate::code_rule_dsl::suppress::vue::{VueDirectives, script_directives as vue_script_directives};
+use crate::code_rule_dsl::suppress::vue::{
+    VueDirectives, script_directives as vue_script_directives,
+};
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
 use std::ops::Range;
@@ -73,13 +75,15 @@ impl Adapter for Vue {
         _: (usize, usize),
     ) -> bool {
         let at = anchored.start;
-        suppress.get::<crate::code_rule_dsl::suppress::eslint::Suppressions>().is_some_and(|rules| {
-            let scripts = file_index(|| vue_script_directives(node, source, lines));
-            scripts.suppresses(rules, at, lines) || {
-                let template = file_index(|| VueDirectives::read(node, source, lines));
-                template.suppresses(rules, at, lines)
-            }
-        })
+        suppress
+            .get::<crate::code_rule_dsl::suppress::eslint::Suppressions>()
+            .is_some_and(|rules| {
+                let scripts = file_index(|| vue_script_directives(node, source, lines));
+                scripts.suppresses(rules, at, lines) || {
+                    let template = file_index(|| VueDirectives::read(node, source, lines));
+                    template.suppresses(rules, at, lines)
+                }
+            })
     }
 }
 

@@ -160,10 +160,9 @@ fn summary_of<D: Doc>(root: &Node<'_, D>) -> Summary {
             if !(dynamic || function.kind() == "identifier" && function.text() == "require") {
                 continue;
             }
-            let first = call.field("arguments").and_then(|arguments| {
-                arguments
-                    .first_code()
-            });
+            let first = call
+                .field("arguments")
+                .and_then(|arguments| arguments.first_code());
             specifiers.extend(
                 first
                     .filter(|first| first.kind() == "string")
@@ -177,12 +176,10 @@ fn summary_of<D: Doc>(root: &Node<'_, D>) -> Summary {
 
 /// A directive's text: an expression statement that is only a string literal (comments aside).
 fn directive<D: Doc>(statement: &Node<'_, D>) -> Option<String> {
-    let mut named = statement
-        .named_code();
+    let mut named = statement.named_code();
     let string = named.next().filter(|child| child.kind() == "string")?;
     named.next().is_none().then(|| literal(&string)).flatten()
 }
-
 
 /// A string literal's text between its quotes.
 fn literal<D: Doc>(string: &Node<'_, D>) -> Option<String> {

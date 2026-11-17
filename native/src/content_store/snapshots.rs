@@ -1,7 +1,5 @@
 //! Git tree and snapshot storage.
 
-#[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
 use super::compression::{compress_source, compress_tape, file_tag};
 use super::objects::{compress_documents, put_source_tx, put_tape_tx, validate_tape_payload};
 #[cfg(any(test, feature = "test-hooks"))]
@@ -14,6 +12,8 @@ use super::{
     STRING_PATH_COMPONENT, SnapshotFilePublication, SnapshotId, SourceId, StoreError, StoreResult,
     StoredFile, TapeId, WorkspaceId, WorkspaceRegistration,
 };
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 #[cfg(any(test, feature = "test-hooks"))]
@@ -360,7 +360,8 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let path_id = intern_path(&transaction, path)?;
         transaction.execute_cached(
             "INSERT INTO snapshot_files(snapshot_id,path_id,source_id,tape_id) VALUES (?1,?2,?3,?4)\
@@ -397,7 +398,11 @@ impl ContentStore {
         for publication in publications {
             validate_relative_path(publication.path)?;
             validate_tape_payload(publication.tape)?;
-            let source_frame = compress_source(publication.source, self.compression_level, file_tag(publication.path, publication.tape.map(|tape| tape.bytes)))?;
+            let source_frame = compress_source(
+                publication.source,
+                self.compression_level,
+                file_tag(publication.path, publication.tape.map(|tape| tape.bytes)),
+            )?;
             let tape_frame = publication
                 .tape
                 .map(|payload| compress_tape(payload.bytes, self.compression_level))
@@ -413,7 +418,8 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let mut stored = Vec::with_capacity(prepared.len());
         for (publication, source_frame, tape_frame, document_frames) in prepared {
             let source_id = put_source_tx(

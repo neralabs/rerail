@@ -365,7 +365,9 @@ pub(super) fn restore_persisted_file(
                 index_version: crate::code_rule_dsl::search_index::POSITIONAL_INDEX_VERSION,
                 kind_tokens: kinds
                     .iter()
-                    .map(|&kind| crate::code_rule_dsl::search_index::kind_index_token(matcher.language, kind))
+                    .map(|&kind| {
+                        crate::code_rule_dsl::search_index::kind_index_token(matcher.language, kind)
+                    })
                     .collect::<Option<_>>()?,
             })
         })
@@ -555,9 +557,7 @@ type CatalogMemo = (
 static CATALOGS: LazyLock<parking_lot::Mutex<Vec<CatalogMemo>>> = LazyLock::new(Default::default);
 
 /// The result catalog of `code_rules`: every apply reads it, so it is hashed once per code-rule set.
-pub fn candidate_catalog(
-    code_rules: &[Arc<CompiledCodeRule>],
-) -> Result<CandidateCatalogIdentity> {
+pub fn candidate_catalog(code_rules: &[Arc<CompiledCodeRule>]) -> Result<CandidateCatalogIdentity> {
     let engine = engine_build_id();
     let same = |(known_engine, known, _): &CatalogMemo| {
         *known_engine == engine
@@ -717,8 +717,7 @@ pub(super) fn persist_files(
                         file.failures.get(id).copied(),
                         file.syntax.as_deref(),
                     )?;
-                    let frame =
-                        compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
+                    let frame = compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
                     Ok(LocalResultPublication {
                         candidate: candidate(id),
                         context,

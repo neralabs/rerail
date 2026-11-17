@@ -967,7 +967,10 @@ impl crate::code_rule_dsl::language::ProjectManifest for Manifest {
         self
     }
     fn same(&self, other: &dyn crate::code_rule_dsl::language::ProjectManifest) -> bool {
-        other.as_any().downcast_ref::<Manifest>().is_some_and(|other| self == other)
+        other
+            .as_any()
+            .downcast_ref::<Manifest>()
+            .is_some_and(|other| self == other)
     }
     fn digest(&self) -> &[u8; 32] {
         Manifest::digest(self)
@@ -1007,7 +1010,8 @@ pub struct NoManifest;
 
 /// A request file's `package` (`language::set_manifest_reader`).
 pub fn read_wire(value: &Value, at: &str) -> Result<crate::code_rule_dsl::language::FileManifest> {
-    Manifest::from_wire(value, at).map(|manifest| Arc::new(manifest) as crate::code_rule_dsl::language::FileManifest)
+    Manifest::from_wire(value, at)
+        .map(|manifest| Arc::new(manifest) as crate::code_rule_dsl::language::FileManifest)
 }
 
 /// The manifest of a file the workspace holds, where it is ECMA's.

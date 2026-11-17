@@ -863,11 +863,7 @@ pub(crate) fn parse_string<D: ast_grep_core::Doc>(
         return None;
     }
     let text = decoded.text.clone();
-    Some(super::Parsed::Tree(std::sync::Arc::new(super::SubTree::new(
-        grammar,
-        text,
-        0,
-        root,
-        super::HostMap::Spans(decoded),
-    ))))
+    Some(super::Parsed::Tree(std::sync::Arc::new(
+        super::SubTree::new(grammar, text, 0, root, super::HostMap::Spans(decoded)),
+    )))
 }

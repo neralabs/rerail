@@ -5,8 +5,8 @@
 use ast_grep_core::{Doc, Node};
 pub use rerail::RerailIgnores;
 // The kinds and what a violation asks of them, below the linters (`kinds`, the lang crate's).
-pub use rerail_lang::code_rule_dsl::suppress::kinds;
 pub use kinds::*;
+pub use rerail_lang::code_rule_dsl::suppress::kinds;
 
 /// The root of the tree a node belongs to.
 pub fn root<'t, D: Doc>(node: &Node<'t, D>) -> Node<'t, D> {

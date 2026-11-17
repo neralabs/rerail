@@ -1,8 +1,8 @@
 //! ECMAScript's conversions between numbers and strings, exactly: `Number::toString`,
 //! StringToNumber, StringToBigInt, ToInt32 and ToUint32; and ESLint's static property names.
 
-use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::language::Family;
+use crate::code_rule_dsl::tree::Tree;
 
 use super::ecma::{cooked, number, operand, ops, string_node};
 use super::{BigInt, Value};

@@ -1,6 +1,9 @@
 // A build of some languages, or without the addon (`headless`), leaves the others' code and the addon's API unused by
 // design: dead-code warnings there say nothing (the default build still warns).
-#![cfg_attr(any(not(feature = "all-languages"), feature = "headless"), allow(dead_code))]
+#![cfg_attr(
+    any(not(feature = "all-languages"), feature = "headless"),
+    allow(dead_code)
+)]
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
@@ -14,21 +17,21 @@ mod build_identity;
 #[allow(dead_code)]
 mod build_languages;
 // Each test's time limit, enforced inside the test binary (`RERAIL_TEST_TIMEOUT`).
-#[cfg(test)]
-mod test_watchdog;
+mod code_rule_dsl;
 #[cfg(test)]
 mod executors_guard_tests;
 #[cfg(test)]
+mod test_watchdog;
+#[cfg(test)]
 mod text_readers_guard_tests;
-mod code_rule_dsl;
-/// The engine's tools without Node (`rerail-engine dump` / `asm`).
-pub use code_rule_dsl::tools;
 #[cfg(all(test, not(windows)))]
 pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
+/// The engine's tools without Node (`rerail-engine dump` / `asm`).
+pub use code_rule_dsl::tools;
 pub use rerail_store::content_store;
-pub use rerail_w::git_ignore;
 pub use rerail_store::git_workspace;
 pub use rerail_store::source_tree;
+pub use rerail_w::git_ignore;
 mod main_instance;
 mod model;
 pub use rerail_w::panic_boundary;
@@ -117,10 +120,16 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 pub(crate) fn install_store_functions() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), env!("RERAIL_GRAMMAR_BUILD_ID"));
+        code_rule_dsl::build_ids::set(
+            env!("RERAIL_ENGINE_BUILD_ID"),
+            env!("RERAIL_GRAMMAR_BUILD_ID"),
+        );
         code_rule_dsl::install_devices();
         code_rule_dsl::install_languages();
-        content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
+        content_store::set_language_tags(
+            code_rule_dsl::stored_tape_tag,
+            code_rule_dsl::path_tape_tag,
+        );
         content_store::set_connection_functions(|db| {
             code_rule_dsl::text::install(db)?;
             code_rule_dsl::prefilter::tapes::install(db)
@@ -326,7 +335,10 @@ pub fn native_memory_profile() -> String {
 
 /// SQLite's allocator set when the library loads, before anything can initialize SQLite
 /// (`content_store::sqlite_on_jemalloc`).
-#[cfg(all(any(target_os = "macos", target_os = "linux"), not(feature = "system-allocator")))]
+#[cfg(all(
+    any(target_os = "macos", target_os = "linux"),
+    not(feature = "system-allocator")
+))]
 #[used]
 #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
 #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
@@ -336,7 +348,6 @@ static SQLITE_ALLOCATOR: extern "C" fn() = {
     }
     install
 };
-
 
 #[napi]
 pub struct ConversationEngine {
@@ -534,8 +545,15 @@ mod executor_tests {
     fn the_facts_executor_of_the_cpu_binding_is_the_runs_and_asks_for_no_device_lane() {
         let before = rerail_accel::lanes::device_lanes_asked();
         let ex = rerail_facts::code_rule_dsl::facts::core::executor_for(false);
-        assert_eq!(rerail_accel::lanes::device_lanes_asked(), before, "the lookup asked for a device lane");
-        assert!(std::ptr::eq(ex, crate::code_rule_dsl::logic::lanes::executor_for(false)), "not the run's executor");
+        assert_eq!(
+            rerail_accel::lanes::device_lanes_asked(),
+            before,
+            "the lookup asked for a device lane"
+        );
+        assert!(
+            std::ptr::eq(ex, crate::code_rule_dsl::logic::lanes::executor_for(false)),
+            "not the run's executor"
+        );
     }
 }
 
@@ -551,8 +569,12 @@ mod tests {
         let before = allocated();
         let bytes = std::hint::black_box(vec![0u8; 1 << 20]);
         let after = allocated();
-        assert!(after - before >= bytes.len() as u64,
-            "Rust allocations must use production jemalloc and reach its profile counters: {} bytes recorded for {} allocated", after - before, bytes.len());
+        assert!(
+            after - before >= bytes.len() as u64,
+            "Rust allocations must use production jemalloc and reach its profile counters: {} bytes recorded for {} allocated",
+            after - before,
+            bytes.len()
+        );
     }
 
     #[test]
@@ -566,7 +588,8 @@ mod tests {
         };
         // Its pages kept dirty until purged: no decay by time (the default purges after 10 s, which a loaded run's
         // pause can reach).
-        unsafe { raw::write::<isize>(format!("arena.{arena}.dirty_decay_ms\0").as_bytes(), -1) }.unwrap();
+        unsafe { raw::write::<isize>(format!("arena.{arena}.dirty_decay_ms\0").as_bytes(), -1) }
+            .unwrap();
         let flags = MALLOCX_ARENA(arena as usize) | MALLOCX_TCACHE_NONE;
         let size = 4 << 20;
         // Other tests' runs purge every arena when they end (`purge_allocator_pages`): one of them can purge this
@@ -584,6 +607,9 @@ mod tests {
             super::purge_allocator_pages();
             dirty() == 0
         });
-        assert!(seen, "a freed block's pages are dirty until purged, and none after");
+        assert!(
+            seen,
+            "a freed block's pages are dirty until purged, and none after"
+        );
     }
 }

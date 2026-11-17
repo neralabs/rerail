@@ -499,10 +499,7 @@ pub fn execute_batch(
 use super::search_index::persist_search_index_batch;
 
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn execute_many(
-    programs: &[Program],
-    tape: &TapeDoc,
-) -> Result<Vec<Vec<Output>>, Error> {
+pub fn execute_many(programs: &[Program], tape: &TapeDoc) -> Result<Vec<Vec<Output>>, Error> {
     let required = programs
         .iter()
         .filter_map(|program| match split(program.words[0]) {

@@ -212,10 +212,7 @@ pub mod kit {
 
     /// Checks `A`'s values against `expect`, over the documents its semantics read of each source
     /// (`tape`).
-    pub fn check<A: Adapter>(
-        expect: &Expect,
-        tape: impl Fn(&str) -> AstGrep<TapeDoc>,
-    ) {
+    pub fn check<A: Adapter>(expect: &Expect, tape: impl Fn(&str) -> AstGrep<TapeDoc>) {
         assert_eq!(<A::Value as ValueRules>::LANG, expect.lang);
         assert_eq!(<A::Value as ValueRules>::string("é"), expect.string);
         assert_eq!(

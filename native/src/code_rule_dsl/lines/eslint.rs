@@ -135,7 +135,10 @@ fn no_unexpected_multiline_reads_the_line_before_the_bracket() {
         }
         at as u64
     };
-    let mut expected = expected("no-unexpected-multiline.ts").into_iter().map(past_bracket).collect::<Vec<_>>();
+    let mut expected = expected("no-unexpected-multiline.ts")
+        .into_iter()
+        .map(past_bracket)
+        .collect::<Vec<_>>();
     expected.sort_unstable();
     assert_eq!(starts(ast, source), expected);
 }

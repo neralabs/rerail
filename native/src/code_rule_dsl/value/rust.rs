@@ -1,9 +1,9 @@
 //! Rust literal values as rustc evaluates them.
 
-use crate::code_rule_dsl::tree::Tree;
 use super::Context;
 use crate::code_rule_dsl::scope::rust::resolve_index;
 use crate::code_rule_dsl::scope::{Form, ScopeTable};
+use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{Doc, Node};
 use num_bigint::BigInt;
 use num_traits::{FromPrimitive, Num, ToPrimitive, Zero};
@@ -459,8 +459,6 @@ fn reader<D: Doc>(expr: Expr) -> Reader<D> {
     }
 }
 
-
-
 /// The operators `unary` and `binary` read, by their text; any other is `?`, which neither reads.
 fn operator(text: &str) -> &'static str {
     const OPERATORS: &[&str] = &[
@@ -481,9 +479,7 @@ fn unary_parts<'r, D: Doc>(
 ) -> Option<(&'static str, Node<'r, D>, Option<Hint>)> {
     // tree-sitter-rust's unary operator has no field: it is the first token.
     let op = node.operator_token().or_else(|| node.first_token())?;
-    let arg = node
-        .field("argument")
-        .or_else(|| node.first_named())?;
+    let arg = node.field("argument").or_else(|| node.first_named())?;
     let op = operator(&op.text());
     let operand_hint = hint.filter(|_| matches!(op, "-" | "+" | "!"));
     Some((op, arg, operand_hint))
@@ -687,14 +683,16 @@ fn static_type<D: Doc>(
     let ty = match expr_of(node) {
         Expr::Number => typed(&literal(node)),
         Expr::Name => const_item(node, reading).and_then(|(_, declared)| declared.hint()),
-        Expr::Parens => node.first_named().and_then(|inner| static_type(&inner, reading, context)),
+        Expr::Parens => node
+            .first_named()
+            .and_then(|inner| static_type(&inner, reading, context)),
         Expr::Unary => static_unary(node, reading, context),
         Expr::Binary => static_binary(node, reading, context),
         Expr::Cast => cast_parts(node).and_then(|(_, ty)| cast_type(&ty)),
         Expr::If => static_if(node, reading, context),
-        Expr::Block | Expr::Else => {
-            node.last_named().and_then(|last| static_type(&last, reading, context))
-        }
+        Expr::Block | Expr::Else => node
+            .last_named()
+            .and_then(|last| static_type(&last, reading, context)),
         Expr::Literal | Expr::Other => None,
     };
     context.leave();

@@ -33,7 +33,12 @@ pub fn html(source: &str) -> AstGrep<TapeDoc> {
 pub struct TestScript;
 
 impl Embedder for TestScript {
-    fn build(&self, root: HostNode<'_>, source: &str, budget: &dyn Fn() -> bool) -> Option<Program> {
+    fn build(
+        &self,
+        root: HostNode<'_>,
+        source: &str,
+        budget: &dyn Fn() -> bool,
+    ) -> Option<Program> {
         let mut scripts = Vec::new();
         let mut handlers = Vec::new();
         let mut stack = vec![root];

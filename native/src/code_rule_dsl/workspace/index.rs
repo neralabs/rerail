@@ -13,6 +13,7 @@
 use super::api::{WORKSPACE_BUSY, WorkspaceApplyTask, close_poisoned, cpu_slot};
 use super::crossfile::CrossFileScheduler;
 use super::global::record_evidence;
+use super::ingest::{RepositoryContext, repository_context};
 use super::ingest::{Request, WireFile, make_file};
 use super::persisted::{candidate_catalog, file_context, restore_complete_results};
 use super::storage::StorageContext;
@@ -22,7 +23,6 @@ use super::{
 use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::language::adapter::{module_path, package_manifests};
 use crate::code_rule_dsl::model::FileInput;
-use super::ingest::{RepositoryContext, repository_context};
 use crate::content_store::{
     CandidateCatalogIdentity, DirectoryReuse, HashKey, StoredFile, StoredPathObjects,
 };
