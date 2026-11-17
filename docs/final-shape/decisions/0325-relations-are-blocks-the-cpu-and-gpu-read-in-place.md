@@ -280,3 +280,23 @@ Step by step, each leaving the engine working (see the commits that name this de
     pooled block would otherwise pay a memset for every view.
   - On hogql (load 38–41, interleaved): Metal 67.5–72.0 B instructions against 68.2–68.7 B, peak 724–785 MB
     against 739–783 MB, findings 1,629. Budget refusals 0–4 a run against 2–5.
+- **Step 5, the device's probes read the relation's own index** (2026-11-17): `Batch::index` finds the relation's
+  index on the key (`Relation::find_index`, over the same rows), else reserves one in the relation's block
+  (`try_reserve_index`, under the block's `Facts::ix` lock) and builds it there. `ix_bucket` hashes each row's key,
+  the radix sort orders the rows by bucket stably, and `ix_place` writes the buckets' starts and the rows. The batch
+  marks the index built when its work is done (`index_built`), so the CPU's builder and the device's make the same
+  index, read by `rel_group`. The stage and witness kernels find a key's rows through `clif_rel_group` and
+  `clif_rel_group_row`. The per-binding sort buffers (`perm`, `starts`, `rkeys`, `nruns`) and `rel_hash` are gone.
+  - One key hash on the device: `key_mix` is the generated `clif_rel_key_mix`, for an index, its probes, dedup's
+    set and a lattice's key table. The old mix and `hash_bits` are gone.
+  - Every device relation's block has room for one index of its rows: about 8–12 bytes a row, next to 8 a column.
+    An index on a second key copies the relation once into a block that has room (`DevIndex::moved`).
+  - An index binds its block's buffer as it is after the index was added (`DevIndex::buffer`). A block with no slab
+    of its own (a run's block when the device's spare budget refuses one) is bound by a wrap of its used extent,
+    taken when it was first bound. An index added after that lay past the wrap: the device's writes went outside
+    the buffer, and probes read empty buckets. On hogql that lost 13 files' findings in one run of four, and
+    another panicked on a corrupt tape. `the_devices_index_of_a_relation_is_the_hosts` covers that case (a relation
+    in anonymous memory, `facts::rows::anon_in_block`), and fails with the old binding.
+  - On hogql (load 68–80): indexes found the relation's own 913–1,048 a run against 741, built 916–925 against
+    937. Instructions 67.7–76.8 B against 68.3–74.1 B, peak 730–797 MB against 699–787 MB. Findings 1,629 in 5
+    runs, cold included.

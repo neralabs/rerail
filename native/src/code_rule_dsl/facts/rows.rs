@@ -51,6 +51,14 @@ const MARGIN: usize = 1 << 20;
 /// A block of relations: shared by every segment and tail in it, given back (to the pool) with the last.
 pub struct Facts {
     pub block: Block,
+    /// Held while an index is added to one of its relations (`Relation::try_reserve_index`, decision 0325 step 5).
+    pub ix: Mutex<()>,
+}
+
+impl Facts {
+    fn new(block: Block) -> Facts {
+        Facts { block, ix: Mutex::new(()) }
+    }
 }
 
 /// How long a relation's rows live, which picks the blocks they go in: a block is given back with its last part,
@@ -109,6 +117,28 @@ fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
     Ok(Block::anon(kind::FACTS, bytes.max(4 * rerail_blocks::block::PAGE)))
 }
 
+/// A relation of `k` columns holding `vals` (row by row), alone in a block of anonymous memory, as a run's block is
+/// when the device's spare budget refuses it a slab: bound on the device by a wrap of its used extent
+/// (`Block::gpu_buffer`), which what is added to the block after that wrap lies past.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
+    let rows = vals.len() / k;
+    let facts = Arc::new(Facts::new(Block::anon(kind::FACTS, 2 * room_for(k, rows) + 8 * MARGIN)));
+    let rel = Relation::try_create(&facts.block, &spec(k), None).expect("room for the relation");
+    assert!(rel.rows.try_reserve(&facts.block, rows as u64));
+    // SAFETY: rows `0..rows` are reserved, and this thread alone writes them before any reader looks.
+    unsafe {
+        rel.rows.claim_reserved(rows as u32);
+        for (i, row) in vals.chunks(k).enumerate() {
+            for (c, &v) in row.iter().enumerate() {
+                rel.rows.put(i as u32, c, v);
+            }
+        }
+    }
+    let at = facts.block.offset_of(rel);
+    InBlock { facts, at, rows: rows as u32, dead: 0 }
+}
+
 /// A relation of `k` values a row, 8 bytes each, read in their order.
 fn spec(k: usize) -> Spec {
     Spec { widths: vec![8; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG }
@@ -137,6 +167,11 @@ impl Part {
 
     /// `new`, or why no block could be had (a device block past the device's budget).
     fn try_new(life: Life, k: usize, rows: usize) -> Result<Part, String> {
+        Part::try_new_with(life, k, rows, 0)
+    }
+
+    /// `try_new`, a block of its own (a device relation's) with `extra` bytes past the relation's room.
+    fn try_new_with(life: Life, k: usize, rows: usize, extra: usize) -> Result<Part, String> {
         let spec = spec(k);
         let need = room_for(k, rows);
         // A device relation is written once at its size, and lives as the device's buffers did: alone in a block of
@@ -146,10 +181,10 @@ impl Part {
         let mut open = OPEN[life as usize].lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
             let facts = match &*open {
-                _ if alone => Arc::new(Facts { block: lease_exact(need, life)? }),
+                _ if alone => Arc::new(Facts::new(lease_exact(need + extra, life)?)),
                 Some(f) if !fresh && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => f.clone(),
                 _ => {
-                    let f = Arc::new(Facts { block: lease(2 * need + MARGIN, life)? });
+                    let f = Arc::new(Facts::new(lease(2 * need + MARGIN, life)?));
                     *open = Some(f.clone());
                     f
                 }
@@ -168,8 +203,14 @@ impl Part {
     /// A device run's own relation of `k` columns and `rows` rows (decision 0325 step 5), every row the device's to
     /// write (claimed now: `len` is `rows`, and the device writes them all before any reader looks). `Err` when the
     /// device's budget refuses its block.
+    ///
+    /// Its block has room for one index of its rows (decision 0325 step 5: the index the device probes it by lies
+    /// with it, built once; a second key's copies the relation into a block of its own). About 8 to 12 bytes a row,
+    /// next to the relation's 8 a column.
     pub fn for_device(k: usize, rows: usize) -> Result<Part, String> {
-        let part = Part::try_new(Life::Device, k, rows)?;
+        let cap = rows.next_power_of_two().max(1);
+        let index = 4 * (cap + 1) + 4 * rows.max(1) + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 3 * 64;
+        let part = Part::try_new_with(Life::Device, k, rows, index)?;
         // SAFETY: rows `0..rows` are reserved; the caller's device work writes every one before a read.
         unsafe { part.rel().rows.claim_reserved(rows as u32) };
         Ok(part)

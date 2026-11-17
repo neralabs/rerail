@@ -1462,7 +1462,9 @@ views). Left, in order:
 
 1. Step 4's rest: heads a rule makes texts into and lattices still come back (on hogql about 34k of 4.54 M
    distinct head rows). The seed heads and the fixpoint's set heads are written in place.
-2. Step 5: indexes are the relation's (`rel_group`), so `rel_hash` per binding goes.
+2. Step 5 is built: every device relation lies in a block, and the device's probes read the relation's own index
+   (`rel_group`), built once and kept with it. Most relations a stratum probes are new each run, so most indexes
+   are still built once a run (about 920 a run on hogql, against 1,000 found).
 3. Step 6: placement drops the upload and row-back prices, and `GPU_BIAS` is refitted.
 4. Step 7: the output's, frames' and memo's rows, and the reach closure's (`Closed`, 5.6 MB on hogql).
 

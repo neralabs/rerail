@@ -37,7 +37,7 @@
 use super::Error;
 use super::metal_sort::queue;
 use metal::{BufferRef, CommandBuffer};
-use rerail_accel::gpu::join::{FREE, Held, Pass, Scan, SortParts, Submitted, Width, encode_sort, groups, pipeline, scratch};
+use rerail_accel::gpu::join::{FREE, Held, Pass, Scan, Submitted, Width, encode_sort, groups, pipeline, scratch};
 
 
 /// No output or step: `Stage::last`, `Stage::passed`.
@@ -194,7 +194,9 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) out_slot: u32,
     pub(in crate::code_rule_dsl) nr: u32,
     pub(in crate::code_rule_dsl) nkeys: u32,
-    pub(in crate::code_rule_dsl) mask: u32,
+    /// The probed relation's index read by its keys (`rel_group`, decision 0325 step 5): its number in the
+    /// relation's directory.
+    pub(in crate::code_rule_dsl) r_index: u32,
     pub(in crate::code_rule_dsl) ntests: u32,
     pub(in crate::code_rule_dsl) nops: u32,
     pub(in crate::code_rule_dsl) nparams: u32,
@@ -496,7 +498,7 @@ struct Stage {
     long par_const[16];
     ulong r_at, r_dead;
     uint4 ops[64];
-    uint mode, nslots, cap_in, cap_out, in_slot, out_slot, nr, nkeys, mask, ntests, nops, nparams, nbinds, npassed, last, counter;
+    uint mode, nslots, cap_in, cap_out, in_slot, out_slot, nr, nkeys, r_index, ntests, nops, nparams, nbinds, npassed, last, counter;
     uint key_kind[8]; uint key_slot[8]; uint key_rcol[8];
     uint test_a[8]; uint test_b[8];
     uint col_kind[16]; uint col_idx[16]; uint col_doc[16];
@@ -509,10 +511,17 @@ struct Stage {
 
 constant uint NONE = 0xffffffffu;
 
-static inline uint hash_keys(thread const long* kv, uint n, uint mask) {
-    ulong h = 0x9E3779B97F4A7C15ul;
-    for (uint i = 0; i < n && i < 8; i++) { h ^= ulong(kv[i]); h *= 0xff51afd7ed558ccdul; h ^= h >> 33; }
-    return uint(h) & mask;
+// A key's hash, one value at a time: `rerail_blocks::key_hash`, the read written once (`clif_rel_key_mix`, decision
+// 0325 step 5), which reads nothing through its descriptor. Every hash of a key on the device is it: a relation's
+// index, a probe of it, the heads' set (`dedup`), a lattice's key table.
+constant ulong KEY_SEED = 0x243F6A8885A308D3ul;
+static inline ulong key_mix(ulong h, long v) {
+    return clif_rel_key_mix((device const uchar*)nullptr, 0ul, h, ulong(v));
+}
+static inline ulong key_hash(thread const long* kv, uint n) {
+    ulong h = KEY_SEED;
+    for (uint i = 0; i < n && i < 8; i++) h = key_mix(h, kv[i]);
+    return h;
 }
 
 static inline long lane_of(long v, uint w) {
@@ -614,20 +623,26 @@ static inline bool out_bit(constant Stage& s, ulong v, uint k) {
     return ((v >> s.outputs[k]) & 1) != 0;
 }
 
-// A binding's candidates: [lo, hi) of the sorted order (or of the rows, without keys), and its key values.
-static inline void candidates(constant Stage& s, device const long* L, uint t, device const uint* starts, device const uint* rkeys,
-                              device const uint* nruns, thread long* kv, thread uint& lo, thread uint& hi) {
+// Entry `q` of the probed relation's index `r_index` (its rows grouped by key, in its block): a row id.
+static inline uint group_row(constant Stage& s, device const long* R, uint q) {
+    return clif_rel_group_row((device const uchar*)R, s.r_at, s.r_index, q);
+}
+
+// The group of index `index` of the relation at `at` for the keys `kv`: [lo, hi) of its entries (every row whose key
+// falls in the key's bucket; `matches` tests the key itself).
+static inline void group_of(device const long* R, ulong at, uint index, thread const long* kv, uint n, thread uint& lo, thread uint& hi) {
+    ulong g = clif_rel_group((device const uchar*)R, at, index, key_hash(kv, n));
+    lo = uint(g >> 32);
+    hi = lo + uint(g & 0xfffffffful);
+}
+
+// A binding's candidates: [lo, hi) of the relation's index group for its keys (or of the rows, without keys), and its
+// key values.
+static inline void candidates(constant Stage& s, device const long* L, uint t, device const long* R, thread long* kv, thread uint& lo, thread uint& hi) {
     if (s.mode == 3) { lo = 0; hi = 1; return; }
     if (s.nkeys == 0) { lo = 0; hi = s.nr; return; }
     for (uint i = 0; i < s.nkeys && i < 8; i++) kv[i] = s.key_kind[i] == 1 ? L[ulong(s.key_slot[i]) * s.cap_in + t] : s.key_const[i];
-    uint h = hash_keys(kv, s.nkeys, s.mask);
-    uint a = 0, b = s.nr == 0 ? 0 : nruns[0];
-    uint runs = b;
-    for (uint k = 0; k < 34 && a < b; k++) {
-        uint mid = (a + b) / 2;
-        if (rkeys[mid] < h) a = mid + 1; else b = mid;
-    }
-    if (a < runs && rkeys[a] == h) { lo = starts[a]; hi = starts[a + 1]; } else { lo = 0; hi = 0; }
+    group_of(R, s.r_at, s.r_index, kv, s.nkeys, lo, hi);
 }
 
 // Whether candidate place q (row r) matches the binding's keys and the relation's column tests.
@@ -646,14 +661,14 @@ static inline bool matches(constant Stage& s, device const long* R, uint r, thre
 
 // An aggregate's value over the binding's matching rows (mode 4, `Stage::agg`): 0 with `v`, 1 when it has none (a min
 // or max of no rows, or a tested value that differs), 2 when a sum passes 64 bits.
-static inline uint aggregate(constant Stage& s, device const long* L, uint t, device const long* R, device const uint* perm,
+static inline uint aggregate(constant Stage& s, device const long* L, uint t, device const long* R,
                              uint lo, uint hi, thread const long* kv, thread long& v) {
     bool keyed = s.nkeys > 0;
     uint kind = s.agg[0] & 0xff;
     long cnt = 0, sum = 0, mn = 0, mx = 0;
     bool any = false, over = false;
     for (uint q = lo; q < hi; q++) {
-        uint r = keyed ? perm[q] : q;
+        uint r = keyed ? group_row(s, R, q) : q;
         if (!matches(s, R, r, kv)) continue;
         cnt++;
         if (s.agg[1] == NONE) continue;
@@ -845,10 +860,9 @@ static inline bool text_pass(constant Stage& s, device const long* L, uint t, de
     return bit == (s.agg[1] != 0);
 }
 
-kernel void stage_count(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device const uint* perm [[buffer(2)]],
-                        device const uint* starts [[buffer(3)]], device const uint* rkeys [[buffer(4)]], device const uint* nruns [[buffer(5)]],
-                        device const uint* totals [[buffer(6)]], device atomic_uint* counters [[buffer(7)]], device uint* counts [[buffer(8)]],
-                        device atomic_uint* A [[buffer(9)]], constant Stage& s [[buffer(10)]], uint t [[thread_position_in_grid]]) {
+kernel void stage_count(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]],
+                        device const uint* totals [[buffer(2)]], device atomic_uint* counters [[buffer(3)]], device uint* counts [[buffer(4)]],
+                        device atomic_uint* A [[buffer(5)]], constant Stage& s [[buffer(6)]], uint t [[thread_position_in_grid]]) {
     if (t > s.cap_in) return;
     uint n = min(totals[s.in_slot], s.cap_in);
     if (t >= n) { counts[t] = 0; return; }
@@ -857,10 +871,10 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
     if (s.mode == 5) { counts[t] = uint(text_pass(s, L, t, R)); return; }
     if (s.mode == 6) { counts[t] = 1; return; }
     if (s.mode == 7) { counts[t] = uint(textop_pass(s, L, t, R, A)); return; }
-    candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
+    candidates(s, L, t, R, kv, lo, hi);
     if (s.mode == 4) {
         long v = 0;
-        uint st = aggregate(s, L, t, R, perm, lo, hi, kv, v);
+        uint st = aggregate(s, L, t, R, lo, hi, kv, v);
         if (st == 2 && s.counter != NONE) atomic_store_explicit(&counters[s.counter], 1u, memory_order_relaxed);
         counts[t] = uint(st == 0);
         return;
@@ -872,7 +886,7 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
     for (uint m = 0; m < 16; m++) q_counts[m] = 0;
     bool found = false;
     for (uint q = lo; q < hi; q++) {
-        uint r = keyed ? perm[q] : q;
+        uint r = keyed ? group_row(s, R, q) : q;
         if (s.mode == 3 ? !row_live(s, R, r) : !matches(s, R, r, kv)) continue;
         if (exists) { found = true; break; }
         p0++;
@@ -901,10 +915,9 @@ static inline void write_row(constant Stage& s, device const long* L, uint t, de
     }
 }
 
-kernel void stage_scatter(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device const uint* perm [[buffer(2)]],
-                          device const uint* starts [[buffer(3)]], device const uint* rkeys [[buffer(4)]], device const uint* nruns [[buffer(5)]],
-                          device uint* totals [[buffer(6)]], device const uint* offsets [[buffer(7)]], device long* O [[buffer(8)]],
-                          device atomic_uint* A [[buffer(9)]], device atomic_uint* counters [[buffer(10)]], constant Stage& s [[buffer(11)]],
+kernel void stage_scatter(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]],
+                          device uint* totals [[buffer(2)]], device const uint* offsets [[buffer(3)]], device long* O [[buffer(4)]],
+                          device atomic_uint* A [[buffer(5)]], device atomic_uint* counters [[buffer(6)]], constant Stage& s [[buffer(7)]],
                           uint t [[thread_position_in_grid]]) {
     uint n = min(totals[s.in_slot], s.cap_in);
     // The offsets past the rows' are not scanned when the grids are sized on the device (`Scan::size`).
@@ -926,9 +939,9 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
     }
     if (s.mode == 4) {
         if (offsets[t + 1] <= at) return;
-        candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
+        candidates(s, L, t, R, kv, lo, hi);
         long v = 0;
-        aggregate(s, L, t, R, perm, lo, hi, kv, v);
+        aggregate(s, L, t, R, lo, hi, kv, v);
         write_row(s, L, t, R, 0, O, at);
         if ((s.agg[0] >> 8) & 1) O[ulong(s.bind_slot[0]) * s.cap_out + at] = v;
         return;
@@ -938,10 +951,10 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
         if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
         return;
     }
-    candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
+    candidates(s, L, t, R, kv, lo, hi);
     bool keyed = s.mode != 3 && s.nkeys > 0;
     for (uint q = lo; q < hi && at < s.cap_out; q++) {
-        uint r = keyed ? perm[q] : q;
+        uint r = keyed ? group_row(s, R, q) : q;
         if (s.mode == 3 ? !row_live(s, R, r) : !matches(s, R, r, kv)) continue;
         if (!defined(s, L, t, R, r)) continue;
         if (s.last != NONE) {
@@ -956,27 +969,17 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
 // A witness's probe (decision 0277): whether relation R has a row of `b`'s keys (a binding's slots, constants or the
 // candidate's columns) and column tests; an anti-join's, whether it has none. One loop over the keys' run.
 static inline bool witness_probe(constant Stage& b, device const long* L, uint t, uint cap_in, constant Stage& a, device const long* RA, uint ra,
-                                 device const long* R, device const uint* perm, device const uint* starts, device const uint* rkeys,
-                                 device const uint* nruns) {
+                                 device const long* R) {
     long kv[8];
     for (uint i = 0; i < b.nkeys && i < 8; i++) {
         uint k = b.key_kind[i];
         kv[i] = k == 1 ? L[ulong(b.key_slot[i]) * cap_in + t] : (k == 2 ? rget(a, RA, ra, b.key_slot[i]) : b.key_const[i]);
     }
     uint lo = 0, hi = b.nr;
-    if (b.nkeys > 0) {
-        uint h = hash_keys(kv, b.nkeys, b.mask);
-        uint a = 0, e = b.nr == 0 ? 0 : nruns[0];
-        uint runs = e;
-        for (uint k = 0; k < 34 && a < e; k++) {
-            uint mid = (a + e) / 2;
-            if (rkeys[mid] < h) a = mid + 1; else e = mid;
-        }
-        if (a < runs && rkeys[a] == h) { lo = starts[a]; hi = starts[a + 1]; } else { lo = 0; hi = 0; }
-    }
+    if (b.nkeys > 0) group_of(R, b.r_at, b.r_index, kv, b.nkeys, lo, hi);
     bool found = false;
     for (uint q = lo; q < hi; q++) {
-        uint r = b.nkeys > 0 ? perm[q] : q;
+        uint r = b.nkeys > 0 ? group_row(b, R, q) : q;
         if (matches(b, R, r, kv)) { found = true; break; }
     }
     return found != (b.mode == 2);
@@ -984,32 +987,26 @@ static inline bool witness_probe(constant Stage& b, device const long* L, uint t
 
 // A witness's count (mode 11): 1 for a binding with a candidate of the stage's relation that every probe passes,
 // found in the candidates' order, the loop ending at the first; else 0. `stage_scatter` (as a semi-join) writes them.
-kernel void witness_count(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device const uint* perm [[buffer(2)]],
-                          device const uint* starts [[buffer(3)]], device const uint* rkeys [[buffer(4)]], device const uint* nruns [[buffer(5)]],
-                          device const uint* totals [[buffer(6)]], device uint* counts [[buffer(7)]], constant Stage* bs [[buffer(8)]],
-                          device const long* R0 [[buffer(9)]], device const uint* p0 [[buffer(10)]], device const uint* s0 [[buffer(11)]],
-                          device const uint* k0 [[buffer(12)]], device const uint* n0 [[buffer(13)]],
-                          device const long* R1 [[buffer(14)]], device const uint* p1 [[buffer(15)]], device const uint* s1 [[buffer(16)]],
-                          device const uint* k1 [[buffer(17)]], device const uint* n1 [[buffer(18)]],
-                          device const long* R2 [[buffer(19)]], device const uint* p2 [[buffer(20)]], device const uint* s2 [[buffer(21)]],
-                          device const uint* k2 [[buffer(22)]], device const uint* n2 [[buffer(23)]],
-                          constant Stage& s [[buffer(24)]], uint t [[thread_position_in_grid]]) {
+kernel void witness_count(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]],
+                          device const uint* totals [[buffer(2)]], device uint* counts [[buffer(3)]], constant Stage* bs [[buffer(4)]],
+                          device const long* R0 [[buffer(5)]], device const long* R1 [[buffer(6)]], device const long* R2 [[buffer(7)]],
+                          constant Stage& s [[buffer(8)]], uint t [[thread_position_in_grid]]) {
     if (t > s.cap_in) return;
     uint n = min(totals[s.in_slot], s.cap_in);
     if (t >= n) { counts[t] = 0; return; }
     long kv[8];
     uint lo, hi;
-    candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
+    candidates(s, L, t, R, kv, lo, hi);
     bool keyed = s.nkeys > 0;
     uint nb = min(s.agg[0], 3u);
     uint found = 0;
     for (uint q = lo; q < hi; q++) {
-        uint r = keyed ? perm[q] : q;
+        uint r = keyed ? group_row(s, R, q) : q;
         if (!matches(s, R, r, kv)) continue;
         bool all = true;
-        if (nb > 0) all = witness_probe(bs[0], L, t, s.cap_in, s, R, r, R0, p0, s0, k0, n0);
-        if (all && nb > 1) all = witness_probe(bs[1], L, t, s.cap_in, s, R, r, R1, p1, s1, k1, n1);
-        if (all && nb > 2) all = witness_probe(bs[2], L, t, s.cap_in, s, R, r, R2, p2, s2, k2, n2);
+        if (nb > 0) all = witness_probe(bs[0], L, t, s.cap_in, s, R, r, R0);
+        if (all && nb > 1) all = witness_probe(bs[1], L, t, s.cap_in, s, R, r, R1);
+        if (all && nb > 2) all = witness_probe(bs[2], L, t, s.cap_in, s, R, r, R2);
         if (all) { found = 1; break; }
     }
     counts[t] = found;
@@ -1565,8 +1562,8 @@ static inline bool same_row(constant Dedup& d, device const long* T, uint a, uin
 }
 
 static inline uint row_hash(constant Dedup& d, device const long* T, uint x) {
-    ulong h = 0x9E3779B97F4A7C15ul;
-    for (uint c = 0; c < d.ncols && c < 16; c++) { h ^= ulong(T[ulong(d.cols[c]) * d.cap + x]); h *= 0xff51afd7ed558ccdul; h ^= h >> 33; }
+    ulong h = KEY_SEED;
+    for (uint c = 0; c < d.ncols && c < 16; c++) h = key_mix(h, T[ulong(d.cols[c]) * d.cap + x]);
     return uint(h) & d.mask;
 }
 
@@ -1616,18 +1613,36 @@ kernel void dedup_scatter(device const long* T [[buffer(0)]], device uint* total
 }
 
 // A relation's rows' hash of its key columns, for its sort.
-kernel void rel_hash(device const long* R [[buffer(0)]], device uint* out [[buffer(1)]], constant uint* p [[buffer(2)]],
+// A relation's index built on the device (decision 0325 step 5): each row's bucket, its key's hash (`key_hash`, as
+// the host's builder and every probe hash it) masked. p: the rows, the key's columns, the relation's descriptor's
+// offset in its block (low, high), the mask (low, high), each key column.
+kernel void ix_bucket(device const uchar* B [[buffer(0)]], device uint* out [[buffer(1)]], constant uint* p [[buffer(2)]],
+                      uint t [[thread_position_in_grid]]) {
+    if (t >= p[0]) return;
+    ulong at = ulong(p[2]) | (ulong(p[3]) << 32);
+    ulong mask = ulong(p[4]) | (ulong(p[5]) << 32);
+    ulong h = KEY_SEED;
+    for (uint i = 0; i < p[1] && i < 8; i++) h = key_mix(h, long(clif_rel_get(B, at, t, p[6 + i])));
+    out[t] = uint(h & mask);
+}
+
+// The index's rows and buckets written into its relation's block, from the rows sorted (stably) by bucket: entry `t`
+// is the sort's row `t` (so a bucket's rows are in id order, as the host's builder places them), and run `t` (a
+// bucket that has rows) sets its bucket's start and the empty buckets' before it; the last run the rest. p: the
+// rows, the buckets, the buckets' offset in the block (low, high), the rows' offset (low, high).
+kernel void ix_place(device uchar* B [[buffer(0)]], device const uint* perm [[buffer(1)]], device const uint* starts [[buffer(2)]],
+                     device const uint* rkeys [[buffer(3)]], device const uint* nruns [[buffer(4)]], constant uint* p [[buffer(5)]],
                      uint t [[thread_position_in_grid]]) {
-    uint nr = p[0];
-    if (t >= nr) return;
-    // The relation's descriptor's offset in its block (`p[3]`, `p[4]`: low, high).
-    ulong at = ulong(p[3]) | (ulong(p[4]) << 32);
-    long kv[8];
-    for (uint i = 0; i < p[1] && i < 8; i++) {
-        uint c = p[5 + i];
-        kv[i] = long(clif_rel_get((device const uchar*)R, at, t, c));
-    }
-    out[t] = hash_keys(kv, p[1], p[2]);
+    uint n = p[0], cap = p[1];
+    device uint* offs = (device uint*)(B + (ulong(p[2]) | (ulong(p[3]) << 32)));
+    device uint* rows = (device uint*)(B + (ulong(p[4]) | (ulong(p[5]) << 32)));
+    if (t < n) rows[t] = perm[t];
+    uint runs = nruns[0];
+    if (t >= runs) return;
+    uint b = rkeys[t];
+    uint from = t == 0 ? 0u : rkeys[t - 1] + 1u;
+    for (uint x = from; x <= b; x++) offs[x] = starts[t];
+    if (t == runs - 1) for (uint x = b + 1; x <= cap; x++) offs[x] = n;
 }
 
 // A lattice relation's rounds on the device (decision 0124): a round's rows `U` (a table of `k` slots: the key's
@@ -1650,9 +1665,7 @@ static inline device long* lat_rp(device uchar* R, constant LatP& p, uint row, u
 }
 
 static inline uint lat_hash(thread const long* key, uint nk, uint mask) {
-    ulong h = 0x9E3779B97F4A7C15ul;
-    for (uint c = 0; c < nk && c < 8; c++) { h ^= ulong(key[c]); h *= 0xff51afd7ed558ccdul; h ^= h >> 33; }
-    return uint(h) & mask;
+    return uint(key_hash(key, nk)) & mask;
 }
 
 static inline bool lat_same(device const long* T, uint stride, uint a, uint b, uint nk) {
@@ -1844,17 +1857,6 @@ pub fn available() -> bool {
     rerail_accel::gpu::join::device().is_ok()
 }
 
-/// The hash the device sorts and probes by, on the host (a check of the kernels').
-pub(in crate::code_rule_dsl) fn hash_keys(kv: &[i64], mask: u32) -> u32 {
-    let mut h: u64 = 0x9E37_79B9_7F4A_7C15;
-    for &v in kv.iter().take(MAX_KEYS) {
-        h ^= v as u64;
-        h = h.wrapping_mul(0xff51_afd7_ed55_8ccd);
-        h ^= h >> 33;
-    }
-    (h as u32) & mask
-}
-
 /// A kind-set axis's batch solve on the device, written into `chunk` (decision 0289 §2, `facts::nearest::ChunkAxis`):
 /// each node's rows counted by a climb of its ancestors, the counts scanned into the starts, then the pairs written,
 /// in one submission. The pairs' space is sized before the count: a nearest axis has at most a row per node, so its
@@ -1949,6 +1951,8 @@ pub(in crate::code_rule_dsl) struct DevRel {
     /// The relation, when it is the device's own (`empty`, `upload`): what the host reads it by once the device
     /// wrote it.
     part: Option<crate::code_rule_dsl::facts::rows::Part>,
+    /// The block its relation lies in (none for words): where its indexes go (decision 0325 step 5).
+    home: Option<std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>>,
 }
 
 impl DevRel {
@@ -1959,7 +1963,8 @@ impl DevRel {
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let buffer = Held::kept(part.facts().block.gpu_buffer(device), Box::new(part.facts().clone()));
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
-        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part) })
+        let home = Some(part.facts().clone());
+        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home })
     }
 
     /// A relation of `cols` columns and `rows` rows, its values given by `fill` (column `c` at
@@ -1988,14 +1993,23 @@ impl DevRel {
 
     /// The words of `buffer`, `words` of them (not a relation).
     fn raw(buffer: Held, words: usize) -> DevRel {
-        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None }
+        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None }
     }
 
-    /// A relation the device reads where it lies (decision 0325): the relation of `rows` rows and `cols` columns
-    /// whose descriptor is `at` bytes into the block `buffer` binds. Nothing is copied.
-    pub(in crate::code_rule_dsl) fn in_block(buffer: Held, at: usize, dead: usize, rows: usize, cols: usize) -> DevRel {
-        assert!(at > 0, "a descriptor past the block's header");
-        DevRel { buffer, rows, cols, at: at as u64, dead: dead as u64, part: None }
+    /// A relation the device reads where it lies (decision 0325): `b`'s, of `cols` columns, bound by its block's own
+    /// device buffer (which it keeps). Nothing is copied.
+    pub(in crate::code_rule_dsl) fn in_block(b: &crate::code_rule_dsl::facts::rows::InBlock, cols: usize) -> Result<DevRel, Error> {
+        assert!(b.at > 0, "a descriptor past the block's header");
+        let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+        let buffer = Held::kept(b.facts.block.gpu_buffer(device), Box::new(b.facts.clone()));
+        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()) })
+    }
+
+    /// Its relation's descriptor.
+    fn relation(&self) -> &rerail_blocks::relation::Relation {
+        let home = self.home.as_ref().expect("a relation, not words");
+        // SAFETY: `at` is a relation's descriptor in `home`'s block, which `home` keeps.
+        unsafe { &*home.block.ptr::<rerail_blocks::relation::Relation>(self.at as usize) }
     }
 
     /// Its rows' descriptor's offset in its block: what a writer's `rows_at` takes.
@@ -2152,25 +2166,59 @@ struct CopyParams {
 
 const _: () = assert!(std::mem::size_of::<CopyParams>() == 240);
 
-/// A relation sorted on the device by the hash of key columns: the sorted order (`perm`), the runs of equal hashes
-/// and their count, and the hash's mask.
+/// A relation's index on key columns, the relation's own (decision 0325 step 5): its number in the relation's
+/// directory, read by `rel_group`. A relation whose block had no room for it was copied once into a block that has
+/// (`moved`), which the probes then read.
 pub(in crate::code_rule_dsl) struct DevIndex {
-    parts: SortParts,
-    pub(in crate::code_rule_dsl) mask: u32,
+    pub(in crate::code_rule_dsl) index: u32,
     pub(in crate::code_rule_dsl) rows: usize,
+    moved: Option<std::rc::Rc<DevRel>>,
+    /// Whether this call built it (a sort made), or found it the relation's already.
+    pub(in crate::code_rule_dsl) built: bool,
+    /// Its block's buffer, taken once the index has its room: what its builder and its probes bind. A block with no
+    /// slab of its own is bound by a wrap of its used extent (`Block::gpu_buffer`), which a buffer taken before the
+    /// index was added (its relation's) does not reach.
+    buffer: Held,
 }
 
 impl DevIndex {
+    /// The device memory it holds of its own: a moved relation's (the index lies in its relation's block).
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
-        4 * self.rows + 8 * (self.rows + 1)
+        self.moved.as_ref().map_or(0, |m| m.bytes())
+    }
+
+    /// The relation its probes read: `rel`, or the copy it was built on.
+    pub(in crate::code_rule_dsl) fn of<'a>(&'a self, rel: &'a DevRel) -> &'a DevRel {
+        self.moved.as_deref().unwrap_or(rel)
+    }
+
+    /// The buffer its probes bind: its block's, which reaches the index.
+    fn bound(&self) -> &BufferRef {
+        &self.buffer.buffer
     }
 }
 
-/// The hash bits for a relation of `rows` rows: about 2^8 times its rows, so few runs mix keys, in whole bytes (each
-/// byte one pass of the sort).
-fn hash_bits(rows: usize) -> u32 {
-    let need = usize::BITS - rows.max(1).leading_zeros() + 8;
-    need.clamp(16, 32).div_ceil(8) * 8
+/// The buffer of `home`'s block as it is now (reaching what it holds now), the block kept with it.
+fn bound(home: &std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>) -> Result<Held, Error> {
+    let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+    Ok(Held::kept(home.block.gpu_buffer(device), Box::new(home.clone())))
+}
+
+/// A stage's probed relation `rel` (and its index, read by keys) into its fields.
+fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
+    stage.nr = rel.rows as u32;
+    stage.r_at = rel.at;
+    stage.r_dead = rel.dead;
+    if let Some(ix) = index {
+        stage.r_index = ix.index;
+    }
+}
+
+/// An index whose builder runs in a batch: marked built (`Relation::index_built`) once the batch's work completes.
+struct Building {
+    home: std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>,
+    rel: *const rerail_blocks::relation::Relation,
+    room: rerail_blocks::relation::IndexRoom,
 }
 
 /// A relation's rows' descriptor's offset from its own (`rerail_blocks`' layout).
@@ -2360,6 +2408,8 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// The texts its jobs' text functions make, made the first time a job asks.
     arena: Option<std::rc::Rc<Arena>>,
     arena_cap: usize,
+    /// The indexes its work builds, marked built when it is done.
+    building: Vec<Building>,
 }
 
 impl Batch {
@@ -2371,7 +2421,7 @@ impl Batch {
     /// A batch whose text arena holds `cap` bytes.
     pub(in crate::code_rule_dsl) fn with_arena(cap: usize) -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
-        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), read: Vec::new(), held: Vec::new(), arena: None, arena_cap: cap })
+        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), read: Vec::new(), held: Vec::new(), arena: None, arena_cap: cap, building: Vec::new() })
     }
 
     /// Keeps `what` (encoded work's buffers, given up by its maker) until the batch is done.
@@ -2435,29 +2485,72 @@ impl Batch {
         for s in self.committed.drain(..) {
             self.done.gpu_seconds += s.wait();
         }
+        for b in self.building.drain(..) {
+            let _g = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
+            // SAFETY: the batch's work, which built it, has completed; `home` keeps the relation.
+            unsafe { (*b.rel).index_built(&b.room) };
+        }
         self.keep.clear();
         self.read.clear();
         self.held.clear();
         Ok(std::mem::take(&mut self.done))
     }
 
-    /// `rel` sorted by the hash of its columns `cols`, encoded into the batch (to be read by the stages after it).
+    /// `rel`'s index on its columns `cols`, the relation's own (decision 0325 step 5): found where it was built
+    /// before (by any batch, kept with the relation), else built by this batch's work into the relation's block
+    /// (read by the stages after it), and marked built when the batch is done. A relation whose block has no room for
+    /// it is copied once into a block of its own that has (with no dead rows: their bits lie in the old block).
     pub(in crate::code_rule_dsl) fn index(&mut self, rel: &DevRel, cols: &[usize]) -> Result<DevIndex, Error> {
+        let home = rel.home.clone().expect("an index of a relation, not of words");
+        let r = rel.relation();
+        assert_eq!(r.base_rows, 0, "an index of a full relation");
+        let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
+        let room = {
+            let _g = home.ix.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(i) = r.find_index(&key, rel.rows as u32) {
+                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, buffer: bound(&home)? });
+            }
+            if let Some(b) = self.building.iter().find(|b| std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.rows_n as usize == rel.rows) {
+                return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, moved: None, built: false, buffer: bound(&home)? });
+            }
+            // SAFETY: under the block's index lock; the relation's rows are written (or are by this batch's work
+            // before the build, which its passes order).
+            unsafe { r.try_reserve_index(&home.block, &key, rel.rows as u32) }
+        };
+        let Some(room) = room else {
+            if rel.dead != 0 {
+                return Err(Error::BackendCapacity);
+            }
+            let copy = DevRel::empty(rel.cols, rel.rows)?;
+            let ident: Vec<Col> = (0..rel.cols).map(Col::From).collect();
+            self.copy_rows(Rows::Rel(rel), rel.rows, &ident, Rows::Rel(&copy), 0)?;
+            let ix = self.index(&copy, cols)?;
+            return Ok(DevIndex { moved: Some(std::rc::Rc::new(copy)), ..ix });
+        };
         let n = rel.rows;
-        let bits = hash_bits(n);
-        let mask = if bits >= 32 { u32::MAX } else { (1u32 << bits) - 1 };
-        let hash = pipeline("join", "rel_hash", || SOURCE.to_owned())?;
-        // A sort is at most 4 passes of three dispatches and two scans' levels, and a few more.
-        let pass = self.pass(48)?;
-        let words = Held::new((4 * n).max(4))?;
-        let mut p = vec![n as u32, cols.len() as u32, mask, rel.at as u32, (rel.at >> 32) as u32];
-        p.extend(cols.iter().map(|&c| c as u32));
+        let buffer = bound(&home)?;
+        assert!(room.rows as u64 + 4 * n as u64 <= buffer.buffer.length(), "the index's room within the buffer bound");
         if n > 0 {
-            pass.run(&hash, &[&rel.buffer.buffer, &words.buffer], &p, &[], groups(n));
+            let bucket = pipeline("join", "ix_bucket", || SOURCE.to_owned())?;
+            let place = pipeline("join", "ix_place", || SOURCE.to_owned())?;
+            let bits = (u64::BITS - room.mask.leading_zeros()).max(8).div_ceil(8) * 8;
+            // A sort is at most 4 passes of three dispatches and two scans' levels, and a few more.
+            let pass = self.pass(48)?;
+            let words = Held::new(4 * n)?;
+            let mut p = vec![n as u32, cols.len() as u32, rel.at as u32, (rel.at >> 32) as u32, room.mask as u32, (room.mask >> 32) as u32];
+            p.extend(cols.iter().map(|&c| c as u32));
+            pass.run(&bucket, &[&buffer.buffer, &words.buffer], &p, &[], groups(n));
+            let parts = encode_sort(pass, &words.buffer, Width::W32, bits, n)?;
+            let at = |o: usize| [o as u32, (o as u64 >> 32) as u32];
+            let mut q = vec![n as u32, (room.mask + 1) as u32];
+            q.extend(at(room.offs));
+            q.extend(at(room.rows));
+            pass.run(&place, &[&buffer.buffer, &parts.perm.buffer, &parts.starts.buffer, &parts.rkeys.buffer, &parts.nruns.buffer], &q, &[], groups(n));
+            self.keep.extend([words, parts.perm, parts.starts, parts.rkeys, parts.nruns]);
         }
-        let parts = encode_sort(pass, &words.buffer, Width::W32, bits, n)?;
-        self.keep.push(words);
-        Ok(DevIndex { parts, mask, rows: n })
+        let index = room.index as u32;
+        self.building.push(Building { home, rel: std::ptr::from_ref(r), room });
+        Ok(DevIndex { index, rows: n, moved: None, built: true, buffer })
     }
 
     /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into
@@ -2489,24 +2582,15 @@ impl Batch {
         stage.out_slot = out_slot as u32;
         stage.counter = counter.map_or(NONE, |c| c as u32);
         stage.nslots = left.slots as u32;
-        let (rbuf, perm, starts, rkeys, nruns) = match right {
+        // A probe by keys reads the relation its index is of (`DevIndex::of`), the index in its block.
+        let rbuf: metal::Buffer = match right {
             Some((rel, index)) => {
-                stage.nr = rel.rows as u32;
-                stage.r_at = rel.at;
-                stage.r_dead = rel.dead;
-                match index {
-                    Some(ix) => {
-                        stage.mask = ix.mask;
-                        (&*rel.buffer.buffer, &*ix.parts.perm.buffer, &*ix.parts.starts.buffer, &*ix.parts.rkeys.buffer, &*ix.parts.nruns.buffer)
-                    }
-                    None => (&*rel.buffer.buffer, &*self.dummy.buffer, &*self.dummy.buffer, &*self.dummy.buffer, &*self.dummy.buffer),
-                }
+                let rel = index.map_or(rel, |ix| ix.of(rel));
+                bind_right(&mut stage, rel, index);
+                index.map_or(&*rel.buffer.buffer, |ix| ix.bound()).to_owned()
             }
-            None => (&*self.dummy.buffer, &*self.dummy.buffer, &*self.dummy.buffer, &*self.dummy.buffer, &*self.dummy.buffer),
+            None => self.dummy.buffer.to_owned(),
         };
-        // Retained by the command buffer, which holds every buffer it binds until it completes.
-        let (rbuf, perm, starts, rkeys, nruns): (metal::Buffer, metal::Buffer, metal::Buffer, metal::Buffer, metal::Buffer) =
-            (rbuf.to_owned(), perm.to_owned(), starts.to_owned(), rkeys.to_owned(), nruns.to_owned());
         if left.cap == 1 && stage.mode == JOIN && right.is_some() {
             // From one binding: a thread per candidate row (`scan_count`), its rows in the relation's order.
             let scount = pipeline("join", "scan_count", || SOURCE.to_owned())?;
@@ -2531,8 +2615,8 @@ impl Batch {
         };
         let pass = self.pass(13)?;
         let lbuf: &BufferRef = &left.buffer.buffer;
-        let count_bufs: [&BufferRef; 10] = [lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counters.buffer.buffer, &counts, &arena];
-        let scatter_bufs: [&BufferRef; 11] = [lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counts, &out.buffer.buffer, &arena, &counters.buffer.buffer];
+        let count_bufs: [&BufferRef; 6] = [lbuf, &rbuf, &totals.buffer.buffer, &counters.buffer.buffer, &counts, &arena];
+        let scatter_bufs: [&BufferRef; 7] = [lbuf, &rbuf, &totals.buffer.buffer, &counts, &out.buffer.buffer, &arena, &counters.buffer.buffer];
         if n > sized_min() {
             // The table's space is the host's guess: the grids are sized on the device, from the rows the stage
             // before made (decision 0113's GPU-sized work).
@@ -2565,37 +2649,23 @@ impl Batch {
         stage.out_slot = out_slot as u32;
         stage.counter = NONE;
         stage.nslots = left.slots as u32;
-        stage.nr = right.0.rows as u32;
-        stage.r_at = right.0.at;
-        stage.r_dead = right.0.dead;
         stage.agg[0] = rest.len() as u32;
         let dummy: metal::Buffer = self.dummy.buffer.to_owned();
-        let parts = |rel: &DevRel, ix: Option<&DevIndex>| -> [metal::Buffer; 5] {
-            match ix {
-                Some(ix) => [rel.buffer.buffer.to_owned(), ix.parts.perm.buffer.to_owned(), ix.parts.starts.buffer.to_owned(), ix.parts.rkeys.buffer.to_owned(), ix.parts.nruns.buffer.to_owned()],
-                None => [rel.buffer.buffer.to_owned(), dummy.clone(), dummy.clone(), dummy.clone(), dummy.clone()],
-            }
-        };
-        if let Some(ix) = right.1 {
-            stage.mask = ix.mask;
-        }
-        let a = parts(right.0, right.1);
+        let rel = right.1.map_or(right.0, |ix| ix.of(right.0));
+        bind_right(&mut stage, rel, right.1);
+        let a = right.1.map_or(&*rel.buffer.buffer, |ix| ix.bound()).to_owned();
         let mut probes = [Stage::default(); WITNESS_PROBES];
-        let mut bufs: Vec<[metal::Buffer; 5]> = Vec::new();
+        let mut bufs: Vec<metal::Buffer> = Vec::new();
         for (k, (b, rel, ix)) in rest.iter().enumerate() {
             let mut b = *b;
-            b.nr = rel.rows as u32;
-            b.r_at = rel.at;
-            b.r_dead = rel.dead;
+            let rel = ix.map_or(*rel, |ix| ix.of(rel));
+            bind_right(&mut b, rel, *ix);
             b.cap_in = left.cap as u32;
-            if let Some(ix) = ix {
-                b.mask = ix.mask;
-            }
             probes[k] = b;
-            bufs.push(parts(rel, *ix));
+            bufs.push(ix.map_or(&*rel.buffer.buffer, |ix| ix.bound()).to_owned());
         }
         while bufs.len() < WITNESS_PROBES {
-            bufs.push([dummy.clone(), dummy.clone(), dummy.clone(), dummy.clone(), dummy.clone()]);
+            bufs.push(dummy.clone());
         }
         let held = Held::of(probes.iter().flat_map(|p| p.bytes().iter().copied()).collect::<Vec<u8>>().into_iter()).map_err(|_| Error::BackendCapacity)?;
         let n = left.cap + 1;
@@ -2603,17 +2673,15 @@ impl Batch {
         let scan = Scan::new(n)?;
         let pass = self.pass(3)?;
         let lbuf: &BufferRef = &left.buffer.buffer;
-        let mut count_bufs: Vec<&BufferRef> = vec![lbuf, &a[0], &a[1], &a[2], &a[3], &a[4], &totals.buffer.buffer, &counts, &held.buffer];
-        for b in &bufs {
-            count_bufs.extend(b.iter().map(|x| &**x));
-        }
+        let mut count_bufs: Vec<&BufferRef> = vec![lbuf, &a, &totals.buffer.buffer, &counts, &held.buffer];
+        count_bufs.extend(bufs.iter().map(|x| &**x));
         pass.run_bytes(&count, &count_bufs, stage.bytes(), groups(n));
         scan.encode(pass, &counts)?;
         // The bindings with a witness out as they are: a semi-join's scatter (mode 1 writes the binding alone).
         let mut write = stage;
         write.mode = SEMI;
         write.nbinds = 0;
-        let scatter_bufs: [&BufferRef; 11] = [lbuf, &a[0], &a[1], &a[2], &a[3], &a[4], &totals.buffer.buffer, &counts, &out.buffer.buffer, &dummy, &dummy];
+        let scatter_bufs: [&BufferRef; 7] = [lbuf, &a, &totals.buffer.buffer, &counts, &out.buffer.buffer, &dummy, &dummy];
         pass.run_bytes(&scatter, &scatter_bufs, write.bytes(), groups(n));
         self.keep.push(held);
         Ok(())
@@ -2951,6 +3019,68 @@ pub mod tests {
         assert!(!want4.is_empty() && want4.len() < want3.len() && want3.len() < want2.len());
     }
 
+    /// A relation's index built on the device (decision 0325 step 5) is the host's (`Relation::build_index`): the same
+    /// buckets and the same rows in each, in id order, for a key of one column and one of two, over many duplicate
+    /// keys. Built once: the next request, in the same batch or a later one, finds it the relation's own.
+    #[test]
+    fn the_devices_index_of_a_relation_is_the_hosts() {
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        // Its index (some 1.8 MB) past the megabyte a host block's wrap rounds its used extent up to.
+        let n = 200_000;
+        let (c0, c1) = (rows(n, 31, 97), rows(n, 32, 13));
+        // A device relation's block has room for one index: one relation a key.
+        let up = || {
+            DevRel::upload(2, n, |v| {
+                v[..n].copy_from_slice(&c0);
+                v[n..].copy_from_slice(&c1);
+            })
+            .unwrap()
+        };
+        let (dev0, dev1) = (up(), up());
+        // A host relation in its block, bound before its index was added: a block without a slab of its own is bound
+        // by a wrap of its used extent, which the index's room lies past. And the host's own builder's, the reference.
+        let vals: Vec<i64> = (0..n).flat_map(|i| [c0[i], c1[i]]).collect();
+        let host_rows = || DevRel::in_block(&crate::code_rule_dsl::facts::rows::anon_in_block(2, &vals), 2).unwrap();
+        let (placed, host) = (host_rows(), host_rows());
+        for (dev, cols) in [(&dev0, vec![0usize]), (&dev1, vec![1, 0]), (&placed, vec![0]), (&placed, vec![1, 0])] {
+            let mut batch = Batch::new().unwrap();
+            let ix = batch.index(dev, &cols).unwrap();
+            assert!(ix.built && ix.moved.is_none(), "built in the relation's own block");
+            let again = batch.index(dev, &cols).unwrap();
+            assert!(!again.built && again.index == ix.index, "one build a batch");
+            batch.finish().unwrap();
+            let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
+            let (r, h) = (dev.relation(), host.relation());
+            assert_eq!(r.find_index(&key, n as u32), Some(ix.index as usize), "marked built once the batch is done");
+            let hosts = if let Some(i) = h.find_index(&key, n as u32) {
+                i
+            } else {
+                let home = host.home.as_ref().unwrap();
+                // SAFETY: one thread; the rows are written.
+                let room = unsafe { h.try_reserve_index(&home.block, &key, n as u32) }.unwrap();
+                unsafe {
+                    h.build_index(&room);
+                    h.index_built(&room);
+                }
+                room.index
+            };
+            let (d, w) = (r.index(ix.index as usize), h.index(hosts));
+            if std::ptr::eq(dev, &placed) {
+                let end = dev.home.as_ref().unwrap().block.offset_of(d.rows.as_slice().as_ptr()) + 4 * n;
+                assert!(end as u64 > placed.buffer.buffer.length(), "the case: the index past the buffer its relation was bound by");
+            }
+            assert_eq!(d.mask, w.mask);
+            assert_eq!(d.offs.as_slice(), w.offs.as_slice(), "{cols:?}: the buckets");
+            assert_eq!(d.rows.as_slice(), w.rows.as_slice(), "{cols:?}: each bucket's rows, in id order");
+            let mut later = Batch::new().unwrap();
+            let found = later.index(dev, &cols).unwrap();
+            assert!(!found.built && found.index == ix.index, "a later batch finds it");
+            later.finish().unwrap();
+        }
+    }
+
     /// Decision 0325 step 3: relations read where they lie in their blocks, with dead rows marked by a delta's dead
     /// bits (`Rows::in_block_dead`), as a maintained relation's kills of the rows it shares. A scan, a keyed join
     /// (through the device's own index of the relation) and an anti-join skip the dead rows: the nested loops'
@@ -2958,7 +3088,9 @@ pub mod tests {
     #[test]
     fn stages_skip_the_dead_rows_of_relations_in_their_blocks() {
         use crate::code_rule_dsl::facts::rows::Rows;
-        let Ok(device) = rerail_accel::gpu::join::device() else { return };
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
         let (na, nb, nc) = (2000, 3000, 500);
         let (a0, a1) = (rows(na, 21, 3000), rows(na, 22, 200));
         let (b0, b1) = (rows(nb, 23, 200), rows(nb, 24, 3000));
@@ -2977,8 +3109,7 @@ pub mod tests {
             r.extend_from_slice(&(0..n).flat_map(|i| cols.iter().map(move |c| c[i])).collect::<Vec<_>>());
             let b = r.in_block_dead(d).expect("the dead rows' delta");
             assert!(b.dead > 0);
-            let held = rerail_accel::gpu::join::Held::kept(b.facts.block.gpu_buffer(device), Box::new(b.facts.clone()));
-            (DevRel::in_block(held, b.at, b.dead, b.rows as usize, k), r)
+            (DevRel::in_block(&b, k).unwrap(), r)
         };
         let ((ra, _ka), (rb, _kb), (rc, _kc)) = (placed(&[&a0, &a1], &da), placed(&[&b0, &b1], &db), placed(&[&c0], &dc));
         let mut batch = Batch::new().unwrap();
@@ -3061,13 +3192,6 @@ pub mod tests {
         assert_eq!(got, want);
     }
 
-    #[test]
-    fn hash_bits_grow_with_the_rows_in_whole_bytes() {
-        assert_eq!(hash_bits(0), 16);
-        assert_eq!(hash_bits(200), 16);
-        assert_eq!(hash_bits(70_000), 32);
-        assert_eq!(hash_bits(1000), 24);
-    }
 }
 
 /// A lattice relation's key table on the device (`Batch::lattice_fold`): each held key's row, kept from round to

@@ -190,13 +190,14 @@ impl Relation {
         &self.index(i).rows.as_slice()[start..start + len]
     }
 
-    /// The index whose key is `cols` (a hashed one: an ordered index holds no buckets), built.
-    pub fn find_index(&self, cols: &[u16]) -> Option<usize> {
+    /// The index whose key is `cols` over its rows `0..rows` (a hashed one: an ordered index holds no buckets), built.
+    /// An index of fewer rows (built before the relation grew) is not it.
+    pub fn find_index(&self, cols: &[u16], rows: u32) -> Option<usize> {
         let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
         let ix = self.indexes.as_slice();
         // SAFETY: an entry's `ncols` is written once, last (`index_built`); read as written, then the index after it.
         let built = |i: usize| unsafe { std::ptr::read_volatile(&raw const ix[i].ncols) } as usize;
-        let found = (0..n).find(|&i| ix[i].ordered == 0 && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols);
+        let found = (0..n).find(|&i| ix[i].ordered == 0 && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols && ix[i].rows.len() == rows as usize);
         std::sync::atomic::fence(Acquire);
         found
     }
@@ -980,15 +981,15 @@ mod tests {
         RelW { block: &block, rel, lock: &lock }.extend(&rows.iter().flatten().copied().collect::<Vec<_>>());
         let n = rel.rows.len();
         for cols in [vec![0u16], (1..9).collect::<Vec<u16>>()] {
-            assert_eq!(rel.find_index(&cols), None);
+            assert_eq!(rel.find_index(&cols, n), None);
             // SAFETY: one thread; the rows are written.
             let room = unsafe { rel.try_reserve_index(&block, &cols, n) }.expect("room");
-            assert_eq!(rel.find_index(&cols), None, "not found before it is built");
+            assert_eq!(rel.find_index(&cols, n), None, "not found before it is built");
             unsafe {
                 rel.build_index(&room);
                 rel.index_built(&room);
             }
-            let i = rel.find_index(&cols).expect("found once built");
+            let i = rel.find_index(&cols, n).expect("found once built");
             for probe in [0usize, 1, 5, 36, 1999] {
                 let key: Vec<i64> = cols.iter().map(|&c| rows[probe][c as usize]).collect();
                 let want: Vec<u32> = (0..n).filter(|&r| cols.iter().zip(&key).all(|(&c, &v)| rows[r as usize][c as usize] == v)).collect();

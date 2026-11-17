@@ -1313,9 +1313,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 if let Some((b, ncols)) = placed {
                     // Entries of relations the engine dropped go now: an entry in place holds its block (`Held::kept`).
                     res.trim(0);
-                    let device = rerail_accel::gpu::join::device()?;
-                    let held = rerail_accel::gpu::join::Held::kept(b.facts.block.gpu_buffer(device), Box::new(b.facts.clone()));
-                    let dev = mj::DevRel::in_block(held, b.at, b.dead, b.rows as usize, ncols);
+                    let dev = mj::DevRel::in_block(&b, ncols).map_err(|e| format!("{e:?}: a relation in its block"))?;
                     rep.in_place += 1;
                     let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
                     let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
@@ -1414,8 +1412,9 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
             return Ok((dev, Some(ix.clone()), place));
         }
         let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
-        let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: a sort of {} rows", dev.rows))?);
-        rep.sorts += 1;
+        let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
+        // Built here, or found the relation's own already (decision 0325 step 5).
+        if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
         e.bytes += ix.bytes();
         e.indexes.push((key, ix.clone()));
         Ok((dev, Some(ix), place))
@@ -2348,12 +2347,10 @@ fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Sto
         // Less the rows the head holds, read where they lie.
         let (rows, slot) = match rel.in_block() {
             Some(held) if rel.n > 0 => {
-                let device = rerail_accel::gpu::join::device()?;
-                let buffer = rerail_accel::gpu::join::Held::kept(held.facts.block.gpu_buffer(device), Box::new(held.facts.clone()));
-                let dev = mj::DevRel::in_block(buffer, held.at, held.dead, held.rows as usize, k);
-                let ix = b.index(&dev, &all).map_err(|e| format!("{e:?}: a sort of {} rows", dev.rows))?;
+                let dev = mj::DevRel::in_block(&held, k).map_err(|e| format!("{e:?}: a relation in its block"))?;
+                let ix = b.index(&dev, &all).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?;
                 rep.in_place += 1;
-                rep.sorts += 1;
+                if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
                 let mut d = mj::Stage { mode: mj::ANTI, nkeys: k as u32, ..mj::Stage::default() };
                 for c in 0..k {
                     d.key_rcol[c] = c as u32;
@@ -2371,10 +2368,8 @@ fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Sto
             _ => (rows, slot),
         };
         let part = crate::code_rule_dsl::facts::rows::Part::for_writes(k, cap);
-        let device = rerail_accel::gpu::join::device()?;
-        let block = rerail_accel::gpu::join::Held::kept(part.facts().block.gpu_buffer(device), Box::new(part.facts().clone()));
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
-        let dst = mj::DevRel::in_block(block, part.rel_at(), 0, cap, k);
+        let dst = mj::DevRel::in_block(&crate::code_rule_dsl::facts::rows::InBlock { facts: part.facts().clone(), at: part.rel_at(), rows: cap as u32, dead: 0 }, k).map_err(|e| format!("{e:?}"))?;
         b.place_rows(mj::Rows::Table(&rows), cap, slot, &words, &ident, dst).map_err(|e| format!("{e:?}"))?;
         hold.push(rows);
         pending.push((h, part, slot, cap, words));
@@ -2424,8 +2419,8 @@ impl Own {
             rep.sort_hits += 1;
             return Ok(Some((dev, Some(ix.clone()))));
         }
-        let ix = Rc::new(batch.index(&dev, cols).map_err(|e| format!("{e:?}: a sort of {} rows", dev.rows))?);
-        rep.sorts += 1;
+        let ix = Rc::new(batch.index(&dev, cols).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
+        if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
         self.sorts.insert(key, ix.clone());
         Ok(Some((dev, Some(ix))))
     }
@@ -2762,10 +2757,8 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             None => batch.insert(direct_batch(None)?),
         };
         let part = crate::code_rule_dsl::facts::rows::Part::for_writes(k, total.rows);
-        let device = rerail_accel::gpu::join::device()?;
-        let block = rerail_accel::gpu::join::Held::kept(part.facts().block.gpu_buffer(device), Box::new(part.facts().clone()));
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
-        let dst = mj::DevRel::in_block(block, part.rel_at(), 0, total.rows, k);
+        let dst = mj::DevRel::in_block(&crate::code_rule_dsl::facts::rows::InBlock { facts: part.facts().clone(), at: part.rel_at(), rows: total.rows as u32, dead: 0 }, k).map_err(|e| format!("{e:?}"))?;
         b.place_rows(mj::Rows::Rel(total), total.rows, None, &no_counts, &ident, dst).map_err(|e| format!("{e:?}"))?;
         parts.push((h, part, total.rows));
     }
