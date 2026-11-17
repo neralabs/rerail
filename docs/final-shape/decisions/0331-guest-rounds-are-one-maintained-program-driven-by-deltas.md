@@ -80,3 +80,23 @@ as before.
 M3, profiled: every later round 0 derived again, no relation without a delta (was 1 and `chain_below`). The two
 strata cost about 0.05 s a round, so the cold CPU did not move outside the machine's noise (under load 40–85:
 58.2 s before, 55.0 s after). Outputs identical (660 relations, 30,449 rows).
+
+## After the hub merge (968fa0dc6, 2026-11-17)
+
+The hub takes the embed slice from the prepared program's version (`embed_slice` over `prepared_placed.v`), not
+the lowered tree: 584 rules, against 488. Its demand relations for aggregates (`rr_demand_agg_*`) are in it.
+Measured back to back on the M3 (load about 12, one sample each; outputs identical, 660 relations, 30,449 rows):
+
+| | cold CPU | slice | guests (profiled) |
+|---|---|---|---|
+| before this decision (t9) | 60.0 s | 488 rules | 11.4 s |
+| the hub alone | 57.8 s | 584 rules | 11.6 s |
+| the hub with this decision | 62.6 s | 584 rules | 11.7 s |
+
+Over the larger slice the maintained rounds no longer gain: rounds 2 and 3 take 5.3 s (3.4 s before the merge),
+reaching 173–219 of 256 strata, every one maintained or priced into deriving again (0090 §4: `rr_agg266`,
+`type_ctx`, `ann_root`, `rr_demand_agg_rr_agg341`, `wstart` the largest, none over 0.2 s). The 4.8 s between the
+last two rows is outside the guests (their spans differ by 0.1 s): one sample's noise.
+
+Open: why the prepared slice's rounds reach more and cost more, and whether the slice should be cut from the
+prepared program at all.
