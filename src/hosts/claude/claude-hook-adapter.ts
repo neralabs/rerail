@@ -1,5 +1,7 @@
 import { rm } from "node:fs/promises";
-import { answeredFacts, hookText, type AdapterDelivery, type RerailEventLoop } from "../../engine/adapter-contract.js";
+import {
+  answeredFacts, hookText, type AdapterDelivery, type AdapterSession, type EventAnswerFacts, type RerailEventLoop,
+} from "../../engine/adapter-contract.js";
 import { claudeHookEvents, claudeWorkspace } from "./claude-event-adapter.js";
 import {
   deliveryConflicts,
@@ -86,6 +88,15 @@ export function claudeHookOutput(hook: string, deliveries: readonly HeldDelivery
   return steerHookOutput(hook, deliveries, CONTEXT_EVENTS, steerLines(links, mark), note);
 }
 
+/**
+ * At a session's start, the note only the model sees, with its dashboard link and rules from the daemon's answer
+ * (`answered`); an older daemon's are read after its answer. Nothing at any other hook.
+ */
+async function sessionNote(hook: string, session: AdapterSession, answered: EventAnswerFacts): Promise<string | undefined> {
+  if (hook !== "SessionStart") return undefined;
+  return sessionStartNote(await dashboardOrigin(session.cwd, answered), session.host, session.sessionId, await presentedSessionNoteRules(session, answered));
+}
+
 export async function handleClaudeEvent(
   input: HookInput,
   eventLoop: RerailEventLoop,
@@ -113,7 +124,7 @@ export async function handleClaudeEvent(
   const mark = rerailMark(colourDepth(env));
   // The daemon's answer carries the note's link and rules and the steers' links; an older daemon's is read after it.
   const answered = answeredFacts(eventLoop);
-  const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd, answered), "claude-code", sessionId, await presentedSessionNoteRules({ host: "claude-code", sessionId, cwd }, answered)) : undefined;
+  const note = await sessionNote(hook, { host: "claude-code", sessionId, cwd }, answered);
   const routed = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
   // `linkDeliveries` copies each delivery, so a steer the 0.1.2 hook held at `Stop` keeps its `late` mark.
   return claudeHookOutput(hook, await linkDeliveries(routed, cwd, answered), { note, links, mark });
