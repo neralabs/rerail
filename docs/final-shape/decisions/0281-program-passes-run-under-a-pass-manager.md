@@ -523,8 +523,14 @@ step 3 replaces what is under the writer.
    per-policy path is steps 6 and 7 carried through, then composed:
    - **6a–6e**, the preparation's tree passes on the manager, last first, the image made one pass earlier each time,
      each an exact port checked against its tree form by digest in a debug build:
-     - 6a: `bound` and `transduce_nearest`;
-     - 6b: `lower_tree`;
+     - 6a: `bound` and `transduce_nearest` (done, b0f27d065);
+     - 6b: `lower_tree` (done, 07db32f7e);
+     - R (found 2026-11-16, before 6c): the passes from 6c on edit `prog`, the tree `Prepared` keeps, which about
+       40 sites of the run read after preparation (the projection's text demand, the settings, the outputs, the
+       world, the references, the cone, the constants). Moved, they would change what those sites read. So
+       `Prepared` first keeps the program before lowering as a version (`source`, the image 6b makes), the readers
+       read it (each checked against the tree's answer in a debug build), the store keeps it in place of the tree's
+       text, and `Prepared::prog` is deleted. From then on the source is a stage of the pipeline;
      - 6c: `strings::as_relations`, `long_text_twins`, `node_subject_tests`, `matchers`;
      - 6d: `reach_form`, `magic`'s two demands, `undo_in_cycles`;
      - 6e: `prune`, `simplify`, `base_inputs`, `cpython_functors`.
