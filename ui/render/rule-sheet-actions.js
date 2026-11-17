@@ -2,10 +2,10 @@
  * The rule sheet's own state and clicks: the "Edit with coding agent" box, the "What the agent sees" hand-off and the
  * two-step Delete. At most one of the three is open; opening one closes the others.
  */
-import { data, ui, panelRuleId, titleOf } from "../state.js";
-import { modeLabel, scopeText } from "../derive.js";
+import { data, ui, panelRuleId, titleOf } from "../data/state.js";
+import { modeLabel, scopeText } from "../model/derive.js";
 import { copyText, invalidate, renderNow, toast } from "../shell.js";
-import { removeRule } from "../rule-remove.js";
+import { removeRule } from "../data/rule-remove.js";
 import { askPrompt, agentSeesPrompt } from "./rule-sheet-model.js";
 
 /** The sheet's open boxes, for rule `ruleId`; a different rule starts closed (`syncSheetState`). */

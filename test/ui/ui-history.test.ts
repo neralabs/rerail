@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { data, ui } from "../../ui/state.js";
-import { filterRanked, historyEmpty, historyRuleId, rankedRules } from "../../ui/history-model.js";
+import { data, ui } from "../../ui/data/state.js";
+import { filterRanked, historyEmpty, historyRuleId, rankedRules } from "../../ui/model/history-model.js";
 import { parseRoute } from "../../ui/routes.js";
 
 const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, rerails: 0 };

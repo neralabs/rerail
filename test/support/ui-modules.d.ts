@@ -3,7 +3,7 @@
  * relative `.js` import is an implicit `any` under `strict`; wildcard ambient modules are the
  * one form TypeScript matches against a relative specifier. Only the surface the tests use.
  */
-declare module "*/ui/sessions-model.js" {
+declare module "*/ui/model/sessions-model.js" {
   export interface Correction {
     key: string;
     finding: { path?: string | null; at: number; span?: { startLine: number } | null; [k: string]: unknown };
@@ -59,7 +59,7 @@ declare module "*/ui/sessions-model.js" {
   export function violationCounts(s: SessionRow): { logged: number; steered: number };
 }
 
-declare module "*/ui/poll.js" {
+declare module "*/ui/data/poll.js" {
   export function titleFromPrompts(prompts: readonly string[]): string | null;
   /** What each poll loads for a repository in scope, by need name (`NEEDS` in poll.js). */
   export function setNeeds(needs: () => Iterable<string>): void;
@@ -109,7 +109,7 @@ declare module "*/ui/poll.js" {
   export function toStoredRules(entries: readonly object[]): Map<string, StoredRule>;
 }
 
-declare module "*/ui/derive.js" {
+declare module "*/ui/model/derive.js" {
   export function violationOutcome(finding: { mode?: string; logged: boolean }): "logged" | "steered";
   export function isRunning(stored: { enabled: boolean; configError?: string | null }): boolean;
   export function packSuppressions(rules: readonly object[], packId: string, owner: "repository" | "checkout", checkoutPath?: string): { text: string; next: "honour" | "ignore" };
@@ -125,7 +125,7 @@ declare module "*/ui/render/pack-panel.js" {
   export function packKind(pack: { category: string; publisher: string }): string;
 }
 
-declare module "*/ui/state.js" {
+declare module "*/ui/data/state.js" {
   export function sinceFor(range?: number): number;
   /** A cursor-paged list as the page holds it. */
   export interface PagedList<Row> { key: string | null; owner: string | null; rows: Row[]; total: number; next: string | null; pages: number }
@@ -172,7 +172,7 @@ declare module "*/ui/state.js" {
   export function ruleSections(): Array<{ key: string; kind: "mine" | "pack" | "legacy"; groups: RuleGroup[] }>;
 }
 
-declare module "*/ui/attachments.js" {
+declare module "*/ui/data/attachments.js" {
   /** The page's rule pack writes; `toast` and `invalidate` are the page's. */
   export function attachmentWrites(page: { toast: (message: string) => void; invalidate: () => void }): {
     setUpRecommended(): Promise<void>;
@@ -185,7 +185,7 @@ declare module "*/ui/format.js" {
   export function failed(what: string, error: unknown): string;
 }
 
-declare module "*/ui/settings-writes.js" {
+declare module "*/ui/data/settings-writes.js" {
   /** One settings write: the folder, the targets and the values it sets (`on: null` clears). */
   export interface SettingPut { folder: string; targets: Array<{ kind: "rule" | "pack"; id: string }>; setting: { on?: boolean | null; suppressions?: "honour" | "ignore" } }
   /** The writes the whole-pack switch sends for pack `packId`: per folder, the pack's on, then its rules' own on cleared. */
@@ -203,14 +203,14 @@ declare module "*/ui/shell.js" {
   export function changeOwner(packId?: string): "repository" | "checkout";
 }
 
-declare module "*/ui/rule-remove.js" {
+declare module "*/ui/data/rule-remove.js" {
   /** Delete rule `id`, created by you, from the repository the page shows; the toast offers Undo. */
   export function removeRule(id: string): Promise<void>;
   /** Undo: add rule `id` back to the repository its delete removed it from. */
   export function restoreRule(id: string): Promise<void>;
 }
 
-declare module "*/ui/pack-model.js" {
+declare module "*/ui/model/pack-model.js" {
   type Stored = { rule: { id: string }; enabled: boolean; addedAt?: number | null };
   type Pack = { id: string; name: string; category: string; covers?: string; rules: Array<{ id: string; title: string; group?: string; on?: boolean }> };
   export const PAGE_FILTERS: ReadonlyArray<readonly [string, string]>;
@@ -246,7 +246,7 @@ declare module "*/ui/views/index.js" {
   export function currentNeeds(): string[];
 }
 
-declare module "*/ui/history-model.js" {
+declare module "*/ui/model/history-model.js" {
   export interface RankedRule { id: string; title: string; origin: string; count: number }
   export function filterRanked(ranked: RankedRule[], query: string): RankedRule[];
   export function historyOrigin(id: string): string;
@@ -257,19 +257,19 @@ declare module "*/ui/history-model.js" {
   export function historyEmpty(ranked?: RankedRule[]): HistoryEmpty | null;
 }
 
-declare module "*/ui/repo-rules.js" {
+declare module "*/ui/model/repo-rules.js" {
   export interface RuleCounts { total: number; on: number }
   export function ruleCountsOf(entries: ReadonlyArray<object>): RuleCounts;
   export function repoTag(counts: RuleCounts | null): string | null;
   export function repoLine(repo: { setUp: boolean; started: boolean; checkoutCount: number }, counts: RuleCounts | null): string;
 }
 
-declare module "*/ui/repo-rule-counts.js" {
+declare module "*/ui/data/repo-rule-counts.js" {
   export function repoRuleCounts(key: string): { total: number; on: number } | null;
   export function loadRepoRuleCounts(keys: readonly string[]): Promise<boolean>;
 }
 
-declare module "*/ui/settings-model.js" {
+declare module "*/ui/model/settings-model.js" {
   export interface AgentStatus {
     state: string;
     tone: "on" | "warn" | "off" | "";
@@ -316,7 +316,7 @@ declare module "*/ui/views/create.js" {
   ): CreateSuggestion[];
 }
 
-declare module "*/ui/first-open.js" {
+declare module "*/ui/model/first-open.js" {
   export type FirstOpenState = "no-repo" | "missing" | "not-set-up" | "stopped" | "no-packs" | "packs-no-session" | "mature";
   export interface RepositoryFacts { scoped: boolean; missing: boolean; setUp: boolean; stopped: boolean; ruleCount: number; sessionsEver: number }
   export function firstOpenState(facts: RepositoryFacts): FirstOpenState;
@@ -330,7 +330,7 @@ declare module "*/ui/first-open.js" {
   export function liveState(session: { endedAt: number | null; startedAt: number; lastEventAt: number | null }, now: number): "live" | "stale" | null;
 }
 
-declare module "*/ui/merge-model.js" {
+declare module "*/ui/model/merge-model.js" {
   type Status = import("../../src/engine/index.js").MergeAssistStatus;
   type Conflict = import("../../src/engine/index.js").Conflict;
   type Segment = string | { code: string };

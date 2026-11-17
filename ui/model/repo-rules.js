@@ -3,7 +3,7 @@
  * reads them). A repository set up with nothing added has none, so the count, not `setUp`, says whether rules were added.
  */
 import { isRunning, toStoredRules } from "./derive.js";
-import { fmt, plural } from "./format.js";
+import { fmt, plural } from "../format.js";
 
 /** `{ total, on }` of a repository's rule entries: one rule per id however many folders add it; on when it runs. */
 export function ruleCountsOf(entries) {

@@ -6,7 +6,7 @@
  * Conflict titles, summaries, authors, branch names and links come from other people's work. Every string here is
  * plain text for a text node; `safePeerUrl` is the only way a peer's link becomes an `href`.
  */
-import { fmt, plural } from "./format.js";
+import { fmt, plural } from "../format.js";
 
 /**
  * A peer's pull request link, only when it is an `https:` URL with no credentials or port, on a GitHub host that is

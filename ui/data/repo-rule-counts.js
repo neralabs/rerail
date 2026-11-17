@@ -4,7 +4,7 @@
  * where nothing changed costs one 304 per repository.
  */
 import { get } from "./api.js";
-import { ruleCountsOf } from "./repo-rules.js";
+import { ruleCountsOf } from "../model/repo-rules.js";
 
 /** repositoryKey → `{ etag, counts: { total, on } }`. */
 const known = new Map();

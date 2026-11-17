@@ -3,8 +3,8 @@
  * the design shows: turns of prompt + reply, each with its tool calls paired to results and
  * classified into a verb and a side-effect level. Pure functions over event records.
  */
-import { HOST_NAME, truncate } from "./format.js";
-import { data } from "./state.js";
+import { HOST_NAME, truncate } from "../format.js";
+import { data } from "../data/state.js";
 
 export const STALE_MIN = 30;
 

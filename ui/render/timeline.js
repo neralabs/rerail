@@ -1,8 +1,8 @@
 import { h, setAttr, setText, setClass, chevron, syncChildren } from "../dom.js";
 import { fmt, plural, ago, clockSeconds, shortPath, truncate } from "../format.js";
-import { violationOutcome } from "../derive.js";
-import { ui, titleOf, packRuleOf } from "../state.js";
-import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, outputText, describeInput } from "../sessions-model.js";
+import { violationOutcome } from "../model/derive.js";
+import { ui, titleOf, packRuleOf } from "../data/state.js";
+import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, outputText, describeInput } from "../model/sessions-model.js";
 
 /** Every event with "Show all events", else only those that carry a shown violation. */
 const EF = () => (ui.showAll ? "all" : "corrections");

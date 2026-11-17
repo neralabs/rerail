@@ -6,8 +6,8 @@
  * sheet's inside `#panel`, the frame's elsewhere; then the common ones (`actions.js`).
  */
 import { setAttr } from "./dom.js";
-import { ui } from "./state.js";
-import { setNeeds, startPolling } from "./poll.js";
+import { ui } from "./data/state.js";
+import { setNeeds, startPolling } from "./data/poll.js";
 import { commonActions } from "./actions.js";
 import { afterPoll, closePanel, connectShell, hideToast, invalidate, loadTheme, startRouting, syncUrl } from "./shell.js";
 import { renderSheet, sheetActions } from "./sheet.js";

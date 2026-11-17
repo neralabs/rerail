@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadRepoRuleCounts, repoRuleCounts } from "../../ui/repo-rule-counts.js";
-import { repoLine, repoTag, ruleCountsOf } from "../../ui/repo-rules.js";
-import { agentStatus, installedLabel } from "../../ui/settings-model.js";
+import { loadRepoRuleCounts, repoRuleCounts } from "../../ui/data/repo-rule-counts.js";
+import { repoLine, repoTag, ruleCountsOf } from "../../ui/model/repo-rules.js";
+import { agentStatus, installedLabel } from "../../ui/model/settings-model.js";
 
 type DataAccess = "kept-out" | "file-tools" | "open";
 const agent = (over: Partial<{ found: boolean; connected: boolean; problem: string | null; access: DataAccess }>) => {

@@ -3,7 +3,7 @@
 The browser view the daemon serves (`rerail manage`, `/rerail-manage`, `rerail daemon start --open`). It is plain
 JavaScript and CSS with no build step and no framework. `npm run build:ui` (`scripts/build/copy-ui.mjs`) copies it
 into `dist/`, and the daemon serves it with client-side routes falling back to `index.html`. It reads only the
-daemon's `/api` operations and `/healthz` (`api.js`).
+daemon's `/api` operations and `/healthz` (`data/api.js`).
 
 - `index.html` is the frame: the top bar over both columns, the sidebar (`#sidenav`), the content column (`#content`)
   and the sheet (`#panel`). `app.js` renders it and routes clicks to the region's actions.
@@ -31,22 +31,22 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   `rule-controls.js`), the range control, the repository choices (`repos.js`), the rule sheet (`panel.js`, its
   state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`), a rule pack in the
   sheet (`pack-panel.js`), and the session timeline (`timeline.js`).
-- `state.js` holds the state; `poll.js` refreshes it with what the page needs (`setNeeds`);
-  `repo-rule-counts.js` reads each repository's rule counts; `attachments.js` writes
-  rule pack changes in click order, `rule-remove.js` deletes a rule created by you from the repository (with Undo),
-  and `settings-writes.js` writes rule settings. Merge Assist's writes go through `writeMergeAssist` in `poll.js`:
-  each answers the checkout's status, which replaces the page's unless a later write was sent, and a read sent before
-  the write answered is dropped.
-- Pure derivations, without the DOM: `derive.js` (a rule's title, mode, scope and a pack's suppression comments),
-  `first-open.js` (the Overview: the repository's first-open state, the Violations steered tally, the Most violations
-  logged ranking, whether a session is live), `pack-model.js` (a pack page's rules as filtered and sorted, the
-  whole-pack switch's state, the catalog's kinds and order), `history-model.js` (which rules History by rule lists
-  under its All · Steered · Logged chips and which one it shows), `sessions-model.js` (a session's events as turns
-  and tool calls), `settings-model.js` (coding agent states and the install date), `repo-rules.js` (what Settings and
-  the repository menu say of a repository's rule counts) and `merge-model.js` (Merge Assist's conflicts and
-  their order, its status strip, readiness checklist and Settings form, the sidebar's count, and which pull request
-  links are safe to open).
-  `format.js` formats numbers and dates; `dom.js` builds and reconciles elements.
+- `data/` holds the page's data: `state.js` the state; `poll.js` refreshes it with what the page needs (`setNeeds`);
+  `api.js` the daemon's `/api` reads and writes; `repo-rule-counts.js` reads each repository's rule counts;
+  `attachments.js` writes rule pack changes in click order, `rule-remove.js` deletes a rule created by you from the
+  repository (with Undo), and `settings-writes.js` writes rule settings. Merge Assist's writes go through
+  `writeMergeAssist` in `poll.js`: each answers the checkout's status, which replaces the page's unless a later write
+  was sent, and a read sent before the write answered is dropped.
+- `model/` holds the pure derivations, without the DOM: `derive.js` (a rule's title, mode, scope and a pack's
+  suppression comments), `first-open.js` (the Overview: the repository's first-open state, the Violations steered
+  tally, the Most violations logged ranking, whether a session is live), `pack-model.js` (a pack page's rules as
+  filtered and sorted, the whole-pack switch's state, the catalog's kinds and order), `history-model.js` (which rules
+  History by rule lists under its All · Steered · Logged chips and which one it shows), `sessions-model.js` (a
+  session's events as turns and tool calls), `settings-model.js` (coding agent states and the install date),
+  `repo-rules.js` (what Settings and the repository menu say of a repository's rule counts) and `merge-model.js`
+  (Merge Assist's conflicts and their order, its status strip, readiness checklist and Settings form, the sidebar's
+  count, and which pull request links are safe to open).
+- `format.js` formats numbers and dates; `dom.js` builds and reconciles elements.
 - `css/base.css` styles the frame and the shared pieces, `css/sheet.css` the sheet, and `css/<view>.css` each view.
   `tokens.generated.css` holds the design tokens, generated from Nera's tokens by `scripts/generate/ui/tokens.mjs`;
   `npm run check:ui-tokens` checks them, and that `index.html` links every sheet under `css/`. The dashboard's own

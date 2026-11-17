@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   bannerFor, firstOpenState, liveState, overviewBody, rulesOnSource, steeredTally, topRules, LIVE_MINUTES, TOP_RULES,
   type RepositoryFacts,
-} from "../../ui/first-open.js";
+} from "../../ui/model/first-open.js";
 
 const MINUTE = 60_000;
 

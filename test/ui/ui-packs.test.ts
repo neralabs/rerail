@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { changeScope, toStoredRules, type StoredRule } from "../../ui/poll.js";
-import { data, ui } from "../../ui/state.js";
-import { catalogKinds, catalogPacks, packSwitch, pageRules, sheetRules, shownRules, sortPageRules, switchTurnsOn } from "../../ui/pack-model.js";
-import { packSwitchWrites, settingWrites } from "../../ui/settings-writes.js";
-import { isFromPack, publisherLabel, worktreeLeftOut } from "../../ui/derive.js";
+import { changeScope, toStoredRules, type StoredRule } from "../../ui/data/poll.js";
+import { data, ui } from "../../ui/data/state.js";
+import { catalogKinds, catalogPacks, packSwitch, pageRules, sheetRules, shownRules, sortPageRules, switchTurnsOn } from "../../ui/model/pack-model.js";
+import { packSwitchWrites, settingWrites } from "../../ui/data/settings-writes.js";
+import { isFromPack, publisherLabel, worktreeLeftOut } from "../../ui/model/derive.js";
 import { packKind } from "../../ui/render/pack-panel.js";
 import { changeOwner } from "../../ui/shell.js";
 

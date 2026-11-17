@@ -5,7 +5,7 @@
  */
 import { data, ui, packById, packFolder, isSetUp, keptPacks } from "./state.js";
 import { recommendationsFor, captureScope, inScope, queueInScope, refreshNow } from "./poll.js";
-import { andList, failed as failedText } from "./format.js";
+import { andList, failed as failedText } from "../format.js";
 
 const ATTACHMENTS = "/api/repository/attachments";
 

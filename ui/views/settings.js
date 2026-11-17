@@ -7,14 +7,14 @@
  */
 import { h, setContent, icon } from "../dom.js";
 import { andList, failed, fmt, plural } from "../format.js";
-import { send } from "../api.js";
-import { data, ui, repoName } from "../state.js";
-import { captureScope, changeScope, inScope, loadAgents, loadPresence, loadFollowGitignore, saveFollowGitignore } from "../poll.js";
+import { send } from "../data/api.js";
+import { data, ui, repoName } from "../data/state.js";
+import { captureScope, changeScope, inScope, loadAgents, loadPresence, loadFollowGitignore, saveFollowGitignore } from "../data/poll.js";
 import { applyTheme, invalidate, toast } from "../shell.js";
-import { loadRepoRuleCounts } from "../repo-rule-counts.js";
-import { repoTag } from "../repo-rules.js";
+import { loadRepoRuleCounts } from "../data/repo-rule-counts.js";
+import { repoTag } from "../model/repo-rules.js";
 import { repoCounts } from "../render/repos.js";
-import { agentStatus, installedLabel } from "../settings-model.js";
+import { agentStatus, installedLabel } from "../model/settings-model.js";
 
 export const needs = [];
 

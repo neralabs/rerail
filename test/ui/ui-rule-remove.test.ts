@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { changeScope } from "../../ui/poll.js";
-import { removeRule, restoreRule } from "../../ui/rule-remove.js";
-import { data } from "../../ui/state.js";
-import type * as Poll from "../../ui/poll.js";
+import { changeScope } from "../../ui/data/poll.js";
+import { removeRule, restoreRule } from "../../ui/data/rule-remove.js";
+import { data } from "../../ui/data/state.js";
+import type * as Poll from "../../ui/data/poll.js";
 
 const { toast } = vi.hoisted(() => ({ toast: vi.fn() }));
 vi.mock("../../ui/shell.js", () => ({ closePanel: () => {}, toast }));
 // The page's poll is not under test: a refresh after a write finishes at once.
-vi.mock("../../ui/poll.js", async importOriginal => ({ ...(await importOriginal<typeof Poll>()), refreshNow: async () => {} }));
+vi.mock("../../ui/data/poll.js", async importOriginal => ({ ...(await importOriginal<typeof Poll>()), refreshNow: async () => {} }));
 
 type Request = { method: string; url: string; body: unknown; answer: (status: number, body?: unknown) => void };
 

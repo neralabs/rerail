@@ -11,7 +11,7 @@
  * - `afterPoll()`: run after each poll while the view shows;
  * - `onInput(element)`, `onChange(element)`: input and change events inside `#content`; `onResize()`.
  */
-import { data, ui } from "../state.js";
+import { data, ui } from "../data/state.js";
 import { SHEET_NEEDS } from "../sheet.js";
 import * as overview from "./overview.js";
 import * as pack from "./pack.js";

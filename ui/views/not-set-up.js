@@ -4,7 +4,7 @@
  * first, or the catalog; `/rerail-start` in a coding agent session does the same from there.
  */
 import { h, setContent, icon } from "../dom.js";
-import { ui, repoName } from "../state.js";
+import { ui, repoName } from "../data/state.js";
 import { writes } from "../shell.js";
 
 export const needs = [];

@@ -3,7 +3,7 @@
  * do there, and the way back to the repositories Rerail has seen.
  */
 import { h, setContent } from "../dom.js";
-import { ui } from "../state.js";
+import { ui } from "../data/state.js";
 import { showRepository } from "../shell.js";
 
 export const needs = [];

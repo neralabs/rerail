@@ -4,7 +4,7 @@
  * and order. Nothing here touches the DOM.
  */
 import { categoryLabel, isRunning } from "./derive.js";
-import { activityOf, fires, matches, ruleSections, titleOf, ui } from "./state.js";
+import { activityOf, fires, matches, ruleSections, titleOf, ui } from "../data/state.js";
 
 /** The Filter select of a pack page: `ui.filter` values `matches()` reads. */
 export const PAGE_FILTERS = [["all", "All rules"], ["on", "On"], ["off", "Off"], ["fired", "Has violations"]];

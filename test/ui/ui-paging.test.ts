@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadEarlier, loadMoreFindings, loadSession, loadSessionFindings, refresh, refreshNow, setNeeds } from "../../ui/poll.js";
-import { placeCorrections, sessionCorrections, sessionTurns } from "../../ui/sessions-model.js";
-import { data, pagedList, setScope, ui, type Violation } from "../../ui/state.js";
+import { loadEarlier, loadMoreFindings, loadSession, loadSessionFindings, refresh, refreshNow, setNeeds } from "../../ui/data/poll.js";
+import { placeCorrections, sessionCorrections, sessionTurns } from "../../ui/model/sessions-model.js";
+import { data, pagedList, setScope, ui, type Violation } from "../../ui/data/state.js";
 import { currentNeeds } from "../../ui/views/index.js";
 
 /** How the test daemon answers one GET: the body, a `Response` (another status), or a promise of either. */

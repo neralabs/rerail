@@ -8,12 +8,12 @@
  */
 import { h, setContent, icon } from "../dom.js";
 import { failed, fmt, plural } from "../format.js";
-import { isRerailPack, isRunning, isWorktreePack, publisherLabel } from "../derive.js";
-import { data, ui, isAttached, repoName, stateHere, isSetUp, keptPacks, runningCount } from "../state.js";
-import { loadRecommendations } from "../poll.js";
+import { isRerailPack, isRunning, isWorktreePack, publisherLabel } from "../model/derive.js";
+import { data, ui, isAttached, repoName, stateHere, isSetUp, keptPacks, runningCount } from "../data/state.js";
+import { loadRecommendations } from "../data/poll.js";
 import { invalidate, toast } from "../shell.js";
 import { commonActions, keepPack } from "../actions.js";
-import { catalogKinds, catalogPacks } from "../pack-model.js";
+import { catalogKinds, catalogPacks } from "../model/pack-model.js";
 import { packAction, packIcon, packKind, removePackControl } from "../render/pack-panel.js";
 
 export const needs = ["rules", "packs", "activity"];

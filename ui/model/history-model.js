@@ -2,7 +2,7 @@
  * History by rule: which rules it lists (under its All · Steered · Logged chips), which one it shows, and what it says
  * when there is nothing to list. `poll.js` reads `historyRuleId` to fetch that rule's violations in range.
  */
-import { data, ui, sinceFor, titleOf, attachedPackOf, packOfRule } from "./state.js";
+import { data, ui, sinceFor, titleOf, attachedPackOf, packOfRule } from "../data/state.js";
 import { isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN } from "./derive.js";
 
 /** History by rule's chips: the `ui.histOutcome` value and its label. */

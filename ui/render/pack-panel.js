@@ -6,9 +6,9 @@
  */
 import { h, setContent, icon, searchIcon } from "../dom.js";
 import { fmt, plural } from "../format.js";
-import { awaitingApproval, categoryLabel, inPack, isRerailPack, isWorktreePack, MODE_LABEL, packSuppressions, publisherLabel } from "../derive.js";
-import { data, ui, isAttached, keptPacks, reviewing, repoName } from "../state.js";
-import { SHEET_FILTER_AT, sheetRules } from "../pack-model.js";
+import { awaitingApproval, categoryLabel, inPack, isRerailPack, isWorktreePack, MODE_LABEL, packSuppressions, publisherLabel } from "../model/derive.js";
+import { data, ui, isAttached, keptPacks, reviewing, repoName } from "../data/state.js";
+import { SHEET_FILTER_AT, sheetRules } from "../model/pack-model.js";
 import { changeOwner } from "../shell.js";
 
 /** Whether the pack is on where its button shows: kept, during the review of a repository not set up yet; else added. */

@@ -4,8 +4,8 @@
  */
 import { h, setAttr, setText, setClass, syncChildren } from "../dom.js";
 import { fmt, plural, whenLabel } from "../format.js";
-import { INTERNAL_TESTING, isInternalTesting, isLog, isRunning } from "../derive.js";
-import { data, isMeasured, isAudited, fires, allFires, activityOf, activityAllOf, rangeLabel, titleOf, panelRuleId } from "../state.js";
+import { INTERNAL_TESTING, isInternalTesting, isLog, isRunning } from "../model/derive.js";
+import { data, isMeasured, isAudited, fires, allFires, activityOf, activityAllOf, rangeLabel, titleOf, panelRuleId } from "../data/state.js";
 
 export const CREATE_COMMAND = "/rerail-create";
 

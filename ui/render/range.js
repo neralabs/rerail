@@ -3,7 +3,7 @@
  * action (`actions.js`).
  */
 import { h, setAttr } from "../dom.js";
-import { RANGES, ui } from "../state.js";
+import { RANGES, ui } from "../data/state.js";
 
 export function rangeControl() {
   return h("div.rangectl", { role: "group", "aria-label": "Time range" },

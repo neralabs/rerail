@@ -3,8 +3,8 @@
  * `render/pack-panel.js`. Its own actions (the rule sheet's own are `ruleSheetActions`), and what a poll loads while
  * it is open.
  */
-import { ui } from "./state.js";
-import { packName } from "./attachments.js";
+import { ui } from "./data/state.js";
+import { packName } from "./data/attachments.js";
 import { renderPanel } from "./render/panel.js";
 import { ruleSheetActions } from "./render/rule-sheet-actions.js";
 import { closePanel, invalidate, openRule, writes } from "./shell.js";

@@ -7,10 +7,10 @@
  */
 import { h, setAttr, setClass, setContent, setText, icon } from "../dom.js";
 import { fmt } from "../format.js";
-import { isWorktreePack } from "../derive.js";
-import { data, ui, packById, repoName, totalFires, rangeLabel, fires, filtering, isAttached } from "../state.js";
+import { isWorktreePack } from "../model/derive.js";
+import { data, ui, packById, repoName, totalFires, rangeLabel, fires, filtering, isAttached } from "../data/state.js";
 import { writes } from "../shell.js";
-import { pageKey, pageRules, packSwitch, runningOf, shownRules, switchTurnsOn } from "../pack-model.js";
+import { pageKey, pageRules, packSwitch, runningOf, shownRules, switchTurnsOn } from "../model/pack-model.js";
 import { CREATE_COMMAND, renderRuleTable } from "../render/rules.js";
 import { ruleControls, ruleControlActions, ruleControlInput, ruleControlChange } from "../render/rule-controls.js";
 import { removePackControl } from "../render/pack-panel.js";

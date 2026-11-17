@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { changeScope, saveFollowGitignore } from "../../ui/poll.js";
-import { data } from "../../ui/state.js";
+import { changeScope, saveFollowGitignore } from "../../ui/data/poll.js";
+import { data } from "../../ui/data/state.js";
 
 type Request = { method: string; url: string; body: unknown; answer: (status: number, body?: unknown) => void };
 

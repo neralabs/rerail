@@ -7,9 +7,9 @@
  */
 import { send } from "./api.js";
 import { data } from "./state.js";
-import { inPack, packSettingDecides } from "./derive.js";
+import { inPack, packSettingDecides } from "../model/derive.js";
 import { captureScope, inScope, refetch, refreshNow } from "./poll.js";
-import { failed as failedText } from "./format.js";
+import { failed as failedText } from "../format.js";
 
 const SETTINGS = "/api/repository/settings";
 /** A failed write's toast when the action names no failure of its own. */

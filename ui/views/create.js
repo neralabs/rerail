@@ -4,9 +4,9 @@
  * repository that are not added yet; with none, the section is left out.
  */
 import { h, setContent, icon } from "../dom.js";
-import { data, ui, repoName } from "../state.js";
+import { data, ui, repoName } from "../data/state.js";
 import { failed } from "../format.js";
-import { loadRecommendations } from "../poll.js";
+import { loadRecommendations } from "../data/poll.js";
 import { invalidate, toast } from "../shell.js";
 import { CREATE_COMMAND } from "../render/rules.js";
 

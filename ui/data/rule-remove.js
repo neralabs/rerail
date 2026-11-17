@@ -5,11 +5,11 @@
  * (`ruleundo`) adds the same attachments back.
  */
 import { data, repoName, titleOf } from "./state.js";
-import { failed as failedText } from "./format.js";
+import { failed as failedText } from "../format.js";
 import { send } from "./api.js";
 import { captureScope, inScope, queueInScope, refreshNow } from "./poll.js";
-import { closePanel, toast } from "./shell.js";
-import { libraryAttachments } from "./render/rule-sheet-model.js";
+import { closePanel, toast } from "../shell.js";
+import { libraryAttachments } from "../render/rule-sheet-model.js";
 
 const ATTACHMENTS = "/api/repository/attachments";
 

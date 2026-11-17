@@ -6,12 +6,12 @@
  */
 import { h, setAttr, setText, setContent, syncChildren, icon } from "../dom.js";
 import { fmt, plural, dayLabel, daysAgo, shortSessionId, whenLabel } from "../format.js";
-import { data, ui, ALL_TIME, rangeLabel, allFires, activityAllOf } from "../state.js";
-import { MODE_LABEL, ruleMode, messageText } from "../derive.js";
-import { loadMoreFindings, refreshNow } from "../poll.js";
+import { data, ui, ALL_TIME, rangeLabel, allFires, activityAllOf } from "../data/state.js";
+import { MODE_LABEL, ruleMode, messageText } from "../model/derive.js";
+import { loadMoreFindings, refreshNow } from "../data/poll.js";
 import { invalidate, loadMore } from "../shell.js";
 import { rangeControl, syncRange } from "../render/range.js";
-import { OUTCOME_CHIPS, inRange, rankedRules, filterRanked, historyRuleId, historyTitle, historyOrigin, historyEmpty } from "../history-model.js";
+import { OUTCOME_CHIPS, inRange, rankedRules, filterRanked, historyRuleId, historyTitle, historyOrigin, historyEmpty } from "../model/history-model.js";
 
 export const needs = ["rules", "packs", "activity", "findings"];
 

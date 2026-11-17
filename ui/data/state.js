@@ -3,8 +3,8 @@
  * `sheet.js`, the frame and each view's own actions) write `ui` and optimistic `data`, and `poll.js` writes fetches.
  * Rules are keyed by id so a poll can patch the row that changed and nothing else.
  */
-import { isFromPack, isRunning, packOriginName, ruleTitle, rulePrefix, scopeText } from "./derive.js";
-import { startOfDay } from "./format.js";
+import { isFromPack, isRunning, packOriginName, ruleTitle, rulePrefix, scopeText } from "../model/derive.js";
+import { startOfDay } from "../format.js";
 
 /**
  * The repository the page shows, from `?repository=<key>&checkout=<path>` (either names it; the checkout also

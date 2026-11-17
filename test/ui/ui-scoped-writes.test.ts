@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { captureScope, changeScope, inScope, queueInScope, recommendationsFor, sendInScope } from "../../ui/poll.js";
-import { data, keptPacks, setScope, ui } from "../../ui/state.js";
-import { attachmentWrites } from "../../ui/attachments.js";
+import { captureScope, changeScope, inScope, queueInScope, recommendationsFor, sendInScope } from "../../ui/data/poll.js";
+import { data, keptPacks, setScope, ui } from "../../ui/data/state.js";
+import { attachmentWrites } from "../../ui/data/attachments.js";
 
 type Request = { method: string; url: URL; body: unknown; answer: (status: number, body?: unknown) => void };
 

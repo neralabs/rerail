@@ -3,9 +3,9 @@
  * so it asks for one, listing every repository Rerail has seen with what it holds.
  */
 import { h, setContent, icon } from "../dom.js";
-import { data } from "../state.js";
+import { data } from "../data/state.js";
 import { invalidate } from "../shell.js";
-import { loadRepoRuleCounts } from "../repo-rule-counts.js";
+import { loadRepoRuleCounts } from "../data/repo-rule-counts.js";
 import { repoHint, repoMeta, repoOption } from "../render/repos.js";
 
 export const needs = [];

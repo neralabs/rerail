@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { changeScope, toStoredRules, type StoredRule } from "../../ui/poll.js";
-import { data } from "../../ui/state.js";
-import { inPack, packSuppressions } from "../../ui/derive.js";
-import { settingWrites } from "../../ui/settings-writes.js";
+import { changeScope, toStoredRules, type StoredRule } from "../../ui/data/poll.js";
+import { data } from "../../ui/data/state.js";
+import { inPack, packSuppressions } from "../../ui/model/derive.js";
+import { settingWrites } from "../../ui/data/settings-writes.js";
 
 type Request = { method: string; body: unknown; answer: (status: number, body?: unknown) => void };
 

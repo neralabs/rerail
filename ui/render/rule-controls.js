@@ -5,9 +5,9 @@
  * its input and change events to `ruleControlInput`/`ruleControlChange`.
  */
 import { h, setAttr, setClass, searchIcon } from "../dom.js";
-import { ui } from "../state.js";
+import { ui } from "../data/state.js";
 import { invalidate } from "../shell.js";
-import { PAGE_FILTERS, PAGE_SORTS } from "../pack-model.js";
+import { PAGE_FILTERS, PAGE_SORTS } from "../model/pack-model.js";
 
 let built = null;
 

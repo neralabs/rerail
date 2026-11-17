@@ -6,11 +6,11 @@
  */
 import { h } from "./dom.js";
 import { failed } from "./format.js";
-import { settingWrites } from "./settings-writes.js";
-import { attachmentWrites } from "./attachments.js";
-import { data, ui, panelRuleId, readScope, setScope, repoName, packById, packRuleOf, isAttached } from "./state.js";
-import { isWorktreePack } from "./derive.js";
-import { refreshNow, changeScope } from "./poll.js";
+import { settingWrites } from "./data/settings-writes.js";
+import { attachmentWrites } from "./data/attachments.js";
+import { data, ui, panelRuleId, readScope, setScope, repoName, packById, packRuleOf, isAttached } from "./data/state.js";
+import { isWorktreePack } from "./model/derive.js";
+import { refreshNow, changeScope } from "./data/poll.js";
 import { bootRoute, parseRoute, repositoryUrl, urlFor } from "./routes.js";
 import { resetPanelScroll } from "./render/panel.js";
 

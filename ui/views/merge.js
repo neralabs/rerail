@@ -17,15 +17,15 @@
  */
 import { h, icon, setAttr, setContent, setText, syncChildren } from "../dom.js";
 import { ago, failed, fmt, plural, stamp } from "../format.js";
-import { data, ui, repoName } from "../state.js";
-import { captureScope, inScope, mergeAssistMark, mergeAssistReadAfter, writeMergeAssist } from "../poll.js";
+import { data, ui, repoName } from "../data/state.js";
+import { captureScope, inScope, mergeAssistMark, mergeAssistReadAfter, writeMergeAssist } from "../data/poll.js";
 import { invalidate, renderNow, toast } from "../shell.js";
 import {
   HOOK_TIMEOUT_DEFAULT, HOOK_TIMEOUT_MAX, QUIET_TEXT, TOLD_TEXT,
   branchText, conflictSections, dismissToast, githubText, hookFailure, hunkLines, quoted, readinessChecks,
   refocusIndex, safePeerUrl, scanSummary, scannedWhat, settingsChange, settingsDraft, settingsSummary, sideHeading,
   writeError,
-} from "../merge-model.js";
+} from "../model/merge-model.js";
 
 export const needs = ["mergeAssist"];
 

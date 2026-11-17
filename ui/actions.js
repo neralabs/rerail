@@ -4,14 +4,14 @@
  * range). A click looks up its region's own actions first (the current view's, the sheet's or the frame's), then
  * these. Each is `(id, element) => void`, `id` being the element's `data-i`.
  */
-import { send } from "./api.js";
-import { data, ui, titleOf, packOfRule, packById, rulesArray, reviewing } from "./state.js";
-import { refreshNow } from "./poll.js";
+import { send } from "./data/api.js";
+import { data, ui, titleOf, packOfRule, packById, rulesArray, reviewing } from "./data/state.js";
+import { refreshNow } from "./data/poll.js";
 import { failed } from "./format.js";
-import { packName } from "./attachments.js";
+import { packName } from "./data/attachments.js";
 import { parseRoute } from "./routes.js";
 import { closePanel, copyText, go, invalidate, openPack, openRule, showRepository, toast, writes } from "./shell.js";
-import { restoreRule } from "./rule-remove.js";
+import { restoreRule } from "./data/rule-remove.js";
 
 function toggleRule(id) {
   const stored = data.rules.get(id);

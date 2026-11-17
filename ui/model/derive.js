@@ -2,7 +2,7 @@
  * Page-side derivations from a rule as `toStoredRules` maps it from `GET /api/repository/rules`. Nothing
  * here is persisted; the rule document, its effective `mode`, `origin`, `source` and per-folder states are the inputs.
  */
-import { collapse } from "./format.js";
+import { collapse } from "../format.js";
 
 /** `origin`: "pack" for rules that come in an installed rule pack, "user" for rules created by you (the library). */
 export const isFromPack = stored => stored.origin === "pack";

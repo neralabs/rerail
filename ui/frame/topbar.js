@@ -4,7 +4,7 @@
  * when Rerail knows more than one), and the status. The theme is in Settings → General.
  */
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
-import { data, ui, repoName, stateHere } from "../state.js";
+import { data, ui, repoName, stateHere } from "../data/state.js";
 import { invalidate } from "../shell.js";
 import { repoOption, repoHint } from "../render/repos.js";
 

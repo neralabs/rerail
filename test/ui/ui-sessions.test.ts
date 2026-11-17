@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { lastEventAt, openState, STALE_MIN, violationCounts, type SessionRow } from "../../ui/sessions-model.js";
-import { data } from "../../ui/state.js";
+import { lastEventAt, openState, STALE_MIN, violationCounts, type SessionRow } from "../../ui/model/sessions-model.js";
+import { data } from "../../ui/data/state.js";
 
 const MIN = 60_000;
 const NOW = 1_800_000_000_000;

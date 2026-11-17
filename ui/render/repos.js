@@ -4,9 +4,9 @@
  * whether it was set up, then its rule count (`repo-rules.js`), since set-up can record no rules.
  */
 import { h, icon } from "../dom.js";
-import { data, runningCount } from "../state.js";
-import { repoRuleCounts } from "../repo-rule-counts.js";
-import { repoLine } from "../repo-rules.js";
+import { data, runningCount } from "../data/state.js";
+import { repoRuleCounts } from "../data/repo-rule-counts.js";
+import { repoLine } from "../model/repo-rules.js";
 
 /**
  * `{ total, on }` for repository `repo`: its own rules as last read (`loadRepoRuleCounts`), else for the repository

@@ -3,7 +3,7 @@ import type { MergeAssistStatus } from "../../src/engine/index.js";
 import {
   conflictSections, dismissToast, githubText, hookFailure, hunkLines, openConflictCount, readinessChecks, refocusIndex,
   safePeerUrl, scanSummary, scannedWhat, settingsChange, settingsDraft, settingsSummary, writeError,
-} from "../../ui/merge-model.js";
+} from "../../ui/model/merge-model.js";
 import { sampleStatus } from "../support/merge-assist/status.js";
 import { conflict, dismissed } from "./support/merge-conflicts.js";
 

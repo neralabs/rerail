@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { data, isAudited } from "../../ui/state.js";
-import { violationOutcome } from "../../ui/derive.js";
+import { data, isAudited } from "../../ui/data/state.js";
+import { violationOutcome } from "../../ui/model/derive.js";
 
 const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, rerails: 0 };
 

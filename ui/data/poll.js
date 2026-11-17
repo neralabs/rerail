@@ -8,10 +8,10 @@
  */
 import { get, send } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
-import { toStoredRules } from "./derive.js";
-import { historyRuleId } from "./history-model.js";
-import { promptText } from "./sessions-model.js";
-import { failed } from "./format.js";
+import { toStoredRules } from "../model/derive.js";
+import { historyRuleId } from "../model/history-model.js";
+import { promptText } from "../model/sessions-model.js";
+import { failed } from "../format.js";
 
 export { toStoredRules };
 

@@ -7,10 +7,10 @@
  */
 import { h, setContent, icon } from "../dom.js";
 import { fmt, plural } from "../format.js";
-import { isRunning } from "../derive.js";
-import { data, ui, ruleSections, repoName } from "../state.js";
+import { isRunning } from "../model/derive.js";
+import { data, ui, ruleSections, repoName } from "../data/state.js";
 import { packIcon } from "../render/pack-panel.js";
-import { openConflictCount } from "../merge-model.js";
+import { openConflictCount } from "../model/merge-model.js";
 
 /** A section's rules that run, of all of them: "24/71" in the item, "24 of 71 rules on" as its tooltip and accessible name. */
 function onCount(section) {

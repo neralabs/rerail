@@ -6,9 +6,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRerailApi, DatabaseApiStores, operations } from "../../src/api/index.js";
 import { type RuleCatalog, PACKAGE_ROOT, readRuleCatalog, recordCheckout, ruleSettings, setUpRepository } from "../../src/engine/index.js";
-import { toStoredRules } from "../../ui/poll.js";
-import { isRunning } from "../../ui/derive.js";
-import { data, matches, runningCount, ui } from "../../ui/state.js";
+import { toStoredRules } from "../../ui/data/poll.js";
+import { isRunning } from "../../ui/model/derive.js";
+import { data, matches, runningCount, ui } from "../../ui/data/state.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 const RULE = "typescript-eslint-consistent-type-definitions";
