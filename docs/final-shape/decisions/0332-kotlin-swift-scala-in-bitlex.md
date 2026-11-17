@@ -145,6 +145,28 @@ Step 5 reads callable references and trailing commas.
 Corpus: 21 the same, 470 refused, 0 differ. The refusals: the grammar 209, `${…}` 90, numbers
 80, raw strings 31, `;` 30, accessors 18, others 12.
 
+## Kotlin, step 6 (`06-lambdas.bitlex`)
+
+Step 6 reads lambdas and trailing lambdas.
+
+- **The tape.** A `lambda_literal` has its braces implied and keeps its parameters' `->`.
+  Without parameters, `{ -> 1 }` keeps its `{` too: that isn't the implied word. Its
+  `lambda_parameters` are `variable_declaration`s.
+- **Trailing lambdas.** After a call's arguments, or alone after an operand, a lambda is an
+  `annotated_lambda` in the call's `call_suffix`.
+- **Three marks at the `{` tell the readings apart.**
+  - `blk` is a token mark: a `{` after `)`, `else`, `do`, `try` or `finally`.
+    - Where a control structure's body goes, it is a block, as the lean parser reads it.
+    - After a call's arguments, it is that call's lambda, not a new call's. Without the mark,
+      `f(1) { }` had two LL(1) readings.
+  - `lam_params` and `lam_bare` are mask marks for a lambda with parameters or with a bare `->`.
+    From the `{`, they fill the bytes that parameters are made of (the lean parser's
+    `lambda_params_end`), and the byte after the fill must start `->`.
+- **Refused for now:** destructured parameters and a trailing comma after the parameters.
+
+Corpus: 32 the same, 459 refused, 0 differ. The corpus test now names, for a grammar refusal,
+the text at the furthest token the reference evaluator reached (`bitlex::tree` reports it).
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
@@ -249,7 +271,8 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
 
 ## Next
 
-Kotlin's ladder goes on. Next: `${…}` templates (a region whose
+Kotlin's ladder goes on. Next: `when`, `try`, `init` and `companion object`, file
+annotations, extension receivers, then `${…}` templates (a region whose
 code nests: a count of braces), `::`, numbers, then lambdas, `when` and `try`, then enums,
 companions, accessors and the remaining operators. Swift and Scala start the same way, in their own crates: their step 1 is
 imports and comments, with Scala's comment kinds `comment` and `block_comment`.

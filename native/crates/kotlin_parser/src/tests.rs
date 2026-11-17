@@ -153,8 +153,26 @@ fn trailing_commas_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 6: lambdas.
 #[test]
-fn what_step_5_does_not_read_is_refused() {
+fn lambdas_are_the_lean_parsers() {
+    same(&[
+        "val a = { x }\n",
+        "val b = { x: Int, y -> x + y }\n",
+        "val c = f { it }\n",
+        "val d = f(1) { a ->\n    g(a)\n    h()\n}\n",
+        "val e = { }\n",
+        "val g = { -> 1 }\n",
+        "fun f() {\n    if (x) { g() }\n    while (y) {\n        h()\n    }\n    list.forEach { println(it) }\n}\n",
+        "val h = a.map { it * 2 }.filter { it > 1 }\n",
+        "val i = f<T> { x }\n",
+        "val j = f()\n    { x }\n",
+        "fun f() { a.forEach { it } }\n",
+    ]);
+}
+
+#[test]
+fn what_step_6_does_not_read_is_refused() {
     refused(&[
         "val a = b to f<T>()\n",
         "val a = x + f<T>(1)\n",
@@ -168,7 +186,8 @@ fn what_step_5_does_not_read_is_refused() {
         "val s = \"open\n",
         "/* /* nested */ */\npackage a\n",
         "/* open\n",
-        "fun f() { a.forEach { it } }\n",
+        "val f = { (a, b) -> a }\n",
+        "val f = { a, -> a }\n",
         "val x = when (y) { else -> 1 }\n",
         "val x = 1L\n",
         "val x = y as Z\n",
@@ -207,7 +226,18 @@ fn corpus() {
                     let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
                     let tables = Default::default();
                     let why = match ::bitlex::eval::Ev::run(&stmts, text.as_bytes(), &tables) {
-                        Ok(out) => out.errors.first().map(|e| e.split(" (byte").next().unwrap_or(e).to_string()).unwrap_or_else(|| "the grammar".into()),
+                        Ok(out) => match out.errors.first() {
+                            Some(e) => e.split(" (byte").next().unwrap_or(e).to_string(),
+                            // The tree's: the text at the furthest token it reached.
+                            None => match out.tree.as_ref().map(|t| ::bitlex::tree::nodes(t, &out.tokens, text.len())) {
+                                Some(Err(e)) => {
+                                    let at = e.rsplit("at byte ").next().and_then(|n| n.trim_end_matches(')').parse::<usize>().ok());
+                                    let near = at.map(|a| text[a..].chars().take(24).collect::<String>().replace('\n', "⏎")).unwrap_or_default();
+                                    format!("the grammar: `{near}`")
+                                }
+                                _ => "the grammar".into(),
+                            },
+                        },
                         Err(e) => format!("eval: {e:?}"),
                     };
                     eprintln!("refused: {why} | {}", p.display());
