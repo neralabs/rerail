@@ -197,13 +197,11 @@ to 5% between runs, the fixed cost of a run most of all. Only the farm's figures
 
 ## Open
 
-- **Names are now the lexer's largest cost**: about 35 instructions of word hash and 30 for the
-  run's end, for every name. A name's word code could be computed only where the parser asks for
-  a keyword. The parser asks often, so this needs counting first.
-- **Cycles: 39 a token against the floor's 4** (44 before the steps above). At about 2.7 instructions a cycle, the gap is
-  branches: the per-token choice between table, name, number and the rest depends on the data.
-  simdjson's stage 2 branches a token too; a table of the start byte's class (one indirect jump)
-  is the next form to measure.
+- **Cycles: 39 a token against the floor's 4** (44 before the steps above). At about 2.7
+  instructions a cycle, the gap is branches: the per-token choice between punctuator, name,
+  string and the rest depends on the data. One path for every token cost far more (above).
+  `LEAD`'s class taken by one indirect jump, as simdjson's stage 2 takes its byte, is not
+  measured yet.
 - **Strings and comments** (142 and 128 instructions) are read by the micro-lexers. Page 36's region
   walk would take them off the masks, but that needs stage 1's stop masks back for every block,
   for 3% of the tokens.
