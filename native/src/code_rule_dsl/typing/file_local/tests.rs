@@ -599,7 +599,7 @@ fn a_located_rule_keeps_its_branded_atoms() {
     let want = locate(&mut tree);
     assert_eq!(want, Ok(vec!["named".to_owned()]));
     assert_eq!(pass.result(), want);
-    let keeps = |l: &Literal| matches!(l, Literal::Atom(a) if a.rel.as_str() == "node" && a.args.iter().any(|t| *t == Term::Branded(kind)));
+    let keeps = |l: &Literal| matches!(l, Literal::Atom(a) if a.rel.as_str() == "node" && a.args.contains(&Term::Branded(kind)));
     assert!(tree.rules.iter().any(|r| r.head.rel.as_str() == "named_at" && r.body.iter().any(keeps)), "the tree's located rule keeps it");
     let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
     assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
