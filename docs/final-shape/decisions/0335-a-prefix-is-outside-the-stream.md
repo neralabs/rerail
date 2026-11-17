@@ -91,7 +91,7 @@ Both evaluators call it.
   a rule's mask could reach back from the stream's first bytes into the
   prefix, so such a mask keeps its cut. With the cut, JSON's run word (a
   call a number token) tested the window's position every token: numbers
-  took 51.5 instructions a byte, not 49.8.
+  took 51.5 instructions a byte, not 50.0.
 - **The records** carry the prefix (`Records::prefix`, `recprefix K B…` in
   the program's text, so the digest covers it).
   - The reference loop (`records::walk`) starts at `Records::start`.
@@ -110,14 +110,14 @@ It is the bound for this change.
 
 | Input | 0330 | Now | `skip ws` alone | simdjson |
 |---|---|---|---|---|
-| Corpus (12 files) | 36.5 | 29.2 | 28.7 | 2.9 |
-| Long ASCII strings | 19.0 | 15.7 | 15.4 | 2.15 |
-| Long UTF-8 strings | 23.3 | 19.9 | 19.6 | 3.26 |
-| White space | 22.5 | 15.8 | 15.4 | 2.15 |
-| Numbers | 56.4 | 49.8 | 49.5 | 4.51 |
-| Short strings | 77.9 | 71.6 | 70.8 | 4.51 |
+| Corpus (12 files) | 36.5 | 29.4 | 28.7 | 2.9 |
+| Long ASCII strings | 19.0 | 15.8 | 15.4 | 2.15 |
+| Long UTF-8 strings | 23.3 | 20.1 | 19.6 | 3.26 |
+| White space | 22.5 | 16.0 | 15.4 | 2.15 |
+| Numbers | 56.4 | 50.0 | 49.5 | 4.51 |
+| Short strings | 77.9 | 71.8 | 70.8 | 4.51 |
 
-**What is left of the prefix:** 0.3 to 0.8 instructions a byte, in the
+**What is left of the prefix:** 0.4 to 1.0 instructions a byte, in the
 block masks. A class cut by `P` is a mask operation, so it leaves the
 vectors. A class that was combined with others there (`lead2 | lead3 |
 lead4`) then takes a movemask of its own. A full block knows `P` is zero,
