@@ -3231,6 +3231,12 @@ fn run_observed(
             &own_store
         }
     };
+    // The run's guests' keys (decision 0323): the store's, read before the first wave, which find and claim them in
+    // memory; without a store, the run's own, shared by its chunks.
+    let guest_keys = match tapes.as_ref() {
+        Some(cache) => cache.guest_keys().map_err(|e| Error::Plan(e.to_string()))?,
+        None => crate::content_store::guest_keys::GuestKeys::in_memory(),
+    };
     // `shortlex_min<>` orders the run's symbols by their text: the store's atoms (decision 0108).
     crate::code_rule_dsl::logic::native::declare("shortlex_min", Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
     let db = {
@@ -5589,7 +5595,7 @@ fn run_observed(
             Some(slice) if !documents.is_empty() => {
                 let _guests = crate::code_rule_dsl::logic::profile::span(|| "guests".into());
                 let documents_len = documents.len();
-                let (mut docs, mut sources, mut made) = (documents, sources, guests::Guests::new(label, projection.shape));
+                let (mut docs, mut sources, mut made) = (documents, sources, guests::Guests::new(label, projection.shape, Arc::clone(&guest_keys)));
                 // The slice's planner statistics: what it reads, measured once, in the first round's batch. A later
                 // round adds only the guests' rows, which are few beside the files' (each measurement sorts a column).
                 let mut measured: BTreeMap<String, Vec<(String, i64, i64, i64, i64)>> = BTreeMap::new();
@@ -7255,6 +7261,10 @@ fn run_observed(
     // after the cross-file part: published then, the lease held until. So with a durable store: the cross part's
     // key (`part_keys`) is known only once it runs, and the manifest is what keeps its frames (decision 0227). Named
     // before it, a phase's or phase 0's cross part was named by no manifest, and collected after every cold run.
+    // The guests' keys the run claimed, in its record (decision 0323), before the manifest's item.
+    if recording && let Some(cache) = tapes.as_ref() {
+        cache.record_guest_keys();
+    }
     let mut publish_later = None;
     let mut collecting = if recording && cross_plan.is_none() && durable.is_none() {
         record_run(store, root, &run_sources, &memo_program, &program_plans.iter().chain(&nested_plans).chain(part_keys.lock().expect("the parts' keys").iter()).copied().collect::<Vec<_>>(), Some(lane), policy, &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?

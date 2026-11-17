@@ -761,6 +761,9 @@ CREATE TABLE IF NOT EXISTS memo_entries(space BLOB NOT NULL, part INTEGER NOT NU
 CREATE INDEX IF NOT EXISTS memo_entries_by_path ON memo_entries(space, path, pack, at);
 -- The segments (and packs before) the entries are in.
 CREATE TABLE IF NOT EXISTS memo_packs(pack INTEGER PRIMARY KEY);
+-- Each guest's key (decision 0323): one row per identity (a SHA-256 of its range and parts), its key unique, its host
+-- file (a value's first asker).
+CREATE TABLE IF NOT EXISTS guest_keys(identity BLOB PRIMARY KEY, key INTEGER NOT NULL UNIQUE, path TEXT NOT NULL) WITHOUT ROWID;
 "#;
 
 impl ContentStore {

@@ -23,6 +23,7 @@ pub use connection::sqlite_on_jemalloc;
 mod cross_rows;
 mod derivation;
 mod frames;
+pub mod guest_keys;
 mod object_segments;
 mod segments;
 mod facts_memo;

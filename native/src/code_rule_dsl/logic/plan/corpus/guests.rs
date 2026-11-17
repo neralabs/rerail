@@ -28,6 +28,7 @@
 use crate::code_rule_dsl::facts::core::{self, Built};
 use crate::code_rule_dsl::facts::vtab::syntax::{self, Document, Guest, Made, Placement};
 use crate::content_store::ContentStore;
+use crate::content_store::guest_keys::GuestKeys;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -138,7 +139,9 @@ fn grammar(name: &str) -> Option<(&'static str, bool)> {
 /// positive: a function of what it is (a guest's host path, place and grammar), so a memoised row's guest nodes keep
 /// their ids. A code guest in the run's language takes `GUEST_KEYS..ANNOTATION_KEYS`, which a policy shows; an
 /// annotation `ANNOTATION_KEYS..HIDDEN_KEYS`; every other document `HIDDEN_KEYS..2^31` (decision 0058 §1).
-fn key(parts: &[&[u8]], range: Range, taken: &mut HashSet<u32>) -> u32 {
+/// A key's range (its base and span), the place in it its parts hash to, and the guest's identity (decision 0323):
+/// a SHA-256 of the range and the parts.
+fn first_key(parts: &[&[u8]], range: Range) -> (u32, u32, u32, [u8; 32]) {
     use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, GUEST_KEYS, HIDDEN_KEYS};
     let (base, end) = match range {
         Range::Code => (GUEST_KEYS, ANNOTATION_KEYS),
@@ -152,11 +155,8 @@ fn key(parts: &[&[u8]], range: Range, taken: &mut HashSet<u32>) -> u32 {
         h.update(p);
     }
     let hash: [u8; 32] = h.finalize().into();
-    let mut k = u32::from_le_bytes(hash[..4].try_into().expect("4 bytes")) % span;
-    while !taken.insert(base + k) {
-        k = (k + 1) % span;
-    }
-    base + k
+    let identity: [u8; 32] = Sha256::new().chain_update(base.to_le_bytes()).chain_update(hash).finalize().into();
+    (base, span, u32::from_le_bytes(hash[..4].try_into().expect("4 bytes")) % span, identity)
 }
 
 /// Which keys a document takes (`key`).
@@ -258,7 +258,7 @@ pub fn markdown_inline_text(f: &core::Facts, id: u32) -> (String, Placement) {
 }
 
 /// The guests' makers' state for one chunk: the run's language and shape, the hosts' numberings, the guests made, and
-/// the keys taken.
+/// the run's guest keys (the store's, decision 0323).
 #[derive(Default)]
 pub(super) struct Guests {
     run: &'static str,
@@ -267,7 +267,7 @@ pub(super) struct Guests {
     numbering: HashMap<u32, syntax::Numbering>,
     made: HashSet<(i64, String)>,
     asked: HashSet<Request>,
-    taken: HashSet<u32>,
+    keys: Arc<GuestKeys>,
     /// Each guest's host file (`memo` attributes a guest's rows to it).
     pub(super) host_of: HashMap<i64, i64>,
     /// Each value made, by grammar and what made it: its key. A value is one per text in a chunk.
@@ -279,9 +279,17 @@ pub(super) struct Guests {
 }
 
 impl Guests {
-    /// For a run over `run`'s files (a dialect label) in `shape`.
-    pub(super) fn new(run: &'static str, shape: syntax::Shape) -> Self {
-        Self { run, shape, ..Self::default() }
+    /// For a run over `run`'s files (a dialect label) in `shape`, whose guests' keys are `keys` (read before the
+    /// first wave: `ContentStore::guest_keys`, or `GuestKeys::in_memory` without a store).
+    pub(super) fn new(run: &'static str, shape: syntax::Shape, keys: Arc<GuestKeys>) -> Self {
+        Self { run, shape, keys, ..Self::default() }
+    }
+
+    /// The key of a document hashed from `parts` in `range`, whose host file (a value's first asker) is `path`.
+    /// Another document of the run has another key: the run's registry's, which every chunk shares.
+    fn key_for(&mut self, parts: &[&[u8]], range: Range, path: &str) -> u32 {
+        let (base, span, first, identity) = first_key(parts, range);
+        self.keys.key(identity, base, span, first, path)
     }
 
     /// Each value document's files.
@@ -381,7 +389,7 @@ impl Guests {
             (true, true) => Range::Annotation,
             (false, _) => Range::Hidden,
         };
-        let key = key(&[host.path.as_bytes(), &at.to_le_bytes(), grammar_name.as_bytes()], range, &mut self.taken);
+        let key = self.key_for(&[host.path.as_bytes(), &at.to_le_bytes(), grammar_name.as_bytes()], range, &host.path);
         self.host_of.insert(i64::from(key), self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key)));
         let in_file = host.guest.as_ref().map_or_else(|| place.clone(), |h| h.in_file.then(place.clone()));
         Ok(Some(Document {
@@ -414,7 +422,7 @@ impl Guests {
         let place = Placement::Segments(Arc::new(program.segments));
         let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text, cache)? else { return Ok(None) };
         let range = if label == self.run { Range::Code } else { Range::Hidden };
-        let key = key(&[host.path.as_bytes(), &at.to_le_bytes(), via.id().as_bytes()], range, &mut self.taken);
+        let key = self.key_for(&[host.path.as_bytes(), &at.to_le_bytes(), via.id().as_bytes()], range, &host.path);
         self.host_of.insert(i64::from(key), self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key)));
         let in_file = host.guest.as_ref().map_or_else(|| place.clone(), |h| h.in_file.then(place.clone()));
         Ok(Some(Document {
@@ -443,7 +451,7 @@ impl Guests {
         let path = path.as_str();
         let (text, _) = if wrap { wrapped(text, Placement::At([0, 0])) } else { (text, Placement::At([0, 0])) };
         let Some((facts, root, digest)) = parse(path, label, wrap, text, cache)? else { return Ok(None) };
-        let key = key(&[b"value", grammar_name.as_bytes(), identity.as_bytes()], Range::Hidden, &mut self.taken);
+        let key = self.key_for(&[b"value", grammar_name.as_bytes(), identity.as_bytes()], Range::Hidden, path);
         self.values.insert((known_as, identity), i64::from(key));
         self.files.insert(i64::from(key), files);
         Ok(Some(Document {
@@ -596,4 +604,37 @@ fn wrapped_root(f: &core::Facts, label: &str) -> u32 {
         Some(e)
     })();
     path.unwrap_or(first)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two hosts' annotations whose identities hash to one key, made in two chunks of a run: two keys, and the first
+    /// identity's key again in a third chunk (decision 0323). Before, each chunk probed only its own keys.
+    #[test]
+    fn two_chunks_guests_that_hash_alike_take_two_keys() {
+        let parts = |p: &str| [p.as_bytes().to_vec(), 0i64.to_le_bytes().to_vec(), b"annotation".to_vec()];
+        // A birthday search over host paths: two whose annotation at 0 hashes to one key.
+        let mut seen: HashMap<u32, String> = HashMap::new();
+        let (a, b) = (0..)
+            .map(|i| format!("f{i}.py"))
+            .find_map(|p| {
+                let [x, y, z] = parts(&p);
+                let k = first_key(&[&x, &y, &z], Range::Annotation).2;
+                seen.insert(k, p.clone()).map(|q| (q, p))
+            })
+            .expect("a pair");
+        let key = |g: &mut Guests, p: &str| {
+            let [x, y, z] = parts(p);
+            g.key_for(&[&x, &y, &z], Range::Annotation, p)
+        };
+        let keys = GuestKeys::in_memory();
+        let chunk = || Guests::new("python", syntax::Shape::default(), Arc::clone(&keys));
+        let (mut one, mut two, mut three) = (chunk(), chunk(), chunk());
+        let ka = key(&mut one, &a);
+        let kb = key(&mut two, &b);
+        assert_ne!(ka, kb, "{a} and {b} hash alike: one key for two documents");
+        assert_eq!(key(&mut three, &a), ka, "an identity keeps its key");
+    }
 }
