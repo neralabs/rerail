@@ -41,10 +41,10 @@ describe("the second look for Git", () => {
 
   const gitIn = (folder: string): string => join(folder, GIT);
 
-  /** Removes the Git `git` keeps, then makes a blocking Git call, which looks again; the Git kept after it. */
+  /** Removes the Git `git` keeps, then makes a Git call, which looks again and waits for that look; the Git kept after it. */
   async function lookAgain(git: GitModule): Promise<string> {
     await rm(git.gitExecutable());
-    git.runGit(root, ["--version"]);
+    await git.runGitAsync(root, ["--version"]);
     return git.gitExecutable();
   }
 

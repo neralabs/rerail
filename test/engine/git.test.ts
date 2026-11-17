@@ -803,11 +803,19 @@ describe("gitStartEnvironment", () => {
     expect(started).toEqual({ PATH: [...first("mingw64", "C:\\h"), "C:\\WINDOWS"].join(";"), HOME: "C:\\h", PLINK_PROTOCOL: "plink", MSYSTEM: "MINGW64" });
   });
 
-  it("sets HOME as the launcher does when it is unset: HOMEDRIVE and HOMEPATH when that folder exists, else USERPROFILE", () => {
-    const onShare = gitStartEnvironment(ucrt, person, install(ucrt, share));
-    expect([onShare.HOME, onShare.Path]).toEqual([share, [...first("ucrt64", share), person.Path].join(";")]);
-    const inProfile = gitStartEnvironment(ucrt, person, install(ucrt));
-    expect([inProfile.HOME, inProfile.Path]).toEqual([person.USERPROFILE, [...first("ucrt64", person.USERPROFILE), person.Path].join(";")]);
+  it("leaves an unset HOME to git.exe, which decides it in its own process as the launcher does, and looks at no folder", () => {
+    // HOMEDRIVE and HOMEPATH name a home share: the launcher takes it when that folder exists, else USERPROFILE. Only a
+    // look at the share tells which, and a share that does not answer holds that look about 21 s: Rerail makes none.
+    const asked: string[] = [];
+    const disk = install(ucrt, share);
+    const counted = { ...disk, exists: (path: string) => (asked.push(path), disk.exists(path)), runnable: (path: string) => (asked.push(path), disk.runnable(path)) };
+    const started = gitStartEnvironment(ucrt, person, counted);
+    expect(asked.filter(path => !path.startsWith(git))).toEqual([]);
+    // Both homes' bin on PATH, the share's first: the launcher's is among them, in its place.
+    expect(started).toEqual({ ...person, MSYSTEM: "UCRT64", PLINK_PROTOCOL: "ssh", Path: [...first("ucrt64", share), win32.join(person.USERPROFILE, "bin"), person.Path].join(";") });
+    // In a person's usual environment the two name one folder, whose bin goes on PATH once, whatever its case.
+    const local = { ...person, HOMEDRIVE: "C:", HOMEPATH: win32.join("\\", "users", "ME") };
+    expect(gitStartEnvironment(ucrt, local, install(ucrt)).Path).toBe([...first("ucrt64", win32.join("C:\\", "users", "ME")), person.Path].join(";"));
     const { USERPROFILE: _profile, HOMEPATH: _path, ...bare } = person;
     expect(gitStartEnvironment(ucrt, bare, install(ucrt))).toEqual({ ...bare, MSYSTEM: "UCRT64", PLINK_PROTOCOL: "ssh", Path: [...first("ucrt64"), bare.Path].join(";") });
   });
@@ -815,15 +823,17 @@ describe("gitStartEnvironment", () => {
   it("puts no folder on PATH that Windows finds from the folder Git runs in, the repository, whatever the home variables hold", () => {
     // An empty, relative or drive-relative home, with no profile to fall back on: no home's bin, and HOME as it was.
     // An empty PLINK_PROTOCOL is kept, as the launcher keeps it: only the home and PATH are held to the folder rule.
+    // An empty HOME goes, so git.exe sets it as when unset.
     for (const HOME of ["", "home", win32.join("\\", "people", "me"), "D:home"]) {
       const env = { Path: person.Path, HOME, USERPROFILE: "", PLINK_PROTOCOL: "" };
-      expect(gitStartEnvironment(ucrt, env, install(ucrt)), HOME).toEqual({ ...env, MSYSTEM: "UCRT64", Path: [...first("ucrt64"), person.Path].join(";") });
+      const { HOME: _home, ...unset } = env;
+      expect(gitStartEnvironment(ucrt, env, install(ucrt)), HOME).toEqual({ ...(HOME === "" ? unset : env), MSYSTEM: "UCRT64", Path: [...first("ucrt64"), person.Path].join(";") });
     }
     // An empty HOME or HOMEPATH is unset, as gitHome reads them: HOMEDRIVE alone names the current folder of its drive.
-    for (const empty of [{ HOME: "" }, { HOMEPATH: "" }]) {
-      const started = gitStartEnvironment(ucrt, { ...person, ...empty }, install(ucrt, "H:"));
-      expect([started.HOME, started.Path]).toEqual([person.USERPROFILE, [...first("ucrt64", person.USERPROFILE), person.Path].join(";")]);
-    }
+    const emptyHome = gitStartEnvironment(ucrt, { ...person, HOME: "" }, install(ucrt));
+    expect([emptyHome.HOME, emptyHome.Path]).toEqual([undefined, [...first("ucrt64", share), win32.join(person.USERPROFILE, "bin"), person.Path].join(";")]);
+    const emptyPath = gitStartEnvironment(ucrt, { ...person, HOMEPATH: "" }, install(ucrt, "H:"));
+    expect([emptyPath.HOME, emptyPath.Path]).toEqual([undefined, [...first("ucrt64", person.USERPROFILE), person.Path].join(";")]);
     // An empty USERPROFILE is unset too: with no other home, HOME stays unset.
     const noProfile = { Path: person.Path, USERPROFILE: "" };
     expect(gitStartEnvironment(ucrt, noProfile, install(ucrt))).toEqual({ ...noProfile, MSYSTEM: "UCRT64", PLINK_PROTOCOL: "ssh", Path: [...first("ucrt64"), person.Path].join(";") });
@@ -1245,44 +1255,89 @@ describe("ProcessGit", () => {
     const find = () => ({ path: paths[Math.min(looks++, paths.length - 1)], looked: ["/opt/git/bin/git", "/usr/bin/git"] });
     return { find, looks: () => looks };
   };
+  /** A disk that holds `files`, read in the thread (`now`) and off it (`later`), counting each read in `reads`. */
+  const disks = (files: ReadonlySet<string>, reads = { now: [] as string[], later: [] as string[] }) => {
+    const now = { exists: (path: string) => (reads.now.push(path), files.has(path)), runnable: (path: string) => (reads.now.push(path), files.has(path)), realpath: (path: string) => path, developerDir: () => undefined };
+    const later = { exists: async (path: string) => (reads.later.push(path), await Promise.resolve(files.has(path))), runnable: async (path: string) => (reads.later.push(path), await Promise.resolve(files.has(path))), realpath: async (path: string) => await Promise.resolve(path), developerDir: async () => await Promise.resolve(undefined) };
+    return { now, later, reads };
+  };
+  const nowhere = disks(new Set());
 
-  it("makes its look at the first ask and keeps it and the Git it finds, or says where it looked when none is installed", () => {
+  it("makes its look at the first ask and keeps it and the Git it finds, or says where it looked when none is installed", async () => {
     const search = searches("/opt/git/bin/git", "/usr/bin/git");
     let decided = 0;
     const git = new ProcessGit(() => {
       decided += 1;
       return search.find;
-    });
+    }, nowhere);
     expect(decided).toBe(0);
     expect([git.path(), git.path()]).toEqual(["/opt/git/bin/git", "/opt/git/bin/git"]);
-    expect(git.afterMissing("/opt/git/bin/git")).toBe("/usr/bin/git");
+    await expect(git.afterMissing("/opt/git/bin/git")).resolves.toBe("/usr/bin/git");
     expect([decided, search.looks()]).toEqual([1, 2]);
-    expect(() => new ProcessGit(() => searches(undefined).find).path()).toThrow(GitUnavailableError);
+    expect(() => new ProcessGit(() => searches(undefined).find, nowhere).path()).toThrow(GitUnavailableError);
   });
 
-  it("looks again once the Git it kept is gone, once for every start that failed on it", () => {
+  it("looks again once the Git it kept is gone, once for every start that failed on it", async () => {
     // Git for Windows 2.56 removes the mingw64 git.exe that a process started on 2.55 kept.
     const [before, after] = [String.raw`C:\Program Files\Git\mingw64\bin\git.exe`, win32.join(String.raw`C:\Program Files\Git`, "ucrt64", "bin", "git.exe")];
     const search = searches(before, after);
-    const git = new ProcessGit(() => search.find);
+    const git = new ProcessGit(() => search.find, nowhere);
     expect(git.path()).toBe(before);
-    expect(git.afterMissing(before)).toBe(after);
-    // A start that failed on the same Git at the same time takes the Git found, with no look of its own.
-    expect(git.afterMissing(before)).toBe(after);
+    // Starts that failed on the same Git at the same time wait for one look; one that failed later takes its Git.
+    await expect(Promise.all([git.afterMissing(before), git.afterMissing(before)])).resolves.toEqual([after, after]);
+    await expect(git.afterMissing(before)).resolves.toBe(after);
     expect([git.path(), search.looks()]).toEqual([after, 2]);
   });
 
-  it("keeps the Git it has when the look finds none or the same one, so the next start that fails looks again", () => {
+  it("keeps the Git it has when the look finds none or the same one, so the next start that fails looks again", async () => {
     const search = searches("/opt/git/bin/git", undefined, "/opt/git/bin/git", "/usr/bin/git");
-    const git = new ProcessGit(() => search.find);
+    const git = new ProcessGit(() => search.find, nowhere);
     expect(git.path()).toBe("/opt/git/bin/git");
     // No Git anywhere, as while an installer replaces it: this start fails, and Rerail still has a Git to try.
-    expect(git.afterMissing("/opt/git/bin/git")).toBeUndefined();
+    await expect(git.afterMissing("/opt/git/bin/git")).resolves.toBeUndefined();
     expect(git.path()).toBe("/opt/git/bin/git");
     // The same path, back: the next call starts it, this one does not start it twice.
-    expect(git.afterMissing("/opt/git/bin/git")).toBeUndefined();
-    expect(git.afterMissing("/opt/git/bin/git")).toBe("/usr/bin/git");
+    await expect(git.afterMissing("/opt/git/bin/git")).resolves.toBeUndefined();
+    await expect(git.afterMissing("/opt/git/bin/git")).resolves.toBe("/usr/bin/git");
     expect([git.path(), search.looks()]).toEqual(["/usr/bin/git", 4]);
+  });
+
+  it("looks for Git again off its thread: a folder that does not answer holds the starts waiting for the look, not the thread", async () => {
+    const files = new Set(["/opt/a/bin/git", "/opt/b/bin/git"]);
+    const disk = disks(files);
+    // The share's answer comes only when the test gives it, as a share off the network answers after Windows' wait.
+    const { promise: shareAnswers, resolve: answerShare } = Promise.withResolvers<void>();
+    const later = { ...disk.later, runnable: async (path: string) => (path.startsWith("/mnt/share") ? await shareAnswers.then(() => disk.later.runnable(path)) : await disk.later.runnable(path)) };
+    const look = gitLook({ platform: "linux", home: "/home/me", path: "/opt/a/bin:/mnt/share/bin:/opt/b/bin", cwd: undefined }, disk.now);
+    const git = new ProcessGit(() => look, { now: disk.now, later });
+    expect(git.path()).toBe("/opt/a/bin/git");
+    files.delete("/opt/a/bin/git");
+    disk.reads.now.length = 0;
+    const waiting = [git.afterMissing("/opt/a/bin/git"), git.afterMissing("/opt/a/bin/git")];
+    // The thread turns while the share has not answered, and the look waits there.
+    await new Promise(setImmediate);
+    expect(disk.reads.later).toEqual(["/opt/a/bin/git"]);
+    answerShare();
+    await expect(Promise.all(waiting)).resolves.toEqual(["/opt/b/bin/git", "/opt/b/bin/git"]);
+    // One look for both starts, each folder asked once, in order, and nothing read in the thread.
+    expect([disk.reads.later, disk.reads.now]).toEqual([["/opt/a/bin/git", "/mnt/share/bin/git", "/opt/b/bin/git"], []]);
+  });
+
+  it("starts a Git it kept with the environment its look decided, reading no file", () => {
+    const install = String.raw`C:\Program Files\Git`;
+    const ucrt = win32.join(install, "ucrt64", "bin", "git.exe");
+    const files = new Set([win32.join(install, "cmd", "git.exe"), win32.join(install, "etc", "gitconfig")]);
+    const disk = disks(files);
+    const git = new ProcessGit(() => () => ({ path: ucrt, looked: [win32.join(install, "cmd", "git.exe")] }), disk);
+    expect(git.path()).toBe(ucrt);
+    disk.reads.now.length = 0;
+    // A home share in the environment, as a domain account has: no start looks at it, nor at Git's install.
+    const env = { Path: String.raw`C:\WINDOWS`, HOMEDRIVE: String.raw`\\server\homes`, HOMEPATH: String.raw`\me`, USERPROFILE: String.raw`C:\Users\me` };
+    const expected = gitStartEnvironment(ucrt, env, disk.now);
+    expect(expected.MSYSTEM).toBe("UCRT64");
+    disk.reads.now.length = 0;
+    for (let start = 0; start < 3; start += 1) expect(git.startEnvironment(ucrt, env)).toEqual(expected);
+    expect([disk.reads.now, disk.reads.later]).toEqual([[], []]);
   });
 });
 

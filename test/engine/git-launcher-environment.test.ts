@@ -6,7 +6,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join, win32 } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -91,10 +91,14 @@ describe.runIf(WINDOWS)("Git for Windows' own git.exe started without its launch
     const environment = async (file: string): Promise<Record<string, string>> => Object.fromEntries(
       Object.entries(JSON.parse(await readFile(file, "utf8")) as Record<string, string>).map(([name, value]) => [name.toUpperCase(), value]),
     );
+    // HOMEDRIVE and HOMEPATH name the profile, as in a person's usual environment (the test's profile is a folder of its
+    // own, while HOMEDRIVE and HOMEPATH still name the machine's account).
+    const profile = process.env.USERPROFILE ?? root;
+    const usual = { HOMEDRIVE: profile.slice(0, 2), HOMEPATH: profile.slice(2) };
     const variants: Record<string, string | undefined>[] = [
-      { MSYSTEM: undefined, HOME: undefined, PLINK_PROTOCOL: undefined },
-      { MSYSTEM: "MINGW64", HOME: join(root, "home"), PLINK_PROTOCOL: undefined },
-      { MSYSTEM: "UCRT64", HOME: undefined, PLINK_PROTOCOL: "plink" },
+      { MSYSTEM: undefined, HOME: undefined, PLINK_PROTOCOL: undefined, ...usual },
+      { MSYSTEM: "MINGW64", HOME: join(root, "home"), PLINK_PROTOCOL: undefined, ...usual },
+      { MSYSTEM: "UCRT64", HOME: undefined, PLINK_PROTOCOL: "plink", ...usual },
     ];
     for (const [index, variant] of variants.entries()) {
       vi.unstubAllEnvs();
@@ -110,6 +114,37 @@ describe.runIf(WINDOWS)("Git for Windows' own git.exe started without its launch
       const names = [...new Set([...Object.keys(rerail), ...Object.keys(through)])].sort();
       const differ = Object.fromEntries(names.filter(name => rerail[name] !== through[name]).map(name => [name, { rerail: rerail[name], launcher: through[name] }]));
       expect(differ, JSON.stringify(variant)).toEqual({});
+    }
+  });
+
+  it("gives Git the launcher's HOME where HOMEDRIVE and HOMEPATH name a home share, there or gone, with both homes' bin on PATH", async () => {
+    const root = await repository();
+    const script = join(root, "environment.cjs");
+    await writeFile(script, "require('node:fs').writeFileSync(process.argv[2], JSON.stringify(process.env));\n");
+    const node = process.execPath.replaceAll("\\", "/");
+    git(root, "config", "alias.environment", /\s/u.test(node) ? `!"${node}"` : `!${node}`);
+    const launcher = machineLauncher();
+    const profile = process.env.USERPROFILE ?? root;
+    const read = async (file: string): Promise<Record<string, string>> => Object.fromEntries(
+      Object.entries(JSON.parse(await readFile(file, "utf8")) as Record<string, string>).map(([name, value]) => [name.toUpperCase(), value]),
+    );
+    await mkdir(join(root, "share"));
+    // The share there, then gone: the launcher, and git.exe, take it when that folder exists, else the profile.
+    for (const [index, share] of [join(root, "share"), join(root, "gone")].entries()) {
+      vi.unstubAllEnvs();
+      for (const [name, value] of Object.entries({ HOME: undefined, HOMEDRIVE: share.slice(0, 2), HOMEPATH: share.slice(2), PATH: personPath(launcher) })) vi.stubEnv(name, value);
+      const started = await freshGit();
+      expect(started.runGit(root, ["environment", script, join(root, `rerail-${index}.json`)]).status).toBe(0);
+      execFileSync(launcher, ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=NUL", "-C", root, "environment", script, join(root, `launcher-${index}.json`)], {
+        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" },
+      });
+      const [rerail, through] = await Promise.all([read(join(root, `rerail-${index}.json`)), read(join(root, `launcher-${index}.json`))]);
+      expect(rerail.HOME, share).toBe(through.HOME);
+      expect(through.HOME, share).toBe(index === 0 ? share : profile);
+      // Rerail's PATH is the launcher's with the other home's bin beside the launcher's own, the share's first.
+      const [shareBin, profileBin] = [win32.join(share, "bin"), win32.join(profile, "bin")];
+      const launcherHomeBin = index === 0 ? shareBin : profileBin;
+      expect(rerail.PATH, share).toBe(through.PATH?.replace(`${launcherHomeBin};`, `${shareBin};${profileBin};`));
     }
   });
 });

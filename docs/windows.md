@@ -166,9 +166,13 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
   resolves a launcher to that `git.exe`, which finds its own DLLs, helpers and system configuration from its folder.
   On an install that holds `ucrt64` and one of the other folders, Rerail runs that folder's `git.exe`.
 - Rerail starts that `git.exe` with the environment the launcher gives it (`gitStartEnvironment`): `MSYSTEM` named
-  for the build, `PATH` led by the build's `bin`, `<Git>\usr\bin` and the home's `bin`, and `HOME` and
-  `PLINK_PROTOCOL` when unset. Where the launcher would put a folder that Windows finds from the repository Git runs
-  in, Rerail puts none: the home's `bin` only for a fully qualified home, never an empty, relative or drive-relative
+  for the build, `PATH` led by the build's `bin`, `<Git>\usr\bin` and the home's `bin`, and `PLINK_PROTOCOL` when
+  unset. An unset `HOME` stays unset: `git.exe` sets it in its own process by the launcher's rule, `HOMEDRIVE` and
+  `HOMEPATH` when that folder exists, else `USERPROFILE`. Rerail looks at no home folder itself, since on a home share
+  that does not answer (a domain account's laptop off the network) Windows waits about 21 s, which then holds that Git
+  call, within its time limit, and not the daemon. Where `HOMEDRIVE` and `HOMEPATH` name another folder than
+  `USERPROFILE`, both homes' `bin` go on `PATH`, the share's first, so the launcher's is there in its place. Where the
+  launcher would put a folder that Windows finds from the repository Git runs in, Rerail puts none: the home's `bin` only for a fully qualified home, never an empty, relative or drive-relative
   one, and no empty entry when `PATH` is empty. Git finds `sh.exe` on that `PATH` for every command it runs through
   its shell (a filter such as Git LFS's, a textconv, an alias with arguments), and the programs those commands name.
   Started bare with `MSYSTEM` set, as an MSYS2 set-up leaves it, and no `sh.exe` on `PATH`, the `git.exe` of 2.55 and
@@ -177,8 +181,10 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
   when a start of it finds no program there (`ENOENT`). An upgrade from Git for Windows 2.55 to 2.56 removes the
   `mingw64\bin\git.exe` a daemon started on 2.55 runs; without the second look, every Git call of that daemon failed
   until it restarted. The look reads the `PATH`, folder and repository the first look read (`gitLook`) and checks each
-  candidate as the first did, and the call runs once more with the Git it finds. When it finds none, as while an
-  installer is still at work, that call fails and the next one looks again. A `git.exe` it finds that Windows cannot
+  candidate as the first did, and the call runs once more with the Git it finds. The look reads the disk off Rerail's
+  thread, so a `PATH` entry on a share that does not answer delays the calls waiting for it, not the daemon; a blocking
+  call, which cannot wait for it, fails as its start did, and the calls after it run the Git found. When it finds none,
+  as while an installer is still at work, that call fails and the next one looks again. A `git.exe` it finds that Windows cannot
   run yet, as one the installer is still writing, fails each call as a Git that cannot start does until it runs.
 - Anyone can put a `cmd\git.exe` or `bin\git.exe` on `PATH`, so Rerail goes behind one only into a Git for Windows
   install: `<Git>\cmd\git.exe` runs, and `<Git>\etc\gitconfig` or the build's `share\git` is there. The `git.exe` it
