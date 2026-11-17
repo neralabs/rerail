@@ -14,7 +14,7 @@ For [pull request #676](https://github.com/neralabs/rerail/pull/676), head cc6af
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 2,398 lines in 23 files: 1,028 ship, 8 run in every test run, 1,362 are tests and text | Careful. A code owner approves. | #666's answer. Open since 14 November; no CI result. | 5 |
+| 2,398 lines in 23 files: 1,028 ship, 8 run in every test run, 1,362 are tests and text | Careful. A code owner approves. | #666's answer. Open since 14 November; CI passes. | 4 |
 
 ## 2. Intent, and the gap
 
@@ -56,13 +56,13 @@ Found 13 to 17 November 2026, on Windows 11 beside 0.1.4.
 
 ## 4. Risk against verification
 
-<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. A, Copy and keep, high risk: users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. B, Triggers, high risk: independent review holds with a limit, users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. C, Drives, lock, high risk: fails without the fix holds with a limit, users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. D, Lists, start, high risk: fails without the fix holds with a limit, users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. CI at this head does not hold yet for every change.">
+<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. A, Copy and keep, high risk: users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. B, Triggers, high risk: independent review holds with a limit, users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. C, Drives, lock, high risk: fails without the fix holds with a limit, users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. D, Lists, start, high risk: fails without the fix holds with a limit, users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. CI at this head holds for every change.">
 
 No CI result at this head. Every Windows mark is a half. Start at A.
 
-<details><summary>Each limit, and each check that does not hold yet</summary>
+<details><summary>Each half mark's limit</summary>
 
-| Change | Check | Its limit, or why it does not hold yet |
+| Change | Check | It holds with this limit |
 |---|---|---|
 | A. Copy and keep | users lose nothing | Windows 11 beside 0.1.4 from npm, real daemons and Claude Code's hooks, at fe4da2b09: 262 kinds of reading, none of this build's below `main`'s. Linux x64: 93 kinds, all equal. One reading of 0.1.4's is below `main`'s: answer 2. Two states read Steer as at `main`: a first session under a held write lock, and a case-only rename. |
 | A. Copy and keep | Windows 11: no new failure | At cc6afc0b2 the change's test file and the two schema test files: 80 passed, 1 skipped, 0 failed, none outside `main`'s baseline. Of the 138 test files that import a changed module, at fe4da2b09, 961 cases fail there: 955 as at `main`; the other 6 fail or flake at `main` too, or passed 5 of 5 reruns at both. |
@@ -75,7 +75,6 @@ No CI result at this head. Every Windows mark is a half. Start at A.
 | D. Lists, start | fails without the fix | The case of a folder 0.1.4 stops in another letter case fails 20 of 20 runs on Windows 11 without 8ad35c3d2 and 0 of 20 with it. The set-up start case fails 3 of 3 with its line out. Three filters have no test that fails without them: in `parentCheckouts`, in `pruneCheckouts`, and `path_key_spellings` among a headless scan's tables. |
 | D. Lists, start | users lose nothing | Through real daemons: this build lists one folder outside Git once, and the dashboard's removal of a preference took 1 row here and 0 at `main` (8ad35c3d2). The list of repository audits is shown by a unit test only: no run through real daemons recorded a repository audit. |
 | D. Lists, start | Windows 11: no new failure | The change's test file passes on Windows 11 at cc6afc0b2, its two Windows-only start state cases among them. The wider set of 138 test files fails 961 cases on that machine: 955 as at `main`; the other 6 fail or flake at `main` too, or passed 5 of 5 reruns at both. |
-| A to D | CI at this head | CI has no result at cc6afc0b2 as this is written. Its last run, at 0ed1ad013, failed 4 cases of this change's own test file in the Windows unit job: the runner keeps its temporary folder off the system drive. 356c11b05 fixed the tests. |
 
 </details>
 
@@ -175,13 +174,12 @@ Pull request #676 is based on main at 71e0822ce, which this head has merged, and
 
 </details>
 
-<details><summary><b>8. What is not covered</b>: 5 not verified, 6 smaller gaps, 8 limits that stay</summary>
+<details><summary><b>8. What is not covered</b>: 4 not verified, 6 smaller gaps, 8 limits that stay</summary>
 
 1. **0.1.4's own repository list** doubles each copied folder outside Git. The narrower copy rule waits for #666's answer.
-2. **CI** has no result at cc6afc0b2. Its last run failed 4 test cases, fixed in 356c11b05.
-3. **Shown by unit tests only:** a later start by 0.1.4, its changes to rule settings and repository audits, and its deletions.
-4. **Four lines** have no test that fails without them.
-5. **Not run:** macOS, the whole suite, real daemons at cc6afc0b2 (its source is fe4da2b09's), a merge with #708 or #674.
+2. **Shown by unit tests only:** a later start by 0.1.4, its changes to rule settings and repository audits, and its deletions.
+3. **Four lines** have no test that fails without them.
+4. **Not run:** macOS, the whole suite, real daemons at cc6afc0b2 (its source is fe4da2b09's), a merge with #708 or #674.
 
 **Smaller gaps**
 
@@ -228,7 +226,7 @@ The description on GitHub is the record: "How you tested it" holds the runs and 
 | Linux x64 and Windows 11 | The case 8ea1cc758 adds, with the line in `moveKey` that renews `preferences_before` taken out, and at cc6afc0b2 | Windows 11: it fails 20 of 20 runs without the line and passes 20 of 20 with it. Linux x64: it fails without the line and passes 20 of 20. A second check: 5 of 5 and 5 of 5 on Windows 11, 5 of 5 and 10 of 10 on Linux x64. |
 | Linux x64 and Windows 11 | One-line removals in the step, the triggers, the start state and the preference rule | Each turns a case red. Linux x64: 16 removals at a753ff129 and 16 at fe4da2b09. Windows 11: 8 removals at fe4da2b09, 2 of 2 runs each. |
 | Linux x64 | The automated reviewer's rules over the diff against `main` at 71e0822ce, with published 0.1.1 and with `main`'s build, at cc6afc0b2 | No new finding; 19 existing ones elsewhere. |
-| CI on GitHub | The pull request's own run | No result at cc6afc0b2 as this is written. The last run, at 0ed1ad013, failed 4 cases of this change's own test file in the Windows unit job. 356c11b05 fixed the tests. |
+| CI on GitHub | The pull request's own run | Run 44064143141 at cc6afc0b2: 31 checks pass, 2 are skipped, none fails. The run before, at 0ed1ad013, failed 4 cases of this change's own test file in the Windows unit job; 356c11b05 fixed the tests. |
 
 **What this report adds to the description**
 
