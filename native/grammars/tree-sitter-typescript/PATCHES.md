@@ -2104,7 +2104,7 @@ model read `x` as a write to an undeclared global; `using x: T = f()` and `for (
        [$.new_expression, $.primary_expression],
        [$.meta_property, $.primary_expression],
        [$.construct_signature, $._property_name],
-+      // A `using` declaration binds no pattern, so `using [0] = 1` assigns to a subscript of a `using` variable.
++      // A `[` after `using` is a subscript (`using [0] = 1`): no `using` declaration binds an array pattern.
 +      [$.primary_expression, $.using_declaration],
      ]),
  
@@ -2216,13 +2216,15 @@ model read `x` as a write to an undeclared global; `using x: T = f()` and `for (
      },
 ```
 
-`using_declaration`, `for_statement` and `_for_header` are tree-sitter-javascript 0.25.0's, with its `for` initializer
-as Patch 5 there extends it; the declarator is this grammar's, so `using x: T = f()` takes a type. `using` is now a
-`_reserved_identifier`, a name wherever a name parses, and after a `using` that starts a statement a binding name
-continues the declaration and any other token the expression. The one shared lookahead is `[`, where the precedence
-reads the subscript, as TypeScript does: a `using` declaration binds no pattern. A `using` at the end of a line before
-a name ends its statement, as ECMAScript's `[no LineTerminator here]` requires. `await using;` is an
-`await_expression`.
+`using_declaration` and `for_statement` are tree-sitter-javascript 0.25.0's, with its `for` initializer as Patch 5 there
+extends it. `_for_header` is 0.23.1's with 0.25.0's `using` alternative added: its `var`, `let` and `const` branches,
+unlike 0.25.0's, take no `of` as a name, as before. The declarator is this grammar's, so `using x: T = f()` takes a
+type. `using` is now a `_reserved_identifier`, a name wherever a name parses, and after a `using` that starts a
+statement a binding name continues the declaration and any other token the expression. The one lookahead both read is
+`[`, where the precedence reads the subscript, as TypeScript does: a `using` declaration binds no pattern. A `{` cannot
+follow a name on the same line, so `using {a} = b`, which TypeScript rejects, still reads as a declaration of an object
+pattern. A `using` at the end of a line before a name ends its statement, as ECMAScript's `[no LineTerminator here]`
+requires. `await using;` is an `await_expression`.
 
 Node kinds: `using_declaration` is new, a `declaration` as `lexical_declaration` is, with the field `kind` (`using`, or
 `await` and `using`) and one `variable_declarator` per name. `using x = f()` and `await using x = f()`, formerly an

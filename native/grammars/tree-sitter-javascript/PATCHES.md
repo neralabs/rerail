@@ -1382,7 +1382,7 @@ of the array pattern `[i]`. Any rule that reads the syntax tree then skips the f
      [$.import_statement, $.import],
      [$.export_statement, $.primary_expression],
      [$.lexical_declaration, $.primary_expression],
-+    // A `using` declaration binds no pattern, so `using [0] = 1` assigns to a subscript of a `using` variable.
++    // A `[` after `using` is a subscript (`using [0] = 1`): no `using` declaration binds an array pattern.
 +    [$.primary_expression, $.using_declaration],
    ],
  
@@ -1400,11 +1400,13 @@ of the array pattern `[i]`. Any rule that reads the syntax tree then skips the f
 
 `using` is now a `_reserved_identifier`, a name wherever a name parses: an operand, an assignment target, a label, a
 parameter, a `for … of` target. After a `using` that starts a statement, a binding name continues the declaration and
-any other token the expression. The one shared lookahead is `[`, where the precedence reads the subscript, as
-ECMAScript does: a `using` declaration binds no pattern. A `using` at the end of a line before a name now ends its
-statement, as ECMAScript's `[no LineTerminator here]` requires: the scanner inserts the semicolon there, as after any
-name. `using x = f()`, `await using x = f()` and `using {a} = b` stay `using_declaration`s, `for (using r of rs)` and
-`for (using r = f(); ;)` keep their `using` heads, and `await using;` is an `await_expression`.
+any other token the expression. The one lookahead both read is `[`, where the precedence reads the subscript, as
+ECMAScript does: a `using` declaration binds no pattern. A `{` cannot follow a name on the same line, so
+`using {a} = b`, which ECMAScript rejects, still reads as a declaration of an object pattern. A `using` at the end of a
+line before a name now ends its statement, as ECMAScript's `[no LineTerminator here]` requires: the scanner inserts the
+semicolon there, as after any name. `using x = f()` and `await using x = f()` stay `using_declaration`s,
+`for (using r of rs)` and `for (using r = f(); ;)` keep their `using` heads, and `await using;` is an
+`await_expression`.
 
 Node kinds and field names are unchanged. A `using` that is a name is an `identifier`, as `let using` already gave.
 `using [a] = b` is an assignment to a subscript, and `using⏎x = f()` and `await using⏎x = f()` are two statements,
