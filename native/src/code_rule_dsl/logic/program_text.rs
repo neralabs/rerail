@@ -503,7 +503,8 @@ pub fn load_image(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_r
 /// pass's version is the tag) and `pipeline_step(key, image, size, digest)`, with its decisions
 /// (`pipeline_step_decision(key, k, pass, what, detail)`, 0269). They are one source under its key's alias, and the
 /// output is an image as a prepared program's is (`store_image`), so a step whose output another step or program
-/// stored already shares its image. Both are held for the run that reads or writes them (O95).
+/// stored already shares its image. A run's collection lease keeps what it reads and writes (decision 0306 step 4), and
+/// a step is written by the store's writer, an item of the run's record (0306 step 2).
 pub struct StoredSteps<'s>(pub &'s ContentStore);
 
 /// The alias a step's facts are kept under: its key, with the image format, so another format's step is not found.
@@ -566,7 +567,6 @@ impl crate::code_rule_dsl::logic::program_image::manager::Steps for StoredSteps<
     }
 
     fn keep(&self, key: &[u8; 32], record: &crate::code_rule_dsl::logic::program_image::manager::StepRecord, output: &crate::code_rule_dsl::logic::program_image::Version) -> Result<(), String> {
-        let e = |e: crate::content_store::StoreError| e.to_string();
         let folded;
         let bytes = match output.base_bytes() {
             Some(b) => b,
@@ -577,7 +577,8 @@ impl crate::code_rule_dsl::logic::program_image::manager::Steps for StoredSteps<
         };
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
         let image: [u8; 32] = Sha256::digest(bytes).into();
-        store_encoded(self.0, &image, true, bytes).map_err(e)?;
+        // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships it.
+        crate::code_rule_dsl::logic::rr::images::export(image_key(&image), bytes);
         let k = Value::Str(hex32(key).into());
         let mut facts = Facts::new();
         facts.entry("pipeline_step_key".into()).or_default().push([k.clone(), str_value(&record.pass), Value::Int(i64::from(record.version))].into());
@@ -585,15 +586,29 @@ impl crate::code_rule_dsl::logic::program_image::manager::Steps for StoredSteps<
         for (i, d) in record.decided.iter().enumerate() {
             facts.entry("pipeline_step_decision".into()).or_default().push([k.clone(), Value::Int(i as i64), str_value(&d.pass), str_value(&d.what), str_value(&d.detail)].into());
         }
-        // Not named by a run's manifest yet (no run keeps its steps here; decision 0306 names a run's sources in its
-        // record): kept until collection's next pass.
-        let alias = step_alias(key);
-        if self.0.source_by_alias(alias).map_err(e)?.is_none() {
-            self.0.put_source(&program_facts::encode(&facts), &[alias]).map_err(e)?;
+        // An item of the run's record (decision 0306): the image's bytes, then the step's facts, in its byte area;
+        // each stored by the writer unless the store holds it already (an image another step or program stored).
+        fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+            let (key, image, at): ([u8; 32], [u8; 32], usize) = crate::content_store::record::codec::from_body(STEP, body)?;
+            let (image_bytes, facts) = cx.bytes.split_at_checked(at).ok_or_else(|| crate::content_store::StoreError::Invalid("a step's record: past its bytes".into()))?;
+            if cx.store.source_by_alias(image_key(&image))?.is_none() {
+                cx.store.put_source(image_bytes, &[image_key(&image)])?;
+            }
+            let alias = step_alias(&key);
+            if cx.store.source_by_alias(alias)?.is_none() {
+                cx.store.put_source(facts, &[alias])?;
+            }
+            Ok(())
         }
+        let mut area = bytes.to_vec();
+        area.extend_from_slice(&program_facts::encode(&facts));
+        self.0.record(STEP, Vec::new(), &(*key, image, bytes.len()), Some(area), apply);
         Ok(())
     }
 }
+
+/// A pipeline step's item of the run's record (`StoredSteps::keep`).
+const STEP: &str = "a pipeline step";
 
 fn str_value(s: &str) -> Value {
     Value::Str(s.to_owned().into())

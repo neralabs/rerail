@@ -218,6 +218,46 @@ impl ContentStore {
         Ok(out)
     }
 
+    /// The tapes of `sources` in `grammar_id` at the given versions, each with its source's id and content hash: one
+    /// read, nothing written. A run reads before its first wave the tapes of the files the root's last runs named
+    /// (Q22), to find a file's by its source or by its text's hash (a file the run knows by its digest alone).
+    pub fn tape_frames_with_hashes(&self, sources: &[SourceId], grammar_id: i64, grammar_version: i64, tape_format_version: i64) -> StoreResult<Vec<(SourceId, HashKey, TapeFrame)>> {
+        if sources.is_empty() {
+            return Ok(Vec::new());
+        }
+        let list = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("integers");
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT t.source_id, h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3, t.raw_length, t.codec_id, t.frame, t.seg, t.seg_at, t.seg_len \
+             FROM json_each(?1) j JOIN tape_objects t ON t.source_id=j.value AND t.grammar_id=?2 AND t.grammar_version=?3 AND t.tape_format_version=?4 \
+             JOIN source_objects s ON s.source_id=t.source_id JOIN hashes h ON h.hash_id=s.canonical_hash_id",
+        )?;
+        type Row = (SourceId, HashKey, i64, i64, Vec<u8>, [i64; 3]);
+        let rows: Vec<Row> = statement
+            .query_map(params![list, grammar_id, grammar_version, tape_format_version], |row| {
+                Ok((
+                    SourceId(row.get(0)?),
+                    HashKey { algorithm: row.get(1)?, lanes: [row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?] },
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                    [row.get(9)?, row.get(10)?, row.get(11)?],
+                ))
+            })?
+            .collect::<Result<_, _>>()?;
+        drop(statement);
+        drop(connection);
+        let mut maps = SegmentMaps::new(object_dir(&self.database_path));
+        let mut out = Vec::new();
+        for (source, hash, raw_length, codec, frame, [seg, seg_at, seg_len]) in rows {
+            // A frame of a codec this binary does not read, or whose segment is gone, is a miss: parsed again.
+            if let Ok(Some(frame)) = row_frame(&mut maps, codec, frame, seg, seg_at, seg_len) {
+                out.push((source, hash, TapeFrame { raw_length, frame }));
+            }
+        }
+        Ok(out)
+    }
+
     pub fn tape_by_source(
         &self,
         source_id: SourceId,

@@ -619,6 +619,42 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         self.b.enc.close(at);
         self
     }
+    /// An aggregate `var = op over : { rel(args) }`, written as the encoder writes a tree's (`over` `None` for a
+    /// count); `var` a variable. A join's separator and keys are not written term by term: refused.
+    pub fn agg(mut self, var: T<'_>, op: &crate::code_rule_dsl::logic::front::AggOp, over: Option<T<'_>>, rel: impl Into<Rel<'b>>, args: &[T<'_>]) -> Self {
+        use crate::code_rule_dsl::logic::front::AggOp;
+        self.body();
+        let code: u8 = match op {
+            AggOp::Count => 0,
+            AggOp::Min => 1,
+            AggOp::Max => 2,
+            AggOp::Sum => 3,
+            AggOp::Product => 4,
+            AggOp::Join { .. } => {
+                self.failed = Some(super::bad("a join aggregate written term by term"));
+                return self;
+            }
+        };
+        let s = match var {
+            T::Var(v) => {
+                let a = self.b.enc.atom(v);
+                self.b.enc.slot_of(a)
+            }
+            T::VarAtom(a) => self.b.enc.slot_of(a.0),
+            _ => {
+                self.failed = Some(super::bad("an aggregate's result that is not a variable"));
+                return self;
+            }
+        };
+        let at = self.b.enc.open(kind::AGG | code << 5, s);
+        match over {
+            Some(t) => self.term(&t),
+            None => self.b.enc.leaf(kind::WILD, 0),
+        }
+        self.atom_node(rel.into(), args, 0);
+        self.b.enc.close(at);
+        self
+    }
     pub fn cmp(mut self, l: T<'_>, op: CmpOp, r: T<'_>) -> Self {
         self.body();
         let at = self.b.enc.open(kind::CMP, op as u32);

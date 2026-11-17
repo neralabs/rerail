@@ -3,7 +3,7 @@
 use crate::code_rule_dsl::logic::front::{self, AggOp, Atom, Literal, Program, Rule, Term};
 use std::collections::{BTreeMap, BTreeSet};
 
-fn dependencies(p: &Program) -> BTreeMap<String, BTreeSet<String>> {
+pub fn dependencies(p: &Program) -> BTreeMap<String, BTreeSet<String>> {
     let mut deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for r in &p.rules {
         deps.entry(r.head.rel.to_string()).or_default().extend(
@@ -26,13 +26,13 @@ fn dependencies(p: &Program) -> BTreeMap<String, BTreeSet<String>> {
 /// The reverse edges are made once too, for every target's walk until the edges change, not again for each target
 /// (O-lower-aggregate-demand).
 #[derive(Default)]
-struct Reach {
+pub struct Reach {
     to: std::cell::RefCell<BTreeMap<String, std::rc::Rc<BTreeSet<String>>>>,
     rev: std::cell::RefCell<Option<BTreeMap<String, Vec<String>>>>,
 }
 
 impl Reach {
-    fn reaches(&self, deps: &BTreeMap<String, BTreeSet<String>>, start: &str, target: &str) -> bool {
+    pub fn reaches(&self, deps: &BTreeMap<String, BTreeSet<String>>, start: &str, target: &str) -> bool {
         if start == target {
             return true;
         }
@@ -68,7 +68,7 @@ impl Reach {
     /// old edges from the guard to the target, so only a target a guard is or reaches (or `demand`) gains relations
     /// that reach it, cycles closed included: only those walks are dropped, and the reverse edges gain the new ones.
     /// Cleared whole, every placement walked every target again.
-    fn placed(&self, name: &str, demand: &str, guards: &BTreeSet<String>) {
+    pub fn placed(&self, name: &str, demand: &str, guards: &BTreeSet<String>) {
         if let Some(rev) = self.rev.borrow_mut().as_mut() {
             rev.entry(demand.to_owned()).or_default().push(name.to_owned());
             for g in guards {
@@ -169,7 +169,7 @@ fn guards(
 }
 
 /// Whether `start` depends on `target` through `edges` (`front::strata`'s: a relation to those it reads).
-fn depends(edges: &front::Edges, start: &str, target: &str) -> bool {
+pub fn depends(edges: &front::Edges, start: &str, target: &str) -> bool {
     let mut todo = vec![start];
     let mut seen = BTreeSet::new();
     while let Some(at) = todo.pop() {
@@ -189,7 +189,7 @@ thread_local! {
     pub static FULL_CHECKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-fn full_checks() -> bool {
+pub fn full_checks() -> bool {
     #[cfg(any(test, feature = "test-hooks"))]
     return FULL_CHECKS.with(std::cell::Cell::get);
     #[cfg(not(any(test, feature = "test-hooks")))]

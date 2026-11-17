@@ -3890,9 +3890,264 @@ fn a_cone_copied_onto_the_version_is_the_trees() {
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
+    // A debug build copies the tree's cone beside the version's and checks the two images agree (`lowered_in_version`).
+    assert!(cfg!(debug_assertions), "the check is a debug build's");
     let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
-    assert!(v.rules().any(|r| v.rel_name(r.head().rel()) == "cmp_same"), "the cone's rules are copied");
-    let tree = super::read_text(src).unwrap().lower_in(src, &library, &scoped, None).unwrap().expect("a modular text");
-    let (t, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).unwrap();
-    assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "{}", crate::code_rule_dsl::logic::program_image::differences(&t, &v));
+    let heads: Vec<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
+    assert!(heads.contains(&"cmp_same"), "the cone's rules are copied: {heads:?}");
+    // The attributes on request are made again over the cone: its readers ask (decision 0174), and the library's own
+    // requests are not copied.
+    assert!(heads.contains(&"rr_value_req") && heads.contains(&"value"), "{heads:?}");
+    assert!(!heads.contains(&"dunder_all"), "a library reader of `value` outside the cone is not copied: {heads:?}");
+}
+
+/// A modular text's program is made a version before `whole()`'s tail, which runs on it (decision 0281's path, step
+/// 7b): a context in a negation's cycle (`a_context_in_a_negations_cycle_is_widened`) is widened on the version, and
+/// a debug build checks the image against the tree's tail (`link_seeded_version`).
+#[test]
+fn a_context_in_a_cycle_is_widened_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl e(n: node, x: symbol, s: number)\n.decl seed(n: node)\n.input e, seed\n",
+        ".decl ask(n: node)\n.decl cb(n: node)\n.output cb\n",
+        "ask(n) :- seed(n).\n",
+        "ask(m) :- cb(n), e(n, x, s), e(m, x, s).\n",
+        "cb(n) :- ask(n), count : { e(m, \"x\", _), m > n } = 0.\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    assert!(cfg!(debug_assertions), "the check is a debug build's");
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let ctx: Vec<String> = v.rules().filter(|r| v.rel_name(r.head().rel()).starts_with("rr_ctx")).map(|r| v.show_rule(r)).collect();
+    assert!(!ctx.is_empty() && ctx.iter().all(|r| !r.contains("ask(")), "{ctx:?}");
+}
+
+/// `whole()`'s sets run on a modular text's version (decision 0281's path, step 7b): a literal twice, a rule twice, a
+/// rule that is its own body and a fact twice are each once, or gone, as the tree's `lower::sets` makes them; a debug
+/// build checks the image against the tree's (`link_seeded_version`).
+#[test]
+fn the_lowerings_sets_are_made_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl a(x: number)\n.decl r(x: number)\n.output r\n",
+        "a(1). a(1). a(2).\n",
+        "r(x) :- a(x), a(x).\n",
+        "r(x) :- a(x), a(x).\n",
+        "r(x) :- r(x).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let r: Vec<String> = v.rules().filter(|x| v.rel_name(x.head().rel()) == "r").map(|x| v.show_rule(x)).collect();
+    assert_eq!(r.len(), 1, "one rule of r, its literal once: {r:?}");
+    assert_eq!(r[0].matches("a(").count(), 1, "{r:?}");
+    let head = v.header(&Default::default()).unwrap();
+    assert_eq!(head.facts.get("a").map(|rows| rows.len()), Some(2), "a's facts once each: {:?}", head.facts.get("a"));
+}
+
+/// `unit` after aggregate demand runs on a modular text's version (decision 0281's path, step 7b): `count : { b(_) }
+/// = 0` made an existence test reads no relation, so its rule reads `rr_unit(0)`, as the tree's `lower::unit`
+/// makes it; a debug build checks the image against the tree's (`link_seeded_version`).
+#[test]
+fn a_rule_left_reading_no_relation_reads_the_unit_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl b(x: number)\n.input b\n.decl r(x: number)\n.output r\n",
+        "r(1) :- count : { b(_) } = 0.\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let r: Vec<String> = v.rules().filter(|x| v.rel_name(x.head().rel()) == "r").map(|x| v.show_rule(x)).collect();
+    assert!(r.iter().all(|x| x.contains("rr_unit(0)")), "{r:?}");
+}
+
+/// Aggregate demand runs on a modular text's version (decision 0281's path, step 7b): the aggregate's helper is
+/// restricted to the keys its consumer asks (`rr_demand_agg_…`, read first by the helper's rules), and a count of
+/// zero becomes an anti-join, as the tree's `aggregate_demand::optimize` makes them; a debug build checks the image
+/// against the tree's (`link_seeded_version`).
+#[test]
+fn aggregate_demand_is_placed_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl a(x: number)\n.decl b(x: number, y: number)\n.input a, b\n.decl r(x: number)\n.decl s(x: number)\n.output r, s\n",
+        "r(x) :- a(x), n = count : { b(x, y), y > x }, n > 1.\n",
+        "s(x) :- a(x), count : { b(x, y), y > x } = 0.\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    assert!(rules.iter().any(|x| x.starts_with("rr_demand_agg_")), "a demand is placed: {rules:#?}");
+    let s: Vec<&String> = rules.iter().filter(|x| x.starts_with("s(")).collect();
+    assert!(s.iter().all(|x| x.contains("!") && !x.contains("count")), "a count of zero is an anti-join: {s:?}");
+}
+
+/// `front::finish`'s rewrites run on a modular text's version (decision 0281's path, step 7b): two nodes compared
+/// by their preorder keys (`node_order`), a `max` over nodes taken through a helper (`rr_ordered0`), as the tree's
+/// `order_nodes` makes them, and a tree axis read declared an input (`declare_axes`); a debug build checks the
+/// image against the tree's (`link_seeded_version`).
+#[test]
+fn finishs_rewrites_run_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl xs(n: node)\n.decl before(a: node, b: node)\n.decl last(n: node)\n.decl owner(n: node, a: node)\n",
+        ".output before, last, owner\n",
+        "xs(n) :- kind(n, \"identifier\").\n",
+        "before(a, b) :- xs(a), xs(b), a < b.\n",
+        "last(m) :- m = max k : { xs(k) }.\n",
+        "owner(n, a) :- xs(n), inside(n, a, \"module\").\n",
+    );
+    assert!(crate::code_rule_dsl::logic::front::orders_nodes(), "node ids per definition");
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    let before = rules.iter().find(|x| x.starts_with("before(")).expect("before's rule");
+    assert!(before.contains("node_order("), "{before}");
+    assert!(rules.iter().any(|x| x.starts_with("rr_ordered0(")), "the max's helper: {rules:#?}");
+    let head = v.header(&Default::default()).unwrap();
+    let owner = rules.iter().find(|x| x.starts_with("owner(")).expect("owner's rule");
+    let axis = owner.split(|c: char| !(c.is_alphanumeric() || c == '_')).find(|w| w.starts_with("rr_inside_")).unwrap_or_else(|| panic!("an axis read: {owner}"));
+    assert!(head.inputs.iter().any(|i| i == axis) && head.decls.contains_key(axis), "the axis {axis} an input: {:?}", head.inputs);
+}
+
+/// `whole()`'s last passes before `front::finish` run on a modular text's version (decision 0281's path, step 7b): a
+/// nullary relation is a set of the unit (a column, a `1` in its atoms), the `.scope` settings set the globs, and a
+/// reader of `value` asks for it, as the tree's `lower::whole_back` makes them; a debug build checks the image against the tree's (`link_seeded_version`).
+#[test]
+fn nullary_relations_and_the_scope_are_made_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".scope include \"impl/**/*.py\"\n",
+        ".decl flag()\n.decl r(n: node)\n.decl q(n: node)\n.output r, q\n",
+        "flag() :- kind(_, \"module\").\n",
+        "r(n) :- flag(), kind(n, \"call\").\n",
+        "q(n) :- kind(n, \"string\"), value(n, _).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    assert!(rules.iter().any(|x| x.starts_with("flag(1)")) && rules.iter().any(|x| x.starts_with("r(") && x.contains("flag(1)")), "{rules:#?}");
+    let head = v.header(&Default::default()).unwrap();
+    assert!(head.nullary.contains("flag") && head.decls["flag"].len() == 1, "{:?}", head.decls.get("flag"));
+    assert!(head.doc_scopes.as_ref().is_some_and(|s| s.iter().any(|(inc, _)| inc.iter().any(|g| g.contains("impl")))), "{:?}", head.doc_scopes);
+    // `value` is answered on request (decision 0174): its reader asks.
+    assert!(rules.iter().any(|x| x.starts_with("rr_value_req")), "{rules:#?}");
+}
+
+/// The kind sets are made on a modular text's version (decision 0281's path, step 7b): a set of kinds given as facts
+/// is a kind set of the program, and a set rules derive is read through helper rules over `child`
+/// (`rr_anc_<set>`, `rr_near_<set>`, `rr_in_<set>`), as the tree's `lower::kind_sets` makes them; a debug build
+/// checks the image against the tree's (`link_seeded_version`).
+#[test]
+fn kind_sets_are_made_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl calls(k: symbol)\ncalls(\"call\").\n",
+        ".decl code(k: symbol)\ncode(k) :- kind(_, k), k != \"comment\".\n",
+        ".decl r(n: node, a: node)\n.decl s(n: node, a: node)\n.output r, s\n",
+        "r(n, a) :- kind(n, \"name\"), nearest(n, a, calls).\n",
+        "s(n, a) :- kind(n, \"name\"), inside(n, a, code).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let head = v.header(&Default::default()).unwrap();
+    assert!(head.kindsets.get("calls").is_some_and(|k| k == &["call"]), "{:?}", head.kindsets);
+    let heads: BTreeSet<&str> = v.rules().map(|x| v.rel_name(x.head().rel())).collect();
+    assert!(["rr_anc_code", "rr_near_code", "rr_in_code"].iter().all(|h| heads.contains(h)), "{heads:?}");
+}
+
+/// The grammar names are checked on a modular text's version (decision 0281's path, step 7b): a grammar the registry
+/// does not have is refused there too; and the built-ins lowering writes out (`nearest`, `earlier`, …) are no relations
+/// of the program (`BuiltinsOut`'s own test is `builtins_out_on_a_version_is_the_trees`: the unseeding hides it here), as the tree's
+/// `lower::grammar_names` and `lower::builtins_out` make them; a debug build checks the image against the tree's.
+#[test]
+fn grammar_names_and_builtins_are_checked_on_the_version() {
+    let lower = |body: &str| {
+        let src = format!("#include \"python/compare.rr\"\n.decl hit(s: node)\n.output hit\n{body}\n");
+        let files = super::read_text(&src).unwrap().files().expect("a modular text");
+        let library = super::lower_library(&files, None).unwrap();
+        let scoped = library.scoped(&files);
+        super::read_text(&src).unwrap().lower_in_version(&src, &library, &scoped, None).map(|v| v.expect("a modular text"))
+    };
+    let refused = lower("hit(s) :- kind(s, \"string\"), parsed(s, \"postgres\", _).").map(|_| ()).unwrap_err().to_string();
+    assert!(refused.contains("no grammar \"postgres\""), "{refused}");
+    let v = lower("hit(s) :- kind(s, \"name\"), within(s, a), kind(a, \"call\").").unwrap();
+    let head = v.header(&Default::default()).unwrap();
+    assert!(!["nearest", "earlier", "split_dot", "unset"].iter().any(|b| head.decls.contains_key(*b)), "{:?}", head.decls.keys().collect::<Vec<_>>());
+}
+
+/// The span patterns are read off a modular text's version (decision 0281's path, step 7b): a `match` over a line
+/// (`src_line`) and one over a comment give the program its rx spans, as the tree's
+/// `lower::span_patterns` finds them; a debug build checks the image against the tree's.
+#[test]
+fn span_patterns_are_found_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl r(l: node)\n.decl c(n: node)\n.output r, c\n",
+        "r(l) :- src_line(_, _, l), match(\"TODO.*\", l).\n",
+        "c(n) :- kind(n, \"comment\"), match(\"#.*fixme\", n).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let head = v.header(&Default::default()).unwrap();
+    use crate::code_rule_dsl::logic::front::SpanIn;
+    assert!(head.rx_spans.iter().any(|(w, p)| *w == SpanIn::Line && p.contains("TODO")), "{:?}", head.rx_spans);
+    assert!(head.rx_spans.iter().any(|(w, p)| *w == SpanIn::Comment && p.contains("fixme")), "{:?}", head.rx_spans);
+}
+
+/// core.rr's declarations and `node`'s projections are made on a modular text's version (decision 0281's path, step
+/// 7b): a rule reading `kind` reads it through the projection `kind(n, k) :- node(_, n, k, _, _)`, the program's
+/// first rule, as the tree's `lower::core_and_projections` makes it; a debug build checks the image against the tree's.
+#[test]
+fn core_declarations_and_projections_are_made_on_the_version() {
+    let src = concat!("#include \"python/compare.rr\"\n", ".decl r(n: node)\n.output r\n", "r(n) :- kind(n, \"call\").\n");
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    assert!(rules.first().is_some_and(|r| r.starts_with("kind($n, $k) :- node(")), "{rules:#?}");
+    let head = v.header(&Default::default()).unwrap();
+    assert!(!head.inputs.iter().any(|i| i == "kind"), "{:?}", head.inputs);
+}
+
+/// The findings of a modular text's `.violation`s are written on its version (decision 0281's path, step 7b): the
+/// `violation` rule at the anchor's line and column, the diagnostic with the message's placeholders (a fresh name per
+/// value, the lowerer's count handed on), `.on syntax_error`'s rule, and the text's own `violation` rule of five columns
+/// widened, as the tree's `lower::findings` writes them;
+/// a debug build checks the image against the tree's.
+#[test]
+fn findings_are_written_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".on syntax_error report BAD000 at line 1\n",
+        ".violation call_at(at: node) code \"C001\" \"call {at}\"\n",
+        "call_at(n) :- kind(n, \"call\").\n",
+        "violation(\"p\", \"own\", \"X\", p, 1) :- doc(_, p, _).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    assert!(rules.iter().any(|r| r.starts_with("violation(") && r.contains("call_at(") && r.contains("\"C001\"")), "{rules:#?}");
+    assert!(rules.iter().any(|r| r.starts_with("violation(") && r.contains("syntax_error(")), "{rules:#?}");
+    assert!(rules.iter().any(|r| r.contains("$rr_message")), "{rules:#?}");
+    // The text's own `violation` rule, in the older five columns, read at column 0.
+    assert!(rules.iter().any(|r| r.starts_with("violation(\"p\", \"own\", \"X\", $p, 1, 0)")), "{rules:#?}");
+    let head = v.header(&Default::default()).unwrap();
+    assert!(head.outputs.iter().any(|o| o == "violation") && head.decls.get("violation").is_some_and(|c| c.len() == 6), "{:?}", head.outputs);
 }

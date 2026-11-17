@@ -37,7 +37,7 @@ fn determined(v: &Version, rule: RuleRef<'_>, lits: &[LitRef<'_>], mut known: BT
                     let args: Vec<TermRef<'_>> = a.args().collect();
                     let fixed = |c: &usize| match args.get(*c) {
                         Some(TermRef::Var(s)) => known.contains(&name(v, rule, *s)),
-                        Some(TermRef::Int(_) | TermRef::Str(_)) => true,
+                        Some(TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_)) => true,
                         _ => false,
                     };
                     if keys.get(v.rel_name(a.rel())).is_some_and(|ks| ks.iter().any(|k| k.iter().all(fixed))) {
@@ -236,7 +236,7 @@ impl ProgramPass for FactorizeExports {
                 let lits: Vec<LitRef<'_>> = reader.body().collect();
                 let L::Atom(a) = lits[li].view() else { return false };
                 a.args().any(|t| match t {
-                    TermRef::Int(_) | TermRef::Str(_) => true,
+                    TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => true,
                     TermRef::Var(s) => lits.iter().enumerate().any(|(j, l)| j != li && matches!(l.view(), L::Atom(b) if !b.neg() && body::atom_vars(b).contains(s))),
                     _ => false,
                 })

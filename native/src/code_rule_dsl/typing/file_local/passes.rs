@@ -12,7 +12,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 mod factorize;
 mod push;
+mod requests;
 pub use factorize::FactorizeExports;
+pub use requests::RequestsFileLocal;
 pub use push::PushLocalJoins;
 
 /// A term of `v`'s rule as a builder's term: a variable by the atom naming it (a derivation's ids are its input's).
@@ -43,6 +45,23 @@ impl Locate {
     /// The tree pass's result: the relations located, or those left.
     pub fn result(&self) -> Result<Vec<String>, Vec<String>> {
         if self.blocked.is_empty() { Ok(self.located.clone()) } else { Err(self.blocked.clone()) }
+    }
+}
+
+/// `file_local::locate`'s move on the version: the relations a round of `Locate` left, their rows naming no document,
+/// qualified `CROSS_FILE` (decision 0290). The split then holds them cross-file, with their file-local readers, and the
+/// program is located again (`preparation::run`).
+pub struct MoveCrossFile(pub Vec<String>);
+
+impl ProgramPass for MoveCrossFile {
+    const NAME: &'static str = "move the relations naming no document to the cross-file part";
+    fn settings(&self) -> Vec<u8> {
+        self.0.join("\n").into_bytes()
+    }
+    fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let words: Vec<(&str, &str)> = self.0.iter().map(|r| (r.as_str(), super::CROSS_FILE)).collect();
+        w.on()?.add_qualifiers(&words);
+        Ok(())
     }
 }
 

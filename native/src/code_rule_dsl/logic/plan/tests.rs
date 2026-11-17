@@ -2505,6 +2505,38 @@ fn a_kind_bound_by_counted_values_reads_their_nodes() {
     assert!((work - (2.0 + 2.0 * 20.0)).abs() < 1e-6, "work {work}");
 }
 
+/// Decision 0320: a node bound by a field is of a kind as often as the field's children are, and a field read by a
+/// node of a kind yields that kind's children by it. Every child by field 7 is of kind 5 here, a hundredth of the
+/// nodes: the kind's share of the nodes passed one row in a hundred, where every row passes.
+#[test]
+fn a_kind_after_a_field_is_priced_by_the_fields_children() {
+    let p = parse(".decl field(p: number, f: number, c: number)\n.decl kind(n: number, k: number)\n.decl r(c: number)\nr(c) :- field(p, 7, c), kind(c, 5).\n.output r\n").unwrap();
+    let model = |fielded: bool| {
+        let mut model = bare_model(&p);
+        model.stats.kfreq = std::sync::Arc::new([("5".to_owned(), 100), ("6".to_owned(), 9_900)].into_iter().collect());
+        model.stats.nodes = 10_000.0;
+        model.stats.card.insert("kind", 10_000.0);
+        model.stats.card.insert("field", 1_000.0);
+        model.stats.dfreq.insert(("field".to_owned(), 1), HashMap::from([(Constant::Int(7), 100), (Constant::Int(8), 900)]));
+        if fielded {
+            model.stats.fielded([("6", "5", "7", 100.0), ("6", "6", "8", 900.0)].map(|(p, c, f, n)| (p.to_owned(), c.to_owned(), f.to_owned(), n)));
+        }
+        model
+    };
+    // Either order reads 100 rows and keeps them: field 7's edges, then all of them of kind 5; or kind 5's nodes, each
+    // a child by field 7 once.
+    let (_, work) = priced_first_rule(&model(true), &p);
+    assert!((work - 200.0).abs() < 1e-6, "work {work}");
+    let (_, independent) = priced_first_rule(&model(false), &p);
+    assert!(independent < 150.0, "without the fields' kinds a kind passes its share of the nodes: {independent}");
+    let f = &model(true).stats.fields;
+    assert_eq!(f.child_share("5", "7"), Some(1.0));
+    assert_eq!(f.parent_share("6", "7"), Some(1.0));
+    assert_eq!(f.joint_share("6", "5", "8", false), Some(0.0));
+    assert_eq!(f.edges("5", "7", false), Some(100.0));
+    assert_eq!(f.child_share("5", "9"), None, "an unmeasured field says nothing");
+}
+
 /// Decision 0299: a probe on several bound columns reads at least the rows of one combination the relation holds.
 /// Independence divided `w`'s two rows a node by its 400 names, though a node has one name.
 #[test]

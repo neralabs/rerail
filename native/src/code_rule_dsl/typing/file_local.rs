@@ -188,7 +188,7 @@ mod shape;
 mod on_version;
 pub use on_version::FileLocal;
 mod passes;
-pub use passes::{FactorizeExports, Locate, PushLocalJoins};
+pub use passes::{FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal};
 pub mod export_demand;
 pub use export_demand::{DemandExports, demand_exports};
 pub use split_memo::forget as forget_splits;

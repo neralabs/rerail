@@ -19,6 +19,9 @@
 
 pub mod tape;
 pub mod f16;
+pub mod newlines;
+/// The tape's reads as Rust, written from their CLIF (decision 0310; `rerail_clif::reads::rust_source`).
+mod generated_reads;
 
 pub const MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// 10: supertype memberships folded into the codes; 11: columns aligned (`COLUMN_ALIGN`); 12:
@@ -808,7 +811,7 @@ impl<L: Layout> Writer<L> {
     /// Format 15's columns are not made. `Redo` where the writer's widths did not keep every size and end exactly
     /// (format 15's offsets do not matter here); `Ok(Err)` where a node breaks format 16's bounds, the writer kept
     /// (format 15's `finish_columns` takes it).
-    pub fn finish_16(&mut self, lang: &f16::Lang, numbers: &[u32], source_len: u64, tag: u8, z: bool) -> Result<Result<f16::Written, String>, Redo> {
+    pub fn finish_16(&mut self, lang: &f16::Lang, numbers: &[u32], source: &[u8], tag: u8, z: bool) -> Result<Result<f16::Written, String>, Redo> {
         debug_assert!(self.chains.is_empty(), "a chain not ended");
         self.commit();
         let w = self.layout.widths();
@@ -828,7 +831,7 @@ impl<L: Layout> Writer<L> {
         }
         let ids = &self.out[HEADER_BYTES..HEADER_BYTES + 2 * self.n];
         let this = &*self;
-        Ok(f16::write(lang, self.n, source_len, tag, z, |i| f16::Node {
+        Ok(f16::write(lang, self.n, source, tag, z, |i| f16::Node {
             number: numbers[usize::from(u16::from_le_bytes([ids[2 * i], ids[2 * i + 1]]))],
             start: u64::from(this.starts[i]),
             end: u64::from(this.end(i)),
@@ -1242,12 +1245,12 @@ mod tests {
         };
         let image = make().finish(&src).unwrap();
         let (columns, table) = f15_columns(&image).unwrap();
-        let f15 = F15::new(columns, &table).unwrap();
+        let f15 = F15::new(&image, columns, &table).unwrap();
         let lang = f16::Lang::new(table.clone(), [1, 1, 1], 1).unwrap();
         for z in [false, true] {
             let mut w = make();
             let numbers: Vec<u32> = (0..w.code_keys().len() as u32).collect();
-            let written = w.finish_16(&lang, &numbers, src.len() as u64, 1, z).unwrap().unwrap();
+            let written = w.finish_16(&lang, &numbers, &src, 1, z).unwrap().unwrap();
             let check = |t: &dyn Fn(usize) -> (u32, usize, Option<usize>, u64, u64), n: usize| {
                 assert_eq!(n, f15.len());
                 for i in 0..n {

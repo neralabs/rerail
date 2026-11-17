@@ -367,14 +367,22 @@ impl Rewrite for Dyn<'_> {
 
 // ---- what keeps a relation ----
 
-/// `simplify::kept`: outputs, inputs, lattices, natives and what they read, relations with facts, demand, gates.
+/// `simplify::kept`: outputs, inputs, lattices, natives and what they read, relations with facts, demand, gates, and
+/// an attribute's request.
 fn kept(f: &Fields<'_>, rel: &str) -> bool {
-    f.is_output(rel) || f.is_input(rel) || f.lattice(rel) || f.native(rel).is_some() || f.natives_read().contains(rel) || f.has_facts(rel) || f.demanded(rel) || f.gate(rel)
+    f.is_output(rel) || f.is_input(rel) || f.lattice(rel) || f.native(rel).is_some() || f.natives_read().contains(rel) || f.has_facts(rel) || f.demanded(rel) || f.gate(rel) || request(rel)
 }
 
-/// `simplify::fixed`: inputs, natives, lattices, demand, gates, and relations the program qualifies.
+/// `simplify::request`: an attribute's request (decision 0174) is read by name (`syntax::VALUE_REQ`), so neither
+/// inlined nor merged into another relation: inlined into its one reader, a request over one node left `value` empty.
+fn request(rel: &str) -> bool {
+    crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.req == rel)
+}
+
+/// `simplify::fixed`: inputs, natives, lattices, demand, gates, relations the program qualifies, and an attribute's
+/// request.
 fn fixed(f: &Fields<'_>, rel: &str) -> bool {
-    f.is_input(rel) || f.native(rel).is_some() || f.lattice(rel) || f.demanded(rel) || f.gate(rel) || !f.qualifiers_of(rel).is_empty()
+    f.is_input(rel) || f.native(rel).is_some() || f.lattice(rel) || f.demanded(rel) || f.gate(rel) || !f.qualifiers_of(rel).is_empty() || request(rel)
 }
 
 fn fields<'v>(cx: &Cx<'v>) -> Result<(&'v Arc<Version>, Arc<FieldsData>)> {

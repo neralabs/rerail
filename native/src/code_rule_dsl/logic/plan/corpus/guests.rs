@@ -159,7 +159,7 @@ fn first_key(parts: &[&[u8]], range: Range) -> (u32, u32, u32, [u8; 32]) {
 }
 
 /// Which keys a document takes (`key`).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Range {
     Code,
     Annotation,
@@ -275,6 +275,57 @@ pub(super) struct Guests {
     files: HashMap<i64, BTreeSet<i64>>,
     /// Made, and given no guest (no text to parse, or no grammar), this chunk.
     pub(super) refused: usize,
+    /// The documents the chunk's program can see (`guests_seen`): a guest past them is not made.
+    seen: Seen,
+    /// The guests not made because the program cannot see them.
+    pub(super) unseen: usize,
+}
+
+/// Which guests a program can see (decision 0058 §1, `hiding`): a guest it cannot see adds no row any of its rules
+/// reads, so a chunk running it makes none. Ordered by range: each sees the ranges before it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Seen {
+    /// Files and code in the run's language: a rule that names no guest.
+    Code,
+    /// And annotations: a relation whose copies for them were folded into it (`hiding::fold_own` widens its bound).
+    Annotations,
+    /// Every guest: a rule enters one through a guest relation (`hiding::ENTRIES`, `READS`), or reads an AST
+    /// matcher's literal.
+    #[default]
+    All,
+}
+
+impl Seen {
+    fn sees(self, range: Range) -> bool {
+        match range {
+            Range::Code => true,
+            Range::Annotation => self >= Seen::Annotations,
+            Range::Hidden => self == Seen::All,
+        }
+    }
+}
+
+/// The guests `v`'s rules can see. A variable reaches a guest's document only from a guest relation (scoped,
+/// `hiding`): every other base read is bounded below `ANNOTATION_KEYS`, or below `HIDDEN_KEYS` where an annotation's
+/// copies were folded in. So a program that reads no guest relation sees annotations only where a comparison is
+/// against the widened bound, and the other guests (other grammars, values) never.
+pub(super) fn guests_seen(v: &crate::code_rule_dsl::logic::program_image::Version) -> Seen {
+    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
+    use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
+    let entry = |rel: &str| READS.contains(&rel) || super::hiding::ENTRIES.iter().any(|(r, ..)| *r == rel);
+    let widened = |t: TermRef<'_>| matches!(t, TermRef::Int(n) if n > i64::from(ANNOTATION_KEYS) && (n <= i64::from(HIDDEN_KEYS) || n > i64::from(ANNOTATION_KEYS) << 32));
+    let mut seen = Seen::Code;
+    for r in v.rules() {
+        for l in r.body() {
+            match l.view() {
+                Lit::Atom(a) | Lit::Agg { atom: a, .. } if entry(v.rel_name(a.rel())) => return Seen::All,
+                Lit::Ast { .. } => return Seen::All,
+                Lit::Cmp { l, r, .. } if widened(l) || widened(r) => seen = Seen::Annotations,
+                _ => {}
+            }
+        }
+    }
+    seen
 }
 
 impl Guests {
@@ -282,6 +333,12 @@ impl Guests {
     /// first wave: `ContentStore::guest_keys`, or `GuestKeys::in_memory` without a store).
     pub(super) fn new(run: &'static str, shape: syntax::Shape, keys: Arc<GuestKeys>) -> Self {
         Self { run, shape, keys, ..Self::default() }
+    }
+
+    /// Makes only the guests a program that sees `seen` can see (a chunk of partial hits, whose cone is all it runs).
+    pub(super) fn seeing(mut self, seen: Seen) -> Self {
+        self.seen = seen;
+        self
     }
 
     /// The key of a document hashed from `parts` in `range`, whose host file (a value's first asker) is `path`.
@@ -317,7 +374,7 @@ impl Guests {
     }
 
     /// The documents `requests` ask for that are not made yet; `docs` holds their hosts.
-    pub(super) fn make(&mut self, requests: Vec<Request>, docs: &[Document]) -> Result<Vec<Document>, String> {
+    pub(super) fn make(&mut self, requests: Vec<Request>, docs: &[Document], parses: &Parses) -> Result<Vec<Document>, String> {
         let by_key: HashMap<u32, &Document> = docs.iter().map(|d| (d.key, d)).collect();
         let mut out = Vec::new();
         for r in requests {
@@ -330,13 +387,18 @@ impl Guests {
                 continue;
             }
             let made = match r {
-                Request::Guest { at, grammar, role, text } => self.guest(&by_key, at, &grammar, &role, text)?,
+                Request::Guest { at, grammar, role, text } => self.guest(&by_key, at, &grammar, &role, text, parses)?,
+                // A value is never shown (`Range::Hidden`): a program that sees no hidden guest makes none.
+                Request::Parse { .. } | Request::Splice { .. } if !self.seen.sees(Range::Hidden) => {
+                    self.unseen += 1;
+                    continue;
+                }
                 Request::Parse { at, grammar, text } => {
                     let asker = super::memo::document_of(at);
                     if self.known(&grammar, &format!("parse:{text}"), asker) {
                         continue;
                     }
-                    self.value(&by_key, asker, &grammar, text.clone(), Made::Parse { text })?
+                    self.value(&by_key, asker, &grammar, text.clone(), Made::Parse { text }, parses)?
                 }
                 Request::Splice { node, with } => {
                     let asker = super::memo::document_of(node);
@@ -344,7 +406,7 @@ impl Guests {
                         continue;
                     }
                     match self.splice(&by_key, docs, node, &with)? {
-                        Some((grammar, text, tape, _)) => self.value(&by_key, asker, &grammar, text, Made::Splice { tape, node, with })?,
+                        Some((grammar, text, tape, _)) => self.value(&by_key, asker, &grammar, text, Made::Splice { tape, node, with }, parses)?,
                         None => None,
                     }
                 }
@@ -358,13 +420,26 @@ impl Guests {
     }
 
     /// The guest at host node `at`.
-    fn guest(&mut self, by_key: &HashMap<u32, &Document>, at: i64, grammar_name: &str, role: &str, text: Option<String>) -> Result<Option<Document>, String> {
+    fn guest(&mut self, by_key: &HashMap<u32, &Document>, at: i64, grammar_name: &str, role: &str, text: Option<String>, parses: &Parses) -> Result<Option<Document>, String> {
         let host_key = (at >> 32) as u32;
         let Some(host) = by_key.get(&host_key).copied() else { return Ok(None) };
         if let Some(via) = embedding(host, grammar_name) {
             return self.program(host, at, via, role);
         }
         let Some((label, wrap)) = grammar(grammar_name) else { return Ok(None) };
+        // Shown to rules that do not name it: code in the run's language. An annotation (a type expression, Python's
+        // in a Python run) is not code: the rules that read one reach it through `parsed`. Shown, a string the
+        // demand asked for only because its rule's inputs hold it (every string, for `type_ctx`) was code to every
+        // rule: `"--host"` was `--host`, a doubled minus (B002 on 157 argparse lines).
+        let range = match (label == self.run, grammar_name == "annotation") {
+            (true, false) => Range::Code,
+            (true, true) => Range::Annotation,
+            (false, _) => Range::Hidden,
+        };
+        if !self.seen.sees(range) {
+            self.unseen += 1;
+            return Ok(None);
+        }
         let ids = self.numbering(host)?;
         // A node id's low bits are its local id only under preorder ids (`syntax::Numbering`).
         let Some(local) = ids.local((at & 0xffff_ffff) as u32) else { return Ok(None) };
@@ -378,16 +453,7 @@ impl Guests {
         };
         let Some((text, place)) = placed else { return Ok(None) };
         let (text, place) = if wrap { wrapped(text, place) } else { (text, place) };
-        let Some((facts, root, digest)) = parse(&host.path, label, wrap, text)? else { return Ok(None) };
-        // Shown to rules that do not name it: code in the run's language. An annotation (a type expression, Python's
-        // in a Python run) is not code: the rules that read one reach it through `parsed`. Shown, a string the
-        // demand asked for only because its rule's inputs hold it (every string, for `type_ctx`) was code to every
-        // rule: `"--host"` was `--host`, a doubled minus (B002 on 157 argparse lines).
-        let range = match (label == self.run, grammar_name == "annotation") {
-            (true, false) => Range::Code,
-            (true, true) => Range::Annotation,
-            (false, _) => Range::Hidden,
-        };
+        let Some((facts, root, digest)) = parse(&host.path, label, wrap, text, parses)? else { return Ok(None) };
         let key = self.key_for(&[host.path.as_bytes(), &at.to_le_bytes(), grammar_name.as_bytes()], range, &host.path);
         self.host_of.insert(i64::from(key), self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key)));
         let in_file = host.guest.as_ref().map_or_else(|| place.clone(), |h| h.in_file.then(place.clone()));
@@ -418,9 +484,13 @@ impl Guests {
         let Some(root) = crate::code_rule_dsl::embed::host::Host::new(&image.primary, &grammar).root() else { return Ok(None) };
         let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source, &|| false) else { return Ok(None) };
         let Some(label) = crate::code_rule_dsl::language::label(program.dialect) else { return Ok(None) };
+        let range = if label == self.run { Range::Code } else { Range::Hidden };
+        if !self.seen.sees(range) {
+            self.unseen += 1;
+            return Ok(None);
+        }
         let place = Placement::Segments(Arc::new(program.segments));
         let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text)? else { return Ok(None) };
-        let range = if label == self.run { Range::Code } else { Range::Hidden };
         let key = self.key_for(&[host.path.as_bytes(), &at.to_le_bytes(), via.id().as_bytes()], range, &host.path);
         self.host_of.insert(i64::from(key), self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key)));
         let in_file = host.guest.as_ref().map_or_else(|| place.clone(), |h| h.in_file.then(place.clone()));
@@ -439,7 +509,7 @@ impl Guests {
     /// A value document (decision 0058 §4): `text` parsed as `grammar_name`, with no host, in the hidden documents,
     /// asked for by document `asker`. Its places are its own text's. It is its askers' files' (O96): `memo` keeps its
     /// rows with each, and its path is the first's.
-    fn value(&mut self, by_key: &HashMap<u32, &Document>, asker: i64, grammar_name: &str, text: String, made: Made) -> Result<Option<Document>, String> {
+    fn value(&mut self, by_key: &HashMap<u32, &Document>, asker: i64, grammar_name: &str, text: String, made: Made, parses: &Parses) -> Result<Option<Document>, String> {
         let Some((label, wrap)) = grammar(grammar_name) else { return Ok(None) };
         let (identity, known_as) = match &made {
             Made::Splice { node, with, .. } => (format!("splice:{node}:{with}"), String::new()),
@@ -449,7 +519,7 @@ impl Guests {
         let path = files.first().and_then(|f| u32::try_from(*f).ok()).and_then(|f| by_key.get(&f)).map_or_else(String::new, |d| d.path.clone());
         let path = path.as_str();
         let (text, _) = if wrap { wrapped(text, Placement::At([0, 0])) } else { (text, Placement::At([0, 0])) };
-        let Some((facts, root, digest)) = parse(path, label, wrap, text)? else { return Ok(None) };
+        let Some((facts, root, digest)) = parse(path, label, wrap, text, parses)? else { return Ok(None) };
         let key = self.key_for(&[b"value", grammar_name.as_bytes(), identity.as_bytes()], Range::Hidden, path);
         self.values.insert((known_as, identity), i64::from(key));
         self.files.insert(i64::from(key), files);
@@ -518,26 +588,28 @@ fn wrapped(text: String, place: Placement) -> (String, Placement) {
 /// A guest's or value's tree: its facts, its root (a wrapped expression's), and the facts' digest.
 type Parsed = (Arc<core::Facts>, u32, [u8; 32]);
 
+/// The guests' trees by grammar and text, for one run: a pack's guests repeat their texts (one annotation in many files,
+/// the same guests in every chunk and round), and the facts are a function of the two alone, so each distinct text is
+/// parsed and digested once a run. Held by the run, not the process (no static memo). A guest's tape is not stored
+/// (Q30): it is made in a wave, where no run reads the store (decision 0104), and parsing it costs less than storing
+/// and reading it (on ep2 about 0.01 s a run, against a 1 MB write and read).
+#[derive(Default)]
+pub(super) struct Parses {
+    kept: std::sync::Mutex<(usize, HashMap<(String, bool, String), Option<Parsed>>)>,
+}
+
 /// `text` parsed as `label`, its root (a wrapped expression's) and its facts' digest; `None` when the parser gives no
-/// facts. Kept for the process by grammar and text: a pack's guests repeat their texts (one annotation string in many
-/// files, the same guests in every chunk and round), and the facts are a function of the two alone, so each distinct
-/// text is parsed and digested once.
-fn parse(path: &str, label: &str, wrap: bool, text: String) -> Result<Option<Parsed>, String> {
-    use std::sync::{Mutex, OnceLock};
+/// facts. Kept for the run by grammar and text (`Parses`).
+fn parse(path: &str, label: &str, wrap: bool, text: String, parses: &Parses) -> Result<Option<Parsed>, String> {
     /// The texts kept, in bytes, before the memo starts again (the facts kept are a small multiple of it).
     const KEPT_BYTES: usize = 8 << 20;
-    static KEPT: OnceLock<Mutex<(usize, HashMap<(String, bool, String), Option<Parsed>>)>> = OnceLock::new();
-    let kept = KEPT.get_or_init(Default::default);
     let key = (label.to_owned(), wrap, text);
-    if let Some(hit) = kept.lock().expect("the parsed guests").1.get(&key) {
+    if let Some(hit) = parses.kept.lock().expect("the parsed guests").1.get(&key) {
         crate::code_rule_dsl::prof::count("guests.parse_kept", 1);
         return Ok(hit.clone());
     }
     let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(key.2.clone()) };
-    // Parsed here, its tape not stored (Q30): a guest is made in a wave, where no run reads the store (decision 0104),
-    // so no later process would read it, and its own run's collection deleted it.
-    let built = core::build(&file)
-    .map_err(|e| format!("{path}: {e}"))?;
+    let built = core::build(&file).map_err(|e| format!("{path}: {e}"))?;
     let parsed = match built {
         Built::Facts(facts) => {
             let root = if wrap { wrapped_root(&facts, label) } else { 0 };
@@ -546,7 +618,7 @@ fn parse(path: &str, label: &str, wrap: bool, text: String) -> Result<Option<Par
         }
         _ => None,
     };
-    let mut kept = kept.lock().expect("the parsed guests");
+    let mut kept = parses.kept.lock().expect("the parsed guests");
     if kept.0 + key.2.len() > KEPT_BYTES {
         *kept = Default::default();
     }
@@ -557,12 +629,10 @@ fn parse(path: &str, label: &str, wrap: bool, text: String) -> Result<Option<Par
 
 /// An embedded program's text parsed as `label`, with its tape kept beside the facts (decision 0222): the rules over
 /// a view read W's values (`value`, a key's text) as over a file, and a value is read off the document's tape. Not
-/// memoised: a host embeds one program.
+/// memoised: a host embeds one program. Its tape is not stored, as a guest's (`parse`, Q30).
 fn taped(path: &str, label: &str, text: String) -> Result<Option<(Parsed, Tape)>, String> {
     let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(text) };
-    // Parsed here, its tape not stored, as a guest's (`parse`, Q30).
-    let built = core::build_with_tape(&file, true)
-    .map_err(|e| format!("{path}: {e}"))?;
+    let built = core::build_with_tape(&file, true).map_err(|e| format!("{path}: {e}"))?;
     let (Built::Facts(facts), tape) = built else { return Ok(None) };
     let digest = core::digest(&facts);
     let tape = tape.map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));

@@ -94,7 +94,7 @@ impl TreeParser for FormatStrings {
                 .collect();
             TapeImage::finish(nodes, Vec::new(), tape, source, &budget)
         };
-        Some(encode().map(FileImage::single).map_err(TemplateError::Encode))
+        Some(encode().map(|image| FileImage::single(image, source)).map_err(TemplateError::Encode))
     }
 
     fn kinds(&self) -> Option<OwnTable> {
