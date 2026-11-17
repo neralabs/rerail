@@ -10,7 +10,7 @@ For [pull request #665](https://github.com/neralabs/rerail/pull/665), head 3c893
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 1,118 lines in 8 files: 532 ship, 586 are tests and text | Careful. It changes what is checked: a code owner approves. | CI. GitHub's CI had not run at this head. | 4 |
+| 1,118 lines in 8 files: 532 ship, 586 are tests and text | Careful. It changes what is checked: a code owner approves. | Nothing. CI passed at this head; no pull request needs it. | 4 |
 
 ## 2. Intent, and the gap
 
@@ -39,16 +39,15 @@ Found on 13 November 2026 with busy Claude Code sessions on a Windows 11 machine
 
 ## 4. Risk against verification
 
-<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. Late edit read, high risk: independent review holds with a limit. CI at this head does not hold yet for every change.">
+<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. Late edit read, high risk: independent review holds with a limit. CI at this head holds for every change.">
 
-One half mark: four late Writes read at `main`'s level where an earlier commit of this branch checked them. CI had not run at this head.
+One half mark: four late Writes read at `main`'s level where an earlier commit of this branch checked them.
 
-<details><summary>Each limit, and each check that does not hold yet</summary>
+<details><summary>Each half mark's limit</summary>
 
-| Change | Check | Its limit, or why it does not hold yet |
+| Change | Check | It holds with this limit |
 |---|---|---|
 | Late edit read | independent review | A second run of 139 edits through a real daemon and the built hook, `main` beside 11bd65a7b, on Linux x64 and Windows 11, found no edit read worse than at `main`. The limit: against 9e0059c26, an earlier commit of this branch, four late Writes read worse, at `main`'s level. |
-| Late edit read | CI at this head | GitHub's CI had not run at 3c8939321 when this was written: the head was not pushed. At 11bd65a7b, CI's `Integration tests` job run on Linux x64 passed, 22 of 22 files, 90 tests passed and 6 skipped, and `npm run check` exits 0 at each commit. |
 
 </details>
 
@@ -98,7 +97,7 @@ Nothing has to merge first: it holds `main` at 44576f751 and merges with `main` 
 1. **A late Write whose new file a formatter changed first** stays unchecked, as at `main`: 4 of 139 edits. 9e0059c26 checked them. Closing it needs the file's state at the call's arrival.
 2. **How often a real call arrives late** is not measured.
 3. **Codex, Cursor, OMP and Pi** results do not say what a file held: as at `main`.
-4. **CI on GitHub at this head, and macOS** had not run when this was written.
+4. **macOS** never ran.
 
 **Smaller gaps**
 
