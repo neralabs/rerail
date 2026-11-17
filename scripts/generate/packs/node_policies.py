@@ -658,9 +658,18 @@ def prefer_promises_docs():
 
 def no_path_concat_doc():
     slash_text = {"any": [{"kind": "string_fragment", "regex": "^/"}, {"kind": "escape_sequence", "regex": "^\\\\/$"}]}
+    from node_es_syntax.globals import WRITE_SLOT
     utils = fn_utils("^(?:node:)?path$", "^sep$")
+    # ReferenceTracker skips a global the file writes anywhere (isModifiedGlobal): after `__dirname = '.'` it is not
+    # Node's __dirname. One verdict per name at the program, as node_es_syntax/globals.py does.
+    wrapper_names = ("__dirname", "__filename")
+    for name in wrapper_names:
+        utils[f"modified:{name}"] = {"kind": "program", "has": {"stopBy": "end", "any": [{"kind": "identifier"}, {"kind": "shorthand_property_identifier_pattern"}],
+                                                                "regex": f"^{name}$", "resolves": {"global": [name]}, "matches": "write-slot"}}
+    utils["write-slot"] = WRITE_SLOT
     utils["path-source"] = {"any": [
-        {"kind": "identifier", "regex": "^(?:__dirname|__filename)$", "resolves": {"global": ["__dirname", "__filename"]}},
+        *({"kind": "identifier", "regex": f"^{name}$", "resolves": {"global": [name]}, "not": {"inside": {"stopBy": "end", "kind": "program", "matches": f"modified:{name}"}}}
+          for name in wrapper_names),
         {"kind": "member_expression", "all": [{"has": {"field": "object", "kind": "meta_property"}}, {"has": {"field": "property", "kind": "property_identifier", "regex": "^(?:dirname|filename|url)$"}}]},
         {"kind": "subscript_expression", "all": [{"has": {"field": "object", "kind": "meta_property"}}, {"has": {"field": "index", **str_const("^(?:dirname|filename|url)$")}}]}]}
     utils["first-slash"] = {"any": [

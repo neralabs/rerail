@@ -153,7 +153,7 @@ Default options, grouping off. A declarator counts as a require when initialised
 
 ### `n-no-path-concat`
 
-Flags `__dirname`/`__filename` or `import.meta.dirname|filename|url` as the left of `+` or a template substitution when the next part's first character is `/` (path.sep on the recorder's POSIX host): a string starting with /, a constant (followed binding), `path.sep` of the path module, or recursively the left of a binary, either side of ||/&&/??, either branch of ?:, an assignment's right side, or a template's first part.
+Flags `__dirname`/`__filename` or `import.meta.dirname|filename|url` as the left of `+` or a template substitution when the next part's first character is `/` (path.sep on the recorder's POSIX host): a string starting with /, a constant (followed binding), `path.sep` of the path module, or recursively the left of a binary, either side of ||/&&/??, either branch of ?:, an assignment's right side, or a template's first part. Like upstream's ReferenceTracker (isModifiedGlobal), it skips `__dirname` or `__filename` in a file that writes that global anywhere (`__dirname = '.'`, `+=`, `++`, a destructuring or for-in/of target).
 
 ### `n-no-process-env` / `n-no-process-exit` / `n-no-new-require`
 
