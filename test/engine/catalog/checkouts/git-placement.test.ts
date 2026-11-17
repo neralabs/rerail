@@ -2,8 +2,9 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
 import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { physicalPath } from "../../../../src/engine/catalog/checkout-control.js";
 import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
 import {
   repositoryIdentityLocation,
@@ -283,6 +284,119 @@ describe("a kept answer's owners are read again each time the recorded checkouts
     owners.lookAgainAt(root);
     expect(expectGitsAnswers(...folders)).toBe(2);
     expect(expectGitsAnswers(...folders)).toBe(0);
+  });
+});
+
+/** `git worktree list` in `checkout`, read as `worktreeRegistry` reads it. */
+function gitsRegistry(checkout: string): string[] {
+  const result = spawnSync("git", ["-C", checkout, "worktree", "list", "--porcelain"], { encoding: "utf8" });
+  return result.stdout.split("\n").filter(line => line.startsWith("worktree ")).map(line => line.slice("worktree ".length));
+}
+
+/** Rerail's registry of each checkout, the common directory it names and the checkout's placement, in order, against Git's. */
+function expectGitsRegistries(...checkouts: string[]): void {
+  for (const checkout of checkouts) {
+    const registry = worktreeRegistry(checkout);
+    expect(registry?.worktrees, `the registry at ${checkout}`).toEqual(gitsRegistry(checkout));
+    expect(registry?.commonDirectory, `the common directory at ${checkout}`).toBe(physicalPath(dirname(gitsAnswer(checkout).identityPath)));
+    expect(repositoryIdentityLocation(checkout), `the placement of ${checkout}`).toEqual(gitsAnswer(checkout));
+  }
+}
+
+/** A repository `first` with the worktrees w1 and w2 beside it, each asked once as a start asks after them. */
+async function firstWithWorktrees(): Promise<{ root: string; main: string; w1: string; w2: string }> {
+  const root = await temporaryRoot();
+  const main = repository(join(root, "first"));
+  git(main, "worktree", "add", "--quiet", "-b", "w1", join(root, "w1"));
+  git(main, "worktree", "add", "--quiet", "-b", "w2", join(root, "w2"));
+  const [w1, w2] = [join(root, "w1"), join(root, "w2")];
+  expectGitsRegistries(w1, main, w2);
+  return { root, main, w1, w2 };
+}
+
+describe("a checkout's folder that comes to hold another repository's checkout while Rerail runs answers as Git does", () => {
+  it.each([["at the reused folder", true], ["at the first repository", false]])(
+    "a worktree removed with Git and its folder made another repository's worktree, asked %s first",
+    async (_, reusedFirst) => {
+      const { root, main, w1, w2 } = await firstWithWorktrees();
+      git(main, "worktree", "remove", "--force", w1);
+      const other = repository(join(root, "other"));
+      git(other, "worktree", "add", "--quiet", "-b", "o1", w1);
+
+      expectGitsRegistries(...(reusedFirst ? [w1, main, w2, other] : [main, w2, other, w1]));
+      expect(resolveCloneId(w1).cloneId).toBe(resolveCloneId(other).cloneId);
+      expect(resolveCloneId(w2).cloneId).toBe(resolveCloneId(main).cloneId);
+      expect(resolveCloneId(w1).cloneId).not.toBe(resolveCloneId(main).cloneId);
+    },
+  );
+
+  it("a worktree removed by hand, its entry left for `git worktree prune`, and its folder made another repository's worktree", async () => {
+    const { root, main, w1, w2 } = await firstWithWorktrees();
+    await removeFolder(w1);
+    const other = repository(join(root, "other"));
+    git(other, "worktree", "add", "--quiet", "-b", "o1", w1);
+
+    expectGitsRegistries(w1, main, w2);
+  });
+
+  it("the folder above a worktree renamed, and another repository's worktree made at the old path", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "first"));
+    const worktree = join(root, "side", "w");
+    git(main, "worktree", "add", "--quiet", "-b", "w", worktree);
+    expectGitsRegistries(worktree, main);
+    await rename(join(root, "side"), join(root, "side-old"));
+    const other = repository(join(root, "other"));
+    git(other, "worktree", "add", "--quiet", "-b", "o1", worktree);
+
+    expectGitsRegistries(worktree, main, join(root, "side-old", "w"));
+  });
+
+  it("a worktree whose .git file is rewritten to name another repository's worktree", async () => {
+    const { root, main, w1, w2 } = await firstWithWorktrees();
+    const other = repository(join(root, "other"));
+    git(other, "worktree", "add", "--quiet", "-b", "o1", join(root, "o1"));
+    await writeFile(join(w1, ".git"), `gitdir: ${join(other, ".git", "worktrees", "o1")}\n`);
+
+    expectGitsRegistries(w1, main, w2);
+  });
+
+  it("a worktree moved with `git worktree move`, and its old folder made another repository's main checkout", async () => {
+    const { root, main, w1, w2 } = await firstWithWorktrees();
+    git(main, "worktree", "move", w1, join(root, "moved"));
+    repository(w1);
+
+    expectGitsRegistries(w1, main, w2, join(root, "moved"));
+  });
+
+  it("a repository whose folder another repository took over is placed by Git again before its worktrees are placed from their files", async () => {
+    const root = await temporaryRoot();
+    const first = repository(join(root, "repository"));
+    expect(expectGitsAnswers(first)).toBe(1);
+    await removeFolder(first);
+    const other = repository(join(root, "repository"));
+    git(other, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
+
+    expect(expectGitsAnswers(join(root, "linked"))).toBe(1);
+    expectGitsAnswers(other);
+    git(other, "worktree", "add", "--quiet", "-b", "later", join(root, "later"));
+    expect(expectGitsAnswers(join(root, "later"))).toBe(0);
+  });
+});
+
+describe("each caller gets an answer of its own", () => {
+  it("a caller that changes the answer it was given changes no later caller's", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
+    for (const folder of [main, join(root, "linked")]) {
+      // The first answer is placed, the second kept: each is changed as a careless caller might change it.
+      for (let ask = 0; ask < 2; ask += 1) {
+        const given = repositoryIdentityLocation(folder);
+        Object.assign(given, { git: !given.git, workspaceRoot: root, identityPath: join(root, "elsewhere"), main: !given.main });
+      }
+      expect(repositoryIdentityLocation(folder), folder).toEqual(gitsAnswer(folder));
+    }
   });
 });
 
