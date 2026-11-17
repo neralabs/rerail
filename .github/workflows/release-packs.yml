@@ -25,9 +25,11 @@ name: Release packs
 # (`held`), and naming the pack alone, at its package.json version, promotes it again and releases the hold.
 # The promote-plan job lists them in the run summary before the promote job, which needs the `release` environment's
 # approval, moves them all, moves each one's `next` up to it unless `next` is at a newer version, and then fails if a
-# promoted pack's `latest` is not the version or its `next` is older (docs/pack-format.md, "Release").
+# promoted pack's `latest` is not the version or its `next` is older (docs/pack-format.md, "Release"). The promote
+# plan refuses a pack whose core range leaves out the core on `latest`, and the promoted-releases job makes each
+# promoted version's GitHub Release a full release.
 # Each pack version a push tags gets its GitHub Release on its tag, with the version's CHANGELOG.md section as its
-# notes (the github-releases job).
+# notes (the github-releases job), a pre-release until it is promoted.
 
 on:
   push:
@@ -340,7 +342,7 @@ jobs:
         with:
           node-version: "24"
 
-      # Trusted publishing needs npm 11.5.1 or newer; dist-tags over it (moving `next`, and the promote job) 11.21.0.
+      # Trusted publishing needs npm 11.5.1 or newer; the promote job, which moves dist-tags over it, needs 11.21.0.
       - name: Install npm with trusted publishing support
         run: |
           npm install --global "npm@^11.21.0"

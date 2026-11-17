@@ -568,8 +568,8 @@ describe("releasePacks", () => {
   const entry = (id, version) => ({ name: `@neralabs/rerail-pack-${id}`, version, file: `${id}-${version}.tgz` });
   const conflict = "npm error 403 403 Forbidden - PUT https://registry.npmjs.org/@neralabs%2frerail-pack-a - You cannot publish over the previously published versions: 0.2.0.";
 
-  /** Steps that record what they do; `published` maps a tarball to npm publish's result, `latest` a name to that dist-tag. */
-  function recording(published = {}, latest = {}) {
+  /** Steps that record what they do; `published` maps a tarball to npm publish's result, `latest` and `next` a name to that dist-tag. */
+  function recording(published = {}, latest = {}, next = {}) {
     const calls = [];
     const lines = [];
     return {
@@ -577,7 +577,7 @@ describe("releasePacks", () => {
       lines,
       steps: {
         publish: (file, distTag) => (calls.push(`publish ${file} ${distTag}`), published[file] ?? { ok: true, output: "" }),
-        readLatest: async (name) => latest[name] ?? null,
+        readDistTags: async (name) => ({ ...(latest[name] === undefined ? {} : { latest: latest[name] }), ...(next[name] === undefined ? {} : { next: next[name] }) }),
         log: (line) => void lines.push(line),
       },
     };
@@ -598,8 +598,16 @@ describe("releasePacks", () => {
     const { calls, steps } = recording({}, latest);
     const { released, superseded } = await releasePacks([entry("a", "0.1.7"), entry("b", "0.1.7"), entry("c", "0.1.0")], steps);
     expect(calls).toEqual(["publish b-0.1.7.tgz next", "publish c-0.1.0.tgz next"]);
-    expect(superseded).toEqual([{ name: "@neralabs/rerail-pack-a", version: "0.1.7", latest: "0.1.8" }]);
+    expect(superseded).toEqual([{ name: "@neralabs/rerail-pack-a", version: "0.1.7", why: "0.1.7 is older than latest 0.1.8: a release on next must not trail latest" }]);
     expect(released.map(({ name }) => name)).toEqual(["@neralabs/rerail-pack-b", "@neralabs/rerail-pack-c"]);
+  });
+
+  it("leaves out a version older than next, so re-running an old run never moves next back", async () => {
+    const { calls, steps } = recording({}, { "@neralabs/rerail-pack-a": "0.1.6" }, { "@neralabs/rerail-pack-a": "0.1.8" });
+    const { released, superseded } = await releasePacks([entry("a", "0.1.7"), entry("b", "0.1.7")], steps);
+    expect(calls).toEqual(["publish b-0.1.7.tgz next"]);
+    expect(superseded).toEqual([{ name: "@neralabs/rerail-pack-a", version: "0.1.7", why: "0.1.7 is older than next 0.1.8: publishing it under next would move next back" }]);
+    expect(released.map(({ name }) => name)).toEqual(["@neralabs/rerail-pack-b"]);
   });
 
   it("takes a version a re-run finds on the registry already as released, without publishing it again, and goes on", async () => {

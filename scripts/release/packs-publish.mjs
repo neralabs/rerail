@@ -3,9 +3,9 @@
 // where it waits for a person to promote it to `latest` (packs-promote.mjs; docs/release.md, "Promoting"). It waits on
 // nothing npm does after a publish: the release workflow's dist-tag check reads the result back. Any failed run can be
 // run again, with the same tarballs or fresh ones: a version already on the registry is not published again
-// (releasePacks in packs.mjs). A version older than its pack's `latest` (an old run run again after a newer version
-// shipped) is not published, since that would put `next` behind `latest`; the others go on, and the run fails naming
-// it.
+// (releasePacks in packs.mjs). A version older than its pack's `latest` or `next` (an old run run again after a newer
+// version shipped) is not published, since `next` would trail `latest` or move back; the others go on, and the run
+// fails naming it.
 //
 // In the release workflow npm authenticates through trusted publishing (`npm dist-tag` over it needs npm 11.21.0 or
 // newer) and publishes with `--provenance` (failing when npm cannot attach an attestation). By hand (a pack's first
@@ -17,7 +17,7 @@
 import { spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { readLatestTag } from "./dist-tags.mjs";
+import { readDistTagsOrNone } from "./dist-tags.mjs";
 import { REGISTRY, releasePacks, releaseTag } from "./packs.mjs";
 
 /**
@@ -40,13 +40,13 @@ const manifest = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8"));
 
 const { released, superseded } = await releasePacks(manifest, {
   publish: (file, distTag) => publish(join(out, file), distTag),
-  readLatest: readLatestTag,
+  readDistTags: readDistTagsOrNone,
   log: (line) => console.log(line),
 });
 if (process.env.GITHUB_OUTPUT !== undefined) {
   appendFileSync(process.env.GITHUB_OUTPUT, `released=${released.map(({ name, version, distTag }) => `${name}@${version}:${distTag}`).join(" ")}\n`);
 }
-for (const { name, version, latest } of superseded) {
-  console.log(`::error title=Superseded::${releaseTag(name, version)} is older than latest ${latest}, so it was not published; ${latest} supersedes it.`);
+for (const { name, version, why } of superseded) {
+  console.log(`::error title=Superseded::${releaseTag(name, version)} was not published: ${why}.`);
 }
 if (superseded.length > 0) process.exitCode = 1;

@@ -20,6 +20,15 @@ describe("release.yml", () => {
     expect(derive.run).not.toContain('?? "latest"');
   });
 
+  it("refuses, in the publish job itself, a version that would move its channel back, since a re-run reuses metadata's outputs", () => {
+    const steps = jobs.publish.steps;
+    const refusal = runs(steps, "publishRefusal(");
+    expect(refusal).toBeGreaterThan(-1);
+    expect(refusal).toBeLessThanOrEqual(runs(steps, "npm publish"));
+    const publish = steps[runs(steps, "npm publish")].run;
+    expect(publish.indexOf("publishRefusal(")).toBeLessThan(publish.indexOf("npm publish"));
+  });
+
   it("raises next only when latest moves, never on a publish", () => {
     expect(runs(jobs.publish.steps, "raise-next.mjs")).toBe(-1);
     expect(runs(jobs["put-back"].steps, "raise-next.mjs")).toBeGreaterThan(-1);

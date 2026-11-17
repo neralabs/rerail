@@ -8,7 +8,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-import { compareVersions, NEXT_TAG, raiseNext } from "./dist-tags.mjs";
+import { NEXT_TAG, publishRefusal, raiseNext } from "./dist-tags.mjs";
 import { changeType, changeTypeRefusal, releaseNoteEntry } from "./release-notes.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -72,22 +72,22 @@ export function tagPacks(manifest, tags, steps) {
  * Publishes each `{ name, version, file }` of a packs-pack.ts manifest, tagged already (tagPacks), waiting on nothing
  * npm does after a publish, so any failed run can be run again: a version the registry already has is not published
  * again, only taken through the steps after the publish. Each is published under `next` (PUBLISH_TAG) and nothing else
- * moves: `latest` waits for the promotion, so a pack put back and held there stays held. A version older than the
- * pack's `latest` (an old run run again after a newer version shipped) is `superseded`: publishing it under `next`
- * would put `next` behind `latest`, so it is left unpublished and the rest go on. `steps` does the I/O:
- * `publish(file, distTag)` returns `{ ok, output }`, and `readLatest(name)` resolves to `latest` or null. Returns
- * `{ released, superseded }`: each `{ name, version, distTag }` this run released, and each `{ name, version, latest }`
- * it left unpublished.
+ * moves: `latest` waits for the promotion, so a pack put back and held there stays held. A version publishRefusal (in
+ * dist-tags.mjs) refuses is `superseded` and left unpublished, and the rest go on: one older than `latest`, which
+ * `next` must not trail, or older than `next`, which an old run run again after a newer version shipped would move
+ * back. `steps` does the I/O: `publish(file, distTag)` returns `{ ok, output }`, and `readDistTags(name)` resolves to
+ * the pack's dist-tags (`{}` when it has none). Returns `{ released, superseded }`: each `{ name, version, distTag }`
+ * this run released, and each `{ name, version, why }` it left unpublished.
  */
 export async function releasePacks(manifest, steps) {
   const released = [];
   const superseded = [];
   for (const { name, version, file } of manifest) {
     const spec = releaseTag(name, version);
-    const latest = await steps.readLatest(name);
-    if (latest !== null && compareVersions(version, latest) < 0) {
-      steps.log(`${spec} is older than latest ${latest}: not published, since publishing it under ${PUBLISH_TAG} would put ${PUBLISH_TAG} behind latest`);
-      superseded.push({ name, version, latest });
+    const why = publishRefusal(version, PUBLISH_TAG, await steps.readDistTags(name));
+    if (why !== null) {
+      steps.log(`${spec} is not published: ${why}`);
+      superseded.push({ name, version, why });
       continue;
     }
     const published = steps.publish(file, PUBLISH_TAG);

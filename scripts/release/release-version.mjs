@@ -289,7 +289,7 @@ if (rows.length === 0) {
   lines.push("Nothing to release.");
 } else {
   lines.push(
-    "Merging this pull request releases these packages to npm under `latest` (each publish waits for a reviewer to approve the `release` environment):",
+    "Merging this pull request releases these packages to npm under `next`, where they wait to be promoted to `latest` (docs/release.md, \"Promoting\"). Each publish waits for a reviewer to approve the `release` environment:",
     "",
     "| Package | Version | Published by |",
     "|---|---|---|",

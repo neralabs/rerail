@@ -93,8 +93,13 @@ releases. Nothing in CI reads them: the checklist is the merger's word (`BEFORE_
 
 Merging publishes the release to `next`; nothing reaches `latest` until a person promotes it. First:
 
-- **End-user testing.** One hour using the release the way a user does: `rerail update --channel next` installs its
-  core, and set-up and `rerail packs add` then fetch its packs from `next`.
+- **End-user testing.** One hour using the release the way a user does. `rerail update --channel next` installs its
+  core and lists the newer versions of your installed packs on `next`, with the `rerail packs add` command for each:
+  run them, so the packs under test are the release's too.
+
+Promote a release before the next Release pull request merges. The packs' promote takes each pack's version on `main`,
+so once a later release has merged it would promote that one, which nobody tested. Its run summary lists the versions
+it will move before anyone approves: check they are the ones tested.
 
 If testing finds a problem, fix it on `main` as any pull request. The next Release pull request releases the fix as the
 next version on `next`, and that version is the one to test and promote. The version that failed stays on `next` and
@@ -151,14 +156,17 @@ after a reviewer approves.
 
 - `beta` and `next` are opt-in: `rerail update --channel <tag>`.
 - The Release pull request makes only plain versions. For a `beta` or `next` preview, set the version and push the tag
-  by hand.
+  by hand. A release is refused while `next` holds a newer preview, since publishing it would move `next` back. To
+  release anyway, end the preview first: `npm dist-tag add @neralabs/rerail@<latest version> next`, then re-run the
+  release's failed jobs.
 
 <details>
 <summary>Publishing rules and checks</summary>
 
 - Publishing uses npm trusted publishing from the protected `release` environment. The channel is the npm dist-tag.
-- Other prerelease suffixes are rejected. The run refuses a version older than core's `latest` before building
-  (`releaseChannel` and `previewRefusal` in `scripts/release/dist-tags.mjs`).
+- Other prerelease suffixes are rejected. The run refuses a version older than core's `latest`, or one on `next` older
+  than `next`, before building and again before publishing, so a re-run of an older release never moves a channel
+  back (`releaseChannel` and `publishRefusal` in `scripts/release/dist-tags.mjs`).
 - `next` never trails `latest`: a promotion or put-back raises `next` to the version (`scripts/release/raise-next.mjs`)
   unless `next` holds a newer one. Whoever follows `next` gets every release first. A publish moves only its own
   channel.

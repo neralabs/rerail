@@ -93,14 +93,14 @@ jobs:
         run: |
           node --input-type=module <<'EOF'
           import { appendFileSync, readFileSync } from "node:fs";
-          import { previewRefusal, readPublicDistTags, releaseChannel } from "./scripts/release/dist-tags.mjs";
+          import { publishRefusal, readPublicDistTags, releaseChannel } from "./scripts/release/dist-tags.mjs";
           if (process.env.PUBLISHES !== "true") {
             console.log("Not a release tag push: the build is uploaded as an artifact and not published.");
             appendFileSync(process.env.GITHUB_OUTPUT, "channel=\n");
             process.exit(0);
           }
           const { version, channel } = releaseChannel(process.env.RELEASE_TAG, JSON.parse(readFileSync("package.json", "utf8")).version);
-          const refusal = previewRefusal(version, channel, (await readPublicDistTags("@neralabs/rerail")).latest);
+          const refusal = publishRefusal(version, channel, await readPublicDistTags("@neralabs/rerail"));
           if (refusal !== null) throw new Error(refusal);
           console.log(`Publishing ${version} to the ${channel} channel.`);
           appendFileSync(process.env.GITHUB_OUTPUT, `channel=${channel}\nversion=${version}\n`);
@@ -235,8 +235,8 @@ jobs:
   # `--provenance` makes npm attach a provenance attestation and fail the publish when it cannot generate one (for
   # example, if this repository is ever made private again), so no release reaches npm without one. The job can be run
   # again after a failure: a version npm already has is not published again (npm refuses to publish over it, which
-  # the step reads, as packs-publish.mjs does, since `npm view` can lag a publish by minutes), and `next` is only ever
-  # moved up.
+  # the step reads, as packs-publish.mjs does, since `npm view` can lag a publish by minutes), and a version older than
+  # the channel's (publishRefusal) is refused, so a re-run of an older release never moves `next` back.
   publish:
     name: Publish to npmjs
     needs: [metadata, package, shrinkwrap, windows-install, unix-install]
@@ -253,7 +253,7 @@ jobs:
         with:
           node-version: "24"
 
-      # Trusted publishing needs npm 11.5.1 or newer; dist-tags over it (moving `next`) 11.21.0.
+      # Trusted publishing needs npm 11.5.1 or newer; the put-back job, which moves dist-tags over it, needs 11.21.0.
       - name: Install npm with trusted publishing support
         run: |
           npm install --global "npm@^11.21.0"
@@ -279,6 +279,9 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$RELEASE_CHANNEL" || { echo "::error::No release channel was derived for ${GITHUB_REF_NAME}" >&2; exit 1; }
+          # Checked again here, not only in metadata, whose outputs a re-run reuses: an older run re-run after a newer
+          # version shipped must not move the channel back.
+          node --input-type=module -e 'import { publishRefusal, readPublicDistTags } from "./scripts/release/dist-tags.mjs"; const refusal = publishRefusal(process.env.RELEASE_VERSION, process.env.RELEASE_CHANNEL, await readPublicDistTags("@neralabs/rerail")); if (refusal !== null) { console.log(`::error::${refusal}`); process.exit(1); }'
           errors="$RUNNER_TEMP/npm-publish.err"
           if npm publish "./$PACKAGE_TARBALL" --registry https://registry.npmjs.org --access public --tag "$RELEASE_CHANNEL" --provenance 2> "$errors"; then
             cat "$errors" >&2
@@ -288,7 +291,6 @@ jobs:
               || { echo "::error::npm publish @neralabs/rerail@${RELEASE_VERSION} failed" >&2; exit 1; }
             echo "::notice::@neralabs/rerail@${RELEASE_VERSION} is already on npm (a re-run): not published again"
           fi
-
 
   # Reads core's dist-tags back from npm with `npm dist-tag ls`; core is public, so no token is needed.
   dist-tags:

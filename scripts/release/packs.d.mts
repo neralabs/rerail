@@ -31,10 +31,10 @@ export function releasePacks(
   manifest: readonly { name: string; version: string; file: string }[],
   steps: {
     publish(file: string, distTag: string): { ok: boolean; output: string };
-    readLatest(name: string): Promise<string | null>;
+    readDistTags(name: string): Promise<Record<string, string>>;
     log(line: string): void;
   },
-): Promise<{ released: { name: string; version: string; distTag: string }[]; superseded: { name: string; version: string; latest: string }[] }>;
+): Promise<{ released: { name: string; version: string; distTag: string }[]; superseded: { name: string; version: string; why: string }[] }>;
 export function onRegistry(version: string, distTags: Record<string, string> | null, versions: readonly string[] | null): boolean | null;
 export function planPacks(
   packs: readonly ReleasePack[],

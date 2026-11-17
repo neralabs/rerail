@@ -51,11 +51,16 @@ export function compareVersions(a, b) {
 export const nextTrails = (next, version) => next === null || next === undefined || compareVersions(next, version) < 0;
 
 /**
- * Why a `beta` or `next` preview `version` must not be published, given the package's `latest` (undefined when it has
- * none), or null when it may be: one older than `latest` would leave its channel behind the stable one.
+ * Why `version` must not be published under `channel`, given the package's dist-tags (`{ latest, next }`, each absent
+ * when unset), or null when it may be. One older than `latest` would leave its channel behind the stable one. Under
+ * `next`, one older than `next` would move `next` back, as re-running an older release's publish would, or a release
+ * while a newer preview is on `next`.
  */
-export const previewRefusal = (version, channel, latest) =>
-  latest !== undefined && compareVersions(version, latest) < 0 ? `${version} is older than latest ${latest}: a ${channel} preview must not trail latest` : null;
+export function publishRefusal(version, channel, { latest, [NEXT_TAG]: next } = {}) {
+  if (latest !== undefined && compareVersions(version, latest) < 0) return `${version} is older than latest ${latest}: a release on ${channel} must not trail latest`;
+  if (channel === NEXT_TAG && next !== undefined && compareVersions(version, next) < 0) return `${version} is older than next ${next}: publishing it under next would move next back`;
+  return null;
+}
 
 /**
  * What release tag `tag` (`v<version>`) publishes, given the version package.json names at it: `{ version, channel }`.
@@ -84,12 +89,12 @@ export async function readPublicDistTags(name) {
 /** `name`'s `next` dist-tag, null when it has none (readPublicDistTags). */
 export const readNextTag = async (name) => (await readPublicDistTags(name))[NEXT_TAG] ?? null;
 
-/** `name`'s `latest` dist-tag, null when it has none or the package was never published (a first publish by hand). */
-export async function readLatestTag(name) {
+/** `name`'s dist-tags, as readPublicDistTags reads them, or none (`{}`) when the package was never published. */
+export async function readDistTagsOrNone(name) {
   const response = await fetch(`${REGISTRY}/-/package/${name.replace("/", "%2f")}/dist-tags`, { headers: { accept: "application/json" } });
-  if (response.status === 404) return null;
+  if (response.status === 404) return {};
   if (!response.ok) throw new Error(`${name}'s dist-tags answer an anonymous request with ${response.status}`);
-  return (await response.json()).latest ?? null;
+  return await response.json();
 }
 
 /** Points `name`'s dist-tag `tag` at `version`, with npm's output on the terminal; throws when npm fails. */

@@ -93,6 +93,16 @@ describe.runIf(NPM_RUNS)("release-version.mjs, the pull request's description", 
     expect(checklist).not.toContain("End-user testing");
     expect(checklist).toContain('After merging, test the release on `next`, then promote it (docs/release.md, "Before promoting").');
   });
+
+  it("tells whoever merges that it publishes to next, where the release waits to be promoted", () => {
+    const repo = repository();
+    writePack(repo, "fresh", ["fresh-one"]);
+    commit(repo, "the pack");
+    releaseVersion(repo);
+    const body = readFileSync(join(repo.root, "body.md"), "utf8");
+    expect(body).toContain("Merging this pull request releases these packages to npm under `next`, where they wait to be promoted to `latest`");
+    expect(body).not.toContain("under `latest`");
+  });
 });
 
 describe.runIf(NPM_RUNS)("release-version.mjs, each released pack's rules", () => {
