@@ -3532,4 +3532,38 @@ describe("a session's start where RERAIL_AUTOSTART keeps the daemon off and none
     expect(lookups.runningDaemonEngineEndpoint).toHaveBeenCalledTimes(1);
     expect(existsSync(join(process.env.RERAIL_HOME!, HOOK_FAILURES_FILE))).toBe(false);
   });
+
+  // Beside a daemon that answers stopped, the session's start says nothing, as Rerail does not run there, and its answer
+  // is kept, so a later hook beside the same daemon, busy, repeats it. A kept answer never stands in for a daemon that is
+  // gone: once that one has stopped and the checkout has been started, the session's start says its line.
+  it.each(sessionStarts)(
+    "lets $host repeat a daemon's answer of stopped while it runs, and says its line once it is gone and the checkout was started",
+    { timeout: 20_000 },
+    async ({ host, run, input, told }) => {
+      const root = await temporaryDirectory({ started: false });
+      const app = stoppedApp(root);
+      vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+      vi.stubEnv("RERAIL_AUTOSTART", "0");
+      const throughDaemon = { storageRoot: join(root, "sessions") };
+      const answered = await countingDaemon(process.env.RERAIL_HOME!, "stopped");
+      try {
+        expect(await run(input(app), throughDaemon)).toEqual({});
+        expect(existsSync(keptAnswerFile(app))).toBe(true);
+      } finally {
+        await answered.close();
+      }
+      // The same daemon, now busy: it would answer started, so an answer of `{}` within the second is the kept one.
+      const busy = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
+      try {
+        expect(await answeredWellBeforeReadLimit(run(laterPrompts[host](app), throughDaemon))).toEqual({});
+        expect(await endedStartChecks(busy)).toEqual({ asked: 1, ended: 1 });
+      } finally {
+        await busy.close();
+      }
+      await rm(join(process.env.RERAIL_HOME!, "daemon.json"));
+      startTestRepository(app);
+      expect(await run(input(app), throughDaemon)).toEqual(told(notRunning("0")));
+      expect(existsSync(join(process.env.RERAIL_HOME!, HOOK_FAILURES_FILE))).toBe(false);
+    },
+  );
 });
