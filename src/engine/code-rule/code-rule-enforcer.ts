@@ -592,12 +592,12 @@ function recordSentPackages(packages: Map<string, string>, edit: CodeRuleEdit, f
     if (loadNativeBinding().readsPackageManifests(file.language)) packages.set(file.path, JSON.stringify(file.package ?? null));
 }
 
-/** Generated snapshots and repository audits have independent native state. */
 /** Turns to take a workspace: `take` resolves with the function that gives the turn back. */
 export interface WorkspaceTurns {
   take(): Promise<() => void>;
 }
 
+/** Generated snapshots and repository audits have independent native state. */
 export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #workspaceRoot: string;
   readonly #catalog: CodeRuleDslCatalog;
@@ -624,7 +624,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   #mode: AuditMode;
   #workspace: PreparedWorkspace | undefined;
   #replacement: PreparedWorkspace | undefined;
-  /** The lane gave its workspace back (`releaseWorkspace`); its next audit or question takes a fresh one. */
+  /**
+   * The lane holds no workspace: it gave its own back (`releaseWorkspace`) or opened with none (`openReleased`). Its next
+   * audit takes a fresh one in its turn; a question goes to an open lane at the same rules (`readsAt`) meanwhile.
+   */
   #released = false;
   #sessionId: string | undefined;
   #revision = 0;
@@ -771,7 +774,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return this.#readsNow(path);
   }
 
-  /** `#readsPath` by the lane's rules: a lane that gave its workspace back takes one again to answer (`releaseWorkspace`). */
+  /**
+   * `#readsPath` by the lane's rules. A lane with no workspace asks an open lane at its rules' version, which reads the
+   * same paths, and takes a workspace to answer only when none is open at it.
+   */
   #readsNow(path: string): boolean {
     if (!this.#released) return this.#readsPath(path);
     const reads = this.#readsAt?.(this.#catalog.status.version);
@@ -828,9 +834,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
 
   /**
    * Gives back the native workspace (its rules, its storage and the checkout's index) while no work of the lane needs
-   * it, keeping all the lane applied and recorded; returns whether it gave one back. The lane's next audit or question
-   * takes a fresh workspace at the catalog's version and applies again what the lane applied (`#takeWorkspaceAgain`),
-   * as a rules change does, so it judges each edit as an open one would.
+   * it, keeping all the lane applied and recorded, and its turn; returns whether it gave one back. The lane's next
+   * audit takes a fresh workspace at the catalog's version in its turn and applies again what the lane applied
+   * (`#takeWorkspaceAgain`), as a rules change does, so it judges each edit as an open one would.
    */
   releaseWorkspace(): boolean {
     const released = this.#disposeIdleWorkspace();
