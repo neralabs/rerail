@@ -4151,3 +4151,28 @@ fn findings_are_written_on_the_version() {
     let head = v.header(&Default::default()).unwrap();
     assert!(head.outputs.iter().any(|o| o == "violation") && head.decls.get("violation").is_some_and(|c| c.len() == 6), "{:?}", head.outputs);
 }
+
+/// The three-valued relations are written on a modular text's version (decision 0281's path, step 7b): `p` declared
+/// `must, may` has a must side of its rules but the `may` one, what reads `p` is three-valued too, and a negated atom
+/// reads the other side, as the tree's `lower::three_valued` writes them; a debug build checks the image against the
+/// tree's.
+#[test]
+fn three_valued_relations_are_written_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl base(x: symbol)\nbase(\"a\"). base(\"b\").\n.decl known(x: symbol)\nknown(\"a\").\n",
+        ".decl p(x: symbol) must, may\nmust p(x) :- known(x).\nmay p(x) :- base(x), !known(x).\n",
+        ".decl q(x: symbol)\nq(x) :- base(x), !p(x).\n.output q, rr_must_q\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    let has = |r: &str| rules.iter().any(|x| x == r);
+    assert!(has("rr_must_p($x) :- known($x)") && has("p($x) :- known($x)") && has("p($x) :- base($x), !known($x)"), "{rules:#?}");
+    assert!(!rules.iter().any(|x| x.starts_with("rr_must_p($x) :- base(")), "{rules:#?}");
+    assert!(has("rr_must_q($x) :- base($x), !p($x)") && has("q($x) :- base($x), !rr_must_p($x)"), "{rules:#?}");
+    let head = v.header(&Default::default()).unwrap();
+    assert!(head.decls.contains_key("rr_must_p") && head.decls.contains_key("rr_must_q"), "{:?}", head.decls.keys().collect::<Vec<_>>());
+}

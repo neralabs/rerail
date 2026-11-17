@@ -1429,6 +1429,78 @@ impl ProgramPass for Findings {
     }
 }
 
+/// `lower::three_valued` on the version: a three-valued relation's rules written twice, its must side
+/// (`rr_must_<r>`, but a rule prefixed `may`) and its may side, each atom of a three-valued relation reading the side
+/// `lower::reads_must` says; the must sides declared and given the facts. Its settings: the relations declared
+/// `must, may`, and the rules' prefixes by index (the version's order is the tree's).
+pub struct ThreeValued {
+    pub three: BTreeSet<String>,
+    pub modal: BTreeMap<usize, String>,
+}
+
+/// `ThreeValued`'s rewrite of one side.
+struct Side<'a> {
+    v: &'a Version,
+    three: &'a BTreeSet<String>,
+    must: bool,
+}
+
+impl crate::code_rule_dsl::logic::program_image::build::Rewrite for Side<'_> {
+    fn atom_as(&mut self, a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>) -> Option<(String, bool, bool)> {
+        let rel = self.v.rel_name(a.rel());
+        crate::code_rule_dsl::logic::rr::lower::reads_must(self.three, rel, a.neg(), self.must).then(|| (crate::code_rule_dsl::logic::rr::lower::must_name(rel), a.neg(), a.gated()))
+    }
+    fn head_as(&mut self, a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>) -> Option<String> {
+        self.must.then(|| crate::code_rule_dsl::logic::rr::lower::must_name(self.v.rel_name(a.rel())))
+    }
+}
+
+impl ProgramPass for ThreeValued {
+    const NAME: &'static str = "three-valued relations";
+    fn settings(&self) -> Vec<u8> {
+        format!("{:?} {:?}", self.three, self.modal).into_bytes()
+    }
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::rr::lower::{three_closure, three_valued_header};
+        if self.three.is_empty() {
+            return Ok(());
+        }
+        let v = cx.v();
+        let shape: Vec<(&str, Vec<&str>)> = v
+            .rules()
+            .map(|r| {
+                let reads = r
+                    .body()
+                    .filter_map(|l| match l.view() {
+                        L::Atom(a) | L::Agg { atom: a, .. } => Some(v.rel_name(a.rel())),
+                        _ => None,
+                    })
+                    .collect();
+                (v.rel_name(r.head().rel()), reads)
+            })
+            .collect();
+        let three = three_closure(&self.three, &shape);
+        drop(shape);
+        let was = v.header(&Default::default())?;
+        let mut head = was.clone();
+        three_valued_header(&mut head, &three);
+        let input = std::sync::Arc::clone(w.input());
+        let b = w.derive()?;
+        b.set_header(&was, &head);
+        for (i, r) in input.rules().enumerate() {
+            if !three.contains(input.rel_name(r.head().rel())) {
+                b.keep(&input, r);
+                continue;
+            }
+            if self.modal.get(&i).map(String::as_str) != Some("may") {
+                b.rewrite(&input, r, &mut Side { v: &input, three: &three, must: true }).finish()?;
+            }
+            b.rewrite(&input, r, &mut Side { v: &input, three: &three, must: false }).finish()?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::code_rule_dsl::logic::program_image::{build::Builder, manager::Pipeline};

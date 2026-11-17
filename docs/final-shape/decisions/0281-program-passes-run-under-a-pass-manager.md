@@ -663,8 +663,13 @@ step 3 replaces what is under the writer.
      `Lowered`) and returns the rules it appends. The tree (`lower::findings`) and the version
      (`lowering_tail::Findings { pending }`) both call it. Test: `findings_are_written_on_the_version` (a
      `.violation` with a message, `.on syntax_error`, an own five-column `violation` rule; fails with the pass left
-     out, and with the version's widening left out); ep2's 317 policies: 0 rows. Next: the three-valued relations,
-     the last of `whole_front` but the clauses.
+     out, and with the version's widening left out); ep2's 317 policies: 0 rows. Then the three-valued relations:
+     `lower::three_valued` is a function of the program, the relations declared `must, may` and the rules' prefixes
+     by index (`Lowered` hands both on), built of `three_closure`, `must_name`, `reads_must` and
+     `three_valued_header`, which `lowering_tail::ThreeValued { three, modal }` builds of too (each side a `Rewrite`'s
+     `atom_as` and `head_as`). Test: `three_valued_relations_are_written_on_the_version` (fails with the pass left
+     out); ep2's 317 policies: 0 rows. `whole_front` is now the clauses alone: every analysis of `whole()` after them
+     runs on the text's version. Next: the link of modules (`append`).
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.

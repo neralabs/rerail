@@ -966,7 +966,7 @@ pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
     program.qualifiers.retain(|r, _| !(seeded.qualifiers.contains(r) && gone(r)));
 }
 
-/// `link_seeded` up to `findings`, `core_and_projections`, `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`, `unit`, `whole_back`, `front::finish` and `whole()`'s tail (aggregate demand, `unit`, `sets`,
+/// `link_seeded` up to `three_valued`, `findings`, `core_and_projections`, `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`, `unit`, `whole_back`, `front::finish` and `whole()`'s tail (aggregate demand, `unit`, `sets`,
 /// `widen_cyclic_contexts`): the program `rr::link_seeded_version`
 /// makes a version of, with what the lowerer knows of it; `declared` checked. `builtins_out` takes out declarations
 /// of relations no rule reads (the built-ins are written out), but `within`, which it declares where read. `kind_sets` takes out only sets no rule
@@ -987,7 +987,8 @@ pub fn link_seeded_front(m: Module, seeds: &Seeds) -> Result<Lowered, Error> {
 
 /// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.
 fn whole(l: Lowerer) -> Result<Program, Error> {
-    let Lowered { mut program, sets: named, rewritten, docof_of_locs, findings: pending } = whole_front(l)?;
+    let Lowered { mut program, sets: named, rewritten, docof_of_locs, findings: pending, three, modal } = whole_front(l)?;
+    three_valued(&mut program, &three, &modal);
     findings(&mut program, &pending)?;
     core_and_projections(&mut program, docof_of_locs)?;
     span_patterns_into(&mut program)?;
@@ -1055,17 +1056,16 @@ pub fn sets(program: &mut Program) {
     }
 }
 
-/// `whole` up to the lowerer's analyses before its findings, with what the lowerer knows of the program
-/// (`Lowered`): what `findings`, `core_and_projections`, `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`,
+/// `whole` but the lowerer's analyses, with what the lowerer knows of the program
+/// (`Lowered`): what `three_valued`, `findings`, `core_and_projections`, `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`,
 /// `unit`, `whole_back`, `front::finish` and the tail (aggregate demand, `unit`,
 /// `sets`, `widen_cyclic_contexts`) make of it `rr::link_seeded_version` makes on the version.
 fn whole_front(mut l: Lowerer) -> Result<Lowered, Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
-    l.three_valued();
     let rewritten: Vec<String> = self::core::REWRITTEN.into_iter().filter(|r| l.rewritten(r)).map(str::to_owned).collect();
     drop(analyses);
     let findings = PendingFindings { violations: std::mem::take(&mut l.violations), next: l.next };
-    Ok(Lowered { program: l.prog, sets: l.sets, rewritten, docof_of_locs: l.docof_of_locs, findings })
+    Ok(Lowered { program: l.prog, sets: l.sets, rewritten, docof_of_locs: l.docof_of_locs, findings, three: l.three, modal: l.modal })
 }
 
 /// The program `whole_front` leaves, with what the lowerer knows of it that the passes after read: the sets its
@@ -1078,6 +1078,9 @@ pub struct Lowered {
     pub docof_of_locs: bool,
     /// The `.violation`s the clauses declared, for `findings`.
     pub findings: PendingFindings,
+    /// The relations declared `must, may`, and the rules' `must`/`may` prefixes by index, for `three_valued`.
+    pub three: BTreeSet<String>,
+    pub modal: BTreeMap<usize, String>,
 }
 
 /// The `.violation`s a program's clauses declared, and the lowerer's count of fresh names, with which `findings` writes
@@ -1428,6 +1431,91 @@ pub fn core_and_projections(prog: &mut Program, docof_of_locs: bool) -> Result<(
         prog.rules.insert(at, rule);
     }
     Ok(())
+}
+
+/// `.decl r(…) must, may` (core.rr 3): r is computed twice. Its may side, which keeps the name, holds what is
+/// proven or unknown: every rule of r. Its must side (`rr_must_r`) holds what is proven: the rules with no
+/// prefix or `must`. A relation that reads a three-valued one is three-valued too, with every rule on both
+/// sides. In a must side's rule a positive atom of a three-valued relation reads its must side and a negated
+/// one its may side; a may side's rule reads the other way. A finding is the may side: a definite one and a
+/// possible one have the same key, and the possible tag is not made yet.
+/// `three` the relations declared `must, may`, `modal` the rules' prefixes by index; the tree's form of
+/// `lowering_tail::ThreeValued`, both built of `three_closure`, `must_name`, `reads_must` and `three_valued_header`.
+pub fn three_valued(prog: &mut Program, three: &BTreeSet<String>, modal: &BTreeMap<usize, String>) {
+    if three.is_empty() {
+        return;
+    }
+    let shape: Vec<(&str, Vec<&str>)> = prog.rules.iter().map(|r| (r.head.rel.as_str(), r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str()).collect())).collect();
+    let three = three_closure(three, &shape);
+    drop(shape);
+    let side = |body: &[Literal], must_side: bool| -> Vec<Literal> {
+        body.iter()
+            .cloned()
+            .map(|mut l| {
+                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = &mut l
+                    && reads_must(&three, &a.rel, a.neg, must_side)
+                {
+                    a.rel = must_name(&a.rel).into();
+                }
+                l
+            })
+            .collect()
+    };
+    let mut rules = Vec::new();
+    for (i, rule) in std::mem::take(&mut prog.rules).into_iter().enumerate() {
+        if !three.contains(rule.head.rel.as_str()) {
+            rules.push(rule);
+            continue;
+        }
+        if modal.get(&i).map(String::as_str) != Some("may") {
+            let mut head = rule.head.clone();
+            head.rel = must_name(&head.rel).into();
+            rules.push(Rule { head, body: side(&rule.body, true).into() });
+        }
+        rules.push(Rule { head: rule.head.clone(), body: side(&rule.body, false).into() });
+    }
+    prog.rules = rules;
+    three_valued_header(prog, &three);
+}
+
+/// The three-valued relations: those declared so, and every relation a rule of which reads one (`rules`: each rule's
+/// head and the relations its body's atoms read), to a fixed point.
+pub fn three_closure(declared: &BTreeSet<String>, rules: &[(&str, Vec<&str>)]) -> BTreeSet<String> {
+    let mut three = declared.clone();
+    loop {
+        let before = three.len();
+        for (head, reads) in rules {
+            if reads.iter().any(|r| three.contains(*r)) {
+                three.insert((*head).to_owned());
+            }
+        }
+        if three.len() == before {
+            return three;
+        }
+    }
+}
+
+/// A three-valued relation's must side.
+pub fn must_name(rel: &str) -> String {
+    format!("{RESERVED}must_{rel}")
+}
+
+/// Whether an atom of `rel` (negated: `neg`) in a rule of the must side (`must_side`) or the may side reads `rel`'s
+/// must side: a positive atom on the must side, a negated one on the may side.
+pub fn reads_must(three: &BTreeSet<String>, rel: &str, neg: bool, must_side: bool) -> bool {
+    three.contains(rel) && neg != must_side
+}
+
+/// Each three-valued relation's must side declared, and given its facts, as the relation is.
+pub fn three_valued_header(prog: &mut Program, three: &BTreeSet<String>) {
+    for rel in three {
+        if let Some(cols) = prog.decls.get(rel.as_str()).cloned() {
+            prog.decls.insert(must_name(rel).into(), cols);
+        }
+        if let Some(rows) = prog.facts.get(rel).cloned() {
+            prog.facts.insert(must_name(rel), rows);
+        }
+    }
 }
 
 /// `span_patterns` on a program, what it finds added to it.
@@ -1820,68 +1908,6 @@ impl Lowerer {
         }
         self.prog.decls.insert(name.into(), out.iter().map(|(c, t)| (c.into(), t.into())).collect());
         Ok(())
-    }
-
-    /// `.decl r(…) must, may` (core.rr 3): r is computed twice. Its may side, which keeps the name, holds what is
-    /// proven or unknown: every rule of r. Its must side (`rr_must_r`) holds what is proven: the rules with no
-    /// prefix or `must`. A relation that reads a three-valued one is three-valued too, with every rule on both
-    /// sides. In a must side's rule a positive atom of a three-valued relation reads its must side and a negated
-    /// one its may side; a may side's rule reads the other way. A finding is the may side: a definite one and a
-    /// possible one have the same key, and the possible tag is not made yet.
-    fn three_valued(&mut self) {
-        if self.three.is_empty() {
-            return;
-        }
-        let must = |rel: &str| format!("{RESERVED}must_{rel}");
-        let mut three = self.three.clone();
-        loop {
-            let before = three.len();
-            for rule in &self.prog.rules {
-                if rule.body.iter().any(|l| l.atom().is_some_and(|a| three.contains(a.rel.as_str()))) {
-                    three.insert(rule.head.rel.to_string());
-                }
-            }
-            if three.len() == before {
-                break;
-            }
-        }
-        let side = |body: &[Literal], must_side: bool| -> Vec<Literal> {
-            body.iter()
-                .cloned()
-                .map(|mut l| {
-                    if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = &mut l
-                        && three.contains(a.rel.as_str())
-                        && (a.neg != must_side)
-                    {
-                        a.rel = must(&a.rel).into();
-                    }
-                    l
-                })
-                .collect()
-        };
-        let mut rules = Vec::new();
-        for (i, rule) in std::mem::take(&mut self.prog.rules).into_iter().enumerate() {
-            if !three.contains(rule.head.rel.as_str()) {
-                rules.push(rule);
-                continue;
-            }
-            let modal = self.modal.get(&i).map(String::as_str);
-            if modal != Some("may") {
-                let mut head = rule.head.clone();
-                head.rel = must(&head.rel).into();
-                rules.push(Rule { head, body: side(&rule.body, true).into() });
-            }
-            rules.push(Rule { head: rule.head.clone(), body: side(&rule.body, false).into() });
-        }
-        self.prog.rules = rules;
-        for rel in &three {
-            if let Some(cols) = self.prog.decls.get(rel.as_str()).cloned() {
-                self.prog.decls.insert(must(rel).into(), cols);
-            }
-            if let Some(rows) = self.prog.facts.get(rel).cloned() {
-                self.prog.facts.insert(must(rel), rows);
-            }
-        }
     }
 
     /// `.violation V(at, …)`: V is an output relation, and each of its rows is a finding (`findings`). Its
