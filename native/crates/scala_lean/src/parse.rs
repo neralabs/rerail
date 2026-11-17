@@ -57,6 +57,8 @@ pub(crate) struct P<'a> {
     enum_cases: bool,
     /// The statements the last `statements` read.
     count: u32,
+    /// Where the separator after the last statement `statements` read ends, if one followed it.
+    trailing: Option<u32>,
 }
 
 /// `src` parsed.
@@ -89,6 +91,7 @@ pub fn parse(src: &[u8]) -> R<crate::Tape> {
             retype: None,
             right_operand: false,
             count: 0,
+            trailing: None,
             in_bound: false,
             enum_cases: false,
         };
@@ -515,13 +518,15 @@ impl<'a> P<'a> {
     fn statements(&mut self, region: Region, field: u8) -> R<()> {
         let fol = Self::region_fol(region);
         let mut count = 0;
+        let mut trailing = None;
         let r = self.with_fol(fol, |p| {
             loop {
                 // Leading `;`s.
                 let mut after_semi = false;
                 while p.peek() == T::Semi {
-                    p.tk(K::TSemi)?;
+                    let t = p.tk(K::TSemi)?;
                     after_semi = true;
+                    trailing = Some(t.end);
                 }
                 match p.peek() {
                     T::RBrace if region != Region::Top => return Ok(()),
@@ -542,10 +547,12 @@ impl<'a> P<'a> {
                 p.statement(field)?;
                 p.depth -= 1;
                 count += 1;
+                trailing = None;
                 // The separator.
                 match p.layout(fol)? {
                     Some(Ext::Semi) => {
                         p.take();
+                        trailing = Some(p.sp);
                         // `end name` after a definition's semicolon is its marker: refused for now.
                         if p.is_word(w::END) && p.layout(v::END_KW)? == Some(Ext::EndKw) {
                             return p.refuse();
@@ -563,6 +570,7 @@ impl<'a> P<'a> {
             }
         });
         self.count = count;
+        self.trailing = trailing;
         r
     }
 

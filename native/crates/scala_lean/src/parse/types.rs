@@ -55,7 +55,8 @@ impl P<'_> {
             self.t.unmark(m);
             return Ok(n);
         }
-        if self.peek() == T::LParen && !tx.no_arrow && self.arrow_after_parens(0) && Self::is_name(self.peek_at(1)) && self.op_at(2) == op::COLON {
+        let k = 1 + usize::from(self.word_at(1) == w::ERASED);
+        if self.peek() == T::LParen && !tx.no_arrow && self.arrow_after_parens(0) && Self::is_name(self.peek_at(k)) && self.op_at(k + 1) == op::COLON {
             // `(x: A) => B` (a dependent function type): the parameters a named tuple type in
             // `parameter_types`.
             let pt = self.open_field(K::ParameterTypes, f::PARAMETER_TYPES);
@@ -358,12 +359,17 @@ impl P<'_> {
 
     /// `(A, B)` (`tuple_type`).
     fn tuple_type(&mut self) -> R<u32> {
-        if Self::is_name(self.peek_at(1)) && self.is_op_at(2, op::COLON) {
-            // `(a: A, b: B)` (`named_tuple_type`): each a `name_and_type` (`name`, `type`).
+        let k = 1 + usize::from(self.word_at(1) == w::ERASED);
+        if Self::is_name(self.peek_at(k)) && self.is_op_at(k + 1, op::COLON) {
+            // `(a: A, b: B)` (`named_tuple_type`): each a `name_and_type` (`name`, `type`; an
+            // `erased_modifier` before the name).
             let n = self.open(K::NamedTupleType);
             self.tk(K::TLParen)?;
             loop {
                 let x = self.open(K::NameAndType);
+                if self.is_word(w::ERASED) && Self::is_name(self.peek_at(1)) && self.is_op_at(2, op::COLON) {
+                    self.leaf(K::ErasedModifier, f::NONE)?;
+                }
                 self.identifier(f::NAME)?;
                 self.tk(K::TColon)?;
                 self.typ_f(f::TYPE)?;

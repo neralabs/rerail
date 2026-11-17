@@ -814,13 +814,21 @@ impl P<'_> {
                 }
             }
             self.count = 0;
+            self.trailing = None;
             if self.peek() != T::RBrace {
                 self.statements(Region::Brace, f::NONE)?;
             }
             // One statement: the block's statement is a lambda expression (its dynamic precedence);
-            // none or more: the block's lambda (`_block_lambda_expression`), of no class.
-            let one = self.count == 1;
-            let id = self.close(l);
+            // none, more, or one and a separator after it: the block's lambda
+            // (`_block_lambda_expression`), of no class, to the separator's end.
+            let one = self.count == 1 && self.trailing.is_none();
+            let id = match self.trailing {
+                Some(e) if !one => {
+                    let e = e.max(self.t.last_end);
+                    self.close_at(l, e)
+                }
+                _ => self.close(l),
+            };
             if one {
                 self.t.set_class(id, EXPR_CLASS);
             }
@@ -1473,6 +1481,11 @@ impl P<'_> {
             self.template_body(f::NONE)?;
             return Ok(self.close(n));
         }
+        if self.is_op(op::COLON) && !self.tok().nl && self.layout(v::COLON_EOL)? == Some(Ext::ColonEol) {
+            // `new:` and an indented body: the template body alone.
+            self.indented_template_body(f::NONE)?;
+            return Ok(self.close(n));
+        }
         let m = self.mark();
         let mut b = self.annotated_type()?;
         if self.peek() == T::LParen && !self.tok().nl && {
@@ -1486,11 +1499,12 @@ impl P<'_> {
             self.arguments(f::NONE)?;
             b = self.close(a);
         }
-        if self.is_word(w::WITH) && !self.tok().nl {
+        // `with` on the next line continues the type where the scanner gives no separator.
+        if self.is_word(w::WITH) && self.continues(v::WITH | AFTER_OPERAND)? {
             // `new A with B { … }`: a compound type (`base`, `extra`), its `with`s left out.
             self.t.refield(b, f::BASE);
             let c = self.t.wrap(m, K::CompoundType, f::NONE);
-            while self.is_word(w::WITH) && !self.tok().nl {
+            while self.is_word(w::WITH) && self.continues(v::WITH | AFTER_OPERAND)? {
                 self.tk(K::TWith)?;
                 let x = self.annotated_type()?;
                 self.t.refield(x, f::EXTRA);

@@ -749,7 +749,7 @@ impl P<'_> {
 
     /// Whether the token next is the construct's where it starts a line: the scanner's choice where
     /// the state takes `own` (a semicolon or an outdent there ends the construct).
-    fn continues(&mut self, own: crate::scan::V) -> R<bool> {
+    pub(super) fn continues(&mut self, own: crate::scan::V) -> R<bool> {
         if !self.tok().nl {
             return Ok(true);
         }
@@ -1059,7 +1059,9 @@ impl P<'_> {
         self.tk(K::TLParen)?;
         if self.is_word(w::USING) {
             self.tk(K::TUsing)?;
-            if !(Self::is_name(self.tok()) && self.is_op_at(1, op::COLON)) {
+            // `(using x: T)`, `(using inline x: T)`: parameters; else types alone.
+            let k = usize::from(matches!(self.word(), w::INLINE | w::ERASED | w::CONSUME | w::TRACKED));
+            if !(Self::is_name(self.peek_at(k)) && self.is_op_at(k + 1, op::COLON)) {
                 // `(using A, B)`: types alone, each `type`, their commas stored.
                 return self.using_types(n);
             }
@@ -1120,7 +1122,9 @@ impl P<'_> {
         let mut d = 0i32;
         loop {
             let t = self.peek_at(j);
-            if j > 1 && t.nl && d == 0 && !self.type_continues_at(j) || t.kind == T::Eof {
+            // A `:` starting a line continues the definition (`val x` then `: T = v` under it).
+            let colon = t.kind == T::Op && t.code == op::COLON;
+            if j > 1 && t.nl && d == 0 && !colon && !self.type_continues_at(j) || t.kind == T::Eof {
                 break;
             }
             match t.kind {
