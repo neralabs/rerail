@@ -3,6 +3,9 @@
 Status: decided (the user, 2026-11-17: "go ahead with 2 then 1", item 2 being the block cost
 on plain bytes). Amends 0177's "a part after each block".
 
+**Replaced by 0372** (2026-11-17): the pass is one loop again, a block's body then its tokens,
+its words handed on as values.
+
 ## Intro
 
 **The problem.** On white space, JSON's tier 1 retired 7.5 instructions a byte, about 480 a
