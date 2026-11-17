@@ -26,16 +26,42 @@ pub(super) fn t_of<'a>(v: &'a Version, rule: RuleRef<'a>, t: TermRef<'a>) -> T<'
 /// derived by the chunks as `r_at(d, p, l)` (`r_at_` where the program has an `r_at` of its own), `d` a document its
 /// rules bind, and the cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also
 /// read, a lattice, or one whose rule binds no location is left, and named in `blocked`.
+///
+/// One round of the tree's `locate` (its `locate_once`): a blocked relation the split still holds file-local is
+/// qualified `CROSS_FILE` in the version this pass derives (`moving`), so the split moves it, and those reading it,
+/// to the cross-file part (decision 0290). `locate_on` runs the rounds until none moves, as `locate` does.
 #[derive(Default)]
 pub struct Locate {
     pub located: Vec<String>,
     pub blocked: Vec<String>,
+    /// The blocked relations this round qualifies `CROSS_FILE`: none already cross-file.
+    pub moving: Vec<String>,
+    /// Every relation qualified `CROSS_FILE` in the version this round read (`moved_in`).
+    pub moved: Vec<String>,
 }
 
 impl Locate {
-    /// The tree pass's result: the relations located, or those left.
+    /// This round's result: the relations located, or those left.
     pub fn result(&self) -> Result<Vec<String>, Vec<String>> {
         if self.blocked.is_empty() { Ok(self.located.clone()) } else { Err(self.blocked.clone()) }
+    }
+}
+
+/// The tree's `locate` on the pipeline's version: `Locate` rounds, each moving the relations the last left to the
+/// cross-file part, until a round leaves none (`Ok`: every relation located, over the rounds) or moves none (`Err`:
+/// the relations moved, which then cannot be placed).
+pub fn locate_on(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipeline) -> Result<Vec<String>, Vec<String>> {
+    let mut located = Vec::new();
+    loop {
+        let mut round = Locate::default();
+        p.program(&mut round);
+        located.append(&mut round.located);
+        if round.blocked.is_empty() {
+            return Ok(located);
+        }
+        if round.moving.is_empty() {
+            return Err(round.moved);
+        }
     }
 }
 
@@ -150,11 +176,16 @@ impl ProgramPass for Locate {
             items.push(Item::ReadAt { rel: rel.clone(), at: k, width: cols.len() });
             self.located.push(rel.clone());
         }
-        if self.located.is_empty() {
+        // A blocked relation still file-local moves to the cross-file part (0290), as the tree's `locate` moves it.
+        self.moved = super::moved_in(&f).into_iter().map(str::to_owned).collect();
+        self.moving = self.blocked.iter().filter(|r| !f.qualified(r, super::CROSS_FILE)).cloned().collect();
+        if self.located.is_empty() && self.moving.is_empty() {
             return Ok(());
         }
         let input = w.input().clone();
         let b = w.derive()?;
+        let moving: Vec<(&str, &str)> = self.moving.iter().map(|r| (r.as_str(), super::CROSS_FILE)).collect();
+        b.add_qualifiers(&moving);
         for (at, cols) in &ats {
             let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
             b.declare(at, &cols);

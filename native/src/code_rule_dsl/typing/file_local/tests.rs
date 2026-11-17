@@ -547,6 +547,29 @@ fn rows_are_located_on_a_version_as_on_the_tree() {
     assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
 }
 
+/// A relation the chunks hand on that a file-local rule also reads is left unlocated, and moved to the cross-file part
+/// (`CROSS_FILE`, decision 0290) with what reads it; the program is then located again. On the version (`locate_on`,
+/// `Locate` rounds) as on the tree (`locate`): the same result and the same program. A single `Locate` round, as the
+/// preparation ran it, left `aware` blocked and never moved it, so a debug build's check that the version's rows are
+/// located as the tree's failed (`corpus.rs`, "the version's rows are located as the tree's").
+#[test]
+fn a_relation_left_unlocated_moves_cross_file_on_a_version_as_on_the_tree() {
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    // `a_relation_naming_no_document_moves_to_the_cross_file_part`'s program: `aware` binds no document.
+    let text = ".decl doc(d: number, p: symbol, x: number)\n.input doc\n.decl owner(d: number)\nowner(d) :- doc(d, \"a.py\", _).\n\
+                .decl aware()\naware() :- owner(d), d > 0.\n.decl found(k: number)\nfound(1) :- owner(_), !aware().\n.output found\n";
+    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let mut p = Pipeline::new("test", v);
+    let got = locate_on(&mut p);
+    let (out, _) = p.finish().unwrap();
+    let want = locate(&mut tree);
+    assert_eq!(moved(&tree), ["aware"], "the case: the tree moves aware");
+    assert_eq!(got, want);
+    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+}
+
 /// A located rule keeps its branded atoms (decision 0270, a lowered program's atoms): `named`'s `node(_, n,
 /// "function", _, _)`, its kind branded as lowering brands it, is the atom whose unnamed document column the located
 /// rule names, its other terms copied (`passes::t_of`): the kind stays the same branded atom. The same program as the

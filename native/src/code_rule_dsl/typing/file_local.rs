@@ -188,7 +188,7 @@ mod shape;
 mod on_version;
 pub use on_version::FileLocal;
 mod passes;
-pub use passes::Locate;
+pub use passes::{Locate, locate_on};
 pub mod export_demand;
 pub use export_demand::demand_exports;
 pub use split_memo::forget as forget_splits;

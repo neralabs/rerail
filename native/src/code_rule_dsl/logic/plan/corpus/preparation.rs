@@ -79,8 +79,7 @@ pub struct Found {
 pub fn run(version: Arc<Version>) -> Result<(Arc<Version>, Found), String> {
     let mut p = Pipeline::new("preparation", version);
     // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
-    let mut locate = crate::code_rule_dsl::typing::file_local::Locate::default();
-    p.program(&mut locate);
+    let located = crate::code_rule_dsl::typing::file_local::locate_on(&mut p);
     let mut merge = MergeIdentical::default();
     let mut repeats = DropRepeated::default();
     if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
@@ -90,7 +89,7 @@ pub fn run(version: Arc<Version>) -> Result<(Arc<Version>, Found), String> {
         p.program(&mut merge);
         p.program(&mut repeats);
     }
-    let found = Found { located: locate.result(), merged: merge.merged, shared: merge.shared, repeated: repeats.0 };
+    let found = Found { located, merged: merge.merged, shared: merge.shared, repeated: repeats.0 };
     p.program(&mut InputsRead);
     if let Ok(order) = std::env::var("RERAIL_RULE_ORDER") {
         p.program(&mut RuleOrder(order));
