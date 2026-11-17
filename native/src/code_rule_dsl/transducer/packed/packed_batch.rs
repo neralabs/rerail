@@ -2779,6 +2779,9 @@ pub mod tests {
         batch.evaluations.push(evaluation);
         batch.source.push(b'x');
         batch.root_spans.push(1);
+        // The batch's node count, which a result's file is checked against (`PackedResults::validate`): since the
+        // CPU path's batch packs no node records (0310 step 2), the header's, not the records'.
+        batch.header.node_count = 1;
         batch
     }
 
