@@ -34,7 +34,7 @@ use std::sync::{Mutex, OnceLock};
 
 /// A set of nodes, as a formula over a tape's columns.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum Set {
+pub enum Set {
     All,
     Kind(u16),
     Field(u16),
@@ -63,7 +63,7 @@ pub(in crate::code_rule_dsl) enum Set {
 
 /// A step from a node, as a targets label's image follows it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum Step {
+pub enum Step {
     Child,
     Descendant,
     Parent,
@@ -75,7 +75,7 @@ pub(in crate::code_rule_dsl) enum Step {
 impl Set {
     /// The starts from which `words` reaches its `EMIT` (a roots label's verdicts), where the
     /// program is a formula.
-    pub(in crate::code_rule_dsl) fn of(words: &[u32]) -> Option<Self> {
+    pub fn of(words: &[u32]) -> Option<Self> {
         let mut end = words.len();
         if end == 0 || split(words[end - 1]).0 != EMIT {
             return None;
@@ -89,12 +89,23 @@ impl Set {
 
     /// The nodes `words` captures on a path that emits from a member of `starts` (a targets
     /// label's), where the capture is the walk's last act and the program is a formula.
-    pub(in crate::code_rule_dsl) fn targets(words: &[u32], starts: Self) -> Option<Self> {
+    pub fn targets(words: &[u32], starts: Self) -> Option<Self> {
         let end = words.len().checked_sub(2)?;
         if split(words[end + 1]).0 != EMIT || split(words[end]).0 != CAPTURE || words[..end].iter().any(|&word| split(word).0 == CAPTURE) {
             return None;
         }
         forward(words, 0, end, starts)
+    }
+
+    /// A walk's anchor (decision 0365): a superset of the starts from which `words` reaches its `EMIT`, for any
+    /// program, a formula or not. Its tests are a conjunction read as `of` reads them, and where the program leaves
+    /// the fragment (a capture is skipped; a next-sibling step, a backward jump, a repetition or any other operation
+    /// ends it) the rest is dropped: a conjunct fewer is a larger set, and every step's set grows with what it reads
+    /// at the node it reaches, so the anchor holds every start that emits. A `TEXT` operand is a text slot
+    /// (`Micro`'s words), read where `texts` has its row, and dropped otherwise.
+    pub fn anchor(words: &[u32], texts: &dyn Fn(u16) -> bool) -> Self {
+        let end = words.iter().position(|&word| split(word).0 == EMIT).unwrap_or(words.len());
+        bound(words, 0, end, texts).0
     }
 
     fn and(parts: Vec<Self>) -> Self {
@@ -180,6 +191,71 @@ fn parse(words: &[u32], from: usize, to: usize) -> Option<(Set, bool)> {
     Some((Set::and(parts), false))
 }
 
+/// `anchor`'s superset of the starts from which `words[from..to]` goes on, and whether the code leaves the node
+/// moved (an axis step) or ends early (where it would go on is not known), where `parse` has the exact set or
+/// nothing.
+fn bound(words: &[u32], from: usize, to: usize, texts: &dyn Fn(u16) -> bool) -> (Set, bool) {
+    let mut parts = Vec::new();
+    let mut pc = from;
+    while pc < to {
+        let (op, mode, arg) = split(words[pc]);
+        match op {
+            KIND => parts.push(Set::Kind(arg)),
+            FIELD => parts.push(Set::Field(arg)),
+            FLAGS => match u8::try_from(arg) {
+                Ok(arg) => parts.push(Set::Flags { mode, arg }),
+                Err(_) => break,
+            },
+            SUPERTYPE => parts.push(Set::Class(arg)),
+            TEXT if texts(arg) => parts.push(Set::Text(arg)),
+            TEXT | CAPTURE => {}
+            SAVE_CURSOR => {
+                let Some(restore) = (pc + 1..to).find(|&at| matches!(split(words[at]), (RESTORE_CURSOR, _, cursor) if cursor == arg)) else { break };
+                parts.push(bound(words, pc + 1, restore, texts).0);
+                pc = restore + 1;
+                continue;
+            }
+            CHILD if let Some((through, after)) = chain(words, pc, to) => {
+                let (through, moved) = bound(words, pc + 2, through, texts);
+                let to = Box::new(bound(words, after, to, texts).0);
+                // A chain whose step body moves is not the formula's chain: its first child at least.
+                parts.push(if moved { Set::Child { named: mode == NAMED, of: Box::new(Set::All) } } else { Set::Chain { named: mode == NAMED, through: Box::new(through), to } });
+                return (Set::and(parts), true);
+            }
+            CHILD | DESCEND | PARENT | FOLLOWING => {
+                let named = mode == NAMED;
+                let of = Box::new(bound(words, pc + 1, to, texts).0);
+                parts.push(match op {
+                    CHILD => Set::Child { named, of },
+                    DESCEND => Set::Descendant { named, of },
+                    FOLLOWING => Set::Following { named, of },
+                    _ => Set::Parent(of),
+                });
+                return (Set::and(parts), true);
+            }
+            FORK => {
+                let at = usize::from(arg);
+                let join = (at > pc + 1 && at <= to).then(|| split(words[at - 1])).filter(|&(goto, _, join)| goto == GOTO && usize::from(join) >= at && usize::from(join) <= to);
+                let Some((_, _, join)) = join else { break };
+                let join = usize::from(join);
+                let (first, moved_first) = bound(words, pc + 1, at - 1, texts);
+                let (second, moved_second) = bound(words, at, join, texts);
+                parts.push(Set::Or(vec![first, second]));
+                // A branch that moved goes on elsewhere: the rest is not read at this node.
+                if moved_first || moved_second {
+                    return (Set::and(parts), true);
+                }
+                pc = join;
+                continue;
+            }
+            _ => break,
+        }
+        pc += 1;
+    }
+    // Ended before `to`: where the rest would have been read is not known, so it is as if moved.
+    (Set::and(parts), pc < to)
+}
+
 /// `CHILD` at `pc` as a loop: `pc: CHILD; FORK a; ψ…; GOTO pc; a:`. Where it is one, `ψ`'s end
 /// (the `GOTO`) and `a`, where the walk goes on from the node the chain stops at.
 fn chain(words: &[u32], pc: usize, to: usize) -> Option<(usize, usize)> {
@@ -254,7 +330,7 @@ fn forward(words: &[u32], from: usize, to: usize, starts: Set) -> Option<Set> {
 
 /// A tape's columns as sets for one labelling, each built the first time a formula reads it.
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Index {
+pub struct Index {
     kinds: OnceLock<Postings>,
     fields: OnceLock<Postings>,
     flags: OnceLock<Vec<u8>>,
@@ -304,13 +380,13 @@ impl Postings {
 }
 
 /// What a formula reads on one tape.
-pub(in crate::code_rule_dsl) struct Reader<'a> {
-    pub(in crate::code_rule_dsl) tape: &'a TapeDoc,
-    pub(in crate::code_rule_dsl) index: &'a Index,
+pub struct Reader<'a> {
+    pub tape: &'a TapeDoc,
+    pub index: &'a Index,
     /// The labels so far, by class less `DERIVED_CLASS_BASE`.
-    pub(in crate::code_rule_dsl) labels: &'a [Vec<u64>],
+    pub labels: &'a [Vec<u64>],
     /// The program's text rows, by slot.
-    pub(in crate::code_rule_dsl) texts: &'a [Vec<u64>],
+    pub texts: &'a [Vec<u64>],
 }
 
 impl Reader<'_> {
@@ -331,7 +407,7 @@ impl Reader<'_> {
     }
 
     /// The members of `set`.
-    pub(in crate::code_rule_dsl) fn eval(&self, set: &Set) -> Vec<u64> {
+    pub fn eval(&self, set: &Set) -> Vec<u64> {
         let words = self.words();
         let len = self.tape.transducer_len();
         match set {
@@ -608,6 +684,32 @@ pub mod tests {
         // one of kind 2.
         let chain = [w(CHILD, 0), w(FORK, 4), w(SUPERTYPE, label), w(GOTO, 0), w(KIND, 2), w(EMIT, 1)];
         assert_eq!(Set::of(&chain), Some(Set::Chain { named: false, through: Box::new(Set::Class(label)), to: Box::new(Set::Kind(2)) }));
+    }
+
+    /// Decision 0365: a walk's anchor is its formula where it is one, and otherwise the conjunction it reads before
+    /// it leaves the fragment.
+    #[test]
+    fn an_anchor_is_the_formula_or_a_superset_of_it() {
+        let w = |op, arg| word(op, 0, arg);
+        let label = DERIVED_CLASS_BASE + 3;
+        let has = [w(SAVE_CURSOR, 0), w(DESCEND, 0), w(SUPERTYPE, label), w(RESTORE_CURSOR, 0), w(CAPTURE, 0), w(EMIT, 1)];
+        assert_eq!(Some(Set::anchor(&has, &|_| true)), Set::of(&has));
+        // A root walk's captures are not tests: kind 4 with a child of kind 5, its captures skipped.
+        let captured = [w(KIND, 4), w(CAPTURE, 0), w(SAVE_CURSOR, 0), w(CHILD, 0), w(KIND, 5), w(CAPTURE, 1), w(RESTORE_CURSOR, 0), w(CAPTURE, 2), w(EMIT, 1)];
+        assert_eq!(Set::of(&captured), None);
+        assert_eq!(Set::anchor(&captured, &|_| true), Set::And(vec![Set::Kind(4), Set::Child { named: false, of: Box::new(Set::Kind(5)) }]));
+        // A next-sibling step ends its region: what the region reads past it is dropped, and the tests after the
+        // cursor's restore are read at the start again.
+        let next = [w(KIND, 1), w(SAVE_CURSOR, 0), w(NEXT, 0), w(KIND, 2), w(RESTORE_CURSOR, 0), w(KIND, 3), w(EMIT, 1)];
+        assert_eq!(Set::anchor(&next, &|_| true), Set::And(vec![Set::Kind(1), Set::Kind(3)]));
+        // Unscoped, it ends the walk.
+        assert_eq!(Set::anchor(&[w(KIND, 1), w(NEXT, 0), w(KIND, 2), w(EMIT, 1)], &|_| true), Set::Kind(1));
+        // A branch that moves: the union of the branches, and the rest (read elsewhere on one of them) dropped.
+        let moved = [w(FORK, 3), w(CHILD, 0), w(GOTO, 4), w(KIND, 2), w(KIND, 5), w(EMIT, 1)];
+        assert_eq!(Set::anchor(&moved, &|_| true), Set::Or(vec![Set::Child { named: false, of: Box::new(Set::All) }, Set::Kind(2)]));
+        // A text test without its row is dropped.
+        assert_eq!(Set::anchor(&[w(KIND, 1), w(TEXT, 0), w(EMIT, 1)], &|_| false), Set::Kind(1));
+        assert_eq!(Set::anchor(&[w(KIND, 1), w(TEXT, 0), w(EMIT, 1)], &|_| true), Set::And(vec![Set::Kind(1), Set::Text(0)]));
     }
 
     #[test]

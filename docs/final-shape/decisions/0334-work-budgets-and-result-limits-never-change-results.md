@@ -189,8 +189,8 @@ Not yet:
    candidate roots for 4,566 roots (1,698 a root, against the spike's 1.05), 34.8 M root-walk steps, and 206.6 M
    label-pass rows (1,522 a node); the worst clauses start at every node (SIM118, RUF005: 135,743 candidates, one
    root). The replanning's part stays as built: an overrun's steps reprice the program, so the next plan starts
-   from them. The anchor itself is a new decision for the wave's planner: each clause's and each label pass's
-   start set from its rarest mandatory requirement (a kind's positions, or a term's), reaching the root by the
-   tape's parent arithmetic, with climb against descent priced by work from 0096's per-edge counts.
+   from them. **Decided and built on the CPU as 0365** (a walk starts within its anchor: its program's tests as a
+   formula, 0036's mechanism; root walks at 1.02 starts a root on 10 files). The label-pass rows above were domain
+   rows: most of those passes are 0036's formulas, which follow their members and do not walk from each.
 2. The micro walk's prediction is a prior (`predict_walk`): the walk counts no steps the cost store could learn
    from.

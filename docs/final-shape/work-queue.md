@@ -485,7 +485,7 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   and the Metal wave's passes, sweeps and root walks give unfinished evaluations to W by cost; a root walk keeps
   its finished roots and may take the micro walk on the term index; mispredictions reprice at once; `replan` is
   the default, after the pack's 491 clauses on corpus0 gave `full`'s roots on both backends.
-- **Done**, but for 0334's "Not yet": another anchor or driver (a second lowering of a clause).
+- **Done.** 0334's "another anchor or driver" is decision 0365 (built on the CPU; Metal is Q23).
 
 ### Q20. The CPU JIT's capture pairs compare and scan a byte a step
 
@@ -570,3 +570,18 @@ output-directive failures were a stale rejected slot and a failed task's early r
     the device's queue and greedy equality do; no fixture shows a difference yet.
 - **Done when**: every fixture passes on the packed JIT, or is shown to test the grid's own machinery and goes.
 
+### Q23. Anchors on Metal: the device evaluates `Set` formulas
+
+Found 2026-11-17 (decision 0365). The CPU's walks start within their anchors (`Set::anchor`, evaluated as 0036's
+formulas); on Metal every label pass is a micro walk per (pass, start) and the root walks' starts are kind-code rules
+(`Roots::Codes`), and no formula runs on the device (nor may the host evaluate on Metal). Next: the device evaluates
+`Set` formulas (the column tests, labels, text rows, and the axis steps over the tape's parents and subtrees) into
+label bits, and each walk's starts read its anchor's bits; 0036's formula passes then run on the device as formulas
+too, not as walks from every start.
+
+### Q24. The wave's labelling: about 80 s of 93 s process CPU outside its stages
+
+Found 2026-11-17 (measuring 0365, `anchored_walks_find_the_unanchored_roots`, 31 waves on 10 of corpus0's files,
+debug build): `labels.wave.labelled` took 93 s process CPU without anchors and 85 s with, while its stages (formulas
+8.9 s, fallback 1.8 s, packed walks 1.8 s) and the sweeps (about 3 s thread CPU) account for a small part. Find
+where the rest goes (a sample of the run), before reading the wave's CPU totals as the walks'.
