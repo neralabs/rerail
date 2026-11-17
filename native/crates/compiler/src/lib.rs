@@ -67,6 +67,8 @@ mod delay_tests;
 #[cfg(test)]
 mod gating_tests;
 #[cfg(test)]
+mod regions_tests;
+#[cfg(test)]
 mod outline_tests;
 #[cfg(test)]
 mod tier2_tests;
