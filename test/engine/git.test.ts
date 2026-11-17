@@ -1249,12 +1249,6 @@ describe("gitLook", () => {
 });
 
 describe("ProcessGit", () => {
-  /** A search that finds each of `paths` in turn, then the last one again, and counts its looks. */
-  const searches = (...paths: (string | undefined)[]) => {
-    let looks = 0;
-    const find = () => ({ path: paths[Math.min(looks++, paths.length - 1)], looked: ["/opt/git/bin/git", "/usr/bin/git"] });
-    return { find, looks: () => looks };
-  };
   /** A disk that holds `files`, read in the thread (`now`) and off it (`later`), counting each read in `reads`. */
   const disks = (files: ReadonlySet<string>, reads = { now: [] as string[], later: [] as string[] }) => {
     const now = { exists: (path: string) => (reads.now.push(path), files.has(path)), runnable: (path: string) => (reads.now.push(path), files.has(path)), realpath: (path: string) => path, developerDir: () => undefined };
@@ -1262,44 +1256,61 @@ describe("ProcessGit", () => {
     return { now, later, reads };
   };
   const nowhere = disks(new Set());
+  /** A look from no repository over `path`, then Linux's install locations, reading `disk`'s files in the thread. */
+  const lookOver = (path: string, disk: ReturnType<typeof disks>) => gitLook({ platform: "linux", home: "/home/me", path, cwd: undefined }, disk.now);
 
   it("makes its look at the first ask and keeps it and the Git it finds, or says where it looked when none is installed", async () => {
-    const search = searches("/opt/git/bin/git", "/usr/bin/git");
+    const files = new Set(["/opt/git/bin/git", "/usr/bin/git"]);
+    const disk = disks(files);
     let decided = 0;
     const git = new ProcessGit(() => {
       decided += 1;
-      return search.find;
-    }, nowhere);
+      return lookOver("/opt/git/bin", disk);
+    }, disk);
     expect(decided).toBe(0);
-    expect([git.path(), git.path()]).toEqual(["/opt/git/bin/git", "/opt/git/bin/git"]);
+    expect([git.path(), git.path(), disk.reads.now]).toEqual(["/opt/git/bin/git", "/opt/git/bin/git", ["/opt/git/bin/git"]]);
+    files.delete("/opt/git/bin/git");
     await expect(git.afterMissing("/opt/git/bin/git")).resolves.toBe("/usr/bin/git");
-    expect([decided, search.looks()]).toEqual([1, 2]);
-    expect(() => new ProcessGit(() => searches(undefined).find, nowhere).path()).toThrow(GitUnavailableError);
+    expect([decided, disk.reads.later]).toEqual([1, ["/opt/git/bin/git", "/usr/bin/git"]]);
+    expect(() => new ProcessGit(() => lookOver("/opt/git/bin", nowhere), nowhere).path()).toThrow(GitUnavailableError);
   });
 
   it("looks again once the Git it kept is gone, once for every start that failed on it", async () => {
-    // Git for Windows 2.56 removes the mingw64 git.exe that a process started on 2.55 kept.
-    const [before, after] = [String.raw`C:\Program Files\Git\mingw64\bin\git.exe`, win32.join(String.raw`C:\Program Files\Git`, "ucrt64", "bin", "git.exe")];
-    const search = searches(before, after);
-    const git = new ProcessGit(() => search.find, nowhere);
+    // Git for Windows 2.56 removes the mingw64 git.exe that a process started on 2.55 kept, and adds ucrt64's.
+    const install = String.raw`C:\Program Files\Git`;
+    const [before, after] = ["mingw64", "ucrt64"].map(build => win32.join(install, build, "bin", "git.exe")) as [string, string];
+    const files = new Set([win32.join(install, "cmd", "git.exe"), win32.join(install, "etc", "gitconfig"), before]);
+    const disk = disks(files);
+    const look = gitLook({ platform: "win32", home: String.raw`C:\Users\me`, path: win32.join(install, "cmd"), cwd: undefined }, disk.now);
+    const git = new ProcessGit(() => look, disk);
     expect(git.path()).toBe(before);
-    // Starts that failed on the same Git at the same time wait for one look; one that failed later takes its Git.
+    files.delete(before);
+    files.add(after);
+    // Starts that failed on the same Git at the same time wait for one look, which reads each file once; one that
+    // failed later takes the Git found, with no look.
     await expect(Promise.all([git.afterMissing(before), git.afterMissing(before)])).resolves.toEqual([after, after]);
+    const read = [...disk.reads.later];
+    expect(read.filter((path, index) => read.indexOf(path) !== index)).toEqual([]);
     await expect(git.afterMissing(before)).resolves.toBe(after);
-    expect([git.path(), search.looks()]).toEqual([after, 2]);
+    expect([git.path(), disk.reads.later]).toEqual([after, read]);
   });
 
   it("keeps the Git it has when the look finds none or the same one, so the next start that fails looks again", async () => {
-    const search = searches("/opt/git/bin/git", undefined, "/opt/git/bin/git", "/usr/bin/git");
-    const git = new ProcessGit(() => search.find, nowhere);
+    const files = new Set(["/opt/git/bin/git"]);
+    const disk = disks(files);
+    const git = new ProcessGit(() => lookOver("/opt/git/bin", disk), disk);
     expect(git.path()).toBe("/opt/git/bin/git");
     // No Git anywhere, as while an installer replaces it: this start fails, and Rerail still has a Git to try.
+    files.clear();
     await expect(git.afterMissing("/opt/git/bin/git")).resolves.toBeUndefined();
     expect(git.path()).toBe("/opt/git/bin/git");
     // The same path, back: the next call starts it, this one does not start it twice.
+    files.add("/opt/git/bin/git");
     await expect(git.afterMissing("/opt/git/bin/git")).resolves.toBeUndefined();
+    files.clear();
+    files.add("/usr/bin/git");
     await expect(git.afterMissing("/opt/git/bin/git")).resolves.toBe("/usr/bin/git");
-    expect([git.path(), search.looks()]).toEqual(["/usr/bin/git", 4]);
+    expect(git.path()).toBe("/usr/bin/git");
   });
 
   it("looks for Git again off its thread: a folder that does not answer holds the starts waiting for the look, not the thread", async () => {
