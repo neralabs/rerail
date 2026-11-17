@@ -760,12 +760,17 @@ fn scratch_rows(plan: &Plan<'_>) -> usize {
 }
 
 /// The device's tape view (decision 0032), which the label and pattern kernels read: the
-/// document table's entry as generated (`slabs::msl`, decision 0289 §4), the reads written once
-/// (decision 0310), then the readers.
+/// document table's entry as generated (`slabs::msl`, decisions 0289 §4 and 0310), the reads written once in CLIF
+/// (`metal_tape_reads.metal`), then the readers.
+///
+/// The batch's tape format is function constant 0 (`tape_format`, 0 for a mixed batch): each view load of the format
+/// field reads it, so a batch of one format runs reads without the other format's branches (t41: label_micro 388 to
+/// about 300 ms at s1000). Every pipeline of these sources is made with a value ([`pipeline_of`]).
 static TAPE_VIEW: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     format!(
-        "#include <metal_stdlib>\nusing namespace metal;\n{}{}{}",
+        "#include <metal_stdlib>\nusing namespace metal;\n{}constant uint tape_format [[function_constant(0)]];\n#define clif_view(v,a) ((tape_format!=0u&&(a)=={}u)?tape_format:(v)[(a)/4u])\n{}{}",
         crate::code_rule_dsl::residency::slabs::msl(),
+        std::mem::offset_of!(crate::code_rule_dsl::residency::slabs::DocView, format),
         include_str!("metal_tape_reads.metal"),
         include_str!("metal_tape.metal")
     )
@@ -773,7 +778,7 @@ static TAPE_VIEW: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
 /// The label kernels over the tape view.
 static SOURCE: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| format!("{}{}{}", *TAPE_VIEW, include_str!("metal_work_queue.metal"), include_str!("metal_label_passes.metal")));
-/// Where a label kernel binds the batch's chunk block (`ChunkTape`'s `at`): past every other buffer.
+/// Where a label kernel binds the batch's chunk block (`DocView`'s `at`): past every other buffer.
 const SLAB_SLOT: u64 = 27;
 const KERNELS: [&str; 14] = [
     "label_sink",
@@ -827,6 +832,10 @@ const TIER_KERNELS: [usize; 3] = [4, 5, 3];
 /// the footprint over budget (511–515 MB). A run whose walk outgrows 64 frames runs again with
 /// the same stacks as 2048 of 128 (`label_micro_deep`, `MICRO_DEEP_POOL`).
 const MICRO_POOL: usize = 4096;
+/// A SIMD group's lanes on every Apple GPU: the kernels that spread a group's roots over its lanes are written for it
+/// (`simd_roots`), and every pool and stack count here is a multiple of it.
+const SIMD_WIDTH: usize = 32;
+const _: () = assert!(MICRO_POOL % SIMD_WIDTH == 0 && MICRO_DEEP_POOL % SIMD_WIDTH == 0);
 const MICRO_STACK_WORDS: usize = 64 * 17;
 /// The pooled stacks' words (`Runner::stacks`), shared by every tier and the root walks: a tier
 /// of `frames` frames of `words` words each runs this many lanes (32,768 of 8 micro frames).
@@ -864,51 +873,68 @@ pub(in crate::code_rule_dsl) fn warm() {
                 // 0.8 s under load) than opening it itself (50-80 ms).
                 let _ = super::set_steps::pipelines();
                 let _ = compile_resident_interpreter_cached();
-                let _ = pipelines();
+                // The run's format, as its tapes are placed (a 16z tape as 16): its batches' kernels.
+                let _ = pipelines(match crate::code_rule_dsl::tape::formats::Format::of_run() {
+                    crate::code_rule_dsl::tape::formats::Format::F15 => 15,
+                    _ => 16,
+                });
                 let _ = compile_sweep_cached();
             });
         }));
     });
 }
 
-/// The label kernels, compiled once (until the residency's drop).
-static PIPELINES: Mutex<Option<Vec<ComputePipelineState>>> = Mutex::new(None);
-/// The clauses' pattern kernels, by source (until the residency's drop).
-static PATTERN_PIPELINES: LazyLock<Mutex<HashMap<String, ComputePipelineState>>> = LazyLock::new(Default::default);
+/// The label kernels, compiled once per tape format (until the residency's drop).
+static PIPELINES: LazyLock<Mutex<HashMap<u32, Vec<ComputePipelineState>>>> = LazyLock::new(Default::default);
+/// The clauses' pattern kernels, by source and tape format (until the residency's drop).
+static PATTERN_PIPELINES: LazyLock<Mutex<HashMap<(String, u32), ComputePipelineState>>> = LazyLock::new(Default::default);
+
+/// A pipeline of a source over [`TAPE_VIEW`] for a batch of tapes in `format` (0: mixed).
+fn pipeline_of(source: &str, name: &str, format: u32) -> Result<ComputePipelineState, Error> {
+    rerail_metal::runtime::pipeline_named_constant(source, name, Some(format))
+}
 
 /// Releases the compiled label and pattern kernels (the residency's drop).
 pub(in crate::code_rule_dsl) fn drop_pipelines() {
     if let Ok(mut pipelines) = PIPELINES.lock() {
-        *pipelines = None;
+        pipelines.clear();
     }
     if let Ok(mut pipelines) = PATTERN_PIPELINES.lock() {
         pipelines.clear();
     }
 }
 
-fn pipelines() -> Result<Vec<ComputePipelineState>, Error> {
+fn pipelines(format: u32) -> Result<Vec<ComputePipelineState>, Error> {
     let mut cached = PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
-    if let Some(pipelines) = &*cached {
+    if let Some(pipelines) = cached.get(&format) {
         return Ok(pipelines.clone());
     }
     let pipelines = KERNELS
         .iter()
-        .map(|name| pipeline_named(&SOURCE, name))
+        .map(|name| pipeline_of(&SOURCE, name, format))
         .collect::<Result<Vec<_>, _>>()?;
-    *cached = Some(pipelines.clone());
+    cached.insert(format, pipelines.clone());
     Ok(pipelines)
+}
+
+/// Compiles every label kernel and the fact-only pattern kernel for a batch of `format` (0: mixed): how many of each.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn compile_label_kernels(format: u32) -> Result<(usize, usize), Error> {
+    let kernels = pipelines(format)?.len();
+    let patterns = pattern_pipelines(&[], true, format)?.map_or(0, |(pipelines, _)| pipelines.len());
+    Ok((kernels, patterns))
 }
 
 /// The plan's pattern kernels, one per `patterns::GROUP` of its patterns (a fact-only plan's
 /// one), with every pattern's metavariable names in the plan's numbering.
-fn pattern_pipelines(patterns: &[&PackedPattern], facts: bool) -> Result<Option<(Vec<ComputePipelineState>, Vec<Vec<String>>)>, Error> {
+fn pattern_pipelines(patterns: &[&PackedPattern], facts: bool, format: u32) -> Result<Option<(Vec<ComputePipelineState>, Vec<Vec<String>>)>, Error> {
     if patterns.is_empty() && !facts {
         return Ok(None);
     }
     let (mut pipelines, mut names) = (Vec::new(), Vec::new());
     let groups = patterns.chunks(patterns::GROUP).collect::<Vec<_>>();
     for (group, members) in if groups.is_empty() { vec![&[][..]] } else { groups }.into_iter().enumerate() {
-        let (pipeline, group_names) = pattern_pipeline(members, group * patterns::GROUP)?;
+        let (pipeline, group_names) = pattern_pipeline(members, group * patterns::GROUP, format)?;
         pipelines.push(pipeline);
         names.extend(group_names);
     }
@@ -916,7 +942,7 @@ fn pattern_pipelines(patterns: &[&PackedPattern], facts: bool) -> Result<Option<
 }
 
 /// One group's pattern kernel, compiled once per distinct source.
-fn pattern_pipeline(patterns: &[&PackedPattern], first: usize) -> Result<(ComputePipelineState, Vec<Vec<String>>), Error> {
+fn pattern_pipeline(patterns: &[&PackedPattern], first: usize, format: u32) -> Result<(ComputePipelineState, Vec<Vec<String>>), Error> {
     let (source, names) = patterns::source(patterns, first);
     // `RERAIL_DIAG_PATTERNS=<dir>`: each pattern kernel's source, for measuring it alone.
     if let Some(dir) = std::env::var_os("RERAIL_DIAG_PATTERNS") {
@@ -926,12 +952,13 @@ fn pattern_pipeline(patterns: &[&PackedPattern], first: usize) -> Result<(Comput
         let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{:016x}.metal", hasher.finish())), &source);
     }
     let mut cached = PATTERN_PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
-    if let Some(pipeline) = cached.get(&source) {
+    let key = (source, format);
+    if let Some(pipeline) = cached.get(&key) {
         return Ok((pipeline.clone(), names));
     }
     crate::code_rule_dsl::prof::count("gpu.pattern_pipelines", 1);
-    let pipeline = pipeline_named(&source, patterns::KERNEL)?;
-    cached.insert(source, pipeline.clone());
+    let pipeline = pipeline_of(&key.0, patterns::KERNEL, format)?;
+    cached.insert(key, pipeline.clone());
     Ok((pipeline, names))
 }
 
@@ -942,7 +969,7 @@ fn bytes_of<T: Copy>(values: &[T]) -> &[u8] {
 /// The batch's tape buffers, shared by every level.
 struct Tapes {
     /// The batch's documents, resident (decision 0032): the label kernels read their tapes in
-    /// place, `docs` holding each one's `ChunkTape`.
+    /// place, `docs` holding each one's `DocView`.
     table: crate::code_rule_dsl::residency::slabs::DocTable,
     docs: MappedBuffer,
     /// The label state: the prefix (head, labels, the sweeps' words), the scratch rows and the
@@ -1311,21 +1338,27 @@ fn encode(
     let queue = rerail_metal::queue()?;
     let command = queue.new_command_buffer().to_owned();
     command.set_label("Rerail label passes");
+    let tapes = crate::code_rule_dsl::prof::time("gpu.tapes", || tapes(device, files, plan, words, rows.as_ref(), [scratch_rows(plan) * words, tally_rows(plan) * nodes]))?;
+    // The batch's one format, or 0 for a mixed batch: the kernels are made for it (`TAPE_VIEW`).
+    let format = tapes.table.format().unwrap_or(0);
+    if crate::code_rule_dsl::prof::on() {
+        crate::code_rule_dsl::prof::count_named(format!("gpu.tape_format={format}"), 1);
+    }
     let mut runner = Runner {
         device,
         engine: compile_resident_interpreter_cached()?,
-        kernels: pipelines()?,
+        kernels: pipelines(format)?,
         sweep: if plan.steps.iter().any(|(recursive, levels)| *recursive && sweeps(levels)) {
             Some(compile_sweep_cached()?)
         } else {
             None
         },
         orders: HashMap::new(),
-        patterns: pattern_pipelines(&plan.patterns, plan.steps.iter().flat_map(|(_, levels)| levels).flatten().any(|pass| matches!(pass, Pass::Fact { .. })))?,
+        patterns: pattern_pipelines(&plan.patterns, plan.steps.iter().flat_map(|(_, levels)| levels).flatten().any(|pass| matches!(pass, Pass::Fact { .. })), format)?,
         command,
         queue,
         files,
-        tapes: crate::code_rule_dsl::prof::time("gpu.tapes", || tapes(device, files, plan, words, rows.as_ref(), [scratch_rows(plan) * words, tally_rows(plan) * nodes]))?,
+        tapes,
         plan_labels: prefix_labels,
         label_rows: rows.as_ref().map(|(_, row_of)| row_of.clone()),
         words,
@@ -1524,7 +1557,7 @@ fn tapes(
         return Err(Error::BackendFailure);
     }
     let docs = if table.views.is_empty() {
-        MappedBuffer::zeroed::<crate::code_rule_dsl::residency::slabs::ChunkTape>(device, 1)?
+        MappedBuffer::zeroed::<crate::code_rule_dsl::residency::slabs::DocView>(device, 1)?
     } else {
         MappedBuffer::from_slice(device, &table.views)?
     };
@@ -1662,8 +1695,18 @@ impl Runner<'_> {
     }
 
     fn dispatch(&mut self, state: &ComputePipelineState, label: &str, buffers: &[(&Buffer, u64)], shape: Shape, threads: usize) {
+        // The kernels that spread a SIMD group's roots over its lanes (`simd_roots`) run whole SIMD groups of 32: a lane
+        // past the items holds no roots. Every tier's pool is a multiple of 32, so this stays inside its stacks.
+        let threads = if label.starts_with("label_micro") || label == patterns::KERNEL {
+            assert_eq!(state.thread_execution_width(), SIMD_WIDTH as u64, "simd_roots is written for SIMD groups of 32");
+            threads.div_ceil(SIMD_WIDTH) * SIMD_WIDTH
+        } else {
+            threads
+        };
         if crate::code_rule_dsl::prof::on() {
             crate::code_rule_dsl::prof::count_named(format!("threads.{label}"), threads);
+            // The pipeline's thread limit: under 1,024 means the kernel's registers cap its occupancy (t41).
+            crate::code_rule_dsl::prof::count_named(format!("pipeline.{label}.max_threads={}", state.max_total_threads_per_threadgroup()), 1);
         }
         if threads == 0 {
             return;

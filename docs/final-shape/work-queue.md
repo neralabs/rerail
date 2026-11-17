@@ -1318,7 +1318,7 @@ pass.
   Not creating it eagerly (`atoms::key` resolving a missing file by its directory) did not remove it: the connection
   makes it. The next run removes it with the scratch files.
 
-### Q57. The warm run after a cold one asks the observer's store inside the waves (the hub, 8e4b6b68e)
+### Q65. (Q57 at django-bugs 49dad1939) The warm run after a cold one asks the observer's store inside the waves (the hub, 8e4b6b68e)
 
 - **Found** (2026-11-16, django-bugs after merging the hub at 8e4b6b68e, and 8e4b6b68e alone, both on the m3):
   `the_run_after_a_cold_one_writes_nothing` fails. Its warm child run exits 3 with "the observer's store not asked
@@ -1353,8 +1353,9 @@ pass.
 - **Found** (2026-11-16, t41 §4): `label_micro` (the loop tier) runs about 2,260 threads a dispatch, at 10 ms a
   dispatch, while `clause_patterns` runs 17.8 M threads in 3 ms. Its walks (`desc`, `child … jump`) average 420–800
   serial steps and reach 4,280.
-- **Done when**: `desc kind=K` is a range query on the preorder tape and a `child` loop a segmented pass, so a walk
-  costs its output, not its length; the longest walk at s1000 is under 100 steps.
+- **Done when**: a `desc kind=K` is a scan of the root's subtree range, 64 codes at a time, its groups spread over
+  threads (nothing posted, 0293 §6), and a `child` loop a segmented pass, so a walk costs its output, not its
+  length; the longest walk at s1000 is under 100 steps.
 
 ### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
 
@@ -1364,7 +1365,45 @@ pass.
 - **Done when**: the next launch is encoded while the GPU runs this one, and the matcher's GPU price comes from
   measured samples.
 
-### Q53. (Q19 at f51cab698) The matcher's `metal-tests` gates: one clause past its work limit, one coverage count short
+### Q53. On the device, a group of 64 nodes' roots run serially in one thread, and a parent is a search (this branch's, since oscar is merged)
+
+- **Found** (2026-11-16, t41's last section, measured on oscar's f51cab698 against the hub's tree at s1000): 0293
+  §10's thread per (pass, group of 64 nodes) runs the group's roots one after another. `clause_patterns` went from
+  18.1 M threads to 186 k, and the micro kernels from 139 ms of GPU time (68.7 M steps) to 474 ms (43.9 M). 0293
+  §9's device parent is a search (format 15: back 64 nodes, then a descent from the root), where the CPU kept its
+  projections' parents (0293 §6).
+- **Done when**: a group's roots are a SIMD group's (a lane a set bit of its mask, or a scan of the masks' counts),
+  a walk's frame carries its parent where its step knew it, and the micro kernels' GPU time on the same s1000
+  matches the hub's tree's or beats it, with the host still listing nothing.
+
+- **Progress** (2026-11-16, t41 "Fixing the merged device"): roots spread over the SIMD group, the walk carries its
+  parent, and the reads are narrowed, scoped and specialized to the batch's format. The label passes went from 1,235
+  to 781 ms at format 15 and to 671 ms at format 16, against the hub tree's 292. What remains is Q57.
+
+### Q57. The device's generated reads cost 1.5× hand-written ones, and its parent is a climb (this branch's)
+
+- **Found** (2026-11-16, t41 "Fixing the merged device"):
+  - `label_micro` is 322 ms with the generated reads against 211 with hand-written format 15 ones. The generated
+    reads load a document's widths from its view and decode a column of any width.
+  - `label_micro_8` is parent climbs: 430 ms at format 15, 272 at format 16, 91 on the hub's tree with its parent
+    column.
+  - The step count is bimodal (97.2 M, or 118.1 M with deep-tier retries).
+  - The device's label tests passed with MSL that did not compile, and with a walk that lost its parent.
+- **Done when**:
+  - the reads' widths cost what constants do, by per-width variants or a column form the decode needs no branch for;
+  - a parent costs a step on the device: format 16 by default (0156, the user's decision), or a parent the walk keeps;
+  - a device test fails on a walk whose steps change (uncompilable MSL fails
+    `the_label_kernels_compile_for_every_format` since 2026-11-16);
+  - the label passes at s1000 match the hub tree's 292 ms or beat it.
+
+### Q54. Oscar's engine stops on the data-layer corpus in `step_histograms` (to check on the merged tree)
+
+- **Found** (2026-11-16, two runs of internal_dead_code with `--metal` over the whole corpus, f51cab698):
+  `setfix.rs:3043`, `RowRef::at`, index 5 of a view row's 2 columns, from `step_histograms` in
+  `Run::exact_statistics`. The hub's tree runs the same corpus.
+- **Done when**: oscar's next hub merge runs the corpus, or the cause is found and fixed there.
+
+### Q55. (Q19 at f51cab698) The matcher's `metal-tests` gates: one clause past its work limit, one coverage count short
 
 Found 2026-11-16 (0293 step 5): the gated tests had not compiled (`LoweredWave::roots_metal` was private to the
 transducer crate, which the engine's `waves::matches` test calls; now `pub`). Compiled, two fail, the same in 15,
@@ -1380,7 +1419,7 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
 - **Done when**: the D416 clause's work is accounted (a limit too small for its walk, or a walk that loops), and
   the coverage test's count is explained (the pack's clauses) or met; both gates pass.
 
-### Q54. (Q20 at f51cab698) The CPU JIT's capture pairs compare and scan a byte a step
+### Q56. (Q20 at f51cab698) The CPU JIT's capture pairs compare and scan a byte a step
 
 Found 2026-11-16 (0310 step 2, moving the JIT's spans onto the tape): `native_cpu_capture_pair.rs`'s `text_equal`
 compares two captures' texts a byte an iteration, and `same_line` looks for a newline between two starts a byte an
@@ -1414,7 +1453,7 @@ iteration. Both are per-byte loops, which the engine's code refuses elsewhere.
    `a_cross_file_reader_finds_the_text_of_another_files_node`; `a_cross_file_text_test_is_maintained_as_a_filter`
    runs again.
 
-### Q55. Relations are blocks the CPU and GPU read in place (0325): steps 4–7
+### Q66. (Q55 at 004e3fddc) Relations are blocks the CPU and GPU read in place (0325): steps 4–7
 
 Built: steps 1 and 2 (417256f3a, b84b98d3e, 061fbbfca, 640ce085c) and step 3 (8aee765b0, 71b1ff602, 27d67f1e2,
 ffed8d55b). The device reads flat relations, relations with dead rows and the vtab's relations in their blocks, and

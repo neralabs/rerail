@@ -151,8 +151,8 @@ fn a_batch_over_several_slabs_is_gathered_into_one_block() {
         assert_eq!(gathered.bytes_at(v.source, v.source_len as usize), document.bytes_at(document.view.source, document.view.source_len as usize));
         assert_eq!(u32s(gathered, v.lines, v.line_count as usize), u32s(document, document.view.lines, document.view.line_count as usize));
         assert_eq!(gathered.codes(), document.codes());
-        // The view moved with the document: its offsets count from its first byte.
-        assert_eq!(gathered.view.view(), document.view.view());
+        // The same offsets from the document's start: a copy moves `at` alone.
+        assert_eq!(rerail_clif::view::TapeView { at: 0, ..*v }, rerail_clif::view::TapeView { at: 0, ..document.view });
     }
     // Asked again, the residency gives the gathered documents: one slab already, nothing copied.
     let again = admit_docs(&docs).unwrap();
@@ -173,13 +173,13 @@ fn the_device_reads_every_format_as_the_document_does() {
     use crate::code_rule_dsl::tape::formats::Format;
     use crate::code_rule_dsl::transducer::packed::metal_backend::{MappedBuffer, pipeline_named};
     use metal::MTLSize;
-    const TAPE: &str = concat!(include_str!("../../transducer/packed/metal_tape_reads.metal"), include_str!("../../transducer/packed/metal_tape.metal"));
+    let tape = format!("{}{}{}", msl(), include_str!("../../transducer/packed/metal_tape_reads.metal"), include_str!("../../transducer/packed/metal_tape.metal"));
     const FIELDS: usize = 12;
     const KERNEL: &str = r#"
-inline uint tape_global(ChunkTape d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
-kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device const uint* nodeDoc [[buffer(1)]],device uint* out [[buffer(2)]],device const uchar* s [[buffer(3)]],constant uint& count [[buffer(7)]],uint g [[thread_position_in_grid]]){
+inline uint tape_global(DocView d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
+kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device const uint* nodeDoc [[buffer(1)]],device uint* out [[buffer(2)]],device const uchar* s [[buffer(3)]],constant uint& count [[buffer(7)]],uint g [[thread_position_in_grid]]){
  if(g>=count)return;
- ChunkTape d=docs[nodeDoc[g]];
+ DocView d=docs[nodeDoc[g]];
  uint i=g-d.node_base;
  device uint* o=out+g*12u;
  o[0]=tape_kind(s,d,i);o[1]=tape_field(s,d,i);o[2]=tape_flags(s,d,i);
@@ -218,14 +218,14 @@ kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device c
             store.put_tape(source_id, i64::from(language::tape_tag(*lang).unwrap()), 1, i64::from(format.store_version()), &bytes).unwrap();
             digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
         }
-        let table = DocTable::new(admit(&store, &digests, &grammar).unwrap()).unwrap();
+        let table = DocTable::one_block(admit(&store, &digests, &grammar).unwrap()).unwrap();
         let expected_format = if format == Format::F15 { 15 } else { 16 };
         assert!(table.views.iter().all(|view| view.format == expected_format), "{format:?} placed as format {expected_format}");
         let node_doc = table.views.iter().enumerate().flat_map(|(doc, view)| std::iter::repeat_n(doc as u32, view.nodes as usize)).collect::<Vec<_>>();
-        let views = MappedBuffer::from_slice::<ChunkTape>(&device, &table.views).unwrap();
+        let views = MappedBuffer::from_slice::<DocView>(&device, &table.views).unwrap();
         let node_doc = MappedBuffer::from_slice(&device, &node_doc).unwrap();
         let out = MappedBuffer::zeroed::<u32>(&device, table.nodes * FIELDS).unwrap();
-        let pipeline = pipeline_named(&format!("#include <metal_stdlib>\nusing namespace metal;\n{}{TAPE}{KERNEL}", msl()), "tape_conformance").unwrap();
+        let pipeline = pipeline_named(&format!("#include <metal_stdlib>\nusing namespace metal;\n{tape}{KERNEL}"), "tape_conformance").unwrap();
         let queue = device.new_command_queue();
         let command = queue.new_command_buffer();
         let encoder = command.new_compute_command_encoder();
@@ -233,7 +233,7 @@ kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device c
         encoder.set_buffer(0, Some(&views.buffer), 0);
         encoder.set_buffer(1, Some(&node_doc.buffer), 0);
         encoder.set_buffer(2, Some(&out.buffer), 0);
-        encoder.set_buffer(3, Some(table.block.as_ref().expect("one block").buffer()), 0);
+        encoder.set_buffer(3, Some(table.block.as_ref().expect("one block bound").buffer()), 0);
         let count = table.nodes as u32;
         encoder.set_bytes(7, 4, std::ptr::from_ref(&count).cast());
         encoder.dispatch_threads(MTLSize::new(table.nodes as u64, 1, 1), MTLSize::new(64, 1, 1));

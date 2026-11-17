@@ -3,7 +3,7 @@ using namespace metal;
 constant uint NONE=0xffffffffu;
 constant uint FORMAT_VERSION=4u;
 struct BatchHeader { uint formatVersion,taskCount,fileCount,programCount,nodeCount,childCount,supertypeCount,lineStartCount,stringCount,structuralWordCount,valueInstructionCount,captureInstructionCount,outputInstructionCount,workspaceByteCount,evaluationCount,queryBucketByteStart,schedulerByteCount,queryMemberByteStart,queuedStateByteStart,greedyEntryByteStart,markScratch,markCounts; };
-struct File { uint nodeStart,nodeCount,sourceStart,source_length,lineStart,line_count,superStart,superCount; };
+struct File { uint nodeStart,nodeCount,sourceStart,sourceLength,lineStart,lineCount,superStart,superCount; };
 struct Node { uint parent,nextAny,nextNamed,childStart,childCount,descendantEnd,sourceStart,sourceEnd,kind,field,flags; };
 struct Program { uint wordStart,wordCount,longStart,longCount,stringStart,stringCount,valueStart,valueCount,captureStart,captureCount,outputStart,outputCount,labelStart,labelCount,maxCursor,maxLuaCapture,flags; };
 struct Supertype { uint node,kind; };
@@ -44,7 +44,7 @@ struct Task { uint evaluation,ordinal,file,program,root,workLimit; };
 // addressed by the batch's offsets. Packed: the packed batch's buffers. Children are hops over
 // their elder siblings' subtrees in both (`descendantEnd`): no child list is read.
 #ifdef RERAIL_RESIDENT
-struct NodeTable { device const uchar* s; ChunkTape d;
+struct NodeTable { device const uchar* s; DocView d;
   Node operator[](uint g) const {
     uint i=g-d.node_base;Node n;n.parent=NONE;n.nextAny=NONE;n.nextNamed=NONE;n.childStart=NONE;n.childCount=NONE;
     n.descendantEnd=g+tape_size(s,d,i);n.sourceStart=d.source_base+tape_start(s,d,i);n.sourceEnd=d.source_base+tape_end(s,d,i);
@@ -58,11 +58,11 @@ inline uint node_flags(thread const NodeTable& t,uint g){return tape_flags(t.s,t
 inline uint node_field(thread const NodeTable& t,uint g){return tape_field(t.s,t.d,g-t.d.node_base);}
 // The next sibling (named: the next named one), or NONE.
 inline uint node_next(thread const NodeTable& t,uint g,bool named){uint i=g-t.d.node_base,p=tape_parent(t.s,t.d,i);if(p==TAPE_NONE)return NONE;uint end=tape_end_of(t.s,t.d,p);uint j=named?tape_next_named_in(t.s,t.d,i,end):tape_next_in(t.s,t.d,i,end);return j==TAPE_NONE?NONE:j+t.d.node_base;}
-struct LineTable { device const uint* lines; uint line_base,source_base; uint operator[](uint at) const {return lines[at-line_base]+source_base;} };
-struct FileTable { device const ChunkTape* docs;
-  File operator[](uint i) const {ChunkTape d=docs[i];File f;f.nodeStart=d.node_base;f.nodeCount=d.nodes;f.sourceStart=d.source_base;f.source_length=d.source_len;f.lineStart=d.line_base;f.line_count=d.line_count;f.superStart=0u;f.superCount=0u;return f;}
+struct LineTable { device const uint* lines; uint lineBase,sourceBase; uint operator[](uint at) const {return lines[at-lineBase]+sourceBase;} };
+struct FileTable { device const DocView* docs;
+  File operator[](uint i) const {DocView d=docs[i];File f;f.nodeStart=d.node_base;f.nodeCount=d.nodes;f.sourceStart=d.source_base;f.sourceLength=d.source_len;f.lineStart=d.line_base;f.lineCount=d.line_count;f.superStart=0u;f.superCount=0u;return f;}
 };
-#define K_FILES device const ChunkTape*
+#define K_FILES device const DocView*
 #define K_NODES device const uchar*
 #define K_CHILDREN device const uchar*
 #define K_SOURCE device const uchar*
@@ -139,12 +139,12 @@ uint label_node(device const Link* captures,Task task,uint head,uint label,uint 
 bool text_equal(Node left,Node right,device const uchar* source){uint length=left.sourceEnd-left.sourceStart;if(length!=right.sourceEnd-right.sourceStart)return false;for(uint i=0;i<length;i++)if(source[left.sourceStart+i]!=source[right.sourceStart+i])return false;return true;}
 bool string_equal(Node node,StringRecord value,device const uchar* source,device const uchar* bytes){uint length=node.sourceEnd-node.sourceStart;if(length!=value.length)return false;for(uint i=0;i<length;i++)if(source[node.sourceStart+i]!=bytes[value.start+i])return false;return true;}
 bool string_contains(Node node,StringRecord value,device const uchar* source,device const uchar* bytes){if(value.length==0u)return true;uint length=node.sourceEnd-node.sourceStart;if(value.length>length)return false;for(uint at=0;at+value.length<=length;at++){bool equal=true;for(uint i=0;i<value.length;i++)equal&=source[node.sourceStart+at+i]==bytes[value.start+i];if(equal)return true;}return false;}
-uint node_line(File file,Node node,LINE_TABLE starts){uint low=0u,high=file.line_count;while(low<high){uint middle=low+(high-low)/2u;if(starts[file.lineStart+middle]<=node.sourceStart)low=middle+1u;else high=middle;}return low-1u;}
+uint node_line(File file,Node node,LINE_TABLE starts){uint low=0u,high=file.lineCount;while(low<high){uint middle=low+(high-low)/2u;if(starts[file.lineStart+middle]<=node.sourceStart)low=middle+1u;else high=middle;}return low-1u;}
 uint evaluate_assertion(Assertion assertion,device const uint* data,device const Link* captures,uint head,Task task,File file,Program program,NODE_TABLE nodes,device const uchar* source,device const StringRecord* strings,device const uchar* stringBytes,device const ValueRecord* values,device const NfaState* nfaStates,device const uint* nfaData,device const NfaRange* nfaRanges,device const LuaInstruction* luaInstructions,device const LuaMember* luaMembers,device uint* valueWork,LINE_TABLE lineStarts,thread uint& steps,device Evaluation& evaluation,device GlobalArenas& globalArenas,uint valueBase,uint valueCapacity){bool any=(assertion.flags&2u)!=0u,positive=any?false:true,negative=any?false:true;uint resultCount=0u;if(assertion.kind==0u||assertion.kind==6u){uint count=min(label_count(captures,task,head,assertion.first,evaluation,globalArenas),label_count(captures,task,head,assertion.second,evaluation,globalArenas));for(uint i=0;i<count;i++){uint left=label_node(captures,task,head,assertion.first,i,evaluation,globalArenas),right=label_node(captures,task,head,assertion.second,i,evaluation,globalArenas);bool result=assertion.kind==0u?text_equal(nodes[left],nodes[right],source):node_line(file,nodes[left],lineStarts)==node_line(file,nodes[right],lineStarts);positive=any?(positive||result):(positive&&result);negative=any?(negative||!result):(negative&&!result);resultCount++;}}else{uint count=label_count(captures,task,head,assertion.first,evaluation,globalArenas);for(uint i=0;i<count;i++){uint nodeId=label_node(captures,task,head,assertion.first,i,evaluation,globalArenas);Node node=nodes[nodeId];bool result=false;if(assertion.kind==1u){uint outcome=evaluate_text(values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,valueWork,stringBytes,source,program,node,task,assertion.second,steps,evaluation,globalArenas,valueBase,valueCapacity);if(outcome>1u)return outcome;result=outcome==1u;}else if(assertion.kind==2u){for(uint j=0;j<assertion.dataCount;j++){uint stringId=data[assertion.dataStart+j];if(stringId>=program.stringCount)return 2u;result|=string_equal(node,strings[program.stringStart+stringId],source,stringBytes);}}else if(assertion.kind==3u){for(uint j=0;j<assertion.dataCount;j++)result|=node.kind==data[assertion.dataStart+j];}else if(assertion.kind==4u){for(uint j=0;j<assertion.dataCount;j++){uint stringId=data[assertion.dataStart+j];if(stringId>=program.stringCount)return 2u;bool found=string_contains(node,strings[program.stringStart+stringId],source,stringBytes);positive=any?(positive||found):(positive&&found);negative=any?(negative||!found):(negative&&!found);resultCount++;}continue;}else if(assertion.kind==5u){uint parent=node_parent(nodes,nodeId);while(parent!=NONE){for(uint j=0;j<assertion.dataCount;j++)result|=nodes[parent].kind==data[assertion.dataStart+j];if(result||!(assertion.flags&4u))break;parent=node_parent(nodes,parent);}}else return 2u;positive=any?(positive||result):(positive&&result);negative=any?(negative||!result):(negative&&!result);resultCount++;}}
  if(resultCount==0u){if(assertion.kind==4u||assertion.kind==5u){positive=true;negative=false;}else if(assertion.kind==3u&&(assertion.flags&8u)){positive=true;negative=true;}else{positive=false;negative=false;}}return (assertion.flags&1u)?uint(negative):uint(positive);}
 Link capture_oldest(device const Link* captures,Task task,uint head,uint count,uint ordinal,device Evaluation& evaluation,device GlobalArenas& globalArenas){uint wanted=count-1u-ordinal,index=0u;while(head){Link capture=captures[head-1u];if(index++==wanted)return capture;head=capture.previous;}return {0u,0u,NONE};}
-uint line_for(File file,uint byte,LINE_TABLE starts){uint low=0u,high=file.line_count;while(low<high){uint middle=low+(high-low)/2u;if(starts[file.lineStart+middle]<=byte)low=middle+1u;else high=middle;}return low-1u;}
-uint byte_for(File file,int row,int column,LINE_TABLE starts,device const uchar* source){if(row<0||column<0||uint(row)>=file.line_count)return NONE;uint start=starts[file.lineStart+uint(row)],end=uint(row)+1u<file.line_count?starts[file.lineStart+uint(row)+1u]-1u:file.sourceStart+file.source_length;uint byte=start+uint(column);if(byte>end||(byte<file.sourceStart+file.source_length&&(source[byte]&0xc0u)==0x80u))return NONE;return byte;}
+uint line_for(File file,uint byte,LINE_TABLE starts){uint low=0u,high=file.lineCount;while(low<high){uint middle=low+(high-low)/2u;if(starts[file.lineStart+middle]<=byte)low=middle+1u;else high=middle;}return low-1u;}
+uint byte_for(File file,int row,int column,LINE_TABLE starts,device const uchar* source){if(row<0||column<0||uint(row)>=file.lineCount)return NONE;uint start=starts[file.lineStart+uint(row)],end=uint(row)+1u<file.lineCount?starts[file.lineStart+uint(row)+1u]-1u:file.sourceStart+file.sourceLength;uint byte=start+uint(column);if(byte>end||(byte<file.sourceStart+file.sourceLength&&(source[byte]&0xc0u)==0x80u))return NONE;return byte;}
 bool append_property(device uchar* storage,Task task,thread uint& propertyCount,Property property,device Evaluation& evaluation,device GlobalArenas& globalArenas){uint propertyIndex=0u;if(reserve_shared(evaluation.quotas[12],globalArenas.arenas[12],1u,propertyIndex))return false;device Property* properties=(device Property*)storage;properties[propertyIndex]=property;propertyCount++;return true;}
 bool append_bytes(device uchar* storage,Task task,thread uint& byteCount,device const uchar* source,uint start,uint length,bool downcase,thread uint& outputStart,device Evaluation& evaluation,device GlobalArenas& globalArenas){if(reserve_shared(evaluation.quotas[13],globalArenas.arenas[13],length,outputStart))return false;for(uint i=0;i<length;i++){uchar byte=source[start+i];storage[outputStart+i]=downcase&&byte>='A'&&byte<='Z'?byte+32:byte;}byteCount+=length;return true;}
 bool capture_head_contains(device const Link* captures,Task task,uint left,uint right,device Evaluation& evaluation,device GlobalArenas& globalArenas){for(uint head=right;head;head=captures[head-1u].previous){Link value=captures[head-1u];if(capture_occurrences(captures,0u,left,value.first,value.second)<capture_occurrences(captures,0u,right,value.first,value.second))return false;}return true;}
@@ -201,14 +201,14 @@ void run_task_in(Task task,constant BatchHeader& header,FILE_TABLE files,NODE_TA
 // A resident task's work limit, as `PackedBatch` computes a task's (`MAX_WORK_PER_TASK`): the
 // root's subtree (its file, where the program repeats) times the evaluation's work per node (its
 // program's words times 4096; bit 31: the program repeats), within [4096, 2^26].
-inline uint resident_work(device const uchar* chunk,ChunkTape doc,uint perNode,uint local){
+inline uint resident_work(device const uchar* chunk,DocView doc,uint perNode,uint local){
  ulong nodes=(perNode&0x80000000u)!=0u?doc.nodes:tape_size(chunk,doc,local);
  return uint(clamp(nodes*ulong(perNode&0x7fffffffu),ulong(4096u),ulong(1u<<26u)));
 }
 // A resident label batch's task (decision 0033): no task records. Its evaluation names its
 // program, its document and its roots' rule in `roots` (the run's, bound in place of the tasks);
 // task `index` is a group of 64 of the document's nodes, and a root of it (`root_mask`) is `local`.
-inline Task resident_task(device const uchar* chunk,ChunkTape doc,device const Evaluation& evaluation,uint evaluationIndex,uint index,uint local){
+inline Task resident_task(device const uchar* chunk,DocView doc,device const Evaluation& evaluation,uint evaluationIndex,uint index,uint local){
  return Task{evaluationIndex,index,evaluation.file,evaluation.program,doc.node_base+local,resident_work(chunk,doc,evaluation.workLimit,local)};
 }
 // The evaluation holding task `index`: tasks are numbered through the evaluations in order.
@@ -217,7 +217,7 @@ inline uint resident_evaluation(device const Evaluation* evaluations,uint count,
 
 void run_task(Task task,constant BatchHeader& header,K_FILES files,K_NODES nodes,device const Program* programs,device const uint* words,device const ulong* longs,K_CHILDREN children,device const Supertype* supertypes,device Pending* pending,device Link* captures,device Link* cursors,device RepeatLink* repeats,device uchar* schedulerStorage,device Result* results,device Status& status,device const ValueRecord* values,device const StringRecord* strings,device const NfaState* nfaStates,device const uint* nfaData,device const NfaRange* nfaRanges,device const LuaInstruction* luaInstructions,device const LuaMember* luaMembers,device const Assertion* assertions,device const uint* assertionData,device const uchar* stringBytes,K_SOURCE source,device uint* valueWork,K_LINES lineStarts,device FinalCapture* finalCaptures,device uchar* outputStorage,device Evaluation& evaluation,device Evaluation& sharedEvaluation){
 #ifdef RERAIL_RESIDENT
- ChunkTape doc=files[task.file];device const uchar* chunk=nodes;device const uchar* slab=tape_doc(chunk,doc);
+ DocView doc=files[task.file];device const uchar* chunk=nodes;device const uchar* slab=tape_doc(chunk,doc);
  NodeTable nodeTable={chunk,doc};LineTable lineTable={(device const uint*)(slab+doc.lines),doc.line_base,doc.source_base};FileTable fileTable={files};
  run_task_in(task,header,fileTable,nodeTable,programs,words,longs,children,supertypes,pending,captures,cursors,repeats,schedulerStorage,results,status,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,assertions,assertionData,stringBytes,tape_doc(chunk,doc)+doc.source-doc.source_base,valueWork,lineTable,finalCaptures,outputStorage,evaluation,sharedEvaluation);
 #else
@@ -261,7 +261,7 @@ kernel void run_batch(device const Task* tasks [[buffer(0)]],constant BatchHeade
 #ifdef RERAIL_RESIDENT
   uint evaluationIndex=resident_evaluation(evaluations,header.evaluationCount,task);
   device Evaluation& evaluation=evaluations[evaluationIndex];
-  ChunkTape rootDoc=files[evaluation.file];
+  DocView rootDoc=files[evaluation.file];
   uint rootGroup=task-evaluation.taskStart;
   ulong rootMask=root_mask(chunk,rootDoc,(device const uint*)tasks,evaluation.rootRule,evaluation.file,rootGroup);
   device Status& status=statuses[tid];
