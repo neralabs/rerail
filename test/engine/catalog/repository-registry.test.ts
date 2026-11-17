@@ -760,6 +760,8 @@ describe("the repository registry", () => {
     git(main, "worktree", "add", "-q", "-b", "feature", worktree);
     // Recorded in path order, which is the order a pass reads them in.
     for (const path of [main, worktree].sort()) recordCheckout(database, path);
+    // A worktree holds its files; one left empty could be the mount point of a drive that is unplugged.
+    writeFileSync(join(worktree, "README.md"), "feature\n");
     if (earlierPass) expect(await pruneCheckouts(database)).toEqual([]);
     // Git in the folder now answers for the repository around it, while main's registry still names the folder, and
     // `git worktree repair` there would write its .git file again.
@@ -797,6 +799,21 @@ describe("the repository registry", () => {
   it.each([
     { when: "its folder is gone from an empty folder, as from the mount point of a drive that is unplugged", offDisk: (copy: string) => removeFolderSync(copy) },
     {
+      // A repository of dotfiles at a home folder is no checkout Rerail recorded, though the mount point sits inside it.
+      when: "its folder is gone from an empty folder inside a repository that is no recorded checkout",
+      offDisk: (copy: string, root: string) => {
+        removeFolderSync(copy);
+        git(root, "init", "-q");
+      },
+    },
+    {
+      when: "its own folder is left empty, as a drive mounted at the copy's folder leaves it once unplugged",
+      offDisk: (copy: string) => {
+        removeFolderSync(copy);
+        mkdirSync(copy);
+      },
+    },
+    {
       when: "its .git can't be read",
       offDisk: (copy: string) => {
         removeFolderSync(join(copy, ".git"));
@@ -817,7 +834,7 @@ describe("the repository registry", () => {
     expect(new Set(listRepositories(database).flatMap(repository => repository.checkouts.map(row => row.cloneId))).size).toBe(1);
     for (const path of recorded) checkoutSetting(database, path);
     git(main, "worktree", "remove", worktree);
-    offDisk(copy);
+    offDisk(copy, root);
 
     // main's registry never named the copy, and the copy's, which can't be read, may still name the worktree.
     expect(await pruneCheckouts(database)).toEqual([]);
