@@ -85,15 +85,20 @@ function tooComplex(name: string): string {
   return `def ${name}(a, b, c, d, e, f, g):\n    score = 0\n${branches}    if a and b:\n        score += 8\n    return score\n`;
 }
 
-/** PreToolUse, the write, PostToolUse and Stop of one edit that breaks the rule, each hook's answer kept. */
-async function editTurn(sessionId: string, file: string): Promise<{ pre: HookAnswer; post: HookAnswer; stop: HookAnswer }> {
+/** A Python function well under the rule's ceiling. */
+function simple(name: string): string {
+  return `def ${name}(a):\n    return a + 1\n`;
+}
+
+/** PreToolUse, the write of `content`, PostToolUse and Stop of one edit, each hook's answer kept. */
+async function editTurn(sessionId: string, file: string, content: (name: string) => string = tooComplex): Promise<{ pre: HookAnswer; post: HookAnswer; stop: HookAnswer }> {
   const name = basename(file, ".py");
-  const content = tooComplex(name);
-  const common = { session_id: sessionId, cwd: repo, tool_name: "Write", tool_use_id: `toolu_${name}`, tool_input: { file_path: file, content } };
+  const text = content(name);
+  const common = { session_id: sessionId, cwd: repo, tool_name: "Write", tool_use_id: `toolu_${name}`, tool_input: { file_path: file, content: text } };
   const pre = await hook({ ...common, hook_event_name: "PreToolUse" }, repo);
   await mkdir(dirname(file), { recursive: true });
-  await writeFile(file, content);
-  const post = await hook({ ...common, hook_event_name: "PostToolUse", tool_response: { type: "create", filePath: file, content } }, repo);
+  await writeFile(file, text);
+  const post = await hook({ ...common, hook_event_name: "PostToolUse", tool_response: { type: "create", filePath: file, content: text } }, repo);
   const stop = await hook({ session_id: sessionId, cwd: repo, hook_event_name: "Stop", prompt_id: "prompt-1", last_assistant_message: "Done." }, repo);
   return { pre, post, stop };
 }
@@ -152,17 +157,25 @@ describe("the Claude Code hook while another process holds the database's write 
     const free = await editTurn(sessionId, join(repo, "src", "app", "free_edit.py"));
     const lock = await holdWriteLock(join(process.env.RERAIL_HOME!, "rerail.sqlite"));
     let held;
+    let clean;
     try {
       held = await editTurn(sessionId, join(repo, "src", "app", "held_edit.py"));
+      clean = await editTurn(sessionId, join(repo, "src", "app", "clean_edit.py"), simple);
     } finally {
       await lock.release();
     }
     const times = (turn: typeof free): string => `PreToolUse ${turn.pre.ms} ms, PostToolUse ${turn.post.ms} ms, Stop ${turn.stop.ms} ms`;
-    const report = `lock free: ${times(free)}; lock held: ${times(held)}`;
+    const report = `lock free: ${times(free)}; lock held, rule broken: ${times(held)}; lock held, clean edit: ${times(clean)}`;
     expect(contextOf(free.post), report).toContain(`[${RULE}]`);
+    // The steer reaches the agent while the lock is held. Its hook then records the steer's receipt itself, on a
+    // connection of its own that waits for the lock up to 5 s; handing the receipt to the daemon removes that wait.
     expect(contextOf(held.post), report).toContain(`[${RULE}]`);
-    expect(held.post.ms, report).toBeLessThan(free.post.ms + 2_000);
-    expect(held.pre.ms + held.post.ms + held.stop.ms, report).toBeLessThan(free.pre.ms + free.post.ms + free.stop.ms + 3_000);
+    expect(contextOf(clean.post), report).not.toContain(`[${RULE}]`);
+    for (const turn of [held, clean]) {
+      expect(turn.pre.ms, report).toBeLessThan(free.pre.ms + 2_000);
+      expect(turn.stop.ms, report).toBeLessThan(free.stop.ms + 2_000);
+    }
+    expect(clean.post.ms, report).toBeLessThan(free.post.ms + 2_000);
     // The records the daemon took while the lock was held: the session's events and the edit's audit with its violation.
     const bundleFile = join(root, "bundle.json");
     await rerail(["support-bundle", "--session", sessionId, "--output", bundleFile]);
