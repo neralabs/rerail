@@ -120,6 +120,9 @@ pub struct PackedBatch {
     /// Each task's size and predicted steps, and its states in the worst case (decision 0334), host-side: what its
     /// budgets are made from (`apply_budget`). Empty for a resident batch's.
     pub(super) sizing: Vec<TaskSizing>,
+    /// A resident label batch's step budget (`assign_resident`): the run's, doubled where its tasks ran over
+    /// (`metal_label_passes`); `None`, the process's (`WorkBudget::current`).
+    pub resident_budget: Option<super::WorkBudget>,
 }
 
 /// A task's size and predicted steps (`evaluation_costs`), and its states of each kind in the worst case: the
@@ -1006,7 +1009,7 @@ impl PackedBatch {
     /// workspace is lanes times that, whatever the roots.
     pub fn assign_resident(&mut self, programs: &[Program], specs: &[[u32; 5]], lanes: usize) -> Result<super::packed_workspace::WorkspaceTotals, Error> {
         let total = specs.iter().try_fold(0_u32, |total, spec| total.checked_add(spec[4])).ok_or(Error::BackendCapacity)?;
-        let budget = super::WorkBudget::current();
+        let budget = self.resident_budget.unwrap_or_else(super::WorkBudget::current);
         self.tasks = specs
             .iter()
             .enumerate()
@@ -1038,12 +1041,19 @@ impl PackedBatch {
             evaluation.root_rule = spec[2];
             evaluation.root_reserved = spec[3];
             // The work per node of a task's subtree (`resident_work` on the device): under the full budget, the
-            // CPU's limit whatever the subtree (`resident_work` clamps a node's 2^26 to 2^26).
+            // CPU's limit whatever the subtree (`resident_work` clamps a node's 2^26 to 2^26). Replanned, the
+            // program's predicted steps per node (its rate, else the prior) times the slack, doubled per rerun
+            // (decision 0334); bit 31: the program repeats, so its tasks' subtree is the file.
             evaluation.workspace_work_estimate = match budget {
-                // The label sweep is not replanned yet: under `Replan` it runs as `Full`.
-                super::WorkBudget::Full | super::WorkBudget::Replan { .. } => super::MAX_WORK_PER_TASK as u32,
+                super::WorkBudget::Full => super::MAX_WORK_PER_TASK as u32,
+                super::WorkBudget::Replan { .. } => {
+                    let per_node = super::evaluation_costs::rate(program.plain_digest()).map_or(
+                        program.words.len().max(1) as u64 * super::evaluation_costs::PRIOR_STEPS_PER_WORD,
+                        |rate| rate.steps_per_unit.ceil().max(1.0) as u64,
+                    );
+                    budget.task_limit(per_node) | u32::from(repeats) << 31
+                }
             };
-            let _ = (program, repeats);
             start += spec[4];
         }
         self.tasks.clear();

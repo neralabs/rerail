@@ -102,4 +102,6 @@ pub struct Outcome {
     pub records: RootsFound,
     /// The command buffers' seconds on the GPU (`GPUStartTime` to `GPUEndTime`), summed.
     pub device: f64,
+    /// How many times the run went again with twice the step budget after a task ran over it (decision 0334).
+    pub replanned: usize,
 }

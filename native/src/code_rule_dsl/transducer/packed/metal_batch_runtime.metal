@@ -182,12 +182,12 @@ void run_task_in(Task task,constant BatchHeader& header,thread const FileTable& 
 }
 
 #ifdef RERAIL_RESIDENT
-// A resident task's work limit, as `PackedBatch` computes a task's (`MAX_WORK_PER_TASK`): the
-// root's subtree (its file, where the program repeats) times the evaluation's work per node (its
-// program's words times 4096; bit 31: the program repeats), within [4096, 2^26].
+// A resident task's step budget (decision 0334): the root's subtree (its file, where the program
+// repeats) times the evaluation's budget per node (`assign_resident`; bit 31: the program repeats),
+// within [256, 2^26]. Under the full budget a node's is 2^26, so every task's is the ceiling.
 inline uint resident_work(thread const Slabs& slabs,DocView doc,uint perNode,uint local){
  ulong nodes=(perNode&0x80000000u)!=0u?doc.nodes:tape_size(slabs,doc,local);
- return uint(clamp(nodes*ulong(perNode&0x7fffffffu),ulong(4096u),ulong(1u<<26u)));
+ return uint(clamp(nodes*ulong(perNode&0x7fffffffu),ulong(256u),ulong(1u<<26u)));
 }
 // A resident label batch's task (decision 0033): no task records. Its evaluation names its
 // program, its document and its roots' rule in `roots` (the run's, bound in place of the tasks);
@@ -266,6 +266,8 @@ kernel void run_batch(device const Task* tasks [[buffer(0)]],constant BatchHeade
   atomic_store_explicit(&lane.quotas[9].used,0u,memory_order_relaxed);
   run_task(own,header,files,nodes,programs,words,longs,children,supertypes,pending,captures,cursors,repeats,schedulerStorage,results,status,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,assertions,assertionData,stringBytes,source,valueWork,lineStarts,finalCaptures,outputStorage,lane,evaluation);
 #ifdef RERAIL_RESIDENT
+  // A stop at a budget below the ceiling is an overrun (decision 0334): the run is replanned, not failed.
+  if(status.error==4u&&own.workLimit<(1u<<26u))status.error=8u;
   if(firstError==0u)firstError=status.error;
 #endif
   }

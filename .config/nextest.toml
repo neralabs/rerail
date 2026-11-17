@@ -18,7 +18,7 @@ default-filter = """not (
   | test(=code_rule_dsl::logic::program_text::tests::pack_programs_read_back_from_their_text)
   | test(=code_rule_dsl::logic::json_rules::tests::json_rules_pack_is_current)
   | test(/^code_rule_dsl::slice::tests::(the_napi_slice_audits_and_applies_as_the_slice_does|an_edit_reruns_its_file_and_a_whitespace_edit_cuts_off)$/)
-  | test(/^code_rule_dsl::transducer::packed::compile_matcher_tests::(spilled_walks_find_the_cpus_roots|micro_walks_are_the_interpreters_label_outputs|lowered_python_clauses_match_where_ws_matcher_does|the_gate_catches_a_widened_walk)$/)
+  | test(/^code_rule_dsl::transducer::packed::compile_matcher_tests::(spilled_walks_find_the_cpus_roots|micro_walks_are_the_interpreters_label_outputs|lowered_python_clauses_match_where_ws_matcher_does|the_gate_catches_a_widened_walk|a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots)$/)
   | test(=code_rule_dsl::sql_executor::tests::recovery::original_cpython_programs_use_private_projections_and_bounded_join_work)
   | test(=code_rule_dsl::sql_executor::tests::recursive::partitioned_recursive_lattices_remove_cycles_with_bounded_work_and_match_fresh)
   | test(=code_rule_dsl::sql_executor::tests::reductions::dependent_aggregate_keys_follow_old_and_new_dependencies_without_scanning_contexts)

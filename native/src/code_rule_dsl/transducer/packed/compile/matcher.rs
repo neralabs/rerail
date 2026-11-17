@@ -338,6 +338,11 @@ impl Labels {
 }
 
 impl LoweredMatcher {
+    /// Every program the clause walks: its labels' and its root program.
+    pub fn walked_programs(&self) -> Vec<&Program> {
+        self.labels.defs.iter().filter_map(Label::program).chain(std::iter::once(&self.program)).collect()
+    }
+
     pub fn lower(tree: &MatchTree) -> Result<Self, Error> {
         let mut labels = Labels::default();
         // Set mode (list step 14): the clause's matches are its roots, read as keys (the wave's

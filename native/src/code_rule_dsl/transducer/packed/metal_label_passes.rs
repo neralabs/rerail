@@ -1019,6 +1019,8 @@ struct Runner<'a> {
     segment_bytes: usize,
     /// A level's lanes and each task's states; a sweeping group's are always `WIDE`.
     lanes: (usize, Option<u32>),
+    /// The run's step budget (decision 0334), doubled for each rerun after an overrun.
+    budget: super::WorkBudget,
     /// Whether a level's micro walks run as such, and each level's, by its address.
     micro: bool,
     /// Whether the loop tier runs with 128-frame stacks (`label_micro_deep`).
@@ -1182,8 +1184,18 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let (mut retries, mut used, mut buffers) = (0, 0, 0);
     let (mut lanes, mut micro, mut deep, mut released) = (NARROW, !interpret_only(), false, false);
+    let (mut budget, mut replanned) = (super::WorkBudget::current(), 0);
     loop {
-        let mut outcome = match encode(device, plan, files, &rounds, lanes, micro, deep) {
+        let mut outcome = match encode(device, plan, files, &rounds, lanes, micro, deep, budget) {
+            // A task over its step budget, below the ceiling (decision 0334): the run again with twice the
+            // budget, until its tasks' budgets are the ceiling (then a stop is `WorkLimit`'s failure).
+            Err(Error::OverBudget) => {
+                crate::code_rule_dsl::prof::count("run.replanned", 1);
+                crate::code_rule_dsl::logic::profile::decision("label sweep over its budget, run again with twice the budget (0334)", || format!("{budget:?}"));
+                budget = budget.doubled();
+                replanned += 1;
+                continue;
+            }
             // Workspaces kept from earlier runs hold the budget: freed once, the same run again.
             Err(Error::BackendCapacity) if !released && super::release_workspaces() => {
                 released = true;
@@ -1230,6 +1242,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
         }
         used += outcome.dispatches;
         buffers += outcome.command_buffers;
+        outcome.replanned = replanned;
         if outcome.waits[1] == 0 {
             outcome.waits[1] = retries;
             outcome.dispatches = used;
@@ -1281,6 +1294,7 @@ fn encode(
     lanes: (usize, Option<u32>),
     micro: bool,
     deep: bool,
+    budget: super::WorkBudget,
 ) -> Result<Outcome, Error> {
     let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let words = nodes.div_ceil(32).max(1);
@@ -1327,6 +1341,7 @@ fn encode(
         prepared: HashMap::new(),
         segment_bytes: 0,
         lanes,
+        budget,
         micro,
         deep,
         walks: HashMap::new(),
@@ -1400,6 +1415,10 @@ fn encode(
     if runner.flag(0) & 2 != 0 {
         crate::code_rule_dsl::prof::count("gpu.frames_overflow", 1);
         return Err(Error::WalkFrames);
+    }
+    // A task over its step budget, below the ceiling (decision 0334): the run again with twice the budget.
+    if runner.flag(0) & 4 != 0 {
+        return Err(Error::OverBudget);
     }
     if runner.flag(0) != 0 {
         return Err(Error::BackendFailure);
@@ -1979,6 +1998,7 @@ impl Runner<'_> {
             batch.header.supertype_count = self.tapes.supertype_count;
             let (lanes, states) = if sweep.is_some() { WIDE } else { self.lanes };
             batch.state_cap = states;
+            batch.resident_budget = Some(self.budget);
             // As many lanes as the free budget holds (O38), each with the states a task takes:
             // a workspace is a fixed part and a part per lane, measured at one lane and at two.
             let lanes = crate::code_rule_dsl::prof::time("size.lanes", || fit_lanes(&mut batch, &programs, &specs, lanes))?;

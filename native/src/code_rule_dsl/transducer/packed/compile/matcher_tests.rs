@@ -430,6 +430,58 @@ fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
     assert!(equal > 0, "no clause ran on the interpreter");
 }
 
+/// Decision 0334: the label sweep under the replanned budget, with every program it walks priced at almost nothing
+/// (a step per node, times the slack). Its tasks run over their budgets, the run goes again with twice the budget
+/// until they finish, and it finds the full budget's roots.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots() {
+    use crate::code_rule_dsl::transducer::packed::evaluation_costs::{self, Rate};
+    use metal_program_backend::label_passes::INTERPRET_ONLY;
+    let tapes = fixtures();
+    let mut matchers = Vec::new();
+    for (policy, compiled) in &clauses() {
+        for (clause, grammar) in python_matchers(compiled) {
+            if !selected(policy, clause) {
+                continue;
+            }
+            let Ok(tree) = match_tree(grammar) else { continue };
+            if let Ok(matcher) = LoweredMatcher::lower(&tree) {
+                matchers.push(matcher);
+            }
+        }
+    }
+    let rates = matchers
+        .iter()
+        .flat_map(LoweredMatcher::walked_programs)
+        .map(|program| (program.plain_digest().to_owned(), Rate { steps_per_unit: 1e-6, samples: 1 }))
+        .collect();
+    evaluation_costs::install(rates);
+    INTERPRET_ONLY.set(true);
+    let (mut checked, mut replanned) = (0, 0);
+    for matcher in matchers.iter().step_by(4).take(12) {
+        // SAFETY: nextest runs each test in a process of its own; nothing else reads the variable meanwhile.
+        unsafe { std::env::remove_var("RERAIL_DEVICE_BUDGET") };
+        let full = matcher.roots_metal(&tapes);
+        unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "replan") };
+        let replan = matcher.roots_metal(&tapes);
+        match (full, replan) {
+            (Ok((full, _)), Ok((replan, outcome))) => {
+                assert_eq!(replan, full, "the replanned sweep finds the full budget's roots");
+                replanned += outcome.replanned;
+                checked += 1;
+            }
+            (Err(Error::BackendCapacity | Error::BackendLaunchLimit), _) => {}
+            (full, replan) => panic!("full {:?}, replanned {:?}", full.err(), replan.err()),
+        }
+    }
+    unsafe { std::env::remove_var("RERAIL_DEVICE_BUDGET") };
+    INTERPRET_ONLY.set(false);
+    eprintln!("{checked} clauses checked, {replanned} reruns with twice the budget");
+    assert!(checked > 0, "no clause ran");
+    assert!(replanned > 0, "no task ran over a budget of a step per node");
+}
+
 /// The Metal gate's mutation check: a widened walk must differ from W's matcher on Metal too, over the CPU check's
 /// tapes (`widened_tapes`), 16 a launch.
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
