@@ -22,8 +22,12 @@
  * running, so the daemon, which runs on, renews the mark if the other program lets it go by then; any renewal that
  * succeeds removes the stuck mark. A hook also repeats an answer only where this user may add files to the folder, as a renewal and the
  * stuck mark both must.
+ *
+ * A renewal writes only into the folder a daemon made as it started (`makeAnswersFolder`): in a home no daemon ran in, a
+ * change to where Rerail runs leaves nothing beside the database. A hook keeps an answer only with a mark it found in
+ * that folder, so a change that committed while the folder was not there, and renewed nothing, is never read past.
  */
-import { accessSync, constants, lstatSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, lstatSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { replaceFileSync } from "../file-replace.js";
 
@@ -50,29 +54,29 @@ interface DatabaseFile {
 }
 
 /**
- * Renews the start mark beside `database`'s file; a database in memory has none. Nothing is written through a link at
- * the answers folder's name, which can lead anywhere, and no hook repeats an answer kept under one. A failure is not the
- * writer's: the change it marks has committed. One that fails leaves the stuck mark before it returns, and tries again
- * later ({@link renewLater}).
+ * Renews the start mark beside `database`'s file; a database in memory has none. It writes only in the answers folder
+ * a daemon made, never makes it, and writes nothing through a link at its name, which can lead anywhere: no hook keeps
+ * an answer where no such folder is there. A failure is not the writer's: the change it marks has committed. One that
+ * fails leaves the stuck mark before it returns, and tries again later ({@link renewLater}).
  */
 export function renewStartMark(database: DatabaseFile): void {
   const { name, memory } = database.$client;
   if (memory || name === "") return;
   const folder = join(dirname(name), STOPPED_ANSWERS_DIR);
-  if (entryAt(folder) === "other") return;
+  if (entryAt(folder) !== "folder") return;
   if (renewedIn(folder)) return;
   markStuck(folder);
   renewLater(folder, RENEWAL_TRIES);
 }
 
 /**
- * One renewal of the mark in `folder`, made where it is missing, that waits for nothing: false where any step fails, as
- * where another program holds the mark open on Windows. Each try runs whole in one turn of the event loop, so a renewal
- * refused in this process between this one's rename and its removal of the stuck mark cannot have that mark removed.
+ * One renewal of the mark in `folder` that waits for nothing: false where any step fails, as where another program
+ * holds the mark open on Windows, or the folder has gone. Each try runs whole in one turn of the event loop, so a
+ * renewal refused in this process between this one's rename and its removal of the stuck mark cannot have that mark
+ * removed.
  */
 function renewedIn(folder: string): boolean {
   try {
-    mkdirSync(folder, { recursive: true, mode: 0o700 });
     replaceFileSync(join(folder, START_MARK), `${Date.now()}\n`, { mode: 0o600, retryMs: 0 });
     rmSync(join(folder, STUCK_MARK), { force: true });
     return true;
@@ -104,16 +108,15 @@ function markStuck(folder: string): void {
 }
 
 /**
- * The start mark beside the database at `databasePath` as a hook keeps it: `none` where nothing is at its name, the
- * device, file id, change time and write time of a plain file there, and undefined for anything else (a link, which is
- * never followed, a folder) or where a look fails. A link at the answers folder's name is not looked through: it can
- * lead to a server that does not answer.
+ * The start mark beside the database at `databasePath` as a hook keeps it: `none` where nothing is at its name in the
+ * answers folder, the device, file id, change time and write time of a plain file there, and undefined for anything
+ * else (a link, which is never followed, a folder), where a look fails, and where the answers folder is not a folder:
+ * no renewal is recorded where none is there, so no answer is kept then. A link at the answers folder's name is not
+ * looked through: it can lead to a server that does not answer.
  */
 export function startMarkFound(databasePath: string): string | undefined {
   const folder = join(dirname(databasePath), STOPPED_ANSWERS_DIR);
-  const kind = entryAt(folder);
-  if (kind !== "folder") return kind === "none" ? NO_MARK : undefined;
-  return markAt(join(folder, START_MARK));
+  return entryAt(folder) === "folder" ? markAt(join(folder, START_MARK)) : undefined;
 }
 
 function markAt(path: string): string | undefined {
@@ -136,22 +139,16 @@ export function startMarkHolds(databasePath: string, kept: string): boolean {
 }
 
 /**
- * Whether this user may add a file to `folder`, as a renewal and the stuck mark both must, or, where it is not made
- * yet, to the folder above it, where a renewal makes it: where its permissions refuse it (as 0500 does), a renewal and
- * its stuck mark both fail and the mark would stay the one kept. Windows checks only the read-only attribute here,
- * which a folder ignores.
+ * Whether this user may add a file to `folder`, as a renewal and the stuck mark both must: where its permissions refuse
+ * it (as 0500 does), a renewal and its stuck mark both fail and the mark would stay the one kept. Windows checks only
+ * the read-only attribute here, which a folder ignores.
  */
 function takesNewFiles(folder: string): boolean {
-  return mayAddTo(folder) ?? mayAddTo(dirname(folder)) === true;
-}
-
-/** Whether this user may add a file to `folder`; undefined where nothing is there. */
-function mayAddTo(folder: string): boolean | undefined {
   try {
     accessSync(folder, constants.W_OK | constants.X_OK);
     return true;
-  } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "ENOENT" ? undefined : false;
+  } catch {
+    return false;
   }
 }
 

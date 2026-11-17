@@ -10,7 +10,7 @@ import { adoptRemote, linkAlias, pruneCheckouts, recordCheckout } from "../../..
 import {
   renewStartMark, START_MARK, startMarkFound, startMarkHolds, STOPPED_ANSWERS_DIR, STUCK_MARK,
 } from "../../../src/engine/storage/start-mark.js";
-import { setCheckoutStarted, setRepositoryStarted } from "../../../src/runtime/index.js";
+import { makeAnswersFolder, setCheckoutStarted, setRepositoryStarted } from "../../../src/runtime/index.js";
 import { linkFolder, symlinkOrSkip } from "../../support/platform/links.js";
 import { NO_POSIX_MODES, POSIX_MODES } from "../../support/platform/file-mode.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
@@ -28,12 +28,22 @@ async function temporary(): Promise<string> {
   return path;
 }
 
-/** A Rerail database in a home of its own under `root`. */
+/** A Rerail database in a home of its own under `root`, where a daemon has made the folder of kept answers at its start. */
 function database(root: string): RerailDatabase {
+  const opened = homeNoDaemonRan(root);
+  makeAnswersFolder(join(root, "home"));
+  return opened;
+}
+
+/** A Rerail database in a home of its own under `root` where no daemon has run, so no folder of kept answers is there. */
+function homeNoDaemonRan(root: string): RerailDatabase {
   const opened = openRerailDatabase(join(root, "home", "rerail.sqlite"));
   openDatabases.push(opened);
   return opened;
 }
+
+/** Each entry in the folder at `path` and below it, sorted. */
+const listing = (path: string): string[] => readdirSync(path, { recursive: true }).map(String).sort();
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", ...args], { cwd, stdio: "ignore" });
@@ -85,6 +95,16 @@ describe("the start mark", () => {
     expect({ before, after: after?.split(":").length, renewed: after !== before }).toEqual({ before: "none", after: 4, renewed: true });
   });
 
+  it.each(writers)("writes nothing in a home where no daemon made the folder of kept answers once $what commits, so no hook keeps an answer there", async ({ write }) => {
+    const root = await temporary();
+    const db = homeNoDaemonRan(root);
+    const app = gitRepository(join(root, "app"));
+    recordCheckout(db, app);
+    const before = listing(join(root, "home"));
+    write(db, app, root);
+    expect({ home: listing(join(root, "home")), mark: markOf(db) }).toEqual({ home: before, mark: undefined });
+  });
+
   it("is a new file at each renewal, in a folder only this user may open and a file only this user may read and write", async ({ skip }) => {
     const root = await temporary();
     const db = database(root);
@@ -111,7 +131,7 @@ describe("the start mark", () => {
 
   it("writes and reads nothing through a link at the folder of kept answers, which can lead anywhere", async () => {
     const root = await temporary();
-    const db = database(root);
+    const db = homeNoDaemonRan(root);
     const outside = join(root, "outside");
     mkdirSync(outside);
     writeFileSync(join(outside, START_MARK), "1\n");
@@ -123,7 +143,7 @@ describe("the start mark", () => {
 
   it("reads no mark through a link at its name, nor a folder there", async ctx => {
     const root = await temporary();
-    const db = database(root);
+    const db = homeNoDaemonRan(root);
     const outside = join(root, "outside");
     mkdirSync(outside);
     writeFileSync(join(outside, START_MARK), "1\n");
@@ -145,6 +165,12 @@ describe("the start mark", () => {
     expect({ none: startMarkHolds(db.$client.name, "none"), found: startMarkHolds(db.$client.name, found) }).toEqual({ none: false, found: true });
     writeFileSync(join(answers(db), STUCK_MARK), "");
     expect(startMarkHolds(db.$client.name, found)).toBe(false);
+  });
+
+  it("is not found, and no mark holds, where the folder of kept answers is not there, since no renewal is recorded then", async () => {
+    const root = await temporary();
+    const db = homeNoDaemonRan(root);
+    expect({ found: markOf(db), none: startMarkHolds(db.$client.name, "none") }).toEqual({ found: undefined, none: false });
   });
 
   it("writes the stuck mark where a renewal cannot replace the mark, and the next renewal that can removes it", async () => {

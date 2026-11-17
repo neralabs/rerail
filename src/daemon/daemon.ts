@@ -22,7 +22,7 @@ import { chooseEngineSocketPath, engineWorktreeWalks, startEngineService, type E
 import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/engine-pipe.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
-import { removeEarlierAnswers } from "../runtime/stopped-answers.js";
+import { makeAnswersFolder, removeEarlierAnswers } from "../runtime/stopped-answers.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import type { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import { getRequestListener } from "@hono/node-server";
@@ -609,6 +609,9 @@ export class RerailDaemon {
   async #announce(remembered: number | undefined): Promise<void> {
     const options = this.#options;
     if (options.stateFile !== undefined) {
+      // Made before hooks can find this daemon, so the first of them may keep its answer: a home no daemon ran in has
+      // no such folder, and a start or a stop there writes nothing beside the database.
+      makeAnswersFolder(dirname(options.stateFile));
       await this.#record(options.stateFile);
       // Hooks find this daemon by the file just written, and never repeat an answer of stopped an earlier daemon gave:
       // it removes those off its start, so no hook pays for the removal.

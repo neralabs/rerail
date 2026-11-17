@@ -896,6 +896,16 @@ describe("Rerail daemon", () => {
     }
   });
 
+  it("makes the folder of kept answers in its home when it starts, a folder only this user may open", { timeout: 30_000 }, async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const home = join(root, "home");
+    await mkdir(home);
+    await start({ stateFile: join(home, DAEMON_STATE_FILE) });
+    const made = await stat(join(home, "stopped-answers"));
+    const mode = process.platform === "win32" ? "not checked on Windows" : (made.mode & 0o777).toString(8);
+    expect({ folder: made.isDirectory(), mode }).toEqual({ folder: true, mode: process.platform === "win32" ? "not checked on Windows" : "700" });
+  });
+
   it("removes the answers of stopped the daemons before it kept for hooks once it has written its state file, removing a link as a link", { timeout: 30_000 }, async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const home = join(root, "home");

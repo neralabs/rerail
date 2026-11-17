@@ -7,7 +7,7 @@ import {
 import { appendFile, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import Database from "better-sqlite3";
@@ -20,6 +20,7 @@ import {
 import {
   encodeRerailEventResult,
   type EngineEndpoint,
+  makeAnswersFolder,
   removeEarlierAnswers,
   setCheckoutStarted,
   setRepositoryStarted,
@@ -525,7 +526,7 @@ async function countingDaemon(
   home: string,
   repositoryState: string | ((repository: string) => string) = "stopped",
   answerWhen?: (url: URL) => Promise<unknown>,
-  { holdsDatabase = true, pid = process.pid, startedAt = 1, scopeOf = daemonScope, databasePath = join(home, "rerail.sqlite") }: StandInOptions = {},
+  { holdsDatabase = true, pid = process.pid, startedAt = 1, scopeOf = daemonScope, databasePath = join(home, "rerail.sqlite"), answersFolder = true }: StandInOptions = {},
 ): Promise<CountingDaemon> {
   const requests: string[] = [];
   const asked: string[] = [];
@@ -565,6 +566,7 @@ async function countingDaemon(
     pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "test",
     databasePath, kernelSocketPath, ui: "bundled", startedAt, packageRoot: home,
   }));
+  if (answersFolder) makeAnswersFolder(home);
   const database = holdsDatabase ? heldOpen(join(home, "rerail.sqlite")) : undefined;
   return {
     requests,
@@ -590,6 +592,8 @@ interface StandInOptions {
   readonly scopeOf?: (folder: string) => DaemonScope;
   /** The database `daemon.json` names; the Rerail home's unless given. */
   readonly databasePath?: string;
+  /** Whether it makes the folder of kept answers at its start, as a daemon does (`makeAnswersFolder`); true unless given. */
+  readonly answersFolder?: boolean;
 }
 
 /** The checkout a live daemon names for `folder` in its answer (`lookupCheckout`); null where it knows none. */
@@ -1143,6 +1147,21 @@ async function keptStopped(host: StartCheckHost, workspace: string, options: Sta
   } finally {
     await daemon.close();
   }
+}
+
+/**
+ * Each entry in the Rerail home and below it, sorted, but SQLite's own WAL and WAL index beside a database, which a read
+ * of the database leaves as it does on main.
+ */
+function homeEntries(): string[] {
+  return readdirSync(process.env.RERAIL_HOME!, { recursive: true }).map(String).filter(name => !/\.sqlite-(wal|shm)$/u.test(name)).sort();
+}
+
+/** What is at `path`, not followed through a link. */
+function entryOf(path: string): "folder" | "link" | "file" {
+  const found = lstatSync(path);
+  if (found.isSymbolicLink()) return "link";
+  return found.isDirectory() ? "folder" : "file";
 }
 
 /** A Git repository at `<root>/app`, started and then stopped in its checkout, as `rerail stop` leaves it. */
@@ -2575,7 +2594,6 @@ describe("the hook start check", () => {
     writeFileSync(join(target, "canary.txt"), "canary");
     const link = at(process.env.RERAIL_HOME!);
     mkdirSync(dirname(link), { recursive: true });
-    // The start and the stop that stopped the checkout made the folder of kept answers for the start mark.
     if (existsSync(link)) removeFolderSync(link);
     folderLink(target, link);
     const host = await startCheckHost();
@@ -2628,7 +2646,7 @@ describe("the hook start check", () => {
     const host = await startCheckHost();
     await keptStopped(host, app);
     expect({ removed: removed.filter(path => !path.includes(`${sep}${process.pid}-1`)), answers: readdirSync(answers).sort() })
-      .toEqual({ removed: [], answers: [`${process.pid}-1`, "7-1", "8-1", START_MARK].sort() });
+      .toEqual({ removed: [], answers: [`${process.pid}-1`, "7-1", "8-1"].sort() });
   });
 
   it("removes, for a daemon once it runs, the folders of answers the daemons before it kept, leaving its own, the start mark and the stuck mark, and nothing a link leads to", async () => {
@@ -2653,6 +2671,39 @@ describe("the hook start check", () => {
     for (const each of [home, linkedHome]) await removeEarlierAnswers(each, { pid: process.pid, startedAt: 1 });
     expect({ answers: readdirSync(answers).sort(), own: readdirSync(join(answers, `${process.pid}-1`)), outside: readdirSync(outside).sort() })
       .toEqual({ answers: [`${process.pid}-1`, START_MARK, STUCK_MARK].sort(), own: [`${"0".repeat(32)}.json`], outside: ["7-1", "keep.txt"] });
+  });
+
+  it.each([
+    { what: "no daemon is recorded", daemon: undefined, keeps: false },
+    { what: "the daemon answers started", daemon: { says: "started", answersFolder: true }, keeps: false },
+    { what: "the daemon answers stopped in a home where no daemon made the folder of kept answers", daemon: { says: "stopped", answersFolder: false }, keeps: false },
+    { what: "the daemon answers stopped", daemon: { says: "stopped", answersFolder: true }, keeps: true },
+  ])("leaves the Rerail home as it found it but for the answer it keeps where $what", async ({ daemon, keeps }) => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    const standIn = daemon === undefined ? undefined : await countingDaemon(process.env.RERAIL_HOME!, daemon.says, undefined, { answersFolder: daemon.answersFolder });
+    const before = homeEntries();
+    try {
+      await host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES);
+    } finally {
+      await standIn?.close();
+    }
+    const kept = relative(process.env.RERAIL_HOME!, keptAnswerFile(app));
+    expect(homeEntries()).toEqual([...before, ...(keeps ? [dirname(kept), kept] : [])].sort());
+  });
+
+  it("makes the folder of kept answers for a daemon where nothing is at its name, and leaves a link or a file there as it is", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const outside = join(root, "outside");
+    mkdirSync(outside);
+    const homes = ["empty", "linked", "file"].map(name => join(root, name));
+    for (const home of homes) mkdirSync(home);
+    folderLink(outside, join(homes[1]!, "stopped-answers"));
+    writeFileSync(join(homes[2]!, "stopped-answers"), "");
+    for (const home of homes) makeAnswersFolder(home);
+    expect({ kinds: homes.map(home => entryOf(join(home, "stopped-answers"))), outside: readdirSync(outside) })
+      .toEqual({ kinds: ["folder", "link", "file"], outside: [] });
   });
 
   it("keeps no answer that rests on a folder outside Git, which the daemon places again on every answer, and waits there", async () => {

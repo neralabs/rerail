@@ -29,6 +29,7 @@ import {
   type RepositorySetupIo,
 } from "../../src/runtime/repository-start.js";
 import { SqliteSessionStore } from "../../src/runtime/session-store.js";
+import { makeAnswersFolder } from "../../src/runtime/stopped-answers.js";
 import { startRerail } from "../../src/cli/index.js";
 import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
@@ -494,6 +495,9 @@ describe("repository start state", () => {
     const root = await temporary("rerail-start-mark-");
     const databasePath = join(root, "home", "rerail.sqlite");
     const main = gitRepository(join(root, "acme-web"));
+    // A daemon made the folder of kept answers as it started, so each change to where Rerail runs renews the mark there.
+    mkdirSync(join(root, "home"));
+    makeAnswersFolder(join(root, "home"));
     // The mark as set-up's start leaves it inside set-up's own transaction, which has not committed yet.
     const inside: Array<string | undefined> = [];
     vi.resetModules();

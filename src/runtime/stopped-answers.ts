@@ -222,14 +222,24 @@ function placementOf(folder: string, top: string): Placement | undefined {
  * Writes the answer `placed` names at `file`, with the clone id the checkout's top holds now, unless what is there says
  * the same of the folder's placement and the start mark and is younger than `REWRITE_AFTER_MS`, the top holds no clone
  * id this hook can read, which no later hook could check, or the daemon does not hold open the files at the database's
- * names ({@link daemonHolds}).
+ * names ({@link daemonHolds}). It makes the daemon's own folder only inside the answers folder a daemon made, never
+ * that one: a mark found in a folder since removed is one no renewal reached, and an answer kept with it is dropped.
  */
 async function rewritten(file: string, { kept, top, pid }: Placed, now: number): Promise<void> {
   if (keptAlready(readKept(file), kept, now)) return;
   const cloneId = cloneIdAt(top);
   if (cloneId === undefined || !daemonHolds(pid, kept)) return;
-  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  folderMadeIn(dirname(file));
   await replaceFile(file, JSON.stringify({ ...kept, cloneId }), { mode: 0o600, retryMs: 0 });
+}
+
+/** Makes `folder`, 0700, where it is not there; throws where its parent is not there, or where any other step fails. */
+function folderMadeIn(folder: string): void {
+  try {
+    mkdirSync(folder, { mode: 0o700 });
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
+  }
 }
 
 function keptAlready(before: KeptAnswer | undefined, kept: Placed["kept"], now: number): boolean {
@@ -240,6 +250,21 @@ function keptAlready(before: KeptAnswer | undefined, kept: Placed["kept"], now: 
 function sameAnswer(left: Placement & { repository?: string }, right: Placement & { repository: string }): boolean {
   return (left.repository === undefined || left.repository === right.repository) && left.depth === right.depth
     && left.folder === right.folder && left.checkout === right.checkout && left.git === right.git;
+}
+
+/**
+ * Makes the folder of kept answers in the Rerail home `home` where nothing is at its name, 0700. Only a daemon makes it,
+ * as it starts: from then on each change to where Rerail runs renews the start mark in it, and hooks keep this daemon's
+ * answers there. A home no daemon ran in has no such folder, so a start or a stop there writes nothing beside the
+ * database. Anything at the name is left as it is: a link, which is never followed, a file, or the folder itself. Where
+ * the home takes no new folder, no hook keeps an answer and each waits for the daemon.
+ */
+export function makeAnswersFolder(home: string): void {
+  try {
+    mkdirSync(join(home, STOPPED_ANSWERS_DIR), { mode: 0o700 });
+  } catch {
+    // Something is at the name already, or the home takes no new folder.
+  }
 }
 
 /** The files beside the daemons' folders of kept answers: the start mark and the stuck mark (`start-mark.ts`). */
