@@ -3860,3 +3860,28 @@ ends(l) :- kind(n, "expression_statement"), last_token(n, t), line(t, l).
     // With `value`'s round undone the program still has core.rr's shape: its token leaves are made.
     assert_eq!(ends, ["1"], "a token leaf's reader");
 }
+
+/// The request record (`Program::asked_by`) follows the passes that split, merge and copy request rules
+/// (`Program::set_rules_from`, `push_rule_from`, `corpus::drop_repeated_rules`): each rule keeps the readers it served,
+/// so `prune` gates it, and a slice cut from the prepared program too (decision 0331).
+#[test]
+fn the_request_record_follows_split_merged_and_copied_rules() {
+    let text = ".decl q(n: number)\n.decl a(n: number)\n.decl b(n: number)\n.decl k(n: number)\n.input k\n\
+        q($n) :- k($n), $n < 3.\nq($n) :- k($n), $n > 5.\na($n) :- q($n).\nb($n) :- q($n).\n";
+    let mut p = front::parse(text).expect("parses");
+    let by = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<String>>();
+    p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["b"])]);
+    let rules = p.rules.clone();
+    // The first request rule split in two, the second kept, a rule of no source added.
+    let split = vec![(rules[0].clone(), vec![0]), (rules[0].clone(), vec![0]), (rules[1].clone(), vec![1]), (rules[1].clone(), vec![]), (rules[2].clone(), vec![2]), (rules[3].clone(), vec![3])];
+    p.set_rules_from(split);
+    assert_eq!(p.asked_by["q"], vec![by(&["a"]), by(&["a"]), by(&["b"]), by(&["q"])]);
+    // Repeats dropped: the rule kept serves both its own readers and its repeat's.
+    assert_eq!(crate::code_rule_dsl::logic::plan::corpus::drop_repeated_rules(&mut p), 2);
+    assert_eq!(p.asked_by["q"], vec![by(&["a"]), by(&["b", "q"])]);
+    // A copy serves its source's readers.
+    let copy = p.rules[0].clone();
+    p.push_rule_from(copy, 0);
+    assert_eq!(p.asked_by["q"], vec![by(&["a"]), by(&["b", "q"]), by(&["a"])]);
+    assert_eq!(p.readers_of_rules().iter().flatten().count(), p.rules.iter().filter(|r| r.head.rel == "q").count());
+}

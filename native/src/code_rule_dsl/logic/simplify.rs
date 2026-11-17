@@ -445,8 +445,10 @@ fn decided_fact_tests(prog: &mut Program) -> usize {
         decided.push(holds.then_some(drop));
     }
     let mut n = 0;
+    let carry = prog.carry();
     let rules = std::mem::take(&mut prog.rules);
-    for (mut rule, d) in rules.into_iter().zip(decided) {
+    let mut kept = Vec::with_capacity(rules.len());
+    for (i, (mut rule, d)) in rules.into_iter().zip(decided).enumerate() {
         match d {
             None => n += 1,
             Some(drop) => {
@@ -454,10 +456,11 @@ fn decided_fact_tests(prog: &mut Program) -> usize {
                 for i in drop.into_iter().rev() {
                     rule.body.remove(i);
                 }
-                prog.rules.push(rule);
+                kept.push((rule, vec![i]));
             }
         }
     }
+    prog.set_rules_carried(&carry, kept);
     n
 }
 
@@ -475,9 +478,10 @@ fn ground_rules(prog: &mut Program) -> usize {
     };
     let mut replaced = 0;
     let mut kept = Vec::with_capacity(prog.rules.len());
-    for rule in std::mem::take(&mut prog.rules) {
+    let carry = prog.carry();
+    for (at, rule) in std::mem::take(&mut prog.rules).into_iter().enumerate() {
         if rule.body.is_empty() || prog.lattice.contains_key(rule.head.rel.as_str()) {
-            kept.push(rule);
+            kept.push((rule, vec![at]));
             continue;
         }
         // The body's bindings, or None when it is not equations of constants alone; Some(None) when two disagree.
@@ -500,7 +504,7 @@ fn ground_rules(prog: &mut Program) -> usize {
             true
         });
         if !all_equations {
-            kept.push(rule);
+            kept.push((rule, vec![at]));
             continue;
         }
         let value = |t: &Term| -> Option<Value> {
@@ -531,10 +535,10 @@ fn ground_rules(prog: &mut Program) -> usize {
                 }
                 replaced += 1;
             }
-            None => kept.push(rule),
+            None => kept.push((rule, vec![at])),
         }
     }
-    prog.rules = kept;
+    prog.set_rules_carried(&carry, kept);
     replaced
 }
 
@@ -1107,11 +1111,12 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
     }
     let mut fresh = 0usize;
     let mut out = Vec::with_capacity(prog.rules.len());
-    let mut work: Vec<Rule> = prog.rules.iter().filter(|r| !bodies.contains_key(r.head.rel.as_str())).cloned().collect();
+    // Each rule with its place among the program's, so the request record follows its copies (`Program::set_rules_from`).
+    let mut work: Vec<(Rule, usize)> = prog.rules.iter().enumerate().filter(|(_, r)| !bodies.contains_key(r.head.rel.as_str())).map(|(i, r)| (r.clone(), i)).collect();
     work.reverse();
-    while let Some(rule) = work.pop() {
+    while let Some((rule, from)) = work.pop() {
         let Some(at) = rule.body.iter().position(|l| matches!(l, Literal::Atom(a) if !a.neg && bodies.contains_key(a.rel.as_str()))) else {
-            out.push(rule);
+            out.push((rule, vec![from]));
             continue;
         };
         let Literal::Atom(read) = rule.body[at].clone() else { unreachable!("a read") };
@@ -1146,10 +1151,10 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
             }
             let mut c = rule.clone();
             c.body.splice(at..=at, body);
-            work.push(c);
+            work.push((c, from));
         }
     }
-    prog.rules = out;
+    prog.set_rules_from(out);
     for rel in bodies.keys() {
         prog.decls.remove(rel.as_str());
     }

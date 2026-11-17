@@ -424,7 +424,86 @@ impl Program {
     pub fn qualified(&self, rel: &str, word: &str) -> bool {
         self.qualifiers.get(rel).is_some_and(|q| q.contains(word))
     }
+
+    /// Each rule's readers in the request record (`asked_by`), by its place in `rules`: `None` for a rule of no
+    /// request relation, or of one whose rules no longer match the record (then its own relation, which keeps it).
+    pub fn readers_of_rules(&self) -> Vec<Option<BTreeSet<String>>> {
+        let mut at: BTreeMap<&str, usize> = BTreeMap::new();
+        let counts: BTreeMap<&str, usize> = self.asked_by.keys().map(|req| (req.as_str(), self.rules.iter().filter(|r| r.head.rel == req.as_str()).count())).collect();
+        self.rules
+            .iter()
+            .map(|r| {
+                let req = r.head.rel.as_str();
+                let readers = self.asked_by.get(req)?;
+                let k = at.entry(req).or_default();
+                *k += 1;
+                Some(if counts[req] == readers.len() { readers[*k - 1].clone() } else { BTreeSet::from([req.to_owned()]) })
+            })
+            .collect()
+    }
+
+    /// Replaces the rules, each with the places in the old `rules` it came from, and carries the request record
+    /// (`asked_by`) across: a request rule serves the readers of the rules it came from, together, and one that
+    /// came from none (or from a rule the record did not cover) its own relation, which keeps it wherever its
+    /// relation is needed (`front::prune`). A pass that rewrites, splits, merges or drops request rules states their
+    /// sources here, and the record holds through it.
+    pub fn set_rules_from(&mut self, rules: Vec<(Rule, Vec<usize>)>) {
+        let carry = self.carry();
+        self.set_rules_carried(&carry, rules);
+    }
+    /// Appends `rule`, a copy made from the rule at `from`: a copy of a request rule serves the readers its source
+    /// serves (`set_rules_from`). A copy under another name is no request rule.
+    pub fn push_rule_from(&mut self, rule: Rule, from: usize) {
+        if self.asked_by.contains_key(rule.head.rel.as_str()) {
+            let req = rule.head.rel.to_string();
+            let serves = self.carry().0.get(from).cloned().flatten().filter(|_| self.rules[from].head.rel == req).unwrap_or_else(|| BTreeSet::from([req.clone()]));
+            let rules = self.rules.iter().filter(|r| r.head.rel == req.as_str()).count();
+            let readers = self.asked_by.get_mut(&req).expect("recorded");
+            if rules == readers.len() {
+                readers.push(serves);
+            }
+        }
+        self.rules.push(rule);
+    }
+    /// The request record by rule (`readers_of_rules`), taken before a pass that takes the rules apart; empty when
+    /// the program has no requests.
+    pub fn carry(&self) -> Carry {
+        Carry(if self.asked_by.is_empty() { Vec::new() } else { self.readers_of_rules() })
+    }
+    /// `set_rules_from`, the old rules' readers taken (`carry`) before the rules were.
+    pub fn set_rules_carried(&mut self, carry: &Carry, rules: Vec<(Rule, Vec<usize>)>) {
+        if self.asked_by.is_empty() {
+            self.rules = rules.into_iter().map(|(r, _)| r).collect();
+            return;
+        }
+        let old = &carry.0;
+        let mut asked: BTreeMap<String, Vec<BTreeSet<String>>> = BTreeMap::new();
+        for (rule, from) in &rules {
+            let req = rule.head.rel.as_str();
+            if !self.asked_by.contains_key(req) {
+                continue;
+            }
+            let mut readers: BTreeSet<String> = BTreeSet::new();
+            for &i in from {
+                match old.get(i) {
+                    Some(Some(by)) => readers.extend(by.iter().cloned()),
+                    _ => {
+                        readers.insert(req.to_owned());
+                    }
+                }
+            }
+            if readers.is_empty() {
+                readers.insert(req.to_owned());
+            }
+            asked.entry(req.to_owned()).or_default().push(readers);
+        }
+        self.asked_by = asked;
+        self.rules = rules.into_iter().map(|(r, _)| r).collect();
+    }
 }
+
+/// Each rule's readers in a program's request record, by its place (`Program::carry`).
+pub struct Carry(Vec<Option<BTreeSet<String>>>);
 
 /// A `.scope` entry taken from a policy option (`.scope dirs option("applicationRoots")`), as `doc_scopes` holds it
 /// until the run's options are known: `rr-option:<form>:<name>`, `form` one of `dirs`, `include`, `exclude`. As a glob
