@@ -257,8 +257,17 @@ fn nested_lambdas_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 15: extension receivers.
 #[test]
-fn what_step_14_does_not_read_is_refused() {
+fn receivers_are_the_lean_parsers() {
+    same(&[
+        "fun String.faint(): String = this\nfun List<T>.g() {}\nval A.B.c: Int get() = 2\n",
+        "class A {\n    val String.x\n        get() = 1\n    fun f() {\n        val y = a.b\n        var z: A.B = c\n    }\n}\n",
+    ]);
+}
+
+#[test]
+fn what_step_15_does_not_read_is_refused() {
     refused(&[
         "val a = b to f<T>()\n",
         "val a = x + f<T>(1)\n",
@@ -284,6 +293,9 @@ fn what_step_14_does_not_read_is_refused() {
         "val x: Int\n    get() = 1\n",
         "fun f() {\n    get(1)\n}\n",
         "fun f(noinline: Int) {}\n",
+        "fun <T : Any> T.f() {}\n",
+        "fun <T> List<T>.g() {}\n",
+        "fun String?.h() = 1\n",
         "val s = \"a $field b\"\n",
         "abstract class A {\n    fun f() {}\n    /* c */\n    abstract fun g()\n}\n",
         "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",

@@ -371,6 +371,35 @@ so the search back from a `->` stops at the inner `{`.
 
 Corpus: 174 the same, 317 refused, 0 differ.
 
+## Kotlin, step 15 (`15-receivers.bitlex`)
+
+A function or a property may name a receiver type before its name: `fun String.faint()`,
+`val A.B.c: Int`. Two decisions need more than the next token:
+
+- **Where the receiver starts.** It starts with a name, as the declared name does.
+- **Which `.` ends it.** A user type's loop of `.`s would go on through it.
+
+A mask finds both:
+
+1. It takes the run from after `fun`, `val` or `var` to its `(`, `:`, `=`, `{` or line end.
+2. The run's last `.` ends a receiver.
+3. The run's first token past the type parameters starts it.
+
+One mark, `dotted`, holds at both, and also at an import's `.` before `*`, which it replaces
+(`wild`). An import holds no receiver and a declaration no `.*`, so the merge loses nothing. The
+marks plus extras fill all 16 bits of a record's code, so a new mark has to share a bit like
+this.
+
+A type parameter with a bound stops the run at its `:`, so that receiver is refused at its `.`.
+Refused for now:
+
+- **A nullable receiver** (`String?.f`): the lexer reads `?.` as one operator.
+- **A generic function** (`fun <T>`): the token mark `generic` (`simple_identifier "<" …`) holds
+  at `fun`, as a keyword's record has a name's kind. The statement then takes the expression's
+  path. A mark's own token can't yet say "a name, but not these words" (step 16).
+
+Corpus: 185 the same, 306 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
