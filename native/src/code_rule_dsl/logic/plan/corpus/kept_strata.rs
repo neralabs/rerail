@@ -19,6 +19,7 @@
 //! relation's rows are read back only when a stratum that runs reads it, or the run's end keeps it (an output): on
 //! the pack, 68 k rows of 695 relations, against 3.0 M rows derived. A run writes the relations whose rows changed.
 
+use crate::code_rule_dsl::logic::native::component::LIVE_BATCH;
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::logic::plan::KeptStrata;
 use crate::content_store::{AdmittedFrame, ContentStore, FramePut, FrameRel, FrameRows, FrameStored};
@@ -416,28 +417,33 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         // Its symbols typed, so the writer maps them; an input of no declared width is not kept.
         let Some(types) = part.types.get(rel).filter(|t| t.len() == w).cloned() else { continue };
         let n = source.len();
-        let mut rows = Vec::with_capacity(n * w);
-        for i in 0..n {
-            rows.extend((0..w).map(|c| source.value(i, c)));
-        }
+        // Each column read from the source a batch at a time, never copied whole.
+        let bytes = FramePut::encode_columns(w, &|c, f| {
+            let mut buf: Vec<i64> = Vec::with_capacity(LIVE_BATCH.min(n));
+            for lo in (0..n).step_by(LIVE_BATCH) {
+                buf.clear();
+                buf.extend((lo..(lo + LIVE_BATCH).min(n)).map(|i| source.value(i, c)));
+                f(&buf);
+            }
+        });
         written += n;
-        puts.push(FramePut { rel: f.clone(), part: 0, digest, reads: Vec::new(), rows: FrameRows { types, rows, n } });
+        puts.push(FramePut::encoded_as(f.clone(), 0, digest, Vec::new(), types, n, bytes));
     }
     for (rel, width, held) in rels {
         let Some((f, was)) = part.frames.get(rel) else { continue };
         // The inputs it was derived from, each with its digest: one not digested this run leaves it unkept.
         let Some(reads) = part.cones.get(rel).map(|c| c.iter().map(|i| Some((i.clone(), *digests.get(i.as_str())?))).collect::<Option<Vec<(String, u64)>>>()).flatten() else { continue };
-        let Some(rows) = held.live_rows() else { continue };
         let n = held.rows();
         // Its symbols typed as declared (the engine holds them as integers), so the writer maps them; its digest of
-        // its content (decision 0212).
+        // its content (decision 0212). Both read the rows where they lie (`retain::held_digest`, `held_bytes`).
         let Some(types) = part.types.get(rel).filter(|t| t.len() == width).cloned() else { continue };
-        let digest = crate::code_rule_dsl::logic::plan::rows_digest(&crate::code_rule_dsl::logic::plan::Cells::new(&store.atoms_handle(), &types), &rows, n);
+        let Some(digest) = super::retain::held_digest(&crate::code_rule_dsl::logic::plan::Cells::new(&store.atoms_handle(), &types), held) else { continue };
         if was.as_ref().is_some_and(|w| w.digest == digest && w.reads == reads) {
             continue;
         }
         written += n;
-        puts.push(FramePut { rel: f.clone(), part: 0, digest, reads, rows: FrameRows { types, rows, n } });
+        let bytes = super::retain::held_bytes(held);
+        puts.push(FramePut::encoded_as(f.clone(), 0, digest, reads, types, n, bytes));
     }
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || format!("{} frames, {written} rows, written to the store", puts.len()));
     let used: Vec<FrameRel> = part.frames.into_values().map(|(f, _)| f).collect();
@@ -447,5 +453,5 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         store.hold_frames(part.space, used, super::run_token(), part.key);
         return;
     }
-    store.queue_frames(part.space, puts, Vec::new(), Some((used, super::run_token(), part.key)));
+    store.queue_encoded_retagged(part.space, puts, Vec::new(), Vec::new(), Vec::new(), Some((used, super::run_token(), part.key)));
 }

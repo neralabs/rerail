@@ -2449,11 +2449,9 @@ impl Retained {
             let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
             whole.into_par_iter().filter_map(|(rel, k)| {
                 let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || "a relation's frame, digested and encoded".into());
-                let rows = k.rel.live_rows()?;
-                let n = k.rel.rows();
                 let types = frame_types(prog, domains, rel, k.rel.types());
-                let d = crate::code_rule_dsl::logic::plan::rows_digest(&Cells::new(atoms, &types), &rows, n);
-                let bytes = was.derived.get(rel).is_none_or(|s| s.digest != d).then(|| FramePut::encode_rows(&FrameRows { types, rows, n }));
+                let d = held_digest(&Cells::new(atoms, &types), &k.rel)?;
+                let bytes = was.derived.get(rel).is_none_or(|s| s.digest != d).then(|| held_bytes(&k.rel));
                 Some((rel, Whole { d, bytes }))
             }).collect()
         };
@@ -2523,10 +2521,7 @@ impl Retained {
                 let done = made.remove(rel);
                 let Some((k, mut rows, d, bytes)) = (match done {
                     Some(Whole { d, bytes }) => self.framed(rel).map(|k| (k, None, d, bytes)),
-                    None => self.framed(rel).and_then(|k| k.rel.live_rows().map(|rows| {
-                        let d = crate::code_rule_dsl::logic::plan::rows_digest(&Cells::new(&atoms, &frame_types(prog, domains, rel, k.rel.types())), &rows, k.rel.rows());
-                        (k, Some(rows), d, None)
-                    })),
+                    None => self.framed(rel).and_then(|k| held_digest(&Cells::new(&atoms, &frame_types(prog, domains, rel, k.rel.types())), &k.rel).map(|d| (k, None, d, None))),
                 }) else {
                     if let Some(rd) = &read_digests {
                         now.insert(rel.clone(), unkept_digest(rel, rd));
@@ -2539,8 +2534,9 @@ impl Retained {
                 if was.derived.get(rel).is_some_and(|s| s.digest == d && s.reads == read_digests) {
                     continue;
                 }
-                // The rows, where the frame is written from them or traced: copied again if the job dropped its copy.
-                if rows.is_none() && (bytes.is_none() || trace) {
+                // The frame's bytes, read from the rows where they lie; the rows copied only to trace them.
+                let bytes = bytes.or_else(|| Some(held_bytes(&k.rel)));
+                if trace {
                     rows = k.rel.live_rows();
                 }
                 if trace && let Some(rows) = &rows {
@@ -2765,12 +2761,11 @@ impl Handed {
     /// `held`'s frame as `write_frames` makes one written whole; `None` for a relation of no rows of its own (a view).
     pub(in crate::code_rule_dsl) fn of(store: &ContentStore, prog: &Placed, domains: &lower::Domains, rel: &str, held: &InRel) -> Option<Handed> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "a relation handed off, its frame made".into());
-        let rows = held.live_rows()?;
         let n = held.rows();
         let types = frame_types(prog, domains, rel, held.types());
         let atoms = store.atoms_handle();
-        let d = crate::code_rule_dsl::logic::plan::rows_digest(&Cells::new(&atoms, &types), &rows, n);
-        let bytes = FramePut::encode_rows(&FrameRows { types: types.clone(), rows, n });
+        let d = held_digest(&Cells::new(&atoms, &types), held)?;
+        let bytes = held_bytes(held);
         Some(Handed { n, types, d, bytes, levels: held.live_levels() })
     }
 }
@@ -2826,3 +2821,19 @@ mod kept_stats;
 
 #[cfg(test)]
 pub mod frame_tests;
+
+/// The frame digest of `held`'s live rows (`rows_digest`), read where they lie a batch at a time: no copy of the
+/// relation (it was copied whole for each frame written, 460 MB of a 300-file run's peak). `None` for a view.
+pub(in crate::code_rule_dsl) fn held_digest(cells: &Cells, held: &InRel) -> Option<u64> {
+    held.each_live_batch(0, 0, |_| {})?;
+    Some(cells.digest_batches(held.len(), held.rows(), &|lo, hi, f| {
+        held.each_live_batch(lo, hi, |rows| f(rows));
+    }))
+}
+
+/// `held`'s live rows encoded as a frame's (`FramePut::encode_rows`), each column read where it lies a batch at a time.
+pub(in crate::code_rule_dsl) fn held_bytes(held: &InRel) -> Vec<u8> {
+    FramePut::encode_columns(held.types().len(), &|c, f| {
+        held.each_live_column(c, |values| f(values));
+    })
+}

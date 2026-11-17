@@ -374,6 +374,9 @@ pub mod probed {
     }
 }
 
+/// The rows a reader of a relation's live rows takes at a time (`InRel::each_live_batch`).
+pub const LIVE_BATCH: usize = 4096;
+
 /// Whether row `id` is dead in bitset `dead` (a relation started from a kept one, its deleted rows marked, not
 /// removed: decision 0090 step 4). Empty: none is.
 #[inline]
@@ -4609,6 +4612,47 @@ impl InRel {
     pub fn posts_all(&self) -> bool {
         self.view.is_none() && (0..self.k).all(|c| self.chains.iter().any(|ix| ix.cols.first() == Some(&c) && ix.rows() >= self.n))
     }
+    /// Its live rows of ids `lo..hi`, row-major, read where they lie a batch at a time into one scratch of at most
+    /// `LIVE_BATCH` rows (`f` per batch): a frame's digest and bytes are made from these, with no copy of the relation
+    /// (`retain::held_frame`). `None` for a view.
+    pub fn each_live_batch(&self, lo: usize, hi: usize, mut f: impl FnMut(&[i64])) -> Option<()> {
+        if self.view.is_some() {
+            return None;
+        }
+        let k = self.k;
+        let hi = hi.min(self.n);
+        let mut buf: Vec<i64> = Vec::with_capacity(LIVE_BATCH.min(hi.saturating_sub(lo)) * k);
+        let mut id = lo;
+        while id < hi {
+            let end = (id + LIVE_BATCH).min(hi);
+            buf.clear();
+            for i in id..end {
+                if self.ndead == 0 || !is_dead(&self.dead, i as u32) {
+                    buf.extend_from_slice(&self.rows.row(i as u32, k));
+                }
+            }
+            f(&buf);
+            id = end;
+        }
+        Some(())
+    }
+    /// Column `c` of its live rows, in id order, read where they lie a batch at a time (`f` per batch). `None` for a
+    /// view.
+    pub fn each_live_column(&self, c: usize, mut f: impl FnMut(&[i64])) -> Option<()> {
+        if self.view.is_some() {
+            return None;
+        }
+        let mut buf: Vec<i64> = Vec::with_capacity(LIVE_BATCH.min(self.n));
+        let mut id = 0;
+        while id < self.n {
+            let end = (id + LIVE_BATCH).min(self.n);
+            buf.clear();
+            buf.extend((id..end).filter(|&i| self.ndead == 0 || !is_dead(&self.dead, i as u32)).map(|i| self.rows.get(i as u32, c)));
+            f(&buf);
+            id = end;
+        }
+        Some(())
+    }
     /// Its live rows, row-major.
     pub fn live_rows(&self) -> Option<Vec<i64>> {
         if self.view.is_some() {
@@ -7376,6 +7420,33 @@ pub mod posted_tests {
     }
 
     /// Statistics counted from a relation's postings are those counted from its live rows.
+    /// A frame made from a relation's rows where they lie (`retain::held_digest`, `held_bytes`) is the frame made
+    /// from a copy of its live rows (`rows_digest`, `encode_rows`), dead rows and batch edges included.
+    #[test]
+    fn a_frame_read_in_place_is_the_frame_of_the_copied_rows() {
+        use crate::code_rule_dsl::logic::plan::{Cells, rows_digest};
+        use crate::code_rule_dsl::logic::plan::corpus::retain::{held_bytes, held_digest};
+        use crate::content_store::{FramePut, FrameRows};
+        let n = 3 * LIVE_BATCH + 17;
+        let mut rel = Rel::new("t", b"iii");
+        for i in 0..n as i64 {
+            rel.push(&[i * 3 - 7, (i * 7919) % 1001 - 500, -i]);
+        }
+        let old = InRel::moved(rel);
+        let mut gone = Rel::new("g", b"iii");
+        for id in [0usize, 5, LIVE_BATCH - 1, LIVE_BATCH, 2 * LIVE_BATCH + 3, n - 1] {
+            let r = old.row(id).to_vec();
+            gone.push(&r);
+        }
+        let dead = InRel::moved(Rel::based("t", b"iii", &old, Some(&InRel::moved(gone))).expect("few dead"));
+        for held in [&old, &dead] {
+            let live = held.live_rows().expect("flat");
+            let cells = Cells::plain(3);
+            assert_eq!(held_digest(&cells, held), Some(rows_digest(&cells, &live, held.rows())), "{} dead", held.ndead);
+            assert_eq!(held_bytes(held), FramePut::encode_rows(&FrameRows { types: b"iii".to_vec(), rows: live, n: held.rows() }), "{} dead", held.ndead);
+        }
+    }
+
     #[test]
     fn statistics_counted_from_postings_are_those_of_the_rows() {
         use crate::code_rule_dsl::logic::plan::statkeep::RelStats;

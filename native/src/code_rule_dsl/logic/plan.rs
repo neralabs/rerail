@@ -9995,6 +9995,26 @@ impl<'a> Cells<'a> {
         self.sum_one(rows)
     }
 
+    /// `rows_digest` of `n` rows read a batch at a time where they lie (`batches(lo, hi, f)`: the rows of ids
+    /// `lo..hi` of `ids`, `f` per batch), with no copy of them all: many ids are summed in parts at once.
+    pub fn digest_batches(&self, ids: usize, n: usize, batches: &(dyn Fn(usize, usize, &mut dyn FnMut(&[i64])) + Sync)) -> u64 {
+        const PART: usize = 1 << 15;
+        let part = |lo: usize| {
+            let mut s = 0u64;
+            batches(lo, (lo + PART).min(ids), &mut |rows| s = s.wrapping_add(self.sum_one(rows)));
+            s
+        };
+        let sum = if self.width == 0 {
+            0
+        } else if ids >= 2 * PART {
+            use rayon::prelude::*;
+            (0..ids).into_par_iter().step_by(PART).map(part).reduce(|| 0, u64::wrapping_add)
+        } else {
+            part(0)
+        };
+        sum ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
+    }
+
     /// `sum` on this thread.
     fn sum_one(&self, rows: &[i64]) -> u64 {
         let w = self.width;
@@ -11176,8 +11196,18 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                 // What the level's strata read of what is kept, read now in one batch, and held where unread.
                 let need: Vec<String> = need.into_iter().collect();
                 m.need(&need, &mut run.model)?;
-                for r in need.iter().filter(|r| unread.contains(*r)) {
-                    let Some(o) = m.kept(r) else { return Err(Error::Plan(format!("{r}: its kept rows were not read"))) };
+                // A kept relation that is no stratum of this program (an earlier round's, decision 0331) is held too:
+                // a stratum derived again reads it as it was. Only the program's own quiet strata were held (`unread`),
+                // so `chain_below`'s reach, derived again in a later guest round, found `chain_step` and its seed read
+                // but not held, and declined to SQL whenever the round chose to derive it again.
+                let hold: Vec<&String> = need.iter().filter(|r| unread.contains(*r) || (!stratum_of.contains_key(r.as_str()) && !run.native_rels.contains(*r) && !f0.is_input(r))).collect();
+                for r in hold {
+                    let Some(o) = m.kept(r) else {
+                        if unread.contains(r) {
+                            return Err(Error::Plan(format!("{r}: its kept rows were not read")));
+                        }
+                        continue;
+                    };
                     hold_quiet(&mut run, f0, db, r, o);
                 }
                 unread.retain(|r| !need.contains(r));

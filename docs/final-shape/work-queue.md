@@ -1873,3 +1873,33 @@ measured on hogql (load 68–80, so noisy): instructions 67.7–76.8 B against 6
   remade when it has outgrown its wrap. Count the remakes.
 - **The build itself** (bucket, radix sort, place) against the old per-binding sort, by GPU time, on quiet runs.
 - **Done when**: each has a measurement on a quiet machine, and what it shows is either fixed or recorded in 0325.
+
+### Q80. A later guest round's derived-again native operator read kept relations it never held (done)
+
+Found by the strict 300-file cold run after the Native-and-GPU-strata merge (908baa86a): 6 runs in 8 aborted with
+`chain_below: the native engine declined: a native fact operator over input relations` in "a later round,
+maintained (round 2)". In that round's maintained program (0331), `chain_below` (a reach, 0119) is derived again
+when the round prices it so (hence intermittent: the price is measured), and it reads `chain_step` and
+`rr_reach_seed_chain_below`, kept from the earlier round and no strata of the round's program. The level read them
+(`m.need`) but held only the program's own quiet strata (`unread`), so the reach found neither held and declined.
+Now every needed kept relation the run does not hold, and that is no stratum or input of the program, is held as
+kept (`hold_quiet`). Four runs pass, findings identical to the reference (660 relations, 30,449 rows).
+
+### Q81. Frames were written from a copy of each relation's rows (done, first of the in-place removals)
+
+The user (2026-11-17): "remove the rest of the places where data that's in a block is transformed into a
+pointer-chasing data-structure or copied when it could be accessed in-place". Every frame written (`write_frames`'
+whole relations and its loop, `Handed::of`, `kept_strata`) copied the relation's live rows into a `Vec` (`live_rows`),
+digested the copy, then encoded it. Now `InRel::each_live_batch` and `each_live_column` read the rows where they lie,
+4,096 at a time into one scratch; the digest is summed over those batches (`Cells::digest_batches`, parallel over
+parts as before) and the frame's bytes are encoded a column at a time from them (`FramePut::encode_columns`, the
+columns at once). `kept_strata`'s inputs are encoded from their source the same way, and its frames go to the writer
+encoded. `a_frame_read_in_place_is_the_frame_of_the_copied_rows` checks digest and bytes against the copy's, with
+dead rows and batch edges. `retain/frame_tests.rs` had not been updated for Q55's two `write_frames` arguments (it
+is only built in rerail-logic's tests); it is now.
+
+Still to do, by size (the 300-file peak's owners, Q74): the setfix fixpoint's host indexes over block rows (`Rel.idx`
+runs, `pending` dedup table, lattice maps), `InRel`'s `Csr` and sorted orders where the relation's own block index
+(0325 step 5) can answer, `Exports::add`'s hash map, the base rows copied for the cross part and the memo, vtab
+`Relation::push` staging, `Rows::clone`/`shared` tail copies and `merged`; `live_rows` remains only for traces,
+tests, `read_derived`/`rows_of` (tests and outputs) and the session deltas.

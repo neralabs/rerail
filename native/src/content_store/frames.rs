@@ -1532,6 +1532,11 @@ impl Put {
     pub fn encode_rows(rows: &Rows) -> Vec<u8> {
         super::cross_rows::encode(rows.types.len(), &rows.rows)
     }
+    /// `encode_rows` of rows read a column at a time where they lie (`column(c, f)`: column `c` in row order, `f` per
+    /// batch), with no row-major copy of them.
+    pub fn encode_columns(width: usize, column: &(dyn Fn(usize, &mut dyn FnMut(&[i64])) + Sync)) -> Vec<u8> {
+        super::cross_rows::encode_columns(width, column)
+    }
     /// A frame of rows already encoded (`encode_rows`).
     pub fn encoded_as(rel: Rel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, n: usize, bytes: Vec<u8>) -> Encoded {
         Encoded { rel, part, frame: Arc::new(Admitted { stored: Stored { digest, reads }, data: Data::Encoded { types, n, bytes: Bytes::Heap(Arc::new(bytes)), store: None } }), place: None }
