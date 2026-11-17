@@ -91,7 +91,16 @@ unchanged: it already leaves inputs and outputs as they are (`kept`).
    - **What stays global:** lowering (0.03 s), the merges of identical relations and repeated rules (helpers two
      parts pushed alike are one relation, named by content), and the split into file-local and cross-file
      programs. These are linear passes over the linked program; the keyed work is the rewriting.
-3. **The combine per part.** Hiding's rounds and the fact spaces over each program's part.
+3. **The combine per part.** Hiding's rounds and the fact spaces over each program's part. Measured before
+   building it (ep2's edit at 32.3 G, the combine 8.2 G, about 0.5 s CPU): each program is read from its kept image
+   already (decision 0246 §6); what the combine pays every edit is reading the 317 programs and texts, the include
+   graphs and the rule files, and its tail over the combined program, about 0.2 s CPU: the fact spaces 0.09 s (a
+   split of their own), merging identical relations 0.04 s, the sources on request 0.035 s, the requests narrowed
+   0.02 s (through the tree, Q52), and the projections, the helpers' retyping and hiding below that. Unlike stage
+   2's passes these decide across programs: merging identical relations is the link itself; the fact spaces
+   decide per relation whether a policy changed a library relation; the sources on request make one request
+   relation from every reader of an attribute in every program; hiding is a fixpoint over every relation. Each
+   needs an interface of its own, as the split did in stage 2, for at most the tail's 0.2 s of 2.8 s.
 
 ## How it is compared with 0333
 
