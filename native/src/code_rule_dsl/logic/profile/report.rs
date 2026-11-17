@@ -97,16 +97,19 @@ pub(in crate::code_rule_dsl) fn placements(r: &mut String, state: &State) {
         runs - gpu,
         if device { "Metal" } else { "CPU" }
     );
-    let _ = writeln!(r, "Prices: CPU measured (100 ns a unit of planned work, 0.13 ms a stratum); GPU: each join step on its device form (the relational lab's measures), each stage and submission at the host's measured cost.");
+    {
+        use crate::code_rule_dsl::logic::plan::placement::{CPU_PER_STRATUM, CPU_PER_WORK, GPU_BIAS};
+        let _ = writeln!(r, "Prices: CPU measured ({:.0} ns a unit of planned work, {:.2} ms a stratum); GPU: each join step on its device form (the relational lab's measures), each stage and submission at the host's measured cost; the GPU taken while under {GPU_BIAS} times the CPU's price (decision 0315).", CPU_PER_WORK * 1e9, CPU_PER_STRATUM * 1e3);
+    }
     device_strata(r, all);
-    // The strata the GPU would run cheaper in at least one run, and did not.
+    // The strata whose GPU price was within its bias in at least one run, and that did not run there.
     let cheaper: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.gpu_cheaper > t.on_gpu).collect();
     let cheaper_cpu: f64 = cheaper.iter().map(|(_, t)| t.cpu).sum();
     // The GPU priced at the work each stratum did, not the work planned: a planned estimate can be far off (a cross
     // product priced at 10^20 rows that met none).
     let at_work = |t: &PlacedTotal| gpu_price(t.runs, t.work as f64);
     let cheaper_gpu: f64 = cheaper.iter().map(|(_, t)| at_work(t)).sum();
-    let _ = writeln!(r, "The GPU would be cheaper for {} strata: {cheaper_cpu:.2} s CPU taken, against {cheaper_gpu:.2} s on the GPU at the work they did.", cheaper.len());
+    let _ = writeln!(r, "The GPU's price was within its bias for {} strata it did not run: {cheaper_cpu:.2} s CPU taken, against {cheaper_gpu:.2} s on the GPU at the work they did.", cheaper.len());
     // Strata whose planned work is off by 10x or more, either way, by their CPU: the placement read a wrong price, and
     // the join order likely came from the same estimate.
     let off = |t: &PlacedTotal| {

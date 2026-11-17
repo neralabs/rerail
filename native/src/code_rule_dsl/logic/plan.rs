@@ -403,6 +403,55 @@ impl Clone for StepsCache {
     }
 }
 
+/// The tree's fielded edges, counted by (parent kind, field) and (child kind, field), and each field's edges: the
+/// share of a field's parents (or children) of a kind, and a kind's nodes' children by a field.
+#[derive(Clone, Debug, Default)]
+pub struct Fielded {
+    parent: HashMap<(String, String), f64>,
+    child: HashMap<(String, String), f64>,
+    field: HashMap<String, f64>,
+    /// By (parent kind, child kind, field).
+    joint: HashMap<(String, String, String), f64>,
+}
+
+impl Fielded {
+    /// The share of field `f`'s edges whose parent is of kind `k`: a node bound as a parent by `field(n, f, _)` is
+    /// of kind `k` that often.
+    pub fn parent_share(&self, k: &str, f: &str) -> Option<f64> {
+        let all = *self.field.get(f)?;
+        (all > 0.0).then(|| self.parent.get(&(k.to_owned(), f.to_owned())).copied().unwrap_or(0.0) / all)
+    }
+    /// The share of the edges by `f` from a `pk` parent to a `ck` child: among those whose child is `ck` when
+    /// `of_child` (how often such a child's parent is `pk`), else among those whose parent is `pk`.
+    pub fn joint_share(&self, pk: &str, ck: &str, f: &str, of_child: bool) -> Option<f64> {
+        let all = if of_child { self.child.get(&(ck.to_owned(), f.to_owned())) } else { self.parent.get(&(pk.to_owned(), f.to_owned())) }.copied()?;
+        (all > 0.0).then(|| self.joint.get(&(pk.to_owned(), ck.to_owned(), f.to_owned())).copied().unwrap_or(0.0) / all)
+    }
+    /// The share of field `f`'s edges whose child is of kind `k`.
+    pub fn child_share(&self, k: &str, f: &str) -> Option<f64> {
+        let all = *self.field.get(f)?;
+        (all > 0.0).then(|| self.child.get(&(k.to_owned(), f.to_owned())).copied().unwrap_or(0.0) / all)
+    }
+    /// The children by field `f` of the nodes of kind `k`, all told (`parent`), or the nodes of kind `k` that are a
+    /// child by `f` (`child`).
+    pub fn edges(&self, k: &str, f: &str, parent: bool) -> Option<f64> {
+        self.field.contains_key(f).then(|| if parent { &self.parent } else { &self.child }.get(&(k.to_owned(), f.to_owned())).copied().unwrap_or(0.0))
+    }
+    fn is_empty(&self) -> bool {
+        self.field.is_empty()
+    }
+    fn of(edges: impl IntoIterator<Item = (String, String, String, f64)>) -> Fielded {
+        let mut f = Fielded::default();
+        for (p, c, field, n) in edges {
+            *f.joint.entry((p.clone(), c.clone(), field.clone())).or_default() += n;
+            *f.parent.entry((p, field.clone())).or_default() += n;
+            *f.child.entry((c, field.clone())).or_default() += n;
+            *f.field.entry(field).or_default() += n;
+        }
+        f
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Stats {
     /// (table, column) → (rows, ndv, sum of squared postings, the same within documents).
@@ -447,6 +496,9 @@ pub struct Stats {
     /// (relation, column) → a lookup's CPU as a multiple of a derived relation's, where its source says it is not
     /// one (`Source::lookup_cost`, decision 0312): placement prices the step by it.
     pub lookup: std::sync::Arc<BTreeMap<(String, String), f64>>,
+    /// The tree's fielded edges by kind (`Own::fields`, `stat_edge`'s field): Q44's correlation of a node's kind with
+    /// the fields it has or is.
+    pub fields: std::sync::Arc<Fielded>,
     /// Relations whose statistics are made when first planned with (`lazy`, `Model::resolve`).
     lazy: LazyMap,
     /// Quiet strata's relations, whose columns take their `__old`'s statistics when first planned with
@@ -546,6 +598,7 @@ impl Stats {
             steps_cache: StepsCache::default(),
             kindsets: Arc::new(prog.kindsets.clone()),
             lookup: Default::default(),
+            fields: Default::default(),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
         }
@@ -636,6 +689,15 @@ impl Stats {
         }
         for (col, v, n) in vals {
             self.memo.entry(rel.to_owned()).or_default().insert((named(col), Constant::Int(v)), n);
+        }
+    }
+
+    /// The tree's fielded edges, `(parent kind, child kind, field, edges)`, replacing what was read or measured.
+    pub fn fielded(&mut self, edges: impl IntoIterator<Item = (String, String, String, f64)>) {
+        let f = Fielded::of(edges);
+        if !f.is_empty() {
+            self.fields = std::sync::Arc::new(f);
+            self.steps_cache.0.lock().clear();
         }
     }
 
@@ -745,6 +807,7 @@ impl Stats {
             steps_cache: StepsCache::default(),
             kindsets: Arc::new(pf.kindsets().iter().map(|(k, ks)| (pf.text(*k).to_owned(), ks.iter().map(|&a| pf.text(a).to_owned()).collect())).collect()),
             lookup: Default::default(),
+            fields: Arc::new(Fielded::of(of("edge").filter(|r| !matches!(r[3], SqlValue::Null)).map(|r| (text(&r[0]), text(&r[1]), text(&r[3]), int(&r[2]) as f64)))),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
         })
@@ -902,6 +965,7 @@ impl Model {
             steps_cache: StepsCache::default(),
             kindsets: st.kindsets.clone(),
             lookup: st.lookup.clone(),
+            fields: st.fields.clone(),
             lazy: LazyMap(rels.iter().filter_map(|r| Some((r.clone(), st.lazy.0.get(r)?.clone()))).collect()),
             prior_later: rels.iter().filter(|r| st.prior_later.contains(*r)).cloned().collect(),
         };
@@ -2922,13 +2986,26 @@ impl Model {
         if fixed.is_none() {
             cx.runners_up.clear();
         }
-        // var → constant kind, from kind($v, "k") atoms.
+        // var → the constant an equality binds it to (`$k = #k1207`): read as the constant where an atom reads it.
+        let mut consts: HashMap<VarSlot, Constant> = HashMap::new();
+        for l in 0..b.len() {
+            if let Lit::Cmp { l: x, op: CmpOp::Eq, r: y } = b.view(l) {
+                match (x, y) {
+                    (TermRef::Var(v), t) | (t, TermRef::Var(v)) if b.constant(t).is_some() => {
+                        consts.insert(v, b.constant(t).expect("a constant"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let constant_of = |t: TermRef<'_>| b.constant(t).or_else(|| t.var().and_then(|v| consts.get(&v).cloned()));
+        // var → constant kind, from kind($v, "k") atoms (the kind a constant, or a variable an equality binds to one).
         let mut kinds: HashMap<VarSlot, String> = HashMap::new();
         for l in 0..b.len() {
             if let Some(a) = b.plain_atom(l)
                 && !a.neg()
                 && b.rel(a) == "kind"
-                && let (TermRef::Var(v), Some(k)) = (b.args(l)[0], b.constant(b.args(l)[1]))
+                && let (TermRef::Var(v), Some(k)) = (b.args(l)[0], constant_of(b.args(l)[1]))
             {
                 // Lowered programs' kinds are kind atoms, and their statistics are keyed by the atoms' text.
                 kinds.insert(v, match k {
@@ -3064,10 +3141,42 @@ impl Model {
                 basis.set("absence proof");
                 return 0.01;
             }
+            // A variable an equality binds to a constant is that constant once bound (`$k = #k1207` placed): the
+            // executor reads the atom with it then. Before, a scan reads every kind.
             if rel == "kind"
-                && let Some(k) = args.get(1).and_then(|t| b.constant(*t))
+                && let Some(k) = args.get(1).and_then(|t| b.constant(*t).or_else(|| t.var().filter(|v| bound.contains(*v)).and_then(|_| constant_of(*t))))
             {
                 basis.set("kind frequency");
+                let key = match &k { Constant::Str(s) => s.clone(), Constant::Int(i) => i.to_string() };
+                // A node bound by a field (`field($n, f, _)` its parent, `field(_, f, $n)` its child, placed) is of
+                // kind `k` as often as `f`'s parents or children are (Q44: an attribute's `object` field's parent is
+                // an attribute every time, where the kinds' shares of the nodes gave it 6%).
+                if let TermRef::Var(v) = args[0]
+                    && bound.contains(v)
+                    && let Some(share) = (0..b.len())
+                        .filter(|&j| j != i)
+                        .filter_map(|j| {
+                            b.plain_atom(j).filter(|o| !o.neg() && b.rel(*o) == "field")?;
+                            let a = b.args(j);
+                            if a.len() != 3 || !b.vars(j).is_subset(bound) {
+                                return None;
+                            }
+                            let f = match b.constant(a[1])? { Constant::Str(s) => s, Constant::Int(i) => i.to_string() };
+                            // With the other end's kind known (a kind atom names it), the share among that kind's
+                            // edges by `f`: an aliased import's `name` is an identifier, though most `name`s'
+                            // parents are functions and classes, whose names are too.
+                            let other = |t: TermRef<'_>| t.var().and_then(|x| kinds.get(&x));
+                            match (a[0], a[2]) {
+                                (TermRef::Var(x), c) if x == v => other(c).and_then(|ck| stats.fields.joint_share(&key, ck, &f, true)).or_else(|| stats.fields.parent_share(&key, &f)),
+                                (p, TermRef::Var(x)) if x == v => other(p).and_then(|pk| stats.fields.joint_share(pk, &key, &f, false)).or_else(|| stats.fields.child_share(&key, &f)),
+                                _ => None,
+                            }
+                        })
+                        .reduce(f64::min)
+                {
+                    basis.set("field statistics");
+                    return share.clamp(0.001, 1.0);
+                }
                 if matches!(args[0], TermRef::Var(v) if bound.contains(v)) {
                     // A bound node's kind check passes the kind's share of the nodes: each node has one kind. At 1.0
                     // no check filtered, and a join's later steps were priced over every binding (decision 0209:
@@ -3122,6 +3231,26 @@ impl Model {
             {
                 basis.set("subtree size");
                 return size.max(1.0);
+            }
+            // `field($p, f, $c)` by its parent, of a kind a kind atom names: that kind's children by `f` a node
+            // (Q44: a function's `name`, one each, was priced at `name`'s share of every node, 0.05). By its child:
+            // the share of the child's kind that is a child by `f`.
+            if rel == "field"
+                && args.len() == 3
+                && let Some(f) = b.constant(args[1])
+                && let Some((at, parent)) = match (args[0], args[2]) {
+                    (TermRef::Var(p), TermRef::Var(c)) if bound.contains(p) && !bound.contains(c) => Some((p, true)),
+                    (TermRef::Var(p), TermRef::Var(c)) if bound.contains(c) && !bound.contains(p) => Some((c, false)),
+                    _ => None,
+                }
+                && let Some(k) = kinds.get(&at)
+                && let Some(&nodes) = stats.kfreq.get(k)
+                && nodes > 0
+                && let Some(edges) = stats.fields.edges(k, &match f { Constant::Str(s) => s, Constant::Int(i) => i.to_string() }, parent)
+            {
+                basis.set("field statistics");
+                let per = edges / nodes as f64;
+                return if parent { per.max(0.01) } else { per.clamp(0.01, 1.0) };
             }
             if cols.is_empty() {
                 basis.set("relation size");
@@ -4006,9 +4135,9 @@ impl Model {
                                 r = out;
                             }
                         }
-                        Lit::Cmp { op, .. } if op == CmpOp::Eq => {}
                         Lit::Agg { .. } => {}
-                        _ => r *= 0.5,
+                        // A filter passes its share, as the search priced it (decision 0297).
+                        _ => r *= b.filter_pass(s.at),
                     }
                     bound.extend(b.vars(s.at));
                     steps.push(super::profile::StepPlan { literal: String::new(), access: String::new(), source: String::new(), rows: r, all: r, passed: Vec::new(), basis: String::new() });
@@ -4072,7 +4201,7 @@ impl Model {
                         (access, source(b.rel(a)))
                     }
                     Lit::Atom(a) => {
-                        r *= 0.5;
+                        r *= b.filter_pass(s.at);
                         (format!("anti-join on ({})", cols(s.at, &bound).join(", ")), source(b.rel(a)))
                     }
                     Lit::Nearest { .. } => {
@@ -4081,15 +4210,15 @@ impl Model {
                         }
                         (s.mode.map_or("nearest", Mode::name).to_owned() + " the tree", "tree".to_owned())
                     }
+                    // A filter passes its share, as the search priced it (decision 0297): a bound of an id's range
+                    // nearly every row, an equality that binds every one. The record halved them (Q44).
                     Lit::Cmp { op, .. } => {
-                        if op != CmpOp::Eq {
-                            r *= 0.5;
-                        }
+                        r *= b.filter_pass(s.at);
                         (if op == CmpOp::Eq { "assign or test" } else { "filter" }.to_owned(), String::new())
                     }
                     Lit::Agg { .. } => ("aggregate".to_owned(), String::new()),
                     _ => {
-                        r *= 0.5;
+                        r *= b.filter_pass(s.at);
                         ("filter".to_owned(), String::new())
                     }
                 };
