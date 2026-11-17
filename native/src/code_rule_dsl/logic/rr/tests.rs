@@ -4107,3 +4107,19 @@ fn span_patterns_are_found_on_the_version() {
     assert!(head.rx_spans.iter().any(|(w, p)| *w == SpanIn::Line && p.contains("TODO")), "{:?}", head.rx_spans);
     assert!(head.rx_spans.iter().any(|(w, p)| *w == SpanIn::Comment && p.contains("fixme")), "{:?}", head.rx_spans);
 }
+
+/// core.rr's declarations and `node`'s projections are made on a modular text's version (decision 0281's path, step
+/// 7b): a rule reading `kind` reads it through the projection `kind(n, k) :- node(_, n, k, _, _)`, the program's
+/// first rule, as the tree's `lower::core_and_projections` makes it; a debug build checks the image against the tree's.
+#[test]
+fn core_declarations_and_projections_are_made_on_the_version() {
+    let src = concat!("#include \"python/compare.rr\"\n", ".decl r(n: node)\n.output r\n", "r(n) :- kind(n, \"call\").\n");
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    assert!(rules.first().is_some_and(|r| r.starts_with("kind($n, $k) :- node(")), "{rules:#?}");
+    let head = v.header(&Default::default()).unwrap();
+    assert!(!head.inputs.iter().any(|i| i == "kind"), "{:?}", head.inputs);
+}

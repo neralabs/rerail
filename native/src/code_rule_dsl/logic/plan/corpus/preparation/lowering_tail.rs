@@ -1120,11 +1120,8 @@ impl ProgramPass for KindSets {
         }
         // `base_relation` for `child` and `node`, the rules gone left out.
         if !need.is_empty() {
-            for (rel, cols) in [("child", &[("p", "node"), ("c", "node"), ("i", "int")][..]), ("node", &[("d", "int"), ("n", "node"), ("kind", "sym"), ("start", "int"), ("end", "int")][..])] {
-                head.decls.entry(rel.to_owned().into()).or_insert_with(|| cols.iter().map(|(c, t)| ((*c).into(), (*t).into())).collect());
-                if !head.inputs.iter().any(|i| i == rel) && !heads_of(&gone, rel) {
-                    head.inputs.push(rel.to_owned());
-                }
+            for rel in ["child", "node"] {
+                crate::code_rule_dsl::logic::rr::lower::base_relation_derived(&mut head, rel, heads_of(&gone, rel));
             }
         }
         // The helpers' rules, as `derived_axes` pushes them: a set's members once, then each helper's rules.
@@ -1303,6 +1300,67 @@ impl ProgramPass for SpanPatterns {
             return Ok(());
         }
         w.on()?.set_header(&was, &head);
+        Ok(())
+    }
+}
+
+/// core.rr's declarations of what the rules read, then `node`'s projections (`lower::core_and_projections`) on the
+/// version: the header's declarations and inputs, and the projections' rules written first, where the tree puts them.
+/// Its setting: whether the program's `docof` is core.rr's, over spans, as the lowerer found it.
+pub struct CoreDecls {
+    pub docof_of_locs: bool,
+}
+
+impl ProgramPass for CoreDecls {
+    const NAME: &'static str = "core declarations";
+    fn settings(&self) -> Vec<u8> {
+        vec![u8::from(self.docof_of_locs)]
+    }
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::rr::lower::{core::declare_core, projection_at, projections};
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let mut head = was.clone();
+        let read: BTreeSet<(String, usize)> = v
+            .rules()
+            .flat_map(|r| r.body())
+            .filter_map(|l| match l.view() {
+                L::Atom(a) | L::Agg { atom: a, .. } => Some((v.rel_name(a.rel()).to_owned(), a.args().count())),
+                _ => None,
+            })
+            .collect();
+        let mut docof = self.docof_of_locs;
+        declare_core(&mut head, &read, &mut docof).map_err(|e| e.to_string())?;
+        let derives_node = v.rel("node").is_some_and(|rel| v.heads(rel).next().is_some());
+        let made = projections(&mut head, &read, docof, derives_node);
+        if made.is_empty() {
+            if head.decls != was.decls || head.inputs != was.inputs || head.tapes != was.tapes {
+                w.on()?.set_header(&was, &head);
+            }
+            return Ok(());
+        }
+        let input = std::sync::Arc::clone(w.input());
+        // The program's order, the projections inserted where the tree inserts them.
+        enum Item<'r> {
+            Old(crate::code_rule_dsl::logic::program_image::RuleRef<'r>),
+            New(&'r crate::code_rule_dsl::logic::front::Rule),
+        }
+        let mut order: Vec<Item<'_>> = input.rules().map(Item::Old).collect();
+        for rule in &made {
+            let first = order.first().map(|x| match x {
+                Item::Old(r) => input.rel_name(r.head().rel()),
+                Item::New(r) => r.head.rel.as_str(),
+            });
+            order.insert(projection_at(&rule.head.rel, first), Item::New(rule));
+        }
+        let b = w.derive()?;
+        b.set_header(&was, &head);
+        for x in order {
+            match x {
+                Item::Old(r) => drop(b.keep(&input, r)),
+                Item::New(r) => drop(b.add(r)?),
+            }
+        }
         Ok(())
     }
 }

@@ -966,7 +966,7 @@ pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
     program.qualifiers.retain(|r, _| !(seeded.qualifiers.contains(r) && gone(r)));
 }
 
-/// `link_seeded` up to `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`, `unit`, `whole_back`, `front::finish` and `whole()`'s tail (aggregate demand, `unit`, `sets`,
+/// `link_seeded` up to `core_and_projections`, `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`, `unit`, `whole_back`, `front::finish` and `whole()`'s tail (aggregate demand, `unit`, `sets`,
 /// `widen_cyclic_contexts`): the program `rr::link_seeded_version`
 /// makes a version of, with what the lowerer knows of it; `declared` checked. `builtins_out` takes out declarations
 /// of relations no rule reads (the built-ins are written out), but `within`, which it declares where read. `kind_sets` takes out only sets no rule
@@ -987,7 +987,8 @@ pub fn link_seeded_front(m: Module, seeds: &Seeds) -> Result<Lowered, Error> {
 
 /// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.
 fn whole(l: Lowerer) -> Result<Program, Error> {
-    let Lowered { mut program, sets: named, rewritten } = whole_front(l)?;
+    let Lowered { mut program, sets: named, rewritten, docof_of_locs } = whole_front(l)?;
+    core_and_projections(&mut program, docof_of_locs)?;
     span_patterns_into(&mut program)?;
     grammar_names(&program)?;
     builtins_out(&mut program, &rewritten);
@@ -1053,19 +1054,17 @@ pub fn sets(program: &mut Program) {
     }
 }
 
-/// `whole` up to the lowerer's analyses before its span patterns, with what the lowerer knows of the program
-/// (`Lowered`): what `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`,
+/// `whole` up to the lowerer's analyses before core.rr's declarations, with what the lowerer knows of the program
+/// (`Lowered`): what `core_and_projections`, `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`,
 /// `unit`, `whole_back`, `front::finish` and the tail (aggregate demand, `unit`,
 /// `sets`, `widen_cyclic_contexts`) make of it `rr::link_seeded_version` makes on the version.
 fn whole_front(mut l: Lowerer) -> Result<Lowered, Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
     l.three_valued();
     l.findings()?;
-    l.declare_core()?;
-    l.projections();
     let rewritten: Vec<String> = self::core::REWRITTEN.into_iter().filter(|r| l.rewritten(r)).map(str::to_owned).collect();
     drop(analyses);
-    Ok(Lowered { program: l.prog, sets: l.sets, rewritten })
+    Ok(Lowered { program: l.prog, sets: l.sets, rewritten, docof_of_locs: l.docof_of_locs })
 }
 
 /// The program `whole_front` leaves, with what the lowerer knows of it that the passes after read: the sets its
@@ -1074,6 +1073,8 @@ pub struct Lowered {
     pub program: Program,
     pub sets: BTreeSet<String>,
     pub rewritten: Vec<String>,
+    /// Whether the program's `docof` is core.rr's, over spans (`core_and_projections`).
+    pub docof_of_locs: bool,
 }
 
 /// Every constant grammar a rule names, in an `embed` or `embed_value` head or a `parsed` or `sub_tape` atom, is
@@ -1302,6 +1303,56 @@ pub fn span_patterns(p: &SpanProgram<'_>) -> Result<SpanPatterns, Error> {
         }
     }
     Ok(out)
+}
+
+/// `core.rr`'s `kind(n, k)` is a projection of `node`, and so is `docof(n, d)` as T's programs declare it (over
+/// nodes): rules, which the planner reads from `node` in place, not inputs, where a rule reads them (the prelude
+/// declares both for every program). `core.rr`'s `docof(x: loc, d)` stays an input, for spans have a document
+/// too. (`precedes` is core.rr's tree arithmetic, `core::rewrite`.)
+/// The rules to add go first, each where `projection_at` puts it; `read` is what the rules read (`reads`), `derives_node`
+/// whether a rule derives `node`. `prog` may be a header alone (a version's).
+pub fn projections(prog: &mut Program, read: &BTreeSet<(String, usize)>, docof_of_locs: bool, derives_node: bool) -> Vec<Rule> {
+    let v = |s: &str| Term::Var(s.to_owned().into());
+    let mut made = Vec::new();
+    for (rel, args) in [("kind", [Term::Wild, v("n"), v("k"), Term::Wild, Term::Wild]), ("docof", [v("d"), v("n"), Term::Wild, Term::Wild, Term::Wild])] {
+        if !read.iter().any(|(r, _)| r == rel) || !prog.inputs.iter().any(|i| i == rel) || (rel == "docof" && (docof_of_locs || !prog.decls.contains_key("node"))) {
+            continue;
+        }
+        // `kind` is always `node`'s column: a program that reads it reads `node`.
+        base_relation_derived(prog, "node", derives_node);
+        prog.inputs.retain(|i| i != rel);
+        let head = if rel == "kind" { vec![v("n"), v("k")] } else { vec![v("n"), v("d")] };
+        made.push(Rule {
+            head: Atom { rel: rel.to_owned().into(), args: head.into(), neg: false, gated: false },
+            body: [Literal::Atom(Atom { rel: "node".into(), args: args.to_vec().into(), neg: false, gated: false })].into(),
+        });
+    }
+    made
+}
+
+/// Where `projections` puts its rule of `rel`, given the program's first rule's head: first, kind before docof (where
+/// T's programs wrote them).
+pub fn projection_at(rel: &str, first_head: Option<&str>) -> usize {
+    usize::from(rel == "docof" && first_head == Some("kind"))
+}
+
+/// The relations a program's rules read (an aggregate's among them), with the arity each is read with.
+pub fn reads(prog: &Program) -> BTreeSet<(String, usize)> {
+    prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| (a.rel.to_string(), a.args.len())).collect()
+}
+
+/// core.rr's declarations of what the program reads (`core::declare_core`), then `node`'s projections
+/// (`projections`), on a program.
+pub fn core_and_projections(prog: &mut Program, docof_of_locs: bool) -> Result<(), Error> {
+    let read = reads(prog);
+    let mut docof = docof_of_locs;
+    self::core::declare_core(prog, &read, &mut docof)?;
+    let derives_node = prog.rules.iter().any(|r| r.head.rel == "node");
+    for rule in projections(prog, &read, docof, derives_node) {
+        let at = projection_at(&rule.head.rel, prog.rules.first().map(|r| r.head.rel.as_str()));
+        prog.rules.insert(at, rule);
+    }
+    Ok(())
 }
 
 /// `span_patterns` on a program, what it finds added to it.
@@ -1755,30 +1806,6 @@ impl Lowerer {
             if let Some(rows) = self.prog.facts.get(rel).cloned() {
                 self.prog.facts.insert(must(rel), rows);
             }
-        }
-    }
-
-    /// `core.rr`'s `kind(n, k)` is a projection of `node`, and so is `docof(n, d)` as T's programs declare it (over
-    /// nodes): rules, which the planner reads from `node` in place, not inputs, where a rule reads them (the prelude
-    /// declares both for every program). `core.rr`'s `docof(x: loc, d)` stays an input, for spans have a document
-    /// too. (`precedes` is core.rr's tree arithmetic, `core::rewrite`.)
-    fn projections(&mut self) {
-        let v = |s: &str| Term::Var(s.to_owned().into());
-        let read: BTreeSet<String> = self.prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.to_string()).collect();
-        for (rel, args) in [("kind", [Term::Wild, v("n"), v("k"), Term::Wild, Term::Wild]), ("docof", [v("d"), v("n"), Term::Wild, Term::Wild, Term::Wild])] {
-            if !read.contains(rel) || !self.prog.inputs.iter().any(|i| i == rel) || (rel == "docof" && (self.docof_of_locs || !self.prog.decls.contains_key("node"))) {
-                continue;
-            }
-            // `kind` is always `node`'s column: a program that reads it reads `node`.
-            self.base("node");
-            self.prog.inputs.retain(|i| i != rel);
-            let head = if rel == "kind" { vec![v("n"), v("k")] } else { vec![v("n"), v("d")] };
-            // First, kind before docof: where T's programs wrote them.
-            let at = usize::from(rel == "docof" && self.prog.rules.first().is_some_and(|r| r.head.rel == "kind"));
-            self.prog.rules.insert(at, Rule {
-                head: Atom { rel: rel.to_owned().into(), args: head.into(), neg: false, gated: false },
-                body: [Literal::Atom(Atom { rel: "node".into(), args: args.to_vec().into(), neg: false, gated: false })].into(),
-            });
         }
     }
 
@@ -4248,11 +4275,6 @@ impl Lowerer {
 
 
 
-    /// A base relation lowering reads (`child`, `node`), declared, and an input, when the program has not.
-    fn base(&mut self, rel: &str) {
-        base_relation(&mut self.prog, rel);
-    }
-
     /// `split_dot(q, m, x)`: q is m.x split at its last dot, so x has no dot: `q = @cat(m, x), !contains(".", x)`
     /// (a bound q splits at every dot, `@cat` run backwards, which takes variables: a constant is bound to one
     /// first). Negated, every column named: q is not m.x, or x has a dot.
@@ -5446,13 +5468,19 @@ fn kinds_of(prog: &Program, set: &str, seen: &mut BTreeSet<String>) -> Option<Ve
 /// `prog` reading the base relation `rel` (`child`, `node`): declared as the engine declares it, and an input unless a
 /// rule makes it. For rules added to a program already read (`corpus::bridge`), as lowering adds them for its own.
 pub fn base_relation(prog: &mut Program, rel: &str) {
+    let derived = prog.rules.iter().any(|r| r.head.rel == rel);
+    base_relation_derived(prog, rel, derived);
+}
+
+/// `base_relation`, told whether a rule derives `rel` (`derived`): `prog` may be a header alone.
+pub fn base_relation_derived(prog: &mut Program, rel: &str, derived: bool) {
     let cols: &[(&str, &str)] = match rel {
         "child" => &[("p", "node"), ("c", "node"), ("i", "int")],
         "node" => &[("d", "int"), ("n", "node"), ("kind", "sym"), ("start", "int"), ("end", "int")],
         other => unreachable!("no base relation {other}"),
     };
     prog.decls.entry(rel.to_owned().into()).or_insert_with(|| cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
-    if !prog.inputs.iter().any(|i| i == rel) && !prog.rules.iter().any(|r| r.head.rel == rel) {
+    if !prog.inputs.iter().any(|i| i == rel) && !derived {
         prog.inputs.push(rel.to_owned());
     }
 }

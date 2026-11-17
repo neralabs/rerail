@@ -650,9 +650,13 @@ step 3 replaces what is under the writer.
      (`SpanProgram`: rules as atoms of names, variables and strings; the declared arities, inputs, natives and
      outputs), which the tree (`SpanProgram::of_tree`) and the version (`lowering_tail::SpanPatterns`, reading the
      image's rules and header) each build, so the analysis stays one definition. Test:
-     `span_patterns_are_found_on_the_version` (fails with the pass left out); ep2's 317 policies: 0 rows. Next:
-     projections, the core's declarations, findings and three-valued relations, each a function of the program and
-     the lowerer state it reads, that state the pass's settings.
+     `span_patterns_are_found_on_the_version` (fails with the pass left out); ep2's 317 policies: 0 rows. Then
+     core.rr's declarations and `node`'s projections: `lower::core::declare_core` and `lower::projections` work on a
+     header given what the rules read (`lower::reads`), `projections` returning its rules and `projection_at` where
+     they go, so the tree (`core_and_projections`) and the version (`lowering_tail::CoreDecls { docof_of_locs }`,
+     the lowerer's flag handed on in `Lowered`) share them; `base_relation_derived` is `base_relation` for a header
+     (`KindSets` uses it too). Test: `core_declarations_and_projections_are_made_on_the_version` (fails with the
+     pass left out); ep2's 317 policies: 0 rows. Next: findings and three-valued relations.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
