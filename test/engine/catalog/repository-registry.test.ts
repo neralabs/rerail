@@ -370,6 +370,15 @@ function askedPaths(database: RerailDatabase): string[] {
   return [...new Set([...recorded, ...above])];
 }
 
+/** Each of `asked` that the reader, asked them again, answers otherwise than the readers of one checkout do. */
+function askedAgainDiffers(database: RerailDatabase, reader: Reader, asked: readonly string[], label: string): string[] {
+  const alone = aloneAnswers(database);
+  const together = togetherAnswers(reader, asked);
+  return asked
+    .filter(path => together.get(path) !== alone.get(path))
+    .map(path => `${label}, ${path}: read together ${together.get(path)}, alone ${alone.get(path)}`);
+}
+
 /** The recorded checkouts strictly inside `root`, as a read of every row and `withinCheckout` give them. */
 function insideAlone(database: RerailDatabase, root: string): string[] {
   return database.select().from(checkouts).all().map(row => row.checkoutPath)
@@ -579,6 +588,10 @@ describe("the repository registry", () => {
       recordTree(database, tree);
       // One reader over the whole run, as a runtime keeps one: it must follow every change below.
       const reader = recordedCheckoutsReader(database);
+      // The same checkouts asked at every step, as a session asks its own again at each event, across the changes:
+      // a checkout recorded in a folder above one of them must reach the next answer.
+      const fixed = askedPaths(database);
+      reader.read(fixed);
       const next = seeded(seed * 7_919);
       const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)]!;
       const spare = randomTree(seed + 1_000, roots).checkouts.map(row => row.checkoutPath);
@@ -602,7 +615,9 @@ describe("the repository registry", () => {
             database.update(repositories).set({ started: pick(ON_OFF), configuredAt: pick([1, null]) }).where(eq(repositories.repositoryKey, pick(["k1", "k2"]))).run();
           }
         }
+        differing.push(...askedAgainDiffers(database, reader, fixed, `seed ${seed}, step ${step}, asked again`));
         differing.push(...togetherDiffersFromAlone(database, `seed ${seed}, step ${step}`, reader));
+        reader.read(fixed);
       }
     }
     expect(differing).toEqual([]);

@@ -958,16 +958,14 @@ describe("rules as they are at a scan and at a session's start", () => {
     const edited = { sessionId: "first", toolCallId: "write", toolName: "Write" };
     await runtime.ingest({ kind: "call", eventId: "write", ...edited, input: { file_path: join(worktree, "api", "x.py"), content: "x = 1\n" } });
     await runtime.ingest({ kind: "result", eventId: "written", ...edited, output: "ok" });
-    const database = openRerailDatabase(databasePath);
-    try {
-      setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: worktree }, folder: "", targetKind: "rule", targetId: "test:main", on: false, mode: null });
-    } finally {
-      database.$client.close();
-    }
+    // A rule file written in the worktree's own `.rerail/rules` changes nothing in the database, so the first session's
+    // next event leaves its lane there as it read it.
+    await mkdir(join(worktree, ".rerail", "rules"), { recursive: true });
+    await writeFile(join(worktree, ".rerail", "rules", "own.json"), JSON.stringify(needle("test:own", "OWN")));
     await runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId: "first", text: "next" });
     await runtime.ingest({ kind: "session-start", eventId: "second-start", session: { host: "claude-code", sessionId: "second", cwd: worktree } });
 
-    expect(reader.hud("second").activeRuleCount).toBe(0);
+    expect(reader.hud("second").activeRuleCount).toBe(2);
   }, 60_000);
 
   it.runIf(process.platform === "win32")("leaves a nested checkout's files out of the folder around it, recorded under another spelling of that folder", async () => {

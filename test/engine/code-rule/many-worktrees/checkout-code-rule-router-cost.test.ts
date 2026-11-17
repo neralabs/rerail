@@ -218,6 +218,19 @@ describe("CheckoutCodeRuleRouter in a repository with many worktrees", () => {
     expect(catalog.status.ruleCount).toBe(0);
   }, 60_000);
 
+  it("reads the session checkout's own rules folder at every event, which changes no rule configuration", async () => {
+    const { main, catalogs, auditor } = await sessionWithWorktrees(1);
+    // A first event reads every lane's rules once, as the session's first event does.
+    auditor.refreshCodeRules();
+    const catalog = catalogs.catalog(main);
+    const before = catalog.status.ruleCount;
+    // A rule file written in the checkout's own `.rerail/rules` leaves the database as it was: only the read of the
+    // session's own lane at the event picks it up.
+    await writeOwnRule(main);
+    auditor.refreshCodeRules();
+    expect(catalog.status.ruleCount).toBe(before + 1);
+  }, 60_000);
+
   it("reads a worktree's rules when its lane opens again, after events that did not use the lane before it closed", async () => {
     const { databasePath, worktrees: [worktree], auditor } = await sessionWithWorktrees(1);
     const path = join(worktree!, "api", "x.py");
@@ -243,6 +256,26 @@ describe("CheckoutCodeRuleRouter in a repository with many worktrees", () => {
     cleanups.push(() => second.close());
     second.refreshCodeRules();
     expect(second.acceptsPath(join(worktree!, "api", "x.py"))).toBe(false);
+  }, 60_000);
+
+  it("opens a lane with a worktree's own rules folder as it is, though another session's lane read it before a file was written there", async () => {
+    const { main, worktrees: [worktree], catalogs, owners, auditor } = await sessionWithWorktrees(1);
+    const path = join(worktree!, "api", "x.py");
+    // The first session's lane in the worktree reads its rules, and an event of the session reads every lane's once.
+    expect(auditor.acceptsPath(path)).toBe(true);
+    auditor.refreshCodeRules();
+    const catalog = catalogs.catalog(worktree!);
+    const before = catalog.status.ruleCount;
+    // A file in another checkout's `.rerail/rules` changes no rule configuration: the first session's event leaves its
+    // lane there as it was until it next uses it.
+    await writeOwnRule(worktree!);
+    auditor.refreshCodeRules();
+    expect(catalog.status.ruleCount).toBe(before);
+    const second = await openRouter(main, { owners, catalogs }, "second");
+    cleanups.push(() => second.close());
+    second.refreshCodeRules();
+    expect(second.acceptsPath(path)).toBe(true);
+    expect(catalog.status.ruleCount).toBe(before + 1);
   }, 60_000);
 
   it("walks a worktree Git creates again at the path it still lists, though the walks worked the list out while it was gone", async () => {
