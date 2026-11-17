@@ -1212,6 +1212,26 @@ pass.
   a walk's frame carries its parent where its step knew it, and the micro kernels' GPU time on the same s1000
   matches the hub's tree's or beats it, with the host still listing nothing.
 
+- **Progress** (2026-11-16, t41 "Fixing the merged device"): roots spread over the SIMD group, the walk carries its
+  parent, and the reads are narrowed, scoped and specialized to the batch's format. The label passes went from 1,235
+  to 781 ms at format 15 and to 671 ms at format 16, against the hub tree's 292. What remains is Q57.
+
+### Q57. The device's generated reads cost 1.5× hand-written ones, and its parent is a climb (this branch's)
+
+- **Found** (2026-11-16, t41 "Fixing the merged device"):
+  - `label_micro` is 322 ms with the generated reads against 211 with hand-written format 15 ones. The generated
+    reads load a document's widths from its view and decode a column of any width.
+  - `label_micro_8` is parent climbs: 430 ms at format 15, 272 at format 16, 91 on the hub's tree with its parent
+    column.
+  - The step count is bimodal (97.2 M, or 118.1 M with deep-tier retries).
+  - The device's label tests passed with MSL that did not compile, and with a walk that lost its parent.
+- **Done when**:
+  - the reads' widths cost what constants do, by per-width variants or a column form the decode needs no branch for;
+  - a parent costs a step on the device: format 16 by default (0156, the user's decision), or a parent the walk keeps;
+  - a device test fails on a walk whose steps change (uncompilable MSL fails
+    `the_label_kernels_compile_for_every_format` since 2026-11-16);
+  - the label passes at s1000 match the hub tree's 292 ms or beat it.
+
 ### Q54. Oscar's engine stops on the data-layer corpus in `step_histograms` (to check on the merged tree)
 
 - **Found** (2026-11-16, two runs of internal_dead_code with `--metal` over the whole corpus, f51cab698):

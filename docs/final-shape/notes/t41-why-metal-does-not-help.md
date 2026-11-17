@@ -197,3 +197,51 @@ against 27.6 G.
 
 The first run of a new engine compiles its shaders (22.8 s of CPU here), so the first run after a kernel change is
 never a measurement. Q53 is now this branch's to fix.
+
+## Fixing the merged device (2026-11-16, later)
+
+internal_dead_code at s1000, every matcher launch pinned to the GPU (`RERAIL_LANE_PIN=gpu:ast matcher wave`; without
+it a run's placement differs from the next's), `RERAIL_GPU_KERNEL_TIMES=1`, `RERAIL_GPU_WALK_STEPS=1`, each engine
+warmed by an s10 run first (its first run compiles its shaders), alternated, at load 45–75. The label passes' GPU
+time, then three of its kernels:
+
+| Engine | Format | Label passes | `label_micro` | `label_micro_8` | `clause_patterns` |
+|---|---|---|---|---|---|
+| hub (61e9f383c) | 15 | 292 ms | 169 | 91 | 3.6 |
+| merged (88f4b24b6) | 15 | 1,235 ms | | | |
+| + a group's roots spread over its SIMD group | 15 | 1,110 ms | | 497 | |
+| + reads in 32 bits where only the low word is used | 15 | about 1,080 ms | about 490 | | |
+| + block-local values declared in their block | 15 | 887–902 ms | 388 | 471 | 10.5 |
+| + the batch's format a function constant | 15 | 781–801 ms | 322–336 | 429–434 | 6.0–7.0 |
+| the same engines | 16 | 895 → 763–781 → 671 ms | 506 → 392–410 → 364 | 338 → 323 → 272 | 15.9 → 18.5 → 6.5 |
+| hand-written format 15 reads (a diagnostic build) | 15 | 667 ms | 211 | 434 | 6.0 |
+
+What each step is:
+
+- **Roots over a SIMD group** (`simd_roots`, `metal_tape.metal`). A thread still makes its group's 64-bit root mask
+  (0293 §10: the host lists nothing). Then the SIMD group's 32 lanes take its roots in rounds of 32, a lane per set
+  bit, found by a prefix sum over the lanes' counts. `label_micro*` and `clause_patterns` run whole SIMD groups.
+- **A walk carries its parent** (`path.end`): a step into a child knows the parent, so `next_in` needs no parent search.
+- **32-bit reads** (`rerail_clif::msl`, `low_words`). A demanded-bits pass emits an I64 value as `uint` where every use
+  reads its low word, as the documents' offsets do.
+- **Block-local declarations.** A value that only its own block sets and reads is declared there, not at the
+  function's head.
+- **The format as a constant.** The label and pattern kernels are made per batch format, as function constant 0,
+  `tape_format`; a mixed batch gets 0, which reads the view's field. The reads' format test then folds away.
+  `DocTable::format` gives the format. The profile has `gpu.tape_format=N` and each label kernel's
+  `pipeline.K.max_threads` (every one is 1,024, so registers don't limit occupancy).
+
+What is left, by kernel:
+
+- **`label_micro`: the generated reads are still 1.5× the hand-written ones** (322 against 211 ms). They still
+  load the widths from the view and branch on them, and decode a column of any width. The widths are a document's,
+  so a constant per batch does not reach them. Q57.
+- **`label_micro_8` is parent climbs**, and the hand-written reads did not change it (434). Format 15's parent is a
+  search; format 16's is cheaper, at 272. The hub's tree had a parent column (91). Making the device's parent cheap
+  is format 16 as the default (0156, the user's), or a parent the walk carries further, or a column, against 0293 §9.
+- **The step count is bimodal**: 97,241,194, or 118,095,951 with `label_micro_deep` at 70 ms instead of 27. Either
+  engine shows both; the second is walks retried on the deep tier. Compare runs with equal counts only.
+- The device's label tests passed with MSL that did not compile, and with a walk that lost its parent at a cursor
+  restore. The conformance tests and these runs caught both. `the_label_kernels_compile_for_every_format` (slow
+  tier, 84 s on an M1 Max) now compiles every label kernel and the pattern kernel for formats 0, 15 and 16. A test
+  for a walk whose steps change is still Q57's.

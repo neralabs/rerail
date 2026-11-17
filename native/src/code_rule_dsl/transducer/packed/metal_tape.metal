@@ -93,3 +93,28 @@ inline uint root_ctz(ulong m){uint low=uint(m);return low!=0u?ctz(low):32u+ctz(u
 // Each root of a mask, document-local: `ROOTS_EACH(mask, group, local) { ... }`. One loop over the
 // mask (a fixed two-trip loop over its halves was unrolled, the body compiled twice).
 #define ROOTS_EACH(MASK,GROUP,LOCAL) for(ulong rootBits=(MASK);rootBits!=0ul;rootBits&=rootBits-1ul)for(uint LOCAL=(GROUP)*ROOT_GROUP+root_ctz(rootBits),rootOnce=0u;rootOnce==0u;rootOnce=1u)
+// A SIMD group's roots, spread over its lanes (decision 0293 §10, work queue Q53). Each lane makes its own group's
+// mask, as above; the SIMD group then numbers all its lanes' roots (lane order, then bit order), and round `r`
+// gives lane `l` root `32r + l`. The roots are as dense over the lanes as a list of them would be, and nothing lists
+// them: a thread looping over its group's roots ran up to 64 walks one after another, and a SIMD group lasted as long
+// as its longest lane's sum. Every lane of the SIMD group calls these together (they shuffle); a lane past the
+// items holds an empty mask, and only lanes past the grid's end are missing (`active` counts the others).
+struct SimdRoots { uint prefix,total,active; };
+inline SimdRoots simd_roots(ulong mask){
+ uint n=popcount(uint(mask))+popcount(uint(mask>>32u));
+ SimdRoots r;r.prefix=simd_prefix_exclusive_sum(n);r.total=simd_sum(n);r.active=simd_sum(1u);return r;
+}
+// The lane whose mask holds root `i` of the SIMD group: the last lane whose prefix is at or below `i`, by halving.
+inline uint simd_root_lane(SimdRoots r,uint i){
+ uint lane=0u;
+ for(uint step=16u;step>0u;step>>=1u){uint p=simd_shuffle(r.prefix,ushort(lane+step));if(lane+step<r.active&&p<=i)lane+=step;}
+ return lane;
+}
+// The `j`-th set bit of a word (j below its count), by halving.
+inline uint word_nth(uint w,uint j){
+ uint at=0u;
+ for(uint span=16u;span>0u;span>>=1u){uint m=(1u<<span)-1u,low=popcount(w&m);if(j>=low){j-=low;w>>=span;at+=span;}else w&=m;}
+ return at;
+}
+// The `j`-th set bit of a mask given as its halves.
+inline uint mask_nth(uint lo,uint hi,uint j){uint c=popcount(lo);return j<c?word_nth(lo,j):32u+word_nth(hi,j-c);}

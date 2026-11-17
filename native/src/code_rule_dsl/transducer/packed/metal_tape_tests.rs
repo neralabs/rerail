@@ -223,3 +223,17 @@ fn a_label_kernel_costs_footprint() {
     submit(&pipeline);
     eprintln!("KERNEL {name}: +{} MB", mb() as i64 - before as i64);
 }
+
+/// Every label kernel and the fact-only pattern kernel compile, for a mixed batch (0) and for each format's own
+/// (`tape_format`). A run whose kernels fail to compile falls back to the CPU and still gives the right rows, so the
+/// label tests alone would pass with MSL that does not compile (t41, Q57).
+#[test]
+fn the_label_kernels_compile_for_every_format() {
+    if METAL_DEVICE.is_none() {
+        return;
+    }
+    for format in [0, 15, 16] {
+        let compiled = super::label_passes::compile_label_kernels(format).unwrap_or_else(|_| panic!("the label kernels for format {format}"));
+        assert_eq!(compiled, (14, 1), "format {format}: the label kernels, then the pattern kernel");
+    }
+}
