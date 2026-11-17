@@ -1050,6 +1050,37 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(signals).toEqual([]);
   });
 
+  /** The home's lock as held for the first `asks` times it is asked, and free after: a daemon that ends meanwhile. */
+  const heldFor = (asks: number): (() => boolean) => {
+    let asked = 0;
+    return () => (asked += 1) <= asks;
+  };
+
+  it.each(["linux", "win32"] as const)("ends nothing when the daemon a lookup found has let go of the home by the time the stop asks (%s)", async platform => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    await holdHome(home, LIVE_PID);
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    const machine = machineWith(platform, signals, heldFor(1));
+    const found = await lookupDaemon(home, machine);
+    if (found.status === "absent") throw new Error("the daemon that holds the home was not found");
+    expect(await stopFoundDaemon(home, found, machine)).toBe("not-daemon");
+    expect(signals).toEqual([]);
+    expect(existsSync(stateFile)).toBe(false);
+  });
+
+  it.each(["linux", "win32"] as const)("sends nothing to a daemon that lets go of the home between its stop's check and the signal (%s)", async platform => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    await holdHome(home, LIVE_PID);
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    const machine = machineWith(platform, signals, heldFor(2));
+    const found = await lookupDaemon(home, machine);
+    if (found.status === "absent") throw new Error("the daemon that holds the home was not found");
+    expect(await stopFoundDaemon(home, found, machine)).toBe("stopped");
+    expect(signals).toEqual([]);
+  });
+
   it("stops waiting, and sends no SIGKILL, once the daemon it stopped lets go of the home, whoever has its pid", async () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const signals: Array<string | number | undefined> = [];
