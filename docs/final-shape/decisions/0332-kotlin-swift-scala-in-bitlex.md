@@ -490,6 +490,37 @@ declaration's.
 
 Corpus: 267 the same, 224 refused, 0 differ.
 
+## Kotlin, step 20 (`20-enums-labels.bitlex`)
+
+What step 20 reads:
+
+- **Enum classes.** An `enum_class_body` holds entries with arguments and bodies, `,` between
+  them, then `;` and members. A trailing `,` and the `}` after it are leaves, as in the lean tape.
+  The `trail` mark takes `}` for this.
+- **`private constructor`.** `decl_mod` holds before `constructor` and `enum`.
+- **Reified type parameters**, and `reified` is no longer a soft name.
+- **Spread arguments.**
+- **`return@x`, `break@x`, `continue@x`, `this@X`.**
+- **`as?`.**
+
+The lean lexer reads a word with the `@` it touches as one token, and `as?` as one token. Here
+`simple_identifier`'s token ends at that `@` or `?`. `return@` and the others are hard keywords,
+so the token takes them without a row of its own. `enum` before `class` gets a row of its own
+(`enum_kw`). A shared kind would clash with the soft name `enum`.
+
+`assign_id` was a token mark that named `simple_identifier`. It is now a mask: a word, then
+blanks, then an assignment operator. With that, no token mark names `simple_identifier`.
+
+The lean parser's type after `as` is a single segment: `x as java.util.List<Int>` is navigation
+over `x as java`. `as_type` takes a single segment, so a `.` after it is refused.
+
+Still refused: a label's definition (`loop@ for …`, `lit@{ … }`). Its own row at every letter
+doubled tier 2's tests at letters, which put the program past the 65,533 words that a `u16`
+operand reaches. It is open: either a label ends `simple_identifier`'s token at its `@`, as
+`return@` does, with the grammar telling a label from a name, or tier 2's operands widen.
+
+Corpus: 311 the same, 180 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment

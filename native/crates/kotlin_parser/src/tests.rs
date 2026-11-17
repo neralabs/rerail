@@ -302,8 +302,17 @@ fn type_arguments_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 20: enum classes, labels, `as?`, reified type parameters, spread arguments.
 #[test]
-fn what_step_19_does_not_read_is_refused() {
+fn enums_and_labels_are_the_lean_parsers() {
+    same(&[
+        "enum class E(val v: Int) {\n    A(1),\n    B(2) {\n        override fun f() = 1\n    };\n    fun g() = 0\n}\nenum class F { X, Y }\ninline fun <reified T : Any, R> h(vararg a: T) = g(*a)\nclass P private constructor(x: Int)\nfun k() {\n    xs.map { return@map 1 }\n    for (i in a) break@loop\n    val t = this@P\n}\n",
+        "internal enum class G {\n    A,\n    B,\n}\nval h = i as? J\n",
+    ]);
+}
+
+#[test]
+fn what_step_20_does_not_read_is_refused() {
     refused(&[
         "val a = b to f<T>()\n",
         "val a = x + f<T>(1)\n",
@@ -331,7 +340,8 @@ fn what_step_19_does_not_read_is_refused() {
         "fun f(noinline: Int) {}\n",
         "fun <T : Any> T.f() {}\n",
         "fun String?.h() = 1\n",
-        "val h = i as? J\n",
+        "fun f() {\n    loop@ for (i in a) break@loop\n}\n",
+        "val a = b as java.util.List<Int>\n",
         "class A(d: C) : C by d {\n}\n",
         "val s = \"a $field b\"\n",
         "abstract class A {\n    fun f() {}\n    /* c */\n    abstract fun g()\n}\n",
@@ -402,6 +412,7 @@ fn corpus() {
 #[ignore = "a tool: set RERAIL_KOTLIN_SHOW"]
 fn show() {
     let c = compiled().expect("compiles");
+    eprintln!("tier 2: {} words", c.program.words.len());
     for p in std::env::var("RERAIL_KOTLIN_SHOW").expect("set RERAIL_KOTLIN_SHOW").split(':') {
         let text = std::fs::read_to_string(p).expect("a file");
         let lean = lean_text(&text).unwrap_or_else(|| "refused".into());
