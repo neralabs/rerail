@@ -398,6 +398,9 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
       partitioned.set(routed.lane, [...(partitioned.get(routed.lane) ?? []), { ...edit, path: routed.path }]);
     }
     const responses: CodeRuleResponse[] = [];
+    // A batch across more worktrees than the session holds workspaces for takes its lanes through the turns: a
+    // workspace kept after it would only be taken back by the next such batch.
+    const keeps = partitioned.size <= WALK_LANES_AT_ONCE;
     for (const lane of [...this.#lanes.values()]) {
       if (!this.#mayRun(lane.root)) continue;
       const edits = partitioned.get(lane);
@@ -408,7 +411,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
       }
       await lane.opening;
       responses.push(await lane.enforcer.auditGeneratedEdits(sessionId, { ...batch, edits }));
-      this.#releaseWhenSettled(lane, batch.mode);
+      this.#releaseWhenSettled(lane, batch.mode, keeps);
     }
     return merged(batch.revision, responses);
   }
@@ -416,28 +419,30 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /**
    * A lane in another checkout that only Log batches reached (the walk's findings in another worktree, which every
    * session watching it audits) gives its workspace back once their audits settle and another lane of the session needs
-   * a turn (`#settled`): a workspace holds the checkout's index, and a session kept one open in every worktree whose
-   * change it audited, so each session in a repository of many worktrees added hundreds of MB. The lane keeps what it
-   * applied and recorded, and judges its next batch as an open one would (`releaseWorkspace`). The session's own
-   * checkout, and a lane its own work reached, stay open.
+   * a turn (`#settled`), or at once after a batch across more worktrees than that (`keeps` false): a workspace holds
+   * the checkout's index, and a session kept one open in every worktree whose change it audited, so each session in a
+   * repository of many worktrees added hundreds of MB. The lane keeps what it applied and recorded, and judges its next
+   * batch as an open one would (`releaseWorkspace`). The session's own checkout, and a lane its own work reached, stay
+   * open.
    */
-  #releaseWhenSettled(lane: Lane, mode: AuditMode | undefined): void {
+  #releaseWhenSettled(lane: Lane, mode: AuditMode | undefined, keeps: boolean): void {
     if (mode !== "log") lane.enforcer.keepWorkspace();
     if (lane.enforcer.kept) return;
     const releasing = lane.enforcer.settleGeneratedEdits()
-      .then(() => { this.#settled(lane); })
+      .then(() => { this.#settled(lane, keeps); })
       .catch(() => undefined)
       .finally(() => this.#releasing.delete(releasing));
     this.#releasing.add(releasing);
   }
 
   /**
-   * A lane whose audits settled: one that holds a turn keeps its workspace until another lane waits for one
-   * (`LaneTurns.idle`); one that holds none (it opened with its workspace) gives it back now.
+   * A lane whose audits settled: one that holds a turn, after a batch the session's turns hold whole (`keeps`), keeps
+   * its workspace until another lane waits for one (`LaneTurns.idle`); any other gives it back now, one that opened
+   * with its workspace, for a walk's question, included.
    */
-  #settled(lane: Lane): void {
+  #settled(lane: Lane, keeps: boolean): void {
     if (this.#lanes.get(lane.root) !== lane) return;
-    if (lane.enforcer.holdsTurn) this.#turns.idle(lane, () => lane.enforcer.releaseWorkspace());
+    if (keeps && lane.enforcer.holdsTurn) this.#turns.idle(lane, () => lane.enforcer.releaseWorkspace());
     else lane.enforcer.releaseWorkspace();
   }
 
