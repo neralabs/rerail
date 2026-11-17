@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { lstat, mkdir, unlink } from "node:fs/promises";
 import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { connect, type Socket } from "node:net";
@@ -7,19 +8,25 @@ import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { z } from "zod/v4";
 import type { AdapterDelivery, AdapterEvent } from "../engine/adapter-contract.js";
+import { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
+import { forgetFreedOwnerLocks, holdOwnerLock, someOwnerLockFreed } from "../engine/audit/owner-lock.js";
 import {
   AdapterEventSchema,
   decodeRerailEventResult,
   encodeRerailEventResult,
   RERAIL_EVENT_MAX_FRAME_BYTES,
 } from "./event-protocol.js";
-import { defaultRerailDatabasePath } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, failWhileWriteLocked, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { isBusy } from "../engine/storage/sqlite-wal.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
 import { isNamedPipe } from "./engine-pipe.js";
+import { checkoutStatus } from "./repository-start.js";
 import { nativeTreeWatch, type TreeWatch } from "../engine/code-rule/tree-watch.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
-import { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
+import {
+  endSuspendedSessions, failQueuedScans, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
+} from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 
 export interface EngineService {
@@ -37,33 +44,54 @@ export interface EngineService {
   /** How many runtimes are open: one per checkout some live session uses. */
   openRuntimes(): number;
   /**
-   * Closes every session that has sent no event for the idle limit and owes its agent nothing, and every one quiet for
-   * a day whatever it owes; the service also does this every minute.
+   * Suspends every session that has sent no event for the idle limit and owes its agent nothing, and every one quiet for
+   * a day whatever it owes (`RerailRuntime.closeIdleSession`), ends each suspended one that can no longer open again
+   * (its folder removed, or Rerail stopped in its checkout), then, once a daemon on the same records that held its
+   * owner lock has ended, what it left open (`endAbandonedSessions`); the service also does this every minute.
    */
   closeIdleSessions(): Promise<void>;
+  /**
+   * Opens again the session the idle close suspended, so a scan just queued for it runs now, as it would have while the
+   * session was open; nothing for a session that is not suspended. Never rejects: it reports its own failure, fails the
+   * scans that waited for the open with why, and the service's close waits for it.
+   */
+  resumeSession(sessionId: string): Promise<void>;
 }
 
 /**
- * How long a session may send no event before the engine service closes it as its end would. Its end is not certain to
- * arrive: a coding agent that is killed sends none, and Claude Code gives its SessionEnd hook 1.5 s, which a hook on a
- * busy Windows machine outlasts. A session whose end was lost kept its state (its own copy of its checkout's source
- * walk, its conversation history, its evaluator) until the daemon stopped. A closed session's next event opens it again
- * from its ledger. A session waiting on a tool call, or holding a steer for its agent, stays open for up to a day
- * (`OWING_SESSION_IDLE_MS`): its ledger holds neither. A reopened session's code-rule boundaries wait for its rules to
- * open again (`REOPENED_RULES_WAIT_MS` in runtime.ts), so its first edit is still steered at its own result.
+ * How long a session may send no event before the engine service suspends it: frees what it holds in memory, as its end
+ * would. Its end is not certain to arrive: a coding agent that is killed sends none, and Claude Code gives its SessionEnd
+ * hook 1.5 s, which a hook on a busy Windows machine outlasts. A session whose end was lost kept its state (its own copy
+ * of its checkout's source walk, its conversation history, its evaluator) until the daemon stopped. A quiet session's
+ * agent may as well still be open (a person away, a long think), so a suspended session stays open in the database and
+ * keeps its owner claim until its daemon stops, the next daemon starts after one that died (`endAbandonedSessions`), or
+ * a sweep finds its folder removed or Rerail stopped in its checkout (`endUnopenableSessions`): it reads as live, a scan
+ * asked for it opens it again to run (`resumeSession`), and its next event opens it again from
+ * its ledger, where its source walks stood (`RerailRuntime.closeIdleSession`). A session waiting on a tool call, holding
+ * a steer or a finding for its agent, or running a check stays as it is for up to a day (`OWING_SESSION_IDLE_MS`). A
+ * reopened session's code-rule boundaries wait for its rules to open again (`REOPENED_RULES_WAIT_MS` in runtime.ts), so
+ * its first edit is still steered at its own result.
  */
 export const IDLE_SESSION_MS = 30 * 60_000;
 /**
- * How long a session that still owes its agent something (a tool call's result, a steer, a held finding, a scan) may
- * send no event before the engine service closes it anyway, and what it owed is lost. An agent killed while its session
- * owed it something, as Claude Code closed at a permission prompt is, sends no end and no result: without a bound its
- * session kept its source walk, its evaluator and its checkout's runtime until the daemon stopped. The bound is a day,
- * not `IDLE_SESSION_MS`, because an agent waiting on a person at a permission prompt can be left for hours while they
- * are away, and closing its session then would drop the check of the call's edit or the steer it holds.
+ * How long a session that still owes its agent something (a tool call's result, a steer, a held finding, a check, a
+ * scan) may send no event before the engine service suspends it anyway. An agent killed while its session owed it
+ * something, as Claude Code closed at a permission prompt is, sends no end and no result: without a bound its session
+ * kept its source walk, its evaluator and its checkout's runtime until the daemon stopped. The bound is a day, not
+ * `IDLE_SESSION_MS`, because an agent waiting on a person at a permission prompt can be left for hours while they are
+ * away, and the session its next event opened again would hold the agent's next tool call while its rules compile again
+ * (`REOPENED_RULES_WAIT_MS` in runtime.ts), or check its edit a turn later in a host that does not wait. Past the bound,
+ * the steers and findings the session holds wait in its ledger for its next event, and the edit of the call it waited
+ * on is checked once its rules are open again (`#takeOwed`, `#checkWhenOpen` in runtime.ts).
  */
 const OWING_SESSION_IDLE_MS = 24 * 60 * 60_000;
 /** How often the engine service looks for idle sessions. */
 const IDLE_SWEEP_MS = 60_000;
+/**
+ * How soon a quiet session's open for a scan is tried again after it met another process's write lock: as often as an
+ * open session's control timer looks for its scans.
+ */
+const RESUME_RETRY_MS = 250;
 
 const ConfigurationSchema = z
   .object({
@@ -221,12 +249,62 @@ interface EngineRoutingState {
   idle: Map<string, NodeJS.Timeout>;
   /** How long a runtime no session uses stays open: `idleRuntimeMs`, or `IDLE_RUNTIME_MS`. */
   idleRuntimeMs: number;
+  /** What each open runtime was made with, by its key: a suspended session's runtime is made again from it. */
+  runtimeOptions: Map<string, RerailRuntimeOptions>;
+  /** The sessions the idle close suspended, by session id, until a runtime opens one again or the service closes. */
+  suspended: Map<string, SuspendedEntry>;
+  /** The timer of each suspended session whose open for a scan met another process's write lock (`retryResume`). */
+  resumeRetries: Map<string, NodeJS.Timeout>;
+  /**
+   * The lock the service holds for its life beside its own database (`holdOwnerLock`), which the owner rows of its
+   * runtimes over that database name (`ownerLockFor`); none where it could take none.
+   */
+  ownerLockId: string | undefined;
+  /** The service's own database: the one its start and its idle sweeps end a dead daemon's sessions in. */
+  databasePath: string;
   /**
    * The walk of each repository's other worktrees, shared by the sessions of every runtime: hooks name the session's
    * folder, so sessions in different worktrees of one repository run in different runtimes, and each walking every
    * worktree for itself held every file of every worktree once per session.
    */
   worktreeWalks: RepositoryWorktreeWalks;
+}
+
+/**
+ * The lock the owner rows of a runtime over `databasePath` name: the service's, for its own database, beside which its
+ * file is and which its start and sweeps judge; none for another database, which no start of this service sweeps, so
+ * the runtime ends its quiet sessions at the idle close (`closeIdleSessions`) as a service with no lock does.
+ */
+function ownerLockFor(state: EngineRoutingState, databasePath: string | undefined): string | undefined {
+  return databasePath === state.databasePath ? state.ownerLockId : undefined;
+}
+
+/** Whether the runtime at `runtimeKey` ends a quiet session rather than suspending it: its owner rows name no lock. */
+function endsQuietSessions(state: EngineRoutingState, runtimeKey: string): boolean {
+  return ownerLockFor(state, state.runtimeOptions.get(runtimeKey)?.databasePath) === undefined;
+}
+
+/** A suspended session, with the runtime it was open in and what that runtime is made with. */
+interface SuspendedEntry {
+  readonly runtimeKey: string;
+  readonly runtimeOptions: RerailRuntimeOptions | undefined;
+  readonly suspension: SessionSuspension;
+}
+
+/**
+ * The service's suspended sessions as the runtime at `runtimeKey` sees them: it keeps the sessions it suspends there, and
+ * one opening a session takes its suspension back.
+ */
+function suspendedSessions(state: EngineRoutingState, runtimeKey: string): SuspendedSessions {
+  return {
+    keep: suspension => keepSuspended(state, runtimeKey, suspension),
+    get: sessionId => state.suspended.get(sessionId)?.suspension,
+    take: (sessionId) => {
+      const entry = state.suspended.get(sessionId);
+      state.suspended.delete(sessionId);
+      return entry?.suspension;
+    },
+  };
 }
 
 /** The lane one session's work in one runtime runs in, one at a time. */
@@ -304,31 +382,63 @@ async function routeEngineEvent(
   const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(event, configuration, options, state);
   if (runtimeOptions !== undefined) runtimeOptions.hookRequest = routed => state.hookRequests.get(routed);
   const lane = laneOf(runtimeKey, sessionId);
-  clearTimeout(state.idle.get(runtimeKey));
-  state.idle.delete(runtimeKey);
+  keepRuntime(state, runtimeKey);
   const execution = state.lanes.run(lane, () => {
-    let runtime = state.runtimes.get(runtimeKey);
-    if (runtime === undefined) {
-      if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
-      runtime = new RerailRuntime({ ...runtimeOptions, autostart: false, startGate: true, worktreeWalks: state.worktreeWalks });
-      state.runtimes.set(runtimeKey, runtime);
-    }
+    const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
     // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
-    if (event.kind !== "session-end") {
-      const keys = state.runtimeKeysBySession.get(sessionId) ?? new Set<string>();
-      keys.add(runtimeKey);
-      state.runtimeKeysBySession.set(sessionId, keys);
-      state.lastEventAt.set(lane, (options.now ?? Date.now)());
-    }
+    if (event.kind !== "session-end") noteSessionUse(state, sessionId, runtimeKey, (options.now ?? Date.now)());
     return runtime.ingest(event);
   });
   track(state, execution);
-  const deliveries = await execution;
-  if (event.kind === "session-end") {
-    state.lastEventAt.delete(lane);
-    releaseSessionRuntime(state, sessionId, runtimeKey);
+  try {
+    return await execution;
+  } finally {
+    if (event.kind === "session-end") afterSessionEnd(state, sessionId, runtimeKey);
   }
-  return deliveries;
+}
+
+/**
+ * The session has ended, whether its runtime recorded the end or not: it is no longer quiet, its suspension, when its
+ * runtime did not open it again (a stopped repository, or an open that failed), ends its record here, and the runtime it
+ * used retires once no other session uses it.
+ */
+function afterSessionEnd(state: EngineRoutingState, sessionId: string, runtimeKey: string): void {
+  state.lastEventAt.delete(laneOf(runtimeKey, sessionId));
+  endIfSuspended(state, sessionId);
+  releaseSessionRuntime(state, sessionId, runtimeKey);
+}
+
+/** The runtime at `runtimeKey` is about to be used: it is no longer one to close for want of use. */
+function keepRuntime(state: EngineRoutingState, runtimeKey: string): void {
+  clearTimeout(state.idle.get(runtimeKey));
+  state.idle.delete(runtimeKey);
+}
+
+/** The runtime open at `runtimeKey`, else one made with `runtimeOptions`, which takes back the sessions the service suspended. */
+function runtimeFor(
+  state: EngineRoutingState,
+  runtimeKey: string,
+  runtimeOptions: RerailRuntimeOptions | undefined,
+  sessionId: string,
+): RerailRuntime {
+  const open = state.runtimes.get(runtimeKey);
+  if (open !== undefined) return open;
+  if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
+  const runtime = new RerailRuntime({
+    ...runtimeOptions, autostart: false, startGate: true, worktreeWalks: state.worktreeWalks,
+    suspendedSessions: suspendedSessions(state, runtimeKey), ownerLockId: ownerLockFor(state, runtimeOptions.databasePath),
+  });
+  state.runtimes.set(runtimeKey, runtime);
+  state.runtimeOptions.set(runtimeKey, runtimeOptions);
+  return runtime;
+}
+
+/** `sessionId` uses the runtime at `runtimeKey` from now on, and was last heard from `at`. */
+function noteSessionUse(state: EngineRoutingState, sessionId: string, runtimeKey: string, at: number): void {
+  const keys = state.runtimeKeysBySession.get(sessionId) ?? new Set<string>();
+  keys.add(runtimeKey);
+  state.runtimeKeysBySession.set(sessionId, keys);
+  state.lastEventAt.set(laneOf(runtimeKey, sessionId), at);
 }
 
 /** Keeps `work` among what `close` waits for until it settles. */
@@ -347,11 +457,15 @@ function releaseSessionRuntime(state: EngineRoutingState, sessionId: string, run
 }
 
 /**
- * Closes, as its end would, each session that has sent no event for `idleMs` (`IDLE_SESSION_MS`), and then retires its
- * runtime as an end does. The check runs again in the session's lane, so an event that came in meanwhile keeps the
- * session open. A session that still owes its agent a tool call's check, a steer or a scan stays open
- * (`RerailRuntime.closeIdleSession`) until it has been quiet for `OWING_SESSION_IDLE_MS`, and so does one whose close
- * fails, which is reported; the next sweep looks again.
+ * Suspends each session that has sent no event for `idleMs` (`IDLE_SESSION_MS`): its runtime frees what it holds and
+ * keeps it open in the database (`RerailRuntime.closeIdleSession`), and the service keeps its suspension for the
+ * session's next open; then its runtime retires as after an end. The check runs again in the session's lane, so an
+ * event that came in meanwhile keeps the session open. A session that still owes its agent a tool call's check, a
+ * steer, a held finding or a scan stays as it is until it has been quiet for `OWING_SESSION_IDLE_MS`, and so does one
+ * whose suspension fails, which is reported; the next sweep looks again. A runtime whose owner rows name no lock
+ * (`ownerLockFor`: the service could take none, or the runtime records in another database) ends each quiet session
+ * instead: after a kill, its rows could be judged only by their pid, and a session it kept open would read as live and
+ * owned for good.
  */
 async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now: () => number): Promise<void> {
   /** How long the session at `lane` has sent nothing; minus infinity once it has closed, so it is never idle. */
@@ -365,9 +479,13 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
       const quiet = quietFor(lane);
       if (quiet < idleMs) return false;
       const evenIfOwing = quiet >= OWING_SESSION_IDLE_MS;
-      const closed = await state.runtimes.get(runtimeKey)?.closeIdleSession(sessionId, { evenIfOwing }) ?? true;
-      if (closed) state.lastEventAt.delete(lane);
-      return closed;
+      // A suspended session's runtime has kept its suspension (`SuspendedSessions.keep`) before closing it, with the time
+      // its record ends at if no runtime opens it again.
+      const end = endsQuietSessions(state, runtimeKey);
+      const idle = await state.runtimes.get(runtimeKey)?.closeIdleSession(sessionId, { evenIfOwing, at: now(), end });
+      if (idle?.kind === "owing") return false;
+      state.lastEventAt.delete(lane);
+      return true;
     });
     track(state, closing);
     try {
@@ -376,6 +494,214 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
       process.stderr.write(`rerail: closing idle session ${sessionId} failed: ${error instanceof Error ? error.message : String(error)}\n`);
     }
   }));
+}
+
+/**
+ * One idle sweep: suspends this service's quiet sessions (`closeIdleSessions`), ends those that can no longer open again
+ * (`endUnopenableSessions`), then ends what a daemon that died left open (`endAbandonedSessions`), as a start does, for
+ * when the start's own pass failed, which it reports: with one daemon per Rerail home (`holdHomeDaemonLock`), no other
+ * start comes while this one runs. Only once an owner lock beside the database is free (`someOwnerLockFreed`), which a
+ * service that ended leaves: opening a writer waits for another process's write lock, up to `busy_timeout`, on the
+ * daemon's main thread, so a minute with no such lock opens no writer. Rows that name no lock are judged at the next
+ * start then, or by a sweep a free lock brings.
+ */
+async function sweepIdle(state: EngineRoutingState, options: EngineServiceOptions, databasePath: string): Promise<void> {
+  const idleMs = options.idleSessionMs ?? IDLE_SESSION_MS;
+  const now = options.now ?? Date.now;
+  await closeIdleSessions(state, idleMs, now);
+  await endUnopenableSessions(state);
+  if (someOwnerLockFreed(databasePath)) endAbandonedSessions(databasePath, idleMs, now);
+}
+
+/**
+ * Ends, at the time each went quiet, every suspended session that can no longer open again (`unopenable`), as the idle
+ * close ended it before sessions were suspended: kept, it would read as live and owned until its daemon stops. Each
+ * ends in its lane, once an open already under way there has taken it or not. The start states are read over one
+ * read-only connection per database, only while some session is suspended; another process's write lock holds up no
+ * reader.
+ */
+async function endUnopenableSessions(state: EngineRoutingState): Promise<void> {
+  const ending: Array<{ entry: SuspendedEntry; reason: string }> = [];
+  for (const [databasePath, entries] of byDatabase([...state.suspended.values()])) {
+    readingStartStates(databasePath, (database) => {
+      for (const entry of entries) {
+        const reason = unopenable(entry, database);
+        if (reason !== undefined) ending.push({ entry, reason });
+      }
+    });
+  }
+  await Promise.all(ending.map(({ entry, reason }) => {
+    const { runtimeKey, suspension: { descriptor: { sessionId } } } = entry;
+    const work = state.lanes.run(laneOf(runtimeKey, sessionId), async () => {
+      if (state.suspended.get(sessionId) === entry) endUnopened(state, entry, reason);
+    });
+    track(state, work);
+    return work;
+  }));
+}
+
+/**
+ * Why the suspended session of `entry` can no longer open again, or undefined while it can: its folder was removed
+ * (opening it would make the folder anew with Rerail's records), or Rerail was stopped in its checkout (a stopped
+ * repository drops the session's events and records no scan). `database` is a read-only connection to its records.
+ */
+function unopenable(entry: SuspendedEntry, database: RerailDatabase): string | undefined {
+  const { descriptor: { cwd }, startGate } = entry.suspension;
+  if (!existsSync(cwd)) return `its folder ${cwd} was removed`;
+  if (startGate === undefined || checkoutStatus(database, startGate).started) return undefined;
+  return `Rerail is stopped in ${startGate.checkoutPath}`;
+}
+
+/** `read` over a read-only connection to `databasePath`; a failure is reported and reads as undefined. */
+function readingStartStates<T>(databasePath: string, read: (database: RerailDatabase) => T): T | undefined {
+  let database: RerailDatabase | undefined;
+  try {
+    database = openRerailDatabase(databasePath, { readonly: true });
+    return read(database);
+  } catch (error) {
+    process.stderr.write(`rerail: reading where quiet sessions' checkouts are started failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    return undefined;
+  } finally {
+    database?.$client.close();
+  }
+}
+
+/**
+ * Keeps a suspended session, with how to make its runtime again, for its next open. Its runtime keeps it as the close
+ * begins (`RerailRuntime.closeIdleSession`), so a scan asked for it meanwhile opens it again behind the close, in its
+ * lane, and a close that fails leaves it here to end at the service's close.
+ */
+function keepSuspended(state: EngineRoutingState, runtimeKey: string, suspension: SessionSuspension): void {
+  state.suspended.set(suspension.descriptor.sessionId, { runtimeKey, runtimeOptions: state.runtimeOptions.get(runtimeKey), suspension });
+}
+
+/**
+ * Opens again, in its lane, the session the idle close suspended (`RerailRuntime.resumeSession`), making its runtime
+ * again when that has closed, so a scan just queued for it runs now. A session that is not suspended is left alone, and
+ * so is one whose end, or an event that opened it, took its suspension while this waited for the lane; one that can no
+ * longer open again (`unopenable`: its folder removed, or Rerail stopped in its checkout) is ended instead
+ * (`endUnopened`). While another process holds the database's write lock the open stops before its first write, which
+ * would wait for it up to 5 s on the daemon's thread, and is tried again (`retryResume`), its scans still queued, as an
+ * open session's claim waits for the lock. Another failure is reported, and the scans queued for a session still
+ * suspended fail with it (`failQueuedScans`), as an open session's do when its evaluator cannot open.
+ */
+async function resumeSuspended(state: EngineRoutingState, sessionId: string, now: () => number): Promise<void> {
+  const entry = state.suspended.get(sessionId);
+  if (entry === undefined) return;
+  const { runtimeKey, runtimeOptions, suspension } = entry;
+  keepRuntime(state, runtimeKey);
+  const resuming = state.lanes.run(laneOf(runtimeKey, sessionId), async () => {
+    // Asked again in the lane: an end that ran first has closed the session's record, which must stay closed.
+    if (state.suspended.get(sessionId) !== entry) return;
+    const reason = readingStartStates(suspension.databasePath, database => unopenable(entry, database));
+    if (reason !== undefined) {
+      endUnopened(state, entry, reason);
+      retireUnusedRuntime(state, runtimeKey);
+      return;
+    }
+    try {
+      // A runtime made again opens its stores, each of which writes.
+      if (!state.runtimes.has(runtimeKey)) failWhileWriteLocked(suspension.databasePath);
+      const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
+      noteSessionUse(state, sessionId, runtimeKey, now());
+      await runtime.resumeSession(suspension.descriptor);
+    } catch (error) {
+      if (!isBusy(error) || state.suspended.get(sessionId) !== entry) throw error;
+      state.lastEventAt.delete(laneOf(runtimeKey, sessionId));
+      releaseSessionRuntime(state, sessionId, runtimeKey);
+      retryResume(state, sessionId, now);
+    }
+  });
+  track(state, resuming);
+  try {
+    await resuming;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`rerail: opening quiet session ${sessionId} again failed: ${reason}\n`);
+    if (state.suspended.get(sessionId) === entry) failScans(suspension, reason);
+  }
+}
+
+/**
+ * Opens `sessionId` again (`resumeSuspended`) in `RESUME_RETRY_MS`, once however often it is asked meanwhile: its open
+ * met another process's write lock. A session no longer suspended by then is left alone; the service's close drops the
+ * timer.
+ */
+function retryResume(state: EngineRoutingState, sessionId: string, now: () => number): void {
+  if (state.resumeRetries.has(sessionId)) return;
+  const timer = setTimeout(() => {
+    state.resumeRetries.delete(sessionId);
+    void resumeSuspended(state, sessionId, now);
+  }, RESUME_RETRY_MS);
+  timer.unref();
+  state.resumeRetries.set(sessionId, timer);
+}
+
+/**
+ * Ends the suspended session of `entry`, which can no longer open again for `reason` (`unopenable`), at the time it went
+ * quiet, as an idle close that ends it would have, once its queued scans have failed, saying why. Its next event, should
+ * one come, opens it again.
+ */
+function endUnopened(state: EngineRoutingState, entry: SuspendedEntry, reason: string): void {
+  const { suspension } = entry;
+  state.suspended.delete(suspension.descriptor.sessionId);
+  failScans(suspension, reason);
+  endEntries([entry]);
+}
+
+/** Fails the scans queued for a suspended session that could not be opened again (`failQueuedScans`); a failure is reported. */
+function failScans(suspension: SessionSuspension, reason: string): void {
+  try {
+    failQueuedScans(suspension, reason);
+  } catch (error) {
+    process.stderr.write(`rerail: failing the scans of quiet session ${suspension.descriptor.sessionId} failed: ${error instanceof Error ? error.message : String(error)}\n`);
+  }
+}
+
+/**
+ * Ends every session still suspended as the service closes, as closing a runtime ends each session open in it: a
+ * suspended session is live only while its daemon runs. Each record ends when its session was suspended, the last the
+ * daemon heard of it.
+ */
+function endSuspended(state: EngineRoutingState): void {
+  const entries = [...state.suspended.values()];
+  state.suspended.clear();
+  endEntries(entries);
+}
+
+/**
+ * Ends `sessionId`'s record when it is still suspended after its end came, which its runtime did not open it for: at
+ * the time the end came, as the runtime ends an open session's.
+ */
+function endIfSuspended(state: EngineRoutingState, sessionId: string): void {
+  const entry = state.suspended.get(sessionId);
+  if (entry === undefined) return;
+  state.suspended.delete(sessionId);
+  endEntries([entry], Date.now());
+}
+
+/**
+ * Ends the suspended sessions of `entries` (`endSuspendedSessions`), each in the database that records it, at `endedAt`
+ * or else when each was suspended; a failure is reported.
+ */
+function endEntries(entries: readonly SuspendedEntry[], endedAt?: number): void {
+  for (const [databasePath, grouped] of byDatabase(entries)) {
+    try {
+      endSuspendedSessions(databasePath, grouped.map(entry => entry.suspension), endedAt);
+    } catch (error) {
+      process.stderr.write(`rerail: ending quiet sessions failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+  }
+}
+
+/** `entries` by the database that records each one's session. */
+function byDatabase(entries: readonly SuspendedEntry[]): Map<string, SuspendedEntry[]> {
+  const grouped = new Map<string, SuspendedEntry[]>();
+  for (const entry of entries) {
+    const { databasePath } = entry.suspension;
+    grouped.set(databasePath, [...(grouped.get(databasePath) ?? []), entry]);
+  }
+  return grouped;
 }
 
 function runtimeInUse(state: EngineRoutingState, runtimeKey: string): boolean {
@@ -420,6 +746,7 @@ function disposeRuntime(state: EngineRoutingState, runtimeKey: string): void {
   const runtime = state.runtimes.get(runtimeKey);
   if (runtime === undefined) return;
   state.runtimes.delete(runtimeKey);
+  state.runtimeOptions.delete(runtimeKey);
   for (const [configuration, key] of state.runtimeKeysByConfiguration) if (key === runtimeKey) state.runtimeKeysByConfiguration.delete(configuration);
   const disposal = runtime.dispose().then(() => {
     collectGarbage();
@@ -430,6 +757,16 @@ function disposeRuntime(state: EngineRoutingState, runtimeKey: string): void {
   });
   state.pending.add(disposal);
   void disposal.then(() => state.pending.delete(disposal));
+}
+
+/**
+ * Closes every runtime, each whatever another's close does, and once all have settled rejects with the first failure:
+ * one failure no longer settles the service's close while the others still close their sessions.
+ */
+async function disposeAll(runtimes: Iterable<RerailRuntime>): Promise<void> {
+  const closed = await Promise.allSettled([...runtimes].map(runtime => runtime.dispose()));
+  const failed = closed.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failed !== undefined) throw failed.reason;
 }
 
 /**
@@ -687,6 +1024,9 @@ export function engineWorktreeWalks(): RepositoryWorktreeWalks {
 
 export async function startEngineService(options: EngineServiceOptions): Promise<EngineService> {
   if (!isNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
+  const databasePath = resolvePath(options.databasePath ?? defaultRerailDatabasePath());
+  // Before any runtime registers an owner: every row this service's runtimes write names it.
+  const ownerLock = holdOwnerLock(databasePath);
   const routing: EngineRoutingState = {
     runtimes: new Map(),
     runtimeKeysBySession: new Map(),
@@ -697,11 +1037,16 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     hookRequests: new WeakMap(),
     idle: new Map(),
     idleRuntimeMs: options.idleRuntimeMs ?? IDLE_RUNTIME_MS,
+    runtimeOptions: new Map(),
+    suspended: new Map(),
+    resumeRetries: new Map(),
+    ownerLockId: ownerLock.id,
+    databasePath,
     worktreeWalks: options.worktreeWalks ?? engineWorktreeWalks(),
   };
   // Walks a caller gave are the caller's to close.
   const closeWalks = options.worktreeWalks === undefined ? () => routing.worktreeWalks.close() : () => undefined;
-  const sweepIdleSessions = (): Promise<void> => closeIdleSessions(routing, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
+  const sweepIdleSessions = (): Promise<void> => sweepIdle(routing, options, databasePath);
   const server = createServer(async (incoming, response) => {
     response.setHeader("Content-Type", "application/json");
     if (incoming.method === "POST" && incoming.url === ENGINE_PROOF_PATH && options.accessToken !== undefined) {
@@ -745,8 +1090,11 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     ingest: (event, configuration) => routeEngineEvent(withHookRequest(routing, event), configuration, options, routing),
     openRuntimes: () => routing.runtimes.size,
     closeIdleSessions: sweepIdleSessions,
+    resumeSession: sessionId => resumeSuspended(routing, sessionId, options.now ?? Date.now),
     async close() {
       clearInterval(idleSweep);
+      for (const timer of routing.resumeRetries.values()) clearTimeout(timer);
+      routing.resumeRetries.clear();
       try {
         // Every hook whose request has arrived gets its answer, with the block or steer in it, and its event is recorded,
         // the ones waiting behind a running event too. The close ends once the last of those connections has: its server
@@ -762,10 +1110,21 @@ export async function startEngineService(options: EngineServiceOptions): Promise
         } finally {
           stopLooking();
         }
-        await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
+        await disposeAll(routing.runtimes.values());
       } finally {
-        // The engine's watch thread and its handles go however the sessions' close went.
-        closeWalks();
+        // Also when the server's or a runtime's close failed: a suspended session left open would read as live with no
+        // daemon. Its lock goes once its sessions have ended, and its file stays, so a later sweep ends any session a
+        // failed close left open (`OwnerLock.release`). The engine's watch thread and its handles go however the sessions'
+        // close went.
+        try {
+          endSuspended(routing);
+        } finally {
+          try {
+            closeWalks();
+          } finally {
+            ownerLock.release();
+          }
+        }
       }
     },
   };
@@ -782,10 +1141,37 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
     } finally {
       closeWalks();
+      ownerLock.release();
     }
     throw error;
   }
+  // In the same turn as the listen, before any request is read: a session this service opens is its own.
+  endAbandonedSessions(databasePath, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
   return engineService;
+}
+
+/**
+ * Ends the sessions a daemon that ended without its stop left open in the service's database: one stopped by a machine
+ * restart, its heap limit or a kill ends none of the sessions it held or had suspended while quiet, and no later daemon
+ * holds them, so each read as open for good, and as owned while another process held its pid. Each ends at the idle
+ * limit after it was last heard from, as the idle close would have ended it, and at the latest now
+ * (`SqliteAuditControlStore.endSessionsOfEndedOwners`); then the lock files of the services that ended are removed,
+ * each once no open session's row names it (`forgetFreedOwnerLocks`). A database not made yet holds none. A failure is
+ * reported, and the service runs all the same.
+ */
+function endAbandonedSessions(databasePath: string, idleMs: number, now: () => number): void {
+  if (!existsSync(databasePath)) return;
+  let store: SqliteAuditControlStore | undefined;
+  try {
+    const controls = new SqliteAuditControlStore(databasePath);
+    store = controls;
+    controls.endSessionsOfEndedOwners(idleMs, now());
+    forgetFreedOwnerLocks(databasePath, lockId => controls.namesOwnerLock(lockId));
+  } catch (error) {
+    process.stderr.write(`rerail: ending the sessions a stopped daemon left open failed: ${error instanceof Error ? error.message : String(error)}\n`);
+  } finally {
+    store?.close();
+  }
 }
 
 export async function ingestEngineEvent(

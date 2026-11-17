@@ -495,7 +495,11 @@ export const operations: readonly Operation[] = [
     handler: (stores, input, caller) => {
       requireSession(stores, caller, input.sessionId);
       const { sessionId, ...request } = input;
-      return stores.auditControls().requestAudit(sessionId, request);
+      const created = stores.auditControls().requestAudit(sessionId, request);
+      // A session the daemon suspended while it was quiet keeps its owner, so its scan queues; it opens again to run it
+      // now, as an open session would. The answer does not wait for that: it reads the session's ledger back.
+      if (created.status === "queued") stores.resumeSession?.(sessionId);
+      return created;
     },
   }),
   defineOperation({

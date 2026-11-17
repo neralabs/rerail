@@ -1,0 +1,69 @@
+name: Pull request issue labels
+
+# A pull request takes the labels of the issues it closes: the issues GitHub lists under the pull request's
+# "Development" links, which a closing keyword in the description (`Fixes #123`) or a link from the sidebar adds. It
+# runs when the pull request is opened, reopened or edited, so a `Fixes #123` added to the description later still
+# counts. A link from the sidebar alone is picked up only at the next of those events, and a label added to an issue
+# after its pull request is open is not carried over.
+#
+# Labels are only ever added, never removed, so a label set by hand stays. A label taken off by hand that a closing
+# issue still carries comes back at the next edit: take it off the issue instead. Only issues in this repository count: a
+# link to another repository's issue would name labels this one may not have. SKIP_LABELS lists the labels that
+# describe where an issue stands in triage rather than what the change is, which a pull request never takes.
+#
+# pull_request_target, so it also runs for forks, with the base branch's workflow: it checks out nothing, runs nothing
+# of the pull request, reads only numbers and label names from the API, and holds only a GITHUB_TOKEN that can label
+# pull requests. No workflow here gates on a pull request label, so a label a fork's pull request takes from an issue
+# unlocks nothing.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited]
+
+permissions: {}
+
+concurrency:
+  group: pr-issue-labels-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  labels:
+    name: Take the labels of the issues it closes
+    if: github.repository == 'neralabs/rerail'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: read
+      pull-requests: write
+    steps:
+      - name: Add the issues' labels the pull request lacks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          SKIP_LABELS: >-
+            ["needs-triage", "needs-info", "stale", "duplicate", "invalid", "wontfix", "question", "good first issue",
+            "help wanted", "known-issue", "trust-request"]
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2016 # literal $variables: GraphQL's, not the shell's
+          gh api graphql -F owner="${GITHUB_REPOSITORY%/*}" -F name="${GITHUB_REPOSITORY#*/}" -F pr="$PR" -f query='
+            query($owner: String!, $name: String!, $pr: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $pr) {
+                  labels(first: 100) { nodes { name } }
+                  closingIssuesReferences(first: 50) {
+                    nodes { number repository { nameWithOwner } labels(first: 100) { nodes { name } } }
+                  }
+                }
+              }
+            }' > "$RUNNER_TEMP/pr.json"
+          jq -c --arg repo "$GITHUB_REPOSITORY" --argjson skip "$SKIP_LABELS" '
+            .data.repository.pullRequest
+            | [.closingIssuesReferences.nodes[] | select(.repository.nameWithOwner == $repo)] as $issues
+            | ([$issues[].labels.nodes[].name] | unique) - $skip - [.labels.nodes[].name]
+            | {issues: [$issues[].number], labels: .}
+          ' "$RUNNER_TEMP/pr.json" > "$RUNNER_TEMP/plan.json"
+          echo "pull request #$PR: $(jq -c . "$RUNNER_TEMP/plan.json")"
+          if [ "$(jq '.labels | length' "$RUNNER_TEMP/plan.json")" -eq 0 ]; then exit 0; fi
+          jq '{labels}' "$RUNNER_TEMP/plan.json" \
+            | gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/labels" --input - --silent
