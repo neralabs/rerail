@@ -134,7 +134,7 @@ def main(argv):
     job = {"cwd": os.path.join(CHECKOUT, "native"), "argv": [relax, "test", "--live"] + argv, "env": env, "nice": 10,
            "map": [CHECKOUT, relax, home] + ([os.path.realpath(std)] if std else []),
            "nofile": resource.getrlimit(resource.RLIMIT_NOFILE)[0]}
-    remote = farm.on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
+    remote = farm.agent_exec(job)
     proc = subprocess.Popen(farm.ssh(host, remote, "live"), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, bufsize=1)
     pushed = [None]

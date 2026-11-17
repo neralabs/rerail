@@ -61,6 +61,11 @@ nice -n 19 cargo nextest run --lib --profile gate              # everything: a p
 nice -n 19 cargo nextest run --lib --ignore-default-filter NAME  # one slow test by name
 ```
 
+On a machine with the build farm (below), run these through `scripts/dev/test-remote -- cargo nextest
+run …` by default: the hosts take several test commands each at once, in a warm target directory per
+checkout, and this machine stays free for the edit loop. A build here prints when a host has a free
+test slot. Run tests here only when no host is usable (test-remote then runs them here itself).
+
 A test that takes 20 s or more belongs in the slow tier (the default profile's
 `default-filter`). Tests that read the packs' test data need it pulled first
 (`npm run fixtures:pull`); without it they fail, which says nothing about the change.

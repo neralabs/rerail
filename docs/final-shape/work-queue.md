@@ -589,7 +589,14 @@ pass.
       each, rows identical to h1 (1,334); the frames sweep finishes in every run's process (50 ms an edit); no free
       pages left behind. (Locally the build's cold run did not finish at nice 19 under a load of 60.) The m3's edits
       cost 15.5 s CPU, against 5.6–6.1 s for local h4–h5 on the long-lived store; cold runs cost the same CPU on
-      both (85–93 s). Not traced; instruction counts do not compare between the two machines.
+      both (85–93 s).
+    - **Edits from a fresh store cost 4× the local ones** (2026-11-16, one binary, isolated state: its own store,
+      `RERAIL_COSTS` and `RERAIL_IMAGE_STORE`, `tmp/m/ep2r/go.sh`): 217–219 G an edit on the m3 and the m1max alike
+      (15.7 s and 18 s CPU), rows identical, against 52.8–54.9 G for local h4–h5 on ep2's long-lived store with an
+      older build. Not the machine (the two hosts agree within 1%), not the cost store (an empty one, or a copy of
+      the local 151 MB one: the same). Left: the long-lived store's history, or code since h4–h5's build. Settled by
+      one local run on the long-lived store with the current binary (cold, then two edits), when the load allows: 55
+      G means a fresh store lacks something worth finding; 217 G means a regression since h4–h5.
 
 ### Q20. After the hub's merge, an edit's kept inputs swing between missing and costing 85 G
 

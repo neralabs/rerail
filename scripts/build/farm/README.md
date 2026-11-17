@@ -146,6 +146,23 @@ nor one a Relax process runs in: scripts/dev/relax/README.md). Each target
 directory's runs are logged in `~/Library/Caches/rerail-farm/tidy/<key>.log`.
 `RERAIL_FARM_NO_TIDY=1` keeps a build from starting one.
 
+A host's target directories (`test-remote`, `live-test-remote` and `quiet-run` build there) are
+cleaned the same way: when a command ends, the host's agent runs the cleaner on its target directory
+(its text goes with the job), detached at nice 19, at most once every 15 minutes per directory, and
+logs it in that directory's `.cleaned.log`. A profile directory another command builds in is skipped
+and cleaned when that command ends. Its only Relax home is the farm's own, under the root. Before
+farm 17 nothing did this: one host's target directories reached 207 GB, 195 GB of it leftovers, and
+the host fell under `min_free_gb` (2026-11-16).
+
+The root is pruned too, after a command ends, at most hourly, logged in `root.log` beside it: what
+no run has read or written for 3 days goes (a directory none of whose files was used goes whole; in
+a directory still in use, only the copies the mirror sent, which it sends again when a run needs
+them; a file a command wrote stays while its directory is in use). While the host has less than
+`min_free_gb` + 40 GB free, the same goes at 1 day idle, then 6 hours. The farm's Relax home is left
+to the cleaner. A compile that misses a pruned copy fails once, runs on the build machine, and the
+host is asked what it holds. Before farm 18 the root kept every copy and run output (95 GB on one
+host).
+
 ## Told at the build
 
 What an agent does wrong is printed in its own build output, not left for someone to find. At the
@@ -159,9 +176,8 @@ features and the earlier command, and repeated at the checkout's builds for 3 ho
 in `~/Library/Caches/rerail-farm/variants/`), and the checkout's latest `diagnose --brief`
 findings (another toolchain or cargo configuration than the active worktrees, profile settings that
 differ, scripts that set the variables builds share), each with what to do. A cargo command that
-runs a whole test tier here (`cargo test` or `cargo nextest run` with no filter, or the gate
-profile) while a test host has 4 cores or more to spare is told the `test-remote` command that runs
-it there (`RERAIL_FARM_TESTS_HERE=1` when it must run here). After a cleaner run, at most hourly per checkout, the job writes
+runs tests here (`cargo test` or `cargo nextest run`, filtered or not) while a test host has a free
+test slot is told the `test-remote` command that runs it there (`RERAIL_FARM_TESTS_HERE=1` when it must run here). After a cleaner run, at most hourly per checkout, the job writes
 those findings (`~/Library/Caches/rerail-farm/findings/<key>`). A build that
 turns the wrapper off (`RUSTC_WRAPPER=`) is stopped by `native/build.rs` instead, with the fix in
 its message. On a machine leased for a benchmark (Quiet runs, below), every build is told the
@@ -181,6 +197,7 @@ hosts, and everything compiles and tests here, as without the farm.
 | `name` | what ssh connects to (a `Host` entry of `~/.ssh/config`) |
 | `enabled` | `false` leaves a host out (default `true`) |
 | `tests` | whether `scripts/dev/test-remote` runs there (default `true`) |
+| `test_slots` | how many `test-remote` commands the host runs at once (default: a third of its cores). One at a time left a 16-core host mostly idle while commands queued for 25 minutes; a command waits only when every slot of every host is taken, and goes to whichever frees first. A checkout's second command goes to another host when one has a slot (its commands on one host share a target directory, which cargo builds in one at a time) |
 | `link` | the host's network interface the farm's traffic must arrive on (its fast link); unset: any |
 | `min_free_gb` | free disk a host needs (default 40) |
 | `max_rtt_ms` | the slowest round trip a host may have (default 150), for a host without `link` |
@@ -269,8 +286,10 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
   forgets: an agent is asked what it holds when it starts, a compile that read a stale file clears
   what was sent, and `test-remote` asks the host again for every file of the checkout before it runs.
   Nothing but the farm writes under the root, so nothing else makes what the mirror remembers wrong.
-- **Disk.** `test-remote`'s target directories (one per checkout, by a hash of its path) go after
-  14 unused days, and the least recently used go while the host has less than `min_free_gb` free.
+- **Disk.** `test-remote`'s target directories (one per checkout, by a hash of its path) are
+  cleaned after each command (above), go after 3 unused days, and the least recently used go while
+  the host has less than `min_free_gb` + 40 GB free: pruning only to `min_free_gb` left the host
+  just above it, and the next build took it under.
 
 `scripts/build/farm/status` probes every host now and prints whether it is usable and why not,
 with its round trip, throughput and free disk (`--json` for scripts; exit 1 when none is usable).

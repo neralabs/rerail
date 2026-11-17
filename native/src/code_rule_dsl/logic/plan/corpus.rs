@@ -10674,7 +10674,9 @@ pub mod tests {
         let record = super::observe(|o| o.run_record(&format!("git-files:{}", real.display())));
         // As `git_files` writes it: the overlays' count (eight bytes), then the files' list.
         let mut empty = 0u64.to_le_bytes().to_vec();
-        empty.extend(super::reuse::encode_lists(&[&[][..] as &[String]]));
+        // Typed apart: Relax's rustc does not infer `&[][..] as &[String]` (E0283), as cargo's does.
+        let no_files: &[String] = &[];
+        empty.extend(super::reuse::encode_lists(&[no_files]));
         assert_eq!(record.map(|(_, files)| files), Some(empty), "the empty answer is kept, with no overlay and no file");
         let _run = super::ObservedBatch::begin();
         assert_eq!(super::git_files(&root), None, "and answered from the record");
