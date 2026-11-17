@@ -1,19 +1,22 @@
 // scripts/release/core.mjs, core-paths.mjs and dist-tags.mjs: when core is released (what it ships changed since its
 // last tag), the version it takes, the changelog and version edits the Release pull request makes, the tag guard,
-// `next` kept from trailing `latest`, the refusal of a preview older than `latest`, and the check of a release's
-// dist-tags.
+// `next` kept from trailing `latest`, the refusal of a preview older than `latest`, the check of a release's
+// dist-tags, and the core range a pack must carry for what it ships, which the pack validation's check 5 and the
+// Release pull request both read.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import semver from "semver";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { changesPackage, coreChanges, lockChangesCore, matrixChanges, publishRetryRefusal, retrySummary, shipsWithCore } from "../../scripts/release/core-paths.mjs";
-import { CHANGE_TYPES, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, newChangelogEntries, nextCoreVersion, readChangelogEntries, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
+import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreBeforeFloor, coreFloor, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, isOpenRange, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
+import { linkFolder } from "../support/platform/links.ts";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -195,7 +198,7 @@ describe("releaseChangelog and changelogSection", () => {
         [".changelog/cli-c.md", null, "- No type."],
       ]);
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      removeFolderSync(root);
     }
   });
 
@@ -299,10 +302,10 @@ describe("release notes: the lead, the entries, and what a note may say", () => 
         // A copy of the scripts, since the check reads the checkout that holds it.
         cpSync(join(ROOT, "scripts", "release"), join(root, "scripts", "release"), { recursive: true });
         cpSync(join(ROOT, "scripts", "check", "check-internal-refs.mjs"), join(root, "scripts", "check", "check-internal-refs.mjs"));
-        symlinkSync(join(ROOT, "node_modules"), join(root, "node_modules"));
+        linkFolder(join(ROOT, "node_modules"), join(root, "node_modules"));
         const git = (...args) => execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { cwd: root, stdio: "ignore" });
         const write = (files) => {
-          rmSync(join(root, ".changelog"), { recursive: true, force: true });
+          removeFolderSync(join(root, ".changelog"));
           mkdirSync(join(root, ".changelog"));
           writeFileSync(join(root, ".changelog", "README.md"), "# Changelog entries\n");
           for (const [file, text] of Object.entries(files)) writeFileSync(join(root, ".changelog", file), text);
@@ -316,7 +319,7 @@ describe("release notes: the lead, the entries, and what a note may say", () => 
         write(after);
         return spawnSync(process.execPath, [join("scripts", "release", "core-changelog-check.mjs"), "base"], { cwd: root, encoding: "utf8" });
       } finally {
-        rmSync(root, { recursive: true, force: true });
+        removeFolderSync(root);
       }
     }
 
@@ -502,5 +505,112 @@ describe("raiseNext", () => {
   it("leaves a next already at the version, as a re-run finds it, or at a newer preview", async () => {
     expect(await run("0.1.0", "0.1.0")).toEqual({ moved: [], line: "@neralabs/rerail@0.1.0: next is 0.1.0, not older; left there" });
     expect((await run("0.1.1-next.1", "0.1.0")).moved).toEqual([]);
+  });
+});
+
+const coreRangeDirectories = [];
+afterEach(() => {
+  for (const directory of coreRangeDirectories.splice(0)) removeFolderSync(directory);
+});
+
+describe("coreFloor", () => {
+  const java = LANGUAGE_SINCE.get("java");
+
+  it("is undefined for a pack every core loads", () => {
+    expect(coreFloor([], ["python", "typescript", "vue"])).toBeUndefined();
+    expect(coreFloor([], [])).toBeUndefined();
+  });
+
+  it("is the release that first reads heldOff for a pack holding a rule off", () => {
+    expect(coreFloor(["ruff-b009-get-attr-with-constant"], ["python"])).toBe(HELD_OFF_SINCE);
+  });
+
+  it("is the release that first reads the language for a pack with a rule in one added since", () => {
+    expect(coreFloor([], ["python", "java"])).toBe(java);
+  });
+
+  it("is the newest of them for a pack with both", () => {
+    const newest = [HELD_OFF_SINCE, java].sort().at(-1);
+    expect(coreFloor(["held"], ["java"])).toBe(newest);
+  });
+});
+
+describe("admitsRefusingCore", () => {
+  it.each([
+    ["a core before the floor leaves the range alone", ">=0.1.0-0", "0.1.5", "0.1.4", false],
+    ["the release at the floor finds a range admitting older cores", ">=0.1.0-0", "0.1.5", "0.1.5", true],
+    ["a prerelease of it does too", ">=0.1.0-0", "0.1.5", "0.1.5-next.0", true],
+    ["a later release does too", ">=0.1.0-0", "0.1.5", "1.0.0", true],
+    ["a range starting at the floor's prereleases is fine", ">=0.1.5-0", "0.1.5", "0.1.5", false],
+    ["a range starting at the floor is fine", ">=0.1.5", "0.1.5", "0.1.5", false],
+    ["a pack with no floor is fine", ">=0.1.0-0", undefined, "1.0.0", false],
+  ])("%s", (_, range, floor, core, admits) => {
+    expect(admitsRefusingCore(range, floor, core)).toBe(admits);
+  });
+
+  it("is settled by the range the release writes", () => {
+    expect(raisedCoreRange("0.1.5")).toBe(">=0.1.5-0");
+    expect(admitsRefusingCore(raisedCoreRange("0.1.5"), "0.1.5", "0.1.5")).toBe(false);
+  });
+});
+
+describe("coreBeforeFloor", () => {
+  it("is true for a core older than the release that first loads the pack, and false from its prereleases on", () => {
+    expect(coreBeforeFloor("0.1.4", "0.1.5")).toBe(true);
+    expect(coreBeforeFloor("0.1.5-next.0", "0.1.5")).toBe(false);
+    expect(coreBeforeFloor("0.1.5", "0.1.5")).toBe(false);
+    expect(coreBeforeFloor("0.1.4", undefined)).toBe(false);
+  });
+});
+
+describe("isOpenRange", () => {
+  it.each([
+    [">=0.1.0-0", true],
+    [">=0.1.5", true],
+    [">= 1.2.3", true],
+    [">=0.1.0-0 <0.2.0", false],
+    [">=0.1.0-0||>=2.0.0", false],
+    [">=0.1.0-0 || >=2.0.0", false],
+    ["^0.1.0", false],
+    ["0.1.x", false],
+    ["*", false],
+    [">0.1.0", false],
+  ])("%s: %s", (range, open) => {
+    expect(isOpenRange(range)).toBe(open);
+  });
+});
+
+describe("heldOffRules", () => {
+  it("names the rules pack.json holds off, and none for a pack.json without rules", () => {
+    expect(heldOffRules({ rules: [{ id: "a" }, { id: "b", on: false, heldOff: "why" }] })).toEqual(["b"]);
+    expect(heldOffRules({})).toEqual([]);
+    expect(heldOffRules(undefined)).toEqual([]);
+  });
+});
+
+describe("shippedLanguages", () => {
+  function pack(documents) {
+    const directory = mkdtempSync(join(tmpdir(), "core-range-"));
+    coreRangeDirectories.push(directory);
+    for (const [path, text] of Object.entries(documents)) {
+      mkdirSync(join(directory, path, ".."), { recursive: true });
+      writeFileSync(join(directory, path), text);
+    }
+    return directory;
+  }
+
+  it("names every language its rule documents name, wherever it sits in them, once each and sorted", () => {
+    const directory = pack({
+      "rules/a.json": JSON.stringify({ clauses: [{ forbid: { ast: { language: "python" } } }, { define: { language: "java" } }] }),
+      "rules/nested/b.json": JSON.stringify({ clauses: [{ forbid: { ast: { language: "java" } } }] }),
+      "rules/notes.md": "language: rust",
+      "candidates/rules/c.json": JSON.stringify({ clauses: [{ forbid: { ast: { language: "vue" } } }] }),
+    });
+    expect(shippedLanguages(directory)).toEqual(["java", "python"]);
+  });
+
+  it("names none for a pack without rules, and skips a document that is not JSON", () => {
+    expect(shippedLanguages(pack({ "pack.json": "{}" }))).toEqual([]);
+    expect(shippedLanguages(pack({ "rules/broken.json": "{", "rules/a.json": JSON.stringify({ language: "php" }) }))).toEqual(["php"]);
   });
 });

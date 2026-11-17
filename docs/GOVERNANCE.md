@@ -44,6 +44,9 @@ Nera Software sets policy; maintainers decide within it, in the open.
   it. If disagreement persists, a majority decides and the issue records the outcome and why.
 - **Saying no.** A maintainer closes as `wontfix` or `duplicate` with a one-line reason, linking the original for a
   duplicate.
+- **Automated accounts.** A maintainer closes a pull request from an account that looks automated, with no person
+  behind it to reach, saying why and how to reach the maintainers
+  ([AI tools and automated accounts](../CONTRIBUTING.md#ai-tools-and-automated-accounts)).
 - **Asking again.** Dispute a decision on your issue, pull request or contributor request there. A maintainer other
   than the one who decided answers.
 - **Releases.** Core and packs publish only after one of the `release` environment's required reviewers, all

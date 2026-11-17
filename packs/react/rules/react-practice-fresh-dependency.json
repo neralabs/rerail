@@ -1,0 +1,1610 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-practice-fresh-dependency",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep values rebuilt on every render, such as filter or map results and the props object, out of effect, memo and callback dependency arrays.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/*.cy.*",
+      "**/__tests__/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/e2e/**",
+      "**/__mocks__/**",
+      "**/*.stories.*",
+      "**/*.story.*",
+      "**/__stories__/**",
+      "**/__fixtures__/**",
+      "**/fixtures/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.d.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "fd-fn": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "method_definition"
+              }
+            ]
+          },
+          "fd-named-component": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  },
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function"
+                  }
+                ],
+                "has": {
+                  "field": "name",
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "property_identifier"
+                    },
+                    {
+                      "kind": "shorthand_property_identifier_pattern"
+                    }
+                  ],
+                  "regex": "^[A-Z]"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  }
+                ],
+                "not": {
+                  "has": {
+                    "field": "name",
+                    "regex": "[\\s\\S]"
+                  }
+                },
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "field": "value",
+                          "kind": "variable_declarator",
+                          "has": {
+                            "field": "name",
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "property_identifier"
+                              },
+                              {
+                                "kind": "shorthand_property_identifier_pattern"
+                              }
+                            ],
+                            "regex": "^[A-Z]"
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "field": "right",
+                          "kind": "assignment_expression",
+                          "has": {
+                            "field": "left",
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "property_identifier"
+                              },
+                              {
+                                "kind": "shorthand_property_identifier_pattern"
+                              }
+                            ],
+                            "regex": "^[A-Z]"
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "field": "value",
+                          "kind": "pair",
+                          "has": {
+                            "field": "key",
+                            "not": {
+                              "kind": "computed_property_name"
+                            },
+                            "all": [
+                              {
+                                "any": [
+                                  {
+                                    "kind": "identifier"
+                                  },
+                                  {
+                                    "kind": "property_identifier"
+                                  },
+                                  {
+                                    "kind": "shorthand_property_identifier_pattern"
+                                  }
+                                ],
+                                "regex": "^[A-Z]"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "field": "right",
+                          "kind": "assignment_pattern",
+                          "has": {
+                            "field": "left",
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "property_identifier"
+                              },
+                              {
+                                "kind": "shorthand_property_identifier_pattern"
+                              }
+                            ],
+                            "regex": "^[A-Z]"
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "field": "right",
+                          "kind": "object_assignment_pattern",
+                          "has": {
+                            "field": "left",
+                            "any": [
+                              {
+                                "kind": "identifier"
+                              },
+                              {
+                                "kind": "property_identifier"
+                              },
+                              {
+                                "kind": "shorthand_property_identifier_pattern"
+                              }
+                            ],
+                            "regex": "^[A-Z]"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "kind": "method_definition",
+                "inside": {
+                  "kind": "object"
+                },
+                "has": {
+                  "field": "name",
+                  "not": {
+                    "kind": "computed_property_name"
+                  },
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "property_identifier"
+                        },
+                        {
+                          "kind": "shorthand_property_identifier_pattern"
+                        }
+                      ],
+                      "regex": "^[A-Z]"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "fd-wrapped-component": {
+            "not": {
+              "has": {
+                "field": "name",
+                "regex": "[\\s\\S]"
+              }
+            },
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^(?:memo|forwardRef|observer)$"
+                    },
+                    {
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "matches": "fd-react-object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "property",
+                            "regex": "^(?:memo|forwardRef)$"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "fd-memo-call": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:memo|observer)$"
+                },
+                {
+                  "kind": "member_expression",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "matches": "fd-react-object"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^memo$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "kind": "identifier",
+                    "regex": "^connect$"
+                  }
+                }
+              ]
+            }
+          },
+          "fd-component": {
+            "any": [
+              {
+                "matches": "fd-named-component"
+              },
+              {
+                "matches": "fd-wrapped-component"
+              }
+            ]
+          },
+          "fd-react-object": {
+            "kind": "identifier",
+            "any": [
+              {
+                "regex": "^React$",
+                "resolves": {
+                  "global": [
+                    "React"
+                  ]
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "any": [
+                        {
+                          "kind": "import_clause"
+                        },
+                        {
+                          "kind": "namespace_import"
+                        }
+                      ],
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "fd-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "fd-react-source": {
+            "kind": "string",
+            "has": {
+              "kind": "string_fragment",
+              "regex": "^(?i:react)$"
+            }
+          },
+          "fd-hook-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^(?:useEffect|useLayoutEffect|useMemo|useCallback)$",
+                "resolves": {
+                  "global": [
+                    "useEffect",
+                    "useLayoutEffect",
+                    "useMemo",
+                    "useCallback"
+                  ]
+                },
+                "pattern": "$HK"
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "has": {
+                        "field": "name",
+                        "regex": "^(?:useEffect|useLayoutEffect|useMemo|useCallback)$",
+                        "pattern": "$HK"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "fd-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "fd-react-object"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(?:useEffect|useLayoutEffect|useMemo|useCallback)$",
+                      "pattern": "$HK"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "identifier",
+                "regex": "^(?:useEffect|useLayoutEffect|useMemo|useCallback)$",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "value",
+                            "matches": "fd-react-object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "name",
+                            "kind": "object_pattern"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                "pattern": "$HK"
+              }
+            ]
+          },
+          "fd-memo-hook-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^(?:useMemo|useCallback)$",
+                "resolves": {
+                  "global": [
+                    "useMemo",
+                    "useCallback"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "has": {
+                        "field": "name",
+                        "regex": "^(?:useMemo|useCallback)$"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "fd-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "fd-react-object"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(?:useMemo|useCallback)$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "identifier",
+                "regex": "^(?:useMemo|useCallback)$",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "value",
+                            "matches": "fd-react-object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "name",
+                            "kind": "object_pattern"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "fd-dep": {
+            "inside": {
+              "kind": "array",
+              "nthChild": {
+                "position": 2,
+                "ofRule": {
+                  "not": {
+                    "kind": "comment"
+                  }
+                }
+              },
+              "inside": {
+                "kind": "arguments",
+                "inside": {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "pattern": "$HOOK",
+                    "matches": "fd-hook-callee"
+                  }
+                }
+              }
+            }
+          },
+          "fd-fresh-array-call": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "kind": "member_expression",
+              "any": [
+                {
+                  "has": {
+                    "field": "property",
+                    "kind": "property_identifier",
+                    "regex": "^(?:filter|map|flatMap|split)$",
+                    "pattern": "$M"
+                  }
+                },
+                {
+                  "pattern": "$M",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^Object$",
+                        "resolves": {
+                          "global": [
+                            "Object"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "kind": "property_identifier",
+                        "regex": "^(?:keys|values|entries)$"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "pattern": "$M",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^Array$",
+                        "resolves": {
+                          "global": [
+                            "Array"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "kind": "property_identifier",
+                        "regex": "^from$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "fd-fresh-object-call": {
+            "kind": "call_expression",
+            "any": [
+              {
+                "has": {
+                  "field": "function",
+                  "kind": "member_expression",
+                  "pattern": "$M",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "object",
+                        "kind": "identifier",
+                        "regex": "^Object$",
+                        "resolves": {
+                          "global": [
+                            "Object"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "kind": "property_identifier",
+                        "regex": "^fromEntries$"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "member_expression",
+                      "pattern": "$M",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "kind": "identifier",
+                            "regex": "^Object$",
+                            "resolves": {
+                              "global": [
+                                "Object"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^assign$"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "has": {
+                        "nthChild": {
+                          "position": 1,
+                          "ofRule": {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          }
+                        },
+                        "kind": "object"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "fd-fresh-array": {
+            "any": [
+              {
+                "matches": "fd-fresh-array-call"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "non_null_expression"
+                  }
+                ],
+                "has": {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "fd-fresh-array"
+                }
+              }
+            ]
+          },
+          "fd-fresh-object": {
+            "any": [
+              {
+                "matches": "fd-fresh-object-call"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "non_null_expression"
+                  }
+                ],
+                "has": {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "fd-fresh-object"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "derived-collection",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$X",
+            "all": [
+              {
+                "matches": "fd-dep"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "fd-fn"
+                  },
+                  "matches": "fd-fn",
+                  "has": {
+                    "field": "body",
+                    "kind": "statement_block",
+                    "has": {
+                      "kind": "lexical_declaration",
+                      "regex": "^const\\b",
+                      "has": {
+                        "kind": "variable_declarator",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "name",
+                              "kind": "identifier",
+                              "pattern": "$X"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "value",
+                              "matches": "fd-fresh-array"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          },
+          "transform": {
+            "HV1": {
+              "replace": {
+                "source": "$HK",
+                "replace": "^use(?:Layout)?Effect$",
+                "by": "reruns"
+              }
+            },
+            "HV2": {
+              "replace": {
+                "source": "$HV1",
+                "replace": "^useMemo$",
+                "by": "recomputes"
+              }
+            },
+            "HVERB": {
+              "replace": {
+                "source": "$HV2",
+                "replace": "^useCallback$",
+                "by": "returns a new function"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "FRESH_DERIVED_DEPENDENCY",
+        "message": "$X is a new array from $M() on every render, so this $HOOK $HVERB each time; build $X inside useMemo, or depend on the values it is built from."
+      }
+    },
+    {
+      "id": "derived-object",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$X",
+            "all": [
+              {
+                "matches": "fd-dep"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "fd-fn"
+                  },
+                  "matches": "fd-fn",
+                  "has": {
+                    "field": "body",
+                    "kind": "statement_block",
+                    "has": {
+                      "kind": "lexical_declaration",
+                      "regex": "^const\\b",
+                      "has": {
+                        "kind": "variable_declarator",
+                        "all": [
+                          {
+                            "has": {
+                              "field": "name",
+                              "kind": "identifier",
+                              "pattern": "$X"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "value",
+                              "matches": "fd-fresh-object"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          },
+          "transform": {
+            "HV1": {
+              "replace": {
+                "source": "$HK",
+                "replace": "^use(?:Layout)?Effect$",
+                "by": "reruns"
+              }
+            },
+            "HV2": {
+              "replace": {
+                "source": "$HV1",
+                "replace": "^useMemo$",
+                "by": "recomputes"
+              }
+            },
+            "HVERB": {
+              "replace": {
+                "source": "$HV2",
+                "replace": "^useCallback$",
+                "by": "returns a new function"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "FRESH_DERIVED_OBJECT_DEPENDENCY",
+        "message": "$X is a new object from $M() on every render, so this $HOOK $HVERB each time; build $X inside useMemo, or depend on the values it is built from."
+      }
+    },
+    {
+      "id": "whole-props",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$P",
+            "all": [
+              {
+                "matches": "fd-dep"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "fd-fn"
+                  },
+                  "matches": "fd-component",
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "arrow_function",
+                          "has": {
+                            "field": "parameter",
+                            "kind": "identifier",
+                            "pattern": "$P"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "parameters",
+                            "kind": "formal_parameters",
+                            "all": [
+                              {
+                                "has": {
+                                  "nthChild": {
+                                    "position": 1,
+                                    "ofRule": {
+                                      "not": {
+                                        "kind": "comment"
+                                      }
+                                    }
+                                  },
+                                  "any": [
+                                    {
+                                      "kind": "identifier",
+                                      "pattern": "$P"
+                                    },
+                                    {
+                                      "kind": "required_parameter",
+                                      "has": {
+                                        "field": "pattern",
+                                        "kind": "identifier",
+                                        "pattern": "$P"
+                                      },
+                                      "not": {
+                                        "any": [
+                                          {
+                                            "has": {
+                                              "field": "value",
+                                              "regex": "[\\s\\S]"
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "field": "type",
+                                              "kind": "type_annotation",
+                                              "has": {
+                                                "any": [
+                                                  {
+                                                    "kind": "array_type"
+                                                  },
+                                                  {
+                                                    "kind": "tuple_type"
+                                                  },
+                                                  {
+                                                    "kind": "function_type"
+                                                  },
+                                                  {
+                                                    "kind": "predefined_type",
+                                                    "regex": "^(?:string|number|boolean|symbol|bigint)$"
+                                                  },
+                                                  {
+                                                    "kind": "literal_type"
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "has": {
+                                    "nthChild": {
+                                      "position": 3,
+                                      "ofRule": {
+                                        "not": {
+                                          "kind": "comment"
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "not": {
+                                  "has": {
+                                    "nthChild": {
+                                      "position": 2,
+                                      "ofRule": {
+                                        "not": {
+                                          "kind": "comment"
+                                        }
+                                      }
+                                    },
+                                    "not": {
+                                      "any": [
+                                        {
+                                          "kind": "identifier",
+                                          "regex": "(?:ref|Ref)$"
+                                        },
+                                        {
+                                          "kind": "required_parameter",
+                                          "has": {
+                                            "field": "pattern",
+                                            "kind": "identifier",
+                                            "regex": "(?:ref|Ref)$"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": {
+                      "matches": "fd-fn"
+                    },
+                    "matches": "fd-fn",
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "arguments",
+                          "inside": {
+                            "matches": "fd-memo-call"
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "arguments",
+                          "inside": {
+                            "kind": "call_expression",
+                            "inside": {
+                              "kind": "arguments",
+                              "inside": {
+                                "matches": "fd-memo-call"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "field": "name",
+                              "kind": "identifier",
+                              "pattern": "$C"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "field": "value",
+                              "kind": "variable_declarator",
+                              "has": {
+                                "field": "name",
+                                "kind": "identifier",
+                                "pattern": "$C"
+                              }
+                            }
+                          }
+                        ],
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "program",
+                          "has": {
+                            "stopBy": "end",
+                            "matches": "fd-memo-call",
+                            "has": {
+                              "field": "arguments",
+                              "has": {
+                                "nthChild": {
+                                  "position": 1,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                },
+                                "kind": "identifier",
+                                "pattern": "$C"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "array",
+                    "inside": {
+                      "kind": "arguments",
+                      "has": {
+                        "nthChild": {
+                          "position": 1,
+                          "ofRule": {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          }
+                        },
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "identifier",
+                          "pattern": "$P",
+                          "not": {
+                            "any": [
+                              {
+                                "inside": {
+                                  "field": "object",
+                                  "any": [
+                                    {
+                                      "kind": "member_expression"
+                                    },
+                                    {
+                                      "kind": "subscript_expression"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "field": "value",
+                                  "kind": "variable_declarator",
+                                  "has": {
+                                    "field": "name",
+                                    "kind": "object_pattern"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          },
+          "transform": {
+            "HV1": {
+              "replace": {
+                "source": "$HK",
+                "replace": "^use(?:Layout)?Effect$",
+                "by": "reruns"
+              }
+            },
+            "HV2": {
+              "replace": {
+                "source": "$HV1",
+                "replace": "^useMemo$",
+                "by": "recomputes"
+              }
+            },
+            "HVERB": {
+              "replace": {
+                "source": "$HV2",
+                "replace": "^useCallback$",
+                "by": "returns a new function"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "FRESH_PROPS_DEPENDENCY",
+        "message": "$P is a new object each time the parent renders, so this $HOOK $HVERB with it; destructure the $P fields it uses above the hook and list those instead of $P."
+      }
+    },
+    {
+      "id": "whole-props-passed-on",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$P",
+            "all": [
+              {
+                "matches": "fd-dep"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "fd-fn"
+                  },
+                  "matches": "fd-component",
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "kind": "arrow_function",
+                          "has": {
+                            "field": "parameter",
+                            "kind": "identifier",
+                            "pattern": "$P"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "parameters",
+                            "kind": "formal_parameters",
+                            "all": [
+                              {
+                                "has": {
+                                  "nthChild": {
+                                    "position": 1,
+                                    "ofRule": {
+                                      "not": {
+                                        "kind": "comment"
+                                      }
+                                    }
+                                  },
+                                  "any": [
+                                    {
+                                      "kind": "identifier",
+                                      "pattern": "$P"
+                                    },
+                                    {
+                                      "kind": "required_parameter",
+                                      "has": {
+                                        "field": "pattern",
+                                        "kind": "identifier",
+                                        "pattern": "$P"
+                                      },
+                                      "not": {
+                                        "any": [
+                                          {
+                                            "has": {
+                                              "field": "value",
+                                              "regex": "[\\s\\S]"
+                                            }
+                                          },
+                                          {
+                                            "has": {
+                                              "field": "type",
+                                              "kind": "type_annotation",
+                                              "has": {
+                                                "any": [
+                                                  {
+                                                    "kind": "array_type"
+                                                  },
+                                                  {
+                                                    "kind": "tuple_type"
+                                                  },
+                                                  {
+                                                    "kind": "function_type"
+                                                  },
+                                                  {
+                                                    "kind": "predefined_type",
+                                                    "regex": "^(?:string|number|boolean|symbol|bigint)$"
+                                                  },
+                                                  {
+                                                    "kind": "literal_type"
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "not": {
+                                  "has": {
+                                    "nthChild": {
+                                      "position": 3,
+                                      "ofRule": {
+                                        "not": {
+                                          "kind": "comment"
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "not": {
+                                  "has": {
+                                    "nthChild": {
+                                      "position": 2,
+                                      "ofRule": {
+                                        "not": {
+                                          "kind": "comment"
+                                        }
+                                      }
+                                    },
+                                    "not": {
+                                      "any": [
+                                        {
+                                          "kind": "identifier",
+                                          "regex": "(?:ref|Ref)$"
+                                        },
+                                        {
+                                          "kind": "required_parameter",
+                                          "has": {
+                                            "field": "pattern",
+                                            "kind": "identifier",
+                                            "regex": "(?:ref|Ref)$"
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": {
+                      "matches": "fd-fn"
+                    },
+                    "matches": "fd-fn",
+                    "any": [
+                      {
+                        "inside": {
+                          "kind": "arguments",
+                          "inside": {
+                            "matches": "fd-memo-call"
+                          }
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "arguments",
+                          "inside": {
+                            "kind": "call_expression",
+                            "inside": {
+                              "kind": "arguments",
+                              "inside": {
+                                "matches": "fd-memo-call"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "has": {
+                              "field": "name",
+                              "kind": "identifier",
+                              "pattern": "$C"
+                            }
+                          },
+                          {
+                            "inside": {
+                              "field": "value",
+                              "kind": "variable_declarator",
+                              "has": {
+                                "field": "name",
+                                "kind": "identifier",
+                                "pattern": "$C"
+                              }
+                            }
+                          }
+                        ],
+                        "inside": {
+                          "stopBy": "end",
+                          "kind": "program",
+                          "has": {
+                            "stopBy": "end",
+                            "matches": "fd-memo-call",
+                            "has": {
+                              "field": "arguments",
+                              "has": {
+                                "nthChild": {
+                                  "position": 1,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                },
+                                "kind": "identifier",
+                                "pattern": "$C"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "array",
+                  "inside": {
+                    "kind": "arguments",
+                    "has": {
+                      "nthChild": {
+                        "position": 1,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      },
+                      "has": {
+                        "stopBy": "end",
+                        "kind": "identifier",
+                        "pattern": "$P",
+                        "not": {
+                          "any": [
+                            {
+                              "inside": {
+                                "field": "object",
+                                "any": [
+                                  {
+                                    "kind": "member_expression"
+                                  },
+                                  {
+                                    "kind": "subscript_expression"
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "inside": {
+                                "field": "value",
+                                "kind": "variable_declarator",
+                                "has": {
+                                  "field": "name",
+                                  "kind": "object_pattern"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "array",
+                  "inside": {
+                    "kind": "arguments",
+                    "inside": {
+                      "kind": "call_expression",
+                      "has": {
+                        "field": "function",
+                        "matches": "fd-memo-hook-callee"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "FRESH_PROPS_MEMO",
+        "message": "$P is a new object each time the parent renders, so this $HOOK rarely reuses its result; destructure the $P fields it needs above the hook, then pass and list those."
+      }
+    }
+  ]
+}

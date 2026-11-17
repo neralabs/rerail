@@ -1,8 +1,8 @@
 // Writes the React pack from react-specs.mjs: each spec's policy, packs/react/rules/<id>.json (ported) or
 // packs/react/candidates/rules/<id>.json (`candidate: true`), and packs/react/conformance.json, the manifest that lists
-// every port: the specs and the hand-written HAND_WRITTEN ports. The conformance runner gates the ports under rules/
-// and scores and reports the candidates without gating them. The documents are listed in scripts/generate/README.md;
-// edit the specs, not the JSON.
+// every port (the specs and the hand-written HAND_WRITTEN ports) and the pack's own rules (OWN, written by hand, no
+// upstream). The conformance runner gates the ports under rules/ and scores and reports the candidates without gating
+// them. The documents are listed in scripts/generate/README.md; edit the specs, not the JSON.
 // Each violation carries the suppression comments its rule honours: `eslint-disable` for the upstream rule, Oxlint
 // 1.88.0's for a rule its `react` plugin implements (OXLINT_REACT), and Biome's for the rules Biome marks the same
 // (conformance/biome-same-sources.generated.ts, which scripts/generate/packs/biome-suppression.mjs writes). A document
@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BIOME_SAME_SOURCES } from "../../../conformance/biome-same-sources.generated.ts";
-import { HAND_WRITTEN, SPECS } from "./react-specs.mjs";
+import { HAND_WRITTEN, OWN, SPECS } from "./react-specs.mjs";
 
 const PACK_DIRECTORY = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "packs", "react");
 const CANDIDATES = join(PACK_DIRECTORY, "candidates");
@@ -142,6 +142,7 @@ const manifest = {
   capabilities: CAPABILITIES,
   tools: TOOLS.map(name => ({ name, version: PINS[name] })),
   rules: ports,
+  own: OWN,
 };
 writeFileSync(join(PACK_DIRECTORY, "conformance.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 console.log(`wrote ${SPECS.length} policies (${SPECS.filter(spec => !spec.candidate).length} ported) and conformance.json (${ports.length} ports)`);

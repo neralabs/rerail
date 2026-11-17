@@ -60,16 +60,18 @@ function hasLlmClause(document: Record<string, unknown>): boolean {
 /** Load documents the way rerail reads a pack it ships: `<pack>/rules/*.json`, through its own bundled-rule loader. */
 export function loadAsBundled(engine: Engine, scratch: string, packId: string, rules: readonly RuleDocument[]): { ids: string[]; kinds: string[] } {
   const directory = mkdtempSync(join(scratch, "bundled-"));
+  const packDirectory = join(directory, packId);
   try {
-    const packDirectory = join(directory, packId);
     mkdirSync(join(packDirectory, "rules"), { recursive: true });
     for (const rule of rules) writeFileSync(join(packDirectory, "rules", rule.file), rule.text);
     const loaded = engine.rerail.loadPackRuleDocuments([packDirectory]);
     return { ids: loaded.map((document) => document.rule.id), kinds: loaded.map((document) => document.kind) };
   } catch (error) {
     // The loader names a file it rejects by absolute path; this directory is new on every run, so the report names the
-    // file from the pack (`<pack>/rules/<file>`) and stays byte-identical across runs.
-    throw new Error((error instanceof Error ? error.message : String(error)).replaceAll(`${directory}/`, ""));
+    // file from the pack (`<pack>/rules/<file>`, with `/` on every platform) and stays byte-identical across runs.
+    let message = error instanceof Error ? error.message : String(error);
+    for (const rule of rules) message = message.replaceAll(join(packDirectory, "rules", rule.file), `${packId}/rules/${rule.file}`);
+    throw new Error(message.replaceAll(`${directory}/`, ""));
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -77,11 +79,19 @@ export function loadAsBundled(engine: Engine, scratch: string, packId: string, r
 
 /**
  * loads: the shipped bytes parse, pass rerail's own schema, compile on this checkout's engine both as written and in
- * the stable form the rule catalog compiles, load through rerail's bundled-rule loader, and apply to an example path
- * of every file type upstream lints (`linted`: gates.yaml's `upstream.lints`, narrowed by `rerail.in_scope` and by the
- * port's own `lints` in conformance.json).
+ * the stable form the rule catalog compiles, load through rerail's bundled-rule loader, and apply to every path of
+ * `linted`, which must name one: for a port, an example path of every file type upstream lints (gates.yaml's
+ * `upstream.lints`, narrowed by `rerail.in_scope` and by the port's own `lints` in conformance.json); for an own rule,
+ * its pack.json examples' paths. `outOfScope` says why a path the rule does not apply to is one it must.
  */
-export function loadsGate(engine: Engine, rule: RuleDocument, packId: string, scratch: string, linted: readonly string[]): LoadsResult {
+export function loadsGate(
+  engine: Engine,
+  rule: RuleDocument,
+  packId: string,
+  scratch: string,
+  linted: readonly string[],
+  outOfScope = "gates.yaml declares upstream lints that file type (upstream.lints); widen the rule's scope, or narrow the tool-pack with rerail.in_scope or the port with its lints in conformance.json",
+): LoadsResult {
   const checks: Check[] = [];
   let document: Record<string, unknown>;
   try {
@@ -133,13 +143,11 @@ export function loadsGate(engine: Engine, rule: RuleDocument, packId: string, sc
     checks.push({ id: "bundled-load", ok: false, detail: message(error) });
   }
 
-  const outOfScope = linted.filter((path) => !compiled.inScope(path));
+  const missed = linted.filter((path) => !compiled.inScope(path));
   checks.push({
     id: "in-scope",
-    ok: outOfScope.length === 0,
-    detail: outOfScope.length === 0
-      ? `applies to ${linted.join(", ")}`
-      : `does not apply to ${outOfScope.join(", ")}: gates.yaml declares upstream lints that file type (upstream.lints); widen the rule's scope, or narrow the tool-pack with rerail.in_scope or the port with its lints in conformance.json`,
+    ok: linted.length > 0 && missed.length === 0,
+    detail: linted.length === 0 ? "names no file it must apply to" : missed.length === 0 ? `applies to ${linted.join(", ")}` : `does not apply to ${missed.join(", ")}: ${outOfScope}`,
   });
   return { checks, compiled, document, ...(schema.success ? { resolved: schema.data as Record<string, unknown> } : {}) };
 }

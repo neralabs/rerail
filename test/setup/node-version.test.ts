@@ -50,8 +50,11 @@ describe("checkNodeVersion", () => {
     expect(upgrade("/opt/homebrew/Cellar/node/22.1.0/bin/node")).toBe("brew upgrade node");
     expect(upgrade("/usr/local/Cellar/node@22/22.9.0/bin/node")).toBe("brew install node");
     expect(upgrade("/home/me/.volta/tools/image/node/20.0.0/bin/node")).toBe("volta install node@24");
-    expect(upgrade("/home/me/.local/share/fnm/node-versions/v20.0.0/installation/bin/node")).toBe("fnm install 24 && fnm use 24");
-    expect(upgrade(String.raw`C:\Users\me\AppData\Local\nvm\v20.0.0\node.exe`, { NVM_HOME: String.raw`C:\Users\me\AppData\Local\nvm` })).toBe("nvm install 24");
+    // One command each, as Windows PowerShell 5.1 refuses `&&`, and nvm-windows installs without switching to it.
+    expect(upgrade("/home/me/.local/share/fnm/node-versions/v20.0.0/installation/bin/node")).toBe("fnm use --install-if-missing 24");
+    expect(upgrade(String.raw`C:\Users\me\AppData\Local\nvm\v20.0.0\node.exe`, { NVM_HOME: String.raw`C:\Users\me\AppData\Local\nvm` })).toBe("nvm install 24, then nvm use 24");
+    expect(upgrade(String.raw`C:\nvm4w\nodejs\node.exe`, { NVM_HOME: String.raw`C:\Users\me\AppData\Local\nvm`, NVM_SYMLINK: String.raw`C:\nvm4w\nodejs` }))
+      .toBe("nvm install 24, then nvm use 24");
     // A system Node first on PATH while nvm is installed: nvm still upgrades it for this shell.
     expect(upgrade("/usr/bin/node", { NVM_DIR: "/home/me/.nvm" })).toBe("nvm install 24");
     expect(upgrade("/usr/bin/node")).toBeUndefined();

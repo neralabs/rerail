@@ -1858,4 +1858,23 @@ export const HAND_WRITTEN = [
     match: "line+column",
   },
 ];
+
+/**
+ * The pack's own rules: written for Rerail, with no upstream plugin, by hand in packs/react/rules/ and proven by their
+ * pack.json examples and their cases in packs/react/upstream/react-practice/ (pack test data). Listed as
+ * conformance.json's `own`, so no gate treats them as unmapped ports.
+ */
+export const OWN = [
+  "react-practice-callback-for-dom-only",
+  "react-practice-fresh-dependency",
+  "react-practice-side-effect-in-render",
+  "react-practice-then-without-stale-guard",
+  "react-practice-cache-update-in-mutate-call",
+  "react-practice-mounted-ref-never-reset",
+  "react-practice-memo-trivial-expression",
+  "react-practice-selector-returns-new-collection",
+  "react-practice-request-beside-data-library",
+  "react-practice-hoist-static-value",
+  "react-practice-lifecycle-hook",
+];
 void H;

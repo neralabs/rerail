@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -34,11 +34,12 @@ import { RerailRuntime } from "../../src/runtime/runtime.js";
 import { testEmbedder } from "../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
 import { installPack, removeInstalledPacks } from "../support/installed-packs.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   removeInstalledPacks();
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function temporary(prefix: string): Promise<string> {
@@ -63,8 +64,6 @@ function recorder(lane: RepositorySetupIo["lane"] = "agent"): RepositorySetupIo 
   const lines: string[] = [];
   return { lane, lines, say: text => { lines.push(text); } };
 }
-
-const NO_PACK_FITS = "  No rule pack fits this repository yet. Add rules on the rules page";
 
 function writeFiles(root: string, files: Record<string, string>): void {
   for (const [path, content] of Object.entries(files)) {

@@ -5,7 +5,7 @@
  * job needs it, and keeps one language's copies (the jobs come grouped by language); one made to plan or report
  * compiles them all. A worker keeps one plan per pack, of the kind its last request needed.
  */
-import { judgeDocuments, judgeToolPack } from "./gates.js";
+import { judgeDocuments, judgeOwnRules, judgeToolPack } from "./gates.js";
 import { loadEngine } from "./checks/engine.js";
 import { loadPack, RERAIL_ROOT } from "./pack.js";
 import { planPack, type PackPlan } from "./runner.js";
@@ -43,6 +43,8 @@ async function answer(request: WorkerRequest): Promise<WorkerResponse> {
       return { kind: "documents", documents: judgeDocuments(RERAIL_ROOT, loadEngine(), loadPack(request.directory), request.tool) };
     case "judge":
       return { kind: "judge", verdict: judgeToolPack(RERAIL_ROOT, loadEngine(), loadPack(request.directory), request.report, request.tool, request.documents) };
+    case "own":
+      return { kind: "judge", verdict: judgeOwnRules(RERAIL_ROOT, loadEngine(), loadPack(request.directory)) };
   }
 }
 

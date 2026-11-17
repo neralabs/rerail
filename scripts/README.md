@@ -8,16 +8,28 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   `.github/workflows/docs-site.yml` publishes it).
 - `check/`: the checks `npm run check` and `check:*` run, including the layer boundary lint
   (`check-boundaries.mjs`), the Windows checkout check (`check-windows-paths.mjs`: every tracked path short
-  enough and named so Windows can check it out), the internal reference check (`check-internal-refs.mjs`: no
-  internal ticket ID, and no `nera-` identifier outside its list of public ones, in a tracked path or text), the CI
-  path filter check (`check-ci-paths.mjs`: every file the jobs `ci.yml`'s path filters skip import, from the entry
-  points it lists, matches their filter) and the licence allowlist.
+  enough and named so Windows can check it out), the owned built-ins check (`check-owned-builtins.mjs`: one table of
+  the Node built-ins only one module in `src/` may use, each in the module that makes it safe on Windows: child
+  processes through `src/engine/child-process.ts`, which hides their windows and starts a program only by its
+  absolute path; renames through `src/engine/file-replace.ts`, which retries a rename while another process holds the
+  file; in the modules that key records by a checkout path, realpath through
+  `src/engine/catalog/checkout-control.ts`, which spells a Windows path as Git does; and `O_NOFOLLOW` through
+  `src/engine/no-follow.ts`, which refuses a symlink on Windows too), the folder removal check
+  (`check-folder-removal.mjs`: tests remove the folders they make only through `test/support/platform/remove-folder.ts`,
+  which names a process the test left running in one and waits out any other holder on Windows; it and the owned
+  built-ins check read files through `source-files.mjs`, which parses them and lists the files Git would commit), the internal
+  reference check (`check-internal-refs.mjs`: no internal ticket ID, and no `nera-` identifier outside its list of
+  public ones, in a tracked path or text), the CI path filter check (`check-ci-paths.mjs`: every file the jobs `ci.yml`'s path filters skip import, from the entry
+  points it lists, matches their filter), the licence allowlist, and the pre-commit check (`pre-commit.sh`: CI's lint
+  and type-check job, before each commit, on the working tree merged into the local `origin/main` when the branch is
+  behind it, as CI checks the pull request merged into main; `merged-checkout.mjs` makes that throwaway checkout).
 - `deps/`: pins that follow a dependency (`sync-pins.mjs`, `npm run deps:sync`): the OMP host and its release digests
   follow the OMP SDK, the ast-grep differential test's reference follows the ast-grep CLI, and `reviewer.yml`'s
   `reviewer_ref` follows the commit its `uses:` pins. `.github/workflows/dependabot-pins.yml` runs it on Dependabot's
   npm pull requests; `npm run check` fails on drift.
-- `dev/`: a development install from this checkout (`just rerail-dev`), its restore, nuke and smoke runs, and the
-  dashboard scenario launcher for design review (`ui-scenario.ts`, `just ui-scenario <scenario>`).
+- `dev/`: a development install from this checkout (`just rerail-dev`), its restore, nuke and smoke runs, the
+  dashboard scenario launcher for design review (`ui-scenario.ts`, `just ui-scenario <scenario>`), and the pre-commit
+  hook's installer (`install-git-hooks.mjs`, run by `npm install`'s `prepare`).
 - `dsl/`: the code-rule DSL benchmark.
 - `feedback/`: the weekly feedback digest (`digest.mjs`): a week's GitHub issues, rule misfires by kind, rule and pack,
   and the open backlog, as a page of the product team's Notion database. `.github/workflows/feedback-digest.yml` runs

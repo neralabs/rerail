@@ -106,10 +106,26 @@ const liveTurn = b => (b.turn === null || b.turn.ended ? openTurn(b) : b.turn);
 
 function setReply(t, text, e) { t.a = text; t.aSeq = e.sequence; t.aTime = e.observedAt; }
 
+/**
+ * A block Claude Code's harness writes into a prompt, which the person never typed: a subagent's or background task's
+ * report (`<task-notification>`, `<agent-message>`) or a reminder (`<system-reminder>`). Only whole blocks at the start
+ * count, so a prompt that mentions one of these tags, opens one it never closes, or quotes a block after the person's
+ * own words keeps it.
+ */
+const HARNESS_BLOCK = /^\s*<(task-notification|agent-message|system-reminder)(?:\s[^>]*)?>[\s\S]*?<\/\1>/;
+
+/** A prompt's text without the harness blocks it opens with; null when nothing the person wrote is left. */
+export function promptText(text) {
+  let rest = text;
+  for (let block = HARNESS_BLOCK.exec(rest); block !== null; block = HARNESS_BLOCK.exec(rest)) rest = rest.slice(block[0].length);
+  if (rest === text) return text;
+  return rest.trim() || null;
+}
+
 function onPrompt(b, e, pl) {
   const t = b.turn;
   const fresh = t === null || t.u !== null || t.ended || t.tools.length ? openTurn(b) : t;
-  fresh.u = String(pl.text ?? ""); fresh.uSeq = e.sequence; fresh.uTime = e.observedAt; fresh.key = `t${e.sequence}`;
+  fresh.u = promptText(String(pl.text ?? "")); fresh.uSeq = e.sequence; fresh.uTime = e.observedAt; fresh.key = `t${e.sequence}`;
 }
 
 function onReply(b, e, pl) {
@@ -244,7 +260,7 @@ export function lastEventAt(s) {
   return Math.max(row ?? -Infinity, loaded ?? -Infinity);
 }
 
-/** A list row's violations: logged in the session, and of those the ones steered (recorded in Steer or Block mode). */
+/** A list row's violations: logged in the session, and of those the ones steered (recorded by an audit in Steer mode while their rule was on Steer or Block). */
 export function violationCounts(s) {
   const logged = s.violationCount ?? 0;
   return { logged, steered: Math.min(logged, s.steeredViolations ?? 0) };

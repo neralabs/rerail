@@ -3,13 +3,14 @@
  * judges, the pending tool-packs, and the guard that both lists only shrink against the base commit. Repositories are
  * hand-made; git is a stand-in runner answering for the base commit.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { PENDING, UNGATED_RULES, ungatedChecks } from "../../conformance/languages/checks/ungated.js";
 import type { CommandResult, CommandRunner } from "../../conformance/process.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const BASE = "0123456789abcdef0123456789abcdef01234567";
 
@@ -19,7 +20,7 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "rerail-ungated-"));
 });
 
-afterEach(() => rmSync(root, { recursive: true, force: true }));
+afterEach(() => removeFolderSync(root));
 
 const write = (path: string, value: unknown): void => {
   mkdirSync(dirname(join(root, path)), { recursive: true });
@@ -119,6 +120,16 @@ describe("not-gated", () => {
     const { check } = await byId();
     expect(check("not-gated:own")).toMatchObject({ ok: false, detail: expect.stringMatching(/^1 new shipped rule\(s\) \(own-a\)/u) });
   });
+
+  it("leaves out a pack's own rules (conformance.json own), beside a port of an ungated tool", async () => {
+    pack("mixed", ["otherlint"], { loose: "otherlint" });
+    write("packs/mixed/pack.json", { rules: [{ id: "loose" }, { id: "mine" }] });
+    write("packs/mixed/conformance.json", { tools: [{ name: "otherlint" }], rules: [{ id: "loose", upstream: { tool: "otherlint" } }], own: ["mine"] });
+    lists({ mixed: ["loose"] });
+    const { result, check } = await byId();
+    expect(check("not-gated:mixed")).toMatchObject({ ok: true });
+    expect(result.notGated).toEqual([{ pack: "mixed", rules: 1 }]);
+  });
 });
 
 describe("frozen-list", () => {
@@ -137,6 +148,16 @@ describe("frozen-list", () => {
     const { check } = await byId();
     expect(check("not-gated:own")).toBeUndefined();
     expect(check("frozen-list:own")).toMatchObject({ ok: false, detail: expect.stringContaining("in a private pack") });
+  });
+
+  it("fails a listed rule now listed in conformance.json's own as stale: an own rule is never on the list", async () => {
+    pack("mixed", ["otherlint"], { loose: "otherlint" });
+    write("packs/mixed/pack.json", { rules: [{ id: "loose" }, { id: "mine" }] });
+    write("packs/mixed/conformance.json", { tools: [{ name: "otherlint" }], rules: [{ id: "loose", upstream: { tool: "otherlint" } }], own: ["mine"] });
+    lists({ mixed: ["loose", "mine"] });
+    const { check } = await byId();
+    expect(check("not-gated:mixed")).toMatchObject({ ok: true });
+    expect(check("frozen-list:mixed")).toMatchObject({ ok: false, detail: expect.stringContaining("(mine)") });
   });
 
   it("passes when every listed rule still ships ungated", async () => {

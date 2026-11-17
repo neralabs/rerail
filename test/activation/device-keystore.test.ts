@@ -1,12 +1,14 @@
-import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { deviceSecretStore, FileDeviceSecretStore, SystemDeviceSecretStore } from "../../src/activation/device-keystore.js";
+import { POSIX_MODES } from "../support/platform/file-mode.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const directories: string[] = [];
 afterEach(async () => {
-  await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(path => removeFolder(path)));
 });
 
 describe("device secret store selection", () => {
@@ -29,7 +31,7 @@ describe("device secret store selection", () => {
     expect(await store.read("profile-a")).toBeUndefined();
     await store.write("profile-a", "secret");
     expect(await store.read("profile-a")).toBe("secret");
-    expect((await stat(join(home, "device-secrets", "profile-a"))).mode & 0o777).toBe(0o600);
+    if (POSIX_MODES) expect((await stat(join(home, "device-secrets", "profile-a"))).mode & 0o777).toBe(0o600);
     await store.remove("profile-a");
     expect(await store.read("profile-a")).toBeUndefined();
     await expect(store.write("../escape", "x")).rejects.toThrow("Invalid Rerail profile name");
@@ -44,6 +46,21 @@ describe("device secret store selection", () => {
     await mkdir(join(home, "device-secrets", "profile-b"));
     await expect(store.write("profile-b", "secret")).rejects.toThrow();
     expect((await readdir(join(home, "device-secrets"))).sort()).toEqual(["profile-a", "profile-b"]);
+  });
+});
+
+describe("Windows Credential Manager", () => {
+  it("runs Windows PowerShell by its System32 path, never a powershell.exe the current folder holds", async () => {
+    const commands: string[] = [];
+    const store = new SystemDeviceSecretStore("win32", async (command) => {
+      commands.push(command);
+      return { code: 0, stdout: JSON.stringify({ found: false }), stderr: "" };
+    });
+    expect(await store.read("profile-a")).toBeUndefined();
+    await store.write("profile-a", "secret");
+    await store.remove("profile-a");
+    expect(commands).toHaveLength(3);
+    for (const command of commands) expect(command).toMatch(/^[A-Za-z]:\\.*\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/u);
   });
 });
 

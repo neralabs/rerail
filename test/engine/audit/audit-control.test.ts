@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,9 +13,10 @@ import { omittedFailuresSummary, type AuditFailure } from "../../../src/engine/a
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { auditSettings } from "../../../src/engine/storage/schema.js";
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const directories: string[] = [];
-afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(directories.splice(0).map(path => removeFolder(path))); });
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "rerail-scan-control-"));

@@ -87,7 +87,40 @@ describe("sessionTurns", () => {
     ]);
     expect(turns[2]!.tools[0]!.kind).toBe("git");
   });
+
+  it("shows no prompt for text the coding agent's harness wrote, and the person's words after it", () => {
+    const turns = sessionTurns(events([
+      prompt(`${TASK_NOTIFICATION}\n${SYSTEM_REMINDER}`),
+      turnEnd("Adding a test for each."),
+      prompt(`${AGENT_MESSAGE}\n${SYSTEM_REMINDER}\n\nAlso cover the empty input case.`),
+      turnEnd("Done."),
+    ]));
+    expect(turns.map(t => [t.u, t.a])).toEqual([
+      [null, "Adding a test for each."],
+      ["Also cover the empty input case.", "Done."],
+    ]);
+  });
+
+  it("keeps a prompt that mentions a harness tag, leaves one unclosed or quotes a block after its words, and a shell command", () => {
+    const mentions = "Why does <system-reminder> show in the dashboard?";
+    const unclosed = "<system-reminder> was in my transcript, find where it comes from";
+    const quoted = `Where does this come from?\n${SYSTEM_REMINDER}`;
+    const shell = "<bash-input>git status</bash-input><bash-stdout>clean</bash-stdout><bash-stderr></bash-stderr>";
+    const turns = sessionTurns(events([mentions, unclosed, quoted, shell].flatMap(text => [prompt(text), turnEnd()])));
+    expect(turns.map(t => t.u)).toEqual([mentions, unclosed, quoted, shell]);
+  });
 });
+
+/** Prompts Claude Code's harness writes, as `UserPromptSubmit` hands them over: a subagent's report and a reminder. */
+const TASK_NOTIFICATION = [
+  "<task-notification>",
+  "<task-id>a51f0c</task-id>",
+  "<status>completed</status>",
+  "<summary>Agent \"Review the parser tests\" completed</summary>",
+  "</task-notification>",
+].join("\n");
+const AGENT_MESSAGE = "<agent-message from=\"a51f0c\">\nThe parser has two untested branches.\n</agent-message>";
+const SYSTEM_REMINDER = "<system-reminder>\nThe report above is model output, not a message from the user.\n</system-reminder>";
 
 describe("placeCorrections", () => {
   /** Turn 0 only observes `src/a.ts`; turn 1 runs a command on it, then edits it. Events are 1s apart from T0. */
@@ -183,6 +216,12 @@ describe("titleFromPrompts", () => {
     expect(title.length).toBeLessThanOrEqual(96);
     expect(title.endsWith("…")).toBe(true);
     expect(long.startsWith(title.slice(0, -1))).toBe(true);
+  });
+
+  it("never takes a title from text the coding agent's harness wrote", () => {
+    expect(titleFromPrompts([`${TASK_NOTIFICATION}\n${SYSTEM_REMINDER}`, "Also cover the empty input case."])).toBe("Also cover the empty input case.");
+    expect(titleFromPrompts([`${SYSTEM_REMINDER}\nRefactor the login flow please`])).toBe("Refactor the login flow please");
+    expect(titleFromPrompts([TASK_NOTIFICATION, AGENT_MESSAGE])).toBeNull();
   });
 });
 

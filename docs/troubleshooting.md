@@ -29,7 +29,8 @@ The suggested upgrade matches how Node was installed:
 | Homebrew `node` | `brew upgrade node` |
 | Homebrew versioned formula (`node@22`) | `brew install node` |
 | nvm | `nvm install 24` |
-| fnm | `fnm install 24 && fnm use 24` |
+| nvm-windows | `nvm install 24, then nvm use 24` |
+| fnm | `fnm use --install-if-missing 24` |
 | Volta | `volta install node@24` |
 | Unknown | `Install Node 24 or newer from https://nodejs.org or your package manager.` |
 
@@ -129,6 +130,36 @@ The installed `rerail` command is `rerail.cmd`, which the policy does not block.
 
 The first `npx @neralabs/rerail setup` downloads and installs about 300 MB; npx prints nothing for 20 to 60 seconds.
 Set-up then prints `Downloading @neralabs/rerail@<version> from npm…`, and npm installs it again under `~/.rerail`.
+From there each step prints a line as it starts, and a step still running prints `still running after 30 s`, then
+again every 30 seconds.
+
+### Set-up or `rerail update` says npm may be stuck
+
+```text
+Downloading @neralabs/rerail@<version> from npm has taken 3 min. npm may be stuck: check your network or proxy, and the registry npm uses (`npm config get registry`). Rerail stops it at 20 min.
+```
+
+npm prints nothing while it downloads, so Rerail times each step. On a slow line the download can take this long; wait
+or press Ctrl-C. A download still running at 20 minutes, or an npm request at 3, is stopped: the update fails, its
+staged files are removed and the version that was active stays active. Check the settings in
+[npm cannot reach the registry](#npm-cannot-reach-the-registry), then run it again.
+
+### npx exits with code 1 and prints nothing
+
+```text
+PS C:\code\app> npx.cmd @neralabs/rerail setup
+PS C:\code\app> $LASTEXITCODE
+1
+```
+
+npx failed to install Rerail before set-up could start: npm prints nothing for `npx` when the install script of a
+package it installs fails. npm's log says which one. Open the newest file in the `_logs` folder of npm's cache
+(`npm config get cache` prints the folder: on Windows usually `%LocalAppData%\npm-cache`, on macOS and Linux
+`~/.npm`) and search it for `error`. Attach that log when you report the problem.
+
+Rerail 0.1.3 and earlier made npm compile better-sqlite3, which needs Python and C++ build tools, and the log shows
+`gyp ERR! find Python`. Later versions install the copy better-sqlite3 ships prebuilt: run
+`npx @neralabs/rerail@latest setup`.
 
 ### npm cannot reach the registry
 
@@ -155,9 +186,10 @@ cannot be installed offline.
 `rerail update` stops the same way. Both run your own `npm` with your `~/.npmrc`, so a registry mirror set there
 works for Rerail and its rule packs.
 
-A failed install removes what it staged and its lock. Ctrl-C while set-up or `rerail update` installs leaves the
-lock, and the next run says `Another Rerail update is already running` for up to 15 minutes. If nothing else is
-installing, delete `~/.rerail/update.lock` and run again.
+A failed install removes what it staged. The update lock is free the moment the set-up or `rerail update` holding it
+ends, Ctrl-C included, so `Another Rerail update is already running` means one is installing now. A Rerail whose engine
+does not load holds the folder `~/.rerail/locks/update-without-engine` instead; if one was cut short and the message
+stays with nothing installing, delete that folder and run again.
 
 </details>
 
@@ -190,6 +222,28 @@ Node.js and React would fit, but have no rules yet, so set-up does not offer the
 
 These packs are published but have no rules yet, so they would check nothing. Nothing to do: a later version brings
 its rules. `rerail packs recommend` lists them too.
+
+### `No rule pack matches what it’s built with`
+
+```text
+Scanned acme-api. No rule pack matches what it’s built with.
+
+  Found           .py 3 · .md 1
+                  from Git’s list of files, which leaves out what Git ignores
+  Not scanned     fixtures/ (1)
+  Closest         Python excludes the 3 files it looks for: tests/ (2),
+                  scripts/ (1)
+  Packs look for  Python      *.py, *.pyi
+                  TypeScript  *.ts, *.mts, *.cts, +1 more,
+                              dependency: typescript
+```
+
+A pack fits when the repository has a file or dependency it looks for. **Found** counts the files scanned by ending
+and says how they were listed. **Not scanned** names the folders set-up never reads, such as `fixtures/` and
+`node_modules/`, with the files in each. **Closest** is a pack that looks for files the repository has but excludes
+every one of them, by the places it names; a leading `/` means only at the repository's top. **Packs look for** says
+what each pack would match. To add a pack anyway, answer "Change rule packs…", or run `rerail packs add <id>`.
+`rerail packs recommend` prints the same explanation, with what each pack looks for on that pack's line.
 
 ## The `rerail` command
 
@@ -252,8 +306,8 @@ the launcher, every connected agent's hooks and the status line.
 The launcher, hooks and Claude Code's status line run the Node that ran set-up, by full path. For Homebrew that is
 `/opt/homebrew/bin/node`, a link `brew upgrade` keeps, so upgrading changes nothing.
 
-If that Node is gone (`nvm uninstall`, say), they fall back to the first `node` on `PATH`. Claude Code's status line
-on Windows does not.
+If that Node is gone (`nvm uninstall`, say), they fall back to the first `node` on `PATH`, Claude Code's status line on
+Windows included.
 
 With that `node` older than 24, the daemon does not start and hooks do nothing. Claude Code's status line reads
 `R E R A I L ✕ needs Node 24 or newer (this is 22.12.0)`.
@@ -276,7 +330,7 @@ Codex runs only hooks you have trusted. Run `/hooks` in Codex, trust Rerail's ho
 <summary>Set-up's hint, skills, and Windows</summary>
 
 After connecting Codex, set-up's summary says `Open Codex and run /hooks once to trust Rerail’s hooks.` Codex asks
-again whenever an update changes the hook, as this release does on Windows.
+again whenever an update changes the hook.
 
 In Codex the commands are skills: `$rerail`, `$rerail-show-me` and so on. Set-up's summary uses that form when Codex
 is the only connected agent; with several, it adds `In Codex, type $rerail-show-me.`
@@ -284,6 +338,29 @@ is the only connected agent; with several, it adds `In Codex, type $rerail-show-
 On Windows, the hook works from a profile folder with a space or non-ASCII letter (`C:\Users\José García`).
 
 </details>
+
+### Windows: Codex or Cursor cannot run a Rerail command
+
+```text
+Unexpected token '"C:\Users\me\.rerail\current\dist\cli\cli.js"' in expression or statement.
+```
+
+Codex and Cursor run commands in PowerShell on Windows. Rerail 0.1.4 and earlier wrote their commands as
+`"<node>" "<cli.js>" …`, which PowerShell reads as a string followed by a word it refuses. Later releases write
+`& '<node>' '<cli.js>' …`. Run `rerail update`, then open a new session.
+
+### `Couldn’t connect Claude Code: Claude Code's Rerail hook …`
+
+```text
+  △ Couldn’t connect Claude Code: Claude Code's Rerail hook did not answer within 30 s
+    Rerail’s hooks are written, but they fail. Fix that, then run rerail setup again to connect Claude Code.
+```
+
+After connecting Claude Code, set-up runs the hook it registered once, as Claude Code will. A hook that cannot run
+records nothing and says nothing in a session, so set-up reports the connection as failed, though the hooks stay in
+Claude Code's `settings.json`. The message ends with what happened: `did not answer within 30 s`, `exited <code>: <its
+output>`, `failed: rerail hook: <reason>`, `answered with no JSON object` or `could not run: <reason>`. Fix what it
+names, then run `rerail setup` again.
 
 ### `Couldn’t connect …: … is not plain JSON`
 
@@ -370,9 +447,104 @@ After moving `RERAIL_HOME` or Node, run `rerail setup` again so the entries name
 Agents load hooks and commands when a session starts. Open a new session after set-up, `rerail install`,
 `rerail update` and `rerail install --remove`.
 
+### `rerail status` says `Hooks run but nothing was recorded`
+
+A coding agent ran Rerail's hooks, and Rerail could not record their events. The line names the last event that
+failed, the coding agent and its version, the Rerail version and the reason, such as `no Rerail daemon answered`
+(the daemon was down; the next hook starts it), `the Rerail daemon (pid …) is running but did not answer within 12 s`
+(it was busy, for example opening a large checkout; events are recorded again once it answers),
+`the Rerail daemon (pid …) refused the access capability in daemon.json` (`daemon.json` was edited or written by
+another daemon; run `rerail daemon stop`, then `rerail daemon start`) or a payload field the coding agent sent in a
+shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in the Rerail home; past 256 KB one hook
+moves it to `hook-failures.jsonl.1`, replacing the one there, and the line counts both. While it cannot be moved, as
+when another program holds `hook-failures.jsonl.1`, it stops taking failures at 1 MB. Update Rerail with
+`rerail update`; if the line stays, report it with `rerail support-bundle`.
+
+The line leads with the first hook that failed after the last event Rerail recorded. When hooks also failed before
+that event, it goes on with the count of all of them: `K hook events failed, of N that could not be recorded in the
+last 24 hours`. When events were recorded after the last failure, the line reads `Hooks: N hook events could not be
+recorded in the last 24 hours` instead. Once the log has moved aside and holds nothing from 24 hours ago, failures from
+before `hook-failures.jsonl.1` began may be gone, so the line counts the failures since it began and says when that
+was: `since <time>, as far back as the log goes`; when another program keeps `hook-failures.jsonl.1` from being read,
+it counts from when `hook-failures.jsonl` began. When every failure it still holds came after the last recorded
+event, hooks may have failed before the time it leads with, and the line says `as far back as the log goes` too.
+
+With `RERAIL_AUTOSTART=0` (or `false`) hooks start no daemon, and a hook that finds none logs nothing, since that is
+what you asked for. A session that starts with no daemon running says so as it starts: Claude Code and Codex
+show the line under the session's start, and Cursor's agent is asked to begin its first reply with it. The line, which
+`rerail status` prints too, says the daemon is not running, that `RERAIL_AUTOSTART=0` keeps hooks from starting it, so
+nothing is recorded until it runs, and to start it with `rerail daemon start`.
+
+If `rerail status` instead names Claude Code hook scripts that are missing, Claude Code's settings point at a Rerail
+that is gone, and every hook fails before Rerail runs. Run `rerail install --refresh` and open a new session.
+
+### Windows: a build from a checkout records nothing
+
+```text
+Model: checksum mismatch (config.json)
+```
+
+`rerail status` says this, and every hook of Rerail built from a Git checkout (`just rerail-dev --install-bridge`, or a
+daemon run from the checkout) fails with `model artifact checksum mismatch for config.json`. Git for Windows checks
+text files out with CRLF line breaks unless told otherwise, and `model/manifest.json` pins the bytes of
+`model/config.json` and `model/tokenizer.json`. The installed package is not affected.
+
+A checkout of a commit whose `.gitattributes` marks both files `-text` writes them as stored. In a checkout made
+before, have Git write them again, then stop the daemon; the next session event starts it with the model:
+
+```sh
+git rm -q --cached model/config.json model/tokenizer.json
+git checkout HEAD -- model/config.json model/tokenizer.json
+rerail daemon stop
+```
+
+[Developing on Windows](../CONTRIBUTING.md#developing-on-windows) covers the rest of the checkout's line endings.
+
 ## Daemon and dashboard
 
 The daemon is the background process every checkout and coding agent on the computer shares; it serves the dashboard.
+
+### Windows: a terminal window keeps opening and takes focus
+
+While a coding agent works, a Windows Terminal window opens every few seconds and takes the keyboard focus. With
+several sessions busy it opens almost without pause.
+
+Rerail 0.1.4 and earlier start the daemon with no console. Each Git command the daemon runs then gets a console window
+of its own, which Windows 11 opens in Windows Terminal. The release after 0.1.4 starts the daemon with a console that
+has no window, and every program the daemon runs shares it. Update while no coding agent session is working, since a
+session's next event starts the daemon again:
+
+```sh
+rerail daemon stop
+rerail update
+```
+
+The next session event starts the new daemon.
+
+<details>
+<summary>Until you can update</summary>
+
+Start the daemon under a hidden console yourself, in PowerShell. Its Git commands then share that console and open
+no window:
+
+```powershell
+$rerail = "$env:USERPROFILE\.rerail"
+& "$rerail\bin\rerail.cmd" daemon stop
+$env:RERAIL_HOME = $rerail
+$node = (Get-Command node -CommandType Application | Select-Object -First 1).Source
+Start-Process cmd.exe -WindowStyle Hidden -WorkingDirectory $rerail -ArgumentList "/c `"`"$node`" `"$rerail\current\dist\cli\daemon-entry.js`" --state-file `"$rerail\daemon.json`" >> `"$rerail\daemon.log`" 2>&1`""
+```
+
+Run it while no coding agent session is working: a hook that finds no daemon starts one the old way. This lists one
+daemon when it worked:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object CommandLine -like '*daemon-entry.js*'
+```
+
+The windows come back after a sign-out, a restart or `rerail daemon start`, until you update.
+
+</details>
 
 ### The daemon keeps running after `/rerail-stop`
 
@@ -421,6 +593,20 @@ The following lines are what this start wrote to `~/.rerail/daemon.log`, and say
 
 A second daemon, from another `RERAIL_HOME` or left behind, holds Rerail's machine-wide lock. Stop it
 (`rerail daemon stop` from its home, or end its pid), then start again.
+
+### `Another Rerail daemon (pid …) runs in …`
+
+Another daemon holds this Rerail home's lock (`locks/daemon.lock`). A daemon started there waits a second for it, then
+writes this line to the home's `daemon.log` and exits; a `rerail daemon start` that launched it prints the line under
+`Rerail daemon exited with code 1 before it was ready`. While the daemon it names answers, the next
+`rerail daemon start` finds it. If it does not, `rerail daemon stop` stops it once `daemon.json` names it, or gives the
+pid to end; if the stop finds none and a start prints this line again, end the process it names and start again.
+
+### `this daemon (pid …) no longer holds the Rerail home at …`
+
+The Rerail home was moved or removed while its daemon ran. The daemon writes this line to `daemon.log` and stops
+writing `daemon.json`, so a home made again at that path never names it, but it still runs, recording into the
+database of the home it lost. End the pid it names, then run `rerail daemon start`.
 
 ### Containers: the dashboard does not open from the host
 
@@ -492,6 +678,20 @@ set-up in WSL warns and goes on:
   Repos on the Windows drive are slow from WSL; a clone in the Linux file system (under ~) is faster.
 ```
 
+## Working from a clone of Rerail
+
+For changing Rerail itself; setting up is in [CONTRIBUTING.md](../CONTRIBUTING.md#development-setup).
+
+### Windows: checks and pack tests fail in a clone made before LF line ends
+
+In a clone made on Windows before `.gitattributes` set `* text=auto eol=lf`, Git checked text files out with CRLF line
+ends. Then the model check fails, `npm run check:structure` fails metrics #8 and #24, and 25 pack tests fail. Commit or
+stash your work, then check every file out again under the current `.gitattributes`, once:
+
+```sh
+git rm --cached -r . && git reset --hard
+```
+
 ## Reporting a problem
 
 Run `/rerail-bug-report` in a coding agent; it works out the kind of problem and what to do.
@@ -529,10 +729,13 @@ read it first and replace anything you'd rather not post with `<redacted>`.
 - `--output <file>` writes elsewhere. The file is readable by your user only.
 - It covers the repository's latest session; `--session <id>` names another (the id is in its dashboard address).
 - It works where Rerail won't start or set-up never finished, and says which parts it could not read.
+- A daemon that misses the first 2-second health check gets 10 more seconds to answer before the bundle calls it
+  unresponsive; one that answers is recorded with how long it took. The file is written before that wait, calling the
+  daemon unresponsive, and again after it, so a command stopped while it waits still leaves a bundle.
 
 | In the file | Left out |
 | --- | --- |
-| Rerail, Node and OS versions; daemon and engine health; connected agents | Your prompts and the agent's replies |
+| Rerail, Node and OS versions; whether Rerail runs from its managed install; daemon and engine health; connected agents | Your prompts and the agent's replies |
 | Installed packs and load failures; the repository's state; rule ids and modes | Tool input and output; source code |
 | Session timeline: event kinds, tool names, times, what it dropped or could not check | Rule text; a violation's message, captures and fix |
 | Steers as the agent got them; violations by rule, file and line | Paths named like secrets |
@@ -554,12 +757,17 @@ Report a vulnerability through [SECURITY.md](../SECURITY.md) instead.
 ## Removing Rerail completely
 
 `rerail install --remove` deletes the installation and keeps your settings, data and backups for you to delete.
+`rerail install --remove --delete-data` deletes those too, and `~/.rerail` itself; it cannot be undone.
 
-It names what it kept; delete those too to remove everything:
+What `--remove` keeps, and names:
 
 - **`~/.rerail`**: Rerail's settings, logs and records, such as `consent.json` and `daemon.log`.
 - **`~/.rerail-clean-YYYYMMDD/`**: your rules and history.
 - **`<file>.<timestamp>.bak`** copies beside every agent config file it changed.
+
+`--delete-data` keeps only what it cannot reach, such as those `.bak` copies, which hold your own settings, and
+names each with the command that deletes it. Both lists in full:
+[What each removal leaves behind](how-setup-works.md#what-each-removal-leaves-behind).
 
 <details>
 <summary>Steps it runs, shared folders, and what it prints</summary>
@@ -568,10 +776,11 @@ A `bin`, `versions` or `packs` folder that also holds other files, as when `RERA
 is kept too; only Rerail's files go.
 
 1. Disconnects every coding agent.
-2. Takes `~/.rerail/bin` off `PATH`, and deletes the `<file>.rerail.bak` it kept.
-3. Stops the daemon.
-4. Moves your database into a backup, `~/.rerail-clean-YYYYMMDD/`.
-5. Deletes `~/.rerail/current`, `~/.rerail/bin`, `~/.rerail/versions`, the rule packs and `~/.cache/rerail`.
+2. Stops the daemon.
+3. Moves your database into a backup, `~/.rerail-clean-YYYYMMDD/`.
+4. Takes `~/.rerail/bin` off `PATH`, and deletes the `<file>.rerail.bak` it kept.
+5. Deletes `~/.rerail/current`, `~/.rerail/bin`, `~/.rerail/versions`, the rule packs and `~/.cache/rerail` (on Windows
+   `%USERPROFILE%\AppData\Local\rerail`, and the `~/.cache/rerail` an earlier release used there).
 
 It prints each removed path (`Removed <path> (<what>).`) and each kept one:
 
@@ -584,5 +793,5 @@ finishes the job:
 
 </details>
 
-Choosing "No, cancel set-up" at set-up's sessions question connects and starts nothing, but Rerail is already installed
+Choosing "Not now, cancel set-up" at set-up's sessions question connects and starts nothing, but Rerail is already installed
 and on `PATH`. Set-up says so: `Rerail stays installed, and off; rerail install --remove takes it off this computer.`

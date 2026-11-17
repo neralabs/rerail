@@ -1,4 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
+import { realpath as realpathAsync } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /** True when `candidate` is `root` or below it; canonicalize both first when symlinked identity matters. */
@@ -7,9 +8,28 @@ export function withinCheckout(root: string, candidate: string): boolean {
   return !isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`);
 }
 
-/** The canonical location of `path`: its deepest existing ancestor resolved through symlinks, plus the part not yet created. */
-export function physicalPath(path: string): string {
-  return resolvedThrough(path, realpathSync);
+/** The realpath checkout keys go through on `platform` (see {@link checkoutRealpath}). */
+function realpathOn(platform: NodeJS.Platform): (path: string) => string {
+  return platform === "win32" ? realpathSync.native : realpathSync;
+}
+
+/**
+ * The realpath of `path` every checkout key goes through. On Windows it is the native one, which spells each name as
+ * stored and the drive letter in upper case, as Git prints a top level: the JS realpath keeps the caller's spelling, so
+ * a session opened at `c:\work\app` (VS Code's spelling) never matched the checkout Git names `C:/work/app`, and no
+ * rule ran in it. Elsewhere it is the JS realpath, which keeps the case a macOS path was typed in (see
+ * {@link storedPath}).
+ */
+export function checkoutRealpath(path: string): string {
+  return realpathOn(process.platform)(path);
+}
+
+/**
+ * The canonical location of `path`: its deepest existing ancestor resolved through symlinks (as {@link checkoutRealpath}
+ * does on `platform`), plus the part not yet created.
+ */
+export function physicalPath(path: string, platform: NodeJS.Platform = process.platform): string {
+  return resolvedThrough(path, realpathOn(platform));
 }
 
 /**
@@ -19,6 +39,22 @@ export function physicalPath(path: string): string {
  */
 export function storedPath(path: string): string {
   return resolvedThrough(path, realpathSync.native);
+}
+
+/**
+ * {@link storedPath} without blocking: a folder on a share that does not answer holds one of the pool's threads until
+ * it does, and never the caller's. `fs.promises.realpath` is the native realpath, as `realpathSync.native` is.
+ */
+export async function storedPathAsync(path: string): Promise<string> {
+  const missing: string[] = [];
+  for (let existing = resolve(path); ; existing = dirname(existing)) {
+    try {
+      return join(await realpathAsync(existing), ...missing);
+    } catch (error) {
+      if (dirname(existing) === existing) throw error;
+      missing.unshift(basename(existing));
+    }
+  }
 }
 
 function resolvedThrough(path: string, realpath: (existing: string) => string): string {

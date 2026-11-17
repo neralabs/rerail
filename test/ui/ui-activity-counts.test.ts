@@ -18,10 +18,12 @@ afterEach(() => {
   data.activityAll = {};
 });
 
-describe("past violations keep the mode they were recorded with", () => {
-  it("labels a past violation by its recorded mode in the timeline and History", () => {
-    expect(violationOutcome({ mode: "steer" })).toBe("steered");
-    expect(violationOutcome({ mode: "log" })).toBe("logged");
+describe("past violations keep the outcome they were recorded with", () => {
+  it("labels a past violation by whether the agent was told, not by its rule's mode", () => {
+    expect(violationOutcome({ mode: "steer", logged: false })).toBe("steered");
+    expect(violationOutcome({ mode: "log", logged: true })).toBe("logged");
+    // An audit in Log mode told the agent nothing, whatever the rule's mode.
+    expect(violationOutcome({ mode: "steer", logged: true })).toBe("logged");
   });
 });
 

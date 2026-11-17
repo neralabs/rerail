@@ -584,5 +584,18 @@
       ],
       "match": "line+column"
     }
+  ],
+  "own": [
+    "react-practice-callback-for-dom-only",
+    "react-practice-fresh-dependency",
+    "react-practice-side-effect-in-render",
+    "react-practice-then-without-stale-guard",
+    "react-practice-cache-update-in-mutate-call",
+    "react-practice-mounted-ref-never-reset",
+    "react-practice-memo-trivial-expression",
+    "react-practice-selector-returns-new-collection",
+    "react-practice-request-beside-data-library",
+    "react-practice-hoist-static-value",
+    "react-practice-lifecycle-hook"
   ]
 }

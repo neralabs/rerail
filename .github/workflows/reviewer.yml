@@ -92,18 +92,16 @@ jobs:
     # Pinned to a release commit. `reviewer_ref` is where the called workflow loads the reviewer's own code
     # from, so it is the same commit: Dependabot moves `uses:` alone, and `npm run check:pins` fails until
     # `npm run deps:sync` brings `reviewer_ref` along (scripts/deps/sync-pins.mjs).
-    uses: neralabs/reviewer/.github/workflows/review.yml@8bbc1d0f29e189f771151527c98e0a657bf6f392 # v0.1.1
+    uses: neralabs/reviewer/.github/workflows/review.yml@fefb172ecf6f3a44f43aec97d34fb35b5295dd09 # v0.1.2
     with:
       app_client_id: ${{ vars.REVIEWER_APP_CLIENT_ID }}
-      reviewer_ref: 8bbc1d0f29e189f771151527c98e0a657bf6f392
+      reviewer_ref: fefb172ecf6f3a44f43aec97d34fb35b5295dd09
       allow_approve: true
       handle: "@neralabs-reviewer"
       bot_login: neralabs-reviewer[bot]
       # Claude Opus 5.5 on Amazon Bedrock. The repo variable REVIEWER_MODEL holds the pinned model id or
-      # inference profile, so no AWS account id sits in this public file. Until AWS credits cover the dedicated
-      # reviewer account (from 1 November) it is the main account's tagged profile, with the main account's
-      # key below; then set REVIEWER_MODEL to us.anthropic.claude-opus-5-5 and pass
-      # secrets.REVIEWER_BEDROCK_API_KEY instead.
+      # inference profile, so no AWS account id sits in this public file. The key below belongs to the AWS account
+      # used only for the reviewer, where the model is the us.anthropic.claude-opus-5-5 inference profile.
       provider: bedrock
       model: ${{ vars.REVIEWER_MODEL }}
       aws_region: us-east-1
@@ -122,7 +120,7 @@ jobs:
     # Named, not `secrets: inherit`: the reviewer gets these and nothing else this repo can see.
     secrets:
       REVIEWER_APP_PRIVATE_KEY: ${{ secrets.REVIEWER_APP_PRIVATE_KEY }}
-      REVIEWER_BEDROCK_API_KEY: ${{ secrets.REVIEWER_BEDROCK_API_KEY_MAIN }}
+      REVIEWER_BEDROCK_API_KEY: ${{ secrets.REVIEWER_BEDROCK_API_KEY }}
       # The Rerail remote is the results sink.
       RESULTS_SINK_URL: ${{ secrets.RERAIL_REMOTE_URL }}
       RESULTS_SINK_TOKEN: ${{ secrets.RERAIL_REMOTE_TOKEN }}

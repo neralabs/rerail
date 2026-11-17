@@ -1,14 +1,22 @@
-import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { linkSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runRemoteCommand, seedRerailDatabase } from "../../src/cli/index.js";
 import { SqliteAuditStore } from "../../src/engine/index.js";
 import { addRemote, machineId, readRemoteConfig, setRepositoryExcluded } from "../../src/runtime/remote-config.js";
 import { backoffMs, MAX_BACKOFF_MS, RemoteOutbox } from "../../src/runtime/remote-outbox.js";
 import { SqliteSessionStore } from "../../src/runtime/session-store.js";
 import { startFakeSink, storedRecords, type FakeSink } from "../support/fake-sink.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("REMOTE_SINK");
+
+vi.mock("node:fs", { spy: true });
+const real = await vi.importActual<typeof import("node:fs")>("node:fs");
 
 const REPOSITORY = "remote:example.com/team/app";
 let home: string;
@@ -23,8 +31,11 @@ beforeEach(async () => {
   clock = 1_000_000;
 });
 afterEach(async () => {
+  vi.mocked(writeFileSync).mockReset();
+  vi.mocked(linkSync).mockReset();
+  vi.mocked(renameSync).mockReset();
   await sink.close();
-  rmSync(home, { recursive: true, force: true });
+  removeFolderSync(home);
 });
 
 /** One finished session of four events (`seedRerailDatabase`) in {@link REPOSITORY}, and a finished audit with a violation. */
@@ -88,6 +99,49 @@ describe("remote sink outbox", () => {
     const order = records.map(item => item.type);
     expect(order.indexOf("session")).toBeLessThan(order.indexOf("event"));
     expect(order.indexOf("audit")).toBeLessThan(order.indexOf("violation"));
+  });
+
+  // A scan's violations stay out of the dashboard's history, not out of a remote's: its audit says it is a scan.
+  it("sends a scan's audit with its origin, and its violations keyed as an ongoing audit's", async () => {
+    const { sessionId, auditId } = seed();
+    const audits = new SqliteAuditStore(databasePath());
+    const violation = {
+      id: "v1", ruleId: "no-todo", clauseId: "c", code: "TODO", mode: "steer", message: "No TODO", path: "a.ts",
+      span: { startByte: 0, endByte: 4, startLine: 0, startColumn: 0, endLine: 0, endColumn: 4 }, captures: {}, variables: {},
+    } as const;
+    const scanId = audits.start({ sessionId, workspaceRoot: "/work/app", scope: "repository", mode: "log", origin: "scan", revision: 1, catalogRevision: "c1", ruleRevisions: [{ ruleId: "no-todo", revision: 1 }], paths: [] });
+    // The same violation twice: only its first copy is a finding.
+    audits.finish(scanId, { status: "completed", violations: [violation, { ...violation, id: "v2" }] });
+    audits.close();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    const records = sink.requests.flatMap(request => request.records);
+    const of = (type: string, id: string) => records.filter(item => item.type === type && String(item.id).startsWith(id));
+    expect([...of("audit", auditId), ...of("audit", scanId)].map(item => item.origin)).toEqual(["ongoing", "scan"]);
+    const [ongoing, scanned] = [of("violation", auditId), of("violation", scanId)];
+    expect([ongoing.map(item => [item.id, item.logged]), scanned.map(item => [item.id, item.logged])])
+      .toEqual([[[`${auditId}:0`, true]], [[`${scanId}:0`, true]]]);
+    expect(scanned[0]!.violationKey).toBe(ongoing[0]!.violationKey);
+  });
+
+  // The update that adds `origin` marks the scans a database already holds, some of them sent already.
+  it("sends again an audit marked a scan after it was sent, and no audit that stays ongoing", async () => {
+    const { sessionId, auditId } = seed();
+    const audits = new SqliteAuditStore(databasePath());
+    const otherId = audits.start({ sessionId, workspaceRoot: "/work/app", scope: "touched-files", mode: "steer", revision: 1, catalogRevision: "c1", ruleRevisions: [], paths: ["b.ts"] });
+    audits.finish(otherId, { status: "completed", violations: [] });
+    audits.close();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(1);
+
+    const database = new Database(databasePath());
+    database.prepare("UPDATE audits SET origin = 'scan' WHERE audit_id = ?").run(auditId);
+    database.close();
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(2);
+    // Its violation is keyed and logged as before, so the remote holds it already.
+    expect(sink.requests[1]!.records.map(item => [item.type, item.id, item.origin])).toEqual([["audit", auditId, "scan"]]);
   });
 
   it("names this machine by the remote's --label when it has one", async () => {
@@ -305,9 +359,97 @@ describe("remote sink outbox", () => {
     await expect(runRemoteCommand(["add", "http://example.com", "--token-file", tokenFile], { home, stdout })).rejects.toThrow(/https/u);
   });
 
+  it("gives the token folder an owner-only ACL on Windows on every add, in a home an earlier release made", () => {
+    // The home is already there, so nothing gives it an ACL now: an earlier release made it with its parent's, under C:\.
+    const restricted: Array<[string, boolean]> = [];
+    const acl = { restrictToOwner: (path: string, folder: boolean): void => { restricted.push([path, folder]); }, otherReaders: (): string[] => [] };
+    const windows = { acl, platform: "win32" as const, profile: String.raw`C:\Users\nobody-here` };
+    addRemote({ url: "https://rerail.example", token: "t", content: true, name: "team" }, home, clock, windows);
+    expect(restricted).toEqual([[join(home, "remote-tokens"), true]]);
+    // A tokens folder an earlier release made is fixed too: each add sets the ACL again, which its files inherit.
+    addRemote({ url: "https://rerail.example", token: "t", content: true, name: "other" }, home, clock, windows);
+    expect(restricted).toEqual([[join(home, "remote-tokens"), true], [join(home, "remote-tokens"), true]]);
+  });
+
   it("backs off exponentially within bounds", () => {
     expect(backoffMs(1, () => 0.5)).toBe(2_000);
     expect(backoffMs(3, () => 0.5)).toBe(8_000);
     expect(backoffMs(30, () => 1)).toBe(MAX_BACKOFF_MS);
+  });
+});
+
+describe("machineId", () => {
+  const ID = /^[0-9a-f-]{36}$/u;
+
+  /**
+   * Has another process ask for the machine id the moment the machine-id file first appears in the home, however it is
+   * made: created and then written, linked in, or renamed in. Returns what that process got.
+   */
+  function askedWhenMade(): string[] {
+    const file = join(home, "machine-id");
+    const got: string[] = [];
+    let asked = false;
+    const ask = (): void => {
+      asked = true;
+      got.push(machineId(home));
+    };
+    vi.mocked(writeFileSync).mockImplementation((path, data, options) => {
+      if (path !== file || asked) return real.writeFileSync(path, data, options);
+      // Created empty, as an exclusive create leaves it, then written.
+      real.writeFileSync(path, "", options);
+      ask();
+      real.writeFileSync(path, data, { ...(typeof options === "object" ? options : {}), flag: "w" });
+    });
+    vi.mocked(linkSync).mockImplementation((from, to) => {
+      real.linkSync(from, to);
+      if (to === file && !asked) ask();
+    });
+    vi.mocked(renameSync).mockImplementation((from, to) => {
+      real.renameSync(from, to);
+      if (to === file && !asked) ask();
+    });
+    return got;
+  }
+
+  it("gives another process asking the moment the id file appears the whole id, not an empty one", () => {
+    const askedMeanwhile = askedWhenMade();
+
+    const id = machineId(home);
+
+    expect(id).toMatch(ID);
+    expect(askedMeanwhile).toEqual([id]);
+  });
+
+  it("returns the id of the process that made the file first when it loses the race to make it", () => {
+    const winner = randomUUID();
+    vi.mocked(linkSync).mockImplementationOnce((from, to) => {
+      const theirs = join(home, "their.tmp");
+      real.writeFileSync(theirs, `${winner}\n`);
+      real.linkSync(theirs, to);
+      real.rmSync(theirs);
+      real.linkSync(from, to);
+    });
+
+    expect(machineId(home)).toBe(winner);
+    expect(machineId(home)).toBe(winner);
+  });
+
+  it("replaces a file that holds no id, as one left empty by a process that died making it, and keeps the new id", () => {
+    writeFileSync(join(home, "machine-id"), "");
+
+    const id = machineId(home);
+
+    expect(id).toMatch(ID);
+    expect(readFileSync(join(home, "machine-id"), "utf8").trim()).toBe(id);
+    expect(machineId(home)).toBe(id);
+  });
+
+  it("leaves no temporary file behind", () => {
+    machineId(home);
+    rmSync(join(home, "machine-id"));
+    writeFileSync(join(home, "machine-id"), "not an id\n");
+    machineId(home);
+
+    expect(real.readdirSync(home).filter(name => name.startsWith("machine-id"))).toEqual(["machine-id"]);
   });
 });

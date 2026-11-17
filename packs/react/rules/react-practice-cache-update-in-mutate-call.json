@@ -1,0 +1,650 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-practice-cache-update-in-mutate-call",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Update the query cache in a mutation's own options, not in callbacks passed to mutate(); those are dropped if the component unmounts before the mutation finishes.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/*.test.*",
+      "**/*.spec.*",
+      "**/*.cy.*",
+      "**/__tests__/**",
+      "**/test/**",
+      "**/tests/**",
+      "**/e2e/**",
+      "**/__mocks__/**",
+      "**/*.stories.*",
+      "**/*.story.*",
+      "**/__stories__/**",
+      "**/__fixtures__/**",
+      "**/fixtures/**",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.d.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "cu-fn": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "method_definition"
+              }
+            ]
+          },
+          "cu-query-source": {
+            "kind": "string",
+            "has": {
+              "kind": "string_fragment",
+              "regex": "^(?:@tanstack/[^/]*query[^/]*|react-query|@trpc/[^/]+)(?:/.*)?$"
+            }
+          },
+          "cu-query-file": {
+            "inside": {
+              "stopBy": "end",
+              "kind": "program",
+              "has": {
+                "kind": "import_statement",
+                "has": {
+                  "field": "source",
+                  "matches": "cu-query-source"
+                }
+              }
+            }
+          },
+          "cu-react-source": {
+            "kind": "string",
+            "has": {
+              "kind": "string_fragment",
+              "regex": "^(?i:react)$"
+            }
+          },
+          "cu-react-object": {
+            "kind": "identifier",
+            "any": [
+              {
+                "regex": "^React$",
+                "resolves": {
+                  "global": [
+                    "React"
+                  ]
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "any": [
+                        {
+                          "kind": "import_clause"
+                        },
+                        {
+                          "kind": "namespace_import"
+                        }
+                      ],
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "cu-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "cu-usememo-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^useMemo$",
+                "resolves": {
+                  "global": [
+                    "useMemo"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "has": {
+                        "field": "name",
+                        "regex": "^useMemo$"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "cu-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "regex": "^useMemo$",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "value",
+                            "matches": "cu-react-object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "name",
+                            "kind": "object_pattern",
+                            "has": {
+                              "kind": "shorthand_property_identifier_pattern",
+                              "regex": "^useMemo$"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "pattern": "$MEMO",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "value",
+                            "matches": "cu-react-object"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "name",
+                            "kind": "object_pattern",
+                            "has": {
+                              "kind": "pair_pattern",
+                              "all": [
+                                {
+                                  "has": {
+                                    "field": "key",
+                                    "regex": "^useMemo$"
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "field": "value",
+                                    "pattern": "$MEMO"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "cu-react-object"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^useMemo$"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "cu-mutate-callee": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "has": {
+                  "field": "property",
+                  "kind": "property_identifier",
+                  "regex": "^(?:mutate|mutateAsync)$"
+                }
+              },
+              {
+                "kind": "identifier",
+                "regex": "^(?:mutate|mutateAsync)$"
+              },
+              {
+                "kind": "identifier",
+                "pattern": "$ALIAS",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "name",
+                        "kind": "object_pattern",
+                        "has": {
+                          "kind": "pair_pattern",
+                          "all": [
+                            {
+                              "has": {
+                                "field": "key",
+                                "regex": "^(?:mutate|mutateAsync)$"
+                              }
+                            },
+                            {
+                              "has": {
+                                "field": "value",
+                                "any": [
+                                  {
+                                    "pattern": "$ALIAS"
+                                  },
+                                  {
+                                    "kind": "assignment_pattern",
+                                    "has": {
+                                      "field": "left",
+                                      "pattern": "$ALIAS"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "cu-wrapper": {
+            "any": [
+              {
+                "kind": "satisfies_expression"
+              },
+              {
+                "kind": "as_expression"
+              },
+              {
+                "kind": "parenthesized_expression"
+              }
+            ]
+          },
+          "cu-arg-2": {
+            "nthChild": {
+              "position": 2,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            }
+          },
+          "cu-mutate-call": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "matches": "cu-mutate-callee"
+            }
+          },
+          "cu-opts-declarator": {
+            "kind": "variable_declarator",
+            "has": {
+              "field": "name",
+              "kind": "identifier",
+              "pattern": "$OPTS"
+            },
+            "inside": {
+              "stopBy": "end",
+              "kind": "program",
+              "has": {
+                "stopBy": "end",
+                "kind": "identifier",
+                "pattern": "$OPTS",
+                "matches": "cu-arg-2",
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "matches": "cu-mutate-call"
+                  }
+                }
+              }
+            }
+          },
+          "cu-per-call-options": {
+            "kind": "object",
+            "any": [
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "matches": "cu-wrapper"
+                    }
+                  },
+                  "kind": "arguments",
+                  "inside": {
+                    "matches": "cu-mutate-call"
+                  }
+                },
+                "any": [
+                  {
+                    "matches": "cu-arg-2"
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "not": {
+                          "matches": "cu-wrapper"
+                        }
+                      },
+                      "matches": "cu-wrapper",
+                      "all": [
+                        {
+                          "matches": "cu-arg-2"
+                        },
+                        {
+                          "inside": {
+                            "kind": "arguments"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "matches": "cu-wrapper"
+                    }
+                  },
+                  "matches": "cu-opts-declarator"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "any": [
+                        {
+                          "matches": "cu-wrapper"
+                        },
+                        {
+                          "kind": "return_statement"
+                        },
+                        {
+                          "kind": "statement_block",
+                          "inside": {
+                            "kind": "arrow_function"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "kind": "arrow_function",
+                  "matches": "cu-memo-factory"
+                }
+              }
+            ]
+          },
+          "cu-memo-factory": {
+            "kind": "arrow_function",
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "cu-usememo-callee"
+                },
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "matches": "cu-wrapper"
+                    }
+                  },
+                  "matches": "cu-opts-declarator"
+                }
+              }
+            }
+          },
+          "cu-per-call-callback": {
+            "matches": "cu-fn",
+            "any": [
+              {
+                "inside": {
+                  "kind": "pair",
+                  "field": "value",
+                  "has": {
+                    "field": "key",
+                    "regex": "^(?:onSuccess|onSettled|onError|'on(?:Success|Settled|Error)'|\"on(?:Success|Settled|Error)\")$"
+                  },
+                  "inside": {
+                    "matches": "cu-per-call-options"
+                  }
+                }
+              },
+              {
+                "kind": "method_definition",
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:onSuccess|onSettled|onError|'on(?:Success|Settled|Error)'|\"on(?:Success|Settled|Error)\")$"
+                },
+                "inside": {
+                  "matches": "cu-per-call-options"
+                }
+              }
+            ]
+          },
+          "cu-trpc-utils-call": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "regex": "^(?:[\\w$]+\\.)+use(?:Utils|Context)$|^use(?:Utils|TRPCUtils|TrpcUtils)$"
+            }
+          },
+          "cu-trpc-receiver": {
+            "all": [
+              {
+                "has": {
+                  "field": "object",
+                  "regex": "^(?:[\\w$]+|\\(\\))(?:\\??\\.[\\w$]+|\\(\\))*$"
+                }
+              },
+              {
+                "has": {
+                  "field": "object",
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "cu-trpc-utils-call"
+                    },
+                    {
+                      "kind": "identifier",
+                      "resolves": {
+                        "binding": {
+                          "value": {
+                            "matches": "cu-trpc-utils-call"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "kind": "identifier",
+                      "resolves": {
+                        "binding": {
+                          "site": {
+                            "kind": "variable_declarator",
+                            "has": {
+                              "field": "value",
+                              "matches": "cu-trpc-utils-call"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "cu-cache-call": {
+            "kind": "call_expression",
+            "has": {
+              "field": "function",
+              "kind": "member_expression",
+              "any": [
+                {
+                  "has": {
+                    "field": "property",
+                    "pattern": "$M",
+                    "regex": "^(?:invalidateQueries|setQueryData|setQueriesData|resetQueries|removeQueries)$"
+                  }
+                },
+                {
+                  "all": [
+                    {
+                      "has": {
+                        "field": "property",
+                        "pattern": "$M",
+                        "regex": "^(?:refetchQueries)$"
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "matches": "cu-query-file"
+                        },
+                        {
+                          "has": {
+                            "field": "object",
+                            "regex": "(?i)(?:^|\\.)(?:query_?client|qc)$"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "has": {
+                        "field": "property",
+                        "pattern": "$M",
+                        "regex": "^(?:invalidate|refetch|reset|setData|setInfiniteData)$"
+                      }
+                    },
+                    {
+                      "matches": "cu-trpc-receiver"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "cache-update-in-mutate-call",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "cu-cache-call",
+            "inside": {
+              "stopBy": {
+                "matches": "cu-fn"
+              },
+              "matches": "cu-per-call-callback"
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "CACHE_UPDATE_IN_MUTATE_CALL",
+        "anchor": "witness.start",
+        "message": "Move this $M call into the mutation's own options: callbacks passed to mutate() are dropped if the component unmounts first. Keep toasts here."
+      }
+    }
+  ]
+}

@@ -7,7 +7,7 @@
  * then its sample rules), the k-th of n runs of consecutive jobs of about equal weight. It writes the results under a
  * directory, one file per pack (`<pack>/<k>-of-<n>.bin`), so CI's shards each score a share of every pack on a machine of
  * their own. `--check --results <dir>` then makes every pack's report from the results all shards wrote, and judges the
- * gated tool-packs. A plain `--check` is both, as shard 1 of 1, into a temporary directory.
+ * gated tool-packs and the packs' own rules. A plain `--check` is both, as shard 1 of 1, into a temporary directory.
  *
  * On each machine the work goes to worker processes (worker.ts), one per core and per 5 GiB of memory (`WorkerPool`):
  * the engine evaluates one workspace at a time per process. A shard's jobs go out in chunks, as workers come free.
@@ -36,7 +36,8 @@ export type WorkerRequest =
   | { kind: "evaluate"; directory: string; options: PlanOptions; compiles: string[]; jobs: number[] }
   | { kind: "report"; directory: string; options: PlanOptions; results: string }
   | { kind: "documents"; directory: string; tool: string }
-  | { kind: "judge"; directory: string; report: T4Report; tool: string; documents: DocumentGates };
+  | { kind: "judge"; directory: string; report: T4Report; tool: string; documents: DocumentGates }
+  | { kind: "own"; directory: string };
 
 /** A worker's answer, of its request's `kind`, or the error that stopped it. */
 export type WorkerResponse =
@@ -212,6 +213,13 @@ export class WorkerPool {
     return response.verdict;
   }
 
+  /** The verdict on the pack's own rules (`judgeOwnRules`), which need no report. */
+  async own(directory: string): Promise<ToolPackVerdict> {
+    const response = await this.#run({ kind: "own", directory });
+    if (response.kind !== "judge") throw unexpected(response);
+    return response.verdict;
+  }
+
   /** Lets the workers exit once they are idle. */
   close(): void {
     for (const child of this.#children) {
@@ -297,8 +305,9 @@ export async function evaluateShard(pool: WorkerPool, directories: readonly stri
 }
 
 /**
- * Each pack's report from the results under `results`, and the verdicts of its gated tool-packs, in path order. The
- * tool-packs' document gates are asked for with the reports, so they are made while the reports are.
+ * Each pack's report from the results under `results`, and the verdicts of its gated tool-packs, in path order, then
+ * the verdict on its own rules when it has any. The tool-packs' document gates and the own rules' verdict are asked
+ * for with the reports, so they are made while the reports are.
  */
 export function reportPacks(
   pool: WorkerPool,
@@ -308,17 +317,18 @@ export function reportPacks(
 ): { report: Promise<T4Report>; verdicts: Promise<ToolPackVerdict[]> }[] {
   const gated = gatedToolPacks(RERAIL_ROOT);
   return directories.map(packDirectory => {
-    const pack = loadPack(packDirectory).pack.pack;
+    const { pack } = loadPack(packDirectory);
     const report = pool.report(packDirectory, options, results);
-    const verdicts = Promise.all(
-      gated
-        .filter(entry => entry.pack === pack)
+    const verdicts = Promise.all([
+      ...gated
+        .filter(entry => entry.pack === pack.pack)
         .map(async ({ tool }) => {
           const documents = pool.documents(packDirectory, tool);
           documents.catch(() => undefined);
           return pool.judge(packDirectory, await report, tool, await documents);
         }),
-    );
+      ...(pack.own.length === 0 ? [] : [pool.own(packDirectory)]),
+    ]);
     // Each is awaited in its turn; one failing meanwhile is not left unhandled.
     report.catch(() => undefined);
     verdicts.catch(() => undefined);

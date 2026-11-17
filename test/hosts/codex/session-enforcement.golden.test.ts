@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { sessionStartNote } from "../../../src/engine/index.js";
 import { codexHookOutput } from "../../../src/hosts/codex/codex-hook-adapter.js";
-import { goldenJson, NO_EXPLICIT_ANY, TWO_RULES, SCENE_DASHBOARD, SCENE_SESSION } from "../../support/session-enforcement-scenes.js";
+import { goldenJson, NO_EXPLICIT_ANY, TWO_RULES, SCENE_DASHBOARD, SCENE_PLATFORM, SCENE_SESSION } from "../../support/session-enforcement-scenes.js";
 import { fixturesPath } from "../../support/oracles.js";
 
 const GOLDEN = fixturesPath("host", "session-enforcement", "codex");
@@ -9,7 +9,7 @@ const GOLDEN = fixturesPath("host", "session-enforcement", "codex");
 /** Codex's output in each scene of the session enforcement design; review a change to these files with Minh. */
 describe("Codex session enforcement golden output", () => {
   it("N1: the note only the coding agent reads", async () => {
-    await expect(sessionStartNote(SCENE_DASHBOARD, "codex", SCENE_SESSION, { setUp: true, ruleCount: 26 }))
+    await expect(sessionStartNote(SCENE_DASHBOARD, "codex", SCENE_SESSION, { setUp: true, ruleCount: 26 }, SCENE_PLATFORM))
       .toMatchFileSnapshot(`${GOLDEN}/n1-session-note.txt`);
   });
 
@@ -18,9 +18,9 @@ describe("Codex session enforcement golden output", () => {
     await expect(goldenJson(codexHookOutput("PostToolUse", [TWO_RULES]))).toMatchFileSnapshot(`${GOLDEN}/n4b-two-rules.json`);
   });
 
-  it("N4c: a late steer shows its line at Stop; the block waits for the next message", async () => {
+  it("N4c: a turn-end steer shows nothing at Stop; its line and block go out together with the next message", async () => {
     await expect(goldenJson(codexHookOutput("Stop", [NO_EXPLICIT_ANY]))).toMatchFileSnapshot(`${GOLDEN}/n4c-late-steer-stop.json`);
-    await expect(goldenJson(codexHookOutput("PostToolUse", [{ ...NO_EXPLICIT_ANY, shown: true }])))
+    await expect(goldenJson(codexHookOutput("PostToolUse", [{ ...NO_EXPLICIT_ANY, late: true }])))
       .toMatchFileSnapshot(`${GOLDEN}/n4c-late-steer-next-message.json`);
   });
 });
