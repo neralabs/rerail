@@ -5619,7 +5619,7 @@ fn run_observed(
     type Hand<'h> = &'h mut dyn FnMut(&str, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>) -> Result<()>;
     let guest_postings_once = parking_lot::Mutex::new(guest_postings_once);
     let measured_once = parking_lot::Mutex::new(measured_once);
-    let evaluate = |task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> Result<Evaluated> {
+    let evaluate_in = |task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> Result<Evaluated> {
         let Task { chunk_nodes_built, sources, documents, mut stats, mix, cone, replay } = task;
         let chunk_docs_n = documents.len();
         // The slice's request lines of each round, for the entries (`memo::GUESTS`).
@@ -5871,6 +5871,11 @@ fn run_observed(
         }
         crate::code_rule_dsl::logic::native::forget_inputs(db);
         Ok(Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mentioned, slice_rounds })
+    };
+    // A chunk's relations go in blocks of its own, given back with it (Q58): not in blocks every chunk at once
+    // shares, which a few rows of each kept whole and the memory line counted whole.
+    let evaluate = |task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> Result<Evaluated> {
+        crate::code_rule_dsl::logic::native::setfix::in_chunk(|| evaluate_in(task, db, modules, hand))
     };
     // The connections chunks evaluate on beside the main thread's, each opened as the run's is (its atoms, the
     // engine's functions, `x` attached when SQL first runs) and given the run's inputs bound before the chunks.

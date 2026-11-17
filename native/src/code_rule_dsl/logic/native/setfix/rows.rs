@@ -41,14 +41,57 @@ pub struct Facts {
     pub block: Block,
 }
 
-/// The block new relations go in, while it has room.
+/// The block new relations go in outside a chunk, while it has room.
 static OPEN: Mutex<Option<Arc<Facts>>> = Mutex::new(None);
 
-/// A block of at least `bytes`: the pool's when it has room to spare (nothing evicted for it), else anonymous.
+/// A chunk's blocks (Q58): the one its new relations go in while it has room, and every one it made, to count
+/// those that outlive it. A block lives while any relation in it does, so one shared by every chunk at once was kept
+/// whole by a few rows of each, and the run's footprint (the line its chunk sizes are cut by) counted it whole.
+#[derive(Default)]
+pub struct Chunk {
+    open: Mutex<Option<Arc<Facts>>>,
+    made: Mutex<Vec<std::sync::Weak<Facts>>>,
+}
+
+thread_local! {
+    /// The chunk this thread's run is evaluating (`in_chunk`): carried to its jobs (`setfix::carried`).
+    pub(super) static CHUNK: std::cell::RefCell<Option<Arc<Chunk>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `f` as a chunk's evaluation: the relations it and its jobs make go in blocks of the chunk's own, given back
+/// with the last of its rows (decision 0289: a chunk is a block). What outlives the chunk keeps only its own block;
+/// the profile counts those (`a chunk's blocks outlived it`).
+pub fn in_chunk<R>(f: impl FnOnce() -> R) -> R {
+    struct Leave(Option<Arc<Chunk>>, Arc<Chunk>);
+    impl Drop for Leave {
+        fn drop(&mut self) {
+            CHUNK.with(|c| *c.borrow_mut() = self.0.take());
+            self.1.open.lock().unwrap_or_else(|e| e.into_inner()).take();
+            let made = std::mem::take(&mut *self.1.made.lock().unwrap_or_else(|e| e.into_inner()));
+            let (n, live) = (made.len(), made.iter().filter_map(std::sync::Weak::upgrade).map(|f| f.block.used()).collect::<Vec<_>>());
+            if !live.is_empty() {
+                let bytes: usize = live.iter().sum();
+                crate::code_rule_dsl::logic::profile::decision("a chunk's blocks outlived it", || {
+                    format!("{} of its {n} blocks, {} MB used in them, held by rows it handed on", live.len(), bytes >> 20)
+                });
+            }
+        }
+    }
+    let chunk = Arc::new(Chunk::default());
+    let _leave = Leave(CHUNK.with(|c| c.borrow_mut().replace(chunk.clone())), chunk);
+    f()
+}
+
+/// A block of at least `bytes`: in a run bound to the device, the pool's when it has room to spare (nothing evicted
+/// for it); else anonymous, resident only where written. A CPU run's block is never a pinned buffer of the pool's,
+/// which its footprint would count whole (Q58); the device can still read an anonymous block in place (a no-copy
+/// buffer, `Block::gpu_buffer`).
 fn lease(bytes: usize) -> Block {
     let bytes = bytes.max(FACTS_BYTES);
     #[cfg(target_os = "macos")]
-    if let Ok(b) = rerail_accel::gpu::shared::lease_block_spare(kind::FACTS, bytes) {
+    if crate::code_rule_dsl::logic::plan::placement::device()
+        && let Ok(b) = rerail_accel::gpu::shared::lease_block_spare(kind::FACTS, bytes)
+    {
         return b;
     }
     Block::anon(kind::FACTS, bytes)
@@ -70,12 +113,16 @@ impl Part {
     fn new(k: usize, rows: usize) -> Part {
         let spec = Spec { widths: vec![8; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG };
         let need = rows * k * 8 + k * size_of::<rerail_blocks::rows::ColDir>() + 4096;
-        let mut open = OPEN.lock().unwrap_or_else(|e| e.into_inner());
+        let chunk = CHUNK.with(|c| c.borrow().clone());
+        let mut open = chunk.as_ref().map_or(&OPEN, |c| &c.open).lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
             let facts = match &*open {
                 Some(f) if !fresh && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => f.clone(),
                 _ => {
                     let f = Arc::new(Facts { block: lease(2 * need + MARGIN) });
+                    if let Some(c) = &chunk {
+                        c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
+                    }
                     *open = Some(f.clone());
                     f
                 }
@@ -489,5 +536,61 @@ mod tests {
         assert_eq!(next.len(), 2 * k);
         assert_eq!(*next.row(1, k), [4, 5, 6]);
         assert_eq!(*next.freeze(2).row(0, k), [1, 2, 3]);
+    }
+
+    /// The block a relation's rows lie in.
+    fn block_of(rows: &Rows) -> Arc<Facts> {
+        rows.in_block().expect("rows").facts
+    }
+
+    fn some_rows() -> Rows {
+        let mut r = Rows::new(2);
+        r.extend_from_slice(&[1, 2, 3, 4]);
+        r
+    }
+
+    /// A chunk's relations go in blocks of its own (Q58): none is shared with the run's or another chunk's, and
+    /// each is given back once the chunk and its rows end, whatever outlives other chunks.
+    #[test]
+    fn a_chunks_relations_go_in_its_own_blocks_and_go_with_it() {
+        let outside = some_rows();
+        let (a, b) = std::thread::scope(|s| {
+            let a = s.spawn(|| in_chunk(|| { let r = some_rows(); (Arc::downgrade(&block_of(&r)), Arc::as_ptr(&block_of(&r)) as usize) }));
+            let b = s.spawn(|| in_chunk(|| { let r = some_rows(); (Arc::downgrade(&block_of(&r)), Arc::as_ptr(&block_of(&r)) as usize) }));
+            (a.join().unwrap(), b.join().unwrap())
+        });
+        let run = Arc::as_ptr(&block_of(&outside)) as usize;
+        assert_ne!(a.1, run, "a chunk's relation is not in the run's block");
+        assert_ne!(a.1, b.1, "two chunks at once share no block");
+        assert!(a.0.upgrade().is_none() && b.0.upgrade().is_none(), "a chunk's blocks go with it");
+        // A relation the chunk keeps past its end keeps its block, and only that.
+        let kept = in_chunk(some_rows);
+        assert_eq!(*kept.row(1, 2), [3, 4]);
+        assert_ne!(Arc::as_ptr(&block_of(&kept)) as usize, run);
+    }
+
+    /// A job the chunk starts (its strata's, on another thread) puts its relations in the chunk's blocks: the
+    /// scope is the run's context, carried.
+    #[test]
+    fn a_job_of_the_chunk_puts_its_relations_in_the_chunks_block() {
+        in_chunk(|| {
+            let mine = Arc::as_ptr(&block_of(&some_rows())) as usize;
+            let theirs = std::sync::Mutex::new(0usize);
+            crate::threads::scope(|jobs| {
+                let got = &theirs;
+                jobs.spawn("a test job", move |_| *got.lock().unwrap() = Arc::as_ptr(&block_of(&some_rows())) as usize);
+            });
+            assert_eq!(mine, theirs.into_inner().unwrap(), "the job wrote in the chunk's block");
+        });
+    }
+
+    /// A run bound to the CPU takes anonymous blocks (Q58): resident only where written, never a pinned buffer of
+    /// the device's pool, which the run's footprint would count whole.
+    #[test]
+    fn a_cpu_run_takes_anonymous_blocks() {
+        let was = crate::code_rule_dsl::logic::plan::placement::set_binding(crate::code_rule_dsl::logic::plan::placement::Binding::Cpu);
+        let r = in_chunk(some_rows);
+        crate::code_rule_dsl::logic::plan::placement::set_binding(was);
+        assert!(!block_of(&r).block.in_slab(), "a CPU run's block is anonymous");
     }
 }

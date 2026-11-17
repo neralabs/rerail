@@ -209,6 +209,11 @@ impl Block {
         h.reserved = self.reserved as u64;
     }
 
+    /// Whether it lies in a slab of a pool's (`rerail_accel::gpu::shared::lease_block`), not memory of its own.
+    pub fn in_slab(&self) -> bool {
+        self.backing.is_some()
+    }
+
     pub fn header(&self) -> &Header {
         unsafe { &*(self.base as *const Header) }
     }

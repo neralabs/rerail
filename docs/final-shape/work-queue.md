@@ -1431,6 +1431,10 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 
 ### Q58. 0325's FACTS blocks raise a CPU run's footprint, and the memory line cuts a third more chunks
 
+- **Status** (2026-11-17): done, both parts (decision 0325, "A chunk's blocks, and a CPU run's"): chunks
+  2,797 and 2,982, user CPU 205.5 and 217.8 s, median footprint 1,189 and 1,194 MB; about 35 MB left (bump-allocated
+  blocks keep a dropped relation's pages until the chunk ends).
+
 - **Found** (2026-11-17, after merging Native-and-GPU-strata a3f9c49f2 at 49dad1939): PostHog cold on the M3, CPU
   binding, profiled, alternated with the engine just before the merge (ec3a74a87): user CPU 210.8 and 204.1 s before,
   224.6 and 224.6 s after, at the same instructions (2,810 and 2,691 G against 2,837 and 2,648 G). Findings the same.

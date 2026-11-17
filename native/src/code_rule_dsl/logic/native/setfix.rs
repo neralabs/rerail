@@ -44,7 +44,7 @@ pub mod ordered;
 pub mod runs;
 use runs::{Index, RowData};
 mod rows;
-pub use rows::{Facts, InBlock, Row};
+pub use rows::{Facts, InBlock, Row, in_chunk};
 use rows::Rows;
 /// A column's statistics in a fixed size (decision 0112): no index is kept for them.
 pub mod sketch;
@@ -5539,6 +5539,7 @@ pub fn walks_whole<R>(f: impl FnOnce() -> R) -> R {
 
 pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
     c.copy(&["WALKS_WHOLE"], &WALKS_WHOLE);
+    c.cloned(&["CHUNK"], &rows::CHUNK);
 }
 
 /// Rows a cut left that a walk going on from it read in their order, unsorted (`scan_order`, decision 0294).

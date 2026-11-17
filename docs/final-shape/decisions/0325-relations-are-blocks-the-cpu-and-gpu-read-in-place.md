@@ -158,3 +158,26 @@ Step by step, each leaving the engine working (see the commits that name this de
     still upload: they are not blocks.
   - Still copied: a relation with dead rows (its bits are setfix's, not the block's), the views, and the rows
     back (step 4).
+
+## A chunk's blocks, and a CPU run's (2026-11-17, Q58)
+
+- **Found**: on PostHog cold (CPU binding) the shared FACTS blocks raised the median footprint from about 1,160 MB
+  to 1,306–1,382 MB. Every chunk evaluating at once wrote into the one open block, so a few rows of each kept every
+  block whole; and the blocks were the device pool's pinned buffers even with no device bound. The memory line
+  (`RUN_MB`) then cut 3,409 chunks against 2,563, and user CPU rose 14–20 s at the same instructions.
+- **Decided**:
+  - A chunk's relations go in blocks of its own (`setfix::in_chunk`, around the chunk's `evaluate`; decision
+    0289, a chunk is a block). The scope is the run's context (`rows::CHUNK`, carried), so the jobs a chunk starts
+    write in its blocks too. Its blocks go back with the last of its rows. Outside a chunk the run's open block is
+    used as before. The profile counts the blocks still held when a chunk's evaluation ends (`a chunk's blocks
+    outlived it`): on PostHog those are the rows each hands on until it is filed, almost all under 1 MB.
+  - A block is the pool's only in a run bound to the device (`placement::device()`); a CPU run's is anonymous,
+    resident only where written. The device can still read an anonymous block in place (a no-copy buffer).
+- **Pinned by**: `a_chunks_relations_go_in_its_own_blocks_and_go_with_it`,
+  `a_job_of_the_chunk_puts_its_relations_in_the_chunks_block`, `a_cpu_run_takes_anonymous_blocks` (setfix::rows).
+- **Measured** (M3, PostHog cold, profiled, two runs, load 26–35): user CPU 205.5 and 217.8 s (before 0325:
+  204.1–210.8; with it: 224.6 twice); chunks 2,797 and 2,982 (2,563; 3,409); median footprint 1,189 and 1,194 MB
+  (1,155–1,161; 1,306–1,382); Metal driver and leased MB 0 (256–320 and 192–256). Findings 29,747, the same hash.
+- **Left**: about 35 MB of median footprint above the run before 0325, and with it a few hundred more chunks: a
+  block is bump-allocated, so a relation a chunk drops (or a tail moved to a bigger place) keeps its written pages
+  until the chunk ends, where a vector's memory went back at once.
