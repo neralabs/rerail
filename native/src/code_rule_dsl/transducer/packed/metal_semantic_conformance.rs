@@ -554,7 +554,6 @@ pub mod retained_grid_runtime {
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
-    #[ignore = "Q22: Metal finds other results than the CPU interpreter, which the CPU JIT agrees with (hidden behind a capacity refusal until 0334 §9)"]
     fn inputs_nested_optional_type_captures_preserve_raw_candidate_ordinals() {
         let query = "(type (_ [(identifier) (none)]? @type (_ [(identifier) (none)]? @type (_ [(identifier) (none)]? @type (_ [(identifier) (none)]? @type)))))";
         let programs = [Program::compile_tree_sitter_query_pattern(
@@ -597,7 +596,6 @@ pub mod retained_grid_runtime {
         }
     }
     #[test]
-    #[ignore = "Q22: Metal finds other results than the CPU interpreter, which the CPU JIT agrees with (hidden behind a capacity refusal until 0334 §9)"]
     fn inputs_compact_stage_capture_predicates_use_the_correct_capture_generation() {
         let language = SupportLang::Python.get_ts_language();
         let module = language.id_for_node_kind("module", true);
@@ -3244,7 +3242,6 @@ pub mod retained_grid_frontier_runtime {
         assert_fixture(&programs, &files, &anchors);
     }
     #[test]
-    #[ignore = "Q22: Metal finds other results than the CPU interpreter, which the CPU JIT agrees with (hidden behind a capacity refusal until 0334 §9)"]
     fn inputs_compact_stage_waves_match_cpu_navigation_and_control_flow() {
         let programs = vec![
             program(vec![

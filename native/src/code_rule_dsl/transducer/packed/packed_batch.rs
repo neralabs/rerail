@@ -875,7 +875,10 @@ impl PackedBatch {
                     .any(|instruction| matches!(instruction, output::OutputInstruction::LanguageFromMime { .. }));
                 let one_result = packed_program.flags & ONE_RESULT != 0;
                 let marks = packed_program.flags & MARKS != 0;
-                Ok::<_, Error>((program_values, strip_states, source_transform, mime_transform, one_result, marks))
+                // A tree-sitter query with repeats (`program_flags` bit 1): the only programs whose query states are
+                // admitted, queued once and reduced, as the CPU's (`finalize_outputs`, `admit_query_state`).
+                let query = packed_program.flags & 2 != 0;
+                Ok::<_, Error>((program_values, strip_states, source_transform, mime_transform, one_result, marks, query))
             })
             .collect::<Result<Vec<_>, _>>()?;
         let capacities = self
@@ -883,7 +886,7 @@ impl PackedBatch {
             .iter()
             .map(|task| {
                 let facts = facts[task.program as usize];
-                let (program_values, strip_states, source_transform, mime_transform, one_result, marks) = per_program[task.program as usize];
+                let (program_values, strip_states, source_transform, mime_transform, one_result, marks, query) = per_program[task.program as usize];
                 let file = &self.files[task.file as usize];
                 // The task's root: its span's length alone is read.
                 let root_length = *self.root_spans.get(task.batch_ordinal as usize).ok_or(Error::BackendFailure)?;
@@ -898,7 +901,9 @@ impl PackedBatch {
                 let capture_states = work_capacity(facts.capture_operations);
                 let cursor_states = work_capacity(facts.cursor_operations);
                 let repeat_states = work_capacity(facts.repeat_operations);
-                let repeat_bound = repeat_states;
+                // The query arenas (states, members, queued states) gate the device's admission, queueing and
+                // reduction (`evaluation.quotas[4]`): none for a program the CPU neither admits nor reduces.
+                let repeat_bound = if query { repeat_states } else { 0 };
                 let greedy_states = work_capacity(facts.greedy_operations);
                 let result_states = work_capacity(facts.emit_operations);
                 // Candidates are still every path's; only the first accepted is kept.

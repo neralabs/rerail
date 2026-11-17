@@ -536,6 +536,10 @@ fn jit_support(
                 source.push_str(&format!(
                     "case {pc}u:return jit_value_{program_index}_{operand}(context);"
                 ));
+            } else if opcode == ASSERT && !program.tree_sitter_query {
+                // An ordinary program tests the capture predicate where it asserts it, on the captures so far, as the
+                // CPU's (`ASSERT`); a tree-sitter query's are tested on its candidates at the task's end.
+                source.push_str(&format!("case {pc}u:return jit_capture_{program_index}_{operand}(context);"));
             } else if opcode == ASSERT {
                 source.push_str(&format!("case {pc}u:return true;"));
             } else {
