@@ -597,6 +597,14 @@ pass.
   passes after lowering ran (0 of 589 prepared); what is left is whole: the link after lowering 0.14 s, the 317
   images 0.07 s, the merges 0.03 s. The parts are conservative at the interface: an export another part reads is
   neither factorized nor cut.
+- **0345: the links' and keys' whole-program work** (2026-11-17): a part keeps the names its passes made (the link
+  read them by scanning every part's rules), and a part's key hashes only its own relations' fields, the shared
+  ones and the program's inputs hashed once a run (each key formatted ~150 shared declarations, 589 keys an edit).
+  Same ep2 sequence, load 41–46: an edit **32.3 G**, 2.77 s CPU (from 36.3 G; A: 40.7 G); `prepare` 11.2 G (A:
+  18.5 G); rows h1's, phase 0 and sources the whole's exactly. Left of the whole per edit: each stage reads the
+  317 parts' images (0.09 s CPU each), stage 1 reads each part's header for the link (0.06 s), stage 2 makes
+  each part's header and interface (0.06 s). Removing the image reads needs a kept link (the linked version, with
+  each part's rules in it, edited where a part changed): 0333's mechanism, which this answer was to compare.
   Getting it working took four fixes in the link, each a name read for its meaning: `strtest_<k>`,
   `rr_ast_<k>_<m>` (its capture count), the requests a runner answers (never inputs), and a part's header (the
   whole program's 3,000 declarations per part made the link quadratic and every part's key the whole's).

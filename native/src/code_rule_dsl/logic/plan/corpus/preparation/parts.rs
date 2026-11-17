@@ -152,6 +152,22 @@ fn shared_of<'a>(header: &'a front::Program, made_by_parts: &BTreeSet<&str>) -> 
     shared
 }
 
+/// `common` with what every part's header holds of the program's relations: the shared ones' fields (`shared_of`)
+/// and the program's inputs, which a part's header starts from. Hashed once a run, into every part's key.
+fn with_shared(common: &[u8; 32], header: &front::Program, shared: &BTreeSet<&str>) -> [u8; 32] {
+    use sha2::Digest as _;
+    let pick = |r: &&str| shared.contains(*r);
+    let decls: Vec<_> = header.decls.iter().filter(|(r, _)| pick(&r.as_ref())).collect();
+    let nullary: Vec<_> = header.nullary.iter().filter(|r| pick(&r.as_str())).collect();
+    let lattice: Vec<_> = header.lattice.iter().filter(|(r, _)| pick(&r.as_str())).collect();
+    let facts: Vec<_> = header.facts.iter().filter(|(r, _)| pick(&r.as_str())).collect();
+    let qualifiers: Vec<_> = header.qualifiers.iter().filter(|(r, _)| pick(&r.as_str())).collect();
+    let tapes: Vec<_> = header.tapes.iter().filter(|(r, _)| pick(&r.as_str())).collect();
+    let demand: Vec<_> = header.demand.iter().filter(|r| pick(&r.as_str())).collect();
+    let all = (decls, nullary, lattice, facts, qualifiers, tapes, demand, &header.inputs);
+    sha2::Sha256::new().chain_update(common).chain_update(format!("{all:?}").as_bytes()).finalize().into()
+}
+
 /// A part's own header (decision 0345 §2): the declarations, facts and lists of the relations it makes and reads
 /// and the `shared` ones, and its inputs and outputs; the fields every part shares (`common_of`) are not in it.
 /// Another part's relations are not its interface, and a change of one does not change its key.
@@ -187,17 +203,27 @@ fn part_header(header: &front::Program, part: &Part, read_elsewhere: &BTreeSet<S
 /// A part's key (decision 0345 §5), without building it: the engine, the dialect, the switches its passes read, the
 /// shared header's digest (`common_of`), its own header's per-relation fields, and its rules' hashes in order (a
 /// rule's hash is its text's: its relations by name).
-fn key_of(head: &front::Program, common: &[u8; 32], rules: &[crate::code_rule_dsl::logic::program_image::RuleRef<'_>], part: &Part, dialect: crate::code_rule_dsl::language::GrammarDialect) -> [u8; 32] {
+fn key_of(head: &front::Program, common: &[u8; 32], shared: &BTreeSet<&str>, inputs_shared: usize, rules: &[crate::code_rule_dsl::logic::program_image::RuleRef<'_>], part: &Part, dialect: crate::code_rule_dsl::language::GrammarDialect) -> [u8; 32] {
     use sha2::Digest as _;
     let mut h = sha2::Sha256::new();
-    h.update(b"rerail/part/v3\0");
+    h.update(b"rerail/part/v4\0");
     h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     h.update(format!("\0{dialect:?}\0").as_bytes());
     for s in SWITCHES {
         h.update(format!("{s}={}\0", std::env::var(s).unwrap_or_default()).as_bytes());
     }
+    // The fields every part shares (`common_of`, and the shared relations' and the program's inputs: `with_shared`)
+    // were hashed once; the part's own are its relations' and what it adds to the inputs.
     h.update(common);
-    let own = (&head.decls, &head.nullary, &head.lattice, &head.facts, &head.qualifiers, &head.tapes, &head.demand, &head.inputs, &head.outputs);
+    let mine = |r: &str| !shared.contains(r);
+    let decls: Vec<_> = head.decls.iter().filter(|(r, _)| mine(r)).collect();
+    let nullary: Vec<_> = head.nullary.iter().filter(|r| mine(r)).collect();
+    let lattice: Vec<_> = head.lattice.iter().filter(|(r, _)| mine(r)).collect();
+    let facts: Vec<_> = head.facts.iter().filter(|(r, _)| mine(r)).collect();
+    let qualifiers: Vec<_> = head.qualifiers.iter().filter(|(r, _)| mine(r)).collect();
+    let tapes: Vec<_> = head.tapes.iter().filter(|(r, _)| mine(r)).collect();
+    let demand: Vec<_> = head.demand.iter().filter(|r| mine(r)).collect();
+    let own = (decls, nullary, lattice, facts, qualifiers, tapes, demand, &head.inputs[inputs_shared.min(head.inputs.len())..], &head.outputs);
     h.update(format!("{own:?}").as_bytes());
     h.update((part.rules.len() as u64).to_le_bytes());
     for &i in &part.rules {
@@ -285,11 +311,14 @@ struct Prepared {
     specs: Vec<(String, Vec<String>)>,
     matches: Vec<String>,
     markers: Vec<String>,
+    /// The names its passes made, new to the part's program: what the link may rename.
+    made: Vec<String>,
 }
 
 impl Prepared {
-    fn of(version: Arc<Version>, f: Front) -> Prepared {
+    fn of(version: Arc<Version>, f: Front, made: Vec<String>) -> Prepared {
         Prepared {
+            made,
             version,
             reaches: f.reaches,
             demanded: f.demanded,
@@ -354,6 +383,7 @@ fn facts_of(p: &Prepared, digest: &[u8; 32]) -> Facts {
     put("part_test", p.tests.iter().zip(&p.specs).enumerate().map(|(i, (r, (op, pats)))| vec![n(i), r.clone(), op.clone(), pats.join("\u{1f}")]).collect());
     put("part_match", p.matches.iter().enumerate().map(|(i, m)| vec![n(i), m.clone()]).collect());
     put("part_marker", p.markers.iter().enumerate().map(|(i, m)| vec![n(i), m.clone()]).collect());
+    put("part_made", p.made.iter().enumerate().map(|(i, m)| vec![n(i), m.clone()]).collect());
     if let Some((listed, outcome)) = &p.demand {
         put("part_demand_listed", listed.iter().enumerate().map(|(i, r)| vec![n(i), r.clone()]).collect());
         let row = match outcome {
@@ -427,6 +457,7 @@ fn lookup(store: &ContentStore, key: &[u8; 32], lists: &front::Lists) -> StoreRe
             specs: tests.iter().map(|r| (r[2].clone(), split(&r[3]))).collect(),
             matches: ordered(&facts, "part_match").into_iter().map(|r| r[1].clone()).collect(),
             markers: ordered(&facts, "part_marker").into_iter().map(|r| r[1].clone()).collect(),
+            made: ordered(&facts, "part_made").into_iter().map(|r| r[1].clone()).collect(),
         },
         sources,
     )))
@@ -591,13 +622,17 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
     let made_by_parts: BTreeSet<&str> = parts.iter().flat_map(|p| p.made.iter().map(String::as_str)).collect();
     let (common, common_digest) = common_of(&header);
     let shared = shared_of(&header, &made_by_parts);
+    let common_digest = with_shared(&common_digest, &header, &shared);
     let mut prepared: Vec<(front::Program, Prepared)> = Vec::with_capacity(parts.len());
     let mut sources = Vec::new();
     let (mut found, mut made) = (0usize, 0usize);
     for (j, part) in parts.iter().enumerate() {
         let read_elsewhere: BTreeSet<String> = part.made.iter().filter(|r| readers.get(r.as_str()).is_some_and(|js| js.iter().any(|&o| o != j))).cloned().collect();
         let head = part_header(&header, part, &read_elsewhere, &made_by_parts, &shared);
-        let key = key_of(&head, &common_digest, &rules, part, dialect);
+        let key = {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "a part's key".into());
+            key_of(&head, &common_digest, &shared, header.inputs.len(), &rules, part, dialect)
+        };
         let kept = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "a part, from the store".into());
             lookup(store, &key, lists).map_err(|e| e.to_string())?
@@ -612,9 +647,11 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
                 made += 1;
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("prepare part {} ({} rules)", part.name, part.rules.len()));
                 let input = program_of(&version, &rules, &head, &common, part)?;
+                let had = names_of(&input, &input.header(lists)?);
                 let (v, f, _) = crate::code_rule_dsl::logic::profile::quiet(|| super::front(input, dialect, None, &mut |_, _| {}))?;
+                let made_names: Vec<String> = names_of(&v, &v.header(lists)?).into_iter().filter(|r| !had.contains(r)).collect();
                 let v = stripped(&v, &common, lists)?;
-                let p = Prepared::of(v, f);
+                let p = Prepared::of(v, f, made_names);
                 if keep {
                     record(store, &key, &p);
                 }
@@ -631,7 +668,9 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
 /// The prepared parts linked (decision 0345 §6), with what their passes found, renamed.
 fn link(version: &Version, header: &front::Program, parts: &[Part], prepared: Vec<(front::Program, Prepared)>, lists: &front::Lists) -> Result<(Arc<Version>, Front)> {
     let s_names = crate::code_rule_dsl::logic::profile::span(|| "link: the parts' names".into());
-    let known = names_of(version, header);
+    // The program's names: its relations by id (every name a rule holds has one) and its header's.
+    let mut known: BTreeSet<String> = (0..version.rel_end()).map(|r| version.rel_name(crate::code_rule_dsl::logic::program_image::RelId(r)).to_owned()).collect();
+    known.extend(header.decls.keys().map(|k| k.to_string()).chain(header.inputs.iter().cloned()).chain(header.outputs.iter().cloned()).chain(header.facts.keys().cloned()).chain(header.natives.keys().cloned()));
     // A relation made in one part alone is that part's own: what its passes remove of it goes.
     let mut makers: HashMap<&str, usize> = HashMap::new();
     for p in parts {
@@ -649,11 +688,13 @@ fn link(version: &Version, header: &front::Program, parts: &[Part], prepared: Ve
     let mut new_inputs: HashMap<String, String> = HashMap::new();
     // The names each part's passes made, and how many parts made each.
     let afters: Vec<front::Program> = prepared.iter().map(|(_, p)| p.version.header(lists)).collect::<Result<_>>()?;
-    let made_new: Vec<BTreeSet<String>> = prepared.iter().zip(&afters).map(|((_, p), after)| names_of(&p.version, after).into_iter().filter(|r| !known.contains(r)).collect()).collect();
+    // The names each part's passes made (kept with the part): one the program has already, or two parts made, is
+    // renamed.
+    let made_new: Vec<BTreeSet<String>> = prepared.iter().map(|(_, p)| p.made.iter().cloned().collect()).collect();
     let mut times: HashMap<&str, usize> = HashMap::new();
     for names in &made_new {
         for r in names {
-            *times.entry(r.as_str()).or_default() += 1;
+            *times.entry(r.as_str()).or_insert(usize::from(known.contains(r))) += 1;
         }
     }
     // The numbers each counter-numbered family has taken: the program's own, then each part's as it is linked.
@@ -855,6 +896,7 @@ pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl
     use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
     use crate::code_rule_dsl::typing::file_local::FileLocal;
     // The whole: the nearest sets, the bound check, and the split every part's interface is read from.
+    let s_whole = crate::code_rule_dsl::logic::profile::span(|| "the whole before the parts' passes: nearest, bound, split".into());
     let mut p = Pipeline::new("before the parts' passes", version);
     let mut nearest = super::Nearest::default();
     p.rules(&mut nearest);
@@ -863,6 +905,7 @@ pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl
     let split = p.get::<FileLocal>()?;
     drop(p);
     let header = v1.header(lists)?;
+    drop(s_whole);
     let parts = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the parts and their interfaces (decision 0345 stage 2)".into());
         parts_of(&v1)
@@ -888,7 +931,9 @@ pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl
     let made_by_parts: BTreeSet<&str> = parts.iter().flat_map(|p| p.made.iter().map(String::as_str)).collect();
     let (common, common_digest) = common_of(&header);
     let shared = shared_of(&header, &made_by_parts);
+    let common_digest = with_shared(&common_digest, &header, &shared);
     // Each part's own header, with its interface: what it is given of the split, and how its outputs are read.
+    let s_heads = crate::code_rule_dsl::logic::profile::span(|| "the parts' headers and interfaces".into());
     let heads: Vec<front::Program> = parts
         .iter()
         .enumerate()
@@ -924,6 +969,7 @@ pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl
             head
         })
         .collect();
+    drop(s_heads);
     let mut sources = Vec::new();
     let (mut found, mut made) = (0usize, 0usize);
     // A part's passes, kept under its key: `decided` the run's push mode, where the run has decided it.
@@ -945,7 +991,10 @@ pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl
                 words.insert(PUSH_BASE.to_owned());
             }
         }
-        let key = after_key(key_of(&head, &common_digest, &rules, &parts[j], dialect), factorize);
+        let key = {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "a part's key".into());
+            after_key(key_of(&head, &common_digest, &shared, header.inputs.len(), &rules, &parts[j], dialect), factorize)
+        };
         let kept_part = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "a part after lowering, from the store".into());
             kept_facts(store, &key).map_err(|e| e.to_string())?
@@ -1065,6 +1114,7 @@ fn link_after(v1: &Version, header: &front::Program, parts: &[Part], heads: &[fr
     let mut all = header.clone();
     all.rules.clear();
     let mut added: BTreeSet<String> = BTreeSet::new();
+    let s_headers = crate::code_rule_dsl::logic::profile::span(|| "link after lowering: the parts' headers".into());
     for ((part, before), a) in parts.iter().zip(heads).zip(afters) {
         let after = a.version.header(lists)?;
         let owned = |r: &str| makers.get(r) == Some(&1) && part.made.contains(r) && !header.outputs.iter().any(|o| o == r);
@@ -1082,6 +1132,8 @@ fn link_after(v1: &Version, header: &front::Program, parts: &[Part], heads: &[fr
     all.inputs = inputs;
     all.outputs = header.outputs.clone();
     let _ = v1;
+    drop(s_headers);
+    let _s_rules = crate::code_rule_dsl::logic::profile::span(|| "link after lowering: the rules".into());
     let mut b = Builder::of_program(&all)?;
     for a in afters {
         for r in a.version.rules() {
