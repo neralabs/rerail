@@ -1949,6 +1949,21 @@ function rewrittenInPlace(path: string, text: string): void {
   }
 }
 
+/**
+ * The file `source` written over the file at `path` in place, as `cp`, `copy /Y` or a file manager's replace writes a
+ * copy over a file that is there, so `path` keeps its file id. Through an open of the file as it is, which the
+ * connections that hold a database do not refuse.
+ */
+function copiedInPlace(source: string, path: string): void {
+  const descriptor = openSync(path, "r+");
+  try {
+    ftruncateSync(descriptor, 0);
+    writeSync(descriptor, readFileSync(source), 0);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
 /** The clone id file of the Git checkout `checkout`, whose `.git` is a folder (`repositoryIdentityLocation`). */
 function cloneIdFile(checkout: string): string {
   return join(checkout, ".git", "rerail-repository-id");
@@ -2989,6 +3004,36 @@ describe("the hook start check", () => {
       inDatabase(database => setCheckoutStarted(database, recordCheckout(database, app), true));
       checkpointed();
       movedAsideAndReplaced(backup);
+      const daemon = await daemonAnsweringAfterProof(host, "started");
+      try {
+        await startedFromLateDaemon(host, daemon, app);
+      } finally {
+        await daemon.close();
+      }
+    } finally {
+      daemonHolds?.close();
+    }
+  });
+
+  it("waits for a late daemon that last answered stopped where an older copy of the database is written over the live file in place, once the start since then committed, which the daemon read and holds", { timeout: 30_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    // The daemon's connection, held from before its answer to the end, as a running daemon holds its database.
+    const daemonHolds = heldOpen(defaultRerailDatabasePath());
+    try {
+      await keptStopped(host, app);
+      const backup = join(root, "backup.sqlite");
+      checkpointed();
+      copyFileSync(defaultRerailDatabasePath(), backup);
+      inDatabase(database => setCheckoutStarted(database, recordCheckout(database, app), true));
+      checkpointed();
+      // The daemon reads the start, as its answer to any request in that folder would, and keeps those pages.
+      daemonHolds?.prepare("SELECT count(*) FROM checkouts WHERE started = 1").get();
+      const id = (): bigint => statSync(defaultRerailDatabasePath(), { bigint: true }).ino;
+      const before = id();
+      copiedInPlace(backup, defaultRerailDatabasePath());
+      expect(id()).toBe(before);
       const daemon = await daemonAnsweringAfterProof(host, "started");
       try {
         await startedFromLateDaemon(host, daemon, app);
