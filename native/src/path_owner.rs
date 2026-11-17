@@ -200,4 +200,13 @@ mod tests {
 
         std::fs::remove_dir_all(folder).unwrap();
     }
+
+    /// Windows' own folder belongs to TrustedInstaller, neither the user nor the Administrators group, so it is not
+    /// the user's whoever runs the test, elevated or not: a check that took any readable owner fails here.
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_another_account_owns_is_not() {
+        let system = std::env::var("SystemRoot").unwrap_or_else(|_| String::from(r"C:\Windows"));
+        assert!(!paths_owned_by_current_user(vec![system]));
+    }
 }
