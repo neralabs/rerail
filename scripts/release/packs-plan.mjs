@@ -4,29 +4,25 @@
 // never approved), which any later run, a re-run of any job or the next push, publishes again (planPacks in
 // packs.mjs). A pack npm cannot be read for fails the plan, so an unpublished version is never taken as released.
 // A pack never published at all is reported as needing its first publish by hand (docs/publishing-a-new-pack.md) and left out.
-// Of those published, a pack held at an older `latest` (heldPacks in packs.mjs) is published under `next`, so the hold
-// stays; reading that from npm needs NODE_AUTH_TOKEN with a read token, and a pack whose dist-tags cannot be read
-// fails the plan, so nothing publishes over a hold unseen.
+// Every pack publishes under `next`, so a pack held at an older `latest` (put back on purpose) stays held.
 // `--all` names every published pack without reading tags, for a pull request's dry run, which packs and checks but publishes
-// nothing. Writes `publish`, `first` and `held` (space-separated pack ids) to $GITHUB_OUTPUT when it is set.
+// nothing. Writes `publish` and `first` (space-separated pack ids) to $GITHUB_OUTPUT when it is set.
 //
 //   node scripts/release/packs-plan.mjs [--all]   (GH_REPO or the checkout's remote names the repository)
 import { appendFileSync } from "node:fs";
 import { readDistTags, readVersions } from "./dist-tags.mjs";
-import { heldPacks, onRegistry, planPacks, publishedPacks, releaseTag, releaseTags } from "./packs.mjs";
+import { onRegistry, planPacks, publishedPacks, releaseTag, releaseTags } from "./packs.mjs";
 
 const packs = publishedPacks();
 const all = process.argv.includes("--all");
 const packOf = (id) => packs.find((pack) => pack.id === id);
 
 let plan = { publish: packs.map((pack) => pack.id), first: [], unpublished: [], unreadable: [] };
-let distTags = new Map();
 if (!all) {
   const tags = releaseTags();
   // Only a version already tagged needs npm read: whether it is there decides if it is released.
   const tagged = packs.filter((pack) => tags.includes(releaseTag(pack.name, pack.version))).map((pack) => pack.name);
-  const [readTags, versions] = await Promise.all([readDistTags(tagged, { fresh: true }), readVersions(tagged)]);
-  distTags = readTags;
+  const [distTags, versions] = await Promise.all([readDistTags(tagged, { fresh: true }), readVersions(tagged)]);
   plan = planPacks(packs, tags, (name, version) => onRegistry(version, distTags.get(name) ?? null, versions.get(name) ?? null));
   if (plan.unreadable.length > 0) {
     throw new Error(`could not read ${plan.unreadable.join(", ")} from npm, so whether each tagged version is published is unknown`);
@@ -34,20 +30,8 @@ if (!all) {
 }
 const { publish, first, unpublished } = plan;
 
-let held = [];
-if (!all && publish.length > 0) {
-  const unread = publish.map((id) => packOf(id).name).filter((name) => !distTags.has(name));
-  for (const [name, read] of await readDistTags(unread, { fresh: true })) distTags.set(name, read);
-  const read = heldPacks(publish.map((id) => packOf(id).name), (name) => distTags.get(name) ?? null);
-  if (read.unreadable.length > 0) {
-    throw new Error(`could not read the dist-tags of ${read.unreadable.join(", ")} from npm, so whether each is held is unknown`);
-  }
-  held = publish.filter((id) => read.held.includes(packOf(id).name));
-}
-
 for (const id of publish) {
-  const why = [unpublished.includes(id) ? "tagged but not on npm: published again" : "", held.includes(id) ? "under next: held at an older latest" : ""].filter(Boolean);
-  console.log(`publish ${id} ${packOf(id).version}${why.length > 0 ? ` (${why.join("; ")})` : ""}`);
+  console.log(`publish ${id} ${packOf(id).version}${unpublished.includes(id) ? " (tagged but not on npm: published again)" : ""}`);
   if (unpublished.includes(id)) console.log(`::warning title=Tagged but not on npm::${releaseTag(packOf(id).name, packOf(id).version)} is tagged but npm does not have it; this run publishes it.`);
 }
 for (const id of first) {
@@ -58,5 +42,5 @@ for (const id of first) {
 }
 if (publish.length === 0 && first.length === 0) console.log("Every pack's version is tagged and on npm.");
 if (process.env.GITHUB_OUTPUT !== undefined) {
-  appendFileSync(process.env.GITHUB_OUTPUT, `publish=${publish.join(" ")}\nfirst=${first.join(" ")}\nheld=${held.join(" ")}\n`);
+  appendFileSync(process.env.GITHUB_OUTPUT, `publish=${publish.join(" ")}\nfirst=${first.join(" ")}\n`);
 }
