@@ -1024,10 +1024,9 @@ impl LoweredWave {
         if let Backend::MetalInterpreter = backend
             && super::device::matcher().is_some()
         {
-            let roots: Vec<Vec<Vec<u32>>> = (0..self.clauses.len())
-                .map(|c| tapes.iter().enumerate().map(|(t, tape)| if active[c][t] { (0..tape.transducer_len() as u32).filter(|&n| self.starts(c, tape, n)).collect() } else { Vec::new() }).collect())
-                .collect();
-            return self.roots_metal_split(tapes, &roots);
+            // Each clause's roots are its domain's nodes where it runs: a rule the device reads (`ClauseRoots::Rule`),
+            // no list made here.
+            return self.roots_metal_split(tapes, active);
         }
         let _ = backend;
         let views = self.labelled_sets(tapes, active)?;
@@ -1056,13 +1055,14 @@ impl LoweredWave {
         Ok((found, WaveRun { limited, ..WaveRun::default() }))
     }
 
-    /// [`roots_metal`](Self::roots_metal), each half of the batch on its own where the whole outgrows a workspace or
-    /// the launch bound (a file's labels read only that file).
-    fn roots_metal_split(&self, tapes: &[TapeDoc], roots: &[Vec<Vec<u32>>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
-        match self.roots_metal(tapes, roots) {
+    /// Every clause's matches from its domain's nodes where `active` (per clause, per tape) has it run, each half of
+    /// the batch on its own where the whole outgrows a workspace or the launch bound (a file's labels read only that
+    /// file).
+    fn roots_metal_split(&self, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
+        match super::device::required().and_then(|device| device.wave_roots(self, tapes, super::device::ClauseRoots::Rule(active))) {
             Err(Error::BackendCapacity | Error::BackendLaunchLimit) if tapes.len() > 1 => {
                 let half = tapes.len() / 2;
-                let part = |range: std::ops::Range<usize>| roots.iter().map(|clause| clause[range.clone()].to_vec()).collect::<Vec<_>>();
+                let part = |range: std::ops::Range<usize>| active.iter().map(|clause| clause[range.clone()].to_vec()).collect::<Vec<_>>();
                 let (mut left, a) = self.roots_metal_split(&tapes[..half], &part(0..half))?;
                 let (right, b) = self.roots_metal_split(&tapes[half..], &part(half..tapes.len()))?;
                 for (l, r) in left.iter_mut().zip(right) {
@@ -1262,7 +1262,7 @@ impl LoweredWave {
 
     /// Each clause's matches of the batch from `roots`, every clause's passes and roots in one command buffer.
     pub fn roots_metal(&self, tapes: &[TapeDoc], roots: &[Vec<Vec<u32>>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, super::device::Outcome), Error> {
-        super::device::required()?.wave_roots(self, tapes, roots)
+        super::device::required()?.wave_roots(self, tapes, super::device::ClauseRoots::Listed(roots))
     }
 }
 

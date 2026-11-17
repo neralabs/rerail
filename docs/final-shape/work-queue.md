@@ -1328,6 +1328,31 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
   the CPU.
 - **Done when**: the next launch is encoded while the GPU runs this one, and the matcher's GPU price comes from
   measured samples.
+- **Progress** (2026-11-17, after merging oscar f15aac19d, the hub at 69fcd347d and Native-and-GPU-strata at
+  004e3fddc; s1000 internal_dead_code, the wave pinned to the GPU, format 16, load about 11):
+  - Nothing on another branch pipelines a program's launches: the GPU backend's `start` overlaps joins only
+    (`space::start`), and a program's `run` is synchronous. The merges brought 0321 (placement leans to the GPU)
+    and 0325 step 3 (the device reads relations in their blocks, no uploads).
+  - The wave's clause roots are now a rule the device reads (`ClauseRoots::Rule`, `Roots::Codes`), not lists the
+    host made by testing every node (0293 §10), and the found roots are read from the label's words by their set
+    bits. Same 97,241,194 steps and 0 findings; the lane's numbers did not move (0.31 s of job CPU), so the lists
+    were not the host's cost.
+  - The lane now: 18 launches, 1,208 ms of wall = 311 ms of host CPU + 361 ms of the label passes' command
+    buffers on the GPU + about 540 ms of waiting beyond both. The host's largest part is `gpu.size` (113 ms over
+    19 runs, the workspace sized on the host); encode and the tapes' buffers take 14 ms each. The waiting looks
+    like the one queue shared with the strata 0321 now places on the GPU; this profile cannot tell which.
+- **Two blockers to the overlap, found**:
+  - `rerail_metal::metal_execution_guard` (a process-wide lock from the grid's launch budget, copied from Tempo)
+    is held for a whole label run, encode through readback. A launch begun on the worker (encode and commit in
+    `start`, wait and decode in `finish`) would hold it while the worker begins the next, which then waits on the
+    same lock on the same thread. The lock must end at the commit. The label passes' own process state is behind
+    mutexes (pipelines) or test-only thread-locals; the packed program backend's arenas need checking first.
+  - `label_passes::run_in_pool` loops around `encode` (more rounds, wider lanes, deeper stacks), so its loop state
+    must move into the begun run's `finish` with the plan, which the runner does not borrow (it borrows the device
+    and the tapes only).
+- **Next**: `kernel::Program::begin` (default: run now) and the GPU backend's `start` beginning a batch of programs;
+  `MatcherWave::begin` on the GPU; the lock narrowed to the encode; then the queue's waiting measured by itself
+  (the command buffers' scheduled and start times).
 
 ### Q53. On the device, a group of 64 nodes' roots run serially in one thread, and a parent is a search (this branch's, since oscar is merged)
 
