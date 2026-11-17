@@ -6,12 +6,14 @@
 //
 //   node --import tsx scripts/ship/product-run.ts <checkout> <corpus dir> <out.json> <rules dir>
 //
-// SHIPBAR_ENGINE_TMPDIR becomes TMPDIR before the engine loads, so the engine's temporary stores start in the run's
-// fresh directory while tsx keeps its transpile cache where it was. Writes { files, rules, compiled, compileErrors,
-// findings: [rule, path, line, code][], failures: { rule, code, message }[], loadMs, compileMs, evaluateMs }.
+// SHIPBAR_ENGINE_TMPDIR becomes TMPDIR (and TMP and TEMP, which Windows reads) before the engine loads, so the
+// engine's temporary stores start in the run's fresh directory while tsx keeps its transpile cache where it was. Corpus
+// paths are '/'-separated on every platform, as the recordings name them. Writes { files, rules, compiled,
+// compileErrors, findings: [rule, path, line, code][], failures: { rule, code, message }[], loadMs, compileMs,
+// evaluateMs }.
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 interface Violation {
@@ -32,7 +34,8 @@ if (checkout === undefined || corpus === undefined || out === undefined || rules
   console.error("usage: product-run.ts <checkout> <corpus dir> <out.json> <rules dir>");
   process.exit(2);
 }
-if (process.env.SHIPBAR_ENGINE_TMPDIR !== undefined) process.env.TMPDIR = process.env.SHIPBAR_ENGINE_TMPDIR;
+const engineTmp = process.env.SHIPBAR_ENGINE_TMPDIR;
+if (engineTmp !== undefined) for (const key of process.platform === "win32" ? ["TMPDIR", "TMP", "TEMP"] : ["TMPDIR"]) process.env[key] = engineTmp;
 
 // Each phase is announced on stderr, so a run that dies says where (shipbar.ts reads the last one).
 console.error("shipbar: phase load");
@@ -49,7 +52,7 @@ const walk = (directory: string): void => {
     const full = join(directory, entry.name);
     if (entry.isDirectory()) walk(full);
     else if (entry.isFile()) {
-      const path = relative(corpus, full);
+      const path = relative(corpus, full).split(sep).join("/");
       const language = engine.languageFor(path);
       if (language !== undefined) files.push({ path, language, source: readFileSync(full, "utf8") });
     }
