@@ -1112,8 +1112,8 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
                 .map(|tape| {
                     let mut nested = vec![0_usize; tape.transducer_len()];
                     let mut longest = 0;
-                    for node in 0..tape.transducer_len() as u32 {
-                        let above = tape.transducer_parent(node).map_or(0, |parent| nested[parent as usize]);
+                    for (node, parent) in (0..tape.transducer_len() as u32).zip(tape.transducer_parents()) {
+                        let above = parent.map_or(0, |parent| nested[parent as usize]);
                         nested[node as usize] = above + usize::from(has(tape, node));
                         longest = longest.max(nested[node as usize]);
                         if *siblings {

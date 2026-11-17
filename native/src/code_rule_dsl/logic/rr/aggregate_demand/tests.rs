@@ -182,7 +182,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     let lowered = plan::lower::lower(&p, crate::code_rule_dsl::language::GrammarDialect::Python,
         &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
-    let native = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
+    let native = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty_of_lowered(&lowered).unwrap(),
         BTreeSet::new(), "program").unwrap();
     assert_eq!(native.shown(), result.shown());
     assert!(native.native.contains("sums"), "production sum must use the native reduction");
@@ -341,7 +341,7 @@ hit(f) :- fn(f), count : { ident(x), count : { ref(n,f,x) } = 0 } > 0.
         native::register(&db).unwrap();
         let lowered = plan::lower::lower(&p, crate::code_rule_dsl::language::GrammarDialect::Python,
             &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
-        let result = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
+        let result = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty_of_lowered(&lowered).unwrap(),
             BTreeSet::new(), modes).unwrap();
         assert_eq!(result.shown()["hit"], [["2"], ["3"]], "outer groups lost in {modes:?}");
     }

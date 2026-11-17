@@ -109,6 +109,10 @@ pub struct Interner { pub atoms: Arc<crate::content_store::atoms::Atoms>, buf: S
 #[derive(Default)]
 struct Deferred { texts: Vec<String>, at: HashMap<String, u32> }
 
+/// Walks in one piece that deferred their new texts and interned them in one batch (`whole`), and those texts: for
+/// the profile.
+pub static DEFERRED_WALKS: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+
 /// The first value of a text a morsel deferred (`Deferred`): past every atom (`Sym` is 32 bits) and below every node
 /// (whose document is in the high 32 bits, from 0x6000… on).
 const DEFERRED: i64 = 1 << 40;
@@ -2462,7 +2466,25 @@ pub fn step_counts(conn: impl Scoped, name: &str) -> Result<Vec<Vec<(i64, i64)>>
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
     Ok(comp.probes.iter().map(|p| match &p.body {
-        Body::Join(j) => j.counts.iter().map(|[a, b]| (a.replace(0) as i64, b.replace(0) as i64)).collect(),
+        Body::Join(j) => {
+            let c: Vec<(u64, u64)> = j.counts.iter().map(|[a, b]| (a.replace(0), b.replace(0))).collect();
+            j.plan_counts(&c).into_iter().map(|(a, b)| (a as i64, b as i64)).collect()
+        }
+        Body::Sql(_) | Body::Unplanned => Vec::new(),
+    }).collect())
+}
+
+/// Profiled: per probe of component `name`, its plan steps' CPU seconds since the last call, and last its head's
+/// (its computed terms and rows made: `JoinRule::step_ns`, `plan_cpu`); the clocks restart. Taken when `step_counts` is, so the two cover the same walks.
+pub fn step_cpu(conn: impl Scoped, name: &str) -> Result<Vec<Vec<f64>>> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    Ok(comp.probes.iter().map(|p| match &p.body {
+        Body::Join(j) => {
+            let c: Vec<f64> = j.step_ns.iter().map(|c| c.replace(0) as f64 / 1e9).collect();
+            j.plan_cpu(&c)
+        }
         Body::Sql(_) | Body::Unplanned => Vec::new(),
     }).collect())
 }
@@ -2499,7 +2521,8 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, 
     });
     let Some(j) = j else { return Ok(vec![None; wanted.len()]) };
     Ok(wanted.iter().map(|(at, cols)| {
-        let Some(Step::Atom { src, neg: false, keys, .. }) = j.steps.get(*at) else { return None };
+        // `at` is the plan's step: the atom is the step made first for it.
+        let Some(Step::Atom { src, neg: false, keys, .. }) = j.step_of(*at).and_then(|s| j.steps.get(s)) else { return None };
         let consts: Vec<(usize, i64)> = keys.iter().filter_map(|&(c, k)| match k { Key::Const(v) => Some((c, v)), Key::Slot(_) => None }).collect();
         let mut counts: rustc_hash::FxHashMap<Vec<i64>, u64> = rustc_hash::FxHashMap::default();
         let mut passed = 0u64;
@@ -2619,6 +2642,7 @@ pub fn trial_over(conn: impl Scoped, name: &str, probe: usize, spec: Option<&Joi
     let Some(at) = restricted(j, of, named) else { return Ok(None) };
     scalars::register(&j.steps, Some(&store));
     let counts: Vec<[u64; 2]> = j.counts.iter().map(|[a, b]| [a.get(), b.get()]).collect();
+    let step_ns: Vec<u64> = j.step_ns.iter().map(Count::get).collect();
     let mut out = Vec::new();
     let n = rows.n;
     let kept = rows.clone();
@@ -2626,6 +2650,7 @@ pub fn trial_over(conn: impl Scoped, name: &str, probe: usize, spec: Option<&Joi
     let got = run_join_in_each(j, 0, &store, &mut syms, &mut [], &[], Some(&mut out), None, None, Some(&mut limited));
     let spent = limited.spent;
     for (c, [a, b]) in j.counts.iter().zip(counts) { c[0].set(a); c[1].set(b); }
+    for (c, t) in j.step_ns.iter().zip(step_ns) { c.set(t); }
     let made_rows = got?;
     syms.check()?;
     drop(store);
@@ -2768,7 +2793,10 @@ pub fn steps(conn: &Connection, name: &str) -> Result<String> {
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
     Ok(comp.probes.iter().map(|p| match &p.body {
-        Body::Join(j) => j.counts.iter().map(|[a, b]| format!("{}:{}", a.replace(0), b.replace(0))).collect::<Vec<_>>().join(","),
+        Body::Join(j) => {
+            let c: Vec<(u64, u64)> = j.counts.iter().map(|[a, b]| (a.replace(0), b.replace(0))).collect();
+            j.plan_counts(&c).iter().map(|(a, b)| format!("{a}:{b}")).collect::<Vec<_>>().join(",")
+        }
         Body::Sql(_) | Body::Unplanned => String::new(),
     }).collect::<Vec<_>>().join("\n"))
 }
@@ -3121,6 +3149,9 @@ impl View {
     }
     /// The source's rows whose view column `c` is `v` and which pass the filters, through the source's own index.
     fn find(&self, c: usize, v: i64) -> Vec<u32> {
+        if !self.eqs.is_empty() && let Some(rows) = self.src.lookup_eq(self.cols[c], v, &self.eqs) {
+            return rows.into_iter().map(|r| r as u32).collect();
+        }
         let rows = self.src.lookup(self.cols[c], &[v]).unwrap_or_default();
         rows.into_iter().filter(|&r| self.eqs.iter().all(|&(c, v)| self.src.value(r, c) == v)).map(|r| r as u32).collect()
     }
@@ -4744,7 +4775,9 @@ fn view(conn: impl Scoped, table: &str, cols: &str) -> Option<View> {
         stored_table(conn.sql().ok()?, schema, name, &need)?
     };
     let src=src.frozen().unwrap_or(src);
-    let names = src.columns();
+    // Its columns as its table names them (`vtab::named`): a relation handed on as `c0`, `c1` under a base one's name
+    // (`value`) is read by the base names, as its statements write them.
+    let names = if schema == "main" { crate::code_rule_dsl::facts::vtab::named(name, src.as_ref()) } else { src.columns() };
     let column = |c: &str| names.iter().position(|n| n == c.trim());
     // `SELECT 1`: whether rows are there (a gate's `done_N(0)`), no columns read.
     let cols: Vec<usize> = if cols.trim() == "1" { Vec::new() } else { cols.split(',').map(column).collect::<Option<_>>()? };
@@ -5361,7 +5394,28 @@ pub struct JoinRule { pub steps: Vec<Step>, pub out: Vec<Term>, pub nslots: usiz
                       pub probes: Vec<u8>,
                       pub fused: Vec<Option<Box<rowcode::Fused>>>, forms: Vec<table::StepForm>, spec: u64,
                       /// Rows passed over by a factored step (`factored`): counted in `counts` as joined, not walked.
-                      pub passed_over: Count }
+                      pub passed_over: Count,
+                      /// Profiled: per step, and last the head's rows made, the CPU nanoseconds its walks spent there,
+                      /// the source's lookups included (`StepClock`); added as `counts` are, and taken with them.
+                      pub step_ns: Vec<Count>,
+                      /// Per step, the plan step it was made for (`JoinSpec::from`; `plan_steps` for a step of the
+                      /// head's computed terms), and the plan's steps: what the engine reports by step is by plan step.
+                      pub from: Vec<usize>, pub plan_steps: usize }
+
+impl JoinRule {
+    /// Its steps' (in, out) counts by plan step (`plan_counts`).
+    pub fn plan_counts(&self, c: &[(u64, u64)]) -> Vec<(u64, u64)> {
+        plan_counts(&self.from, self.plan_steps, c)
+    }
+    /// Its steps' CPU by plan step, and last the head's (`plan_cpu`).
+    pub fn plan_cpu(&self, c: &[f64]) -> Vec<f64> {
+        plan_cpu(&self.from, self.plan_steps, c)
+    }
+    /// The step made first for plan step `p`.
+    pub fn step_of(&self, p: usize) -> Option<usize> {
+        self.from.iter().position(|&f| f == p)
+    }
+}
 
 /// Whether a scan's walk may run in morsels (`run_join_in_each`'s `morsels`): `RERAIL_MORSELS=off` walks every join
 /// on its caller's thread, as before (to compare).
@@ -5418,6 +5472,85 @@ impl Count {
     pub fn set(&self, v: u64) { self.0.store(v, std::sync::atomic::Ordering::Relaxed) }
     pub fn replace(&self, v: u64) -> u64 { self.0.swap(v, std::sync::atomic::Ordering::Relaxed) }
     fn add(&self, v: u64) { if v > 0 { self.0.fetch_add(v, std::sync::atomic::Ordering::Relaxed); } }
+}
+
+/// Steps' (in, out) counts by the plan step each was made for (`from`, of `plan_steps`): a plan step's bindings into
+/// its first step and out of its last. A plan step that made no step passes its rows on; the head's computed terms'
+/// steps are no plan step's.
+pub fn plan_counts(from: &[usize], plan_steps: usize, c: &[(u64, u64)]) -> Vec<(u64, u64)> {
+    let mut out: Vec<Option<(u64, u64)>> = vec![None; plan_steps];
+    for (&p, &(a, b)) in from.iter().zip(c) {
+        if let Some(o) = out.get_mut(p) {
+            *o = Some(o.map_or((a, b), |(a0, _)| (a0, b)));
+        }
+    }
+    let mut last = 0;
+    out.into_iter().map(|o| { let o = o.unwrap_or((last, last)); last = o.1; o }).collect()
+}
+
+/// Steps' CPU, and last the head's rows made (`c`'s last), by plan step, and last the head's: its computed terms'
+/// steps and its rows made.
+pub fn plan_cpu(from: &[usize], plan_steps: usize, c: &[f64]) -> Vec<f64> {
+    let mut out = vec![0.0; plan_steps + 1];
+    for (i, &t) in c.iter().enumerate() {
+        out[from.get(i).copied().unwrap_or(plan_steps).min(plan_steps)] += t;
+    }
+    out
+}
+
+/// The processor's tick counter: the virtual counter on ARM (24 MHz on Apple's), the time-stamp counter on x86.
+/// Read at every step a profiled walk enters and leaves, where a thread-CPU clock read (a few hundred ns) would
+/// cost more than the steps it times. Its unit cancels: a walk's ticks are scaled to its thread's CPU (`StepClock`).
+#[inline(always)]
+fn ticks() -> u64 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let t: u64;
+        // SAFETY: reads the virtual counter, which user code may read on every platform the engine runs on.
+        unsafe { std::arch::asm!("mrs {}, cntvct_el0", out(reg) t, options(nomem, nostack, preserves_flags)) };
+        t
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: the time-stamp counter is readable from user code.
+        unsafe { core::arch::x86_64::_rdtsc() }
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        0
+    }
+}
+
+/// A profiled walk's CPU per step (Q36: a view's row can cost far more than a unit of work, and the stratum's CPU
+/// alone does not say which step's source it is). Each step entered and left charges the ticks since the last
+/// charge to the step the walk was in, so a step's time is its own, its source's lookups and tests included, the
+/// steps after it not. At the end the ticks are scaled to the thread's CPU over the walk: a thread descheduled
+/// mid-walk spreads that time over the steps in proportion, not onto the one it stopped in.
+struct StepClock { ticks: Vec<u64>, at: usize, last: u64, t0: u64, cpu0: f64 }
+impl StepClock {
+    /// Off unless profiling. `steps + 2` places: each step, the head's rows made, and the walk outside any step.
+    fn start(steps: usize) -> Option<Box<StepClock>> {
+        crate::code_rule_dsl::logic::profile::on().then(|| {
+            let t = ticks();
+            Box::new(StepClock { ticks: vec![0; steps + 2], at: steps + 1, last: t, t0: t, cpu0: crate::code_rule_dsl::logic::profile::now() })
+        })
+    }
+    #[inline(always)]
+    fn to(&mut self, at: usize) -> usize {
+        let t = ticks();
+        self.ticks[self.at] += t.wrapping_sub(self.last);
+        self.last = t;
+        std::mem::replace(&mut self.at, at)
+    }
+    /// The walk's CPU, by step, added to the join's (`JoinRule::step_ns`).
+    fn end(mut self, j: &JoinRule) {
+        let outside = self.ticks.len() - 1;
+        self.to(outside);
+        let (span, cpu) = (self.last.wrapping_sub(self.t0), crate::code_rule_dsl::logic::profile::now() - self.cpu0);
+        if span == 0 || cpu <= 0.0 { return; }
+        let ns = cpu * 1e9 / span as f64;
+        for (c, &t) in j.step_ns.iter().zip(&self.ticks) { c.add((t as f64 * ns) as u64); }
+    }
 }
 
 fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<JoinRule> {
@@ -5712,7 +5845,14 @@ fn join_rule_with(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, index
     let fused = if env_set!("RERAIL_NO_ROW_PROGRAMS") { steps.iter().map(|_| None).collect() } else { rowcode::fuse(&steps) };
     let forms = (0..steps.len()).map(|_| table::StepForm::default()).collect();
     let probes = probes(&steps, &out);
-    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused, forms, probes, spec: level::digest(spec), passed_over: Default::default() })
+    let step_ns = (0..=steps.len()).map(|_| Default::default()).collect();
+    // Each step's plan step, where the planner said (a spec read from text did not: each step is its own).
+    let (from, plan_steps) = if spec.from.len() == steps.len() {
+        (spec.from.iter().map(|&p| p as usize).collect(), spec.plan_steps as usize)
+    } else {
+        ((0..steps.len()).collect(), steps.len())
+    };
+    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused, forms, probes, spec: level::digest(spec), passed_over: Default::default(), step_ns, from, plan_steps })
 }
 
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
@@ -5847,7 +5987,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                      first: Option<(Rows<'a>, Cands<'a>)>,
                      /// At a cut of a walk in morsels, the first step's rows its morsels left (each one's from the row
                      /// it stopped in), in place of those from one row of `list0` on.
-                     left0: Option<Vec<u32>> }
+                     left0: Option<Vec<u32>>,
+                     /// Profiled: the CPU per step (`StepClock`).
+                     clock: Option<Box<StepClock>> }
     fn val(slots: &[i64], k: Key) -> i64 { match k { Key::Slot(s) => slots[s], Key::Const(c) => c } }
     /// Where an atom's candidate tuples are: an input relation or a component relation, by id.
     #[derive(Clone, Copy)]
@@ -5977,7 +6119,15 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             cx.syms.id(&t)
         }
     }
+    /// Enters step `i` (past the last, the head's row): profiled, its time is charged to it until it returns.
+    #[inline(always)]
     fn go<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
+        let Some(clock) = cx.clock.as_mut() else { return enter(cx, i, slots) };
+        let was = clock.to(i);
+        enter(cx, i, slots);
+        if let Some(clock) = cx.clock.as_mut() { clock.to(was); }
+    }
+    fn enter<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
         if cx.error.is_some() || cx.stop { return; }
         // The walk's work is the steps it enters, as the planner counts a line's (`profile::plan_work`).
         cx.work += 1;
@@ -6478,7 +6628,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                                       factor, failed, snap: Vec::new(), skipped: 0, deep: 0, work: 0, budget: share, stop: false,
                                       only_step: usize::MAX, only: None, list0: None, cut_from,
                                       counts: j.counts.iter().map(|_| Default::default()).collect(), first: Some((rows_of_first(src, store), first)),
-                                      left0: None };
+                                      left0: None, clock: StepClock::start(j.steps.len()) };
                     let mut slots = slots.to_vec();
                     go(&mut w, 0, &mut slots);
                     let (n, skipped, work, error) = (w.n, w.skipped, w.work, w.error.take());
@@ -6488,6 +6638,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         list[at..].to_vec()
                     }));
                     let counts = w.counts.iter().map(|[a, b]| [a.get(), b.get()]).collect();
+                    // Its own thread's CPU, by step: added to the join's as it ends (the counts go by the walk's).
+                    if let Some(clock) = w.clock.take() { clock.end(j); }
                     drop(w);
                     let mut mine = if collecting { Fresh::default() } else { std::mem::take(&mut fresh[head]) };
                     let texts = syms.deferred.take().map_or_else(Vec::new, |d| d.texts);
@@ -6529,6 +6681,39 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         cx.work += 1 + u64::from(cx.stop);
         IN_MORSELS.with(|m| m.set(m.get() + 1));
         true
+    }
+    /// A walk in one piece. One that may make atoms defers its new texts, as a morsel does (`Deferred`), and interns
+    /// them at its end with one `intern_all` (`settle_deferred`). Interned row by row, each new text took the arena's
+    /// write lock, and every thread reading a text (`cat_held`, `with_str`) waited behind it: over PostHog, the run's
+    /// most-waited lock once the planner's were gone (decision 0315). The walk's head rows go to a `Fresh` of its own
+    /// (its rows hold deferred values until settled), absorbed into the stratum's as a morsel's are.
+    fn whole(cx: &mut Ctx<'_, '_>, slots: &mut [i64]) {
+        if !makes_atoms(cx.j) || cx.syms.deferred.is_some() {
+            return go(cx, 0, slots);
+        }
+        cx.syms.deferred = Some(Default::default());
+        let (head, collecting) = (cx.head, cx.collect.is_some());
+        let from = cx.collect.as_ref().map_or(0, |c| c.len());
+        let before = if collecting { None } else { Some(std::mem::take(&mut cx.fresh[head])) };
+        go(cx, 0, slots);
+        let mut texts = cx.syms.deferred.take().map_or_else(Vec::new, |d| d.texts);
+        let mut mine = if collecting { Fresh::default() } else { std::mem::take(&mut cx.fresh[head]) };
+        let mut rows = cx.collect.as_deref_mut().map_or_else(Vec::new, |c| c.split_off(from));
+        if texts.is_empty() {
+            if !collecting { mine.settle(&cx.store.rels[head]); }
+        } else {
+            DEFERRED_WALKS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            DEFERRED_WALKS[1].fetch_add(texts.len() as u64, std::sync::atomic::Ordering::Relaxed);
+            settle_deferred(cx, &mut [(&mut texts, &mut mine, &mut rows)]);
+        }
+        match (cx.collect.as_deref_mut(), before) {
+            (Some(c), _) => c.extend_from_slice(&rows),
+            (None, Some(mut f)) => {
+                f.absorb(mine);
+                cx.fresh[head] = f;
+            }
+            (None, None) => unreachable!("a walk not collecting kept its head's rows"),
+        }
     }
     /// The morsels' deferred texts interned, in the morsels' order (one `intern_all`), and each morsel's rows read
     /// with their atoms in place of its deferred values, in the head's columns that may hold a made text
@@ -6635,7 +6820,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                        factor, failed, snap: Vec::new(), skipped: 0, deep: 0,
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
                        only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None,
-                       cut_from: usize::MAX, counts: j.counts.iter().map(|_| Default::default()).collect(), first: None, left0: None };
+                       cut_from: usize::MAX, counts: j.counts.iter().map(|_| Default::default()).collect(), first: None, left0: None,
+                       clock: StepClock::start(j.steps.len()) };
     if cx.collect.is_none() { cx.cut_from = tail(j); }
     let mut slots = vec![0i64; j.nslots];
     for &(s, v) in preset { slots[s] = v; }
@@ -6675,10 +6861,11 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 go(&mut cx, 2, &mut slots);
             }
         }
-        _ => if !morsels(&mut cx, &slots) { go(&mut cx, 0, &mut slots) },
+        _ => if !morsels(&mut cx, &slots) { whole(&mut cx, &mut slots) },
     }
-    // The walk's counts, into the join's.
+    // The walk's counts, into the join's, and its CPU by step.
     for (c, l) in j.counts.iter().zip(&cx.counts) { c[0].add(l[0].get()); c[1].add(l[1].get()); }
+    if let Some(clock) = cx.clock.take() { clock.end(j); }
     scalars::explain(&j.steps,store);
     // Each passed-over row was read and tested against a hash set, as a probe is.
     if cx.skipped > 0 { charge(Unit::JoinRow, cx.skipped); j.passed_over.add(cx.skipped); }

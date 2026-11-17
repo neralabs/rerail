@@ -262,14 +262,12 @@ inline long global_of(device const ChunkDoc& d, uint l) {
 }
 // The projection's parent (`Projected::parent`): a node left out of it has the root for parent.
 inline uint parent_of(device const ChunkDoc& d, uint l) {
-    uint id = items<uint>(d.core)[l];
-    uint p = items<uint>(d.parent)[id];
-    uint q = p == CH_NONE ? CH_NONE : items<uint>(d.local)[p];
+    uint q = items<uint>(d.up)[l];
     return (q == CH_NONE && l != 0u) ? 0u : q;
 }
-// The kind column (`Dialect::kind`): the canonical code's atom.
-inline long kind_of(device const ChunkDoc& d, uint id) {
-    uint code = items<uint>(d.kind)[id] % 1024u;
+// The kind column (`Dialect::kind`) of local `l`: the canonical code's atom.
+inline long kind_of(device const ChunkDoc& d, uint l) {
+    uint code = items<uint>(d.kind)[l] % 1024u;
     if (code == 0u) return long(d.tag * 1024u);
     uint c = code < uint(d.canonical.len) ? uint(items<ushort>(d.canonical)[code]) : code;
     return long(d.tag * 1024u + (c == 0xffffu ? 0u : c));
@@ -340,9 +338,8 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
         uint l = r - d.loc_row;
         uint s, e;
         if (l < d.nodes) {
-            uint id = items<uint>(d.core)[l];
-            s = items<uint>(d.start)[id];
-            e = items<uint>(d.end)[id];
+            s = items<uint>(d.start)[l];
+            e = items<uint>(d.end)[l];
         } else {
             s = items<uint>(d.spans)[2u * (l - d.nodes)];
             e = items<uint>(d.spans)[2u * (l - d.nodes) + 1u];
@@ -381,11 +378,11 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
         } else if (view == 3u && col == 1u) {
             v = long(id);
         } else if (view == 0u && col == 2u) {
-            v = kind_of(d, id);
+            v = kind_of(d, l);
         } else if (view == 0u && col == 3u) {
-            v = long(items<uint>(d.start)[id]);
+            v = long(items<uint>(d.start)[l]);
         } else if (view == 0u && col == 4u) {
-            v = long(items<uint>(d.end)[id]);
+            v = long(items<uint>(d.end)[l]);
         } else if ((view == 1u || view == 2u) && col == 0u) {
             uint q = parent_of(d, l);
             v = q == CH_NONE ? -1 : global_of(d, q);
@@ -393,7 +390,7 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
             // `child`'s columns are parent, child, index (`Viewed::columns`).
             v = long(items<uint>(d.ord)[l]);
         } else if (view == 2u && col == 1u) {
-            v = long(d.tag << 16 | uint(items<ushort>(d.field)[id]));
+            v = long(d.tag << 16 | uint(items<ushort>(d.field)[l]));
         } else {
             v = global_of(d, l);
         }
@@ -406,7 +403,7 @@ kernel void view_expand(device const char* B [[buffer(0)]], device long* out [[b
 // (`inside`, containment) or 0 for the nearest. The climb is bounded by the document's nodes.
 inline bool axis_member(device const char* B, uint bits_at, device const ChunkDoc& d, uint l) {
     if (bits_at == 0u) return true;
-    uint at = d.tag * 1024u + items<uint>(d.kind)[items<uint>(d.core)[l]] % 1024u;
+    uint at = d.tag * 1024u + items<uint>(d.kind)[l] % 1024u;
     return ((((device const uint*)(B + bits_at))[at >> 5] >> (at & 31u)) & 1u) != 0u;
 }
 
@@ -2278,6 +2275,12 @@ impl Batch {
         self.committed.push(s);
         self.done.submissions += 1;
         Ok(())
+    }
+
+    /// Commits what is open without waiting: the work encoded so far runs before any command buffer committed after
+    /// it on the one queue (a batch that reads what this one's work writes).
+    pub(in crate::code_rule_dsl) fn commit_open(&mut self) -> Result<(), Error> {
+        self.submit_open()
     }
 
     /// Commits what is open and waits for every command buffer.

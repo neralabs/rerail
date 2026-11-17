@@ -641,6 +641,15 @@ impl Version {
         Ok(p.finish()?.0)
     }
 
+    /// A part of this version whose rules are those whose id `rules` takes, with its own inputs and outputs (a
+    /// selection from a general form, decision 0298): one overlay, its relations' other fields this version's.
+    pub fn part_rules<S: AsRef<str>, T: AsRef<str>>(self: &Arc<Self>, rules: impl Fn(RuleId) -> bool, inputs: &[S], outputs: &[T]) -> Result<Arc<Version>, String> {
+        use super::manager::Pipeline;
+        let mut p = Pipeline::new("part", self.clone());
+        p.program(&mut super::passes::SelectPart { keep: rules, inputs, outputs });
+        Ok(p.finish()?.0)
+    }
+
     /// `to` as an edit of this version: its rules matched by hash, its parts by relation. For a caller that holds
     /// both programs (a test, the trace's replay); a pass states its edit instead.
     pub fn diff<'p>(self: &'p Arc<Self>, to: &Program) -> Result<Builder<'p>, String> {
@@ -758,6 +767,11 @@ pub trait Rewrite {
     fn atom_as(&mut self, _a: AtomRef<'_>) -> Option<(String, bool, bool)> {
         None
     }
+    /// The relation (by name) to write the head `a` with; `None` keeps its own (a relation merged into another,
+    /// `preparation::merge`).
+    fn head_as(&mut self, _a: AtomRef<'_>) -> Option<String> {
+        None
+    }
     /// Whether to keep body literal `l`.
     fn keep(&mut self, _l: LitRef<'_>) -> bool {
         true
@@ -804,7 +818,7 @@ impl Walk<'_, '_> {
         }
     }
     fn atom(&mut self, a: AtomRef<'_>, site: Site<'_>, rw: &mut impl Rewrite) {
-        let renamed = if matches!(site, Site::Head(_)) { None } else { rw.atom_as(a) };
+        let renamed = if matches!(site, Site::Head(_)) { rw.head_as(a).map(|rel| (rel, a.neg(), a.gated())) } else { rw.atom_as(a) };
         let at = match renamed {
             Some((rel, neg, gated)) => {
                 let r = self.enc.rel(&rel);

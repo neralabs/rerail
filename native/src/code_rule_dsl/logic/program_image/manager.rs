@@ -221,7 +221,18 @@ impl Delta {
         if d.rebuilt || !d.removed.is_empty() || !d.added.is_empty() {
             d.touched = d.touched | Reads::RULES;
         }
-        fields_delta(input, output, &mut d);
+        // An overlay of the input whose own layer states no declaration or fact (one that removes rules or sets the
+        // inputs and outputs, a part's or a selection's) has the input's: those are not compared (each comparison
+        // reads every declaration and fact of both).
+        let states = match &**output {
+            Version::Overlay { parent, delta, .. } if Arc::ptr_eq(parent, input) => States {
+                decls: delta.decl_count() > 0 || !delta.u32s(super::R::DeclGone).is_empty(),
+                facts: delta.fact_count() > 0 || !delta.u32s(super::R::FactGone).is_empty(),
+                about: delta.owns() & 4 != 0,
+            },
+            _ => States { decls: true, facts: true, about: true },
+        };
+        fields_delta(input, output, &mut d, states);
         d
     }
 }
@@ -234,10 +245,17 @@ fn same_numbering(input: &Arc<Version>, output: &Arc<Version>) -> bool {
 
 /// The fields' part of the delta, by each part's hash: declarations by relation, facts, `.about` rows, inputs and
 /// outputs. Their count is the program's relations, never its rules.
-fn fields_delta(input: &Version, output: &Version, d: &mut Delta) {
+/// Which of the output's fields its own layer may state apart from the input's (`Delta::of`).
+struct States {
+    decls: bool,
+    facts: bool,
+    about: bool,
+}
+
+fn fields_delta(input: &Version, output: &Version, d: &mut Delta, states: States) {
     use std::collections::HashMap;
     let decls = |v: &Version| -> HashMap<String, u64> { v.decls().into_iter().map(|x| (v.text(x.name()).to_owned(), x.hash())).collect() };
-    let (a, b) = (decls(input), decls(output));
+    let (a, b) = if states.decls { (decls(input), decls(output)) } else { Default::default() };
     for (name, h) in &b {
         if a.get(name) != Some(h) {
             d.decls.insert(output.rel(name).expect("a declared relation has an id"));
@@ -256,10 +274,10 @@ fn fields_delta(input: &Version, output: &Version, d: &mut Delta) {
         x.sort_unstable();
         x
     };
-    if facts(input.all_facts(), input) != facts(output.all_facts(), output) {
+    if states.facts && facts(input.all_facts(), input) != facts(output.all_facts(), output) {
         d.touched = d.touched | Reads::FACTS;
     }
-    if facts(input.about_facts(), input) != facts(output.about_facts(), output) {
+    if (states.facts || states.about) && facts(input.about_facts(), input) != facts(output.about_facts(), output) {
         d.touched = d.touched | Reads::ABOUT;
     }
     if input.inputs_hash() != output.inputs_hash() {
@@ -658,8 +676,10 @@ impl<'p> ProgramW<'p> {
                 })
             }
         };
-        // A derivation that changed nothing is its input: its analyses carry, and no new base is kept.
-        if mode == Mode::Derive && v.digest() == self.input.digest() && v.size() == self.input.size() {
+        // A derivation that changed nothing is its input: its analyses carry, and no new base is kept. The digest is
+        // a sum over the rules, blind to their order, so the rules are compared in order too (a derivation that
+        // reorders them, `RuleOrder`, changes the program).
+        if mode == Mode::Derive && v.digest() == self.input.digest() && v.size() == self.input.size() && v.rules().map(|r| r.hash()).eq(self.input.rules().map(|r| r.hash())) {
             return Ok((self.input.clone(), Form::Unchanged, self.visited));
         }
         Ok((v, form, self.visited))

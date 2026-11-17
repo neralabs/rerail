@@ -22,11 +22,26 @@ pub fn note(site: &str, from: &Program, to: &Program) {
     }
 }
 
+/// `note` of two versions, each printed from its handles (`Version::show`, 0276 §6) as `<digest>.vrr`.
+pub fn note_versions(site: &str, from: &super::program_image::Version, to: &super::program_image::Version) {
+    let Some(dir) = std::env::var_os("RERAIL_VERSION_TRACE") else { return };
+    let dir = Path::new(&dir);
+    let _ = std::fs::create_dir_all(dir);
+    let (f, t) = (save_text(dir, from.show(), "vrr"), save_text(dir, to.show(), "vrr"));
+    if let Ok(mut out) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("trace.tsv")) {
+        let _ = out.write_all(format!("{site}\t{f}\t{t}\n").as_bytes());
+    }
+}
+
 fn save(dir: &Path, prog: &Program) -> String {
     let (text, ext) = match super::program_text::print(prog) {
         Ok(t) => (t, "rr"),
         Err(_) => (format!("{prog:?}"), "dbg"),
     };
+    save_text(dir, text, ext)
+}
+
+fn save_text(dir: &Path, text: String, ext: &str) -> String {
     let digest = format!("{:016x}", foldhash::quality::FixedState::with_seed(0x0173).hash_one(&text));
     let path = dir.join(format!("{digest}.{ext}"));
     if !path.exists() {

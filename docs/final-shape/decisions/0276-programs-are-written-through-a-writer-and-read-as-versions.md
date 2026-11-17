@@ -355,6 +355,10 @@ rules must equal the old pass's, compared by digest, as 0246 §1 does for loweri
   - the per-run `hops` check.
 
   The pragma becomes an error that cites 0065.
+
+  Done 2026-11-16 (0281 step 4): the module and its tests, the run's three branches, `run_rounds`, `rounds_loop`,
+  the report's `rounds` and the per-run `hops`. `.pragma "cross-rounds"` is refused by both readers. The cross
+  memo's `same_document` is now its own, over a version's rule, so nothing moved to `file_local`.
 - **What stays, moved to `file_local`:** `same_document`, which the cross memo uses, and the `@doc($a) = @doc($b)`
   join (`join_spec`, `select`), which is the split's, not the rounds'.
 
@@ -368,7 +372,8 @@ rules must equal the old pass's, compared by digest, as 0246 §1 does for loweri
 - **Why it is not needed.** The answer is built. Levels is in the engine (`setfix`'s `Levels`), used where the
   planner says `leveled`. Its results and pitfalls are recorded in 0090. Nothing calls the spike except its
   environment variable.
-- **What goes:** the module, its call in the cross part's run, and its row in `facts_only`'s list.
+- **What goes:** the module, its call in the cross part's run, and its row in `facts_only`'s list. Done
+  2026-11-16, with the rounds.
 
 ## Agreement with prior work
 

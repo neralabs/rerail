@@ -413,7 +413,11 @@ impl<'a> Run<'a, '_> {
         let kinds = |kset| pf.kindset(b.v.text(kset)).unwrap_or_else(|| panic!("no kind set {}", b.v.text(kset))).iter().map(|&k| pf.text(k)).collect::<Vec<_>>().join(",");
         let call_of = |t: TermRef<'_>, f: &str| matches!(t, TermRef::Call(g, _) if b.v.text(g) == f);
         let mut lines = Vec::new();
+        // Per item, the plan step it was made for (`JoinSpec::from`).
+        let mut from: Vec<u32> = Vec::new();
         for (idx, s) in steps.iter().enumerate() {
+            // The items the step before made are its (a literal can make several: `$k = @sub(@strlen($d), 1)`).
+            from.resize(lines.len(), idx.saturating_sub(1) as u32);
             match b.view(s.at) {
                 Lit::Atom(l) => {
                     if s.mode == Some(Mode::Range) {
@@ -425,7 +429,7 @@ impl<'a> Run<'a, '_> {
                 Lit::Cmp { l: TermRef::Call(fl, xl), op: op @ (CmpOp::Eq | CmpOp::Ne), r: TermRef::Call(fr, xr) }
                     if b.v.text(fl) == "doc" && b.v.text(fr) == "doc" && xl.clone().count() == 1 && xr.clone().count() == 1 =>
                 {
-                    // `@doc($a) = @doc($b)` (cross_rounds' hops): both nodes bound.
+                    // `@doc($a) = @doc($b)` (the split's same-document join): both nodes bound.
                     let (x, y) = (xl.clone().next().expect("one"), xr.clone().next().expect("one"));
                     if !slots.bound(x) || !slots.bound(y) {
                         return None;
@@ -629,6 +633,8 @@ impl<'a> Run<'a, '_> {
                 _ => return None,
             }
         }
+        // Each item's plan step, the last one's after the loop; then the head's computed terms' (`JoinSpec::from`).
+        from.resize(lines.len(), steps.len().saturating_sub(1) as u32);
         let mut head = Vec::new();
         let head_args: Vec<TermRef<'_>> = if bare { Vec::new() } else { b.head().args().collect() };
         for (k, t) in head_args.into_iter().enumerate() {
@@ -659,7 +665,8 @@ impl<'a> Run<'a, '_> {
                 _ => head.push(HeadTok::Tok(t_tok(b, t, &mut slots)?)),
             }
         }
+        from.resize(lines.len(), steps.len() as u32);
         lines.push(JoinItem::Head(head));
-        Some(JoinSpec { items: lines })
+        Some(JoinSpec { items: lines, from, plan_steps: steps.len() as u32 })
     }
 }

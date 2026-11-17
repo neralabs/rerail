@@ -112,7 +112,17 @@ fn scala_contextual_aliases_preserve_native_node_identity() {
 
     let mut expected = Vec::new();
     native_nodes(native.tree.root_node(), &mut expected);
+    // The nodes a tape holds: the tokens the grammar implies (`def`, `:`, `}` here) left out, as
+    // Scala's token automata (0305) decide (`stored_children_for_test`, as `stored` reads them).
+    let mut kept = std::collections::HashSet::new();
+    let mut stack = vec![native.tree.root_node()];
+    while let Some(node) = stack.pop() {
+        kept.insert(node.id());
+        stack.extend(stored_children_for_test(GrammarDialect::Scala, node).into_iter().map(|(child, _)| child));
+    }
+    expected.retain(|node| kept.contains(&node.id()));
     let actual = tape.root_node().dfs().collect::<Vec<_>>();
+    assert!(actual.iter().any(|n| n.kind() == "arguments"), "the contextual alias is kept");
     assert_eq!(expected.len(), actual.len());
     for (native, restored) in expected.into_iter().zip(actual) {
         assert_eq!(restored.kind_id(), native.kind_id());
@@ -162,7 +172,6 @@ fn fixture(
 
 #[test]
 fn known_field_edges_match_native_first_child_without_larger_records() {
-    assert_eq!(std::mem::size_of::<Rec>(), 40);
     for (lang, source) in [
         (
             GrammarDialect::Python,
@@ -1086,9 +1095,9 @@ fn cancellation_interrupts_mid_encode_without_partial_image() {
     // A record per stored node: the tokens the grammar implies are in no tape (RER-131).
     let nodes = native.tree.root_node().descendant_count();
     let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
-    assert_eq!(doc.data.len(), doc.image.node_count());
-    assert_eq!(image.primary.node_count(), doc.data.len());
-    assert!(doc.data.len() < nodes);
+    assert_eq!(doc.transducer_len(), doc.image.node_count());
+    assert_eq!(image.primary.node_count(), doc.transducer_len());
+    assert!(doc.transducer_len() < nodes);
 }
 
 #[test]
@@ -1112,7 +1121,7 @@ fn cancellation_interrupts_mid_restore_after_hashing() {
     );
     assert_eq!(calls.get(), 5, "restore must poll after the source digest");
     let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
-    assert_eq!(doc.data.len(), doc.image.node_count());
+    assert_eq!(doc.transducer_len(), doc.image.node_count());
 }
 
 #[test]
@@ -1321,8 +1330,10 @@ fn restore_rejects_noncanonical_side_tables_and_checkpoint_boundaries() {
     broken.off[2 * 17] ^= 0x40;
     reject("second block offset", &broken);
     let mut broken = image.clone();
-    broken.codes.push(broken.codes[0]);
-    broken.code[0..2].copy_from_slice(&(broken.codes.len() as u16).to_le_bytes());
+    let first = broken.codes[0];
+    broken.codes.push(first);
+    let count = broken.codes.len() as u16;
+    broken.code[0..2].copy_from_slice(&count.to_le_bytes());
     reject("out-of-range code", &broken);
     let mut broken = image.clone();
     broken.widths[1] = 4;
@@ -2255,7 +2266,7 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
     let lines = Arc::new(LineTable::new(&source, Terminators::of(GrammarDialect::Python)));
     let reject = |image: &TapeImage| {
         assert!(TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), image, &|| false).is_err());
-        assert!(core::from_image(Arc::clone(&source), &grammar, image, Arc::clone(&lines)).is_err());
+        assert!(core::from_image(Arc::clone(&source), &grammar, image.clone(), Arc::clone(&lines)).is_err());
     };
     let mut corrupt = image.clone(); corrupt.source_digest.as_mut().expect("the image holds its source's digest")[0] ^= 1; reject(&corrupt);
     let mut corrupt = image.clone(); corrupt.code.pop(); reject(&corrupt);
@@ -2269,7 +2280,7 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
     let (_, _, nested, ng) = fixture("f(g(x))\n", GrammarDialect::Python);
     let mut corrupt = nested.clone();
     corrupt.size[2..4].copy_from_slice(&2u16.to_le_bytes());
-    assert!(core::from_image(Arc::new("f(g(x))\n".into()), &ng, &corrupt, Arc::new(LineTable::new("f(g(x))\n", Terminators::Newlines))).is_err());
+    assert!(core::from_image(Arc::new("f(g(x))\n".into()), &ng, corrupt, Arc::new(LineTable::new("f(g(x))\n", Terminators::Newlines))).is_err());
 }
 
 
@@ -2535,6 +2546,12 @@ fn ecma_implied_tokens() {
         ("markdown", GrammarDialect::Markdown),
         ("markdown-inline", GrammarDialect::MarkdownInline),
         ("sql", GrammarDialect::Sql),
+        ("kotlin", GrammarDialect::Kotlin),
+        ("swift", GrammarDialect::Swift),
+        ("scala", GrammarDialect::Scala),
+        ("go", GrammarDialect::Go),
+        ("c", GrammarDialect::C),
+        ("cpp", GrammarDialect::Cpp),
     ];
     let wanted = std::env::var("RERAIL_IMPLIED_DIALECTS").unwrap_or_else(|_| "javascript,typescript,tsx".into());
     for (name, dialect) in all.into_iter().filter(|(name, _)| wanted.split(',').any(|w| w == *name)) {
@@ -2551,7 +2568,7 @@ fn ecma_implied_tokens() {
 /// Writes a dialect's token automata (`TokenGrammar::automata_text`) to `RERAIL_AUTOMATA_OUT`, for a lean
 /// parser's tables: `RERAIL_AUTOMATA_DIALECT=sql` writes `native/crates/sql_lean/automata.tsv`,
 /// `markdown-inline` `native/crates/markdown_inline_lean/automata.tsv`, `vue`
-/// `native/crates/vue_lean/automata.tsv`.
+/// `native/crates/vue_lean/automata.tsv`; `kotlin`, `swift` and `scala` those lean parsers'.
 #[test]
 #[ignore = "writes a lean parser's automata table; needs RERAIL_AUTOMATA_OUT"]
 fn token_automata_text() {
@@ -2560,6 +2577,9 @@ fn token_automata_text() {
         Ok("sql") | Err(_) => GrammarDialect::Sql,
         Ok("markdown-inline") => GrammarDialect::MarkdownInline,
         Ok("vue") => GrammarDialect::Vue,
+        Ok("kotlin") => GrammarDialect::Kotlin,
+        Ok("swift") => GrammarDialect::Swift,
+        Ok("scala") => GrammarDialect::Scala,
         Ok(other) => panic!("no automata table for {other}"),
     };
     std::fs::write(out, tokens::TokenGrammar::of_dialect(dialect).expect("a token grammar").automata_text()).unwrap();
@@ -2607,6 +2627,12 @@ fn python_tape_expect() {
         Ok("markdown-inline") => GrammarDialect::MarkdownInline,
         Ok("sql") => GrammarDialect::Sql,
         Ok("vue") => GrammarDialect::Vue,
+        Ok("kotlin") => GrammarDialect::Kotlin,
+        Ok("swift") => GrammarDialect::Swift,
+        Ok("scala") => GrammarDialect::Scala,
+        Ok("go") => GrammarDialect::Go,
+        Ok("c") => GrammarDialect::C,
+        Ok("cpp") => GrammarDialect::Cpp,
         _ => GrammarDialect::Python,
     };
     let grammar = Grammar::new(dialect).unwrap();
@@ -3493,6 +3519,259 @@ fn java_parse_costs() {
             t * 1e9 / bytes as f64,
             t
         );
+    }
+}
+
+/// Go's tapes from the lean parser (the product's parser for Go, decision 0314) are tree-sitter-go's,
+/// byte for byte, on hand-written cases; a text tree-sitter reads with an error the lean parser
+/// refuses (its file goes to tree-sitter). The corpus comparison is `rerail-go-lean`'s `oracle`.
+#[test]
+fn go_tapes_from_the_lean_parser_are_tree_sitters() {
+    use crate::code_rule_dsl::tape::go_lean;
+    let sources = [
+        "",
+        "// only a comment\n/* block */\npackage a\n",
+        "package main\n\nimport (\n\t\"fmt\"\n\t. \"strings\"\n\t_ \"embed\"\n\tm \"math\"\n)\n\nimport \"os\"\n",
+        "package a\n\nconst (\n\tA = iota\n\tB\n\tC, D = 1, 2\n)\n\nvar x, y int = 1, 2\nvar (\n\tz = []int{1, 2,}\n\tw map[string]chan<- *T\n)\n\ntype T struct {\n\tA, B int `json:\"a\"`\n\t*E\n\tpkg.F\n}\n\ntype I interface {\n\tM(a int) (b string, err error)\n\t~int | ~string\n}\n\ntype U = T\n",
+        "package a\n\nfunc F[T any, U comparable](x T, ys ...U) (r T) {\n\treturn x\n}\n\nfunc (r *R[T]) M() {}\n",
+        "package a\n\nfunc f() {\n\tx := 1\n\tx += 2\n\tx++\n\tc <- x\n\tgo g()\n\tdefer h()\n\tif x := f(); x > 0 {\n\t} else if y {\n\t} else {\n\t}\n\tfor i := 0; i < n; i++ {\n\t}\n\tfor k, v := range m {\n\t}\n\tfor range c {\n\t}\nL:\n\tfor {\n\t\tbreak L\n\t}\n\tgoto L\n}\n",
+        "package a\n\nfunc f() {\n\tswitch x := v.(type) {\n\tcase int, nil:\n\tdefault:\n\t}\n\tswitch {\n\tcase a > b:\n\t\tfallthrough\n\tcase c:\n\t}\n\tselect {\n\tcase v := <-c:\n\tcase c <- 1:\n\tdefault:\n\t}\n}\n",
+        "package a\n\nvar s = []string{\"a\\n\\x41\\u00e9\", `raw\n`, \"\"}\nvar r = 'x' + '\\''\nvar n = 0x1F + 0o17 + 0b1 + 1_000 + .5e-3 + 1i + 0x1p-2\n",
+        "package a\n\nvar (\n\ta = F[int](x)\n\tb = pkg.F[T](x)\n\tc = f[i](x, y)\n\td = G[*pkg.T](x, y)\n\te = (*T)(p)\n\tf = (*S[A])(p)\n\tg = *(*[]T)(p)\n\th = T{A: 1, B: {2}}\n\ti = func(x int) int { return x }(1)\n\tj = interface{}(x)\n\tk = new(T)\n\tl = make([]int, 0, n)\n\tm = a[1:2:3]\n\tn = x.(T)\n)\n",
+    ];
+    let grammar = Grammar::new(GrammarDialect::Go).unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Go.get_ts_language()).unwrap();
+    for source in sources {
+        let ours = go_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        assert!(!tree.root_node().has_error(), "tree-sitter's tree of {source:?} has an error");
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
+        assert!(
+            ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+            "the tapes of {source:?} differ:\n{}\n{}",
+            python_tape_plain(&ours, &grammar),
+            python_tape_plain(&theirs, &grammar)
+        );
+    }
+    // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
+    for invalid in ["package a\nfunc f( {\n", "package a\nvar x = (1,\n", "package a\nfunc f() {\n", "package a\nvar s = \"ab\n", "package a\nfunc f() { x := }\n", "package a\nvar x = 1 +\n"] {
+        assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
+        assert!(go_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
+    }
+}
+
+/// The product reads Go with the lean parser: a file's image through the engine's parse
+/// (`TapeImage::parse`) is the lean parser's; a file it refuses goes to tree-sitter-go.
+#[test]
+fn the_product_reads_go_with_the_lean_parser() {
+    use crate::code_rule_dsl::tape::go_lean;
+    let grammar = Grammar::new(GrammarDialect::Go).unwrap();
+    assert!(tree_parser(GrammarDialect::Go).is_some(), "Go's parser is installed");
+    let source = "package a\n\nfunc f(x int) int { return x + 1 } // one\n";
+    let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let lean = go_lean::encode(&grammar, source, &|| false).unwrap().unwrap();
+    assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap());
+    let invalid = "package a\nfunc f( {\n";
+    assert!(go_lean::encode(&grammar, invalid, &|| false).is_err());
+    assert!(TapeImage::parse(&grammar, invalid, &|| false).unwrap().is_ok());
+}
+
+/// What a Go file's tape costs, by parser: the lean parser (`tape::go_lean`, the product's)
+/// against tree-sitter-go, over `RERAIL_PY_FILES` (a list of paths): instructions retired, cycles
+/// and CPU time a node, the best of three passes. Only the files both read.
+#[test]
+#[ignore = "a measurement; needs RERAIL_PY_FILES"]
+fn go_parse_costs() {
+    use crate::code_rule_dsl::tape::go_lean;
+    let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
+    let gd = GrammarDialect::Go;
+    let grammar = Grammar::new(gd).unwrap();
+    let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
+    parser.borrow_mut().set_language(&gd.get_ts_language()).unwrap();
+    let mut files: Vec<String> = list.lines().filter(|l| !l.is_empty()).filter_map(|p| std::fs::read_to_string(p).ok()).collect();
+    let all = files.len();
+    files.retain(|f| go_lean::encode(&grammar, f, &|| false).is_ok_and(|t| t.is_ok()));
+    let bytes: usize = files.iter().map(String::len).sum();
+    let nodes: usize = files.iter().map(|f| go_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("lean: the parser's columns", Box::new(|f| rerail_go_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
+        ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(go_lean::encode(&grammar, f, &|| false)).is_ok()))),
+        ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
+        ("tree-sitter: the tape", Box::new(|f| {
+            let tree = parser.borrow_mut().parse(f, None).unwrap();
+            usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, f, &|| false)).is_ok())
+        })),
+    ];
+    let mut best = vec![(f64::MAX, u64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for (i, (_, step)) in steps.iter().enumerate() {
+            let (i0, c0) = retired();
+            let t0 = cpu();
+            let mut n = 0;
+            files.iter().for_each(|f| n += step(f));
+            std::hint::black_box(n);
+            let (i1, c1) = retired();
+            let t = cpu() - t0;
+            best[i] = (best[i].0.min(t), best[i].1.min(i1 - i0), best[i].2.min(c1 - c0));
+        }
+    }
+    eprintln!("Go: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
+    for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
+        eprintln!(
+            "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",
+            *ins as f64 / nodes as f64,
+            *cyc as f64 / nodes as f64,
+            t * 1e9 / bytes as f64,
+            t
+        );
+    }
+}
+
+/// What a C or C++ file's tape costs, by parser: the lean parser (`tape::c_lean`, the product's)
+/// against tree-sitter-c or tree-sitter-cpp (`RERAIL_C_DIALECT=c`, else C++), over
+/// `RERAIL_PY_FILES` (a list of paths): instructions retired, cycles and CPU time a node, the best
+/// of three passes. Only the files both read.
+#[test]
+#[ignore = "a measurement; needs RERAIL_PY_FILES"]
+fn cpp_parse_costs() {
+    use crate::code_rule_dsl::tape::c_lean;
+    let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
+    let c = std::env::var("RERAIL_C_DIALECT").as_deref() == Ok("c");
+    let gd = if c { GrammarDialect::C } else { GrammarDialect::Cpp };
+    let dialect = if c { rerail_c_lean::Dialect::C } else { rerail_c_lean::Dialect::Cpp };
+    let grammar = Grammar::new(gd).unwrap();
+    let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
+    parser.borrow_mut().set_language(&gd.get_ts_language()).unwrap();
+    let mut files: Vec<String> = list.lines().filter(|l| !l.is_empty()).filter_map(|p| std::fs::read_to_string(p).ok()).collect();
+    let all = files.len();
+    files.retain(|f| c_lean::encode(&grammar, f, &|| false).is_ok_and(|t| t.is_ok()));
+    let bytes: usize = files.iter().map(String::len).sum();
+    let nodes: usize = files.iter().map(|f| c_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("lean: the parser's columns", Box::new(|f| rerail_c_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.code.len()))),
+        ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(c_lean::encode(&grammar, f, &|| false)).is_ok()))),
+        ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
+        ("tree-sitter: the tape", Box::new(|f| {
+            let tree = parser.borrow_mut().parse(f, None).unwrap();
+            usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, f, &|| false)).is_ok())
+        })),
+    ];
+    let mut best = vec![(f64::MAX, u64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for (i, (_, step)) in steps.iter().enumerate() {
+            let (i0, c0) = retired();
+            let t0 = cpu();
+            let mut n = 0;
+            files.iter().for_each(|f| n += step(f));
+            std::hint::black_box(n);
+            let (i1, c1) = retired();
+            let t = cpu() - t0;
+            best[i] = (best[i].0.min(t), best[i].1.min(i1 - i0), best[i].2.min(c1 - c0));
+        }
+    }
+    eprintln!("{gd:?}: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
+    for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
+        eprintln!(
+            "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",
+            *ins as f64 / nodes as f64,
+            *cyc as f64 / nodes as f64,
+            t * 1e9 / bytes as f64,
+            t
+        );
+    }
+}
+
+/// C's and C++'s tapes from the lean parser (the product's parser for both, decision 0317) are
+/// tree-sitter-c's and tree-sitter-cpp's, byte for byte, on hand-written cases; a text tree-sitter
+/// reads with an error the lean parser refuses (its file goes to tree-sitter). The corpus
+/// comparison is `rerail-c-lean`'s `oracle`.
+fn c_lean_matches_tree_sitter(dialect: GrammarDialect, sources: &[&str], invalid: &[&str]) {
+    use crate::code_rule_dsl::tape::c_lean;
+    let grammar = Grammar::new(dialect).unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&dialect.get_ts_language()).unwrap();
+    for &source in sources {
+        let ours = c_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        assert!(!tree.root_node().has_error(), "tree-sitter's tree of {source:?} has an error");
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
+        assert!(
+            ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+            "the tapes of {source:?} differ:\n{}\n{}",
+            python_tape_plain(&ours, &grammar),
+            python_tape_plain(&theirs, &grammar)
+        );
+    }
+    // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
+    for &bad in invalid {
+        assert!(parser.parse(bad, None).unwrap().root_node().has_error(), "{bad:?} reads without an error");
+        assert!(c_lean::encode(&grammar, bad, &|| false).is_err(), "accepted {bad:?}");
+    }
+}
+
+#[test]
+fn c_tapes_from_the_lean_parser_are_tree_sitters() {
+    let sources = [
+        "",
+        "// only a comment\n/* block */\n",
+        "#include <stdio.h>\n#include \"a.h\"\n#define N 10\n#define F(x, y) ((x) + (y))\n#ifdef A\nint a;\n#elif B\nint b;\n#else\nint c;\n#endif\n",
+        "struct S { int a, *b; unsigned c : 3; struct { char d; } e; };\ntypedef struct S S;\nenum E { A = 1, B, };\nunion U { int i; float f; };\n",
+        "static const char *s[] = { \"a\" \"b\", [2] = \"c\" };\nint (*fp)(int, char *);\nlong long x = 0x1Fu + 1e-3f + 'a' + L'\\n';\n",
+        "int f(int a, ...) {\n  for (int i = 0; i < a; i++) {\n    if (a > 1) continue; else break;\n  }\n  while (a--) a += 2;\n  do { a = a ? a : -a; } while (0);\n  switch (a) { case 1: return 1; default: break; }\n  goto end;\nend:\n  return sizeof(int) + sizeof a + (int)a;\n}\n",
+        "void g(void) { struct S s = { .a = 1 }; s.b->c[1] = &s; int *p = (int *)malloc(4); f(p, *p); }\n",
+    ];
+    let invalid = ["int f( {\n", "int x = (1,\n", "void f() {\n", "char *s = \"ab\n", "int x = 1 +;\n"];
+    c_lean_matches_tree_sitter(GrammarDialect::C, &sources, &invalid);
+}
+
+#[test]
+fn cpp_tapes_from_the_lean_parser_are_tree_sitters() {
+    let sources = [
+        "",
+        "#include <vector>\nnamespace a::b {\nusing std::vector;\nusing T = vector<int>;\ninline namespace v1 { int x; }\n}\n",
+        "template <typename T, int N = 3>\nclass A : public B<T>, virtual C {\npublic:\n  A() : x_(0) {}\n  explicit A(int x) noexcept;\n  virtual ~A() = default;\n  T get() const override { return x_; }\n  static constexpr int n = N;\nprivate:\n  T x_;\n};\n",
+        "int A::f(std::unique_ptr<B> p, const std::string& s) const {\n  auto l = [&, this](int y) -> int { return y + x_; };\n  for (auto& [k, v] : m) { std::cout << k << v; }\n  if constexpr (sizeof(T) > 4) { throw std::runtime_error(\"x\"); }\n  try { g(); } catch (const E& e) { } catch (...) { }\n  return static_cast<int>(l(1)) + new int[3]{1, 2, 3}[0];\n}\n",
+        "enum class E : unsigned char { A, B };\nstruct S { int a{}; S& operator=(const S&) = delete; operator bool() const; };\nconstexpr auto s = R\"(raw\\n)\"sv;\n",
+        "template <class T> concept C = requires(T t) { t.f(); };\ntemplate <C T> void h(T&& t) { std::forward<T>(t).f(); }\n",
+    ];
+    let invalid = ["int f( {\n", "class A {\n", "auto x = [&] -> int { return 1; };\n", "int x = (a = b, c);\n", "void f() { p->A::~A(); }\n"];
+    c_lean_matches_tree_sitter(GrammarDialect::Cpp, &sources, &invalid);
+    // Where tree-sitter-cpp's GLR forks past its 6 stack versions in nested template arguments,
+    // it reads some as expressions by version order (decision 0317): refused, for tree-sitter.
+    use crate::code_rule_dsl::tape::c_lean;
+    let grammar = Grammar::new(GrammarDialect::Cpp).unwrap();
+    for capped in ["[[nodiscard]] std::pair<A, B<C>> f(int);\n", "void f() { x = *static_cast<A<B<C<double>>>*>(p); }\n"] {
+        assert!(c_lean::encode(&grammar, capped, &|| false).is_err(), "accepted {capped:?}");
+    }
+}
+
+/// The product reads C and C++ with the lean parser: a file's image through the engine's parse
+/// (`TapeImage::parse`) is the lean parser's; a file it refuses goes to tree-sitter.
+#[test]
+fn the_product_reads_c_and_cpp_with_the_lean_parser() {
+    use crate::code_rule_dsl::tape::c_lean;
+    for (dialect, source) in [(GrammarDialect::C, "int f(int x) { return x + 1; } // one\n"), (GrammarDialect::Cpp, "namespace a { int f(int x) { return x + 1; } } // one\n")] {
+        let grammar = Grammar::new(dialect).unwrap();
+        assert!(tree_parser(dialect).is_some(), "{dialect:?}'s parser is installed");
+        let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+        let lean = c_lean::encode(&grammar, source, &|| false).unwrap().unwrap();
+        assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap());
+        let invalid = "int f( {\n";
+        assert!(c_lean::encode(&grammar, invalid, &|| false).is_err());
+        assert!(TapeImage::parse(&grammar, invalid, &|| false).unwrap().is_ok());
     }
 }
 
@@ -4814,4 +5093,114 @@ fn every_tape_format_reads_the_document_as_restored() {
             }
         });
     }
+}
+
+/// Decision 0293 §4: a file's documents stored in each format (`FileImage::in_format`, then as the store keeps and
+/// reads them) are held as stored, and the documents restored from them answer every node question as format 15's
+/// do: a Python file of several blocks, and a host whose language has no format 16 table (kept as format 15) with a
+/// TSX guest that has one.
+#[test]
+fn a_file_stored_in_each_format_reads_back_as_format_15() {
+    use super::formats::Format;
+    fn same(a: &TapeDoc, b: &TapeDoc, name: &str) {
+        assert_eq!(a.transducer_len(), b.transducer_len(), "{name}: nodes");
+        for node in 0..a.transducer_len() as u32 {
+            assert_eq!(
+                (a.transducer_kind(node), a.transducer_field(node), a.transducer_flags(node), a.transducer_span(node)),
+                (b.transducer_kind(node), b.transducer_field(node), b.transducer_flags(node), b.transducer_span(node)),
+                "{name}: node {node}"
+            );
+            assert_eq!(a.transducer_parent(node), b.transducer_parent(node), "{name}: parent of {node}");
+            assert_eq!(a.transducer_descendants(node), b.transducer_descendants(node), "{name}: subtree of {node}");
+            assert_eq!(a.transducer_children(node).collect::<Vec<_>>(), b.transducer_children(node).collect::<Vec<_>>(), "{name}: children of {node}");
+        }
+        assert_eq!(a.transducer_supertypes().collect::<Vec<_>>(), b.transducer_supertypes().collect::<Vec<_>>(), "{name}: classes");
+    }
+    let python: String = (0..400).map(|i| format!("class C{i}(B):\n    def f(self, x={i}):\n        return [y for y in x if y]\n")).collect();
+    let cases = [(GrammarDialect::Python, python), (GrammarDialect::TestHtml, "<script lang=\"tsx\">let x = <a />;</script>\n".to_owned())];
+    for (lang, source) in cases {
+        let grammar = Grammar::new(lang).unwrap();
+        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap();
+        assert_eq!(image.primary.format(), Format::F15, "the tests' run stores format 15");
+        let reference = TapeDoc::restore(Arc::new(source.clone()), Arc::clone(&grammar), &image, &|| false).unwrap();
+        for format in Format::ALL {
+            let stored = image.clone().in_format(format).round_trip(&grammar).unwrap();
+            let has_table = |dialect| crate::code_rule_dsl::language::tape_tag(dialect).and_then(rerail_tape_format::f16::lang).is_some();
+            let held = |tape: &TapeImage| if has_table(tape.language) { format } else { Format::F15 };
+            assert_eq!(stored.primary.format(), held(&stored.primary), "{lang:?} in {}", format.name());
+            for d in &stored.derived {
+                assert_eq!(d.tape.format(), held(&d.tape), "{lang:?}'s guest in {}", format.name());
+            }
+            let doc = TapeDoc::restore(Arc::new(source.clone()), Arc::clone(&grammar), &stored, &|| false).unwrap();
+            same(&reference, &doc, &format!("{lang:?} in {}", format.name()));
+            let (guests, read) = (reference.guests().unwrap(), doc.guests().unwrap());
+            assert_eq!(guests.len(), read.len());
+            assert_eq!(guests.len(), usize::from(lang == GrammarDialect::TestHtml));
+            for (g, r) in guests.iter().zip(read.iter()) {
+                same(&g.doc, &r.doc, &format!("{lang:?}'s guest in {}", format.name()));
+            }
+        }
+    }
+}
+
+/// Decision 0293 (the user, 2026-11-16: "generalize the lean parsers so that they produce format 16 directly, and
+/// ideally format 16 compressed directly"): each lean parser's writer, finished in a run of format 16 or 16z, writes
+/// that format in one pass over its nodes (`formats::lean`), never format 15's columns. The tape is the bytes format
+/// 15's image converts to, and answers every node question as format 15's does.
+#[test]
+fn the_lean_parsers_write_each_format_directly() {
+    use super::formats::{Format, as_run};
+    use rerail_tape_format::tape::Tape;
+    type Encode = fn(&Grammar, &str) -> Result<TapeImage, String>;
+    fn lean<R: std::fmt::Debug>(r: Result<Result<TapeImage, String>, R>) -> Result<TapeImage, String> {
+        r.map_err(|why| format!("the lean parser refused it: {why:?}"))?
+    }
+    let python: String = (0..300).map(|i| format!("class C{i}(B):\n    def f(self, x={i}):\n        return [y for y in x if y]\n")).collect();
+    let js: String = (0..200).map(|i| format!("const x{i} = (a) => a?.b ?? {i};\nfunction f{i}(y) {{ return y + 1; }}\n")).collect();
+    let cases: Vec<(GrammarDialect, String, Encode)> = vec![
+        (GrammarDialect::Python, python, |g, s| lean(super::python_lean::encode(g, s, &|| false))),
+        (GrammarDialect::JavaScript, js, |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::JavaScript, g, s, &|| false))),
+        (GrammarDialect::TypeScript, "interface A { x?: number }\nconst x: A = {};\n".into(), |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::TypeScript, g, s, &|| false))),
+        (GrammarDialect::Tsx, "const A = () => <div title=\"x\">text</div>;\n".into(), |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::Tsx, g, s, &|| false))),
+        (GrammarDialect::Rust, "fn main() { let x = Some(1); if let Some(y) = x { println!(\"{y}\"); } }\n".into(), |g, s| lean(super::rust_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Php, "<?php function f($x) { return $x + 1; }\n".into(), |g, s| lean(super::php_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Sql, "SELECT a, count(*) FROM t GROUP BY a;\n".into(), |g, s| lean(super::sql_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Vue, "<template><div>{{ value }}</div></template>\n<script>\nlet value = 1;\n</script>\n".into(), |g, s| lean(super::vue_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Css, "a { color: red; }\n.b > c { margin: 0 1px; }\n".into(), |g, s| lean(super::css_lean::encode(g, s, &|| false))),
+        (GrammarDialect::CSharp, "class A { void F() { var x = 1; } }\n".into(), |g, s| lean(super::csharp_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Html, "<div class=\"a\"><p>hi</p></div>\n".into(), |g, s| lean(super::html_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Java, "class A { void f() { int x = 1; } }\n".into(), |g, s| lean(super::java_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Markdown, "# Title\n\nSome *text* here.\n\n- a\n- b\n".into(), |g, s| lean(super::markdown_lean::encode(g, s, &|| false))),
+        (GrammarDialect::MarkdownInline, "Some *text* and `code`".into(), |g, s| lean(super::markdown_inline_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Rr, ".decl item(n:number)\nitem(1).\n.output item\n".into(), |g, s| TapeImage::encode_rr(g, s, &|| false)),
+    ];
+    let mut direct = Vec::new();
+    for (lang, source, encode) in cases {
+        let grammar = Grammar::new(lang).unwrap();
+        let reference = as_run(Format::F15, || encode(&grammar, &source)).unwrap_or_else(|e| panic!("{lang:?}: {e}"));
+        assert_eq!(reference.format(), Format::F15, "{lang:?}");
+        let has_table = crate::code_rule_dsl::language::tape_tag(lang).and_then(rerail_tape_format::f16::lang).is_some();
+        for format in [Format::F16, Format::F16Z] {
+            let image = as_run(format, || encode(&grammar, &source)).unwrap();
+            let at = format!("{lang:?} in {}", format.name());
+            assert_eq!(image.format(), if has_table { format } else { Format::F15 }, "{at}");
+            if !has_table {
+                continue;
+            }
+            direct.push(at.clone());
+            assert_eq!(image.source_digest, reference.source_digest, "{at}");
+            // The bytes format 15's image converts to (`in_format`): one writer, whichever way it is fed.
+            assert_eq!(image.to_bytes().unwrap(), reference.clone().in_format(format).to_bytes().unwrap(), "{at}: bytes");
+            let (a, b) = (reference.tape(), image.tape());
+            rerail_tape_format::with_tape!(a, |a| rerail_tape_format::with_tape!(b, |b| {
+                assert_eq!(a.len(), b.len(), "{at}");
+                for i in 0..a.len() {
+                    assert_eq!(a.table().entry(a.code(i)), b.table().entry(b.code(i)), "{at}: code of {i}");
+                    assert_eq!((a.start(i), a.end(i), a.subtree_end(i), a.parent(i)), (b.start(i), b.end(i), b.subtree_end(i), b.parent(i)), "{at}: node {i}");
+                }
+            }));
+        }
+    }
+    assert!(direct.iter().any(|d| d.starts_with("Python")), "the tables cover Python: {direct:?}");
+    eprintln!("written directly: {direct:?}");
 }

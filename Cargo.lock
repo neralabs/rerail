@@ -3174,9 +3174,19 @@ dependencies = [
 name = "rerail-blocks"
 version = "0.1.0"
 dependencies = [
+ "block",
  "libc",
  "metal",
  "rayon",
+]
+
+[[package]]
+name = "rerail-c-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -3338,12 +3348,14 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-c-lean",
  "rerail-compiler",
  "rerail-csharp-lean",
  "rerail-css-lean",
  "rerail-device-metal",
  "rerail-ecma-lean",
  "rerail-facts",
+ "rerail-go-lean",
  "rerail-html-lean",
  "rerail-java-lean",
  "rerail-lang",
@@ -3481,6 +3493,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-go-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
+]
+
+[[package]]
 name = "rerail-html-lean"
 version = "0.1.0"
 dependencies = [
@@ -3495,6 +3516,14 @@ dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
+]
+
+[[package]]
+name = "rerail-kotlin-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -3538,10 +3567,12 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-c-lean",
  "rerail-compiler",
  "rerail-csharp-lean",
  "rerail-css-lean",
  "rerail-ecma-lean",
+ "rerail-go-lean",
  "rerail-html-lean",
  "rerail-java-lean",
  "rerail-lang",
@@ -4007,6 +4038,7 @@ name = "rerail-logic"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",
+ "arc-swap",
  "ast-grep-core",
  "ast-grep-language",
  "base64 0.22.1",
@@ -4114,6 +4146,7 @@ dependencies = [
  "bitlex",
  "rerail-compiler",
  "rerail-metal",
+ "rerail-parser-tests",
  "rerail-rr-syntax",
  "tree-sitter",
  "tree-sitter-json",
@@ -4273,6 +4306,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "rerail-compiler",
+ "rerail-rr-aot",
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-tape-format",
@@ -4287,6 +4321,7 @@ dependencies = [
  "libc",
  "rerail-compiler",
  "rerail-metal",
+ "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-tape-format",
  "sha2 0.10.9",
@@ -4361,6 +4396,14 @@ dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
+]
+
+[[package]]
+name = "rerail-scala-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -4476,6 +4519,7 @@ dependencies = [
  "regex",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-prof",
  "rerail-store",
  "rusqlite",
@@ -4485,6 +4529,14 @@ dependencies = [
  "tempfile",
  "tikv-jemalloc-sys",
  "zstd",
+]
+
+[[package]]
+name = "rerail-swift-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]

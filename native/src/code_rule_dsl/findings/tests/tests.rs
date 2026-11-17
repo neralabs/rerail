@@ -628,7 +628,7 @@ fn complete_async_family_producer_profile() {
         let started = cpu_ns();
         let facts = core::from_tape(tape[0].root().get_doc(), Arc::new(LineTable::new(&source, Terminators::of(GrammarDialect::Python)))).unwrap();
         core_ns += cpu_ns() - started;
-        nodes += facts.kind.len();
+        nodes += facts.len();
         let roots = [(0, tape[0].root())];
         for (iteration, times) in runs.iter_mut().enumerate() {
             let posting = || {

@@ -1951,6 +1951,35 @@ thread_local! {
     static TICKETS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
+/// A batch of its own (not the wave's), with a text arena of `arena` bytes when given. The thread's open wave is
+/// committed first: the relations kept resident (`resident`, `verdicts`, the texts) take their sorts, indexes and
+/// verdicts from the batch that first asked for them, often the wave, and the cache hands them out at once. A batch
+/// committed before the wave would read them unwritten (Q48: a stratum run apart, beside a wave it did not join,
+/// read its inputs' sorts empty). The queue is one, so the wave's work, committed first, runs first.
+fn direct_batch(arena: Option<usize>) -> Result<mj::Batch, String> {
+    commit_wave()?;
+    match arena {
+        Some(cap) => mj::Batch::with_arena(cap),
+        None => mj::Batch::new(),
+    }
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// A batch of its own over `arena`, a recursive component's text arena (decision 0307), its rounds' texts going into
+/// it; the thread's open wave committed first, as `direct_batch`'s (Q48).
+fn shared_batch(arena: &Rc<mj::Arena>) -> Result<mj::Batch, String> {
+    commit_wave()?;
+    mj::Batch::with_shared_arena(Rc::clone(arena)).map_err(|e| format!("{e:?}"))
+}
+
+/// The thread's open wave, committed (`direct_batch`).
+fn commit_wave() -> Result<(), String> {
+    WAVE.with_borrow_mut(|w| match w {
+        Some((_, wave)) => wave.commit_open().map_err(|e| format!("{e:?}")),
+        None => Ok(()),
+    })
+}
+
 /// A stratum's joins encoded into the level's open command buffer, to wait for the wave (`lanes::wave::flush`
 /// commits it once, for every stratum in it): its ticket for `resume`. `None` when they do not all fit one
 /// submission's space (the stratum then runs on its own, `run`).
@@ -2033,7 +2062,7 @@ pub(in crate::code_rule_dsl) fn resume(ticket: u64, rules: &[(&Plan, &JoinRule, 
 
 /// The first rules of `rules` that fit one submission's space, run: their head rows as `run`'s.
 fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh], rep: &mut Report) -> Result<Vec<u64>, String> {
-    let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
+    let mut batch = direct_batch(None)?;
     let runs = encode_runs(rules, &mut batch, rep, names)?;
     finish_timed(&mut batch, rep)?;
     complete(runs, &rules[..], store, names, fresh, rep)
@@ -2141,7 +2170,7 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
         }
         let b = match &mut batch {
             Some(b) => b,
-            None => batch.insert(mj::Batch::with_arena(arena.max(mj::ARENA_START)).map_err(|e| format!("{e:?}"))?),
+            None => batch.insert(direct_batch(Some(arena.max(mj::ARENA_START)))?),
         };
         for (k, s) in again {
             runs[k].encode(s, b, rep, &mut Own::default(), names)?;
@@ -2256,9 +2285,9 @@ pub(in crate::code_rule_dsl) fn reads_own(plan: &Plan) -> bool {
 /// `shared`: the component's text arena (decision 0307), which every round's texts go into.
 fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Interner, rep: &mut Report, shared: Option<&Rc<mj::Arena>>) -> Result<Vec<Option<(Run<'p>, usize)>>, String> {
     let mut batch = match shared {
-        Some(a) => mj::Batch::with_shared_arena(Rc::clone(a)),
-        None => mj::Batch::new(),
-    }.map_err(|e| format!("{e:?}"))?;
+        Some(a) => shared_batch(a)?,
+        None => direct_batch(None)?,
+    };
     let mut runs: Vec<Option<Run<'p>>> = Vec::with_capacity(rules.len());
     for (plan, j, _) in rules {
         if !own.ready(plan) || super::reads_empty_input(j) {
@@ -2404,7 +2433,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         first = false;
         // Each head's rows this round, from every rule that made some, into one union; made distinct; less the
         // relation's rows: its new rows.
-        let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
+        let mut batch = direct_batch(None)?;
         let mut news: Vec<(usize, mj::Table, mj::Words, bool)> = Vec::new();
         // A lattice head's round: its new keys' rows (with their change counts), its changed rows, their counts.
         let mut folded: Vec<(usize, mj::Table, mj::Table, mj::Words)> = Vec::new();
@@ -2482,7 +2511,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         drop(ran);
         drop(hold);
         // The new rows onto each relation, and as its next delta; a relation with none has no delta.
-        let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
+        let mut batch = direct_batch(None)?;
         let mut any = false;
         let mut old: Vec<Rc<mj::DevRel>> = std::mem::take(&mut own.delta).into_values().collect();
         let mut rows_held: Vec<mj::Table> = Vec::new();
