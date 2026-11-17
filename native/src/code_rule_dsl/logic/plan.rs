@@ -6547,22 +6547,25 @@ impl<'a> Run<'a, '_> {
             top.sort_by(|a, b| b.1.total_cmp(&a.1));
             top.into_iter().take(table::HEAVY).map(|t| t.0).collect()
         };
-        let (Some(ids), Some(lsrc)) = (engine::trial_ids(self.db, name, line)?, engine::derived(self.db, b.rel(la))) else { return Ok(None) };
+        // The trial's ids are the relation's own (`trial_ids`), read through it: the SQL source (`engine::derived`)
+        // numbers a relation with dead rows by its live rows instead.
+        let (Some(ids), Some(lrel)) = (engine::trial_ids(self.db, name, line)?, engine::held(self.db, b.rel(la))) else { return Ok(None) };
+        let lsrc = |id: u32, c: usize| lrel.at(id as usize).at(c);
         let mut parts = HeavyParts { link: link.clone(), cv, hot: Vec::new(), cold: Vec::new() };
         let put = |p: &mut HeavyParts, id: u32, vs: &[i64]| if vs.iter().any(|v| heavy.contains(v)) { p.hot.push(id) } else { p.cold.push(id) };
         match via {
             None => {
                 for &id in &ids {
-                    put(&mut parts, id, &[lsrc.value(id as usize, cv)]);
+                    put(&mut parts, id, &[lsrc(id, cv)]);
                 }
             }
             Some((cu, lc)) => {
                 // Each lead row's keys: the link probed by its value (decision 0232), not the link read whole.
-                let Some(lrel) = engine::held(self.db, &link) else { return Ok(None) };
+                let Some(linked) = engine::held(self.db, &link) else { return Ok(None) };
                 let mut keys: HashMap<i64, Vec<i64>> = HashMap::new();
                 for &id in &ids {
-                    let u = lsrc.value(id as usize, lc);
-                    let vs = keys.entry(u).or_insert_with(|| { let mut vs = Vec::new(); lrel.probe_each(&[cu], &[u], &mut |row| vs.push(row(cv))); vs });
+                    let u = lsrc(id, lc);
+                    let vs = keys.entry(u).or_insert_with(|| { let mut vs = Vec::new(); linked.probe_each(&[cu], &[u], &mut |row| vs.push(row(cv))); vs });
                     put(&mut parts, id, vs);
                 }
             }
@@ -8001,7 +8004,8 @@ impl<'a> Run<'a, '_> {
                     let t_model = std::time::Instant::now();
                     let hp = self.heavy_parts(&name, line, &b, lead)?.filter(|hp| !hp.hot.is_empty() && !hp.cold.is_empty());
                     let parts_s = t_model.elapsed().as_secs_f64();
-                    let lead_src = match b.view(lead) { Lit::Atom(a) if hp.is_some() => super::native::component::derived(self.db, b.rel(a)), _ => None };
+                    // The parts are the relation's own row ids (`trial_ids`), read through it.
+                    let lead_src = match b.view(lead) { Lit::Atom(a) if hp.is_some() => super::native::component::held(self.db, b.rel(a)), _ => None };
                     let walker = lead_src.as_ref().map(|_| {
                         let db = self.db;
                         Walker::new(&b, lead, joins::walk_width(), &|rel| super::native::component::held(db, rel), &|x| super::native::component::symbol_id(db, x).ok().flatten())
@@ -8009,7 +8013,7 @@ impl<'a> Run<'a, '_> {
                     let lead_cols = match b.view(lead) { Lit::Atom(_) => b.args(lead).len(), _ => 0 };
                     let values = |ids: &[u32]| -> Vec<Vec<i64>> {
                         let src = lead_src.as_ref().expect("a walker");
-                        ids.iter().map(|&id| (0..lead_cols).map(|c| src.value(id as usize, c)).collect()).collect()
+                        ids.iter().map(|&id| (0..lead_cols).map(|c| src.at(id as usize).at(c)).collect()).collect()
                     };
                     // The first phase's rows: a uniform sample of each part (seeded), as lead rows.
                     let phase1: Option<[Vec<Vec<i64>>; 2]> = hp.as_ref().filter(|_| walker.is_some()).map(|hp| {
@@ -8124,7 +8128,7 @@ impl<'a> Run<'a, '_> {
                             // measured the fixture's line at 49,612 rows of work for 388,673.
                             let lead_at = o[0].at;
                             let x2 = match (b.view(lead_at), w) {
-                                (Lit::Atom(a), Some(_)) => super::native::component::derived(this.db, b.rel(a)).map(|src| {
+                                (Lit::Atom(a), Some(_)) => super::native::component::held(this.db, b.rel(a)).map(|src| {
                                     let db = this.db;
                                     let walker = Walker::new(&b, lead_at, joins::walk_width(), &|rel| super::native::component::held(db, rel), &|x| super::native::component::symbol_id(db, x).ok().flatten());
                                     // The walk starts from lead rows: those of the sample matching the lead's constants and
@@ -8137,7 +8141,7 @@ impl<'a> Run<'a, '_> {
                                         _ => None,
                                     }).collect();
                                     let same: Vec<(usize, usize)> = largs.iter().enumerate().filter_map(|(c, t)| { let v = t.var()?; largs.iter().position(|u| u.var() == Some(v)).filter(|&d| d < c).map(|d| (d, c)) }).collect();
-                                    let rows: Vec<Vec<i64>> = picked.iter().map(|&id| (0..largs.len()).map(|c| src.value(id as usize, c)).collect::<Vec<i64>>())
+                                    let rows: Vec<Vec<i64>> = picked.iter().map(|&id| (0..largs.len()).map(|c| src.at(id as usize).at(c)).collect::<Vec<i64>>())
                                         .filter(|row| consts.iter().all(|&(c, v)| v == Some(row[c])) && same.iter().all(|&(d, c)| row[d] == row[c])).collect();
                                     if rows.is_empty() { return 0.0 }
                                     walker.work_at(o, &rows, 4 * joins::walk_width()) * rows.len() as f64 / picked.len().max(1) as f64
@@ -12185,12 +12189,13 @@ impl WalkSnap {
         let delta = first.and_then(|f| {
             let Lit::Atom(a) = b.view(f) else { return None };
             let ids = engine::trial_ids(db, name, line).ok()??;
-            let src = engine::derived(db, b.rel(a))?;
+            // The relation's own ids (`trial_ids`), read through it, not through its SQL source's live numbering.
+            let src = engine::held(db, b.rel(a))?;
             let mut v: Vec<(u64, u32)> = ids.iter().map(|&id| ((id as u64 + 3).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 7, id)).collect();
             v.sort_unstable();
             // As wide as a lead's draw (`starts`): its checks may pass few.
             let width = b.args(f).len();
-            let rows = v.into_iter().take(16 * joins::walk_rows()).map(|(_, id)| (0..width).map(|c| src.value(id as usize, c)).collect()).collect();
+            let rows = v.into_iter().take(16 * joins::walk_rows()).map(|(_, id)| (0..width).map(|c| src.at(id as usize).at(c)).collect()).collect();
             Some((rows, ids.len() as f64))
         });
         Some(WalkSnap { rels, syms, delta, heavy })

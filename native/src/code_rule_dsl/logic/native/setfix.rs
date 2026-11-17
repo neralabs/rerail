@@ -3955,6 +3955,14 @@ impl Derived {
             rows
         })
     }
+    /// The held index's answer (row ids of the whole relation) as this source's rows: with dead rows, a row is its
+    /// position among the live ones (`len`, `value`), and a dead row is no answer.
+    fn live_rows(&self, ids: Vec<usize>) -> Vec<usize> {
+        match &self.2 {
+            None => ids,
+            Some(live) => ids.into_iter().filter_map(|id| live.binary_search(&(id as u32)).ok()).collect(),
+        }
+    }
     /// The rows whose column `c` is `v`, as a slice of its order.
     fn rows_of(&self, c: usize, v: i64) -> &[u32] {
         use crate::code_rule_dsl::facts::vtab::Source as _;
@@ -3975,14 +3983,14 @@ impl crate::code_rule_dsl::facts::vtab::Source for Derived {
     fn indexed(&self, c: usize) -> bool { c < self.0.k }
     // A relation an index holds answers from the index (`hold_source`), not from orders sorted over its rows.
     fn composite(&self) -> bool { self.0.held_source().is_some_and(|s| s.composite()) }
-    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> { self.0.held_source()?.lookup_all(equal) }
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> { self.0.held_source()?.lookup_all(equal).map(|ids| self.live_rows(ids)) }
     fn sorts_rows(&self, c: usize) -> bool { self.0.held_source().is_none() && c < self.0.k }
     fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
         if c >= self.0.k {
             return None;
         }
         if let Some(src) = self.0.held_source() {
-            return src.lookup(c, values);
+            return src.lookup(c, values).map(|ids| self.live_rows(ids));
         }
         let mut out: Vec<usize> = values.iter().flat_map(|&v| self.rows_of(c, v).iter().map(|&r| r as usize)).collect();
         out.sort_unstable();
@@ -3991,7 +3999,8 @@ impl crate::code_rule_dsl::facts::vtab::Source for Derived {
     fn sorted_rows(&self, c: usize, v: i64) -> Option<&[u32]> { (c < self.0.k && self.0.held_source().is_none()).then(|| self.rows_of(c, v)) }
     fn value(&self, row: usize, column: usize) -> i64 { self.0.at(self.2.as_ref().map_or(row, |l| l[row] as usize)).at(column) }
     fn value_counts(&self, wanted: &[(usize, i64)]) -> Option<Vec<i64>> {
-        if let Some(src) = self.0.held_source() { return src.value_counts(wanted); }
+        // The held index counts dead rows too: with dead rows, the live ones are counted here.
+        if self.2.is_none() && let Some(src) = self.0.held_source() { return src.value_counts(wanted); }
         let mut counted = self.0.counted.lock().unwrap();
         for &(c, _) in wanted {
             if c < self.0.k && !counted.contains_key(&c) {

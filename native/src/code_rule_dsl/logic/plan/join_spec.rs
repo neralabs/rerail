@@ -49,7 +49,7 @@ impl Val<'_> {
     fn known(&self, slots: &Slots) -> bool {
         match self {
             Val::T(TermRef::Var(v)) => slots.has(Key::Var(*v)),
-            Val::T(TermRef::Int(_) | TermRef::Str(_)) | Val::Made(_) | Val::Str(_) => true,
+            Val::T(TermRef::Int(_) | TermRef::Str(_) | TermRef::Top) | Val::Made(_) | Val::Str(_) => true,
             Val::T(_) => false,
         }
     }
@@ -60,6 +60,8 @@ fn const_tok(b: &Body<'_>, t: TermRef<'_>) -> Option<Tok> {
     match t {
         TermRef::Int(i) => Some(Tok::Int(i)),
         TermRef::Str(s) => Some(Tok::Sym(b.v.text(s).to_owned())),
+        // A lattice's `top` is the integer the SQL form writes (`select::term`).
+        TermRef::Top => Some(Tok::Int(super::TOP)),
         _ => None,
     }
 }
@@ -84,7 +86,7 @@ fn var_tok(s: Slot, slots: &mut Slots) -> Tok {
 }
 
 fn is_const(t: TermRef<'_>) -> bool {
-    matches!(t, TermRef::Int(_) | TermRef::Str(_))
+    matches!(t, TermRef::Int(_) | TermRef::Str(_) | TermRef::Top)
 }
 
 /// The native function of call `f` with `n` arguments (`@concat` is `str_concat`).
@@ -124,7 +126,7 @@ fn expr<'v>(b: &Body<'v>, v: &Val<'v>, idx: usize, slots: &mut Slots, lines: &mu
     };
     match t {
         TermRef::Var(s) => slots.has(Key::Var(s)).then(|| v.clone()),
-        TermRef::Int(_) | TermRef::Str(_) => Some(v.clone()),
+        TermRef::Int(_) | TermRef::Str(_) | TermRef::Top => Some(v.clone()),
         TermRef::Call(f, args) => {
             let f = b.v.text(f);
             let args: Vec<TermRef<'v>> = args.collect();
@@ -298,7 +300,7 @@ impl<'a> Run<'a, '_> {
         // number. A variable equal to another (`$m = $a`, a capture's alias) has the other's type.
         let typ = |t: TermRef<'_>| -> Option<String> {
             match t {
-                TermRef::Int(_) => Some("int".to_owned()),
+                TermRef::Int(_) | TermRef::Top => Some("int".to_owned()),
                 TermRef::Str(_) => Some("sym".to_owned()),
                 TermRef::Var(n) => {
                     let mut same: Vec<Slot> = vec![n];
@@ -380,6 +382,7 @@ impl<'a> Run<'a, '_> {
                 let value = match t {
                     TermRef::Int(i) => super::integer(i),
                     TermRef::Str(s) => super::string(b.v.text(s)),
+                    TermRef::Top => super::integer(super::TOP),
                     _ => continue,
                 };
                 wheres.push(format!("{} = {}", sql_col(c), value.render()));
