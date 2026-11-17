@@ -208,6 +208,7 @@ take the lexer from 48 cycles a token to about 20: about a quarter of the parse'
   On `.rr`, page 31 measured that shape at parity with a byte lexer in cycles, but that byte lexer
   was already at 21 cycles a token; this one is at 48. The design is in "simdjson, the gold
   standard" above. Build it in `rerail-c-lean` first, behind the same digest and oracles, then Go.
+  **Built: 0318** (the lexers 145 → 119 and 133 → 117 instructions a token).
 - **Stage 1's lazy masks**: the stop masks of strings, block comments and directive arguments
   (`STOP`, `STAR`, `ARG`) made where one starts (page 31's micro-lexers), not for every block.
   Stage 1 is about 3% of C++'s time.
