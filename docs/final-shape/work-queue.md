@@ -525,6 +525,24 @@ pass.
   above. Then the passes that 0333 §6 leaves whole (hiding's fixpoint, the fact spaces, prune) are made to cost
   their delta, if the measurement shows them worth it.
 
+- **Measured after the merge of Typing-support** (2026-11-17, 36f97e581, with step P and 0333; ep2 on the m3,
+  profiling build, own state, cost and image stores; the m3 at load 58–76, so wall times are left out):
+  - The edit costs 64.7–70.7 G and 6.7–7.6 s CPU, against 32.7 G before the merge. Rows are h1's (0 differ).
+    Cold: 979.7 G, against 887.5 G.
+  - `combine` 8.2 G (0.60 s), about as before (0.58 s).
+  - `prepare` 38.0 G (3.14 s CPU), against 0.95 s:
+    - `columns no reader reads` (before lowering, a version pass): 0.96 s, 6,663 spans, 2.3 GB allocated. A pass
+      run per relation over the whole program; the tree's prune/simplify/demand were 0.14 s together.
+    - Using P's stored run before lowering (`the last run of before lowering`): 0.68 s and 320 MB. The stored run
+      of preparation: 0.06 s.
+    - The passes after lowering: 0.35 s (push 0.23 s).
+  - The store's writer: the run's record is 2 jobs, 71 MB encoded, 1.1 s (P's runs and the prepared program).
+  - Q30 holds: no guest tape is written (10,047 writes a run before it), and `parse` is 0.05 s.
+  - The tree detours of Q52 cost 0.05 s.
+
+  P costs more than it saves on this edit, as Typing-support found (+1.0 s writing, +0.5 s opening). The pass
+  that gained most (`columns no reader reads`) is whole-program work in either design.
+
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 
 - **Found** (2026-11-15, ep2, while measuring Q18): an edit of one rule's body costs 82.9 G in a new process, of
