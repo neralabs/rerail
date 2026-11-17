@@ -1,1 +1,0 @@
-The daemon no longer runs out of memory on a large repository or grows with each session. It gives back a checkout's file records and compiled rules 15 minutes after its last session ends or is freed as quiet, shares one record per unchanged file among sessions, and restarts before its heap runs out.

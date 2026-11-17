@@ -1,1 +1,0 @@
-Just after a process holding one of Rerail's locks was killed, two set-ups, or a set-up and `rerail packs add`, no longer change the rule packs together, and sessions starting together no longer launch a second daemon that fails. On Windows, a process taking a lock as another lets go no longer fails with "EPERM: operation not permitted".

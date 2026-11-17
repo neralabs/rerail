@@ -1,1 +1,0 @@
-On Windows, rules run in sessions VS Code opens with a `c:\` path, Codex and Cursor get commands PowerShell runs, set-up's answers included (through the new `rerail setup --powershell`), and `rerail daemon stop` lets the daemon finish its work. On any system, Claude Code's plugin hooks work under a folder with a space in its path.

@@ -1,1 +1,0 @@
-Claude Code's assistant text is recorded in a session's events as it streams. Each of those hooks failed with "Claude hook omitted index", because Claude Code sends a reply's `index` as a number and Rerail took only text, so only a turn's final message was kept.
