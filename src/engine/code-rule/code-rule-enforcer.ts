@@ -1327,7 +1327,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   async #run(): Promise<void> {
     await yieldToHost();
     while (!this.#closing) {
-      await this.#workspaceForPending();
+      // Only a lane with no workspace waits here: an open lane picks its next edit up in the same turn, as before.
+      if (this.#released) await this.#workspaceForPending();
       while (this.#replacement !== undefined && !this.#closing) await this.#replaceWorkspace(this.#replacement);
       const entry = this.#pending.entries().next().value;
       if (entry === undefined) return;
