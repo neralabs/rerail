@@ -226,8 +226,9 @@ describe.runIf(LINUX)("the daemon's process entry", () => {
   it("starts the daemon's Git without copying the daemon: no fork through Node, and a third of a fork's system time or less", async () => {
     const root = await repository();
     const reads = await daemonReads(root);
-    expect(reads.head).toBe(execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim());
-    expect(reads.nodeStarts).toBe(0);
-    expect(reads.moduleSystemMs).toBeLessThan(reads.nodeSystemMs / 3);
+    const head = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    // The figures go in the message, so a failure says what each read cost.
+    const seen = { head: reads.head, nodeStarts: reads.nodeStarts, underAThird: reads.moduleSystemMs < reads.nodeSystemMs / 3 };
+    expect(seen, JSON.stringify(reads)).toEqual({ head, nodeStarts: 0, underAThird: true });
   }, 90_000);
 });
