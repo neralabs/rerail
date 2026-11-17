@@ -1,451 +1,47 @@
 #!/usr/bin/python3
-"""Runs a benchmark COMMAND on a mostly idle machine: a host of the build farm, or this one
-(scripts/build/farm/README.md, "Quiet runs").
+"""Runs COMMAND at once, as any other command: on a farm host through `scripts/dev/test-remote`, or
+here with `--here`. Kept so existing scripts still work; it no longer leases a machine, queues,
+drains the farm's work or times the run (removed 2026-11-16: the turns and waits stalled every
+agent). Run benchmarks like any other command, and say in the result how loaded the machine was.
 
-    scripts/dev/quiet-run [--host NAME | --here] [--minutes N] [--max-wait M] [--label TEXT]
-                          [--dir native] [--tree DIR]... -- COMMAND...
+    scripts/dev/quiet-run [--host NAME | --here] [--dir native] [--tree DIR]... -- COMMAND...
 
-It asks for the machine and waits its turn (at most --max-wait minutes, default 30). Requests are
-served fairly: the checkout that used the machine least in the last hour goes first, and a
-checkout has one request open at a time. Once it holds the machine the farm sends it nothing new
-(no compiles, no test commands; on this machine, compiles wait), in-flight farm work drains, and
-the load settles (at most 2 minutes). Then COMMAND runs, from this checkout's `native/` (or
---dir): on a host in this checkout's copy there, sent as test-remote sends it, with each
-`--tree DIR` (inputs, a program built here).
-
-A run has --minutes (default and most 10): then it is stopped, so plan a long benchmark in parts
-of 10 minutes. When it ends it prints how quiet the machine was: the load,
-and what else ran meanwhile.
-
-The default machine is the usable host with the shortest queue and the most cores to spare.
-`--here` is this machine, where the farm controls only compiles: tests, Relax and other
-processes keep running, and each checkout whose processes loaded it during the run is told so
-at its next builds. A host is never taken from a person using it.
-
-The exit status is COMMAND's; 124 when it was stopped for time; 75 when no turn came in
---max-wait, or a person is using the host.
+`--minutes`, `--max-wait` and `--label` are accepted and ignored. The exit status is COMMAND's.
 """
-import json
-import re
 import os
-import resource
-import shlex
-import signal
 import subprocess
 import sys
-import time
 
-CHECKOUT = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../.."))
-SHARE = os.path.expanduser("~/.local/share/rerail-farm")
-DRAIN_SECONDS = 120
-# The load is settled once it has not fallen over this long.
-SETTLE_SECONDS = 8
-TICK = 1.0
-# A checkout whose processes used this much of a leased machine is told so at its builds.
-INTERFERED_CPU_S = 10
+# The checkout whose command this is: an older checkout's quiet-run is handed here by the installed
+# farm (farm.py), with its checkout in RERAIL_QUIET_RUN_CHECKOUT.
+CHECKOUT = os.environ.pop("RERAIL_QUIET_RUN_CHECKOUT", None) or \
+    os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../.."))
 
 
-def say(message):
-    print(f"quiet-run: {message}", file=sys.stderr, flush=True)
-
-
-def usage(why):
-    sys.exit(f"quiet-run: {why}\n(scripts/dev/quiet-run --help)")
-
-
-def parse(argv):
-    o = {"host": None, "here": False, "minutes": 10.0, "max_wait": 30.0, "label": None, "dir": "native", "trees": []}
+def main(argv):
+    remote, here, directory = [], False, "native"
     while argv and argv[0] != "--":
         a = argv.pop(0)
         if a in ("-h", "--help"):
             print(__doc__.strip())
-            sys.exit(0)
+            return 0
         if a == "--here":
-            o["here"] = True
-        elif a in ("--host", "--minutes", "--max-wait", "--label", "--dir", "--tree"):
-            if not argv:
-                usage(f"{a} needs a value")
-            v = argv.pop(0)
-            if a == "--tree":
-                if not os.path.isdir(v):
-                    usage("--tree needs a directory")
-                o["trees"].append(os.path.realpath(v))
-            elif a in ("--minutes", "--max-wait"):
-                try:
-                    o[a[2:].replace("-", "_")] = float(v)
-                except ValueError:
-                    usage(f"{a} needs a number")
-            else:
-                o[a[2:]] = v
+            here = True
+        elif a in ("--minutes", "--max-wait", "--label") and argv:
+            argv.pop(0)
+        elif a in ("--host", "--tree") and argv:
+            remote += [a, argv.pop(0)]
+        elif a == "--dir" and argv:
+            directory = argv.pop(0)
         else:
-            usage(f"unknown option {a}")
-    if not argv or argv[0] != "--" or len(argv) < 2:
-        usage("no COMMAND (after --)")
-    if o["here"] and o["host"]:
-        usage("--host and --here: one machine")
-    if not os.path.isdir(os.path.join(CHECKOUT, o["dir"])):
-        usage(f"--dir {o['dir']}: no such directory in {CHECKOUT}")
-    return o, argv[1:]
-
-
-def choose(o):
-    """The machine to ask for: --here, --host, or the usable host with the shortest queue and the
-    most cores to spare (a leased one counts, as a longer queue)."""
-    if o["here"]:
-        return farm.HERE, None
-    hosts = [h for h in farm.hosts() if h.get("enabled", True)]
-    if o["host"]:
-        host = next((h for h in hosts if h["name"] == o["host"]), None)
-        if host is None:
-            usage(f"{o['host']} is not in the farm's configuration")
-        if not farm.health(host, fresh=True).get("ok"):
-            sys.exit(f"quiet-run: {host['name']} is not usable: {farm.health(host).get('why')}")
-        return host["name"], host
-    ok = [h for h in hosts if farm.health(h).get("ok")]
-    if not ok:
-        sys.exit("quiet-run: no usable host (scripts/build/farm/status); --here uses this machine")
-    best = min(ok, key=lambda h: (len(farm.queue(h["name"])) + (1 if farm.lease_of(h["name"]) else 0), -farm.spare(h)))
-    return best["name"], best
-
-
-def fairness(machine, minutes):
-    """Refuses a second open request of this checkout; tells it when it asks for more than its share."""
-    root = os.path.dirname(farm.lease_dir(machine))
-    for d in os.listdir(root):
-        if os.path.isdir(os.path.join(root, d)):
-            held = farm.lease_of(d)
-            for r in farm.queue(d) + ([held] if held else []):
-                if r["client"] == CHECKOUT:
-                    say(f"this checkout already holds or waits for {d} (pid {r['pid']}): one request at a time, so every "
-                        "checkout gets its turn")
-                    sys.exit(75)
-    mine = farm.used_seconds(CHECKOUT)
-    others = {}
-    for e in farm.ledger():
-        if e["client"] != CHECKOUT:
-            others[e["client"]] = others.get(e["client"], 0) + e["ended"] - e["started"]
-    waiting = {r["client"] for r in farm.queue(machine)} - {CHECKOUT}
-    share = (mine + sum(others.values())) / (1 + len(others)) if others else mine
-    if mine > farm.LEASE_SECONDS and (waiting or (others and mine > 1.5 * share)):
-        say(f"warning: this checkout held leases for {mine / 60:.0f} min of the last hour, the "
-            f"{len(others)} other checkout(s) {sum(others.values()) / 60:.0f} min between them"
-            + (f", and {len(waiting)} wait for {machine} now" if waiting else "")
-            + ": asking for more is unfair to them. It goes after every checkout that used less.")
-    if minutes > farm.LEASE_SECONDS / 60:
-        say(f"a run has {farm.LEASE_SECONDS // 60} minutes at most: plan a longer benchmark in parts")
-
-
-def take_turn(machine, entry, max_wait):
-    """Waits for this request's turn; then it holds the lease."""
-    path = os.path.join(farm.lease_dir(machine), "queue", entry["id"] + ".json")
-    farm.write_json(path, entry)
-    deadline = time.time() + max_wait * 60
-    said = None
-    try:
-        while True:
-            lock = farm.Lock(os.path.join(farm.lease_dir(machine), "lock"))
-            try:
-                q = farm.queue(machine)
-                current = farm.lease_of(machine)
-                if current is None and q and q[0]["id"] == entry["id"]:
-                    lease = dict(entry, machine=machine, started=time.time(), taken=time.time(),
-                                 until=time.time() + DRAIN_SECONDS + entry["minutes"] * 60 + 60)
-                    farm.write_json(os.path.join(farm.lease_dir(machine), "lease.json"), lease)
-                    os.unlink(path)
-                    return lease
-            finally:
-                lock.release()
-            ahead = next((i for i, r in enumerate(q) if r["id"] == entry["id"]), len(q)) + (1 if current else 0)
-            if ahead != said:
-                who = f"; {current.get('label') or 'a run'} holds it until {time.strftime('%H:%M:%S', time.localtime(current['until']))} at the latest" if current else ""
-                say(f"{machine}: {ahead} ahead of this request{who}")
-                said = ahead
-            if time.time() > deadline:
-                say(f"no turn on {machine} in {max_wait:g} min")
-                sys.exit(75)
-            time.sleep(2)
-    finally:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
-
-
-def busy_of(machine, host):
-    """(cores busy over the last second, cores, a person's idle seconds or None) of `machine` now.
-    Not the load average: it trails by a minute, and a drain would wait for it to decay."""
-    top = "top -l 2 -n 0 -s 1 | grep 'CPU usage' | tail -1"
-    if host is None:
-        out, cores, idle = subprocess.run(["sh", "-c", top], capture_output=True, text=True).stdout, os.cpu_count() or 8, None
-    else:
-        h = farm.health(host, fresh=True)
-        out = subprocess.run(farm.ssh(machine, top, "health"), capture_output=True, text=True, timeout=20).stdout
-        cores, idle = host["cores"], (0 if farm.attended(host, h) else None)
-    m = re.search(r"([\d.]+)% idle", out)
-    return (cores * (1 - float(m.group(1)) / 100) if m else float(cores)), cores, idle
-
-
-def drain(machine, host):
-    """Waits for the farm's work on `machine` to end and its load to settle (at most DRAIN_SECONDS).
-    A host a person uses is not taken. The load at the start."""
-    slots = [f"{machine}.{i}" for i in range(host["cores"])] if host else [f"local.{i}" for i in range(os.cpu_count() or 8)]
-    locks = [farm.state("slots", s) for s in slots] + (farm.test_slot_paths(machine, host) if host else [])
-    deadline = time.time() + DRAIN_SECONDS
-    seen = []
-    while True:
-        busy = 0
-        for p in locks:
-            lock = farm.Lock(p, blocking=False)
-            busy += 0 if lock.held else 1
-            lock.release()
-        load, cores, idle = busy_of(machine, host)
-        person = idle is not None and idle < farm.USER_IDLE_SECONDS
-        # Settled: nearly idle, or (the farm's work gone) the load no longer falls, since what is
-        # left is work the farm does not hold back, and waiting longer gains nothing.
-        now = time.time()
-        seen.append((now, load))
-        before = [l for t, l in seen if now - t >= SETTLE_SECONDS]
-        settled = load <= max(1.0, 0.15 * cores) or (before and load >= 0.95 * before[-1])
-        if not busy and settled and not person:
-            if load > max(1.0, 0.15 * cores):
-                say(f"{machine}'s {load:.1f} busy cores (of {cores}) are work the farm does not hold back: running; "
-                    "the report says what it was")
-            return load
-        if time.time() > deadline:
-            if person:
-                say(f"someone is using {machine}: it is not taken from them")
-                return None
-            say(f"{machine} did not settle in {DRAIN_SECONDS} s ({busy} farm job(s) still running, {load:.1f} busy "
-                f"cores of {cores}): running anyway; the report says how loaded it was")
-            return load
-        time.sleep(3 if host else 1)
-
-
-def start(machine, host, o, argv, lease):
-    """Starts COMMAND; the process (on a host: the ssh connection, whose end stops it there)."""
-    env = dict(os.environ, RERAIL_FARM_LEASE=lease["id"])
-    if host is None:
-        return subprocess.Popen(argv, cwd=os.path.join(CHECKOUT, o["dir"]), env=env, start_new_session=True)
-    reply = mirror.compile({"host": machine, "since": time.time(), "roots": [[CHECKOUT, "checkout"]] + [[t, "tree"] for t in o["trees"]],
-                            "files": [], "verify": True,
-                            "run": {"cwd": "/", "argv": ["true"], "dirs": [], "outputs": [], "depinfo": None, "env": {}}})
-    if reply is None or reply.get("code") != 0:
-        say(f"the checkout could not be sent to {machine}: {(reply or {}).get('why') or 'no mirror daemon'}")
-        return None
-    job = {"cwd": os.path.join(CHECKOUT, o["dir"]), "argv": argv,
-           "map": [CHECKOUT] + [t for t in o["trees"] if not t.startswith(CHECKOUT + os.sep)],
-           "env": {"RUSTC_WRAPPER": "", "RERAIL_FARM_LEASE": lease["id"]}, "target": farm.key(CHECKOUT), "nice": 0,
-           "nofile": resource.getrlimit(resource.RLIMIT_NOFILE)[0], "min_free_gb": farm.config().get("min_free_gb", 40)}
-    remote = farm.agent_exec(job)
-    return subprocess.Popen(farm.ssh(machine, remote, "quiet"), stdin=subprocess.PIPE)
-
-
-def stop(proc, host):
-    if host is None:
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-        except OSError:
-            pass
-    else:
-        try:
-            proc.stdin.close()
-        except OSError:
-            pass
-    try:
-        return proc.wait(timeout=15)
-    except subprocess.TimeoutExpired:
-        if host is None:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except OSError:
-                pass
-        else:
-            proc.kill()
-        return proc.wait()
-
-
-def table(lines):
-    """(pid, ppid, %cpu, command) of each line of `ps -Ao pid=,ppid=,pcpu=,comm=` (or command=)."""
-    rows = []
-    for line in lines:
-        parts = line.split(None, 3)
-        if len(parts) == 4:
-            try:
-                rows.append((int(parts[0]), int(parts[1]), float(parts[2]), parts[3].strip()))
-            except ValueError:
-                pass
-    return rows
-
-
-def seconds(etime):
-    """The seconds of ps's elapsed time, [[dd-]hh:]mm:ss."""
-    days, _, rest = etime.rpartition("-")
-    total = 0
-    for part in rest.split(":"):
-        total = total * 60 + int(part)
-    return total + int(days or 0) * 86400
-
-
-def tree(rows, roots):
-    """The pids of `roots` and every process under them."""
-    children = {}
-    for pid, ppid, _, _ in rows:
-        children.setdefault(ppid, []).append(pid)
-    mine, todo = set(), list(roots)
-    while todo:
-        p = todo.pop()
-        if p not in mine:
-            mine.add(p)
-            todo += children.get(p, [])
-    return mine
-
-
-class Sampler:
-    """The load and the other work on the machine while COMMAND runs. Here, each process outside
-    COMMAND's tree that uses a core's fifth or more, by checkout (its working directory); on a
-    host, its busiest processes (a host's own work is its person's)."""
-
-    def __init__(self, machine, host, proc, lease_id, taken):
-        self.machine, self.host, self.proc, self.lease_id = machine, host, proc, lease_id
-        self.loads, self.cpu, self.cwd, self.last, self.before = [], {}, {}, time.time(), set()
-        self.taken = taken
-
-    def sample(self, last=False):
-        now = time.time()
-        if now - self.last < (1 if last else 10 if self.host else 5):
-            return
-        every = now - self.last
-        self.last = now
-        if self.host:
-            out = subprocess.run(farm.ssh(self.machine, "sysctl -n vm.loadavg; ps -Ao pid=,ppid=,pcpu=,command=", "health"),
-                                 capture_output=True, text=True, timeout=20).stdout.splitlines()
-            try:
-                self.loads.append(float(out[0].strip("{} ").split()[0]))
-            except (IndexError, ValueError):
-                return
-            rows = table(out[1:])
-            roots = [pid for pid, _, _, cmd in rows if self.lease_id in cmd]
-            mine = tree(rows, roots)
-            for pid, _, pcpu, cmd in rows:
-                if pid not in mine and pcpu >= 20:
-                    k = ("the host", os.path.basename(cmd.split()[0]))
-                    self.cpu[k] = self.cpu.get(k, 0) + pcpu / 100 * every
-            return
-        self.loads.append(os.getloadavg()[0])
-        rows, age = [], {}
-        for line in subprocess.run(["ps", "-Ao", "pid=,ppid=,pcpu=,etime=,comm="], capture_output=True, text=True).stdout.splitlines():
-            parts = line.split(None, 4)
-            if len(parts) == 5:
-                try:
-                    rows.append((int(parts[0]), int(parts[1]), float(parts[2]), parts[4].strip()))
-                    age[int(parts[0])] = seconds(parts[3])
-                except ValueError:
-                    pass
-        mine = tree(rows, [os.getpid(), self.proc.pid])
-        for pid, _, pcpu, comm in rows:
-            if pid in mine or pcpu < 20:
-                continue
-            if now - age[pid] < self.taken - 2:
-                # Started before the lease: in flight, not sent onto a leased machine.
-                self.before.add(pid)
-            if pid not in self.cwd:
-                out = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], capture_output=True, text=True).stdout
-                cwd = next((l[1:] for l in out.splitlines() if l.startswith("n")), "")
-                self.cwd[pid] = farm.checkout_of(cwd) if cwd else None
-            k = (self.cwd[pid] or "no checkout", os.path.basename(comm) + (" (started before the lease)" if pid in self.before else ""))
-            self.cpu[k] = self.cpu.get(k, 0) + pcpu / 100 * every
-
-    def report(self, lease, started_load, cores):
-        try:
-            self.sample(last=True)
-        except (subprocess.SubprocessError, OSError):
-            pass
-        # Shown from a CPU-second; told to its checkout from INTERFERED_CPU_S.
-        heavy = sorted(((k, v) for k, v in self.cpu.items() if v >= 1), key=lambda kv: -kv[1])
-        if self.loads:
-            say(f"{self.machine}: {started_load:.1f} cores busy at the start; load average during the run {sum(self.loads) / len(self.loads):.1f} "
-                f"on average, {max(self.loads):.1f} at most (of {cores} cores)")
-        if heavy:
-            say("other work during the run: " + ", ".join(
-                f"{name.split(' (')[0]} ({os.path.basename(who) if who.startswith('/') else who}"
-                f"{', started before the lease' if '(' in name else ''}) {cpu:.0f} CPU-s" for (who, name), cpu in heavy[:6]))
-        else:
-            say("no other process used a fifth of a core or more during the run")
-        for (who, name), cpu in heavy:
-            if who.startswith("/") and who != CHECKOUT and cpu >= INTERFERED_CPU_S and not name.endswith("the lease)"):
-                farm.interfered(who, {"at": time.time(), "what": name, "cpu_s": cpu, "label": lease.get("label"),
-                                      "machine": self.machine})
-        return {"busy_start": started_load, "load_mean": sum(self.loads) / len(self.loads) if self.loads else None,
-                "load_max": max(self.loads) if self.loads else None,
-                "others_cpu_s": round(sum(v for _, v in heavy))}
-
-
-def main(argv):
-    o, argv = parse(argv)
-    sys.path.insert(0, SHARE)
-    global farm, mirror
-    try:
-        import farm
-        import mirror
-    except ImportError:
-        sys.exit("quiet-run: the farm is not installed (scripts/build/farm/setup)")
-    if not hasattr(farm, "lease_of"):
-        sys.exit("quiet-run: the installed farm has no leases (version 9 and later): scripts/build/farm/setup")
-    machine, host = choose(o)
-    fairness(machine, o["minutes"])
-    o["minutes"] = max(0.1, min(o["minutes"], farm.LEASE_SECONDS / 60))
-    entry = {"id": f"{int(time.time() * 1000)}-{os.getpid()}", "client": CHECKOUT, "pid": os.getpid(), "asked": time.time(),
-             "label": o["label"] or " ".join(argv)[:60], "minutes": o["minutes"]}
-    lease = take_turn(machine, entry, o["max_wait"])
-    lease_path = os.path.join(farm.lease_dir(machine), "lease.json")
-    how, code, proc, report = "not started", 75, None, {}
-    try:
-        say(f"{machine}: held; draining the farm's work there")
-        started_load = drain(machine, host)
-        if started_load is None:
-            return 75
-        began = time.time()
-        lease.update(started=began, until=began + o["minutes"] * 60 + 30)
-        farm.write_json(lease_path, lease)
-        proc = start(machine, host, o, argv, lease)
-        if proc is None:
-            return 75
-        say(f"{machine}: running ({lease['label']}) until {time.strftime('%H:%M:%S', time.localtime(began + o['minutes'] * 60))} at the latest")
-        sampler = Sampler(machine, host, proc, lease["id"], lease["taken"])
-        while True:
-            c = proc.poll()
-            if c is not None:
-                how, code = f"exit {c}", c
-                break
-            now = time.time()
-            if now > began + o["minutes"] * 60:
-                say(f"its {o['minutes']:g} minutes are up: stopping it")
-                stop(proc, host)
-                how, code = "stopped: its minutes were up", 124
-                break
-            try:
-                sampler.sample()
-            except (subprocess.SubprocessError, OSError):
-                pass
-            time.sleep(TICK)
-        say(f"{machine}: {how} after {time.time() - began:.0f} s")
-        report = sampler.report(lease, started_load, host["cores"] if host else os.cpu_count())
-        return code
-    except KeyboardInterrupt:
-        if proc is not None and proc.poll() is None:
-            stop(proc, host)
-        how = "interrupted"
-        return 130
-    finally:
-        lock = farm.Lock(os.path.join(farm.lease_dir(machine), "lock"))
-        try:
-            if (farm.read_json(lease_path, {}) or {}).get("id") == lease["id"]:
-                os.unlink(lease_path)
-        except OSError:
-            pass
-        finally:
-            lock.release()
-        farm.record_lease(lease, time.time(), how, report)
+            sys.exit(f"quiet-run: unknown option {a} (--help)")
+    command = argv[1:]
+    if not command:
+        sys.exit("quiet-run: no COMMAND (--help)")
+    if here:
+        return subprocess.run(command, cwd=os.path.join(CHECKOUT, directory)).returncode
+    test_remote = os.path.join(CHECKOUT, "scripts/dev/test-remote")
+    os.execv(test_remote, [test_remote] + remote + ["--dir", directory, "--"] + command)
 
 
 if __name__ == "__main__":
