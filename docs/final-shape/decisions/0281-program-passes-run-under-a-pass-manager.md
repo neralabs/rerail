@@ -516,6 +516,27 @@ step 3 replaces what is under the writer.
      - **Not yet:** the preparation pipeline is not keyed. Its passes return results in themselves (the pushed
        relations, the demand lines) that the run reads; they move to decisions first. ep2 is measured once the
        remaining passes are ported.
+   **The order from here (2026-11-16, user: the per-policy preparation path, then the workplan to its end, no
+   step-by-step tuning).** An edit of one policy costs that policy only when the run's input is an edit of the last
+   run's input, and every pass from the rule texts to the prepared program runs on versions and reruns on an edit
+   (§3) or maintains its analyses (§2). About 16,000 lines of those passes still edit `front::Program` trees, so the
+   per-policy path is steps 6 and 7 carried through, then composed:
+   - **6a–6e**, the preparation's tree passes on the manager, last first, the image made one pass earlier each time,
+     each an exact port checked against its tree form by digest in a debug build:
+     - 6a: `bound` and `transduce_nearest`;
+     - 6b: `lower_tree`;
+     - 6c: `strings::as_relations`, `long_text_twins`, `node_subject_tests`, `matchers`;
+     - 6d: `reach_form`, `magic`'s two demands, `undo_in_cycles`;
+     - 6e: `prune`, `simplify`, `base_inputs`, `cpython_functors`.
+   - **7a**, combining on versions: each policy's lowered image (0246 §6) renamed into the combined version, and
+     combining's passes (the requests, hiding's bound, the fact spaces, the merge of identical relations) on the
+     manager.
+   - **P**, the per-policy edit: the combined version is kept, and a run's is an overlay of the last one's (the
+     edited policy's rules out, its new ones in). The preparation pipeline runs `again` from its stored run. Each
+     pass reruns on the delta, or maintains what it reads, or runs whole where it must. ep2 is measured once, at the
+     end.
+   - **7b–7c**: `rr::lower`'s per-clause half as rule passes, the loader writing versions; `front::Program` deleted.
+   - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
 7. **The per-clause half of `rr::lower`** as `RulePass`es over the tape's clauses (0276 step 5), with `Domains`; the
