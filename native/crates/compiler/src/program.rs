@@ -147,8 +147,9 @@ pub struct Words {
     /// leaf of kind `K` where a `LEAF` names `stream_ir::WORD_KIND`. Rising by string.
     pub word_kinds: Vec<(u16, u16)>,
     /// The extras a `TOKEN` takes (`m` with `TOKEN_EXTRAS`; `tokenextra bB #K`): a token whose
-    /// record's code has mark bit `B` (`records::MARK_SHIFT + B`) is an extra of kind `K`. Rising
-    /// by bit.
+    /// record's code has the first entry's mark bit `B` (`records::MARK_SHIFT + B`) is an extra,
+    /// of the first entry's kind `K`, or of a later entry's where it has that entry's bit too
+    /// (`stream::extra_kind`: a kind each, after the first). Rising by bit.
     pub extras: Vec<(u8, u16)>,
     /// The token marks (decision 0129; `tokenmark K oO kK sW …`): mark `K` holds where its
     /// record's bit does and its tokens follow, each element one record (the extras between

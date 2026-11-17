@@ -3509,6 +3509,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-kotlin-parser"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "rerail-compiler",
+ "rerail-kotlin-lean",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-lang"
 version = "0.1.0"
 dependencies = [

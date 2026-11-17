@@ -2035,8 +2035,47 @@ struct TokenShape {
     on_stack: bool,
     /// The extra this `TOKEN` takes (`TOKEN_EXTRAS`): its code's mark bit and its leaf's kind.
     extra: Option<(u8, u16)>,
+    /// The extras' later kinds (`stream::extra_kind`), each with its bit.
+    more: MoreExtras,
     /// The program has wraps (`framed`): a leaf's frame slot too.
     wrapping: bool,
+}
+
+/// The extras' kinds after the first (`Words::extras`), each with its mark bit: at most
+/// `MORE_EXTRAS`.
+#[derive(Clone, Copy, Default)]
+struct MoreExtras {
+    kinds: [(u8, u16); MORE_EXTRAS],
+    count: usize,
+}
+
+const MORE_EXTRAS: usize = 3;
+
+impl MoreExtras {
+    /// The extras taken (`TOKEN_EXTRAS`): the first, and the later kinds; `None` for none.
+    fn of(extras: &[(u8, u16)], taken: bool) -> Result<(Option<(u8, u16)>, Self), Error> {
+        let Some((&first, rest)) = extras.split_first().filter(|_| taken) else { return Ok((None, Self::default())) };
+        if rest.len() > MORE_EXTRAS {
+            return Err(Error::UnsupportedBackend);
+        }
+        let mut more = Self::default();
+        more.kinds[..rest.len()].copy_from_slice(rest);
+        more.count = rest.len();
+        Ok((Some(first), more))
+    }
+
+    /// The leaf's kind of the extra whose record's code is `c`: `kind`, or the last later kind
+    /// whose bit `c` has (`stream::extra_kind`).
+    fn kind(&self, f: &mut FunctionBuilder<'_>, c: Value, kind: u16) -> Value {
+        let mut k = f.ins().iconst(types::I64, i64::from(kind));
+        for &(bit, later) in &self.kinds[..self.count] {
+            let b = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT) + i64::from(bit));
+            let b = f.ins().band_imm(b, 1);
+            let l = f.ins().iconst(types::I64, i64::from(later));
+            k = f.ins().select(b, l, k);
+        }
+        k
+    }
 }
 
 /// `TOKEN`'s body (`WordFn::Token`), taking a token: params `ctx`, the calls open. The room for
@@ -2137,7 +2176,7 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
         let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
         let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a leaf does not refuse");
         let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
-        let k = f.ins().iconst(types::I64, i64::from(kind));
+        let k = t.more.kind(f, c, kind);
         leaf_word(f, &env, table, k, true, true, EndAt::Taken, t.wrapping);
         f.ins().jump(top, &[]);
         f.switch_to_block(on);
@@ -3407,12 +3446,8 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
             };
             match w.operation {
                 Op::Token { any, extras, .. } => {
-                    // One kind of extra (`.rr`'s comments) for now.
-                    let extra: Option<(u8, u16)> = match (extras, native.extras.as_slice()) {
-                        (false, _) => None,
-                        (true, &[one]) => Some(one),
-                        (true, _) => return Err(Error::UnsupportedBackend),
-                    };
+                    // The extras: the first kind, and the later ones by their bits.
+                    let (extra, more) = MoreExtras::of(&native.extras, extras)?;
                     // Any mark's mask (`TOKEN m=1+k`): its output.
                     let any_mark: Option<usize> = match any {
                         Some(k) => Some(native.block_programs.first().and_then(|b| b.masks.get(usize::from(k)).copied()).ok_or(Error::UnsupportedBackend)?),
@@ -3425,7 +3460,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             f.ins().jump(fall, &[]);
                             continue;
                         }
-                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, wrapping };
+                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, more, wrapping };
                         let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, table, &native.token_marks, pinned_ctx)?;
                         let c = pinned(&mut f);
                         let open_calls: Vec<Value> = if on_stack { vec![] } else { vec![mget(&mut f, Mem::Ret)] };
@@ -3539,7 +3574,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             let one = f.ins().iconst(types::I64, 1);
                             mset(&mut f, Mem::Need, one);
                         }
-                        let k = f.ins().iconst(types::I64, i64::from(kind));
+                        let k = more.kind(&mut f, c, kind);
                         let again = wb[pc].expect("its own place");
                         word!(WordFn::Leaf { deferred: true, extra: true, end: EndAt::Taken, by_word: false }, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| leaf_word(g, e, table, q[0], true, true, EndAt::Taken, wrapping), again);
                         f.switch_to_block(on);
@@ -4316,12 +4351,15 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     }
                     // The caller's token, taken here (`callee_takes`): a refusal is this word's.
                     if let (Some((any, extras)), false) = (landing_token, again) {
-                        let extra: Option<(u8, u16)> = if extras { Some(*native.extras.first().ok_or(Error::UnsupportedBackend)?) } else { None };
+                        if extras && native.extras.is_empty() {
+                            return Err(Error::UnsupportedBackend);
+                        }
+                        let (extra, more) = MoreExtras::of(&native.extras, extras)?;
                         let any_mark: Option<usize> = match any {
                             Some(k) => Some(native.block_programs.first().and_then(|b| b.masks.get(usize::from(k)).copied()).ok_or(Error::UnsupportedBackend)?),
                             None => None,
                         };
-                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, wrapping };
+                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, more, wrapping };
                         let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, table, &native.token_marks, pinned_ctx)?;
                         let c = pinned(&mut f);
                         let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0];

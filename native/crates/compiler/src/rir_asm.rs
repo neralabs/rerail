@@ -648,8 +648,12 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     "end" => crate::records::ReadNone::End,
                     w => crate::records::ReadNone::Bytes(w.strip_prefix("bytes").and_then(|m| m.parse().ok()).ok_or(format!("block {at} recarm: `refuse`, `end` or `bytesM`, not {w}"))?),
                 };
+                let retag = match line.word() {
+                    Ok(w) if w == "retag" => Some((line.number("")?, line.number("")?)),
+                    _ => None,
+                };
                 let rd = r.readers.get_mut(k).ok_or(format!("block {at} recarm {k}: no such reader"))?;
-                rd.arms.push(crate::records::ReadArm { opener, closer, off, none });
+                rd.arms.push(crate::records::ReadArm { opener, closer, off, none, retag });
             } else if first == "recpart" {
                 // `recpart K START BYTES`: a part of reader K's region (`Reader::parts`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recpart before its records"))?;

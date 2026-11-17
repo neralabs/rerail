@@ -266,6 +266,19 @@ pub struct Reader {
     pub parts: Vec<ReadPart>,
 }
 
+impl Reader {
+    /// Every kind and marks it gives a token (`retag`, and its arms' own, `ReadArm::retag`).
+    pub fn tags(&self) -> impl Iterator<Item = (u8, u32)> + '_ {
+        self.retag.into_iter().chain(self.arms.iter().filter_map(|a| a.retag))
+    }
+
+    /// The kind and marks it gives every token it reads, where they are one: its `retag`, with
+    /// no arm of a kind of its own.
+    pub fn tag(&self) -> Option<(u8, u32)> {
+        self.retag.filter(|&t| self.arms.iter().all(|a| a.retag.is_none_or(|x| x == t)))
+    }
+}
+
 /// A part of a region read in parts (`Reader::parts`): at a bit of output `start`, `bytes`
 /// bytes, as a lexer reads an escape in a string.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -292,6 +305,10 @@ pub struct ReadArm {
     pub closer: u16,
     pub off: i8,
     pub none: ReadNone,
+    /// Where the reader reads the regions of several kinds (Kotlin's line and block comments,
+    /// both at `/`): this region's kind and marks, as `Reader::retag` says them for the reader's
+    /// own (`None`: the reader's).
+    pub retag: Option<(u8, u32)>,
 }
 
 /// A reader's region with no closer after its opener (`ReadArm::none`).

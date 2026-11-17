@@ -416,8 +416,8 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     next += 1;
                     // An extra (`TOKEN_EXTRAS`): its bytes taken and its leaf deferred, as
                     // `SPAN m=1; LEAF m=1 #K`; then the next token.
-                    let extra = if mode & TOKEN_EXTRAS == 0 { None } else { program.extras.iter().find(|&&(b, _)| code >> (crate::records::MARK_SHIFT + u32::from(b)) & 1 == 1) };
-                    let Some(&(_, kind)) = extra else { break };
+                    let extra = if mode & TOKEN_EXTRAS == 0 { None } else { extra_kind(&program.extras, code) };
+                    let Some(kind) = extra else { break };
                     end = rec_end;
                     if pending == 0 {
                         keep = last_end;
@@ -882,6 +882,18 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
 
 /// Whether token mark `m` holds at the record before `next` (`Words::token_marks`): each element
 /// at its offset among the records that are no extra (`extra_bit`, the code's bit).
+/// The kind of the extra a record's `code` is (`Words::extras`), or `None` for a grammar token:
+/// an extra has the first entry's bit; its kind is the last later entry whose bit it has, or the
+/// first entry's.
+pub fn extra_kind(extras: &[(u8, u16)], code: u32) -> Option<u16> {
+    let has = |b: u8| code >> (crate::records::MARK_SHIFT + u32::from(b)) & 1 == 1;
+    let &(first, kind) = extras.first()?;
+    if !has(first) {
+        return None;
+    }
+    Some(extras[1..].iter().rev().find(|&&(b, _)| has(b)).map_or(kind, |&(_, k)| k))
+}
+
 pub fn token_mark_holds(m: &TokenMark, codes: &[u32], next: usize, extra_bit: u32) -> bool {
     let is_extra = |c: u32| c >> (crate::records::MARK_SHIFT + extra_bit) & 1 == 1;
     let Some(here) = next.checked_sub(1) else { return false };

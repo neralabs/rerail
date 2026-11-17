@@ -2602,7 +2602,7 @@ const LONG_CALL: u16 = 0x0400;
 /// load each in the loop. A last is a record's `u32` (or `-1`), a tag a code (a `u32`, `-1`
 /// for none), a hit a mark's bit (`records::check_hits`, a `u32`).
 fn packs(r: &crate::records::Records) -> bool {
-    r.readers.iter().all(|x| x.retag.is_none_or(|(kind, marks)| (u64::from(kind) | u64::from(marks) << crate::records::MARK_SHIFT) < u64::from(u32::MAX)))
+    r.readers.iter().all(|x| x.tags().all(|(kind, marks)| (u64::from(kind) | u64::from(marks) << crate::records::MARK_SHIFT) < u64::from(u32::MAX)))
 }
 
 /// A rule function's four results packed (`packs`).
@@ -3789,6 +3789,11 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 // byte after.
                 let firsts = first_bytes(r, k);
                 for (j, a) in reader.arms.iter().enumerate() {
+                    // A region of a kind of its own (`ReadArm::retag`): its kind and marks.
+                    let tag = match a.retag {
+                        Some((kind, marks)) => f.ins().iconst(types::I64, i64::from(kind) | i64::from(marks) << crate::records::MARK_SHIFT),
+                        None => tag,
+                    };
                     let limit = rd.limit(a.closer, limit);
                     let (arm, not) = (f.create_block(), f.create_block());
                     let bit = rd.bit_first(f, c, s, a.opener, Some(firsts), heads);
@@ -4033,7 +4038,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
 fn tag_known(r: &crate::records::Records, k: usize) -> Option<(i64, u32)> {
     use crate::records::{CheckThen, EndRule};
     let &EndRule::Read(i) = r.rules.get(k)? else { return None };
-    let (kind, marks) = r.readers.get(usize::from(i))?.retag?;
+    let (kind, marks) = r.readers.get(usize::from(i))?.tag()?;
     let mut hits = 0u32;
     for c in r.checks.iter().filter(|c| usize::from(c.rule) == k) {
         if !c.always() {
@@ -4050,7 +4055,7 @@ fn tag_known(r: &crate::records::Records, k: usize) -> Option<(i64, u32)> {
 
 /// Whether rule `k` is a reader that tags its token (`Reader::retag`).
 fn tagged(r: &crate::records::Records, k: usize) -> bool {
-    matches!(r.rules.get(k), Some(&crate::records::EndRule::Read(i)) if r.readers.get(usize::from(i)).is_some_and(|x| x.retag.is_some()))
+    matches!(r.rules.get(k), Some(&crate::records::EndRule::Read(i)) if r.readers.get(usize::from(i)).is_some_and(|x| x.tags().next().is_some()))
 }
 
 /// The rule from a first byte's entry (`RecordTables::token`).
@@ -5083,7 +5088,7 @@ pub(crate) fn loop_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> 
     if r.skip.is_none() {
         return (Vec::new(), Vec::new());
     }
-    let retagged: u32 = r.readers.iter().filter_map(|rd| rd.retag).fold(0, |a, (_, m)| a | m);
+    let retagged: u32 = r.readers.iter().flat_map(|rd| rd.tags()).fold(0, |a, (_, m)| a | m);
     let mut lift = Vec::new();
     let mut at = Vec::new();
     for (k, &(o, w)) in r.marks.iter().enumerate() {
@@ -5880,7 +5885,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let kind = f.ins().band_imm(entry, 0xff);
     // A reader's token's kind and marks (`Reader::retag`), where it gives them.
     // None in a rare class of no tagging reader's rules (`Side::Rare`).
-    let retag = retag.filter(|_| r.readers.iter().any(|rd| rd.retag.is_some()) && !matches!(side, Side::Rare(Some(RareClass { tagged: false, .. }))));
+    let retag = retag.filter(|_| r.readers.iter().any(|rd| rd.tags().next().is_some()) && !matches!(side, Side::Rare(Some(RareClass { tagged: false, .. }))));
     // A punctuation of the fused pair rule (`TOKEN_PUNCT`): its code bits by its first byte
     // and its length, a load beside the entry's, no word looked up, as the lean lexer's.
     if common {
@@ -6404,7 +6409,7 @@ fn record_end(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
 #[allow(clippy::too_many_arguments)]
 fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts: usize, outputs: usize, c: &FileCols, n: Value, lift: bool, looped: u32, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
     // The marks a reader gives (`Reader::retag`) are its: no mask is read for them.
-    let retagged: u32 = r.readers.iter().filter_map(|rd| rd.retag).fold(0, |a, (_, m)| a | m);
+    let retagged: u32 = r.readers.iter().flat_map(|rd| rd.tags()).fold(0, |a, (_, m)| a | m);
     let late: Vec<(usize, u16)> = r.marks.iter().enumerate().filter(|&(k, m)| m.0 != crate::records::WORD_ALONE && m.1 == 0 && (r.gaps >> k & 1 == 1) == lift && retagged >> k & 1 == 0 && r.tested_only >> k & 1 == 0 && looped >> k & 1 == 0).map(|(k, m)| (k, m.0)).collect();
     if late.is_empty() {
         f.ins().jump(then, &[]);

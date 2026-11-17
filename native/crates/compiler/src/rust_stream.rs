@@ -469,11 +469,16 @@ fn token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>, extras: bool, fl
     } else {
         ("", "            self.last_end = self.rec_end;\n", "", "")
     };
-    let extra = match (extras, n.extras.first()) {
-        (true, Some(&(bit, kind))) => format!(
-            "            if c >> {} & 1 != 0 {{\n{extra_end}                self.leaf::<true, true>({kind}, self.rec_end);\n                self.room()?;\n                continue;\n            }}\n",
-            crate::records::MARK_SHIFT + u32::from(bit)
-        ),
+    let extra = match (extras, n.extras.split_first()) {
+        (true, Some((&(bit, kind), more))) => {
+            // The leaf's kind: the first's, or the last later kind whose bit the code has
+            // (`stream::extra_kind`).
+            let kind = more.iter().fold(kind.to_string(), |k, &(b, later)| format!("if c >> {} & 1 != 0 {{ {later} }} else {{ {k} }}", crate::records::MARK_SHIFT + u32::from(b)));
+            format!(
+                "            if c >> {} & 1 != 0 {{\n{extra_end}                self.leaf::<true, true>({kind}, self.rec_end);\n                self.room()?;\n                continue;\n            }}\n",
+                crate::records::MARK_SHIFT + u32::from(bit)
+            )
+        }
         _ => String::new(),
     };
     // The token marks that refuse (`TokenMark::refuses`): their bits in the code, one test; where
