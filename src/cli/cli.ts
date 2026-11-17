@@ -676,17 +676,20 @@ const STOP_ANSWERS: Readonly<Record<StopDaemonResult, string>> = {
   "not-daemon": `${NOT_HOME_DAEMON_NOTE}\nThe Rerail daemon is not running.\n`,
 };
 
+/** `rerail daemon start [options]` or `rerail daemon stop`, in `home`. */
+async function runDaemonVerb(args: readonly string[], home: string): Promise<number> {
+  const [verb, ...rest] = args;
+  if (verb === "start") return await runDaemonStartCommand(rest, home);
+  if (verb === "stop" && rest.length === 0) {
+    process.stdout.write(STOP_ANSWERS[await stopDaemon(home)]);
+    return 0;
+  }
+  throw new Error(`Usage: rerail daemon start [options] | rerail daemon stop\n\n${usage()}`);
+}
+
 /** The daemon commands need only the launcher home; they never load an activation policy. */
 async function runDaemonCommand(command: string, args: readonly string[], home: string): Promise<number | undefined> {
-  if (command === "daemon") {
-    const [verb, ...rest] = args;
-    if (verb === "start") return await runDaemonStartCommand(rest, home);
-    if (verb === "stop" && rest.length === 0) {
-      process.stdout.write(STOP_ANSWERS[await stopDaemon(home)]);
-      return 0;
-    }
-    throw new Error(`Usage: rerail daemon start [options] | rerail daemon stop\n\n${usage()}`);
-  }
+  if (command === "daemon") return await runDaemonVerb(args, home);
   if (command === "status") return await runStatusCommand(home);
   if (command === "manage") return await runManageCommand(args);
   return undefined;
