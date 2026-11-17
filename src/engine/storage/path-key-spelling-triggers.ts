@@ -8,10 +8,11 @@
  * reach it. They are triggers because only a trigger runs inside an earlier build's own writes.
  *
  * A row of this build's key follows the earlier build's row only while it still holds what that row held before the
- * write (`CarriedTable.values`, and `copied`): a copy no one has written since. A row that stood under the key before
+ * write (`CarriedTable.values`, and `copied`): a copy no one has changed since. A row that stood under the key before
  * the step (an earlier build saved the folder under both spellings, or a build without the step recorded it), or that
- * this build or an earlier build's session spelt as the disk spells it wrote since, keeps its own values, as it does
- * beside a build without the step. What carries over: a checkout's start state when it changes; and for audit
+ * this build or an earlier build's session spelt as the disk spells it changed since, keeps its own values, as it does
+ * beside a build without the step; saving a setting again changes it, since that sets when it was saved. What carries
+ * over: a checkout's start state when it changes; and for audit
  * settings, a checkout's rule settings, its repository audit and its presentation preferences, each row an earlier build
  * changes or deletes, and each row it inserts where this build's key holds none. A write under any other key finds no
  * spelling and changes nothing, so this build's own writes cost one lookup of that table's primary key. On Windows an
@@ -63,9 +64,11 @@ const CARRIED_TABLES: readonly CarriedTable[] = [
     key: "repository",
     rest: ["host"],
     values: ["presence"],
-    // A preference keeps no time; a copy is made after the row it copies, and saving a preference again updates its row
-    // in place, so a row this build's key held before the earlier build's was made is no copy of it.
-    copied: "rowid > OLD.rowid",
+    // A preference keeps no time, and saving one again updates its row in place, so a copy is told by when its row was
+    // made: past the last row the table held when the step copied this spelling (`preferences_before`), and after the
+    // row it copies. A row that stood under this build's key before the step, or that this build made there before the
+    // earlier build made its own, is no copy of it.
+    copied: "rowid > OLD.rowid AND rowid > (SELECT preferences_before FROM path_key_spellings WHERE stored = OLD.repository)",
     paths: row => `${row}.repository <> ''`,
   },
 ];

@@ -290,12 +290,11 @@ What an earlier version changes later under a spelling the step recorded reaches
 the database (`src/engine/storage/path-key-spelling-triggers.ts`), which run inside that version's own writes, carry a
 start or a stop it makes, and each audit setting, rule setting of the checkout, repository audit and presentation
 preference it changes or deletes there, to the copy the step made, while the copy still holds what that version's row
-held. Once this version writes the copy, or a session of the earlier version opened in the folder as the disk spells
-it does, the copy keeps its own values, and so does a row that stood under that spelling before the step. A row the
-earlier version adds there is copied where this version has none. A presentation preference keeps no time, so one the
-earlier version saved as the disk spells the folder after saving the same choice under the other spelling follows that
-version's later change under the other. Nothing else goes the other way: an earlier version reads its own rows, as it
-does beside a version without the step. Rows an earlier version writes under a spelling the step never saw stay under
+held. Once this version, or a session of the earlier version opened in the folder as the disk spells it, changes the
+copy (saving a setting again changes it, since that sets when it was saved), the copy keeps its own values, and so does
+a row that stood under that spelling before the step. A row the earlier version adds there is copied where this version
+has none. Nothing else goes the other way: an earlier version reads its own rows, as it does beside a version without
+the step. Rows an earlier version writes under a spelling the step never saw stay under
 that spelling: the step runs once per database.
 
 <details>

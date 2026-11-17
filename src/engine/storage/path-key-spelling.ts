@@ -83,7 +83,8 @@ const PATH_HISTORY: readonly PathColumn[] = [
 ];
 
 /** `path_key_spellings` as `path-keys-as-stored` introduced it. */
-const PATH_KEY_SPELLINGS_TABLE = "CREATE TABLE IF NOT EXISTS `path_key_spellings` (\n\t`stored` text PRIMARY KEY NOT NULL,\n\t`current` text\n)";
+const PATH_KEY_SPELLINGS_TABLE =
+  "CREATE TABLE IF NOT EXISTS `path_key_spellings` (\n\t`stored` text PRIMARY KEY NOT NULL,\n\t`current` text,\n\t`preferences_before` integer\n)";
 
 /**
  * The key this build looks a folder up by, for a key an earlier build stored as `stored`. On Windows, for a folder that
@@ -289,13 +290,15 @@ function ifHeld(database: RerailDatabase, column: PathColumn, read: () => string
 }
 
 /**
- * Records where `stored` stands now: `key` when its folder's key moved, none while its folder is absent. A key that
- * moved has the rows each keyed table holds under it copied there.
+ * Records where `stored` stands now: `key` when its folder's key moved, none while its folder is absent, and the last
+ * presentation preference row before any copy is made (`preferences_before`). A key that moved has the rows each keyed
+ * table holds under it copied there.
  */
 function moveKey(database: RerailDatabase, stored: string, key: string | undefined): void {
   if (key === stored) return;
-  database.run(sql`INSERT INTO path_key_spellings (stored, current) VALUES (${stored}, ${key ?? null})
-    ON CONFLICT (stored) DO UPDATE SET current = excluded.current`);
+  database.run(sql`INSERT INTO path_key_spellings (stored, current, preferences_before)
+    VALUES (${stored}, ${key ?? null}, ${lastRowid(database, "presentation_preferences")})
+    ON CONFLICT (stored) DO UPDATE SET current = excluded.current, preferences_before = excluded.preferences_before`);
   if (key !== undefined) copyToKey(database, { from: stored, to: key });
 }
 

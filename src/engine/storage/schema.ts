@@ -695,6 +695,12 @@ export const schemaMigrations = sqliteTable("schema_migrations", {
 export const pathKeySpellings = sqliteTable("path_key_spellings", {
   stored: text("stored").primaryKey(),
   current: text("current"),
+  /**
+   * The last rowid `presentation_preferences` held when the step copied this spelling's rows. A preference keeps no time,
+   * so the triggers that carry an earlier build's later change (`path-key-spelling-triggers.ts`) tell the step's copy of
+   * one from a row that stood under `current` before by this: only a row made past it can be a copy.
+   */
+  preferencesBefore: integer("preferences_before"),
 });
 
 /**

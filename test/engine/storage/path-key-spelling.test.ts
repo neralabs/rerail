@@ -266,10 +266,6 @@ function kept(folder: string, repositoryAudit: Omit<Records["repositoryAuditList
   };
 }
 
-/**
- * What an earlier build reads for its checkout `stored`, by the key it looks each record up by: the spelling it stored.
- * 0.1.4's stores look a checkout, its settings, its audit settings and audit, and its preferences up so.
- */
 /** Whether `folder`'s checkout runs, and the checkout above it, as the dashboard's view of its repository shows them. */
 function dashboardState(folder: string, databasePath: string): { started: boolean; parentCheckoutPath: string | null } {
   const database = openRerailDatabase(databasePath, { readonly: true });
@@ -282,6 +278,10 @@ function dashboardState(folder: string, databasePath: string): { started: boolea
   }
 }
 
+/**
+ * What an earlier build reads for its checkout `stored`, by the key it looks each record up by: the spelling it stored.
+ * 0.1.4's stores look a checkout, its settings, its audit settings and audit, and its preferences up so.
+ */
 function earlierBuildReads(databasePath: string, stored: string) {
   const client = new Database(databasePath, { readonly: true });
   try {
@@ -581,7 +581,8 @@ describe("path keys an earlier build stored under another spelling", () => {
     const stored = otherSpelling(folder);
     earlierBuildRecorded(folder, databasePath, stored);
     // The same records under the spelling the disk stores, each saved before the one under `stored`, so two rows of a
-    // record agree but for when they were saved; there the folder is stopped, and its preference was made first.
+    // record agree but for when they were saved; there the folder is stopped. A preference keeps no time: the one for
+    // Claude Code was made there after the earlier build's under `stored`, the one for Codex before.
     write(databasePath, [
       [`INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, "on", updated_at)
         VALUES ('checkout', ?, '', 'rule', 'no-debugger', 0, 1)`, stored],
@@ -593,9 +594,9 @@ describe("path keys an earlier build stored under another spelling", () => {
       ["INSERT INTO audit_settings (workspace_root, settings_json, updated_at) SELECT ?, settings_json, updated_at - 1 FROM audit_settings", folder],
       [`INSERT INTO repository_audits (workspace_root, session_id, audit_id, status, started_at, finished_at, error)
         SELECT ?, session_id, audit_id, status, started_at - 1, finished_at, error FROM repository_audits`, folder],
-      ["DELETE FROM presentation_preferences WHERE repository = ?", stored],
       ["INSERT INTO presentation_preferences (repository, host, presence) VALUES (?, 'claude-code', 'silent')", folder],
-      ["INSERT INTO presentation_preferences (repository, host, presence) VALUES (?, 'claude-code', 'silent')", stored],
+      ["INSERT INTO presentation_preferences (repository, host, presence) VALUES (?, 'codex', 'silent')", folder],
+      ["INSERT INTO presentation_preferences (repository, host, presence) VALUES (?, 'codex', 'silent')", stored],
     ]);
     vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
     openRerailDatabase(databasePath).$client.close();
@@ -625,6 +626,33 @@ describe("path keys an earlier build stored under another spelling", () => {
     ]);
     expect(rowsUnder(databasePath, folder)).toEqual(saved);
     expect(recordsAt(folder, databasePath)).toMatchObject({ startState: "stopped", presence: "silent", auditSettings: { mode: "log" } });
+  });
+
+  // A preference keeps no time, so the triggers tell the step's copy of one by when its row was made. One this build
+  // saved after the step, before the earlier build saved the same one under the other spelling, is no copy of it.
+  it("keep a preference this build saved before the earlier build saved the same one under the other spelling", async () => {
+    const { folder, databasePath } = await checkoutFolder();
+    onTheSystemDrive(folder);
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+    openRerailDatabase(databasePath).$client.close();
+    const codex = (key: string): unknown[] =>
+      fileRows(databasePath, "SELECT presence FROM presentation_preferences WHERE repository = ? AND host = 'codex'", key);
+    const preferences = new SqlitePresentationPreferenceStore(databasePath);
+    try {
+      preferences.upsert({ repository: folder, host: "codex", presence: "silent" });
+    } finally {
+      preferences.close();
+    }
+    // The earlier build saves the same for Codex under its spelling, changes it, then removes it.
+    write(databasePath, [
+      ["INSERT INTO presentation_preferences (repository, host, presence) VALUES (?, 'codex', 'silent')", stored],
+      ["UPDATE presentation_preferences SET presence = 'compact' WHERE repository = ? AND host = 'codex'", stored],
+    ]);
+    expect([codex(folder), codex(stored)]).toEqual([[{ presence: "silent" }], [{ presence: "compact" }]]);
+    write(databasePath, [["DELETE FROM presentation_preferences WHERE repository = ? AND host = 'codex'", stored]]);
+    expect(codex(folder)).toEqual([{ presence: "silent" }]);
   });
 
   // A copy this build had written went on taking what the earlier build saved later under the other spelling: a rule
