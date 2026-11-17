@@ -151,6 +151,21 @@ describe("a folder outside Git", () => {
   });
 });
 
+describe("a folder Git places in a repository with no work tree", () => {
+  it.for([
+    { name: "a bare repository", make: (root: string) => bareRepository(root) },
+    { name: "a folder inside a checkout's .git", make: (root: string) => join(checkout(root, "main"), ".git", "refs") },
+  ])("$name is keyed by its remote", async ({ make }) => {
+    const root = await plainRoot();
+    const folder = make(root);
+    git(folder, "remote", "add", "origin", "https://github.com/example/demo.git");
+
+    const recorded = recordCheckout(database(root), folder);
+
+    expect(recorded).toMatchObject({ git: false, repositoryKey: "remote:github.com/example/demo" });
+  });
+});
+
 /** A folder shape: the folder Rerail is asked about, the environment it is asked in, or why this machine cannot make it. */
 type Made = string | { readonly folder: string; readonly env?: Record<string, string>; readonly skip?: string };
 

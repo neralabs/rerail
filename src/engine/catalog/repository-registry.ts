@@ -14,6 +14,7 @@ import { mergeAssistExperimentEnabled } from "../experimental-features.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
 import {
   normalizeRemoteAddress,
+  outsideGit,
   readCloneIdAt,
   readRemoteAddress,
   repositoryFolderName,
@@ -53,10 +54,11 @@ function repositoryByKeyOrAlias(db: Reader, key: RepositoryKey): RepositoryRow |
 
 /**
  * The normalised key of the checkout's `origin` or sole remote; undefined without one or without git. A folder outside
- * Git has no remote, so Git is not started to say so.
+ * Git ({@link outsideGit}) has no remote, so Git is not started to say so. A folder with no work tree that Git still
+ * places in a repository, a bare repository or a folder inside a `.git`, is keyed by that repository's remote.
  */
 function remoteKeyOf(location: RepositoryIdentityLocation): RepositoryKey | undefined {
-  if (!location.git) return undefined;
+  if (!location.git && outsideGit(location.workspaceRoot)) return undefined;
   try {
     const remote = readRemoteAddress(location.workspaceRoot);
     return remote === undefined ? undefined : normalizeRemoteAddress(remote.url);

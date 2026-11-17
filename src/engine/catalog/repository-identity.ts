@@ -74,7 +74,7 @@ const GIT_MARKERS = [".git", "HEAD"];
  * and Git still answers no repository (another owner's, past `GIT_CEILING_DIRECTORIES`, an empty `.git` folder), Git is
  * asked as before.
  */
-function outsideGit(folder: string): boolean {
+export function outsideGit(folder: string): boolean {
   if (process.env.GIT_DIR !== undefined) return false;
   const written = resolve(folder);
   let real: string;
