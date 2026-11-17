@@ -1297,8 +1297,10 @@ fn stage1_loop_keeps_values_in_registers() {
     // head, stored on the back edge), 9 since.
     assert!(stack <= STAGE1_LOOP_STACK && mvn == 0, "stage 1's loop spills ({stack}, budget {STAGE1_LOOP_STACK}) or inverts vectors ({mvn}):\n{}", lines.join("\n"));
     let block = &p.block_programs[0];
-    // The state is packed: one carried word per 64 state bits (decision 0048).
-    let words = state_bits(block).div_ceil(64);
+    // The state is packed: one carried word per 64 state bits (decision 0048), but a chain's
+    // carry, in a word of its own as simdjson's (0345).
+    let (chains, chain_bits) = native_cpu_block::State::of(&native).chains();
+    let words = (state_bits(block) - chain_bits).div_ceil(64) + chains;
     assert_eq!(carried_params(&compiled.clif) - sink_params(&native), words, "stage 1's carried state is not packed");
 }
 

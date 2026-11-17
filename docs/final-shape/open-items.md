@@ -4819,3 +4819,15 @@ past the start.
 function taking the max itself, off the hot path), so an arm whose exits all are needs no max.
 
 **Closed 2026-11-16.** No `max` where the rule's last is never below its start (`last_below_start`; a refusal leaves the loop).
+
+## O-json-tier2-own-calls. JSON's compiled path asserts tier 2 makes no call of its own; it makes 30
+
+Opened 2026-11-17 (found running 0345's checks). `parser_tests`'
+`json_compiled_path_equals_the_interpreters` asserts `tier2.own_calls == 0` ("no pass over the
+table") before it runs a file; tier 2 now has 30. Tier 2's compile reads nothing 0345 changed,
+so the count is older (tier 2's calls by rule, 0322–0323, are the likely source). The test's runs
+of tier 1 and tier 2 against the interpreters are not reached.
+
+**Closure:** decide whether those calls are the "pass over the table" the assertion forbids
+(then remove them) or a call by rule (then the assertion names what it means), and let the
+runs below it run again.

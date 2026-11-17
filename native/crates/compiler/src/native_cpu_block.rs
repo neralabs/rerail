@@ -395,12 +395,19 @@ pub const BACK: usize = 256;
 /// A field of the carried state: bits `pos..pos + width` of loop-carried word `word`. A `top`
 /// field keeps the top `width` bits of instruction `at`'s word (for its `prev`s, and a `toggle`'s
 /// or `fill`'s own carry, its top bit); a `flag` field an `escaped`'s borrow.
+///
+/// A chain's carry (a `toggle`'s or a `fill`'s top bits, an `escaped`'s borrow: what the block
+/// after reads to go on) is `own`: a word of its own, as simdjson keeps `prev_in_string` and
+/// `prev_escaped` (0345). A top field's word is its value as made, the field its top `width`
+/// bits (`pos` is `64 - width`): no shift writes it, and the parity is one arithmetic shift. A
+/// flag's word is the borrow itself. The look-backs stay packed (0070).
 #[derive(Clone, Copy, Debug)]
 pub struct Field {
     at: usize,
     width: u8,
     word: usize,
     pos: u8,
+    own: bool,
 }
 
 /// The carried state's layout (decision 0070): its fields, packed first-fit into words.
@@ -440,6 +447,12 @@ impl State {
         self.fields.iter().map(|f| (f.at, f.width, f.word)).collect()
     }
 
+    /// The words a chain's carry has to itself (`Field::own`), and the bits they hold.
+    pub fn chains(&self) -> (usize, usize) {
+        let own = self.fields.iter().filter(|f| f.own);
+        (own.clone().count(), own.map(|f| usize::from(f.width)).sum())
+    }
+
     pub fn of(native: &BlockNative) -> Self {
         let n = native.insts.len();
         let plan = Plan::of(native);
@@ -452,36 +465,45 @@ impl State {
                 back[usize::from(a)] = back[usize::from(a)].max(k);
             }
         }
-        // (instruction, width, what): 0 its top bits, 1 an escape's flag, 2 + w walk `w`'s state.
-        let mut wanted: Vec<(usize, u8, usize)> = Vec::new();
+        // (instruction, width, what, own): what is 0 its top bits, 1 an escape's flag, 2 + w walk
+        // `w`'s state; own, a chain's carry (`Field::own`).
+        let mut wanted: Vec<(usize, u8, usize, bool)> = Vec::new();
         for (at, inst) in native.insts.iter().enumerate() {
             match inst {
-                BlockInst::Toggle(_) | BlockInst::Fill(..) => wanted.push((at, back[at].max(1), 0)),
+                BlockInst::Toggle(_) => wanted.push((at, back[at].max(1), 0, true)),
+                BlockInst::Fill(..) => wanted.push((at, back[at].max(1), 0, false)),
                 BlockInst::Escaped(_) => {
-                    wanted.push((at, 1, 1));
+                    wanted.push((at, 1, 1, true));
                     if back[at] > 0 {
-                        wanted.push((at, back[at], 0));
+                        wanted.push((at, back[at], 0, false));
                     }
                 }
-                _ if back[at] > 0 => wanted.push((at, back[at], 0)),
+                _ if back[at] > 0 => wanted.push((at, back[at], 0, false)),
                 _ => {}
             }
         }
         for (w, walk) in native.walks.iter().enumerate().filter(|(_, w)| !w.kinds.is_empty()) {
-            wanted.push((usize::from(walk.hidden), WalkState::width(walk.kinds.len()), 2 + w));
+            wanted.push((usize::from(walk.hidden), WalkState::width(walk.kinds.len()), 2 + w, false));
         }
         let mut used: Vec<u8> = Vec::new();
         let (mut fields, mut top, mut flag, mut walk) = (Vec::new(), vec![None; n], vec![None; n], vec![None; native.walks.len()]);
-        for (at, width, what) in wanted {
-            let word = match used.iter().position(|&u| u + width <= 64) {
-                Some(w) => w,
-                None => {
-                    used.push(0);
-                    used.len() - 1
-                }
-            };
-            fields.push(Field { at, width, word, pos: used[word] });
-            used[word] += width;
+        for (at, width, what, own) in wanted {
+            if own {
+                // A word of its own, full: no packed field joins it.
+                used.push(64);
+                let pos = if what == 1 { 0 } else { 64 - width };
+                fields.push(Field { at, width, word: used.len() - 1, pos, own });
+            } else {
+                let word = match used.iter().position(|&u| u + width <= 64) {
+                    Some(w) => w,
+                    None => {
+                        used.push(0);
+                        used.len() - 1
+                    }
+                };
+                fields.push(Field { at, width, word, pos: used[word], own });
+                used[word] += width;
+            }
             match what {
                 0 => top[at] = Some(fields.len() - 1),
                 1 => flag[at] = Some(fields.len() - 1),
@@ -532,6 +554,67 @@ pub(crate) fn prefix_xor(f: &mut FunctionBuilder<'_>, x: Value) -> Value {
         x = f.ins().bxor(x, up);
     }
     x
+}
+
+/// A toggle's prefix XOR (`prefix_xor`), the multiply taking its mask where the vector
+/// registers hold it. A toggle of `q & m` (a bitmask's lane `q`, and terms `m`: an escape, a
+/// gate) is `prefix_xor(q) ^ prefix_xor(q & !m)`, prefix XOR being linear: the multiply of `q`
+/// as `addp` leaves it (the vendored Cranelift's aarch64 `clmul` reads a vector's low lane in
+/// place), and the rounds of the quotes the terms take out, zero but where one is escaped or
+/// gated off. The rounds are off the path from the bytes to the toggle, as in
+/// `rerail-json-lean`'s `PMULL_RAW` (0345). Without the multiply, or with no lane under the
+/// terms, it is `prefix_xor` of the value.
+pub(crate) fn toggle(f: &mut FunctionBuilder<'_>, x: Value) -> Value {
+    if !clmul() {
+        return prefix_xor(f, x);
+    }
+    let Some((lane, terms)) = lane_and(f, x) else { return prefix_xor(f, x) };
+    if terms.is_empty() {
+        return prefix_xor(f, x);
+    }
+    // The lane's bits the terms take out: `q & !t` for a term `t`, `q & t` for a term `!t`.
+    let mut out: Option<Value> = None;
+    for (t, not) in terms {
+        let o = if not { f.ins().band(lane, t) } else { f.ins().band_not(lane, t) };
+        out = Some(match out {
+            None => o,
+            Some(acc) => f.ins().bor(acc, o),
+        });
+    }
+    let whole = prefix_xor(f, lane);
+    let mut fix = out.expect("a term");
+    for k in [1, 2, 4, 8, 16, 32] {
+        let up = f.ins().ishl_imm(fix, k);
+        fix = f.ins().bxor(fix, up);
+    }
+    f.ins().bxor(whole, fix)
+}
+
+/// `x` as a bitmask's lane (`extractlane` of an `i64x2`'s lane 0) ANDed with terms: the lane,
+/// and each term with whether it is complemented (`band_not`).
+fn lane_and(f: &FunctionBuilder<'_>, x: Value) -> Option<(Value, Vec<(Value, bool)>)> {
+    use cranelift_codegen::ir::{InstructionData, Opcode, ValueDef};
+    let dfg = &f.func.dfg;
+    let ValueDef::Result(inst, _) = dfg.value_def(x) else { return None };
+    match dfg.insts[inst] {
+        InstructionData::BinaryImm8 { opcode: Opcode::Extractlane, arg, imm } if u8::from(imm) == 0 && dfg.value_type(arg) == types::I64X2 => Some((x, Vec::new())),
+        InstructionData::Binary { opcode: Opcode::Band, args: [a, b] } => {
+            if let Some((lane, mut terms)) = lane_and(f, a) {
+                terms.push((b, false));
+                Some((lane, terms))
+            } else {
+                let (lane, mut terms) = lane_and(f, b)?;
+                terms.push((a, false));
+                Some((lane, terms))
+            }
+        }
+        InstructionData::Binary { opcode: Opcode::BandNot, args: [a, b] } => {
+            let (lane, mut terms) = lane_and(f, a)?;
+            terms.push((b, true));
+            Some((lane, terms))
+        }
+        _ => None,
+    }
 }
 
 /// The constants every body uses, made once in the function's entry: the nibble mask, the
@@ -926,6 +1009,10 @@ impl Emit<'_, '_> {
     fn read(&self, f: &mut FunctionBuilder<'_>, field: &Field, from: u8, n: u8) -> Value {
         let shift = field.pos + from;
         let w = self.packed_in[field.word];
+        if field.own && field.pos == 0 && from == 0 && n == field.width {
+            // A flag's own word: the borrow itself.
+            return w;
+        }
         let x = if shift == 0 { w } else { f.ins().ushr_imm(w, i64::from(shift)) };
         if field.pos + from + n == 64 { x } else { f.ins().band_imm(x, ((1u64 << n) - 1) as i64) }
     }
@@ -939,6 +1026,11 @@ impl Emit<'_, '_> {
             return;
         }
         let value = plain(&mut *f, &self.syms, &mut self.values, at);
+        if field.own {
+            // Its word is the value as made (`Field::own`).
+            self.packed_out[field.word] = Some(value);
+            return;
+        }
         let top = f.ins().ushr_imm(value, 64 - i64::from(field.width));
         self.put(&mut *f, field, top);
     }
@@ -1067,9 +1159,10 @@ impl Emit<'_, '_> {
                 // of the previous word, all ones or zero.
                 let field = state.fields[state.top[at].expect("a toggle has a field")];
                 let bit = field.pos + field.width - 1;
-                let parity = f.ins().ishl_imm(self.packed_in[field.word], i64::from(63 - bit));
+                let w = self.packed_in[field.word];
+                let parity = if bit == 63 { w } else { f.ins().ishl_imm(w, i64::from(63 - bit)) };
                 let parity = f.ins().sshr_imm(parity, 63);
-                let x = prefix_xor(&mut *f, v(a));
+                let x = toggle(&mut *f, v(a));
                 f.ins().bxor(x, parity)
             }
             BlockInst::Escaped(a) => {

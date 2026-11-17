@@ -16,7 +16,8 @@ Four crates change; each is crates.io's 0.125.4 with the branch's diff for it:
 
 - `cranelift-codegen-0.125.4` (here):
   - the aarch64 lowering, `pmull v.1q, v.1d, v.1d` when the ISA flag `has_pmull` is set, its
-    encoding and printing;
+    encoding and printing; a multiplicand that is a vector's low lane (`extractlane` of an
+    `i64x2`, lane 0) is read in place, with no move out and back (0345);
   - the x64 lowering, `pclmulqdq` when `has_pclmulqdq` is set;
   - `links = "cranelift_codegen"` and `cargo:clmul=1` in `build.rs`, so a dependent's build
     script sees `DEP_CRANELIFT_CODEGEN_CLMUL` (rerail's `compiler/build.rs` sets the cfg

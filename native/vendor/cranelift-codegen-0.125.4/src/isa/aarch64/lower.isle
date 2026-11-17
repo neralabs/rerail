@@ -1023,6 +1023,22 @@
             (p Reg (pmull64 xv yv)))
         (mov_from_vec p 0 (ScalarSize.Size64))))
 
+;; A multiplicand that is a vector's low 64-bit lane is read in place: `pmull`
+;; multiplies the low lanes, so the lane needs no move out and back. A mask
+;; made in the vector registers (a bitmask's `addp`) goes straight to the
+;; multiply.
+(rule 1 (lower (has_type $I64 (clmul (extractlane vec @ (value_type $I64X2) (u8_from_uimm8 0)) y)))
+      (if-let true (use_pmull))
+      (let ((yv Reg (mov_to_fpu y (ScalarSize.Size64)))
+            (p Reg (pmull64 (put_in_reg vec) yv)))
+        (mov_from_vec p 0 (ScalarSize.Size64))))
+
+(rule 2 (lower (has_type $I64 (clmul x (extractlane vec @ (value_type $I64X2) (u8_from_uimm8 0)))))
+      (if-let true (use_pmull))
+      (let ((xv Reg (mov_to_fpu x (ScalarSize.Size64)))
+            (p Reg (pmull64 xv (put_in_reg vec))))
+        (mov_from_vec p 0 (ScalarSize.Size64))))
+
 ;;;; Rules for `umulhi` ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (rule 1 (lower (has_type $I64 (umulhi x y)))

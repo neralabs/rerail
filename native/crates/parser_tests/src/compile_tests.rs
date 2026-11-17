@@ -747,10 +747,18 @@ fn json_loop_keeps_values_in_registers() {
     let lines = crate::block_tests::machine_loop(&compiled.loops_disassembly());
     let (stack, mvn) = crate::block_tests::loop_costs(&lines);
     eprintln!("json loop: {} instructions, {stack} stack loads or stores, {mvn} vector mvn", lines.len());
+    if let Ok(path) = std::env::var("RERAIL_DUMP_LOOP") {
+        // The loop's machine code, to read where its stack traffic is.
+        std::fs::write(path, lines.join("\n")).expect("writes");
+    }
     assert_eq!(mvn, 0, "json's loop inverts vectors");
-    // The state is packed: one carried word per 64 state bits (decision 0070).
+    // The state is packed: one carried word per 64 state bits (decision 0070), but a chain's
+    // carry, in a word of its own as simdjson's (0345).
     let bits = crate::block_tests::state_bits(&program.block_programs[0]);
-    assert_eq!(crate::block_tests::carried_params(&compiled.clif) - crate::block_tests::sink_params(&native), bits.div_ceil(64), "json's carried state is not packed");
+    let state = native_cpu_block::State::of(&native);
+    let (chains, chain_bits) = state.chains();
+    eprintln!("json: {} carried words, {chains} of them a chain's ({chain_bits} bits); fields (instruction, bits, word): {:?}", state.words, state.fields());
+    assert_eq!(crate::block_tests::carried_params(&compiled.clif) - crate::block_tests::sink_params(&native), (bits - chain_bits).div_ceil(64) + chains, "json's carried state is not packed");
     assert!(lines.len() <= JSON_LOOP && stack <= JSON_LOOP_STACK, "json loop: {} instructions (budget {JSON_LOOP}), {stack} stack loads or stores (budget {JSON_LOOP_STACK})", lines.len());
 }
 
@@ -768,9 +776,13 @@ fn json_loop_keeps_values_in_registers() {
 /// calls has 564 instructions and 4 stack loads or stores; with the delayed outputs not held
 /// and the regions called where it is free, 566 and 4. 690 with the records: every token's last
 /// byte an extract of its own, flattened as the starts are (simdjson writes one index; a record
-/// with no end for a one-byte token would save it).
-const JSON_LOOP: usize = 690;
-const JSON_LOOP_STACK: usize = 4;
+/// with no end for a one-byte token would save it). 699 and 6 after 0337–0341 (the string a
+/// toggle, the classes one lookup, the multiply), not raised then. 704 and 10 with 0345: the
+/// toggle's multiply of the raw quotes adds the rounds of the escaped ones (+7), and the string's
+/// two chains in words of their own, as simdjson's (-2), hold two more registers across the loop,
+/// and Cranelift spills two values elsewhere.
+const JSON_LOOP: usize = 704;
+const JSON_LOOP_STACK: usize = 10;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0071) ---------------------------------------------
 //

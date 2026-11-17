@@ -126,7 +126,8 @@ pub fn carried_words(p: &crate::block::BlockProgram) -> usize {
 /// `fill`, and for each value its `prev`s read, the top `k` bits of its previous word (`k` the
 /// farthest look-back). A `toggle`'s and a `fill`'s carry is its top bit, so a look-back on one
 /// costs `k - 1` more. Every executor carries these bits and no more: Cranelift packs them into
-/// words, never a word per bit.
+/// words, never a word per bit, but a chain's carry (a `toggle`'s, a `fill`'s, an `escaped`'s),
+/// in a word of its own as simdjson keeps them (0345).
 pub fn state_bits(p: &crate::block::BlockProgram) -> usize {
     use crate::block::BlockOp::*;
     let mut back: std::collections::BTreeMap<u16, u8> = std::collections::BTreeMap::new();
