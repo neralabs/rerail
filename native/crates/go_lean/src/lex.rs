@@ -230,8 +230,10 @@ const L_ONE: u8 = 0;
 const L_NAME: u8 = 1;
 /// ...a byte read from the gap's start by `token` (a comment's `/`, a NUL, or the text's end, read as a 0)...
 const L_TOKEN: u8 = 2;
-/// ...or the rest (`decimal`, then `token_at`).
+/// ...or the rest (`decimal`, then `token_at`)...
 const L_REST: u8 = 3;
+/// ...but a string's `"`, read by `string_end` at once.
+const L_STR: u8 = 4;
 
 #[derive(Clone, Copy)]
 struct Lead {
@@ -253,6 +255,7 @@ static LEAD: [Lead; 256] = {
         c += 1;
     }
     t[0].class = L_TOKEN;
+    t[b'"' as usize].class = L_STR;
     t[b'/' as usize].class = L_TOKEN;
     t
 };
@@ -302,7 +305,26 @@ impl<'s> Lexer<'s> {
         }
         let (mut nl, mut last, mut closed) = (NO_NL, NO_NL, false);
         loop {
-            at = self.blocks.blank_end(at);
+            match self.blocks.gap(at) {
+                // Blanks and line ends at once, where they end in their block. No comment closes
+                // inside the run, so each of its line ends sets `last` as the arm below would:
+                // the run's last before a comment closes, its first after one, where none is set.
+                Some((e, eols)) => {
+                    if eols != 0 {
+                        let b = (at & !63) as u32;
+                        if nl == NO_NL {
+                            nl = b + eols.trailing_zeros();
+                        }
+                        if !closed {
+                            last = b + 63 - eols.leading_zeros();
+                        } else if last == NO_NL {
+                            last = b + eols.trailing_zeros();
+                        }
+                    }
+                    at = e;
+                }
+                None => at = self.blocks.blank_end(at),
+            }
             match self.at(at) {
                 b'\n' if at < self.src.len() => {
                     if nl == NO_NL {
@@ -349,11 +371,12 @@ impl<'s> Lexer<'s> {
     /// Up to `n` tokens from `at` pushed onto `out`, comments onto `extras`: where the next is
     /// lexed. A run ends early after `Eof`, or after a refusal, written as `refused` writes it.
     ///
-    /// simdjson's stage 2 in page 31's form (`rerail_simd8::blocks`): each token's start is the
-    /// next one of stage 1's start masks, the gap's first and last line ends scans bounded by it,
-    /// an ASCII name's end its word run, a short decimal's its run and one 8-byte test; the token
-    /// written into reserved room, the length set once. A token that is not one of those is read
-    /// by `token_at`; a comment in the gap sends the token to `token` from the gap's start.
+    /// simdjson's stage 2 in page 31's form. A gap is one run of its block's blank and line-end
+    /// masks (`Blocks::gap`: the next token's start and the gap's line ends), or the start cursor
+    /// where it runs past its block. The start byte's class is one load (`LEAD`): a one-byte
+    /// punctuator, an ASCII name (its end the word run), a string (`string_end` at once), a byte
+    /// for `token` (a comment in the gap, the text's end), or the rest (`decimal`, then
+    /// `token_at`).
     #[inline(always)]
     pub fn run(&self, mut at: usize, extras: &mut Vec<Extra>, out: &mut Vec<Tok>, n: usize) -> usize {
         let mut cur = rerail_simd8::blocks::Cursor::default();
@@ -399,6 +422,11 @@ impl<'s> Lexer<'s> {
                 }
             } else if lead.class == L_TOKEN {
                 self.token(at, extras).unwrap_or_else(refused)
+            } else if lead.class == L_STR {
+                match self.string_end(s) {
+                    Some(end) => Tok { kind: T::Quote, word: 0, start: s as u32, end: end as u32, nl, nl_last },
+                    None => refused(Refusal::Lex(s as u32)),
+                }
             } else if let Some(end) = self.decimal(s) {
                 Tok { kind: T::Int, word: 0, start: s as u32, end: end as u32, nl, nl_last }
             } else {
