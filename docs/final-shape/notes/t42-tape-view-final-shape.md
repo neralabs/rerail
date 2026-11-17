@@ -143,3 +143,18 @@ MSL from the Rust fields). The final shape's steps go on the work queue as their
   CPU and memory per job. C3 is not the direction.
 - **D:** format 15 is retired after every workload runs on 15 and 16 side by side and every difference is fixed.
 - **A:** open.
+
+## Corrections after the user's questions (2026-11-17)
+
+- **Lengths, not starts, in the header:** no reason is recorded (0156 does not name one; the writer, `Tape16::laid`,
+  writes each region's length as a u64). Starts from 0 give every length as well; nothing reads a length that a
+  start would not give.
+- **"A revision of format 16" overstated it.** Stored tapes are the store's derived data, rebuilt from their
+  sources, and the header's mark already refuses a tape of another revision. Writing starts is a new mark and one
+  cold run; format 16 has been in stores only since 2026-11-16 (f6a527f84).
+- **A decoded 16z block is format 16's bytes.** What differs is the implementation's blocking, not the format.
+  0156 §2.1 cuts *each array* into blocks of 1,024 nodes, each decoding to a fixed offset in its decoded array, with
+  raw, LZ4 and repeat blocks and the checkpoints always raw. The implementation (`Tape16Z`) compresses all nine
+  regions of a block's nodes as one LZ4 block (checkpoints too), has no raw or repeat blocks, and computes a
+  decoded block's region starts by `layout`. So a full decode is a scatter of each block's regions into the whole
+  tape's (`unblock_into`), not blocks decoded where they belong, and a read of one array decodes all nine.
