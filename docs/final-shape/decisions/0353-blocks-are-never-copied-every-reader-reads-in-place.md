@@ -132,25 +132,73 @@ slot is a hash of its key, with clashes settled in key order. Its index counts t
 then its tokens. Both are functions of the tape (`granules.rs`). An id is not a number on the tape, so today a
 per-node array holds it (`DefIds::low`, 4 bytes a node).
 
-**In place:** a document keeps a granule table, one entry a granule, written once when the document is placed. Each
-entry holds the granule's slot, its first and last tape node, its node and token counts, and its nested granules'
-range in the table. A document has about one granule per definition or top-level statement, not per node.
+**In place:** a document keeps a granule table (`granules::Table`), written once where its granules are numbered.
+It holds, per granule:
+- its start and its subtree's end on the tape, and its parent granule;
+- its slots;
+- its numbered nodes' and tokens' counts, as prefix sums;
+- its child granules, each with the granule's own nodes and tokens before it.
 
-- **The id of a tape node** is its granule's slot, and its rank among the granule's projected nodes:
-  - the projected nodes are counted from the granule's first node by the code table's mask, 64 nodes at a time
-    (popcount);
-  - the nested granules' counts, from the table, are subtracted.
+Beside it is a rank index: per 64 tape nodes, which ones are numbered nodes and which are tokens, and how many of each
+come before. That is 24 bytes per 64 nodes, 3 bits a node. The array it replaces holds 32 bits a node (`DefIds::low`),
+plus 64 for its way back.
 
-  A scan carries the innermost granule and its running count in the walk, so it pays one add a node.
-- **The tape node of an id** is the slot's granule from the table, then the index-th projected node in it, counted
-  the same way (select by popcount).
-- The spike measured succinct trees at about 2 bits a node, needing rank and select (design index, D S024–S031,
-  S039). If a point read's count over a large granule measures too slow, a rank directory (one count per 64 nodes,
-  0.5 bits a node, in the chunk block) is the fallback. It is an index, not a copy. It is built only if measured
-  necessary.
+- **The id of a tape node:**
+  - its granule is the innermost one whose subtree holds it (a bisection of the starts);
+  - its index is its rank among the granule's numbered nodes, read off the rank index (two ranks), less the counts of
+    the granules nested between;
+  - a token's index follows the granule's nodes.
+- **The tape node of an id:**
+  - the slot's granule, then the child granule its index falls after (a bisection);
+  - then a select forward from that stretch's start.
+- **A scan** walks the rank index's set bits and carries the innermost granule and its running counts.
 
-This is step 2 of the plan, and it is measured before anything is built on it: the cost of a point read and of a
-scan, against the per-node array, on hogql's tapes in formats 15, 16 and 16z.
+A granule's tokens are numbered in preorder of the tokens, not in the order of their nodes. That is what a rank
+counts. It moved the pinned ids' hash once (`definition_ids_are_pinned`; nodes' and spans' ids are unchanged), and
+`Locs`' token spans follow the same order.
+
+**Why a rank index, from the measurement** (`native/examples/node_ids_in_place.rs`, hogql: 437 files, 1,311,480
+ids, 20,877 granules; least of 5 rounds; load 40–55):
+
+| Read | Instructions an id | Cycles an id |
+|---|---|---|
+| The array (`DefIds::low[l]`) | 4.6 | 1.2 |
+| Point read, counting the codes from the granule's start | 6,260 | 820 |
+| Point read, rank index | 171 | 26 |
+| Scan, rank index | 59 | 7.8 |
+| Node of an id: the array's way back (a sorted copy, made once) | 209 | 45 |
+| Node of an id: rank index, bisection, select forward | 254 | 74 |
+
+Formats 15, 16 and 16z measure the same with the rank index, since it does not read the tape's codes. The projection
+that makes the arrays costs 1,350 instructions an id in format 15 (1,770 M), 1,500 in 16 and 2,450 in 16z.
+
+- **The codes alone cannot say which nodes are numbered.** A code says what a node is, not what is above it. Python's
+  `is not` is an anonymous node holding the anonymous `is` and `not`: the numbering counts it as a token of its
+  named parent, and does not count its children. hogql has 5,348 such nodes.
+- **A count of the codes costs about 1,210 instructions per 64 nodes** in formats 15 and 16, and 1,740 in 16z: set
+  membership is tested one code byte at a time. A rank directory alone (counts only) would still read two such
+  groups a point read.
+- **A granule can be large.** A document with more granules than slots folds into one: 17,000 definitions are one
+  granule of about 136,000 nodes. Counting from its start is unbounded; a rank is not.
+
+The rank index is derived: which nodes the projection numbers is a function of the codes and the parents, written
+once. It is an index, not a copy of the tape. The check (`node_ids_in_place_equal_the_numbered_ones`) runs every
+node and token of Python, TypeScript, TSX, JavaScript, Rust, PHP and SQL documents, and of the folded one, in formats
+15, 16 and 16z and both shapes:
+- the id equals `DefIds::low`'s;
+- `Table::node` inverts it;
+- the scan gives the same ids;
+- no other tape node has one.
+
+Findings stay 1,629 on hogql. Interleaved first runs on fresh stores, at load 22–34: the base retired 80.0 B
+instructions, and with the table built beside the arrays 71.8 B, inside the earlier spread of 65.7–80 B. The table's
+build is 0.05 s of CPU (the `granule slots` span).
+
+Still to do in step 2:
+- place the table and its rank index in the batch's block beside the tape;
+- write the reads once in CLIF, for Rust and MSL;
+- answer a narrowed projection (anchors) too;
+- then remove `Projected`'s arrays and `DefIds`.
 
 ## The copies today
 
@@ -262,5 +310,4 @@ reads need the ids, and the CPU's reads are their check.
 
 ## Open
 
-- The rank directory for ids, only if step 2's measurement needs it.
 - Texts compared in place (spans' bytes) rather than through symbols: a later question, after step 3.
