@@ -443,7 +443,8 @@ failed, the coding agent and its version, the Rerail version and the reason, suc
 `the Rerail daemon (pid …) refused the access capability in daemon.json` (`daemon.json` was edited or written by
 another daemon; run `rerail daemon stop`, then `rerail daemon start`) or a payload field the coding agent sent in a
 shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in the Rerail home; past 256 KB one hook
-moves it to `hook-failures.jsonl.1`, replacing the one there, and the line counts both. Update Rerail with
+moves it to `hook-failures.jsonl.1`, replacing the one there, and the line counts both. While it cannot be moved, as
+when another program holds `hook-failures.jsonl.1`, it stops taking failures at 1 MB. Update Rerail with
 `rerail update`; if the line stays, report it with `rerail support-bundle`.
 
 The line leads with the first hook that failed after the last event Rerail recorded. When hooks also failed before

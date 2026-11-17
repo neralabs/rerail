@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -260,25 +260,85 @@ describe("the hook failure log", () => {
       await stopHookProcesses(hooks);
     }
   }, 120_000);
+
+  // The log's limits (`hook-failures.ts`): moved aside past 256 KB, and no failure written past 1 MB while it cannot be.
+  // Hooks that read its size at the same moment each write one more line: at most a line of ~1.2 KB each here.
+  const MOVED_PAST = 256 * 1024;
+  const CAP = 1024 * 1024;
+  const slack = (processes: number): number => processes * 2 * 1024;
+  const sizeOfLog = (rerailHome: string, name = HOOK_FAILURES_FILE): number => statSync(join(rerailHome, name)).size;
+
+  it("keeps both parts of the log within their size when the engine does not load and hooks move it unlocked", async () => {
+    const processes = 8;
+    const rerailHome = await home();
+    const hooks = await startHookProcesses(processes, { RERAIL_ENGINE_PATH: join(rerailHome, "missing.node") });
+    try {
+      // 8 hooks at once, 400 failures of 1 KB each: 3.7 MB written in all.
+      await Promise.all(hooks.map(hook => hook.fail(rerailHome, 2, { times: 400, reasonBytes: 1_024 })));
+    } finally {
+      await stopHookProcesses(hooks);
+    }
+    // No hook took the move's lock: each moved the log without it.
+    expect(existsSync(join(rerailHome, LOCKS_DIR, "hook-failures.lock"))).toBe(false);
+    expect(readdirSync(rerailHome).filter(name => name.startsWith(HOOK_FAILURES_FILE)).sort()).toEqual([HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`]);
+    expect(sizeOfLog(rerailHome)).toBeLessThanOrEqual(MOVED_PAST + slack(processes));
+    expect(sizeOfLog(rerailHome, `${HOOK_FAILURES_FILE}.1`)).toBeLessThanOrEqual(MOVED_PAST + slack(processes));
+  }, 120_000);
+
+  it("stops growing the live log at its cap when .1 cannot be replaced", async () => {
+    const rerailHome = await home();
+    // A folder that holds a file: no system renames a file over it, and the retry gives up at once.
+    mkdirSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`));
+    writeFileSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`, "kept"), "");
+    for (let index = 0; index < 1_500; index += 1) {
+      recordHookFailure({ host: "claude-code", event: "PostToolUse", reason: "x".repeat(1_024) }, { home: rerailHome, now: 2, env: {} });
+    }
+    expect(sizeOfLog(rerailHome)).toBeGreaterThanOrEqual(CAP);
+    expect(sizeOfLog(rerailHome)).toBeLessThanOrEqual(CAP + slack(1));
+  });
+
+  // The system frees a lock once its holder ends, however it ends; here the test holds it for as long as the hooks run.
+  it("stops growing the live log at its cap while another process holds the move's lock", async () => {
+    const processes = 20;
+    const rerailHome = await home();
+    mkdirSync(join(rerailHome, LOCKS_DIR), { recursive: true });
+    const held = loadNativeBinding().tryLockExclusive(join(rerailHome, LOCKS_DIR, "hook-failures.lock"));
+    expect(held).not.toBeNull();
+    const hooks = await startHookProcesses(processes);
+    try {
+      // 20 hooks at once, 100 failures of 1 KB each: 2.3 MB written in all.
+      await Promise.all(hooks.map(hook => hook.fail(rerailHome, 2, { times: 100, reasonBytes: 1_024 })));
+    } finally {
+      held!.release();
+      await stopHookProcesses(hooks);
+    }
+    expect(existsSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`))).toBe(false);
+    expect(sizeOfLog(rerailHome)).toBeGreaterThanOrEqual(CAP);
+    expect(sizeOfLog(rerailHome)).toBeLessThanOrEqual(CAP + slack(processes));
+  }, 120_000);
 });
 
 interface HookProcess {
   readonly child: ChildProcess;
-  /** Records one failure at `at` into `rerailHome`; resolves once it is written. */
-  fail(rerailHome: string, at: number): Promise<void>;
+  /**
+   * Records a failure at `at` into `rerailHome`, `times` times (once by default), each with a reason `reasonBytes` longer
+   * than the plain one; resolves once all are written.
+   */
+  fail(rerailHome: string, at: number, options?: { times?: number; reasonBytes?: number }): Promise<void>;
 }
 
-/** A process that records a hook failure each time it is told to, as a hook process does. */
-async function startHookProcess(): Promise<HookProcess> {
+/** A process that records hook failures each time it is told to, as a hook process does, with `env` over this one's. */
+async function startHookProcess(env: NodeJS.ProcessEnv = {}): Promise<HookProcess> {
   const program = `import { recordHookFailure } from ${JSON.stringify(sourceModule("src/harness/hook-failures.ts"))};
-process.on("message", ({ home, at }) => {
-  recordHookFailure({ host: "claude-code", event: "PostToolUse", reason: "the daemon did not answer" }, { home, now: at, env: {} });
+process.on("message", ({ home, at, times, reasonBytes }) => {
+  const reason = "the daemon did not answer" + "x".repeat(reasonBytes);
+  for (let index = 0; index < times; index += 1) recordHookFailure({ host: "claude-code", event: "PostToolUse", reason }, { home, now: at, env: {} });
   process.send("recorded");
 });
 process.send("ready");
 `;
   const child = tracked(spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
-    cwd: join(import.meta.dirname, "..", ".."), stdio: ["ignore", "ignore", "inherit", "ipc"], windowsHide: true,
+    cwd: join(import.meta.dirname, "..", ".."), env: { ...process.env, ...env }, stdio: ["ignore", "ignore", "inherit", "ipc"], windowsHide: true,
   }));
   const reply = (): Promise<void> => new Promise((resolve, reject) => {
     const onExit = (code: number | null): void => reject(new Error(`the hook process exited (${code}) before it answered`));
@@ -288,17 +348,17 @@ process.send("ready");
   await reply();
   return {
     child,
-    fail: (rerailHome, at) => {
+    fail: (rerailHome, at, { times = 1, reasonBytes = 0 } = {}) => {
       const recorded = reply();
-      child.send({ home: rerailHome, at });
+      child.send({ home: rerailHome, at, times, reasonBytes });
       return recorded;
     },
   };
 }
 
 /** Starts `count` hook processes; fails with the reason of each that did not start, once the others are stopped. */
-async function startHookProcesses(count: number): Promise<HookProcess[]> {
-  const started = await Promise.allSettled(Array.from({ length: count }, () => startHookProcess()));
+async function startHookProcesses(count: number, env?: NodeJS.ProcessEnv): Promise<HookProcess[]> {
+  const started = await Promise.allSettled(Array.from({ length: count }, () => startHookProcess(env)));
   const hooks = started.flatMap(outcome => (outcome.status === "fulfilled" ? [outcome.value] : []));
   const failed = started.flatMap(outcome => (outcome.status === "rejected" ? [String(outcome.reason)] : []));
   if (failed.length > 0) {

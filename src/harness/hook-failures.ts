@@ -16,6 +16,12 @@ export const HOOK_FAILURES_FILE = "hook-failures.jsonl";
 /** Past this size the file is moved to `<name>.1`, replacing the one before; a failing hook writes on every event. */
 const MAX_FAILURE_BYTES = 256 * 1024;
 
+/**
+ * Past this size the live log takes no more failures: the most it holds while it cannot be moved aside, as when another
+ * program holds `.1`, or a hook is stopped holding the move's lock until the system frees it.
+ */
+const CAP_FAILURE_BYTES = 4 * MAX_FAILURE_BYTES;
+
 /** Where the full log moves, replacing the one before: the older part of the log. */
 const MOVED_ASIDE_FILE = `${HOOK_FAILURES_FILE}.1`;
 
@@ -68,7 +74,10 @@ interface PartStart {
  */
 const PART_START_PAST_CLOCK_MS = 16 + 1;
 
-/** Appends one failure. Never throws: a hook must not break the session over its own bookkeeping. */
+/**
+ * Appends one failure. Never throws: a hook must not break the session over its own bookkeeping. A log that could not
+ * be moved aside and has reached `CAP_FAILURE_BYTES` keeps what it holds, and the failure is not written.
+ */
 export function recordHookFailure(
   failure: Pick<HookFailure, "host" | "event" | "reason">,
   { home = defaultRerailHome(), now, env = process.env }: HookFailureContext = {},
@@ -76,7 +85,9 @@ export function recordHookFailure(
   try {
     makeRerailHome(home);
     const path = join(home, HOOK_FAILURES_FILE);
-    const moved = sizeOf(path) > MAX_FAILURE_BYTES && movedAside(home, path);
+    const size = sizeOf(path);
+    const moved = size > MAX_FAILURE_BYTES && movedAside(home, path);
+    if (!moved && size >= CAP_FAILURE_BYTES) return;
     // Read after the move, past it by a clock step when this hook moved the log: the hook's own failure carries the
     // time the new part starts, so it counts in that part.
     const at = now ?? Date.now() + (moved ? PART_START_PAST_CLOCK_MS : 0);
@@ -87,11 +98,12 @@ export function recordHookFailure(
   }
 }
 
+/** The log's size: 0 when there is none, and past every limit when it cannot be told, so nothing is written unchecked. */
 function sizeOf(path: string): number {
   try {
     return statSync(path).size;
-  } catch {
-    return 0;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? 0 : Number.POSITIVE_INFINITY;
   }
 }
 
@@ -100,32 +112,36 @@ function sizeOf(path: string): number {
  * time moves it, under an OS lock it tries once and never waits for: a hook that finds the lock held leaves the move to
  * its holder and appends to whichever log is live, which status reads either way. Under the lock the size is read
  * again, so a hook that found the log full just before another moved it does not move the new log over the full one in
- * `.1`. Without the engine there is no lock, and the log is not moved: a log past its size is harmless, and an unlocked
- * move could replace a full `.1` with a nearly empty log.
+ * `.1`. Without the engine there is no lock, and the hook moves the log unlocked, as before the lock: two hooks moving
+ * at once may then replace a full `.1`, but the log stays bounded.
  */
 function movedAside(home: string, path: string): boolean {
   const lock = moveLock(home);
-  if (lock === null) return false;
+  if (lock === "busy") return false;
   try {
     if (sizeOf(path) <= MAX_FAILURE_BYTES) return false;
     renameWithRetrySync(path, join(home, MOVED_ASIDE_FILE));
     return true;
   } catch {
-    // Another program holds `.1` (Windows): the failure goes into the live log, and a later hook moves it.
+    // Another program holds `.1` (Windows), or something other than a file is there: the failure goes into the live
+    // log, up to its cap, and a later hook moves it.
     return false;
   } finally {
-    lock.release();
+    lock?.release();
   }
 }
 
-/** The move's lock if no other hook holds it; null when one does, or the engine does not load. */
-function moveLock(home: string): NativeExclusiveFileLock | null {
+/**
+ * The move's lock; "busy" when another hook holds it; undefined when the engine does not load or the lock file cannot
+ * be made, where the hook moves the log unlocked.
+ */
+function moveLock(home: string): NativeExclusiveFileLock | "busy" | undefined {
   try {
     const locks = join(home, LOCKS_DIR);
     mkdirSync(locks, { recursive: true, mode: 0o700 });
-    return loadNativeBinding().tryLockExclusive(join(locks, MOVE_LOCK_FILE));
+    return loadNativeBinding().tryLockExclusive(join(locks, MOVE_LOCK_FILE)) ?? "busy";
   } catch {
-    return null;
+    return undefined;
   }
 }
 
