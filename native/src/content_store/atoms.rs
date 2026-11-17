@@ -37,7 +37,7 @@ pub use map::{ProcessIds, StoreIds, map_columns, mapped};
 
 pub type Sym = u32;
 
-/// The values `Atoms::intern_all` looks up under one read lock (decision 0314): a writer waits at most this many
+/// The values `Atoms::intern_all` looks up under one read lock (decision 0315): a writer waits at most this many
 /// lookups for it.
 const READ_RUN: usize = 256;
 
@@ -987,7 +987,7 @@ impl Atoms {
         self.reader.lock().take();
     }
 
-    /// The atom of each of `values`, giving out new ones (pending) under the lease. Decision 0314: each value is
+    /// The atom of each of `values`, giving out new ones (pending) under the lease. Decision 0315: each value is
     /// hashed once, outside any lock; those held are found under the read lock, and only the rest are looked for
     /// again and given ids under the write lock (`give`), so a batch of mostly known values stops the arena's readers
     /// for its new ones only.
@@ -995,7 +995,7 @@ impl Atoms {
         let hashes: Vec<u64> = values.iter().map(|value| hash_str(value)).collect();
         // Looked up `READ_RUN` at a time, each run under a read lock of its own: a writer waits for every reader
         // (`Sharded::write`), and while it waits every reader of a shard it holds waits too; a parser's batch read
-        // under one lock was the arena's longest hold (decision 0314).
+        // under one lock was the arena's longest hold (decision 0315).
         let mut found: Vec<Option<Sym>> = Vec::with_capacity(values.len());
         for (values, hashes) in values.chunks(READ_RUN).zip(hashes.chunks(READ_RUN)) {
             let state = self.state.read();
