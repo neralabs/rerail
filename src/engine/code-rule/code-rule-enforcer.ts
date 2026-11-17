@@ -46,6 +46,7 @@ import {
   type AuditFailure,
   type AuditRecorder,
   type AuditMode,
+  type AuditOrigin,
   type AuditResult,
   type AuditRuleProvenance,
   type AuditScope,
@@ -61,6 +62,7 @@ import { contentStorePath } from "../native/rerail-build.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES, sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
 import { binaryPrefix } from "./binary-prefix.js";
+import { IGNORED_DIRECTORIES } from "./ignored-directories.js";
 import { checkoutPathBoundary, SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES, sensitiveByName } from "../path-boundary.js";
 
 export { SOURCE_LANGUAGES };
@@ -79,22 +81,6 @@ const AUDIT_MAX_FAILURES = 20;
 const UNREPORTED_FACTS = "\0unreported";
 /** The most source bytes the repository walk reads in total. */
 export const AUDIT_MAX_SOURCE_BYTES = 512 * 1024 * 1024;
-export const IGNORED_DIRECTORIES = new Set([
-  ".git",
-  ".hg",
-  ".svn",
-  ".rerail",
-  ".venv",
-  "__pycache__",
-  "node_modules",
-  "dist",
-  "build",
-  ".next",
-  ".turbo",
-  "coverage",
-  "target",
-  "vendor",
-]);
 /**
  * A repository index honours the walk's bounds, ignored directories and source languages, and skips an unlisted file
  * named like a secret as `workspaceLanguage` does; the lane adds Git's ignores.
@@ -242,6 +228,21 @@ type ByteRange = { start: number; end: number };
 type ReportBase = Pick<CodeRuleEdit, "previousText" | "previousReadError">;
 /** The nested checkouts a walk skips (judged by their own rules), and the ones it reached. */
 type NestedCheckoutWalk = { readonly pruned: ReadonlySet<string>; readonly reached: string[] };
+/** One `#runScopeAudit`: what it audits and how, and what it has gathered so far. */
+type ScopeAuditRun = {
+  readonly scope: "repository" | "touched-files";
+  readonly mode: AuditMode;
+  readonly paths: string[];
+  readonly generatedEdit: boolean;
+  readonly revision: number;
+  readonly startedAt: number;
+  readonly failures: AuditFailure[];
+  readonly nested: NestedCheckoutWalk;
+  auditId?: string | undefined;
+};
+
+/** The audit ids an audit that may not have started returns. */
+const startedAudits = (auditId: string | undefined): readonly string[] => (auditId === undefined ? [] : [auditId]);
 /** One audit walk's budget and what it has read; `facts` holds each directory's nearest `package.json` and server graphs. */
 type ScopeAuditState = {
   bytes: number;
@@ -552,6 +553,26 @@ function auditFailureCap(scope: AuditScope, limit = AUDIT_MAX_FAILURES): (failur
 }
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+/**
+ * A walked entry's place among its siblings in path order: the byte order of UTF-8 paths, which Git and the native
+ * repository index sort by. A folder sorts as its name followed by "/", so `a.txt` comes before `a/b.txt` and `a0.txt`
+ * after it.
+ */
+function walkOrderKey(entry: Dirent): Buffer {
+  return Buffer.from(entry.isDirectory() ? `${entry.name}/` : entry.name);
+}
+
+/** A folder's entry waiting to go on the walk's stack, with its `walkOrderKey`. */
+interface WalkEntry {
+  readonly path: string;
+  readonly key: Buffer;
+}
+
+/** Puts `entries` on the walk's stack so the walk, which takes from the stack's end, takes them in path order. */
+function pushInPathOrder(stack: string[], entries: WalkEntry[]): void {
+  entries.sort((left, right) => Buffer.compare(right.key, left.key));
+  for (const entry of entries) stack.push(entry.path);
 }
 
 /** The graph reads the edit's own text, which disk may not hold yet. */
@@ -924,38 +945,45 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     }
   }
 
+  /** An audit someone asked for (`rerail scan`, the first repository audit), recorded as a scan (`AuditOrigin`). */
   async audit(
     sessionId: string,
     options: { scope: "repository" | "touched-files"; mode: AuditMode; paths?: string[]; audit?: RepositoryAuditHooks },
   ): Promise<readonly string[]> {
     if (sessionId !== this.#sessionId || this.#closing) throw new Error("Executable policy enforcer session mismatch");
-    const paths = options.paths ?? [];
-    if (options.scope === "repository" && paths.length > 0)
-      throw new Error("Repository scope always covers the full repository");
-    if (options.scope === "touched-files" && paths.length === 0)
-      throw new Error("Touched-files policy scan requires paths");
-    if (options.scope === "repository") {
-      if (options.audit !== undefined && !options.audit.claim(this.#workspaceRoot, this.catalogRevision())) return [];
-      const { auditId } = await this.auditRepository(sessionId, options.mode);
-      options.audit?.finish(this.#workspaceRoot, auditId);
-      return auditId === undefined ? [] : [auditId];
-    }
-    const scope = paths.map((path) => {
+    if (options.scope === "repository") return await this.#scanRepository(sessionId, options);
+    const task = this.#runScopeAudit("touched-files", options.mode, this.#scanPaths(options.paths), false, [], "scan");
+    this.#trackAudit(task);
+    return startedAudits(await task);
+  }
+
+  /** `audit` of the whole checkout, once its `audit` hooks (the first repository audit's) claim it. */
+  async #scanRepository(sessionId: string, options: { mode: AuditMode; paths?: string[]; audit?: RepositoryAuditHooks }): Promise<readonly string[]> {
+    if ((options.paths ?? []).length > 0) throw new Error("Repository scope always covers the full repository");
+    if (options.audit !== undefined && !options.audit.claim(this.#workspaceRoot, this.catalogRevision())) return [];
+    const { auditId } = await this.auditRepository(sessionId, options.mode);
+    options.audit?.finish(this.#workspaceRoot, auditId);
+    return startedAudits(auditId);
+  }
+
+  /** A touched-files scan's paths, relative to the checkout; an empty list, or a path outside the checkout, is refused. */
+  #scanPaths(paths: readonly string[] | undefined): string[] {
+    if (paths === undefined || paths.length === 0) throw new Error("Touched-files policy scan requires paths");
+    return paths.map((path) => {
       const absolute = resolve(this.#workspaceRoot, path);
       if (!withinCheckout(this.#workspaceRoot, absolute)) throw new Error("Policy scan path escapes workspace");
       return relative(this.#workspaceRoot, absolute).split(sep).join("/");
     });
-    const task = this.#runScopeAudit(options.scope, options.mode, scope);
-    this.#trackAudit(task);
-    const auditId = await task;
-    return auditId === undefined ? [] : [auditId];
   }
 
-  /** Audit this whole checkout; the checkouts nested in it are skipped and reported, for their own rules to judge. */
+  /**
+   * Audit this whole checkout, as a scan; the checkouts nested in it are skipped and reported, for their own rules to
+   * judge.
+   */
   async auditRepository(sessionId: string, mode: AuditMode): Promise<RepositoryAuditReport> {
     if (sessionId !== this.#sessionId || this.#closing) throw new Error("Executable policy enforcer session mismatch");
     const nestedCheckouts: string[] = [];
-    const task = this.#runScopeAudit("repository", mode, [], false, nestedCheckouts);
+    const task = this.#runScopeAudit("repository", mode, [], false, nestedCheckouts, "scan");
     this.#trackAudit(task);
     const auditId = await task;
     return { auditId, nestedCheckouts: [...new Set(nestedCheckouts)].sort(compareDeterministicStrings) };
@@ -1365,51 +1393,62 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     generatedEdit = false,
     /** Receives the nested checkouts the walk reached and skipped. */
     reached: string[] = [],
+    origin: AuditOrigin = "ongoing",
   ): Promise<string | undefined> {
     const startedAt = performance.now();
     this.refreshCodeRules();
-    const revision = this.#revision;
-    let auditId: string | undefined;
-    const failures: AuditFailure[] = [];
+    const run: ScopeAuditRun = {
+      scope, mode, paths, generatedEdit, revision: this.#revision, startedAt, failures: [],
+      nested: { pruned: new Set(this.#nestedCheckouts()), reached },
+    };
     let workspace: NativeCodeRuleDslWorkspace | undefined;
-    const nested: NestedCheckoutWalk = { pruned: new Set(this.#nestedCheckouts()), reached };
     try {
       await yieldToHost();
-      if (this.#closing) return auditId;
+      if (this.#closing) return undefined;
       const prepared = this.#prepareWorkspace();
       workspace = prepared.workspace;
-      auditId = this.#startAudit(scope, mode, revision, paths, prepared);
-      const indexed = scope === "repository" && (await prepared.storage);
-      const indexStartedAt = performance.now();
-      const walked = indexed
-        ? await this.#indexRepository(workspace, auditId, failures, nested)
-        : await this.#walkAuditSources(workspace, scope, auditId, paths, failures, nested);
-      const indexMilliseconds = performance.now() - indexStartedAt;
-      if (this.#closing) return auditId;
-      const summary = await this.#finishScopeAudit({
-        workspace,
-        auditId,
-        revision,
-        scope,
-        mode,
-        sourcePaths: walked.sourcePaths,
-        failures,
-        stopped: walked.stopped,
-        generatedEdit,
-        indexed,
-      });
-      if (scope === "repository" && summary !== undefined)
-        this.#logRepositoryAudit(summary.status, startedAt, indexMilliseconds, summary.resultPagesMilliseconds, walked.files, summary.violations, summary.failures);
-      return auditId;
+      run.auditId = this.#startAudit(scope, mode, run.revision, paths, prepared, undefined, origin);
+      await this.#evaluateScopeAudit(run, prepared);
     } catch (error) {
-      const all = [...failures, failure("scan", "adapter-error", errorMessage(error), undefined, "scan")];
-      if (scope === "repository") this.#logRepositoryAudit("failed", startedAt, 0, 0, 0, 0, all.length);
-      const listed = auditFailureCap(scope)(all);
-      this.#finishAudit(auditId, "failed", [], listed, all.length - listed.length);
-      return auditId;
+      this.#failScopeAudit(run, error);
     } finally {
       if (workspace !== undefined) this.#disposeWorkspace(workspace);
     }
+    return run.auditId;
+  }
+
+  /** Reads `run`'s files, evaluates them and records the result, unless the evaluator closes meanwhile. */
+  async #evaluateScopeAudit(run: ScopeAuditRun, prepared: PreparedWorkspace): Promise<void> {
+    const { workspace } = prepared;
+    const indexed = run.scope === "repository" && (await prepared.storage);
+    const indexStartedAt = performance.now();
+    const walked = indexed
+      ? await this.#indexRepository(workspace, run.auditId, run.failures, run.nested)
+      : await this.#walkAuditSources(workspace, run.scope, run.auditId, run.paths, run.failures, run.nested);
+    const indexMilliseconds = performance.now() - indexStartedAt;
+    if (this.#closing) return;
+    const summary = await this.#finishScopeAudit({
+      workspace,
+      auditId: run.auditId,
+      revision: run.revision,
+      scope: run.scope,
+      mode: run.mode,
+      sourcePaths: walked.sourcePaths,
+      failures: run.failures,
+      stopped: walked.stopped,
+      generatedEdit: run.generatedEdit,
+      indexed,
+    });
+    if (run.scope === "repository" && summary !== undefined)
+      this.#logRepositoryAudit(summary.status, run.startedAt, indexMilliseconds, summary.resultPagesMilliseconds, walked.files, summary.violations, summary.failures);
+  }
+
+  /** Records `run` failed for `error`, with the failures it gathered first. */
+  #failScopeAudit(run: ScopeAuditRun, error: unknown): void {
+    const all = [...run.failures, failure("scan", "adapter-error", errorMessage(error), undefined, "scan")];
+    if (run.scope === "repository") this.#logRepositoryAudit("failed", run.startedAt, 0, 0, 0, 0, all.length);
+    const listed = auditFailureCap(run.scope)(all);
+    this.#finishAudit(run.auditId, "failed", [], listed, all.length - listed.length);
   }
 
   /** One line per repository audit in the daemon log: where its time went, so a slow audit can be told from a stuck one. */
@@ -1685,6 +1724,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return false;
   }
 
+  /**
+   * Puts a folder's walkable entries on the walk's stack so the walk takes them in path order (`walkOrderKey`), as the
+   * native repository index reads a Git checkout, whatever order the filesystem lists them in. A listing that fails
+   * partway (on a network or FUSE filesystem) still puts the entries it gave on the stack before its error leaves, so
+   * they are audited and the caller reports the folder.
+   */
   async #enqueueAuditDirectory(
     workspace: NativeCodeRuleDslWorkspace,
     canonicalRoot: string,
@@ -1692,10 +1737,15 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     stack: string[],
     nested: NestedCheckoutWalk,
   ): Promise<void> {
-    for await (const entry of await opendir(absolute)) {
-      if (this.#closing) return;
-      if (!this.#shouldWalkDirectoryEntry(workspace, canonicalRoot, absolute, entry, nested)) continue;
-      stack.push(join(absolute, entry.name));
+    const entries: WalkEntry[] = [];
+    try {
+      for await (const entry of await opendir(absolute)) {
+        if (this.#closing) return;
+        if (this.#shouldWalkDirectoryEntry(workspace, canonicalRoot, absolute, entry, nested))
+          entries.push({ path: join(absolute, entry.name), key: walkOrderKey(entry) });
+      }
+    } finally {
+      pushInPathOrder(stack, entries);
     }
   }
 
@@ -2082,6 +2132,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     paths: string[],
     prepared: PreparedWorkspace | null | undefined = this.#replacement ?? this.#workspace,
     provenance: readonly AuditRuleProvenance[] = prepared?.provenance ?? this.#catalog.provenance(),
+    origin: AuditOrigin = "ongoing",
   ): string | undefined {
     if (this.#closing && prepared !== null) return undefined;
     let auditId: string | undefined;
@@ -2091,6 +2142,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         workspaceRoot: this.#workspaceRoot,
         scope,
         mode,
+        origin,
         catalogRevision: prepared === null ? null : (prepared?.version ?? this.#catalog.status.version),
         ruleRevisions: prepared === null ? [] : provenance.map(({ ruleId, revision }) => ({ ruleId, revision })),
         revision,

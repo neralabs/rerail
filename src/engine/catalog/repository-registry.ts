@@ -10,6 +10,7 @@ import { and, eq, getTableColumns, inArray, ne, sql } from "drizzle-orm";
 import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGit } from "../git.js";
+import { mergeAssistExperimentEnabled } from "../experimental-features.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
 import {
   normalizeRemoteAddress,
@@ -21,7 +22,7 @@ import {
   worktreeRegistry,
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
-import { checkouts, repositories, ruleSettings } from "../storage/schema.js";
+import { checkouts, mergeAssistState, repositories, ruleSettings } from "../storage/schema.js";
 
 type Reader = Pick<RerailDatabase, "select">;
 type Writer = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
@@ -70,9 +71,23 @@ function contextOf<C extends string | null>(
   return { checkoutPath, repositoryKey, cloneId, git: location.git, main: location.main };
 }
 
+/** A forgotten checkout's own rows go with it: its rule settings, and what Merge Assist found and scanned there. */
 function deleteCheckoutSettings(db: Writer, checkoutPaths: readonly string[]): void {
   if (checkoutPaths.length === 0) return;
   db.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "checkout"), inArray(ruleSettings.ownerId, [...checkoutPaths]))).run();
+  // The keys `runtime/merge-assist/state.ts` keeps per checkout (`STATE_KEYS`).
+  const keys = checkoutPaths.flatMap(path => [`conflicts:${path}`, `scan:${path}`, `scanning:${path}`]);
+  db.delete(mergeAssistState).where(inArray(mergeAssistState.key, keys)).run();
+}
+
+/** The keys `runtime/merge-assist/state.ts` keeps per repository (`STATE_KEYS`): the person's settings, and `gh` readiness. */
+const mergeAssistSettingsKey = (key: RepositoryKey): string => `settings:${key}`;
+const mergeAssistGithubKey = (key: RepositoryKey): string => `github:${key}`;
+
+/** A removed repository's own rows go with it: its rule settings, and its Merge Assist settings and `gh` readiness. */
+function deleteRepositorySettings(db: Writer, key: RepositoryKey): void {
+  db.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, key))).run();
+  db.delete(mergeAssistState).where(inArray(mergeAssistState.key, [mergeAssistSettingsKey(key), mergeAssistGithubKey(key)])).run();
 }
 
 /** Clone-keyed repositories whose remote this process already tried to adopt; a clone with no remote is checked again. */
@@ -249,9 +264,12 @@ export function createCheckoutResolver(db: Reader): (workspace: string) => Check
   };
 }
 
+/** `fromKey`'s settings become `toKey`'s, its Merge Assist settings too; its `gh` readiness is read again for `toKey`. */
 function moveRepositorySettings(db: Writer, fromKey: RepositoryKey, toKey: RepositoryKey): void {
   db.update(ruleSettings).set({ ownerId: toKey })
     .where(and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, fromKey))).run();
+  db.update(mergeAssistState).set({ key: mergeAssistSettingsKey(toKey) }).where(eq(mergeAssistState.key, mergeAssistSettingsKey(fromKey))).run();
+  db.delete(mergeAssistState).where(eq(mergeAssistState.key, mergeAssistGithubKey(fromKey))).run();
 }
 
 /** Started when either was; stopped when either was stopped and neither started; else still never set. */
@@ -279,9 +297,10 @@ export function adoptRemote(db: RerailDatabase, fromKey: RepositoryKey, toKey: R
     }
     if (target !== undefined) {
       tx.update(checkouts).set({ repositoryKey: fromKey }).where(eq(checkouts.repositoryKey, toKey)).run();
-      tx.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, toKey))).run();
       tx.delete(repositories).where(eq(repositories.repositoryKey, toKey)).run();
     }
+    // What `toKey` holds gives way to `fromKey`'s, rows a repository removed before left under it included.
+    deleteRepositorySettings(tx, toKey);
     const aliases = [...new Set([...source.aliases, ...(target?.aliases ?? []), fromKey])].filter(alias => alias !== toKey);
     tx.update(repositories)
       .set({
@@ -324,7 +343,7 @@ function absorbAliasOwner(tx: Writer, key: RepositoryKey, alias: RepositoryKey):
   if (other === undefined) return [];
   if (other.configuredAt !== null) throw new Error(`${alias} already belongs to the set-up repository ${other.repositoryKey}`);
   tx.update(checkouts).set({ repositoryKey: key }).where(eq(checkouts.repositoryKey, other.repositoryKey)).run();
-  tx.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, other.repositoryKey))).run();
+  deleteRepositorySettings(tx, other.repositoryKey);
   tx.delete(repositories).where(eq(repositories.repositoryKey, other.repositoryKey)).run();
   return [other.repositoryKey, ...other.aliases];
 }
@@ -395,6 +414,16 @@ export function followsGitignore(db: Reader, checkout: Pick<CheckoutContext, "re
   if (checkout === undefined) return true;
   return db.select({ followGitignore: repositories.followGitignore }).from(repositories)
     .where(eq(repositories.repositoryKey, checkout.repositoryKey)).get()?.followGitignore ?? true;
+}
+
+/**
+ * Whether Merge Assist is on for `repositoryKey`'s repository: its setting, off for a repository not recorded, and off
+ * for every repository while the experiment is ({@link mergeAssistExperimentEnabled}), whatever a person saved.
+ */
+export function mergeAssistEnabled(db: Reader, repositoryKey: RepositoryKey): boolean {
+  if (!mergeAssistExperimentEnabled()) return false;
+  return db.select({ mergeAssist: repositories.mergeAssist }).from(repositories)
+    .where(eq(repositories.repositoryKey, repositoryKey)).get()?.mergeAssist ?? false;
 }
 
 /** The recorded checkouts of the same repository inside `checkout`'s folder; never itself. */

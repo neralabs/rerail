@@ -21,6 +21,7 @@ import {
   CODE_RULE_PLANNED_LANGUAGES,
   codeRuleDialectForPath,
 } from "../../../src/engine/code-rule/code-rule-languages.js";
+import { LANGUAGE_SINCE } from "../../../scripts/release/core.mjs";
 import { EXEMPLAR, exemplarLanguageRegistry, exemplarRegistryModule } from "../support/exemplar-registry.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
@@ -64,6 +65,15 @@ describe("the language registry", () => {
     expect(readFileSync(LANGUAGE_REGISTRY_MODULE_PATH, "utf8")).not.toContain(EXEMPLAR);
     expect(CODE_RULE_LANGUAGE_IDS).not.toContain(EXEMPLAR);
     expect(CODE_RULE_PLANNED_LANGUAGES).not.toContain(EXEMPLAR);
+  });
+
+  // An older core refuses a rule document in a language it does not know, and check 5 of the pack validation holds a
+  // pack's core range to the release that first reads each language: a language added after 0.1.0 fails here until
+  // LANGUAGE_SINCE names that release.
+  it("names the release that first reads each language added after 0.1.0", () => {
+    const readSince010 = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue"];
+    const added = readLanguageRegistry().map(entry => entry.id).filter(id => !readSince010.includes(id));
+    expect([...LANGUAGE_SINCE.keys()].toSorted()).toEqual(added.toSorted());
   });
 
   it("reads the exemplar beside the product registry for tests: planned, with every capability not supported yet", () => {

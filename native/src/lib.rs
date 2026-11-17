@@ -15,6 +15,7 @@ mod model;
 mod panic_boundary;
 pub mod process;
 mod rules;
+pub mod tree_watch;
 
 use model::{ModelFingerprint, shared_model, verify_model};
 use napi::{Error, Result, Status, bindgen_prelude::Float32Array};

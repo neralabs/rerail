@@ -1,5 +1,7 @@
 # Rerail rule pack: PHP
 
+**Linter-equivalent to PHP_CodeSniffer 4.0.4, PHPStan 2.2.16 and Psalm 6.19.1.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
+
 15 code rules for PHP, ported from PHP_CodeSniffer 4.0.4 (8 sniffs), PHPStan 2.2.16 (6 rules) and Psalm 6.19.1 (1
 issue). 10 start off (`"on": false`): no approved configuration of their tool turns them on, so they are experimental.
 Bare `phpcs` runs PSR12, which has `Generic.PHP.LowerCaseConstant` alone of the ported sniffs, and PHPStan's default

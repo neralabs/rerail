@@ -15,7 +15,7 @@ import {
   type PackageRegistry,
 } from "../../src/setup/updater.js";
 import { ENTRY_POINTS } from "../../src/engine/index.js";
-import type { NpmRunner } from "../../src/runtime/index.js";
+import type { NpmRunner, Progress } from "../../src/runtime/index.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { raceForLock, raceSize, sourceModule } from "../support/processes/lock-race.js";
@@ -664,7 +664,7 @@ describe("ManagedUpdater.install (setup bootstrap)", () => {
 });
 
 describe("NpmPackageRegistry", () => {
-  interface NpmCall { args: readonly string[]; cwd: string | undefined; projectConfig: boolean; env: NodeJS.ProcessEnv | undefined; userconfig: string | undefined }
+  interface NpmCall { args: readonly string[]; cwd: string | undefined; timeoutMs: number | undefined; projectConfig: boolean; env: NodeJS.ProcessEnv | undefined; userconfig: string | undefined }
 
   /**
    * An npm whose registry has `@neralabs/rerail@1.1.0` at https://mirror.example/npm and whose `audit signatures`
@@ -676,7 +676,7 @@ describe("NpmPackageRegistry", () => {
       const cwd = options.cwd ?? process.cwd();
       const userconfigPath = options.env?.npm_config_userconfig;
       calls.push({
-        args, cwd: options.cwd, projectConfig: existsSync(join(cwd, ".npmrc")) || existsSync(join(cwd, "package.json")), env: options.env,
+        args, cwd: options.cwd, timeoutMs: options.timeoutMs, projectConfig: existsSync(join(cwd, ".npmrc")) || existsSync(join(cwd, "package.json")), env: options.env,
         userconfig: userconfigPath === undefined ? undefined : await readFile(userconfigPath, "utf8"),
       });
       if (args[0] === "view") return { stdout: JSON.stringify("1.1.0"), stderr: "" };
@@ -720,6 +720,38 @@ describe("NpmPackageRegistry", () => {
       expect(view.cwd).not.toBe(process.cwd());
       expect(view.projectConfig).toBe(false);
     }
+  });
+
+  it("reports each step of an update as it starts, and gives every npm call a timeout", async () => {
+    const { npm, calls } = fakeNpm(async () => {});
+    const updater = await updaterWith(npm, async () => {});
+    const steps: string[] = [];
+    const progress: Progress = {
+      step: async (label, run, stall) => {
+        steps.push(stall === undefined ? label : `${label} (warns at ${stall.afterMs / 1_000} s)`);
+        return await run();
+      },
+    };
+
+    await expect(updater.update(undefined, progress)).resolves.toMatchObject({ changed: true, current: { version: "1.1.0" } });
+    expect(steps).toEqual([
+      "Checking npm for the newest Rerail on latest (warns at 30 s)",
+      "Downloading @neralabs/rerail@1.1.0 from npm (warns at 180 s)",
+      "Checking the registry signatures of @neralabs/rerail@1.1.0 (warns at 30 s)",
+      "Checking that Rerail 1.1.0 starts (warns at 60 s)",
+      "Switching to Rerail 1.1.0",
+    ]);
+    expect(calls.map(call => [call.args[0], call.timeoutMs])).toEqual([
+      ["view", 180_000],
+      ["view", 180_000],
+      ["install", 1_200_000],
+      ["audit", 180_000],
+    ]);
+
+    // Nothing newer: the active version is only checked again.
+    steps.length = 0;
+    await updater.update(undefined, progress);
+    expect(steps).toEqual(["Checking npm for the newest Rerail on latest (warns at 30 s)", "Checking that Rerail 1.1.0 starts (warns at 60 s)"]);
   });
 
   it("installs with the person's npm settings but not allow-scripts, which npm 11 refuses for a --prefix install", async () => {
