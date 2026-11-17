@@ -1969,6 +1969,7 @@ impl DevRel {
 
     /// A relation of `cols` columns and `rows` rows, its values given by `fill` (column `c` at
     /// `[c * rows .. (c + 1) * rows]`) and written by the host into a relation of the device's own.
+// copy (0353 step 6): an upload of rows from the host. It goes with its last caller (decision 0353).
     pub(in crate::code_rule_dsl) fn upload(cols: usize, rows: usize, fill: impl FnOnce(&mut [i64])) -> Result<DevRel, Error> {
         let mut values = vec![0i64; cols * rows];
         fill(&mut values);
@@ -2534,6 +2535,8 @@ impl Batch {
             if rel.dead != 0 {
                 return Err(Error::BackendCapacity);
             }
+// copy (0353 step 6): a second key's index copies the relation. It goes: a relation is made with room for
+// the indexes its readers probe (decision 0353).
             let copy = DevRel::empty(rel.cols, rel.rows)?;
             let ident: Vec<Col> = (0..rel.cols).map(Col::From).collect();
             self.copy_rows(Rows::Rel(rel), rel.rows, &ident, Rows::Rel(&copy), 0)?;
@@ -2577,6 +2580,8 @@ impl Batch {
     /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into
     /// `out`, a relation of `out.rows` rows whose columns are `cols` in order: what `Viewed::row_at` made on the host.
     /// `pairs`: an axis's pairs' offset in the block (`device_chunk::VIEW_AXIS`), else 0.
+// copy (0353 step 4): a view expanded into a relation (660.8 MB a run on hogql). It goes: a view is a
+// read of the tape, and a stage reads it in place (decision 0353).
     pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &metal::Buffer, root: usize, view: u32, pairs: usize, cols: &[usize], out: &DevRel) -> Result<(), Error> {
         let expand = pipeline("chunk_views", "view_expand", chunk_views_source)?;
         let pass = self.pass(1)?;

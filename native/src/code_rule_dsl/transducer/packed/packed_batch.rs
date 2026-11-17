@@ -77,6 +77,8 @@ enum Layout {
 }
 
 #[derive(Clone, Default)]
+// copy (0353 step 7): the packed batch's node records (44 bytes a node) and child lists are copies of the
+// tape. They go: the transducer reads the tape (decisions 0293, 0353).
 pub struct PackedBatch {
     pub header: MetalBatchHeader,
     pub nodes: Vec<BatchNode>,

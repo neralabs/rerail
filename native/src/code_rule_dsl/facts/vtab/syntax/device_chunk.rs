@@ -111,6 +111,8 @@ pub fn device_view(view: View) -> Option<u32> {
 }
 
 /// `pairs` copied into the chunk: their offset in the block, or `None` when its reservation cannot hold them.
+// copy (0353 step 5): an axis's pairs copied into the chunk. It goes: the solve writes its answer once,
+// as ids, into a relation in the chunk block (decision 0353).
 pub fn put_pairs(chunk: &Chunk, pairs: &[u64]) -> Option<usize> {
     let p: *mut u64 = chunk.block.try_alloc_t(pairs.len().max(1))?;
     // SAFETY: `p` holds `pairs.len()` items, just allocated in the block.
@@ -163,6 +165,8 @@ fn point<T: Copy + rerail_blocks::Pod>(b: &Arc<Block>, span: *const Span<T>, cel
 }
 
 /// The batch's chunk, in the batch's block: every document's arrays the views read.
+// copy (0353 step 4): the node columns (`start`, `end`, `kind`, `field`), the canonical codes and the
+// projection's arrays copied or made here. They go: the kernels read the placed tapes (decision 0353).
 pub fn build(batch: &Batch) -> Chunk {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "a batch's chunk block".into());
     let b = Arc::clone(&batch.block);

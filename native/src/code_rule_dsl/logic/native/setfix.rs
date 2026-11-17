@@ -1137,6 +1137,8 @@ impl Fresh {
         if self.data.is_empty() {
             self.data = o.data;
         } else {
+// copy (0353 step 6): head rows staged and merged before their relation takes them. They go: a CPU stratum
+// claims and writes its rows in the relation's block, as the device does (decision 0353).
             self.data.extend_from_slice(&o.data);
         }
         self.n += o.n;
@@ -2071,6 +2073,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                             }
                             continue;
                         }
+// copy (0353 step 6): the device's rows staged (decision 0353).
                         f.data.extend_from_slice(&d.data);
                         f.n += d.n;
                         // The device's rows, in no order known here.

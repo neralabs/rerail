@@ -2,7 +2,9 @@
 
 Status: decided, building (2026-11-16). 0266's path step 4 ("Facts"; 0295 step 6), built in Native-and-GPU-strata.
 Follows 0266 (blocks), 0289 (a chunk is a block), 0295 (the pool's tiers), 0310 (reads written once in CLIF),
-0321 (placement leans to the GPU).
+0321 (placement leans to the GPU). **0353 (2026-11-17)** withdraws step 5's "the views it makes from a chunk become
+relations": a view is never made, it is a read of the tape; and counts the copies left (moved indexes, fixpoint
+totals, the CPU's staged heads) as 0353's to remove.
 
 ## Intro
 

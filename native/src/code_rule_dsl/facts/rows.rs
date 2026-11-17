@@ -326,6 +326,8 @@ pub struct Rows {
     hint: usize,
     /// The blocks its parts go in.
     life: Life,
+// copy (0353 step 6): the merged part is a copy. It goes: a run's relations lie in one slab's buffer
+// (decision 0353).
     /// Every part merged into one, made once for a reader that binds one relation (`in_block`).
     merged: std::sync::OnceLock<Part>,
     /// The dead rows' delta of that one relation (`in_block_dead`), its descriptor's offset; `None` when its block

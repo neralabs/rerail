@@ -1505,3 +1505,19 @@ The refusals name indexes and views of 0.5–1.2 M rows.
 - How much each refusal's dropped residency cache (ef6c6c386) adds: views made again.
 - **Done when**: on hogql the new prices are no worse than the old in strata CPU and instructions over interleaved
   runs, with findings unchanged.
+
+### Q69. Blocks are never copied: the in-place kernels (0353)
+
+The user, 2026-11-17: "the entire point is that the CPU and GPU kernels all operate on exactly the same linear
+data"; blocks never get copied into other data structures for convenience. Decision 0353 holds the rule, the shape
+(a view is a read of the tape, node ids computed in place from a granule table, derived facts written once), the
+inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan.
+
+1. Step 1 is done: the record, `AGENTS.md`, the guard (`scripts/check/check-no-block-copies.py`, in pre-commit) and
+   the marks. Left of it: the profile's `copies (decision 0353)` counter.
+2. Step 2 next: the granule table and the id reads, measured against `DefIds::low` before they replace it.
+3. Then steps 3 (CPU views on the tape), 4 (GPU views on the tape: the 660.8 MB a run), 5 (axes written once),
+   6 (in-place writes and indexes), 7 (the transducer's packed batch, its owners'), 8 (0325 step 7), 9 (prices).
+
+Open for the user: `Projected::up` (0293 §6 kept it on measurement; 0353 recommends dropping it with step 2).
+Q68 (step 6's prices) waits for step 4: most of what it prices goes.

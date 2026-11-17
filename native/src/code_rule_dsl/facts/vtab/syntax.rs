@@ -1646,6 +1646,8 @@ impl Dialect {
 
 /// A document's nodes, numbered in preorder: its named nodes other than comments (T's), or every named node
 /// (`core.rr`'s).
+// copy (0353 step 2): the per-node arrays (`core`, `local`, `up`, `idx`, `fielded`, `size`, `depth`) are
+// copies of the tape's answers. They go: readers read the tape and the granule table in place (decision 0353).
 pub struct Projected {
     pub module: Option<crate::code_rule_dsl::module_path::ModulePath>,
     pub key: u32,
@@ -1675,6 +1677,8 @@ pub struct Projected {
 /// Spans that are positions (a document's text, its lines, its tokens) are in the top slots, in order; `Extra`'s spans
 /// in the slots below them (`granules::ExtraSpan`), so a node by definition is never read as one of those spans, nor
 /// one of them as a node.
+// copy (0353 step 2): ids by node (`low`, `order`, `back`). They go: an id is computed in place from the
+// granule table and the tape (decision 0353, "Node identity").
 struct DefIds {
     /// The low 32 bits of each node's and token's id, by local id, in the batch's block.
     low: Cells<u32>,
@@ -3271,6 +3275,8 @@ impl Batch {
             if d.facts.syntax_errors() {
                 errors.push(key);
             }
+// copy (0353 step 3): core.rr's per-node rows. Tape answers become tape views, and derived values become
+// rules computed on demand, written once (decision 0353).
             let nodes_span = crate::code_rule_dsl::logic::profile::span(|| "node rows".into());
             if let Some(dialect) = dialect {
                 // In core.rr's shape `NodeRows` makes only `intval` and T's `op` (`op_t`).

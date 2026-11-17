@@ -2,7 +2,8 @@
 
 Status: decided (2026-11-16), by the user: "The tape needs to have a common, abstract API that abstracts away the
 format behind it. We will remove some formats when we make a decision, but in the mean time it needs to be connected
-up." Building. Follows 0156 (format 16, draft) and the lab's `inplace::Reader` (t39).
+up." Building. **0353 (2026-11-17):** every reader reads in place, so §6's `Projected::up` and the projection's
+per-node arrays are copies, removed by 0353 step 2 (`up` is the user's call, 0353 Open). Follows 0156 (format 16, draft) and the lab's `inplace::Reader` (t39).
 
 ## Intro
 

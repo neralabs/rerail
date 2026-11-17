@@ -1346,6 +1346,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     mj::give_back();
                 }
                 // A whole view its batch's chunk block makes (decision 0289 §2): its columns made on the device.
+// copy (0353 step 4): a view made on the device, cached as a relation (decision 0353).
                 let made = match (&owner, &rel.view) {
                     (Owner::Src(_), Some(view)) if ids.is_none() && view.whole() => view.src.device_view().filter(|d| d.rows == n),
                     _ => None,
@@ -1366,6 +1367,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     res.bytes = res.bytes();
                     res.entries.len() - 1
                 } else {
+// copy (0353 step 6): rows uploaded from the host (decision 0353).
                 let dev = mj::DevRel::upload(k, n, |v| {
                     let row_of = |r: usize| ids.as_ref().map_or(r, |ids| ids[r]);
                     match (&owner, &rel.view) {
@@ -1660,6 +1662,8 @@ fn column_symbols(rel: &InRel, col: usize) -> Vec<i64> {
 
 /// The texts of columns `cols`' symbols and of `consts`, on the device together (`str_cmp` reads them), copied once
 /// and kept while the relations are.
+// copy (0353 step 6): symbols' names copied for the device. They go: the kernels read the strings block
+// (decision 0353).
 fn texts(cols: &[(Arc<InRel>, usize)], consts: &[i64], rep: &mut Report, names: &Interner) -> Result<Rc<mj::DevText>, String> {
     RESIDENT.with_borrow_mut(|res| {
         let found = res.unions.iter().find(|(cs, ks, _)| {
@@ -2787,6 +2791,8 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             Some(b) => b,
             None => batch.insert(direct_batch(None)?),
         };
+// copy (0353 step 6): the fixpoint's total copied into a run's block. It goes: the total lives in a block
+// of the run's life from its start (decision 0353).
         let part = crate::code_rule_dsl::facts::rows::Part::for_writes(k, total.rows);
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
         let dst = mj::DevRel::in_block(&crate::code_rule_dsl::facts::rows::InBlock { facts: part.facts().clone(), at: part.rel_at(), rows: total.rows as u32, dead: 0 }, k).map_err(|e| format!("{e:?}"))?;

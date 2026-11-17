@@ -728,6 +728,7 @@ impl Source for Within {
         // Solved in the chunk, the pairs are there already; else copied in once.
         let at = match &self.solved().in_chunk {
             Some(c) => c.pairs,
+// copy (0353 step 5): the pairs copied for the device (decision 0353).
             None => (*self.on_device.get_or_init(|| device_chunk::put_pairs(chunk, pairs)))?,
         };
         Some(crate::code_rule_dsl::facts::vtab::DeviceView { block: &chunk.block, root: chunk.root, view: device_chunk::VIEW_AXIS, rows: pairs.len(), pairs: at })
