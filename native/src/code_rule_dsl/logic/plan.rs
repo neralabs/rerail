@@ -442,6 +442,12 @@ pub struct Stats {
     /// Exact postings of the program's constants: table → (column, value) → n. By table first: a relation's are
     /// read without a pass over every table's (`of_relation`, once per input of a session's run).
     pub memo: HashMap<String, HashMap<(String, Constant), i64>>,
+    /// The relations whose constants' postings in `memo` are estimates: counted over a sample of one chunk of a mix
+    /// and scaled to the others (`corpus::Own`). A constant missing from them is unknown, not absent: the chunk
+    /// measured may lack a value every other chunk holds. Priced as absent (one row), `#f65561` (a comprehension's
+    /// field) led `pre_115`'s plan in every chunk of a cold PostHog run: 14.5 M rows into three anti-joins, and 47
+    /// slow-plan checks measuring exact pair statistics that the kept plan never used.
+    pub estimated: BTreeSet<String>,
     steps_cache: StepsCache,
     kindsets: std::sync::Arc<BTreeMap<String, Vec<String>>>,
     /// (relation, column) → a lookup's CPU as a multiple of a derived relation's, where its source says it is not
@@ -555,6 +561,7 @@ impl Stats {
             indexes: Default::default(),
             docs: None,
             memo: HashMap::new(),
+            estimated: BTreeSet::new(),
             steps_cache: StepsCache::default(),
             kindsets: Arc::new(kindsets),
             lookup: Default::default(),
@@ -750,6 +757,7 @@ impl Stats {
             solving_digest: 0,
             indexes: Default::default(),
             docs: meta.get("docs").copied(),
+            estimated: BTreeSet::new(),
             memo: of("val").filter_map(|r| Some((text(&r[0]), (text(&r[1]), sql_constant(&r[3])?), int(&r[2])))).fold(HashMap::new(), |mut m, (t, k, n)| {
                 m.entry(t).or_insert_with(HashMap::new).insert(k, n);
                 m
@@ -762,10 +770,14 @@ impl Stats {
         })
     }
 
-    /// Exact postings for a constant probe on an input column; `None` if the column has no statistics.
+    /// Exact postings for a constant probe on an input column; `None` if the column has no statistics, or the value
+    /// is missing from postings that are estimates (`estimated`).
     pub fn const_freq(&self, rel: &str, cname: &str, v: &Constant) -> Option<i64> {
         if let Some(&n) = self.memo.get(rel).and_then(|m| m.get(&(cname.to_owned(), v.clone()))) {
             return Some(n);
+        }
+        if self.estimated.contains(rel) {
+            return None;
         }
         self.col.of(rel).is_some_and(|c| c.contains_key(cname)).then_some(0)
     }
@@ -911,6 +923,7 @@ impl Model {
             indexes: st.indexes.clone(),
             docs: st.docs,
             memo: HashMap::default(),
+            estimated: rels.iter().filter(|r| st.estimated.contains(*r)).cloned().collect(),
             steps_cache: StepsCache::default(),
             kindsets: st.kindsets.clone(),
             lookup: st.lookup.clone(),

@@ -5691,6 +5691,7 @@ fn run_observed(
                     for ((rel, col, v), n) in postings {
                         stats.measured(&rel, [], [(col, v, n)]);
                     }
+                    stats.estimated.extend(constants.keys().filter(|(rel, _)| guests::READS.contains(&rel.as_str())).map(|(rel, _)| rel.clone()));
                 }
                 sources
             }
@@ -5992,6 +5993,8 @@ fn run_observed(
                         }
                     };
                     chunk.apply(&mut stats);
+                    // Counted over a sample of the mix's first chunk: a constant missing there is unknown here.
+                    stats.estimated.extend(constants.keys().map(|(rel, _)| rel.clone()));
                     own_totals.add(&chunk);
                     chunk_own = Some(chunk);
                 }
@@ -10437,9 +10440,15 @@ impl Own {
             }
             let rel = v.rel_name(atom.rel());
             for (i, arg) in atom.args().enumerate() {
-                if let TermRef::Int(n) = arg {
-                    out.entry((rel.to_owned(), super::sql_col(rel, i))).or_default().insert(n);
-                }
+                // A kind, field or name is a branded term (decision 0270), its atom the column's value, as the
+                // planner reads it (`Constant::Int(a.value())`). Left out, no field name was counted: `field($fc,
+                // #f65561, $e)` was priced as absent (one row) and led `pre_115`'s plan over a cold PostHog run.
+                let n = match arg {
+                    TermRef::Int(n) => n,
+                    TermRef::Branded(a) => a.value(),
+                    _ => continue,
+                };
+                out.entry((rel.to_owned(), super::sql_col(rel, i))).or_default().insert(n);
             }
         }
         out
