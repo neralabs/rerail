@@ -106,7 +106,7 @@ jobs:
 
       - name: Build native engine
         if: steps.lookup.outputs.cache-hit != 'true'
-        run: ./node_modules/.bin/napi build --platform --release --target ${{ matrix.target }} ${{ matrix.napi_cross && '--use-napi-cross --strip' || '' }} --manifest-path native/Cargo.toml --output-dir native
+        run: node scripts/build/release-engine.mjs ${{ matrix.target }}
 
       - name: Save the cargo cache
         if: steps.lookup.outputs.cache-hit != 'true'
