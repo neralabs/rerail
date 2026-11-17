@@ -3301,6 +3301,10 @@ fn run_observed(
     };
     // Typing may rebuild the combined program. Publish external facts after that rebuild.
     edit_header(&mut v, &mut prog, |p| external_inputs(p, &shape, root))?;
+    // The repository files, artifacts and base revision the readers read are consulted too (`inputs::still`). Taken
+    // before the debug build's tree edit below: taken after it, the version's reads were dropped with the tree's, so a
+    // debug build's cutoff never saw an `.input` file's edit.
+    let read = inputs::take_consulted();
     #[cfg(debug_assertions)]
     {
         // The tree's own edit, its consulted inputs dropped: the version's are the run's.
@@ -3308,8 +3312,6 @@ fn run_observed(
         external_inputs(&mut tree, &of_tree, root)?;
         let _ = inputs::take_consulted();
     }
-    // The repository files, artifacts and base revision the readers read are consulted too (`inputs::still`).
-    let read = inputs::take_consulted();
     if t.is_none() {
         consulted.extend(read);
     }
