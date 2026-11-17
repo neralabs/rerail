@@ -114,6 +114,11 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     if (this.#closing) return;
     for (const root of this.#eligibility.keys()) this.#eligibility.set(root, this.#options.catalogs.refresh(root));
     this.#refreshAnsweredCatalogs();
+    this.#refreshLanes();
+  }
+
+  /** Each lane reads its rules again; one whose checkout may no longer run rules closes. */
+  #refreshLanes(): void {
     for (const lane of [...this.#lanes.values()]) {
       if (this.#mayRun(lane.root)) {
         lane.enforcer.refreshCodeRules();
