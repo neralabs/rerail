@@ -256,17 +256,78 @@ pub(in crate::code_rule_dsl) fn document_delta(rel: &str, old: &dyn Source, was:
         out
     };
     let (gone, made) = (rows_of(old, &mut row), rows_of(new, &mut row));
-    let relation = |suffix: &str, rows: &mut dyn Iterator<Item = &Vec<i64>>| {
-        let names: Vec<String> = (0..width).map(|c| crate::code_rule_dsl::logic::plan::sql_col(&format!("{rel}__{suffix}"), c)).collect();
-        let mut rel = crate::code_rule_dsl::facts::vtab::Relation::new(&names.iter().map(String::as_str).collect::<Vec<_>>());
-        let mut rows: Vec<&Vec<i64>> = rows.collect();
-        rows.sort_unstable();
-        for r in rows {
-            rel.push(r);
-        }
-        Arc::new(rel) as Arc<dyn Source>
+    Some(((delta_relation(rel, "plus", width, &mut made.difference(&gone)), delta_relation(rel, "minus", width, &mut gone.difference(&made))), Arc::new(now)))
+}
+
+/// A delta of `rel` (`suffix` "plus" or "minus") holding `rows`, sorted, its columns named as the planner reads its
+/// statistics (`sql_col` of `rel__plus`, `rel__minus`).
+fn delta_relation<'r>(rel: &str, suffix: &str, width: usize, rows: &mut dyn Iterator<Item = &'r Vec<i64>>) -> Arc<dyn Source> {
+    let names: Vec<String> = (0..width).map(|c| crate::code_rule_dsl::logic::plan::sql_col(&format!("{rel}__{suffix}"), c)).collect();
+    let mut out = crate::code_rule_dsl::facts::vtab::Relation::new(&names.iter().map(String::as_str).collect::<Vec<_>>());
+    let mut rows: Vec<&Vec<i64>> = rows.collect();
+    rows.sort_unstable();
+    for r in rows {
+        out.push(r);
+    }
+    Arc::new(out) as Arc<dyn Source>
+}
+
+/// An input's delta when its rows only grew (`maintained::Delta`; the guests' rounds, decision 0331): a later round's
+/// batch is the round before's with new documents, so a base relation holds the rows it held and the new documents'.
+/// When the old rows are the new ones' first rows, in order (the batch builds documents in order, and a round's
+/// documents come last), its new rows are the rest: one pass over the old rows' values, no row hashed. Otherwise the
+/// two are compared as sets of rows, which is exact whatever moved. `None` when the two hold other columns.
+pub(in crate::code_rule_dsl) fn grown_delta(rel: &str, old: &dyn Source, new: &dyn Source) -> Option<(Arc<dyn Source>, Arc<dyn Source>)> {
+    use rustc_hash::FxHashSet;
+    let width = new.columns().len();
+    if old.columns().len() != width {
+        return None;
+    }
+    let all: Vec<usize> = (0..width).collect();
+    let (mut a, mut b) = (vec![0i64; width], vec![0i64; width]);
+    let prefix = old.len() <= new.len()
+        && (0..old.len()).all(|r| {
+            old.row_at(r, &all, &mut a);
+            new.row_at(r, &all, &mut b);
+            a == b
+        });
+    let rows = |s: &dyn Source, range: std::ops::Range<usize>| -> Vec<Vec<i64>> {
+        range
+            .map(|r| {
+                let mut row = vec![0i64; width];
+                s.row_at(r, &all, &mut row);
+                row
+            })
+            .collect()
     };
-    Some(((relation("plus", &mut made.difference(&gone)), relation("minus", &mut gone.difference(&made))), Arc::new(now)))
+    if prefix {
+        let made = rows(new, old.len()..new.len());
+        return Some((delta_relation(rel, "plus", width, &mut made.iter()), delta_relation(rel, "minus", width, &mut std::iter::empty())));
+    }
+    let was: FxHashSet<Vec<i64>> = rows(old, 0..old.len()).into_iter().collect();
+    let now: FxHashSet<Vec<i64>> = rows(new, 0..new.len()).into_iter().collect();
+    Some((delta_relation(rel, "plus", width, &mut now.difference(&was)), delta_relation(rel, "minus", width, &mut was.difference(&now))))
+}
+
+/// An input's delta when the rows it gained are all of new documents and it lost none (the guests' rounds, decision
+/// 0322): the rows whose node column `g` is of a document `is_new` names, with nothing gone. One pass over that
+/// column, against `grown_delta`'s hashing of every row old and new. `None` unless the rows add up: the old less
+/// none, with those, are the rows now.
+pub(in crate::code_rule_dsl) fn owners_delta(rel: &str, old: &dyn Source, new: &dyn Source, g: usize, is_new: &dyn Fn(i64) -> bool) -> Option<(Arc<dyn Source>, Arc<dyn Source>)> {
+    let width = new.columns().len();
+    if old.columns().len() != width || g >= width {
+        return None;
+    }
+    let all: Vec<usize> = (0..width).collect();
+    let made: Vec<Vec<i64>> = (0..new.len())
+        .filter(|&r| is_new(super::memo::document_of(new.value(r, g))))
+        .map(|r| {
+            let mut row = vec![0i64; width];
+            new.row_at(r, &all, &mut row);
+            row
+        })
+        .collect();
+    (old.len() + made.len() == new.len()).then(|| (delta_relation(rel, "plus", width, &mut made.iter()), delta_relation(rel, "minus", width, &mut std::iter::empty())))
 }
 
 /// Which strata a run evaluates: those not `clean`.
