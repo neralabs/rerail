@@ -218,8 +218,18 @@ fn members_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 11: `when`.
 #[test]
-fn what_step_10_does_not_read_is_refused() {
+fn when_is_the_lean_parsers() {
+    same(&[
+        "fun f(x: Int) = when (x) {\n    1, 2 -> a()\n    in r -> b\n    is T -> { c() }\n    else -> d\n}\n",
+        "fun g() {\n    when {\n        x > 1 -> a()\n        !y -> b()\n    }\n    val v = when (val y = h()) {\n        else -> 0\n    }\n}\n",
+        "fun g() {\n    when (x) {\n        // c\n        1 -> {\n        }\n\n        else -> {}\n    }\n}\n",
+    ]);
+}
+
+#[test]
+fn what_step_11_does_not_read_is_refused() {
     refused(&[
         "val a = b to f<T>()\n",
         "val a = x + f<T>(1)\n",

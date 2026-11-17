@@ -298,6 +298,18 @@ Two of the lean parser's behaviours surfaced with these files. Each is refused f
 
 Corpus: 124 the same, 367 refused, 0 differ.
 
+## Kotlin, step 11 (`11-when.bitlex`)
+
+`when` is an expression. It has an optional subject (an expression, or a `val` bound to one)
+and then its entries, one per line. An entry has conditions or `else`, then `->`, then a body.
+A condition is an expression, a range test (`in`) or a type test (`is`). The line breaks
+between entries are the scanner's semicolons, as a class body's are.
+
+A `{` after `->` is a block (`blk`), as after `)` or `else`, so `1 -> { … }` is a body and
+not a lambda. No grammar change was needed beyond the nodes.
+
+Corpus: 137 the same, 354 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
