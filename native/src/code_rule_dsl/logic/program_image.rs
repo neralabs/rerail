@@ -56,7 +56,7 @@ pub mod version;
 
 pub use about::{About, GateRef, LatticeRef, NativeKind, NativeRef, NativeSpec, ShapeRef, ShapeWaitRef};
 pub use analyses::{Edges, Strata};
-pub use build::{Builder, PartFields, Rel, Rewrite, RuleBuilder, Site, T};
+pub use build::{Builder, PartFields, Rel, Rewrite, RuleBuilder, Site, T, t_of};
 pub use extents::Extents;
 pub use grouped::Grouped;
 pub use handles::{AggRef, AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};

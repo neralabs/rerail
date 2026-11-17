@@ -342,8 +342,9 @@ pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Pr
     }
     // Each rule's twins follow it, so a rule's place does not depend on what other rules the program holds.
     let mut twins: std::collections::BTreeMap<usize, Vec<crate::code_rule_dsl::logic::front::ast::Rule>> = Default::default();
-    let mut fresh = 0usize;
     for (r, atoms) in by_rule.into_iter().filter(|(_, a)| a.len() <= MAX) {
+        // Fresh names counted per rule: a rule's twins do not depend on the others'.
+        let mut fresh = 0usize;
         for set in 1..(1u32 << atoms.len()) {
             let mut twin = program.rules[r].clone();
             for (bit, &i) in atoms.iter().enumerate().filter(|(b, _)| set >> b & 1 == 1) {

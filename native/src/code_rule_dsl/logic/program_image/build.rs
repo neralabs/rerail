@@ -42,6 +42,18 @@ pub enum T<'a> {
     CallAtom(AtomId, Vec<T<'a>>),
 }
 
+/// A term of `v`'s rule `r`, to write into a builder under `v`'s ids (one on `v`, or derived from it).
+pub fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
+    match t {
+        TermRef::Var(s) => T::VarAtom(r.var(s)),
+        TermRef::Wild => T::Wild,
+        TermRef::Top => T::Top,
+        TermRef::Int(i) => T::Int(i),
+        TermRef::Str(a) => T::StrAtom(a),
+        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| t_of(v, r, a)).collect()),
+    }
+}
+
 /// A relation to write, by its id (the builder's parent's, or one it made) or by name.
 #[derive(Clone, Copy, Debug)]
 pub enum Rel<'a> {
@@ -555,6 +567,21 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         self.atom_node(rel.into(), args, kind::NEG);
         self
     }
+    /// An `ast(document, node, matcher)` literal, its captures (name, variable) in order.
+    pub fn ast(mut self, document: T<'_>, node: T<'_>, matcher: &str, captures: &[(&str, T<'_>)]) -> Self {
+        self.body();
+        let m = self.b.enc.atom(matcher);
+        let at = self.b.enc.open(kind::AST, m);
+        self.term(&document);
+        self.term(&node);
+        for (name, var) in captures {
+            let a = self.b.enc.atom(name);
+            self.b.enc.leaf(kind::STR, a);
+            self.term(var);
+        }
+        self.b.enc.close(at);
+        self
+    }
     pub fn cmp(mut self, l: T<'_>, op: CmpOp, r: T<'_>) -> Self {
         self.body();
         let at = self.b.enc.open(kind::CMP, op as u32);
@@ -770,6 +797,10 @@ pub trait Rewrite {
     fn keep(&mut self, _l: LitRef<'_>) -> bool {
         true
     }
+    /// Whether to leave out argument `c` of atom `a` (`match_all`'s regex, which its relation names instead).
+    fn drop_arg(&mut self, _a: AtomRef<'_>, _c: usize) -> bool {
+        false
+    }
     /// The variable (by the atom naming it, in the builder's ids) to write in place of variable `s` where no term is
     /// asked for it (`nearest`'s variables), and where `term` keeps a variable term; `None` keeps its name.
     fn var(&mut self, _s: Slot) -> Option<AtomId> {
@@ -828,8 +859,12 @@ impl Walk<'_, '_> {
         let n = a.node();
         let end = n + self.im.node(n).1;
         let mut c = n + 1;
+        let mut k = 0;
         while c < end {
-            self.term(c, site, rw);
+            if !rw.drop_arg(a, k) {
+                self.term(c, site, rw);
+            }
+            k += 1;
             c += self.im.node(c).1;
         }
         self.enc.close(at);
