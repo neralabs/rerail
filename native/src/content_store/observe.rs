@@ -115,7 +115,12 @@ impl Entry {
     /// Whether the answer still holds for a path whose stat is `now`: the same stat, and recorded safely after the
     /// path last changed.
     fn holds(&self, now: &Stat) -> bool {
-        self.stat == *now && self.stat.mtime_ns < self.recorded_ns - RACY_NS && self.stat.ctime_ns < self.recorded_ns - RACY_NS
+        self.stat == *now && !self.racy()
+    }
+
+    /// Whether it was recorded inside the racy window: the path changed less than [`RACY_NS`] before.
+    fn racy(&self) -> bool {
+        self.stat.mtime_ns >= self.recorded_ns - RACY_NS || self.stat.ctime_ns >= self.recorded_ns - RACY_NS
     }
 }
 
@@ -192,6 +197,9 @@ pub struct Observer {
     entries: BTreeMap<PathBuf, Entry>,
     /// Paths whose entry changed since the last `flush`.
     dirty: Vec<PathBuf>,
+    /// Paths recorded inside the racy window (`Entry::holds`) since the outermost run's last end: read again then,
+    /// once the window has passed (`settle_racy`).
+    racy: Vec<PathBuf>,
     /// Git blob → sha256 of its bytes, seen this process (and in `git_alias`).
     aliases: HashMap<Vec<u8>, [u8; 32]>,
     /// Each path's canonical form (`canonical`), kept as `canonical:<path>` records (`run_record`), and those new
@@ -341,7 +349,7 @@ impl Observer {
         if let Some(k) = db.as_ref() {
             own.extend(k.meta.keys().filter_map(|k| k.strip_prefix(OWN_OUTPUT)).flat_map(|d| spellings(Path::new(d))));
         }
-        Observer { db, entries, dirty: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new() }
+        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new() }
     }
 
     /// Records `dir` as a directory a run writes its outputs into: rerail's own (decision 0284), for this observer
@@ -551,6 +559,9 @@ impl Observer {
             && e.listing.as_deref().map(|l| l.as_slice()) == entry.listing.as_deref().map(|l| l.as_slice())
         {
             return;
+        }
+        if entry.racy() {
+            self.racy.push(path.to_owned());
         }
         self.entries.insert(path.to_owned(), entry);
         self.dirty.push(path.to_owned());
@@ -1138,7 +1149,16 @@ impl Observer {
             return Some(listing);
         }
         self.counts.listed += 1;
-        // rerail's own files are not in a listing (decision 0284): what they hold changes with every run.
+        let listing = self.read_listing(dir, own)?;
+        if encode_listing(&listing).is_some() && !own {
+            self.remember(dir, Entry { kind: Kind::Dir, stat: now, digest: listing_digest(&listing), listing: Some(Arc::clone(&listing)), recorded_ns: started });
+        }
+        Some(listing)
+    }
+
+    /// `dir`'s entries as read now. rerail's own files are not in a listing (decision 0284): what they hold changes
+    /// with every run.
+    fn read_listing(&self, dir: &Path, own: bool) -> Option<Listing> {
         let mut entries: Vec<(String, bool)> = std::fs::read_dir(dir)
             .ok()?
             .filter_map(|e| e.ok())
@@ -1153,11 +1173,47 @@ impl Observer {
             })
             .collect();
         entries.sort();
-        let listing: Listing = Arc::new(entries);
-        if encode_listing(&listing).is_some() && !own {
-            self.remember(dir, Entry { kind: Kind::Dir, stat: now, digest: listing_digest(&listing), listing: Some(Arc::clone(&listing)), recorded_ns: started });
+        Some(Arc::new(entries))
+    }
+
+    /// The answers recorded inside the racy window, read again where the window has passed since their path last
+    /// changed (by `now`): the same stat and the same bytes (or listing) are then trusted, recorded by the run that
+    /// read them, behind it. Without this the next run, a warm one, reads each again and writes it (Q45: rules
+    /// copied in just before a cold run). An answer whose path changed, or still inside the window, is left as it
+    /// was: one still inside it waits for a later end of the process's runs (the rules a process reads first are
+    /// flushed seconds before its corpus run ends), one that changed is the next run's to read. Sound by the racy
+    /// rule itself: the read starts past the window, so a write after it changes the stat.
+    fn settle_racy(&mut self, now: i64) {
+        let mut waiting = Vec::new();
+        for path in std::mem::take(&mut self.racy) {
+            let Some(e) = self.entries.get(&path).filter(|e| e.racy()).cloned() else { continue };
+            if e.stat.mtime_ns.max(e.stat.ctime_ns) >= now - RACY_NS {
+                waiting.push(path);
+                continue;
+            }
+            let Some((kind, stat)) = Self::own_stat(&path) else { continue };
+            if kind != e.kind || stat != e.stat {
+                continue;
+            }
+            let (digest, listing) = match kind {
+                Kind::File => {
+                    let Ok(bytes) = std::fs::read(&path) else { continue };
+                    self.counts.hashed += 1;
+                    self.counts.bytes += bytes.len() as u64;
+                    (Sha256::digest(&bytes).into(), None)
+                }
+                Kind::Dir => {
+                    let Some(l) = self.read_listing(&path, false) else { continue };
+                    self.counts.listed += 1;
+                    (listing_digest(&l), Some(l))
+                }
+                _ => continue,
+            };
+            if digest == e.digest && Self::own_stat(&path).is_some_and(|(_, s)| s == e.stat) {
+                self.remember(&path, Entry { listing: listing.or(e.listing), recorded_ns: now, ..e });
+            }
         }
-        Some(listing)
+        self.racy.extend(waiting);
     }
 
     /// The digest of `dir`'s listing, as `listing` gives it.
@@ -1213,6 +1269,9 @@ impl Observer {
     /// again. A run inside a run (phase 0's, a batch's policies) leaves the outer run's roots asked: counting its end
     /// asked each of them again after every inner run.
     pub fn flush(&mut self) {
+        if self.open <= 1 {
+            self.settle_racy(now_ns());
+        }
         self.write_dirty();
         self.open = self.open.saturating_sub(1);
         if self.open == 0 {
@@ -2181,6 +2240,36 @@ mod tests {
         o.digest(&file).unwrap();
         o.digest(&file).unwrap();
         assert_eq!(o.counts.hashed, 2, "inside the racy window every observation reads");
+    }
+
+    /// An answer recorded inside the racy window is read again at the run's end once the window has passed, and
+    /// trusted then: the next run (a warm one) neither reads nor records it (Q45). One whose bytes changed is not.
+    #[test]
+    fn a_racy_answer_is_settled_at_the_runs_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, other) = (dir.path().join("a.py"), dir.path().join("b.py"));
+        std::fs::write(&file, "x = 1\n").unwrap();
+        std::fs::write(&other, "y = 1\n").unwrap();
+        let mut o = Observer::open(None);
+        o.validate_every = 0;
+        let d = o.digest(&file).unwrap();
+        o.digest(&other).unwrap();
+        o.listing(dir.path()).unwrap();
+        assert!(o.entries.values().all(Entry::racy), "written just now: recorded inside the window");
+        // Still inside the window: left as it was, and kept for a later end.
+        o.settle_racy(now_ns());
+        assert!(o.entries[&file].racy());
+        assert_eq!(o.racy.len(), 3, "each waits for a later end: {:?}", o.racy);
+        // `b.py`'s recorded digest no longer its bytes' (as if written in the recording's tick, its stat kept).
+        o.entries.get_mut(&other).unwrap().digest = [7; 32];
+        let hashed = o.counts.hashed;
+        // Past the window (as a run's end some seconds later is).
+        o.settle_racy(now_ns() + 3 * RACY_NS);
+        assert_eq!(o.counts.hashed, hashed + 2, "each racy file read again once");
+        assert!(!o.entries[&file].racy() && !o.entries[dir.path()].racy(), "the same bytes and listing: trusted");
+        assert!(o.entries[&other].racy(), "bytes that differ from the answer: left for the next run to read");
+        assert!(o.racy.is_empty());
+        assert_eq!(o.entries[&file].digest, d);
     }
 
     /// A rewrite that keeps size and mtime is seen by ctime; a validation pass sees what a lying stat hides.
