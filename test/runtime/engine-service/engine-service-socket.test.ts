@@ -8,7 +8,9 @@ import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { engineHoldsCapability, engineProof } from "../../../src/runtime/engine-proof.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../../src/runtime/engine-pipe.js";
-import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../../src/runtime/engine-service.js";
+import {
+  chooseEngineSocketPath, ingestEngineEvent, ingestEngineEventAnswer, listenBesideHeldPipe, preparePrivateDirectory, startEngineService,
+} from "../../../src/runtime/engine-service.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
@@ -348,5 +350,44 @@ describe("an engine pipe another process holds", () => {
     await expect(listenBesideHeldPipe(PIPE, held, { listen, ownEngineAnswers: async () => true, fallback: () => FALLBACK }))
       .rejects.toThrow(/in use by a running daemon/u);
     await expect(listenBesideHeldPipe(PIPE, held, { listen, ownEngineAnswers: async () => false, fallback: undefined })).rejects.toBe(held);
+  });
+});
+
+describe("the answer to a hook's event", () => {
+  it("carries the event's deliveries when the facts beside them cannot be read, and the facts to a hook that asks once they can", async () => {
+    const root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : SOCKET_ROOT, "rerail-event-answer-"));
+    const databasePath = join(root, "rerail.sqlite");
+    startTestRepository(root, databasePath);
+    const socketPath = process.platform === "win32"
+      ? String.raw`\\.\pipe\rerail-event-answer-${process.pid}-${Date.now().toString(16)}`
+      : join(root, "engine.sock");
+    let readable = false;
+    const service = await startEngineService({
+      socketPath,
+      storageRoot: join(root, "state"),
+      databasePath,
+      embedder: testEmbedder,
+      createAuditor: () => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => true,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
+        close: async () => undefined,
+      }),
+      answerFacts: async () => {
+        if (!readable) throw new Error("the presentation read failed");
+        return { dashboard: null, sessionNote: { setUp: false } };
+      },
+    });
+    const start = (sessionId: string) => ({ kind: "session-start", eventId: `${sessionId}:start`, session: { host: "claude-code", sessionId, cwd: root } } as const);
+    try {
+      // The hook reads what the answer lacks after it, as from a daemon older than these facts.
+      await expect(ingestEngineEventAnswer({ socketPath }, start("unread"))).resolves.toEqual({ eventId: "unread:start", deliveries: [] });
+      readable = true;
+      await expect(ingestEngineEventAnswer({ socketPath }, start("read")))
+        .resolves.toEqual({ eventId: "read:start", deliveries: [], dashboard: null, sessionNote: { setUp: false } });
+    } finally {
+      await service.close();
+      await removeFolder(root);
+    }
   });
 });

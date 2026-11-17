@@ -242,7 +242,21 @@ async function eventAnswer(
 ): Promise<RerailEventSuccessFrame> {
   const version = Number(incoming.headers[EVENT_ANSWER_HEADER]);
   const reads = Number.isInteger(version) && version >= EVENT_ANSWER_WITH_FACTS;
-  return { eventId: event.eventId, deliveries: [...deliveries], ...(reads ? await options.answerFacts?.(event, deliveries) : undefined) };
+  return { eventId: event.eventId, deliveries: [...deliveries], ...(reads ? await answerFacts(event, deliveries, options) : undefined) };
+}
+
+/**
+ * What `options.answerFacts` says of `event`, or nothing where it fails: a fact the daemon cannot read never costs the
+ * event its answer, and the hook reads it after the answer as from a daemon older than these facts.
+ */
+async function answerFacts(
+  event: AdapterEvent, deliveries: readonly AdapterDelivery[], options: EngineServiceOptions,
+): Promise<EventAnswerFacts | undefined> {
+  try {
+    return await options.answerFacts?.(event, deliveries);
+  } catch {
+    return undefined;
+  }
 }
 
 /**

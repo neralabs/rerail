@@ -76,20 +76,16 @@ function answerDashboard(
 
 /**
  * The facts of the answer to `event`: the dashboard where the hook links something, and at a session's start what its
- * note says of its rules. Empty for an event that names no session, and undefined where a read fails: the hook then
- * reads as it did before the answer carried them.
+ * note says of its rules. Empty for an event that names no session. Throws where a read fails; the engine service then
+ * answers without them (`answerFacts`), and the hook reads them as it did before the answer carried them.
  */
 export async function eventAnswerFacts(
   stores: RerailApiStores, event: AdapterEvent, deliveries: readonly AdapterDelivery[],
-): Promise<EventAnswerFacts | undefined> {
+): Promise<EventAnswerFacts> {
   const session = event.session;
   if (session === undefined) return {};
-  try {
-    return {
-      ...answerDashboard(stores, { ...event, session }, deliveries),
-      ...(event.kind === "session-start" ? { sessionNote: await sessionNoteRules(stores, session) } : {}),
-    };
-  } catch {
-    return undefined;
-  }
+  return {
+    ...answerDashboard(stores, { ...event, session }, deliveries),
+    ...(event.kind === "session-start" ? { sessionNote: await sessionNoteRules(stores, session) } : {}),
+  };
 }
