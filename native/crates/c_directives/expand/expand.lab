@@ -97,7 +97,32 @@ named:  IS m=1 "define"
         GOTO @chain
         IS m=1 "endif"
         GOTO @endif
+        IS m=1 "include"
+        GOTO @inc
+        IS m=1 "include_next"
+        GOTO @inc
+        IS m=1 "import"
+        GOTO @inc
+        IS m=1 "pragma"
+        GOTO @pragma
         SKIPLINE 0
+        GOTO @raw
+pragma: PRAGMA 0
+        GOTO @raw
+; An include: its header name as mode (a) read it, or made of its line expanded.
+inc:    INCLUDE m=0 0
+        GOTO @enter
+        IF m=2 0
+hl:     PUSH @h1
+        GOTO @one
+h1:     IS m=0 8
+        GOTO @he
+        KEEP 0
+        GOTO @hl
+he:     INCLUDE m=1 0
+        GOTO @enter
+        GOTO @raw         ; malformed, or a name the host resolves for the next round
+enter:  INCLUDE m=2 0
         GOTO @raw
 def:    DEFINE 0
         GOTO @raw

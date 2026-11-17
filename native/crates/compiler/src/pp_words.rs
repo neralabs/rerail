@@ -30,7 +30,7 @@ use std::collections::HashMap;
 
 /// Whether a word is one of the preprocessing words.
 pub fn is_pp(opcode: u8) -> bool {
-    (READ..=DEFINED).contains(&opcode)
+    (READ..=PRAGMA).contains(&opcode)
 }
 
 // A token's kind.
@@ -72,13 +72,31 @@ pub struct Tok {
     pub end: u32,
 }
 
-/// A file of the TU: its bytes, its token tape (`buf` its index + 1), and its conditionals'
-/// chains: each conditional's `#` (a token's index) and its chain's next directive's, rising.
+/// A file of the TU: its bytes, its token tape (`buf` its index + 1), its conditionals' chains
+/// (each conditional's `#`, a token's index, and its chain's next directive's, rising), and
+/// its includes resolved: those whose header name mode (a) read (their `#` and file, `NONE`
+/// not found, rising), and those whose name is made by expanding their line, by name.
+#[derive(Clone, Copy, Default)]
 pub struct File<'a> {
     pub bytes: &'a [u8],
     pub toks: &'a [Tok],
     pub chains: &'a [(u32, u32)],
+    pub includes: &'a [(u32, u32)],
+    pub named: &'a [Named],
 }
+
+/// An include whose header name is made by expanding its line: the name (its quotes or brackets
+/// taken off), `<…>`, `#include_next`, and the file it names (`NONE`: not found).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Named {
+    pub name: Vec<u8>,
+    pub angle: bool,
+    pub next: bool,
+    pub to: u32,
+}
+
+/// The file includes nest to at most (clang's bound).
+pub const MAX_INCLUDE_DEPTH: usize = 200;
 
 /// The stores' bounds.
 #[derive(Clone, Debug)]
@@ -103,10 +121,13 @@ impl Bounds {
     }
 }
 
-/// The expansion: the output tokens and their made spellings (`buf` 0).
+/// The expansion: the output tokens and their made spellings (`buf` 0), and the includes whose
+/// names no file's `named` has (the including file and the name, as `Named` keys them): the host
+/// resolves them and runs the TU again (the import fixpoint).
 pub struct Expanded {
     pub toks: Vec<Tok>,
     pub scratch: Vec<u8>,
+    pub wanted: Vec<(u32, Named)>,
 }
 
 impl Expanded {
@@ -130,7 +151,7 @@ const VA_OPT: &[u8] = b"__VA_OPT__";
 
 /// Whether a word is a test (it runs the next word where it holds, skips it where not).
 fn is_test(opcode: u8, mode: u8) -> bool {
-    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) || (opcode == IF && mode == 1)
+    matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == INCLUDE && mode <= 1) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) || (opcode == IF && mode == 1)
 }
 
 /// A preprocessing program's rules: only these words, `GOTO`, `PUSH` (each followed by its
@@ -144,7 +165,8 @@ pub fn validate(program: &Words) -> Result<(), Error> {
     for (pc, &w) in words.iter().enumerate() {
         let (op, mode, operand) = split(w);
         let ok = match op {
-            READ | LINE | LOOKUP | PAINT | PUT | FRAME | KEEP | SUBST | DEFINE | UNDEF | SKIPLINE | SKIP | DEFINED => mode == 0 && operand == 0,
+            READ | LINE | LOOKUP | PAINT | PUT | FRAME | KEEP | SUBST | DEFINE | UNDEF | SKIPLINE | SKIP | DEFINED | PRAGMA => mode == 0 && operand == 0,
+            INCLUDE => mode <= 2 && operand == 0,
             IS => match mode {
                 0 => operand < u16::from(KINDS),
                 1 => string(operand),
@@ -152,7 +174,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
                 _ => false,
             },
             COND => mode <= 6 && operand == 0,
-            IF => mode <= 1 && operand == 0,
+            IF => mode <= 2 && operand == 0,
             PEEK => mode == 1 && string(operand),
             MACRO => mode <= 1 && operand == 0,
             ARG => mode <= 5 && operand == 0,
@@ -213,8 +235,8 @@ fn after(words: &[u32], pc: usize, memo: &mut HashMap<usize, Option<bool>>) -> V
     let (op, mode, operand) = split(words[pc]);
     match op {
         READ | LINE | RETURN | ACCEPT | STOP => vec![],
-        // `defined` reads its operand; an `#if`'s line is read into its source.
-        DEFINED => vec![],
+        // `defined` reads its operand where it holds, and nothing where it does not.
+        DEFINED => vec![pc + 2],
         GOTO => vec![usize::from(operand)],
         PUSH => {
             let callee = usize::from(split(words[pc + 1]).2);
@@ -251,7 +273,8 @@ fn reads(words: &[u32], entry: usize, memo: &mut HashMap<usize, Option<bool>>) -
     ok
 }
 
-const NONE: u32 = u32::MAX;
+/// No file, definition or source.
+pub const NONE: u32 = u32::MAX;
 /// A body token's mark: no parameter.
 const NO_PARAM: u32 = 0xffff;
 /// ...a `__VA_OPT__`.
@@ -304,6 +327,8 @@ struct Frame {
     pres: u32,
     depth: u32,
     next_use: u32,
+    /// Its arguments are being read (to its `)`).
+    open: bool,
 }
 
 struct Machine<'a> {
@@ -336,6 +361,15 @@ struct Machine<'a> {
     conds: Vec<(u32, bool, bool)>,
     /// An `#if`'s line is being expanded.
     in_if: bool,
+    /// The frames whose arguments are being read: a file's end ends them, not the file.
+    collecting: u32,
+    /// The files `#pragma once` or `#import` has entered once.
+    once: Vec<bool>,
+    /// `push_macro`'s stack: the slot and its definition then.
+    pushed: Vec<(u32, u32)>,
+    /// The include read last: its word (0 `include`, 1 `include_next`, 2 `import`) and file.
+    inc: (u8, u32),
+    wanted: Vec<(u32, Named)>,
 }
 
 type R<T> = Result<T, &'static str>;
@@ -385,6 +419,11 @@ pub fn run(program: &Words, files: &[File], bounds: &Bounds) -> Result<Expanded,
         from_file: false,
         conds: Vec::new(),
         in_if: false,
+        collecting: 0,
+        once: vec![false; files.len()],
+        pushed: Vec::new(),
+        inc: (0, NONE),
+        wanted: Vec::new(),
     };
     let words = &program.words;
     let mut returns: Vec<usize> = Vec::new();
@@ -415,7 +454,7 @@ pub fn run(program: &Words, files: &[File], bounds: &Bounds) -> Result<Expanded,
                 pc = returns.pop().ok_or_else(|| fail("a return with no call"))?;
                 None
             }
-            ACCEPT => return Ok(Expanded { toks: m.out, scratch: m.scratch }),
+            ACCEPT => return Ok(Expanded { toks: m.out, scratch: m.scratch, wanted: m.wanted }),
             STOP => return Err(fail("the program stopped")),
             READ => {
                 m.read();
@@ -437,8 +476,13 @@ pub fn run(program: &Words, files: &[File], bounds: &Bounds) -> Result<Expanded,
                 None
             }
             COND => m.cond(mode).map_err(fail)?,
-            IF if mode == 0 => {
-                m.if_open().map_err(fail)?;
+            IF if mode != 1 => {
+                m.if_open(mode == 0).map_err(fail)?;
+                None
+            }
+            INCLUDE => m.include(mode).map_err(fail)?,
+            PRAGMA => {
+                m.pragma().map_err(fail)?;
                 None
             }
             IF => Some(m.if_close().map_err(fail)?),
@@ -520,12 +564,19 @@ impl Machine<'_> {
                 top.pos += 1;
                 return;
             }
-            // A stop source's end, and (until includes) the main file's, are read again and again.
-            if s.stop || s.file != NONE {
+            // A stop source's end, the main file's, and a file's while a call's arguments are read
+            // (they end with it), are read again and again.
+            if s.stop || (s.file != NONE && (self.sources.len() == 1 || self.collecting > 0)) {
                 (self.t, self.from_file) = (eof(if s.stop { STOP } else { 0 }), false);
                 return;
             }
+            let i = self.sources.len() as u32 - 1;
             self.sources.pop();
+            if s.file != NONE {
+                while self.conds.last().is_some_and(|c| c.0 == i) {
+                    self.conds.pop();
+                }
+            }
             if s.def != NONE {
                 self.defs[s.def as usize].disabled = false;
             }
@@ -600,7 +651,8 @@ impl Machine<'_> {
             return Err("past the frames' bound");
         }
         let def = self.defs[self.d as usize];
-        self.frames.push(Frame { def: self.d, name: self.t, args: self.argv.len() as u32, pres: self.pres.len() as u32, depth: 0, next_use: 0 });
+        self.frames.push(Frame { def: self.d, name: self.t, args: self.argv.len() as u32, pres: self.pres.len() as u32, depth: 0, next_use: 0, open: def.fnlike });
+        self.collecting += u32::from(def.fnlike);
         self.pres.extend(std::iter::repeat_n((NONE, NONE), usize::from(def.params)));
         if def.fnlike {
             let a = self.arena.len() as u32;
@@ -645,6 +697,7 @@ impl Machine<'_> {
             }
             2 => {
                 if f.depth == 0 {
+                    self.close_args();
                     return Ok(Some(true));
                 }
                 self.frames.last_mut().unwrap().depth -= 1;
@@ -684,9 +737,20 @@ impl Machine<'_> {
                 }
                 return Ok(Some(true));
             }
-            _ => self.drop_frame(),
+            _ => {
+                self.close_args();
+                self.drop_frame();
+            }
         }
         Ok(None)
+    }
+
+    fn close_args(&mut self) {
+        let f = self.frames.last_mut().unwrap();
+        if f.open {
+            f.open = false;
+            self.collecting -= 1;
+        }
     }
 
     fn arg_range(&self, f: &Frame, p: usize) -> (u32, u32) {
@@ -1064,7 +1128,7 @@ impl Machine<'_> {
         Ok(None)
     }
 
-    fn if_open(&mut self) -> R<()> {
+    fn if_open(&mut self, in_if: bool) -> R<()> {
         let a = self.arena.len() as u32;
         while self.line()? {
             let t = self.t;
@@ -1075,17 +1139,22 @@ impl Machine<'_> {
         }
         self.sources.push(Src { file: NONE, pos: a, end: self.arena.len() as u32, def: NONE, stop: true, hash: NONE });
         self.levels.push((u16::MAX, self.kept.len() as u32));
-        self.in_if = true;
+        self.in_if = in_if;
         Ok(())
     }
 
-    fn if_close(&mut self) -> R<bool> {
+    /// The level `if_open` opened closed: its tokens.
+    fn line_close(&mut self) -> R<Vec<Tok>> {
         let (_, at) = self.levels.pop().ok_or("no level open")?;
         if !self.sources.pop().is_some_and(|s| s.stop) {
-            return Err("an #if's source not on top");
+            return Err("a line's source not on top");
         }
         self.in_if = false;
-        let toks: Vec<Tok> = self.kept.drain(at as usize..).collect();
+        Ok(self.kept.drain(at as usize..).collect())
+    }
+
+    fn if_close(&mut self) -> R<bool> {
+        let toks = self.line_close()?;
         let items: Vec<crate::pp_expr::Item> = toks.iter().map(|t| crate::pp_expr::item(t.kind, self.text(t), self.program.pp.cpp)).collect();
         Ok(crate::pp_expr::eval(&items, self.program.pp.cpp).is_ok_and(|v| v.is_true()))
     }
@@ -1111,6 +1180,141 @@ impl Machine<'_> {
         }
         self.t = self.scratch_tok(NUMBER, if v { b"1" } else { b"0" }, t.flags & (BOL | SPACE))?;
         Ok(true)
+    }
+
+    // The includes.
+
+    fn include(&mut self, mode: u8) -> R<Option<bool>> {
+        // `m=1`'s line, its stop source on top, closed first.
+        let toks = if mode == 1 { self.line_close()? } else { Vec::new() };
+        let i = self.file_src()?;
+        let s = self.sources[i];
+        match mode {
+            0 => {
+                self.inc.0 = match self.text(&self.t) {
+                    b"include_next" => 1,
+                    b"import" => 2,
+                    _ => 0,
+                };
+                let incs = self.files[s.file as usize].includes;
+                let Ok(k) = incs.binary_search_by_key(&s.hash, |x| x.0) else { return Ok(Some(false)) };
+                self.inc.1 = incs[k].1;
+                self.skip_line()?;
+                Ok(Some(true))
+            }
+            1 => {
+                let Some((name, angle)) = self.header_name(&toks) else { return Ok(Some(false)) };
+                // `#include_next` in the main file is `#include` (clang's reading).
+                let next = self.inc.0 == 1 && s.file != 0;
+                let named = self.files[s.file as usize].named;
+                match named.iter().find(|n| n.name == name && n.angle == angle && n.next == next) {
+                    Some(n) => {
+                        self.inc.1 = n.to;
+                        Ok(Some(true))
+                    }
+                    None => {
+                        self.wanted.push((s.file, Named { name, angle, next, to: NONE }));
+                        Ok(Some(false))
+                    }
+                }
+            }
+            _ => {
+                let f = self.inc.1;
+                let depth = self.sources.iter().filter(|s| s.file != NONE).count();
+                if f == NONE || self.once[f as usize] || depth > MAX_INCLUDE_DEPTH {
+                    return Ok(None);
+                }
+                if self.inc.0 == 2 {
+                    self.once[f as usize] = true;
+                }
+                if self.sources.len() >= self.bounds.depth {
+                    return Err("past the sources' bound");
+                }
+                let end = self.files[f as usize].toks.len() as u32;
+                self.sources.push(Src { file: f, pos: 0, end, def: NONE, stop: false, hash: NONE });
+                Ok(None)
+            }
+        }
+    }
+
+    /// The header name tokens make: a string literal's inside, or `<` … `>` spelled with their
+    /// blanks (the lean pass's `header_of`).
+    fn header_name(&self, toks: &[Tok]) -> Option<(Vec<u8>, bool)> {
+        let first = toks.first()?;
+        let s = self.text(first);
+        if first.kind == LITERAL && s.first() == Some(&b'"') && s.len() >= 2 {
+            return Some((s[1..s.len() - 1].to_vec(), false));
+        }
+        if s != b"<" {
+            return None;
+        }
+        let mut name = Vec::new();
+        for (k, t) in toks[1..].iter().enumerate() {
+            if self.text(t) == b">" && t.kind == PUNCT {
+                return Some((name, true));
+            }
+            if k > 0 && t.flags & SPACE != 0 {
+                name.push(b' ');
+            }
+            name.extend_from_slice(self.text(t));
+        }
+        None
+    }
+
+    fn pragma(&mut self) -> R<()> {
+        let i = self.file_src()?;
+        let file = self.sources[i].file;
+        let mut toks = Vec::new();
+        while let Some(t) = self.line_tok()? {
+            if toks.len() < 4 {
+                toks.push(t);
+            }
+        }
+        let word = |k: usize| toks.get(k).filter(|t| t.kind == IDENT).map_or(&b""[..], |t| self.text(t));
+        if word(0) == b"once" {
+            self.once[file as usize] = true;
+            return Ok(());
+        }
+        let (push, pop) = (word(0) == b"push_macro", word(0) == b"pop_macro");
+        if !(push || pop) || toks.get(1).is_none_or(|t| !self.spelled(t, b"(")) {
+            return Ok(());
+        }
+        // The lean pass's string argument: a string literal, not a raw one.
+        let Some(st) = toks.get(2).filter(|t| t.kind == LITERAL) else { return Ok(()) };
+        let s = self.text(st);
+        let Some(q) = s.iter().position(|&c| c == b'"' || c == b'\'') else { return Ok(()) };
+        if s[q] != b'"' || s[..q].contains(&b'R') {
+            return Ok(());
+        }
+        let body = &s[q + 1..s.len().saturating_sub(1).max(q + 1)];
+        let mut name = Vec::with_capacity(body.len());
+        let mut k = 0;
+        while k < body.len() {
+            if body[k] == b'\\' && matches!(body.get(k + 1), Some(b'"' | b'\\')) {
+                k += 1;
+            }
+            name.push(body[k]);
+            k += 1;
+        }
+        let slot = match self.find(&name)? {
+            Ok(i) => i,
+            Err(i) if push => {
+                let n = self.scratch_tok(IDENT, &name, 0)?;
+                self.table[i] = Some(Slot { key: key(&name), name: n, def: NONE });
+                i
+            }
+            Err(_) => return Ok(()),
+        };
+        if push {
+            if self.pushed.len() >= self.bounds.macros * 4 {
+                return Err("past push_macro's bound");
+            }
+            self.pushed.push((slot as u32, self.table[slot].unwrap().def));
+        } else if let Some(k) = self.pushed.iter().rposition(|p| p.0 == slot as u32) {
+            let (_, d) = self.pushed.remove(k);
+            self.table[slot].as_mut().unwrap().def = d;
+        }
+        Ok(())
     }
 
     // The directives.

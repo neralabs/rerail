@@ -228,6 +228,28 @@ lines).
 - **Corpus:** 3,002 of 3,135 files expand as the lean pass does, 0 differ. Not run: 57 use a
   built-in macro, 1 a directive not read yet (`#embed`), 75 a grammar refuses.
 
+## Stage 3, second part: includes and pragmas
+
+- **Resolution is the host's, before the words run.** An include whose header name mode (a)
+  read (`c_include`, quote or angle form) is resolved by the host for each file it reaches, and
+  the file's table (`File::includes`) maps its `#` to the file. `INCLUDE m=0` looks the `#` up
+  and passes the line unread.
+- **A name the expansion makes** (`#include MACRO`): `IF m=2` expands the line as `#if`'s is
+  expanded (no `defined`), and `INCLUDE m=1` forms the header name (the lean pass's
+  `header_of`) and looks it up in the file's `named` table. A name not there is returned in
+  `Expanded::wanted`; the host resolves it and runs the TU again. This is the import fixpoint
+  of the plan, here in the host (`expand_tu`, 16 rounds at most). In the engine, the answerer
+  returns `c_pp_include_wanted` and the fixpoint re-asks.
+- **`INCLUDE m=2`** enters the file: not when it is not found, when `#pragma once` or `#import`
+  has entered it, or past 200 files deep. A file's end pops it, except while a call's arguments
+  are read (they end with the file, clang's reading and the lean pass's).
+- **`PRAGMA`**: `once`, `push_macro("X")` and `pop_macro("X")` (a stack per macro slot).
+- **Tests:** six TUs of several files (guards, not found, once and import, names made by
+  macros, `#include_next` over two system dirs, macros and conditionals across files, a call
+  ended by its file, push and pop) equal the lean pass in C and C++. The corpus is unchanged.
+- **Also fixed:** the verifier counted `DEFINED` as a read on both sides; where it does not
+  hold it reads nothing.
+
 ## Open
 
 - **Header units:** a header expanded once per entry macro state (0327, open).

@@ -1,9 +1,13 @@
 use super::*;
 
-/// The words over the token tape by the interpreter (the same tape as every backend's,
-/// `tokens::tests`), so a test compiles no grammar through Cranelift.
+/// The grammars by the interpreter (the same tapes as every backend's, `tokens::tests`), so a
+/// test compiles no grammar through Cranelift.
+const INTERPRETED: Grammars = Grammars { tokens: &tokens::interpreted, read: &crate::interpreted_read };
+
+/// The words over a TU of one file, `main.c`.
 fn expand(src: &[u8], cpp: bool) -> Result<Vec<Out>, String> {
-    expand_with(src, cpp, tokens::interpreted(src, cpp), crate::interpreted_read(src))
+    let files = [("main.c", src)];
+    expand_tu("main.c", &mut search(&files, &[]), cpp, &INTERPRETED)
 }
 
 /// The words' tokens equal the lean preprocessor's, kinds, spellings and flags, in C and C++.
@@ -162,14 +166,88 @@ fn an_unterminated_group_is_refused() {
     assert!(e.contains("directives' grammar"), "{e}");
 }
 
+/// TUs of several files: each its files (the first the main file) and its search path (`inc`, `-I`;
+/// `sys` and `sys2`, `-isystem`).
+const TUS: &[(&str, &[(&str, &str)])] = &[
+    (
+        "quote and angle includes, a guard, not found",
+        &[
+            ("main.c", "#include \"a.h\"\n#include <b.h>\n#include \"a.h\"\nA B\n#include \"none.h\"\n#include <none.h>\nend\n"),
+            ("a.h", "#ifndef A_H\n#define A_H\n#define A 1\nin_a\n#endif\n"),
+            ("inc/b.h", "#define B 2\nin_b\n"),
+        ],
+    ),
+    (
+        "#pragma once, #import",
+        &[
+            ("main.c", "#include \"o.h\"\n#include \"o.h\"\n#import \"i.h\"\n#include \"i.h\"\n#import \"i.h\"\nend\n"),
+            ("o.h", "#pragma once\nonce\n"),
+            ("i.h", "imported\n"),
+        ],
+    ),
+    (
+        "names made by macros",
+        &[
+            ("main.c", "#define Q \"q.h\"\n#define A <b.h>\n#define F(x) #x\n#include Q\n#include A\n#include F(q.h)\n#include W\n#define N(x) <x.h>\n#include N(b)\nend\n"),
+            ("q.h", "in_q\n"),
+            ("inc/b.h", "in_b\n"),
+        ],
+    ),
+    (
+        "#include_next",
+        &[
+            ("main.c", "#include <n.h>\nend\n"),
+            ("sys/n.h", "first\n#include_next <n.h>\n"),
+            ("sys2/n.h", "second\n#include_next <n.h>\n"),
+        ],
+    ),
+    (
+        "macros and conditionals across files",
+        &[
+            ("main.c", "#define X 1\n#include \"c.h\"\nY Z\n#if defined(Y) && Y == 3\nyes\n#endif\n#include \"call.h\"\n2)\n"),
+            ("c.h", "#if X\n#define Y 3\n#else\n#define Y 4\n#endif\n#ifdef X\n#include \"d.h\"\n#endif\n"),
+            ("d.h", "#define Z X+Y\n"),
+            ("call.h", "#define G(a, b) a b\nG(1,\n"),
+        ],
+    ),
+    (
+        "push_macro and pop_macro",
+        &[(
+            "main.c",
+            "#define M 1\n#pragma push_macro(\"M\")\n#undef M\n#define M 2\nM\n#pragma pop_macro(\"M\")\nM\n#pragma push_macro(\"U\")\n#define U 3\nU\n#pragma pop_macro(\"U\")\nU\n#pragma pop_macro(\"V\")\n#pragma push_macro(R\"(M)\")\n",
+        )],
+    ),
+];
+
+/// A TU's tokens by the words and by the lean pass, in C and C++.
+fn same_tu(files: &[(&str, &str)]) -> Result<(), String> {
+    let files: Vec<(&str, &[u8])> = files.iter().map(|f| (f.0, f.1.as_bytes())).collect();
+    let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
+    let show = |v: &[Out]| v.iter().map(|(k, f, s)| format!("{}:{k}:{f}", String::from_utf8_lossy(s))).collect::<Vec<_>>().join(" ");
+    for cpp in [false, true] {
+        let got = expand_tu(files[0].0, &mut search(&files, &dirs), cpp, &INTERPRETED).map_err(|e| format!("cpp {cpp}: {e}"))?;
+        let want = lean_tu(files[0].0, &mut search(&files, &dirs), cpp);
+        if show(&got) != show(&want) {
+            return Err(format!("cpp {cpp}:\n words {}\n lean  {}", show(&got), show(&want)));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn the_examples_expand_as_the_lean_pass_does() {
+    for (name, files) in TUS {
+        if let Err(e) = same_tu(files) {
+            eprintln!("{name}: {e}");
+        }
+    }
+    let tus: Vec<&str> = TUS.iter().filter(|(_, f)| same_tu(f).is_err()).map(|t| t.0).collect();
     let failed: Vec<String> = EXAMPLES.iter().filter_map(|(name, src)| std::panic::catch_unwind(|| same(src)).err().map(|_| (*name).to_owned())).collect();
-    assert!(failed.is_empty(), "differ: {failed:?}");
+    assert!(failed.is_empty() && tus.is_empty(), "differ: {failed:?} {tus:?}");
 }
 
 /// Why the words do not run `src` yet, where they do not: `#embed` and the built-ins (stage 3).
-/// (An `#include` finds nothing here, in both passes: the TU is one file.)
+/// (An `#include` finds nothing here, in both passes: the TU is one file; `TUS` has includes.)
 fn outside_stage_2(src: &[u8], cpp: bool) -> Option<&'static str> {
     let toks = tokens::interpreted(src, cpp)?;
     let text = |t: &tokens::Tok| &src[t.start as usize..t.end as usize];

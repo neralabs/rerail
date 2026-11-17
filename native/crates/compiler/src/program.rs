@@ -151,11 +151,19 @@ pub const SKIP: u8 = 0x77;
 pub const COND: u8 = 0x78;
 /// `m=0`: an `#if`'s line (the rest of it) pushed as a stop source, a level opened for its
 /// expansion, `defined` an operator; `m=1`, a test: the level closed and its expression's value
-/// true (`pp_expr`).
+/// true (`pp_expr`); `m=2`: as `m=0`, `defined` no operator (an `#include`'s line).
 pub const IF: u8 = 0x79;
 /// A test: `T` is `defined` (not painted), its operand (`X` or `( X )`) read unexpanded, and
 /// `T` the number `1` or `0`.
 pub const DEFINED: u8 = 0x7a;
+/// An `#include`, `#include_next` or `#import` (`T` its word): `m=0`, a test: its header name
+/// was read by mode (a) (`pp_words::File::includes`), its file looked up, its line passed; `m=1`,
+/// a test: the level `IF m=2` opened closed, a header name made of its tokens, and its file
+/// found by name (`File::named`; one not there is wanted, `Expanded::wanted`); `m=2` the file
+/// entered, unless not found, once only, or too deep.
+pub const INCLUDE: u8 = 0x7b;
+/// A `#pragma`'s line, unexpanded: `once`, `push_macro("X")` and `pop_macro("X")` carried out.
+pub const PRAGMA: u8 = 0x7c;
 
 pub const NAMED: u8 = 1;
 pub const GREEDY: u8 = 1;
