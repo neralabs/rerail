@@ -303,11 +303,16 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
   the answer (on Linux, only files the daemon held open then). It also repeats one only while the start mark
   (`stopped-answers/start-mark`, `src/engine/storage/start-mark.ts`), which each change to where Rerail runs renews once
   it commits, is the file it found before it asked the daemon for that answer, by device, file id, change time and write
-  time, and no `start-mark-stuck` is beside it. So a copy written over the live database file in place, which the daemon
-  may answer past from what it read, brings no answer of stopped back. A mark planted, replaced or linked at that name,
-  or held open so that a renewal cannot replace it, reads as another mark or as stuck, and the hook waits; nothing is
-  written or read through a link at the folder's name. So a file planted or swapped at one of those names cannot turn
-  Rerail off in a checkout the daemon reads as started; `docs/reference.md` lists what a kept answer leaves unseen.
+  time, no `start-mark-stuck` is beside it, and this user may add files to its folder. So a copy written over the live
+  database file in place after a start this release recorded, which the daemon may answer past from what it read,
+  brings no answer of stopped back; `docs/reference.md` names the starts that leave such a copy unseen. A mark planted,
+  replaced or linked at that name, or held open so that a renewal cannot replace it, reads as another mark or as stuck,
+  and the hook waits; no writer waits for a mark held open, and nothing is written or read through a link at the
+  folder's name. So a file planted or swapped at the name of the database, its WAL, the WAL's index, the mark or a Git
+  file the hook checks cannot turn Rerail off in a checkout the daemon reads as started. A kept answer is the person's
+  own 0600 file: a process of the same user that rewrites one to name the mark now there, and writes an older copy of
+  the database in place, makes hooks skip events while the daemon answers started, as such a process can on earlier
+  releases by keeping the daemon from answering for 2 s.
 - Session directories are created 0700 and explicitly chmod 0700; ledgers append 0600 (`src/runtime/runtime.ts`).
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
