@@ -1179,12 +1179,32 @@ fn json_compiled_path_equals_the_interpreters() {
     let tier1 = native_cpu_block::compile(&native.block_programs[0]).expect("tier 1 compiles");
     let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
     // JSON has no wraps and no chained returns: it pays for neither (no wrap columns). Its loop
-    // heads are the stream's. The table is written as it goes (each row's parent and extra flag
-    // with the row), and JSON defers no leaf: no call, no pass at its end. A token's end is its
+    // heads are the stream's. JSON defers no leaf: no pass at its end. A token's end is its
     // record's (`records`): no search.
     assert!(!tier2.wraps);
     assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
-    assert_eq!(tier2.own_calls, 0, "no pass over the table");
+    // Tier 2 writes the tape (decision 0140, 6d343719e3), its rare steps outlined functions of
+    // the tape's (`native_cpu_tape`, made in `TableFns::make`'s order): a block's base and
+    // offsets again, a commit of code ids, codes taken back, the image's end. Its calls are
+    // theirs alone, and they call nothing. With no wraps and no drops there is no function
+    // that shifts or drops the table's rows (`shift_rows`, `drop_rows`): no pass over the table.
+    // Tier 2's IR, a function at a time (`u0:0` the token loop's, then its own), by name.
+    let functions: Vec<(&str, &str)> = tier2.clif.split("function ").filter(|f| !f.is_empty()).map(|f| (f.split('(').next().expect("a name"), f)).collect();
+    let arity = |f: &str| {
+        let head = f.lines().next().expect("a head");
+        let params = head.split('(').nth(1).and_then(|p| p.split(')').next()).map_or(0, |p| p.split(',').filter(|x| !x.trim().is_empty()).count());
+        let returns = head.split(" -> ").nth(1).map_or(0, |r| r.split(',').count());
+        (params, returns)
+    };
+    let tape: Vec<(usize, usize)> = functions[1..].iter().map(|&(_, f)| arity(f)).collect();
+    assert_eq!(tape, [(5, 2), (11, 1), (5, 1), (10, 1)], "tier 2's own functions: the tape's blocks, commit, uncode and finish alone");
+    let calls = |f: &str| f.lines().filter(|l| l.contains(" call ") || l.trim_start().starts_with("call ")).count();
+    for &(name, f) in &functions[1..] {
+        assert_eq!(calls(f), 0, "{name}: a tape function calls");
+    }
+    let callees: std::collections::BTreeSet<&str> = functions[0].1.lines().filter_map(|l| l.split(" = colocated ").nth(1)).map(|l| l.split(' ').next().expect("a callee")).collect();
+    assert!(callees.iter().all(|c| functions[1..].iter().any(|(n, _)| n == c)), "tier 2 calls {callees:?}, not the tape's alone");
+    assert_eq!(tier2.own_calls, calls(functions[0].1), "every call tier 2's, each to a tape function");
     let files = json_tier2_files();
     for f in &files {
         let want1 = p.block_programs[0].run_files(&[f]).remove(0);

@@ -21,10 +21,13 @@
 //! 3. the compiled path, `native_cpu_stream::Parser`: one Cranelift function per tier, tier 2
 //!    reading tier 1's buffers as written.
 //!
-//! Tier 1 on Cranelift and on Metal (generated MSL) equals its interpreter bit for bit. And each
-//! step has the shape the compiler promises: tier 1's body has no branch but the loop's and the
-//! extracts' flattening (it is branchless per block), and tier 2 has one loop, over the tokens
-//! (and one over 64-byte blocks inside each `check`); neither calls anything.
+//! Tier 1 on Metal (generated MSL) equals its interpreter bit for bit, and on Cranelift by the
+//! contract between the tiers (decision 0177, `tier1_agrees`): the records, the totals and every
+//! mask the CPU makes. And each step has the
+//! shape the compiler promises: tier 1's body has no branch but the loop's and the extracts'
+//! flattening (it is branchless per block; a CPU form that makes no mask is the record pass's
+//! token loop alone), and tier 2 has one loop, over the tokens (and one over 64-byte blocks
+//! inside each `check`); neither calls anything.
 
 
 use crate::native_cpu_shape::Step;
@@ -49,15 +52,35 @@ impl Rng {
     }
 }
 
-/// Ids by name, for a corpus grammar: each kind or field is numbered at its first use, from 1.
+/// Ids by name, for a corpus grammar: each kind is numbered at its first use, from 1, and each
+/// field (`field NAME`) apart, from 1, as a tree-sitter grammar numbers them. A field's id is
+/// a code's bits above its kind on the tape tier 2 writes (decision 0140), under
+/// `rerail_tape_format::FIELD_LIMIT`.
 #[derive(Default)]
 pub struct Ids(pub std::cell::RefCell<HashMap<String, u16>>);
 
 impl Ids {
     pub fn of(&self, name: &str) -> u16 {
         let mut m = self.0.borrow_mut();
-        let n = m.len() as u16 + 1;
-        *m.entry(name.to_owned()).or_insert(n)
+        if let Some(&id) = m.get(name) {
+            return id;
+        }
+        let field = name.starts_with("field ");
+        let id = m.keys().filter(|k| k.starts_with("field ") == field).count() as u16 + 1;
+        m.insert(name.to_owned(), id);
+        id
+    }
+
+    /// The ids back to their names: the kinds', and the fields' (without `field `).
+    pub fn names(&self) -> (HashMap<u16, String>, HashMap<u16, String>) {
+        let (mut kinds, mut fields) = (HashMap::new(), HashMap::new());
+        for (n, &id) in self.0.borrow().iter() {
+            match n.strip_prefix("field ") {
+                Some(f) => fields.insert(id, f.to_owned()),
+                None => kinds.insert(id, n.clone()),
+            };
+        }
+        (kinds, fields)
     }
 }
 
@@ -449,7 +472,12 @@ pub fn compile_step(name: &str, source: &str) -> Compiled {
     let ids = Ids::default();
     let compiled = {
         let kind = |n: &str| Some(ids.of(n));
-        let field = |n: &str| Some(ids.of(&format!("field {n}")));
+        // A field's id goes on the tape in a code's bits above its kind (`native_cpu_tape::kf`).
+        let field = |n: &str| {
+            let id = ids.of(&format!("field {n}"));
+            assert!(usize::from(id) < rerail_tape_format::FIELD_LIMIT, "{name}: field {n} past the tape's {}", rerail_tape_format::FIELD_LIMIT);
+            Some(id)
+        };
         let symbols = crate::bitlex_masks::Symbols { kind: &kind, field: &field };
         crate::bitlex_masks::compile(&stmts, &[crate::bitlex_masks::FALLBACK], Some(&symbols)).unwrap_or_else(|e| panic!("{name}: compiles: {e}"))
     };
@@ -507,19 +535,64 @@ pub fn reference(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
     )
 }
 
+/// What tier 1 on the CPU owes tier 2, as decision 0177 states the contract between the tiers:
+/// the records (every position, every code), every total, and every output the CPU's form
+/// makes. The outputs its form makes a zero constant (the masks the record pass and its token
+/// loop make from the bytes where they read them: `BlockNative::cpu_form`) are not made, and
+/// the gap marks tier 2 on the CPU tests itself (`native_cpu_block::lazy_marks`) are not in its
+/// codes, where the interpreter's codes have them.
+pub struct Contract {
+    unmade: Vec<bool>,
+    lazy: u32,
+}
+
+impl Contract {
+    pub fn of(block: &crate::block_native::BlockNative) -> Self {
+        let cpu = block.cpu_form();
+        let unmade = cpu.outputs.iter().map(|&o| matches!(cpu.insts[usize::from(o)], crate::block_native::BlockInst::Const(0))).collect();
+        let lazy = block.records.as_ref().map_or(0, |r| {
+            let bytes = crate::native_cpu_bytes::Bytewise::of(block);
+            crate::native_cpu_block::lazy_marks(r, &|o| bytes.can(o)).iter().fold(0, |a, &(k, _)| a | 1 << (crate::records::MARK_SHIFT + u32::from(k)))
+        });
+        Self { unmade, lazy }
+    }
+}
+
+/// Whether tier 1 on the CPU (`cpu`) keeps the contract with its interpreter's run (`interp`).
+pub fn tier1_agrees(contract: &Contract, cpu: &crate::block::BlockRun, interp: &crate::block::BlockRun) -> bool {
+    cpu.positions == interp.positions
+        && cpu.totals == interp.totals
+        && cpu.codes.len() == interp.codes.len()
+        && cpu.codes.iter().zip(&interp.codes).all(|(&c, &i)| c == i & !contract.lazy)
+        && cpu.outputs.len() == interp.outputs.len()
+        && cpu.outputs.iter().zip(&interp.outputs).zip(&contract.unmade).all(|((c, i), &unmade)| unmade || c == i)
+}
+
 /// The step's shape: tier 1's body branches only for its loop, its extracts' flattening and, when
-/// it has values known on ASCII bytes, one all-ASCII test, and one branch per gated region;
+/// it has values known on ASCII bytes, one all-ASCII test, and one branch per gated region (a
+/// program whose CPU form makes no mask is its record pass's token loop alone, decision 0177);
 /// tier 2 loops only over tokens, over a mask's words, 64 bytes a turn (a `check` is tier 1's
 /// masks), over the calls it pops, and (a grammar with wraps) over the node table once, at the
 /// end; nothing calls.
 pub fn check_shape(name: &str, c: &Compiled) {
     // Each pass of tier 1 (one, without `back_fill`): a forward pass's body as above; a
     // backward pass's function branches only for its files, its blocks and their ends.
+    let block = &c.native.block_programs[0];
+    let cpu = block.cpu_form();
+    let makes_masks = cpu.insts.iter().any(|i| !matches!(i, crate::block_native::BlockInst::Const(_)));
+    assert!(makes_masks || block.records.is_some(), "{name}: tier 1 on the CPU makes no mask and has no record pass");
     for (k, pass) in c.parser.tier1.passes.iter().enumerate() {
         let branches = |lines: &[String]| lines.iter().filter(|l| crate::clif_text::opcode(l) == "brif").count();
         if pass.back {
             let lines: Vec<String> = pass.clif.lines().map(|l| l.trim().to_owned()).collect();
             assert_eq!(branches(&lines), 4, "{name}: tier 1's backward pass {k} branches beyond its loops");
+            continue;
+        }
+        // A program whose CPU form makes no mask (decision 0177: its token loop reads its
+        // tokens' bytes where it reads them) has no full blocks' body: it is the record pass's
+        // token loop alone, whose loops the verifier states (`native_cpu_shape::check`: over the
+        // blocks, their tokens and their readers' words).
+        if !makes_masks {
             continue;
         }
         let body = crate::clif_text::body_of(&pass.clif);
@@ -541,10 +614,13 @@ pub fn check_shape(name: &str, c: &Compiled) {
     // Each tier calls only its own outlined functions (`native_cpu_block::general`,
     // `native_cpu_stream::outline`).
     // An indirect jump only through a jump table of its own: tier 2's shared arms
-    // (`native_cpu_stream::shared_runs`) end in one, a `br` each.
+    // (`native_cpu_stream::shared_runs`) end in one, a `br` each; tier 1's token loop takes a
+    // token's rule by one, as the lean lexer's `match` on its first byte (decision 0177).
     use crate::clif_text::{Transfer, count_transfers, transfers};
-    let tables = c.parser.tier2.clif.lines().filter(|l| l.contains(" br_table ")).count();
-    for (tier, asm, own, tables) in [("tier 1", &c.parser.tier1.disassembly, c.parser.tier1.own_calls(), 0), ("tier 2", &c.parser.tier2.disassembly, c.parser.tier2.own_calls, tables)] {
+    let tables_in = |clif: &str| clif.lines().filter(|l| l.contains(" br_table ")).count();
+    let tables1 = c.parser.tier1.passes.iter().map(|p| tables_in(&p.clif) + p.outlined.iter().map(|o| tables_in(&o.clif)).sum::<usize>()).sum();
+    let tables = tables_in(&c.parser.tier2.clif);
+    for (tier, asm, own, tables) in [("tier 1", &c.parser.tier1.disassembly, c.parser.tier1.own_calls(), tables1), ("tier 2", &c.parser.tier2.disassembly, c.parser.tier2.own_calls, tables)] {
         // A jump table's sequence is one line, its indirect jump inside, its entries the
         // function's labels.
         let out: Vec<&str> = asm.lines().filter(|l| transfers(l).iter().any(|t| matches!(t, Transfer::NearCall | Transfer::Jump))).take(4).collect();
@@ -577,6 +653,7 @@ pub fn check_ladder(
         let (mut sentences, mut mutations) = ([0usize; 2], [0usize; 2]);
         let mut reasons: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
         let extra_ids: Vec<u16> = lang.extras.iter().map(|e| c.ids.of(e)).collect();
+        let contract = Contract::of(&c.native.block_programs[0]);
         let (mut docs, before) = documents_with(&lang, seed(name), &|b| reference(&c, b).is_some(), alphabet);
         docs.extend(fixed.iter().map(|d| d.as_bytes().to_vec()));
         for (i, bytes) in docs.into_iter().enumerate() {
@@ -586,7 +663,7 @@ pub fn check_ladder(
             let interp = crate::stream::run(&c.program, &bytes, &run).ok().map(as_ids);
             let compiled = c.parser.parse(&bytes).ok().map(as_ids);
             let tier1 = c.parser.tier1.extract(&bytes);
-            if tier1 != run {
+            if !tier1_agrees(&contract, &tier1, &run) {
                 differ.push(format!("{}: tier 1 compiled differs from its interpreter", show()));
                 break;
             }

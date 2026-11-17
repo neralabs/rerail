@@ -1221,9 +1221,18 @@ impl<'a> Ev<'a> {
         let mut before: Vec<Vec<bool>> = vec![vec![false; self.marks.len()]; toks.len()];
         // A token mark: at each grammar token that begins its run, after its token before.
         // A choice at a token: its kind, or its text as a word (its kind's spelling, a
-        // keyword's, or its soft word). `~`: none of its choices, and never the file's end.
+        // keyword's, or its soft word). `~`: none of its choices, and never the file's end. A
+        // kind takes the tokens a keyword of its row renamed (`#include`, `hash_word`'s), as the
+        // compiler's rows do.
+        let keywords = &self.keywords;
+        let src = self.src;
         let one = |t: &Token, c: &TokenElem| match c {
-            TokenElem::Kind(k) => &t.kind == k,
+            TokenElem::Kind(k) => {
+                &t.kind == k
+                    || keywords.iter().any(|(row, words, _, _)| {
+                        row == k && words.iter().any(|(w, alias)| src[t.start..t.end] == w[..] && alias.as_deref().map_or(t.kind.as_bytes() == &w[..], |a| a == t.kind))
+                    })
+            }
             TokenElem::Word(w) => t.kind.as_bytes() == w.as_slice() || t.soft.as_deref().is_some_and(|s| s.as_bytes() == w.as_slice()),
             TokenElem::Not(_) | TokenElem::End => false,
         };
