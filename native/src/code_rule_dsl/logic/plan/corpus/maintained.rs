@@ -228,7 +228,7 @@ pub(in crate::code_rule_dsl) fn run_with(
                 *why.entry(w).or_default() += 1;
             }
             crate::code_rule_dsl::logic::profile::decision("a maintained run driven by deltas (decision 0331)", || {
-                format!("{reached} of {of} strata reached, {quiet} quiet: {} maintained, {} derived again {why:?}; no delta for {:?}", maintained.maintained, maintained.derived_again, driver.no_delta.iter().take(8).collect::<Vec<_>>())
+                format!("{reached} of {of} strata reached, {quiet} quiet: {} maintained, {} derived again {why:?} {:?}; no delta for {:?}", maintained.maintained, maintained.derived_again, maintained.again.iter().map(|a| &a.0).take(4).collect::<Vec<_>>(), driver.no_delta.iter().take(8).collect::<Vec<_>>())
             });
             got
         }
@@ -264,7 +264,7 @@ pub(in crate::code_rule_dsl) fn run_with(
     drop(s);
     let _s = span("retain");
     let (patched, _, _) = super::kept_statistics(lazies, bound_old, &mut measured_kept, &rows, &HashMap::new(), &constants);
-    let mut next = retain::after(kept, key, digests, &cut, rows, &outputs, &sources, measured_kept, HashMap::new(), input_docs, Default::default(), patched, retain::budget());
+    let mut next = retain::after(kept, key, digests, &cut, rows, &outputs, &sources, measured_kept, HashMap::new(), input_docs, Default::default(), patched, retain::budget(), store.is_none());
     if let Some(frames) = frames {
         next.with_frames(frames, &cut);
     }

@@ -509,6 +509,7 @@ pub(in crate::code_rule_dsl) fn after(
     docs: (super::input_delta::Docs, [u8; 32]),
     mut patched: HashMap<String, Patched>,
     budget: usize,
+    indexes: bool,
 ) -> Retained {
     // An input bound as the last run's source keeps that source's hashes.
     if let Some(old) = &old {
@@ -538,8 +539,10 @@ pub(in crate::code_rule_dsl) fn after(
     let mut past: HashMap<String, Kept> = HashMap::new();
     for (rel, width, held) in derived {
         // An index's relation (the reach index, decision 0119) is made again in less than reading it back costs:
-        // not kept, so it never takes the budget from the relations whose rows are work.
-        if held.held_source().is_some() {
+        // not kept, so it never takes the budget from the relations whose rows are work. Kept where the part stays
+        // in memory (`indexes`: a chunk's guest rounds, decision 0331), so its next run's delta is made against it
+        // and its readers are maintained.
+        if held.held_source().is_some() && !indexes {
             continue;
         }
         let k = Kept { rel: held, width, output: outputs.get(&rel).cloned() };

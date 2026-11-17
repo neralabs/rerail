@@ -60,8 +60,23 @@ M3, cold, 4 threads, the full shape (317 rules, corpus0):
 
 Outputs are identical (660 relations, 30,449 rows).
 
-## Open
+Found along the way: `a_maintained_run_decodes_and_copies_no_tree` failed on the committed code: `decode_kept` read
+the lowered program's tree for its inputs and declarations. It now reads the version's fields.
 
-- `chain_below` is derived again in the later rounds: a read of it has no delta.
-- `a_maintained_run_decodes_and_copies_no_tree` failed on the committed code: `decode_kept` read the lowered
-  program's tree for its inputs and declarations. It now reads the version's fields.
+## A reach index's delta (2026-11-17)
+
+Each later round still derived one stratum again: `chain_root (1 relations, reads chain_below)`, "a changed read's
+old rows not kept". `chain_below` is a transitive closure, held as a reach index (0119). A native stratum has no
+maintained form: the driven walk made it again from its reads, as the base program does, with no delta, so its
+readers derived again. A reach index cannot be made inside a form (the engine builds one in place, on the base walk).
+
+Now, where its old rows are kept in memory, it is still made in place, and its delta is then made against them
+(`reach_delta`: both row sets sorted and compared, held as `chain_below__minus` and `__plus`). Its readers are
+maintained. `retain::after` keeps an index's relation when the part stays in memory (`indexes`: the guest rounds,
+no store); a session's and the cone's still do not keep it (0119 §3: it is made again in less than reading it back
+costs), so their path is unchanged. Where the index is not made in place (`reach_rows`), its readers derive again
+as before.
+
+M3, profiled: every later round 0 derived again, no relation without a delta (was 1 and `chain_below`). The two
+strata cost about 0.05 s a round, so the cold CPU did not move outside the machine's noise (under load 40–85:
+58.2 s before, 55.0 s after). Outputs identical (660 relations, 30,449 rows).
