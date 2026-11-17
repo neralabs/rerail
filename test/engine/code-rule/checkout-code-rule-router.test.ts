@@ -606,6 +606,22 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect(opened).toHaveBeenCalledTimes(2);
   });
 
+  it("holds one Git ignore matcher for a worktree whether a walk's question or an edit reached it first", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await mkdir(join(worktree, "api"), { recursive: true });
+    const { recorder, audits } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    const opened = vi.spyOn(loadNativeBinding(), "openGitIgnoreMatcher");
+    cleanups.push(async () => { opened.mockRestore(); });
+
+    await auditor.openWorkspace("one-matcher");
+    expect(auditor.walkView().ignoresPath(join(worktree, "api"), true)).toBe(false);
+    await edit(auditor, "one-matcher", 1, join(worktree, "api", "x.py"));
+    expect(violations(audits)).toEqual([{ checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" }]);
+    // A matcher holds its checkout's index: the lane the edit opened takes the one the question opened.
+    expect(opened.mock.calls.filter(([root]) => root === worktree)).toHaveLength(1);
+  });
+
   it("judges a sibling worktree from a session that started in a worktree", async () => {
     const { databasePath, session, worktree, root } = await repositoryWithWorktree(outside);
     const sibling = join(root, "elsewhere", "sibling");
