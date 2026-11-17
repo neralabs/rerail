@@ -79,6 +79,20 @@ describe.runIf(process.platform !== "win32")("engine service socket directory", 
     }
   });
 
+  it("runs its before-event step before it routes each event sent on the socket", async () => {
+    const directory = join(await temporaryRoot(), "run");
+    await mkdir(directory, { mode: 0o700 });
+    const socketPath = join(directory, "engine.sock");
+    const steps: string[] = [];
+    const service = await startEngineService({ socketPath, storageRoot: join(directory, "state"), beforeEvent: () => steps.push("before") });
+    try {
+      await expect(ingestEngineEvent({ socketPath }, { kind: "session-end", eventId: "end", sessionId: "s" })).rejects.toThrow(/\(400\)/u);
+      expect(steps).toEqual(["before"]);
+    } finally {
+      await service.close();
+    }
+  });
+
   it("leaves a socket a live process answers on alone, and names it as a running daemon's", async () => {
     const directory = join(await temporaryRoot(), "run");
     await mkdir(directory, { mode: 0o700 });
