@@ -2693,6 +2693,22 @@ describe("the hook start check", () => {
     expect(homeEntries()).toEqual([...before, ...(keeps ? [dirname(kept), kept] : [])].sort());
   });
 
+  it("keeps no answer, and makes no folder of kept answers, where that folder goes while the hook waits for the daemon", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    const answers = join(process.env.RERAIL_HOME!, "stopped-answers");
+    // The folder goes after the hook found the start mark in it and before the daemon answers: a change that commits
+    // then renews no mark, so an answer kept with the mark found before would be read past it.
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "stopped", async () => removeFolderSync(answers));
+    try {
+      expect(await host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES)).toBe(false);
+    } finally {
+      await daemon.close();
+    }
+    expect({ requests: daemon.requests, answers: existsSync(answers) }).toEqual({ requests: ["/api/presentation"], answers: false });
+  });
+
   it("makes the folder of kept answers for a daemon where nothing is at its name, and leaves a link or a file there as it is", async () => {
     const root = await temporaryDirectory({ started: false });
     const outside = join(root, "outside");
