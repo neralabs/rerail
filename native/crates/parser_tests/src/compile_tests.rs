@@ -953,8 +953,10 @@ fn only_the_compiler_reads_tier2s_states() {
                 continue;
             }
             let text = std::fs::read_to_string(&path).expect("reads a source file");
-            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`) are not the table's.
-            let table_line = |line: &str| needles.iter().any(|n| line.contains(n)) && !((line.contains("rd.arms") || line.contains("reader.arms")) && !needles[1..].iter().any(|n| line.contains(n)));
+            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`, or one indexed in the records'
+            // `readers[i].arms`) are not the table's.
+            let reader_arms = |line: &str| line.contains("rd.arms") || line.contains("reader.arms") || (line.contains("readers[") && line.contains("].arms"));
+            let table_line = |line: &str| needles.iter().any(|n| line.contains(n)) && (!reader_arms(line) || needles[1..].iter().any(|n| line.contains(n)));
             if text.lines().any(table_line) {
                 readers.push(path.display().to_string());
             }
