@@ -613,6 +613,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   #mode: AuditMode;
   #workspace: PreparedWorkspace | undefined;
   #replacement: PreparedWorkspace | undefined;
+  /** The lane gave its workspace back (`releaseWorkspace`); its next audit or question takes a fresh one. */
+  #released = false;
   #sessionId: string | undefined;
   #revision = 0;
   readonly #versions = new Map<string, number>();
@@ -728,7 +730,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * say, a path Git ignores is refused while the lane follows `.gitignore`.
    */
   acceptsPath(path: string): boolean {
-    return this.#readsPath(path) && !this.ignoresPath(path, false);
+    return this.#readsNow(path) && !this.ignoresPath(path, false);
   }
 
   /**
@@ -739,8 +741,19 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return (this.#replacement ?? this.#workspace)?.version;
   }
 
+  /** Whether the lane gave its workspace back (`releaseWorkspace`) and has not taken another yet. */
+  get released(): boolean {
+    return this.#released;
+  }
+
   /** `acceptsPath` apart from Git's ignore rules: what another checkout at `rulesVersion` reads (the router asks it). */
   readsPath(path: string): boolean {
+    return this.#readsNow(path);
+  }
+
+  /** `#readsPath` by the lane's rules: a lane that gave its workspace back takes one again to answer (`releaseWorkspace`). */
+  #readsNow(path: string): boolean {
+    if (this.#released) this.#takeWorkspaceAgain();
     return this.#readsPath(path);
   }
 
@@ -773,7 +786,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * no rule reads anyway.
    */
   ignoredEdit(path: string): NativeGitIgnoreMatch | undefined {
-    if (!this.#followGitignore || !this.#readsPath(path)) return undefined;
+    if (!this.#followGitignore || !this.#readsNow(path)) return undefined;
     return this.#askGitIgnore(path, matcher => matcher.ignoredBy(path, false)) ?? undefined;
   }
 
@@ -787,6 +800,37 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       this.#gitIgnore ??= null;
       process.stderr.write(`rerail: cannot read Git ignore rules for ${path || "."}: ${errorMessage(error)}\n`);
       return undefined;
+    }
+  }
+
+  /**
+   * Gives back the native workspace (its rules, its storage and the checkout's index) while no work of the lane needs
+   * it, keeping all the lane applied and recorded; returns whether it gave one back. The lane's next audit or question
+   * takes a fresh workspace at the catalog's version and applies again what the lane applied (`#takeWorkspaceAgain`),
+   * as a rules change does, so it judges each edit as an open one would.
+   */
+  releaseWorkspace(): boolean {
+    const prepared = this.#workspace;
+    if (prepared === undefined || this.#replacement !== undefined || this.#closing || this.#working()) return false;
+    this.#workspace = undefined;
+    this.#released = true;
+    this.#disposeWorkspace(prepared.workspace);
+    return true;
+  }
+
+  /** Whether an edit is being stored, queued, evaluated or audited. */
+  #working(): boolean {
+    return this.snapshotStatus().pending || this.#storing.size > 0 || this.#generatedEditAudits.size > 0;
+  }
+
+  /** A workspace for a lane that gave its own back, at the catalog's version; the next evaluation installs it (`#run`). */
+  #takeWorkspaceAgain(): void {
+    this.#released = false;
+    if (this.#closing) return;
+    try {
+      this.#replacement = this.#prepareWorkspace();
+    } catch (error) {
+      this.#readFailures.set("catalog", failure("catalog", "adapter-error", errorMessage(error), undefined, "evaluate"));
     }
   }
 
@@ -862,7 +906,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     try {
       this.#catalog.refresh();
       this.#reportQuarantined();
-      if ((this.#replacement ?? this.#workspace)?.version === this.#catalog.status.version) return;
+      if (this.#holdsCurrentRules()) return;
       const replacement = this.#prepareWorkspace();
       if (this.#replacement !== undefined) this.#disposeWorkspace(this.#replacement.workspace);
       this.#replacement = replacement;
@@ -872,6 +916,14 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         failure("catalog", "adapter-error", errorMessage(error), undefined, "evaluate"),
       );
     }
+  }
+
+  /**
+   * Whether the lane's workspace is at the catalog's version, or the lane gave its workspace back and takes one at the
+   * catalog's version when an audit or a question needs it (`#takeWorkspaceAgain`).
+   */
+  #holdsCurrentRules(): boolean {
+    return this.#released || (this.#replacement ?? this.#workspace)?.version === this.#catalog.status.version;
   }
 
   /** Digest of the compiled rule catalog as of now: what a repository audit started now records as its `catalogRevision`. */
