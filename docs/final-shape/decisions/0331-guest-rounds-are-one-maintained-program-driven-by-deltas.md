@@ -123,6 +123,31 @@ dropped) rewrite request rules and leave the record. With a record that does not
 taking every rule (`prune` does), so a gated slice cut (`working-data/patches/slice-request-gate.patch`) changes
 nothing today. A rule's derivation source (`R::From`) does not survive the store's fold of an edit into a base.
 
-Open, a choice: (a) the passes after lowering keep the `asked` record (each pass that drops, adds or rewrites a
-request rule states it), so the slice and `prune` both gate on it; or (b) the slice is cut before those passes,
-from the lowered program, and the slice prepared on its own. Whether the record still matches there is not yet checked: `prune` relies on it there, but simplification runs after the requests are made.
+Chosen (2026-11-17), of (a) the passes after lowering keep the record, or (b) the slice cut from the lowered
+program and prepared on its own: (a).
+
+### The record carried (2026-11-17)
+
+Traced pass by pass, the record broke in the tree before the version was built, not in the version's passes:
+`requests_file_local` split request rules into narrowed bodies and merged equal ones (36 to 41 `rr_value_req`
+rules), `simplify`'s filter inlining copied a rule per definition (36 to 39), `long_text_twins` added a twin beside
+a rule (39 to 40), hiding appended seeded copies, and `drop_repeated_rules` dropped repeats. Each such pass now
+states where each rule came from: `Program::set_rules_from` (with `carry` and `set_rules_carried` for a pass that
+takes the rules apart first) rebuilds the record, a rule serving the readers of the rules it came from together;
+`push_rule_from` gives an appended copy its source's readers. A rule of no known source serves its own relation,
+which `prune` keeps wherever the relation is needed: the record is always complete, and a pass that forgets it
+ungates one rule, not a relation. The version build states a relation whose rules no longer match as a decision
+(`the request record`).
+
+With the record whole, `prune` gates the whole program's requests (`rr_token_req` 5 rules to 2), and the embed
+slice gates them as `prune` does (`embed_slice`, `Version::asked`). On the M3 (cold, 4 threads; guests from the
+profiled run):
+
+| | t9 (before the hub) | merged | the record carried |
+|---|---|---|---|
+| embed slice rules | 488 | 584 | 491 |
+| guests, s | 10.40 | 12.62 | 9.90 |
+| run CPU, s | 58.2 | 59.7 | 52.5 |
+
+Outputs identical in all three (660 relations, 30,449 rows). The maintained rounds' gain is back: round 2 3.05 s
+against 5.08 s merged, the slice's first round 2.00 s against 2.48 s. One sample each; the M3's load was 11–24.
