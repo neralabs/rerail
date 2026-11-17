@@ -587,6 +587,16 @@ pass.
 - **Done when**: each passes, the first by binding the long-text nodes before whichever part reads them (or by the
   part not reading node text), the second by classifying each switch from what it does, the third from the cause.
 
+### Q22. Every run parses its 10,047 guest tapes again
+
+- **Found** (2026-11-17, ep2 at 0281 step P, with B101 edits): every run, cold or edit, reports 132–462 tape
+  cache hits and 10,047 misses (`input tape cache`), over 300 files. The writer stores 10,047 tapes each run
+  (`a tape and its source: 10047 jobs`), so the next run never finds what this one wrote.
+  - The key (`facts/core.rs`, `queued_tape`) is the content digest, the tape tag, the grammar version and the format:
+    stable across runs. The hit depends on the caller's lookup (`found`), so the guests' lookup likely misses.
+  - Cost over an edit (`prof-body5`): parsing 1.82 s, guests 1.19 s and most of the store writer's 1.20 s, of 10.3 s.
+- **Done when**: an edit's run finds the guest tapes the last run wrote, and parses none of an unchanged file.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives

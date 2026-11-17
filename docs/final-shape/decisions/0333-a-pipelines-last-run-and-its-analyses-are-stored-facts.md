@@ -89,3 +89,34 @@ A new process opens the last run from the store and runs `again` over an edit of
 - **Test.** `a_stored_run_reruns_on_an_edit_in_a_new_process`: a run kept, the store reopened, the edit rebased onto
   the stored input, the rule pass visiting the edit's added rules alone, the input's `Needed` read back, the output a
   run from scratch's.
+
+## Measured (2026-11-17, §6)
+
+ep2 (`tmp/ep2.sh`: corpus0, the 317 B-now rules, one store; each step a new process; profiling build), at 0281
+step P. Each step finds the same 427 rows.
+
+| Step | Instructions | CPU | Wall | Peak |
+|---|---|---|---|---|
+| cold | 1117 G | 77.4 s | 22.0 s | 3310 MB |
+| warm | 6.3 G | 0.40 s | 0.45 s | 66 MB |
+| B101 edited, the first build of P | 130–246 G | 9.6–16.9 s | 5.8–12.7 s | 2.3–2.5 GB |
+| B101 edited, with the fix below | 145 G | 10.3 s | 6.0 s | 2.5 GB |
+
+The first build of P spent 7.1 s of an edit in `prior`. Every step after the first program pass of a rerun has
+an input that is not an edit of the last run's, and `Delta::of` rebuilt a whole-program delta for each of the
+6,918 steps of "columns no reader reads", only for `prior` to discard it. `Delta::read_off` now says whether the
+delta is read off the version, and `prior` makes no rebuilt one. Preparation over an edit fell from 8.71 s to
+2.24 s.
+
+Where an edit's 10.3 s goes (`prof-body5`):
+- preparation, 2.24 s. Of it: "columns no reader reads" 0.78 s; opening the last run of `before lowering` 0.49 s
+  (of `preparation`, 0.04 s); pushing the file-local joins 0.15 s.
+- writing the pipelines' runs, on the store's writer, 1.03 s: `before lowering` keeps a version per step, 6,918 of
+  them.
+- parsing, 1.82 s, and guests, 1.19 s: every run misses its 10,047 guest tapes (work queue Q22). Not P's.
+- the combine 0.71 s, the per-file memo 0.80 s, moving rows to the cross-file part 0.60 s.
+
+So P works as built: a new process finds the last run and reruns its pipelines over the edit. It gains little
+yet, because the rerun is an edit of the last run's only up to its first program pass, and every step after that
+runs whole. What it is worth comes when the program passes write onto the last run's outputs; and the per-step
+versions of `before lowering` should be kept as one, to stop the 1.0 s of writing and the 0.5 s of opening.

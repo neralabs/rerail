@@ -202,6 +202,16 @@ impl Delta {
         self.removed.len() + self.added.len() + self.decls.len()
     }
 
+    /// Whether the edit that made `output` from `input` is read off `output` (`of` does not rebuild it).
+    pub fn read_off(input: &Arc<Version>, output: &Arc<Version>) -> bool {
+        Arc::ptr_eq(input, output)
+            || match &**output {
+                Version::Overlay { parent, .. } => Arc::ptr_eq(parent, input),
+                Version::View { .. } => same_numbering(input, output),
+                Version::Base { .. } => false,
+            }
+    }
+
     /// The edit that made `output` from `input`.
     pub fn of(input: &Arc<Version>, output: &Arc<Version>) -> Delta {
         let mut d = Delta::default();
@@ -941,6 +951,11 @@ impl<'s> Pipeline<'s> {
         let Some(k) = self.last.get_mut(self.kept.len()).and_then(|k| k.take_if(|k| k.pass == pass)) else { return Ok(Prior::None) };
         if Arc::ptr_eq(&k.input, &self.v) {
             return Ok(Prior::Same(k));
+        }
+        // An input not made as an edit of the last one (a step after one that ran whole): a rebuilt delta, of the
+        // whole program, is never read, so it is not made.
+        if !Delta::read_off(&k.input, &self.v) {
+            return Ok(Prior::None);
         }
         let d = Delta::of(&k.input, &self.v);
         if d.rebuilt {
