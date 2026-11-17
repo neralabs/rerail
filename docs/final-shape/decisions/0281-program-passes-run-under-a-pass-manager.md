@@ -640,9 +640,15 @@ step 3 replaces what is under the writer.
      sets the clauses named, no longer a lowerer method; on the version `lowering_tail::KindSets { sets }` (the
      lowerer's sets as the pass's settings) and `Unit`. `whole_front` hands on its program with those sets. Test:
      `kind_sets_are_made_on_the_version` (a set of facts, a derived set read through its axes; fails with the pass
-     left out); ep2's 317 policies: 0 rows, every check passes. Next: the lowerer's analyses before them (the
-     grammar names, the span patterns, projections, the core's declarations, findings, three-valued relations), each
-     a function of the program and the lowerer state it reads, that state the pass's settings.
+     left out); ep2's 317 policies: 0 rows, every check passes. Then the grammar names and the built-ins'
+     declarations: `lower::grammar_names` and `lower::builtins_out` are functions of the program (the rewritten
+     core relations, which only the lowerer knows, handed on in `lower::Lowered`); on the version
+     `lowering_tail::GrammarNames` and `BuiltinsOut { rewritten }`. Tests: `grammar_names_and_builtins_are_checked_on_the_version`
+     (fails without `GrammarNames`), and `builtins_out_on_a_version_is_the_trees` on its own, since on a modular
+     text's path the unseeding hides it (the library declares every built-in); each fails with its pass left out.
+     ep2's 317 policies: 0 rows. Next: the span patterns, projections, the core's declarations, findings and
+     three-valued relations, each a function of the program and the lowerer state it reads, that state the pass's
+     settings.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.

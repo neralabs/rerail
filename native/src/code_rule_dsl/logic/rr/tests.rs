@@ -4066,3 +4066,23 @@ fn kind_sets_are_made_on_the_version() {
     let heads: BTreeSet<&str> = v.rules().map(|x| v.rel_name(x.head().rel())).collect();
     assert!(["rr_anc_code", "rr_near_code", "rr_in_code"].iter().all(|h| heads.contains(h)), "{heads:?}");
 }
+
+/// The grammar names are checked on a modular text's version (decision 0281's path, step 7b): a grammar the registry
+/// does not have is refused there too; and the built-ins lowering writes out (`nearest`, `earlier`, …) are no relations
+/// of the program (`BuiltinsOut`'s own test is `builtins_out_on_a_version_is_the_trees`: the unseeding hides it here), as the tree's
+/// `lower::grammar_names` and `lower::builtins_out` make them; a debug build checks the image against the tree's.
+#[test]
+fn grammar_names_and_builtins_are_checked_on_the_version() {
+    let lower = |body: &str| {
+        let src = format!("#include \"python/compare.rr\"\n.decl hit(s: node)\n.output hit\n{body}\n");
+        let files = super::read_text(&src).unwrap().files().expect("a modular text");
+        let library = super::lower_library(&files, None).unwrap();
+        let scoped = library.scoped(&files);
+        super::read_text(&src).unwrap().lower_in_version(&src, &library, &scoped, None).map(|v| v.expect("a modular text"))
+    };
+    let refused = lower("hit(s) :- kind(s, \"string\"), parsed(s, \"postgres\", _).").map(|_| ()).unwrap_err().to_string();
+    assert!(refused.contains("no grammar \"postgres\""), "{refused}");
+    let v = lower("hit(s) :- kind(s, \"name\"), within(s, a), kind(a, \"call\").").unwrap();
+    let head = v.header(&Default::default()).unwrap();
+    assert!(!["nearest", "earlier", "split_dot", "unset"].iter().any(|b| head.decls.contains_key(*b)), "{:?}", head.decls.keys().collect::<Vec<_>>());
+}

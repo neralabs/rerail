@@ -1199,3 +1199,101 @@ impl ProgramPass for KindSets {
         Ok(())
     }
 }
+
+/// `lower::grammar_names` on the version: every constant grammar a rule names is one the language registry has.
+pub struct GrammarNames;
+
+impl ProgramPass for GrammarNames {
+    const NAME: &'static str = "grammar names";
+    fn run(&mut self, cx: &Cx<'_>, _w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::rr::lower::{grammar_column, no_grammar};
+        let v = cx.v();
+        for r in v.rules() {
+            let body = r.body().filter_map(|l| match l.view() {
+                L::Atom(a) => Some(a),
+                _ => None,
+            });
+            for a in std::iter::once(r.head()).chain(body) {
+                if let Some(i) = grammar_column(v.rel_name(a.rel()))
+                    && let Some(TermRef::Str(g)) = a.args().nth(i)
+                    && !crate::code_rule_dsl::language::is_grammar(v.text(g))
+                {
+                    return Err(no_grammar(v.rel_name(r.head().rel()), v.text(g)).to_string());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `lower::builtins_out` on the version: the built-ins written out, and the core relations the lowering rewrote
+/// (`rewritten`, its settings), are no relations of the program; `within` stays declared where a rule reads it.
+pub struct BuiltinsOut {
+    pub rewritten: Vec<String>,
+}
+
+impl ProgramPass for BuiltinsOut {
+    const NAME: &'static str = "built-ins out";
+    fn settings(&self) -> Vec<u8> {
+        self.rewritten.join("\n").into_bytes()
+    }
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let mut head = was.clone();
+        let reads_within = v.rules().any(|r| r.body().any(|l| matches!(l.view(), L::Atom(a) if v.rel_name(a.rel()) == WITHIN)));
+        for b in crate::code_rule_dsl::logic::rr::lower::builtins(&self.rewritten).filter(|b| !(reads_within && *b == "within")) {
+            head.decls.remove(b);
+            head.inputs.retain(|i| i != b);
+        }
+        if reads_within {
+            head.decls.entry(WITHIN.to_owned().into()).or_insert_with(|| [("n".into(), "node".into()), ("a".into(), "node".into())].into());
+            if !head.inputs.iter().any(|i| i == WITHIN) {
+                head.inputs.push(WITHIN.to_owned());
+            }
+        }
+        if head.decls == was.decls && head.inputs == was.inputs {
+            return Ok(());
+        }
+        w.on()?.set_header(&was, &head);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::code_rule_dsl::logic::program_image::{build::Builder, manager::Pipeline};
+
+    /// `BuiltinsOut` on a version is the tree's `lower::builtins_out`: the built-ins' and the rewritten relations'
+    /// declarations and inputs go, and `within`, read by a rule, is declared and an input. (On a modular text's path
+    /// the unseeding hides this, since the library declares every built-in: so it is checked here, on its own.)
+    #[test]
+    fn builtins_out_on_a_version_is_the_trees() {
+        let text = ".decl e(x: number)\n.input e\n.decl r(x: number)\nr(x) :- e(x).\n.output r\n";
+        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        for b in ["nearest", "earlier", "precedes"] {
+            tree.decls.insert(b.to_owned().into(), [("x".into(), "number".into())].into());
+            tree.inputs.push(b.to_owned());
+        }
+        // A rule reading `within`, undeclared.
+        let mut reads = tree.rules[0].clone();
+        reads.body = [crate::code_rule_dsl::logic::front::Literal::Atom(crate::code_rule_dsl::logic::front::Atom {
+            rel: "within".to_owned().into(),
+            args: [crate::code_rule_dsl::logic::front::Term::Var("x".to_owned().into()), crate::code_rule_dsl::logic::front::Term::Wild].into(),
+            neg: false,
+            gated: false,
+        })]
+        .into();
+        tree.rules.push(reads);
+        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        let rewritten = vec!["precedes".to_owned()];
+        let mut p = Pipeline::new("test", v);
+        p.program(&mut super::BuiltinsOut { rewritten: rewritten.clone() });
+        let (out, _) = p.finish().unwrap();
+        crate::code_rule_dsl::logic::rr::lower::builtins_out(&mut tree, &rewritten);
+        assert!(!tree.decls.contains_key("nearest") && !tree.decls.contains_key("precedes") && tree.inputs.iter().any(|i| i == "within"), "{:?}", tree.inputs);
+        let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
+    }
+}

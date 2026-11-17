@@ -966,27 +966,30 @@ pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
     program.qualifiers.retain(|r, _| !(seeded.qualifiers.contains(r) && gone(r)));
 }
 
-/// `link_seeded` up to `kind_sets`, `unit`, `whole_back`, `front::finish` and `whole()`'s tail (aggregate demand, `unit`, `sets`,
+/// `link_seeded` up to `grammar_names`, `builtins_out`, `kind_sets`, `unit`, `whole_back`, `front::finish` and `whole()`'s tail (aggregate demand, `unit`, `sets`,
 /// `widen_cyclic_contexts`): the program `rr::link_seeded_version`
-/// makes a version of, with the sets its clauses named; `declared` checked. `kind_sets` takes out only sets no rule
+/// makes a version of, with what the lowerer knows of it; `declared` checked. `builtins_out` takes out declarations
+/// of relations no rule reads (the built-ins are written out), but `within`, which it declares where read. `kind_sets` takes out only sets no rule
 /// reads, and declares the axes' helpers it writes. `whole_back` adds a column to nullary relations, in their declarations
 /// and reads alike, and the requests' relations it declares. `finish` declares only the axes (transduced, which `declared` passes)
 /// and `node_order` with the helpers it reads. Aggregate demand adds only relations it declares. The tail drops repeats (a literal or rule another copy keeps), a rule
 /// whose body is its own head, and literals of relations the program derives, and adds `node` only where it is
 /// declared: the check before it refuses what the check after it does, but for a relation read only by its own
 /// copy-rule, which the lowering does not declare apart.
-pub fn link_seeded_front(m: Module, seeds: &Seeds) -> Result<(Program, BTreeSet<String>), Error> {
+pub fn link_seeded_front(m: Module, seeds: &Seeds) -> Result<Lowered, Error> {
     let mut l = seeds.l.clone();
     l.violations.clear();
     l.append(m);
-    let (program, sets) = whole_front(l)?;
-    crate::code_rule_dsl::logic::front::declared(&program)?;
-    Ok((program, sets))
+    let lowered = whole_front(l)?;
+    crate::code_rule_dsl::logic::front::declared(&lowered.program)?;
+    Ok(lowered)
 }
 
 /// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.
 fn whole(l: Lowerer) -> Result<Program, Error> {
-    let (mut program, named) = whole_front(l)?;
+    let Lowered { mut program, sets: named, rewritten } = whole_front(l)?;
+    grammar_names(&program)?;
+    builtins_out(&mut program, &rewritten);
     kind_sets(&mut program, named)?;
     unit(&mut program);
     whole_back(&mut program);
@@ -1049,37 +1052,84 @@ pub fn sets(program: &mut Program) {
     }
 }
 
-/// `whole` up to the lowerer's analyses before its kind sets, with the sets its clauses named: what `kind_sets`,
+/// `whole` up to the lowerer's analyses before its grammar names, with what the lowerer knows of the program
+/// (`Lowered`): what `grammar_names`, `builtins_out`, `kind_sets`,
 /// `unit`, `whole_back`, `front::finish` and the tail (aggregate demand, `unit`,
 /// `sets`, `widen_cyclic_contexts`) make of it `rr::link_seeded_version` makes on the version.
-fn whole_front(mut l: Lowerer) -> Result<(Program, BTreeSet<String>), Error> {
+fn whole_front(mut l: Lowerer) -> Result<Lowered, Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
     l.three_valued();
     l.findings()?;
     l.declare_core()?;
     l.projections();
     l.span_patterns()?;
-    l.grammar_names()?;
-    // The built-ins lowering writes out (`nearest`, `within`, …) and the core relations it rewrites where the program
-    // does not derive them (`next_sibling`, `precedes`) are declared in `core.rr` for the checker; they are no
-    // relations of the program.
-    // `within` stays where a rule reads it: the lowering made it the engine's relation (decision 0050).
-    let reads_within = l.prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == crate::code_rule_dsl::facts::vtab::syntax::WITHIN);
-    let rewritten: Vec<&str> = self::core::REWRITTEN.into_iter().filter(|r| l.rewritten(r)).collect();
-    for b in RELATION_ARG.iter().map(|(r, _)| *r).chain(["within", "earlier", "split_dot", "unset"]).chain(rewritten).filter(|b| !(reads_within && *b == "within")) {
-        l.prog.decls.remove(b);
-        l.prog.inputs.retain(|i| i != b);
-    }
-    // A program lowered without `core.rr` (its own part, `parse_own`) still declares the `within` it reads.
-    if reads_within {
-        use crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
-        l.prog.decls.entry(WITHIN.to_owned().into()).or_insert_with(|| [("n".into(), "node".into()), ("a".into(), "node".into())].into());
-        if !l.prog.inputs.iter().any(|i| i == WITHIN) {
-            l.prog.inputs.push(WITHIN.to_owned());
+    let rewritten: Vec<String> = self::core::REWRITTEN.into_iter().filter(|r| l.rewritten(r)).map(str::to_owned).collect();
+    drop(analyses);
+    Ok(Lowered { program: l.prog, sets: l.sets, rewritten })
+}
+
+/// The program `whole_front` leaves, with what the lowerer knows of it that the passes after read: the sets its
+/// clauses named (`kind_sets`), and the core relations it rewrote, which it does not derive (`builtins_out`).
+pub struct Lowered {
+    pub program: Program,
+    pub sets: BTreeSet<String>,
+    pub rewritten: Vec<String>,
+}
+
+/// Every constant grammar a rule names, in an `embed` or `embed_value` head or a `parsed` or `sub_tape` atom, is
+/// one the language registry has (decision 0082): a supported dialect's label or a fragment. A name it does not
+/// have would make no guest and say nothing.
+pub fn grammar_names(prog: &Program) -> Result<(), Error> {
+    for rule in &prog.rules {
+        let atoms = std::iter::once(&rule.head).chain(rule.body.iter().filter_map(Literal::atom));
+        for a in atoms {
+            if let Some(i) = grammar_column(&a.rel)
+                && let Some(Term::Str(g)) = a.args.get(i)
+                && !crate::code_rule_dsl::language::is_grammar(g)
+            {
+                return Err(no_grammar(&rule.head.rel, g));
+            }
         }
     }
-    drop(analyses);
-    Ok((l.prog, l.sets))
+    Ok(())
+}
+
+/// The column of a relation that names a grammar (`grammar_names`).
+pub fn grammar_column(rel: &str) -> Option<usize> {
+    match rel {
+        "embed" | "embed_value" => Some(2),
+        "parsed" | "sub_tape" => Some(1),
+        _ => None,
+    }
+}
+
+/// `grammar_names`'s error: rule `head` names grammar `g`, which the registry does not have.
+pub fn no_grammar(head: &str, g: &str) -> Error {
+    Error::Syntax(format!("{head}: no grammar {g:?}; a grammar is a language registry dialect's label or fragment (languages/*.json)"))
+}
+
+/// The built-ins lowering writes out (`nearest`, `within`, …) and the core relations it rewrites where the program
+/// does not derive them (`rewritten`: `next_sibling`, `precedes`) are declared in `core.rr` for the checker; they are
+/// no relations of the program. `within` stays where a rule reads it: the lowering made it the engine's relation
+/// (decision 0050); a program lowered without `core.rr` (its own part, `parse_own`) still declares it.
+pub fn builtins_out(prog: &mut Program, rewritten: &[String]) {
+    let reads_within = prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == crate::code_rule_dsl::facts::vtab::syntax::WITHIN);
+    for b in builtins(rewritten).filter(|b| !(reads_within && *b == "within")) {
+        prog.decls.remove(b);
+        prog.inputs.retain(|i| i != b);
+    }
+    if reads_within {
+        use crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
+        prog.decls.entry(WITHIN.to_owned().into()).or_insert_with(|| [("n".into(), "node".into()), ("a".into(), "node".into())].into());
+        if !prog.inputs.iter().any(|i| i == WITHIN) {
+            prog.inputs.push(WITHIN.to_owned());
+        }
+    }
+}
+
+/// The relations `builtins_out` takes out, `within` among them.
+pub fn builtins(rewritten: &[String]) -> impl Iterator<Item = &str> {
+    RELATION_ARG.iter().map(|(r, _)| *r).chain(["within", "earlier", "split_dot", "unset"]).chain(rewritten.iter().map(String::as_str))
 }
 
 /// `whole()` after the lowerer's analyses, before `front::finish`: nullary relations as sets of the unit, the
@@ -2701,32 +2751,6 @@ impl Lowerer {
         let mut out = vec![atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(String::new().into()), m])];
         out.extend(groups(re).into_iter().map(|g| atom(vec![p.clone(), c.clone(), j.clone(), Term::Str(g.clone().into()), Term::Var(g.into())])));
         Ok(vec![out])
-    }
-
-    /// Every constant grammar a rule names, in an `embed` or `embed_value` head or a `parsed` or `sub_tape` atom, is
-    /// one the language registry has (decision 0082): a supported dialect's label or a fragment. A name it does not
-    /// have would make no guest and say nothing.
-    fn grammar_names(&self) -> Result<(), Error> {
-        let at = |rel: &str| match rel {
-            "embed" | "embed_value" => Some(2),
-            "parsed" | "sub_tape" => Some(1),
-            _ => None,
-        };
-        for rule in &self.prog.rules {
-            let atoms = std::iter::once(&rule.head).chain(rule.body.iter().filter_map(Literal::atom));
-            for a in atoms {
-                if let Some(i) = at(&a.rel)
-                    && let Some(Term::Str(g)) = a.args.get(i)
-                    && !crate::code_rule_dsl::language::is_grammar(g)
-                {
-                    return Err(Error::Syntax(format!(
-                        "{}: no grammar {g:?}; a grammar is a language registry dialect's label or fragment (languages/*.json)",
-                        rule.head.rel
-                    )));
-                }
-            }
-        }
-        Ok(())
     }
 
     /// `Program::rx_spans`: each `rx_span(p, c, …)` a rule reads, its pattern p a constant and its span c bound in
