@@ -2479,11 +2479,24 @@ impl Batch {
         self.submit_open()
     }
 
-    /// Commits what is open and waits for every command buffer.
+    /// Commits what is open and waits for every command buffer. A command buffer the GPU failed fails the batch: its
+    /// outputs are partly written, so its strata run on the CPU, and the indexes it built are not marked built (a
+    /// later batch would find one half written).
     pub(in crate::code_rule_dsl) fn finish(&mut self) -> Result<Done, Error> {
         self.submit_open()?;
+        let mut failed = 0;
         for s in self.committed.drain(..) {
-            self.done.gpu_seconds += s.wait();
+            let (seconds, ok) = s.wait_ok();
+            self.done.gpu_seconds += seconds;
+            failed += usize::from(!ok);
+        }
+        if failed > 0 {
+            crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "a batch the GPU failed (its strata on the CPU)", failed as u64);
+            self.building.clear();
+            self.keep.clear();
+            self.read.clear();
+            self.held.clear();
+            return Err(Error::BackendFailure);
         }
         for b in self.building.drain(..) {
             let _g = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
@@ -2539,8 +2552,16 @@ impl Batch {
             let words = Held::new(4 * n)?;
             let mut p = vec![n as u32, cols.len() as u32, rel.at as u32, (rel.at >> 32) as u32, room.mask as u32, (room.mask >> 32) as u32];
             p.extend(cols.iter().map(|&c| c as u32));
+            // A sort refused after the bucket's dispatch leaves `words`, which the dispatch writes, with the batch
+            // until its command buffer is done: dropped here, it would go back to the pool at once.
             pass.run(&bucket, &[&buffer.buffer, &words.buffer], &p, &[], groups(n));
-            let parts = encode_sort(pass, &words.buffer, Width::W32, bits, n)?;
+            let parts = match encode_sort(pass, &words.buffer, Width::W32, bits, n) {
+                Ok(parts) => parts,
+                Err(e) => {
+                    self.keep.push(words);
+                    return Err(e.into());
+                }
+            };
             let at = |o: usize| [o as u32, (o as u64 >> 32) as u32];
             let mut q = vec![n as u32, (room.mask + 1) as u32];
             q.extend(at(room.offs));

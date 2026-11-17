@@ -1232,6 +1232,21 @@ impl Resident {
     }
 }
 
+/// `r`, after a refusal at run time dropped what this thread's device cache holds: a batch refused while it was
+/// encoded is dropped uncommitted, and a wave that failed did not run to its end, so the views, texts, verdicts and
+/// indexes they made (cached as they were encoded) were never written. Later strata would read them as made.
+fn unrun<T>(r: Result<T, String>) -> Result<T, String> {
+    if r.is_err() {
+        RESIDENT.with_borrow_mut(|res| {
+            res.entries.clear();
+            res.unions.clear();
+            res.bytes = 0;
+        });
+        crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "device caches dropped after a refusal", 1);
+    }
+    r
+}
+
 /// The report of the last stratum the device ran or refused on this thread (taken).
 pub(in crate::code_rule_dsl) fn take_report() -> Option<Report> {
     LAST.with_borrow_mut(Option::take)
@@ -1893,6 +1908,10 @@ impl<'p> Run<'p> {
 /// `fresh` as the CPU's run would add them. Returns each rule's head rows (before the store's set). The rules go in
 /// as few submissions as their tables' space allows (`BATCH_MAX`): one, for most strata.
 pub(in crate::code_rule_dsl) fn run(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    unrun(run_(rules, store, names, fresh))
+}
+
+fn run_(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
     on_lane("stratum joins", rules.len(), || run_here(rules, store, names, fresh))
 }
 
@@ -2009,6 +2028,10 @@ fn commit_wave() -> Result<(), String> {
 /// commits it once, for every stratum in it): its ticket for `resume`. `None` when they do not all fit one
 /// submission's space (the stratum then runs on its own, `run`).
 pub(in crate::code_rule_dsl) fn submit(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String> {
+    unrun(submit_(rules, names))
+}
+
+fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins (to the wave)".into());
     // A wave holds its strata's buffers to the level's end: with the budget's headroom gone (the wave's own leases
     // count, `device_bytes_left`), this stratum runs in a submission of its own, whose buffers go back when it ends.
@@ -2058,6 +2081,10 @@ pub(in crate::code_rule_dsl) fn submit(rules: &[(&Plan, &JoinRule, usize)], name
 
 /// A stratum that waited for its wave (`submit`'s `ticket`), finished: as `run`, from the flushed submission.
 pub(in crate::code_rule_dsl) fn resume(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    unrun(resume_(ticket, rules, store, names, fresh))
+}
+
+fn resume_(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins (after the wave)".into());
     let Some((runs, wave, mut rep, live)) = SUSPENDED.with_borrow_mut(|s| s.remove(&ticket)) else { return Err("a stratum's device joins were not submitted".into()) };
     let all = rules.len();
@@ -2520,6 +2547,10 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
 /// the new rows once, at the end, into `fresh` as the CPU's waves would add them. `heads` are the component's
 /// relations, which must be empty when it starts. Returns each rule's rows made, seeds then deltas.
 pub(in crate::code_rule_dsl) fn fixpoint(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    unrun(fixpoint_(seeds, deltas, heads, store, names, fresh))
+}
+
+fn fixpoint_(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
     on_lane("stratum rounds", seeds.len() + deltas.len(), || fixpoint_here(seeds, deltas, heads, store, names, fresh))
 }
 

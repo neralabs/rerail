@@ -271,6 +271,14 @@ impl Submitted {
         }
         gpu_seconds(&self.command)
     }
+
+    /// `wait`, and whether the GPU ran it to the end: a command buffer the GPU failed (out of memory, a fault)
+    /// completes too, its outputs partly written. A caller that keeps what it wrote must check.
+    pub fn wait_ok(self) -> (f64, bool) {
+        let command = self.command.clone();
+        let seconds = self.wait();
+        (seconds, command.status() != metal::MTLCommandBufferStatus::Error)
+    }
 }
 
 /// Scratch slots.
@@ -960,6 +968,9 @@ pub struct SortParts {
 /// Encodes into `pass` a stable LSD radix sort of the `n` values of `lead` (each `width` wide, their span `bits`
 /// bits) and the runs of equal values: the passes only its span needs. Intermediates are in scratch; the results are
 /// buffers of their own. `nruns` is not written when `n` is 0.
+///
+/// Every allocation that can fail is made before the first dispatch: a sort refused after encoding would drop
+/// buffers (`perm`, `starts`) that work already in the command buffer writes, back to the pool at once.
 pub fn encode_sort(pass: &Pass<'_>, lead: &BufferRef, width: Width, bits: u32, n: usize) -> Result<SortParts, String> {
     let key = width.key();
     let [init, hist, scatter, heads, compact] = sort_pipes(width)?;
@@ -978,6 +989,11 @@ pub fn encode_sort(pass: &Pass<'_>, lead: &BufferRef, width: Width, bits: u32, n
         let histogram = scratch(HIST, 4 * 256 * tiles)?;
         let hscan = Scan::new(256 * tiles)?;
         let heads_buf = scratch(HEADS, 4 * n)?;
+        // The heads' scan after the histograms': the two share scratch levels, one after the other in the command
+        // buffer. Made here, before any dispatch, so its levels are at their size for both.
+        let rscan = Scan::new(n)?;
+        pipeline("scan", "scan_block", || SCAN_SOURCE.to_owned())?;
+        pipeline("scan", "scan_add", || SCAN_SOURCE.to_owned())?;
         let nn = n as u32;
         pass.run(&init, &[lead, &keys_a, idx_a], &[nn], &[], groups(n));
         for p in 0..passes {
@@ -987,8 +1003,6 @@ pub fn encode_sort(pass: &Pass<'_>, lead: &BufferRef, width: Width, bits: u32, n
             pass.run(&scatter, &[ki, ii, &histogram, ko, io], &[nn, 8 * p], &[], tiles);
         }
         let keys = if passes % 2 == 0 { &keys_a } else { &keys_b };
-        // The heads' scan after the histograms': the two share scratch, one after the other.
-        let rscan = Scan::new(n)?;
         pass.run(&heads, &[keys, &heads_buf], &[nn], &[], groups(n));
         rscan.encode(pass, &heads_buf)?;
         pass.run(&compact, &[keys, &heads_buf, &starts.buffer, &rkeys.buffer, &nruns.buffer], &[nn], &[], groups(n));
