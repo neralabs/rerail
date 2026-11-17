@@ -226,7 +226,7 @@ const outsideShapes: readonly Shape[] = [
   { name: "a folder holding .gitignore, .gitattributes and .gitmodules files", asks: false, make: root => DOT_FILES.reduce((folder, name) => withFile(folder, name, "\n"), folderAt(root, "notes")) },
   { name: "a folder holding git, .github and .git-old folders", asks: false, make: root => notesHolding(root, ["git", ".github", ".git-old"]) },
   { name: "a folder named like a bare repository, with no HEAD", asks: false, make: root => folderAt(root, "notes.git", "refs") },
-  { name: "a folder holding a link that leads nowhere", asks: false, make: root => linkAt(join(root, "missing"), join(folderAt(root, "notes"), "docs")) },
+  { name: "a folder holding a link that leads nowhere", asks: false, make: root => resolve(linkAt(join(root, "missing"), join(folderAt(root, "notes"), "docs")), "..") },
   { name: "a link to a folder outside Git", asks: false, make: root => linkAt(folderAt(root, "notes"), join(root, "link")) },
   { name: "while GIT_CEILING_DIRECTORIES names its parent", asks: false, make: root => notesWhile(root, "GIT_CEILING_DIRECTORIES", root) },
   { name: "while GIT_WORK_TREE names it", asks: false, make: root => notesWhile(root, "GIT_WORK_TREE", join(root, "notes")) },
@@ -268,6 +268,7 @@ const askedShapes: readonly Shape[] = [
   { name: "a folder in a checkout past GIT_CEILING_DIRECTORIES", asks: true, make: root => ({ folder: folderAt(checkout(root, "main"), "src"), env: { GIT_CEILING_DIRECTORIES: join(root, "main") } }) },
   { name: "a checkout Git takes as another owner's", asks: true, make: root => ({ folder: checkout(root, "main"), env: { GIT_TEST_ASSUME_DIFFERENT_OWNER: "1" } }) },
   { name: "a folder that is gone", asks: true, make: root => join(root, "gone") },
+  { name: "a link that leads nowhere", asks: true, make: root => linkAt(join(root, "missing"), join(root, "link")) },
   { name: "a folder in a checkout by its \\\\localhost\\C$ path", asks: true, windowsOnly: true, make: root => byShare(folderAt(checkout(root, "main"), "src")) },
   { name: "a folder in a checkout written in other letter case", asks: true, windowsOnly: true, make: root => folderAt(checkout(root, "main"), "src").toUpperCase() },
 ];
