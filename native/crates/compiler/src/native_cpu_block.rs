@@ -5844,7 +5844,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             // cursor's block made every refill's loads wait for the block's last token's end,
             // the token chain and the refill in series, where the lean lexer's next window is
             // `base + 64` whatever its tokens did (0177, "The next block waits on no token").
-            // The refill follows the body (0359): the lean lexer's skips, no gap marks folded, a
+            // The refill follows the body (0360): the lean lexer's skips, no gap marks folded, a
             // part of the fused pass (`limit`). It reads up to the blocks made (`ready`), not the
             // file's end, and a wait there keeps the block it would read next (`spent_q`).
             let bounded = skips && !folded && limit.is_some();
