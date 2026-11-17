@@ -1527,12 +1527,25 @@ pub fn now() -> f64 {
 
 /// A run-level decision or optimization under `topic` (counted when made again, as per chunk).
 pub fn decision(topic: &str, text: impl FnOnce() -> String) {
-    if !on() {
+    if !on() || QUIET.get() {
         return;
     }
     // The text first: making it may profile too (a split's span), and the state's lock is not reentrant.
     let text = text();
     *state().decisions.entry((topic.to_owned(), text)).or_default() += 1;
+}
+
+thread_local! {
+    static QUIET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with this thread's decisions unrecorded: a debug build's check that runs a pass's tree form beside it,
+/// whose decisions the pass itself records.
+pub fn quiet<T>(f: impl FnOnce() -> T) -> T {
+    let was = QUIET.replace(true);
+    let out = f();
+    QUIET.set(was);
+    out
 }
 
 /// The decisions made so far (none when profiling is off): `decisions_since` takes the ones made after.
@@ -2089,6 +2102,11 @@ pub fn open_spans() -> String {
 /// Record why expensive input relations are requested, before projection planning.
 pub fn projection_plan(prog: &crate::code_rule_dsl::logic::front::Program, reads: &std::collections::BTreeSet<String>) {
     if on() { analysis_report::projection(prog, reads); }
+}
+
+/// `projection_plan` from the relations' readers and the outputs (`analysis_report::projection_of`).
+pub fn projection_plan_of(users: impl FnOnce() -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>>, outputs: &std::collections::BTreeSet<String>, reads: &std::collections::BTreeSet<String>) {
+    if on() { analysis_report::projection_of(&users(), outputs, reads); }
 }
 
 #[cfg(test)]

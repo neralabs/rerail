@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// columns, grammar column, tape column).
 /// `string_annotation(s)` is one: Ruff's strings that are type definitions, nested ones too, whose nodes are in an
 /// annotation's document (not shown, `guests::key`).
-const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
+pub(super) const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
     ("guest", &[0], Some(3), None),
     ("string_annotation", &[0], None, None),
     ("parsed", &[2], Some(1), None),
@@ -45,7 +45,7 @@ const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
 ];
 
 /// Views of base relations the lowering writes as rules.
-const VIEWS: [&str; 3] = ["kind", "docof", "precedes"];
+pub(super) const VIEWS: [&str; 3] = ["kind", "docof", "precedes"];
 
 /// The grammar a guest's kinds are named in: a dialect label (`annotation` is Python's expression).
 pub(super) fn dialect_label(grammar: &str) -> &str {
@@ -65,15 +65,15 @@ pub(super) fn bound(prog: &Program) -> u32 {
 /// a guest's node, not only maybe one (O110). A variable read from a derived column that host rows fill too is
 /// scoped (no bound on it) but not definite: it is specialized to a guest grammar only in a clone of its rule.
 /// For a derived relation's column, `definite` says every rule fills it with a definite variable.
-#[derive(Clone, Default, PartialEq)]
-struct Fact {
-    scoped: bool,
-    grammar: Option<String>,
-    definite: bool,
+#[derive(Clone, Default, PartialEq, Debug)]
+pub(super) struct Fact {
+    pub(super) scoped: bool,
+    pub(super) grammar: Option<String>,
+    pub(super) definite: bool,
 }
 
 impl Fact {
-    fn join(&mut self, other: &Fact) -> bool {
+    pub(super) fn join(&mut self, other: &Fact) -> bool {
         let mut changed = (other.scoped && !self.scoped) || (other.definite && !self.definite);
         self.scoped |= other.scoped;
         self.definite |= other.definite;
@@ -513,6 +513,8 @@ fn asking(prog: &Program) -> BTreeSet<String> {
 /// qualified kind of `label` is written plainly; a clone (O110) is then its rule again, dropped as a repeat by
 /// `merge_and_drop_repeats`. With guests not shown (`bound`, `.guests off`) nothing is folded. Gives the copies folded.
 /// `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
+// The tree's edit, kept as a debug build's check of the version's (`run_typed`'s `Beside`).
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
 pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
     use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
     if bound != ANNOTATION_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|v| v == "on") {

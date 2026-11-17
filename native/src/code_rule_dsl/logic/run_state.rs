@@ -133,6 +133,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan/placement.rs", "DEVICE", Carried, ""),
     ("src/code_rule_dsl/logic/profile.rs", "BEHIND", Thread, "marks the store's writer thread"),
     ("src/code_rule_dsl/logic/profile.rs", "HELD", Thread, "whether this thread holds the profile's state"),
+    ("src/code_rule_dsl/logic/profile.rs", "QUIET", Call, "a debug build's check of a pass's tree form beside it (`profile::quiet`): its decisions unrecorded on the calling thread; a job it hands to another thread records them"),
     ("src/code_rule_dsl/logic/profile.rs", "SHARD", Thread, "this thread's profile records, merged into the run's as they are read"),
     ("src/code_rule_dsl/logic/profile.rs", "STACK", Thread, "this thread's open spans; a job opens its span under its caller's (`profile::here`, carried)"),
     ("src/code_rule_dsl/logic/profile.rs", "STAGE", Carried, ""),

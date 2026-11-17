@@ -454,6 +454,13 @@ impl Version {
         super::Tree::new(self, lists).program()
     }
 
+    /// The program's fields besides its rules (its declarations, facts, inputs, outputs, settings, policies and the
+    /// rest of its `.about` rows), as a tree without rules: what a run reads of a program other than its rules, with no
+    /// rule decoded (decision 0281's path, step R).
+    pub fn header(&self, lists: &Lists) -> Result<Program, String> {
+        super::Tree::new(self, lists).program_of(std::iter::empty())
+    }
+
     /// A new base of this version's program, keeping its atom and relation ids (rule ids are renumbered from 0).
     pub fn fold(&self) -> Result<Arc<Version>, String> {
         super::Builder::folding(self).finish().map(|(v, _)| v)
@@ -475,4 +482,31 @@ pub fn trees_decoded() -> (usize, Option<String>) {
 /// Forgets this thread's decodes (`trees_decoded`): a check counts a run's alone.
 pub fn forget_trees_decoded() {
     DECODED.with(|d| d.set((0, None)));
+}
+
+/// What two versions differ in, by text: the rules, declarations, facts and about rows only one has (a debug check's
+/// message).
+pub fn differences(a: &Version, b: &Version) -> String {
+    use std::collections::BTreeSet;
+    let texts = |v: &Version| -> BTreeSet<String> {
+        let mut out: BTreeSet<String> = v.rules().map(|r| format!("rule {}", v.show_rule(r))).collect();
+        for d in v.decls() {
+            out.insert(format!("decl {}({})", v.text(d.name()), d.cols().map(|(n, t)| format!("{}: {}", v.text(n), v.text(t))).collect::<Vec<_>>().join(", ")));
+        }
+        let cell = |c: Cell| match c {
+            Cell::Int(i) => i.to_string(),
+            Cell::Str(x) => format!("{:?}", v.text(x)),
+        };
+        for f in v.all_facts().into_iter().chain(v.about_facts()) {
+            for (k, row) in f.rows().enumerate() {
+                out.insert(format!("{} {} #{k} ({})", if f.about() { "about" } else { "fact" }, v.text(f.name()), row.map(cell).collect::<Vec<_>>().join(", ")));
+            }
+        }
+        out.insert(format!("inputs {:?}", v.inputs().map(|a| v.text(a)).collect::<Vec<_>>()));
+        out.insert(format!("outputs {:?}", v.outputs().map(|a| v.text(a)).collect::<Vec<_>>()));
+        out
+    };
+    let (ta, tb) = (texts(a), texts(b));
+    let only = |x: &BTreeSet<String>, y: &BTreeSet<String>| x.difference(y).take(12).cloned().collect::<Vec<_>>().join("\n    ");
+    format!("\n  only the first:\n    {}\n  only the second:\n    {}", only(&ta, &tb), only(&tb, &ta))
 }

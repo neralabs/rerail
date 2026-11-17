@@ -481,6 +481,23 @@ pass.
   comparable with the 82.9 G above (another engine, another lib). Next lever: 0225 §7's per-module part; see 0281
   step 5 (c).
 
+- **Measured again** (2026-11-16, after 0225 §2's partial hits were made to cost their cone; same ep2 setup):
+  95.3–95.8 G, 6.4–6.6 s CPU, 3.8–4.0 s wall, from 150 G. What is left, and what each needs:
+  - **combining and preparing** (1.33 s, on the main thread, a third of the wall): each a whole-program pass over
+    about 10,000 rules, run again because the edit misses the prepared program's key. Costing the edit needs 0225 §7
+    (a prepared program kept per module), and so an input that is an edit of the last run's: 0281 steps 6–7. The
+    keyed steps (0281 §6) store the steps but reuse only an unchanged input. Pushing the joins as a rule pass alone
+    (0.15 s at most) was left out (user, 2026-11-16).
+  - **the guests of every partial hit** (0.9 s on the workers): 10,047 guest tapes parsed and written back each run,
+    since a wave reads no tape and a guest is found only in a wave (0104); and the hosts projected twice, once
+    without their guests (about 0.2 s). Reading the guests' tapes before the waves would need them named by their
+    host's content, which is a new cache, unless it is written as rules (0103).
+  - **the splits in preparation** (about 0.15 s): `FileLocal::maintain` splits whole once its cone passes half the
+    relations, and a push round's changed helpers reach most relations through their readers. A cone that stops
+    where a relation's place comes out unchanged would cost the change.
+  - **the entries read** (lookup 0.3 s, decode 0.45 s, their rows handed on 0.34 s): every file is a partial hit and
+    is read whole, so these are near what this edit must read.
+
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 
 - **Found** (2026-11-15, ep2, while measuring Q18): an edit of one rule's body costs 82.9 G in a new process, of
@@ -545,9 +562,16 @@ pass.
     `text(i, x)`, and its run fails with `@rr_node_text without the run's long-text nodes bound`
     (`native/setfix.rs`, the function step's binding of `LONG_TEXT_NODES`). Some part of a phase's run evaluates a
     node's text before the run binds its long-text nodes.
+    **Fixed** (2026-11-16): the join was made before the run bound its nodes, and took the binding then. A node read
+    now holds the binding when there is one, or the connection's scope, and looks the binding up as it runs
+    (`setfix::NodeTexts`); with none bound it reads NULL, as the SQL function does. The 15 typing oracle tests,
+    `base_relations_read_are_inputs` and this test pass.
   - `corpus::tests::every_switch_lowering_reads_is_classified`: `RERAIL_EXPORT_IMAGES`, `RERAIL_IMAGE_STORE`,
     `RERAIL_SHIPPED_IMAGES` (`rr/images.rs`) and `RERAIL_MODULE_IMAGES` (`combine_read`) are read in combining but
     are in neither list. Each needs classifying: does it change a prepared program (`COMBINING`) or not?
+    **Fixed** (2026-11-16, with 0281 step 7a-1): none changes a prepared program. An image is keyed by its text, its
+    scope and the format, so the store it comes from gives the same program; the export only writes it out too.
+    They and `RERAIL_VERSION_TRACE` (a measurement aid that writes each version) are in `NOT_PREPARING`.
   - `sql_executor::tests::rule_files_use_the_core_prelude_and_unused_inputs_need_no_binding` (red at aa36f9104):
     running a rule file after binding a snapshot fails with `value: SQL output already exists; rebind inputs to
     clear derived results` (`sql_executor/session.rs`): the core prelude's `value` is taken for an output that
@@ -555,6 +579,10 @@ pass.
   - `convert::tests::helpers_take_the_metavariables_bound_around_them` and
     `convert::tests::a_sample_of_the_replay_gives_the_recorded_findings` (77 of 268 events), red at a31a11e22 with
     the phases test's error (`@rr_node_text without the run's long-text nodes bound`): the same cause, likely.
+  - `corpus::base_tests::base_relations_read_are_inputs` (red at e2c15672d, 2026-11-16): `text(sp, s)` of a
+    document's `source` span fails with the same error: no phase here, so the cause is not phase-specific.
+  - `typing::oracle_tests::rust_calls_program_agrees_with_rust_analyzer` (red at 0281 step 6d, 2026-11-16, its first
+    run since): the same error, in a Rust run.
   - Also: `sql_executor` as a whole, in parallel, passes 3 GB RSS (`tmp/capped.sh 3000`); with four threads too.
 - **Done when**: each passes, the first by binding the long-text nodes before whichever part reads them (or by the
   part not reading node text), the second by classifying each switch from what it does, the third from the cause.

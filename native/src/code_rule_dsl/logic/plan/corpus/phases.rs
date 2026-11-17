@@ -206,11 +206,14 @@ pub(super) fn phase_files(read: &[crate::code_rule_dsl::logic::rr::TextNames], d
 /// The relations `prog` reads from earlier phases, by phase: `(the reader's relation, the export)`. A relation named
 /// `<phase>__<x>` that no rule of `prog` makes, where `<phase>` is a phase program.
 pub(super) fn wanted(prog: &Program, dir: Option<&Path>) -> Result<BTreeMap<String, Vec<(String, String)>>> {
-    let made: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
-    let read: BTreeSet<&str> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str())).collect();
+    wanted_in(prog, &super::shape::Shape::of_tree(prog), dir)
+}
+
+/// `wanted` of a program by its header (`Version::header`) and its rules' shape.
+pub(super) fn wanted_in(prog: &Program, shape: &super::shape::Shape, dir: Option<&Path>) -> Result<BTreeMap<String, Vec<(String, String)>>> {
     let own = declared(prog).map(|d| d.name);
     let mut out: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
-    for rel in read.into_iter().filter(|r| !made.contains(r) && prog.decls.contains_key(*r)) {
+    for rel in shape.read.iter().map(String::as_str).filter(|r| !shape.made.contains(*r) && prog.decls.contains_key(*r)) {
         let Some((phase, export)) = rel.split_once(SEP) else { continue };
         if phase.is_empty() || export.is_empty() || own.as_deref() == Some(phase) || phase.starts_with("typing_") || phase.starts_with("rr_") {
             continue;
@@ -352,7 +355,7 @@ pub(crate) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 
 /// The facts `prog` reads from earlier phases (`<phase>__<export>`), each phase run first in its own space, and the
 /// phases' runs, in the order they ran.
-pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<(Facts, Vec<PhaseRun>)> {
+pub(crate) fn facts(prog: &Program, shape: &super::shape::Shape, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<(Facts, Vec<PhaseRun>)> {
     // A phase's own run: its upstream facts were worked out by the run that started it.
     if let Some(me) = declared(prog)
         && let Some(f) = HANDED_DOWN.with(|h| h.borrow().last().filter(|(n, _)| *n == me.name).map(|(_, f)| Facts::clone(f)))
@@ -367,7 +370,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         return Ok((facts, runs));
     }
     let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(PathBuf::from);
-    for (name, reads) in wanted(prog, dir.as_deref())? {
+    for (name, reads) in wanted_in(prog, shape, dir.as_deref())? {
         // Phase 1 ran before any phase, for the run (`PhaseOne`): its exports are handed on as it left them. A run
         // that did not run it (given its files, or with `RERAIL_SOURCES_PHASE=off`) reads none.
         if name == SOURCES {
@@ -382,7 +385,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let src = source(&name, dir.as_deref())?.expect("a phase program");
         let program = crate::code_rule_dsl::logic::rr::parse(&src)?;
         // A later phase sees the libraries only through what earlier ones hand on (0083 §1: P3 loads nothing).
-        if derives_load(prog) && loads_documents(&program, dir.as_deref(), &mut BTreeSet::new())? {
+        if shape.made.contains("load") && loads_documents(&program, dir.as_deref(), &mut BTreeSet::new())? {
             return Err(Error::Plan(format!("a program reading phase {name}, whose fixed point loaded documents, loads documents itself: it reads the libraries through {name}'s exports")));
         }
         let declared = declared(&program).ok_or_else(|| Error::Plan(format!("{name}.rr: no `.phase {name}`")))?;
@@ -415,7 +418,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         // after it read again.
         let mut handed = program.clone();
         handed.outputs.extend(declared.exports.iter().cloned());
-        let (upstream, upstream_runs) = self::facts(&program, root, scratch, modes, binding, chunk_nodes, typing, options)?;
+        let (upstream, upstream_runs) = self::facts(&program, &super::shape::Shape::of_tree(&program), root, scratch, modes, binding, chunk_nodes, typing, options)?;
         for r in upstream_runs {
             if !runs.iter().any(|x: &PhaseRun| x.name == r.name) {
                 runs.push(r);
