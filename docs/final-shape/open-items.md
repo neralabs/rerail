@@ -5541,7 +5541,7 @@ sake whose hashed content is the one the keeper counted is read for its outputs 
 Max, 4 threads: 7.29 s CPU, 6.07 s wall -> 6.46 s, 5.10 s; 299 of 300 files outputs-only; outputs equal a
 from-scratch run (660 relations, 30,453 rows).
 
-## O-json-tier2-own-calls. JSON's compiled path asserts tier 2 makes no call of its own; it makes 30
+## O-json-tier2-own-calls (closed 2026-11-17). JSON's compiled path asserts tier 2 makes no call of its own; it makes 30
 
 Opened 2026-11-17 (found running 0346's checks). `parser_tests`'
 `json_compiled_path_equals_the_interpreters` asserts `tier2.own_calls == 0` ("no pass over the
@@ -5552,3 +5552,10 @@ of tier 1 and tier 2 against the interpreters are not reached.
 **Closure:** decide whether those calls are the "pass over the table" the assertion forbids
 (then remove them) or a call by rule (then the assertion names what it means), and let the
 runs below it run again.
+
+**Closed (2026-11-17, with 0355, `edc03a31f`):** the calls are neither. Since `8a1762be0` ("The
+JIT's tier 2 writes the tape directly too") tier 2 calls the tape's own functions (ids 1–4, the
+tape's writers) instead of returning rows for a pass over them. A pass over the table would be
+a call to any other function. The assertion now says that: every callee in tier 2's IR
+(`fnK = colocated u0:N`) is one of the tape's four. The runs below it run again, and tier 1 and
+tier 2 equal the interpreters on every file.
