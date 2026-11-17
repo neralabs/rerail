@@ -11314,8 +11314,10 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
         }
     }
     // A debugging aid: `RERAIL_REL_ROWS=<file>` appends each derived relation's rows; `RERAIL_REL_DIR=<dir>` writes
-    // every relation the run reads or derives, one directory per run.
+    // every relation the run reads or derives, one directory per run. Its reads are behind the run (strict mode's
+    // waves are over), so a strict run can be dumped.
     if let Some(path) = std::env::var_os("RERAIL_REL_ROWS") {
+        super::profile::behind(|| -> Result<()> {
         use std::io::Write as _;
         static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let at = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -11331,7 +11333,15 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             let _ = writeln!(f, "{r}\t{n}");
             if let Some(d) = &dir {
                 let text: String = match h {
-                    Some(h) => (0..h.rows()).map(|i| h.row(i).iter().map(|v| v.to_string()).collect::<Vec<_>>().join("\t") + "\n").collect(),
+                    // Its live rows: flat when it holds them, else read through its view (a view holds no row flat).
+                    Some(h) => {
+                        let k = h.types().len().max(1);
+                        let line = |r: &[i64]| r.iter().map(|v| v.to_string()).collect::<Vec<_>>().join("\t") + "\n";
+                        match h.live_rows() {
+                            Some(flat) => flat.chunks(k).map(line).collect(),
+                            None => (0..h.len()).map(|i| line(&h.values(i))).collect(),
+                        }
+                    }
                     None => {
                         let k = f0.arity(r).unwrap_or(0);
                         let sql = format!("SELECT * FROM {}", crate::code_rule_dsl::logic::sql::ident(r));
@@ -11352,6 +11362,8 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                 let _ = std::fs::write(d.join(format!("{r}.tsv")), text);
             }
         }
+        Ok(())
+        })?;
     }
     Ok(())
     })?;

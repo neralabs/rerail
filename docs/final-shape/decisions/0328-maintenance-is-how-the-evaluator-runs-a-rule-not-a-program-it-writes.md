@@ -208,8 +208,10 @@ is stored whole.
    - **a non-recursive stratum:** delta joins and a recheck (3). Nothing kept. A head row with several
      derivations needs no count: the recheck finds the one that remains.
    - **an aggregate:** its changed groups computed again through an index on the group columns.
-   - **a recursive stratum:** open for the user: a level column (0090's *levels, checked*), or no state and the
-     changed partitions derived again. See "Recursion" below.
+   - **a recursive stratum:** yes/no/maybe from the deltas, nothing kept: each candidate rechecked, the
+     candidates settled together from the rows outside them. It was exact on `calls.rr`'s 8 real edits, with
+     candidates 1.03–1.17 times the rows removed ("Recursion in real edits" below). A level column or partitions
+     only for a dense closure, if a real workload shows one.
    - **any stratum:** derived again when 0090 §4's threshold says an edit reaches too much of it.
 
    Counting and its support relations go, and so does the strategy byte: what a stratum does follows from whether
@@ -322,8 +324,8 @@ How to read it:
      where the rules are partitioned by a column, which preparation can check. `reach` and every per-document
      closure are partitioned that way.
 
-   This is an architectural choice, for the user. The recommendation is levels, with derive-again by 0090 §4's
-   threshold; partitions as the stateless form where no levels are kept.
+   That was the choice on a dense closure. On real edits of `calls.rr`, yes/no/maybe from the deltas is exact and
+   keeps nothing ("Recursion in real edits" below), so the level column is a fallback, not the default.
 4. **Recursive strata are where the cost is**, as on `calls.rr` (40–45% of strata CPU): an edit that changes
    `reach` costs 25–1,000 M, one that does not costs 2–5 M.
 
@@ -343,6 +345,100 @@ How to read it:
   Nothing is a new kind of kernel.
 - **The spike's edge join by document key** (`paces.rs`) is a special case of delta joins: the removed and added
   rows of one document, joined.
+
+## Recursion in real edits: what it has to handle (2026-11-17)
+
+The spike's `reach` is a dense closure, synthetic. The question the user asked next: what problem do DRed and
+levels solve here, what depends on it, and would something weaker do? It is answered on `calls.rr` over the O125
+replay (77 files, 8 real commits), from the engine's own derivations
+(`scripts/profiling/o125/recursion/`, its README).
+
+### The problem, and who sees it
+
+Adding rows is exact by joining from them. Only removal is hard, and only in a recursive component: rows on a cycle
+of the derivation graph can support each other after their real support is gone. A recheck then finds that circular
+derivation and keeps them. A row kept so is *unfounded*: a cold run would not derive it.
+
+What reads `calls.rr`'s recursive relations (`pv`, `bv`, `fv`, `reach_sync`, `open_sync`, …):
+- **positively:** `call_target`, `calls`, `chain_step`, `finding`. A stale row gives a false positive, for
+  example ASYNC_BLOCKING on a call that no longer reaches `time.sleep`.
+- **under negation:** `async_open` (`!reach_sync(g)`), `mro_dropped`. A stale row hides a row that should be
+  there.
+- **as a lattice:** `workload.rr`'s `cv` is pinned at `top`.
+
+Errors go one way only, toward rows that should be gone. They persist, and pile up until a cold run.
+
+### Measured
+
+`calls.rr` has 13 recursive components. The biggest is the points-to component: 41 relations, 123 rules. A state
+has 283,000–304,000 recursive rows from 304,000–330,000 derivations.
+
+**On a cycle of the derivation graph: 656–664 rows, 0.23%.** They are in four places:
+- class openness (`attr_open`, `base_open`): about 370;
+- module re-exports (`tbv`, `tqv`): 222;
+- class membership (`acls`, `ainst`): 60–63;
+- `open_sync` over recursive calls: 4–6.
+
+| Edit | Removed | Removed on an old cycle | Recheck alone keeps wrongly | DRed overdeletes | Yes/no/maybe: candidates | Maybe | Settled back | Rounds | Errors |
+|---|---|---|---|---|---|---|---|---|---|
+| 00→01 | 690 | 0 | 0 | 962 | 842 | 112 | 0 | 1 | 0 |
+| 01→02 | 582 | 0 | 0 | 3,817 | 601 | 28 | 1 | 1 | 0 |
+| 02→03 | 1,757 | 2 | 0 | 6,149 | 2,037 | 626 | 3 | 1 | 0 |
+| 03→04 | 135 | 0 | 0 | 167 | 148 | 39 | 0 | 1 | 0 |
+| 04→05 (14 files) | 4,980 | 18 | **33** (`pv` 28, `bv` 3, `fret` 2) | 11,592 | 5,372 | 1,685 | 21 | 8 | 0 |
+| 05→06 | 72 | 0 | 0 | 3,609 | 84 | 15 | 0 | 1 | 0 |
+| 06→07 | 289 | 0 | 0 | 6,660 | 391 | 73 | 0 | 1 | 0 |
+| 07→08 | 2,452 | 2 | 0 | 8,597 | 2,604 | 686 | 2 | 1 | 0 |
+
+What each column is:
+- **Recheck alone:** a candidate is killed when no derivation over the rows still present holds, and the rows it
+  supported become candidates. No overdelete, nothing kept. This is the greatest fixpoint, so it can keep a cycle.
+- **Yes/no/maybe** (from the deltas, nothing kept):
+  - the candidates are the old rows that lost a derivation;
+  - a candidate with a derivation (in the new state) over rows that are not candidates is **yes**, and its
+    dependents are not touched;
+  - one that is not is **maybe** (a derivation only through other candidates) or **no** (none), and its
+    dependents become candidates;
+  - then every candidate is settled together, as the least fixpoint from the rows outside them. A row that does
+    not come back is removed, and its dependents become candidates, until none is added.
+
+  It agreed exactly with the next state on all eight edits.
+
+### What it shows
+
+1. **Recheck alone was exact on 7 of 8 edits.** The eighth (14 files) left 33 unfounded rows of `pv`, `bv` and
+   `fret`: 0.7% of its removals, and points-to rows, which `call_target` and the findings read. Recheck alone is not
+   correct, but it is a good estimate of where the work is.
+2. **DRed is the wrong default.** It overdeletes 1.1–50 times the rows that are really removed (3,609 for 72), and
+   rederives almost all of them.
+3. **Yes/no/maybe is exact, keeps nothing, and its work follows the change.** Its candidates are 1.03–1.17 times
+   the rows really removed. Seven edits settle in one round, the eighth in 8. Each candidate costs one probe with
+   its head bound, plus the settling fixpoint over the open ones. It is the published Backward/Forward idea
+   (Motik et al.): look for another derivation before propagating a deletion.
+4. **Levels and counts are not needed here.** Neither DRed's overdelete nor a level column is used, and nothing is
+   stored between runs.
+
+### Is an approximation better?
+
+The user asked about storing yes, no or maybe per row for deletion. The data say no, for two reasons:
+- **Maybe is almost always "gone".** Of 1,685 maybes in the large edit, 21 came back. Elsewhere, 0–3 of up to
+  686. So keeping a maybe row would leave the wrong answer almost every time. Treating it as gone would be wrong for
+  0–21 rows, missing rows that a later pass restores.
+- **Settling costs little:** one fixpoint over the open candidates, in 1–8 rounds. It is cheaper than whatever
+  would have to catch the approximation's errors later. Nothing stored would stay right either: a cycle can form
+  in the new state between rows that were never on one (the 33 rows above were on no old cycle).
+
+So the exact form is the cheap one. Stored state would add something only for a dense closure like the spike's
+`reach`, where most candidates are maybes and levels order them. `calls.rr`'s recursion is not dense.
+
+### What this changes
+
+- Decision 6's recursive case: **yes/no/maybe from the deltas, nothing kept**, with 0090 §4's threshold to derive
+  again. The level column and partitions become fallbacks for a dense closure, measured when one appears in a
+  real workload.
+- This is a measure of rows, candidates and probes, not of instructions. Instructions come when the evaluator's
+  mode (decision 3) runs it.
+- Not measured: `workload.rr`'s lattice components, and other workloads' recursion (dl10, the packs).
 
 ## Sizes, today against this decision (dl10)
 
@@ -376,7 +472,8 @@ with each step's findings and rows compared with a cold run's.
 
 - Why an edit of `calls.rr` costs 55–110% of a cold run. The kept rows' moves and the placement are about half of
   it, as on the other workloads, but the joins are large too: the recursive strata.
-- How recursion is kept: a level column, or partitions derived again (above, "What it shows", point 3).
+- Yes/no/maybe measured on `workload.rr`'s lattice components and on dl10 and the packs' recursion; then in
+  instructions, in the evaluator's mode.
 - The spike's recursive cases are one closure. A recursive stratum with negation or aggregation inside its
   component (stratified per component today) is not measured.
 - The kept rows' moves to and from frames (26–30%) are 0266's `Facts` block (its step 4), not this decision's; this
