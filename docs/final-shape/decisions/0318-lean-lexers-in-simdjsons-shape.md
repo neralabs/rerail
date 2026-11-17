@@ -200,8 +200,9 @@ to 5% between runs, the fixed cost of a run most of all. Only the farm's figures
 - **Cycles: 39 a token against the floor's 4** (44 before the steps above). At about 2.7
   instructions a cycle, the gap is branches: the per-token choice between punctuator, name,
   string and the rest depends on the data. One path for every token cost far more (above).
-  `LEAD`'s class taken by one indirect jump, as simdjson's stage 2 takes its byte, is not
-  measured yet.
+  `LEAD`'s class by one indirect jump, as simdjson's stage 2 takes its byte, is not to be had
+  in Rust: a `match` on the five classes compiles to the same compare chain, and a table of
+  functions adds a call to every token.
 - **Strings and comments** (142 and 128 instructions) are read by the micro-lexers. Page 36's region
   walk would take them off the masks, but that needs stage 1's stop masks back for every block,
   for 3% of the tokens.

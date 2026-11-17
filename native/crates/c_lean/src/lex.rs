@@ -520,8 +520,8 @@ impl<'s> Lexer<'s> {
     }
 
     /// A decimal integer of up to 8 digits at `s` with no suffix, fraction, exponent or `'`, no
-    /// character past ASCII after it (C refuses one), and no leading `0` (C++'s `0x` and `0b` take a suffix's place): its end, from its word run and
-    /// one test of its 8 bytes. `number` reads every other number.
+    /// character past ASCII after it (C refuses one), and no leading `0` (C++'s `0x` and `0b` take
+    /// a suffix's place): its end, from its word run and one test of its 8 bytes. `number` reads every other number.
     #[inline(always)]
     fn decimal(&self, s: usize) -> Option<usize> {
         let c = self.src[s];
