@@ -597,9 +597,9 @@ export class RerailDaemon {
         databasePath,
         workspaceRoot,
         accessToken,
+        ...(untaken === undefined ? {} : { beforeEvent: () => untaken.take() }),
         worktreeWalks,
         ...sharedMergeAssist,
-        ...(untaken === undefined ? {} : { beforeEvent: () => untaken.take() }),
         // On Windows any local user can create the default pipe first; the engine then listens on a random name.
         ...(options.kernelSocketPath === undefined
           ? { pipeFallback: () => fallbackPipe(kernelSocketPath) }
@@ -630,7 +630,6 @@ export class RerailDaemon {
   /** What a started daemon leaves behind for others: its state file, its remote sink and the port links point at. */
   async #announce(remembered: number | undefined): Promise<void> {
     const options = this.#options;
-    this.#takeUntaken();
     if (options.stateFile !== undefined) await this.#record(options.stateFile);
     this.#startRemoteSink();
     // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
@@ -638,7 +637,7 @@ export class RerailDaemon {
   }
 
   /**
-   * Takes the events hooks left untaken in this daemon's home, oldest first, before its state file names it, and each one
+   * Takes the events hooks left untaken in this daemon's home, oldest first, as its state file is written, and each one
    * left later as soon as this daemon's event loop runs (`untaken-events.ts`). Only with the watch running does the state
    * file tell hooks they may leave events for it without asking it; without one, events left by a hook that waited out
    * this daemon are still taken at its next event and its next start.
@@ -670,6 +669,7 @@ export class RerailDaemon {
    * start and hook in that home while it records into a database that home does not hold.
    */
   async #record(stateFile: string): Promise<void> {
+    this.#takeUntaken();
     const text = `${JSON.stringify(this.state(), null, 2)}\n`;
     await replaceFile(stateFile, text, { mode: 0o600 });
     this.#recordText = text;

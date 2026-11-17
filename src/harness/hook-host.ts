@@ -1,4 +1,5 @@
-import type { AdapterDelivery, AdapterEvent, AdapterSession, RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
+import type { AdapterEvent, AdapterSession, RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
+import type { AdapterDelivery } from "../engine/adapter-contract.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { readRepositoryState } from "../presentation/session-presentation.js";
 import { isRerailStarted } from "../runtime/repository-start.js";
