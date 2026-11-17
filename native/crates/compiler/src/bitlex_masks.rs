@@ -948,6 +948,25 @@ impl Lowering {
             let w = me.within(d)?;
             Ok(me.op(BlockOp::And(v, w)))
         };
+        // One kind whose opener is its closer, one byte, with no `else`: simdjson's string,
+        // `prefix_xor(quote)`. Its fill is the toggle of its quotes, with no fixed point and no
+        // walk: by induction, with `t = toggle(q)` and the fill `t` a byte before, the hidden
+        // byte is `prev(t)`, the opener `q & ~prev(t)`, and the fill
+        // `open | (prev(t) & ~q) = q ^ prev(t) = t`.
+        if let ([r], [(o, c)]) = (regions.kinds.as_slice(), inputs.as_slice()) {
+            if r.empty.is_none() && !r.outside && r.bytes == 1 && (o.v, o.d) == (c.v, c.d) {
+                let q = Val { v: clean(self, *o, d)?, d, dirty: false, set: None };
+                let fill = self.carried(q, BlockOp::Toggle);
+                let hidden = self.op(BlockOp::Prev(fill.v, 1));
+                let open = self.op(BlockOp::AndNot(q.v, hidden));
+                for (name, v) in [(regions.hidden.clone(), hidden), (format!("o_{}", r.kind), open), (format!("f_{}", r.kind), fill.v)] {
+                    self.names.insert(name, Val { v, d, dirty: true, set: None });
+                }
+                // A mode of tier 2's states, as a toggle is (`row_modes`).
+                self.toggles.push((fill, q));
+                return Ok(());
+            }
+        }
         let mut ins = Vec::new();
         for &(o, c) in &inputs {
             let later = if later { Some(clean(self, c, d - 1)?) } else { None };
