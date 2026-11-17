@@ -1,0 +1,114 @@
+import { mkdtemp, realpath } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, onTestFinished } from "vitest";
+import type { AdapterDelivery, AdapterEvent } from "../../../src/engine/index.js";
+import { RerailRuntime } from "../../../src/runtime/runtime.js";
+import { testEmbedder } from "../../support/hook-events.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
+
+/** The steer the turn's edit checks find once the test lets them end. */
+const LATE = "late steer";
+
+/**
+ * A Claude Code session whose turn's edit checks end only once the test opens `checks`, then steer `LATE` once. Each
+ * event's hook request is the one `stop` and `next` give it: none stands for a hook that waits for its answer.
+ */
+async function heldStopSession() {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-stop-gave-up-")));
+  onTestFinished(async () => {
+    await removeFolder(root);
+  });
+  const settling = Promise.withResolvers<void>();
+  const checks = Promise.withResolvers<void>();
+  const steered = Promise.withResolvers<void>();
+  const requests = new WeakMap<AdapterEvent, AbortSignal>();
+  let steers = 0;
+  const runtime = new RerailRuntime({
+    autostart: false,
+    workspaceRoot: root,
+    storageRoot: join(root, "sessions"),
+    databasePath: join(root, "rerail.sqlite"),
+    embedder: testEmbedder,
+    hookRequest: event => requests.get(event),
+    createAuditor: ({ steerDelivery }) => ({
+      openWorkspace: async () => undefined,
+      acceptsPath: () => true,
+      auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
+      settleGeneratedEdits: async () => {
+        settling.resolve();
+        await checks.promise;
+        if (steers++ > 0) return;
+        await steerDelivery.requestSteer("stop-gave-up", "steer", LATE, { revision: 0, scope: [] });
+        steered.resolve();
+      },
+      close: async () => undefined,
+    }),
+  });
+  // Vitest runs clean-ups in reverse order, so the runtime closes before its folder goes; the checks end so the stop can.
+  onTestFinished(async () => {
+    checks.resolve();
+    await runtime.dispose();
+  });
+  const session = { host: "claude-code" as const, sessionId: "stop-gave-up", cwd: root };
+  await runtime.ingest({ kind: "session-start", eventId: "start", session });
+  await runtime.codeRulesOpened(session.sessionId);
+  /** Sends the turn's end with a hook request the test aborts as the hook gives up; `answer` is what the stop answered. */
+  const stop = () => {
+    const hook = new AbortController();
+    const event: AdapterEvent = { kind: "turn-end", eventId: "stop", sessionId: session.sessionId, session, text: "" };
+    requests.set(event, hook.signal);
+    const answered: { answer?: readonly AdapterDelivery[] } = {};
+    const answering = runtime.ingest(event).then((deliveries) => {
+      answered.answer = deliveries;
+    });
+    return { giveUp: () => hook.abort(), answered, answering };
+  };
+  const next = async (eventId: string) => (await runtime.ingest({ kind: "user-prompt", eventId, sessionId: session.sessionId, text: "next" }))
+    .map(delivery => delivery.content);
+  return { runtime, sessionId: session.sessionId, settling: settling.promise, release: () => checks.resolve(), steered: steered.promise, stop, next };
+}
+
+/** Resolves in the next check phase of the event loop: every promise job queued before it has run by then. */
+async function nextCheckPhase(): Promise<void> {
+  await new Promise<void>(done => setImmediate(done));
+}
+
+describe("a Claude Code stop whose hook gave up", () => {
+  it("answers at once while the turn's edit checks still run, and the session still owes its agent their steers", async () => {
+    const held = await heldStopSession();
+    const { giveUp, answered } = held.stop();
+    await held.settling;
+    giveUp();
+    // From the abort to the stop's answer only promise jobs run, so the next check phase finds it answered. Before, the
+    // stop waited for every check, holding the session's next prompt and tool calls behind it.
+    await nextCheckPhase();
+    expect(answered.answer).toEqual([]);
+    // The checks run on: an idle close leaves the session open for the steers they find, as for a check that outran
+    // a tool result's wait.
+    expect(await held.runtime.closeIdleSession(held.sessionId)).toBe(false);
+  });
+
+  it("hands the steers its checks find to the session's next event, once", async () => {
+    const held = await heldStopSession();
+    const { giveUp, answered, answering } = held.stop();
+    await held.settling;
+    giveUp();
+    held.release();
+    await held.steered;
+    await answering;
+    // Before, the stop took the steer into the answer its hook no longer read, and recorded it as delivered.
+    expect(answered.answer).toEqual([]);
+    expect(await held.next("next")).toEqual([LATE]);
+    expect(await held.next("after")).toEqual([]);
+  });
+
+  it("carries the steers its checks find while its hook still waits", async () => {
+    const held = await heldStopSession();
+    const answering = held.runtime.ingest({ kind: "turn-end", eventId: "stop", sessionId: held.sessionId, text: "" });
+    await held.settling;
+    held.release();
+    expect((await answering).map(delivery => delivery.content)).toEqual([LATE]);
+    expect(await held.next("next")).toEqual([]);
+  });
+});
