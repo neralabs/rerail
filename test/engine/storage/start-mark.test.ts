@@ -251,7 +251,7 @@ describe("the start mark", () => {
     const app = gitRepository(join(root, "app"));
     recordCheckout(db, app);
     const watched = transactionAtEachRenewal(db);
-    write(watched.db, app, root);
+    await write(watched.db, app, root);
     expect({ renewed: watched.inTransaction.length > 0, inside: watched.inTransaction.filter(Boolean).length }).toEqual({ renewed: true, inside: 0 });
   });
 });
