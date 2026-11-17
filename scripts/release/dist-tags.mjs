@@ -55,6 +55,19 @@ export const previewRefusal = (version, channel, latest) =>
   latest !== undefined && compareVersions(version, latest) < 0 ? `${version} is older than latest ${latest}: a ${channel} preview must not trail latest` : null;
 
 /**
+ * What release tag `tag` (`v<version>`) publishes, given the version package.json names at it: `{ version, channel }`.
+ * A plain version goes to `next`, where it waits for a person to promote it to `latest` (release.yml's `latest` input);
+ * a `beta` or `next` preview goes to its own channel. Throws on a tag that is no release tag, or one package.json
+ * disagrees with.
+ */
+export function releaseChannel(tag, packageVersion) {
+  const match = /^v(\d+\.\d+\.\d+)(?:-(beta|next)\.\d+)?$/u.exec(tag);
+  if (match === null) throw new Error(`Release tag ${tag} is not vX.Y.Z, vX.Y.Z-beta.N, or vX.Y.Z-next.N`);
+  if (packageVersion !== tag.slice(1)) throw new Error(`package.json version ${packageVersion} does not match ${tag}`);
+  return { version: packageVersion, channel: match[2] ?? NEXT_TAG };
+}
+
+/**
  * `name`'s dist-tags (`{ tag: version }`), read anonymously from the registry's dist-tags endpoint (the one
  * `npm dist-tag ls` reads, which sees a publish straight away, where `npm view` can lag it by minutes and a first
  * publish answers 404). Throws when the registry does not answer with the package's dist-tags.
