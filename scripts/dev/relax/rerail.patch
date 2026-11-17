@@ -14,6 +14,35 @@ index a83c0c4f..f44a8d24 100644
          return None;
      }
      home().ok().map(|dir| SharedCode { dir, stale: Vec::new() })
+diff --git a/libs/relax/compiler/tests/cast_open_slice_referent.rs b/libs/relax/compiler/tests/cast_open_slice_referent.rs
+new file mode 100644
+index 00000000..a3a893dd
+--- /dev/null
++++ b/libs/relax/compiler/tests/cast_open_slice_referent.rs
+@@ -0,0 +1,23 @@
++// A cast whose source referent is a slice of a still-open element type: `&[][..] as &[String]`.
++// rustc's cast check coerces the operand to the target (cast.rs try_coercion_cast), which decides
++// the element; Relax left it open and reported the index's `[_; 0]: Index<RangeFull>` as E0283.
++// Run with `makepad test` and rustc --test; lines "| " are compared.
++fn count(lists: &[&[String]]) -> usize {
++    lists.iter().map(|l| l.len()).sum::<usize>() + lists.len()
++}
++
++#[test]
++fn empty_slice_cast_takes_the_target_element() {
++    let lists = [&[][..] as &[String]];
++    let words = vec!["a".to_string()];
++    let more = [&words[..] as &[String], &[][..] as &[String]];
++    println!("| {} {}", count(&lists), count(&more));
++}
++
++#[test]
++fn literal_elements_still_cast() {
++    let bytes = &[1u8, 2][..] as &[u8];
++    let v: Vec<u16> = Vec::new();
++    let r = &v[..] as &[u16];
++    println!("| {:?} {}", bytes, r.len());
++}
 diff --git a/libs/relax/front/src/native.rs b/libs/relax/front/src/native.rs
 index 20d9fcc4..2b518851 100644
 --- a/libs/relax/front/src/native.rs
@@ -386,3 +415,22 @@ index eeb69f2d..9be81c76 100644
      /// `UniversalRegions::closure_mapping`: the regions of the parent that the nested body's
      /// external universal regions (global first, then external) stand for. Those the nested body
      /// inherits are the parent's own universal regions; the others sit in the regions of the closure
+diff --git a/libs/relax/types/src/typeck.rs b/libs/relax/types/src/typeck.rs
+index 15b36829..7d3de8d1 100644
+--- a/libs/relax/types/src/typeck.rs
++++ b/libs/relax/types/src/typeck.rs
+@@ -5373,6 +5373,14 @@ impl<'a> Fcx<'a> {
+                     // `p.as_ref() as &Path`: the source referent is open (`AsRef<_>` with several
+                     // impls); rustc check_casts coerces at the end of typeck, which decides it
+                     self.deferred_casts.push((*x, xt, target));
++                } else if matches!((&kx, &kt), (TyKind::Ref(_, p, _), TyKind::Ref(..)) if self.has_open_infer(*p)) {
++                    // `&[][..] as &[String]`: the source referent is known in shape but holds an
++                    // open variable (`[?T]`). rustc's cast check coerces (try_coercion_cast), which
++                    // unifies it with the target's referent; without that nothing decided `?T`, and
++                    // the index's `[?T; 0]: Index<RangeFull>` stayed ambiguous (E0283). A failed
++                    // coercion leaves the types as they were, for the cast check to report.
++                    let snap = self.start_snapshot();
++                    if self.try_coerce(xt, target, Some(*x)) { self.commit_from(snap); } else { self.rollback_to(snap); }
+                 } else if let (TyKind::Ref(m1, a, _), TyKind::Ref(m2, bt, _)) = (&kx, &kt) {
+                     // a cast is first a coercion when one applies (rustc cast.rs
+                     // try_coercion_cast): `&s as &str` is a deref coercion of &String
