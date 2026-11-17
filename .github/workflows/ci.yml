@@ -341,7 +341,7 @@ jobs:
               - 'scripts/host/**'
 
   # Fills the Actions cache with every key the jobs below restore (.github/actions/pack-test-data, `fetch: "true"`): every
-  # tool-pack's archives for the unit jobs (Linux and Windows) and the conformance jobs, and the three tool-packs the
+  # tool-pack's archives for the unit jobs (Linux and Windows) and the conformance jobs, and the four tool-packs the
   # Rust tests read, each its own key. It holds the OIDC token, which only a miss uses, runs nothing but the pull
   # (scripts/s3/pack-fixtures.mjs, this commit's code), and never extracts a cache entry; the jobs that read the data
   # restore it holding no token. The Release pull request reads none.
@@ -390,6 +390,12 @@ jobs:
         with:
           pack: vue
           tool: eslint-plugin-vue
+          fetch: "true"
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: data-layer
+          tool: lint
           fetch: "true"
 
   # S3 holds every archive each test-data.lock names and every samples archive each samples.lock names
@@ -508,8 +514,9 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
-      # The clippy leg only compiles the tests; the tests legs run them, and three read pack test data: Ruff's fixtures,
-      # SQLFluff's expected findings and fixtures, and eslint-plugin-vue's fixtures.
+      # The clippy leg only compiles the tests; the tests legs run them, and four read pack test data: Ruff's fixtures,
+      # SQLFluff's expected findings and fixtures, eslint-plugin-vue's fixtures, and the data-layer port's recordings and
+      # rule corpus (the converter, census, replay and text tests).
       - if: matrix.task == 'test'
         uses: ./.github/actions/pack-test-data
         with:
@@ -529,6 +536,13 @@ jobs:
         with:
           pack: vue
           tool: eslint-plugin-vue
+          fetch: "false"
+
+      - if: matrix.task == 'test'
+        uses: ./.github/actions/pack-test-data
+        with:
+          pack: data-layer
+          tool: lint
           fetch: "false"
 
       # The canonical Python AST facts (`value::python_ast`) run CPython 3.13 as `python3.13`; the runner has 3.12.

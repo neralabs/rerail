@@ -143,13 +143,13 @@ All fourteen acceptance gates pass. The change retains both the 100-execution bu
 
 ## Reproduction and evidence
 
-The [runner](../../benchmark/async-family-integration/early-demands.py) accepts separate baseline and production executables.
+The [runner](../../packs/data-layer/upstream/benchmarks/authored/benchmark/async-family-integration/early-demands.py) accepts separate baseline and production executables.
 The baseline uses merge `5c790a0f4` plus the archived typed-spec compatibility patch.
 Its rule library and pack come from that merge. The production executable uses this change and the current library.
 The runner records commands, environment, warmups, samples, findings, and phase counters.
 
-The [gate script](../../benchmark/async-family-integration/check-early-demands.py) checks structural, semantic, and performance requirements.
-The [evidence archive](../../benchmark/async-family-integration/early-demands/manifest.json) records binary and source hashes.
+The [gate script](../../packs/data-layer/upstream/benchmarks/authored/benchmark/async-family-integration/check-early-demands.py) checks structural, semantic, and performance requirements.
+The [evidence archive](../../packs/data-layer/upstream/benchmarks/authored/benchmark/async-family-integration/early-demands/manifest.json) records binary and source hashes.
 It includes SQL, query plans, profiles, timing reports, test logs, and the gate report.
 The archive excludes executable binaries, corpus databases, and tape caches.
 

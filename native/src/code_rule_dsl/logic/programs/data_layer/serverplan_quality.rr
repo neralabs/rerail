@@ -2,7 +2,7 @@
 // and the relational clauses quality-contracts-2, quality-contracts-3, quality-local-taxonomy and
 // quality-project-taxonomy. The relational clauses quality-contracts-1 and quality-conditional-1 are part files:
 // serverplan_quality.quality_contracts_1.rdl and serverplan_quality.quality_conditional_1.rdl.
-// Source: gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-quality.json.
+// Source: packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rules/data-layer-serverplan-quality.json.
 //
 // Options at their defaults (entryPoint "all", oracleAnalyzer false). The inputs' matchers are verbatim, their `$option`
 // nodes included (resolved at the defaults by the matcher compiler); stage SQL is read at the defaults.

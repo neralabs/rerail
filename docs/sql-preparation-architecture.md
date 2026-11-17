@@ -5,7 +5,7 @@ Its exactly-once contract replaces reconstruction of live owned producers as a m
 It remains a design, without promotion of the rejected retention experiments.
 
 Status: implemented and measured preparation changes; broader retention rejected for the tested workloads.
-The [experiment results](../fixtures/host/data-layer-port/profiling/sql-preparation-20261022.json) record the matched CPU trials and SQL layout comparisons.
+The [experiment results](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/sql-preparation-20261022.json) record the matched CPU trials and SQL layout comparisons.
 The sections below preserve the proposed architecture and its contracts.
 The implementation promotes shared structural preparation, duplicate-expression removal, fixed request tables, and incremental vocabulary matches.
 Expanded posting sets and generic shared utility sets remain isolated experiments because both increase measured CPU.
@@ -29,7 +29,7 @@ Durable reuse across process restarts requires a separate design.
 
 ## Evidence and scope
 
-The [current evidence](../fixtures/host/data-layer-port/profiling/value-access-20261021.json) records these median cold process CPU totals:
+The [current evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/value-access-20261021.json) records these median cold process CPU totals:
 
 | Workload | Before value access and shared properties | Current implementation |
 | --- | ---: | ---: |

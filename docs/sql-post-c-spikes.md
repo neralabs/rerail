@@ -90,7 +90,7 @@ SQLite internal executions remain separately reported. None of these experiments
 
 ## Measurements
 
-The [checked evidence](../fixtures/host/data-layer-port/profiling/post-c-spikes-20261024.json) retains trials, artifact hashes, boundaries, and validation.
+The [checked evidence](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/post-c-spikes-20261024.json) retains trials, artifact hashes, boundaries, and validation.
 
 | Complete fixed guard | C | Selected runtime and policy prototype |
 | --- | ---: | ---: |

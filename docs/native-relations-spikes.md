@@ -63,7 +63,7 @@ The owned-row adapter continues to store complete vectors.
 
 The workload contains five pinned data-layer files, with 1,026,452 source bytes.
 The source commit is `2b1504adc4291daaf080b2e932962b134da1a69a`.
-[The evidence file](../fixtures/host/data-layer-port/profiling/native-relations-metrics.json) records hashes, counts, phase timings, and artifact names.
+[The evidence file](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/native-relations-metrics.json) records hashes, counts, phase timings, and artifact names.
 Raw profiles remain under `.rerail/profiles/native-relations-spike/`.
 
 ### Complete captured-input SQL replay

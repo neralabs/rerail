@@ -1636,7 +1636,7 @@ after P's last native commit):
   `RERAIL_RELATIONAL_TESTS=1`; both scripts still run by hand.
 - Not the merge's: `audit-cli.test.ts` has 1 failure before and after it.
   `checkout-code-rule-router.test.ts` had 17 failures before and has 1 after it (a 5 s timeout
-  under load). The `gate/data-layer/test/conformance` copies fail to load before and after it
+  under load). The `packs/data-layer/upstream/lint/authored/test/conformance` copies fail to load before and after it
   (imports relative to `gate/`).
 
 To close: when O18 is decided, either the relational clause becomes production and these run by
@@ -1844,7 +1844,7 @@ where it is faster (the rows then filled from its answer), or the device path is
 
 ## O93. The data-layer pack's rules do not run on the full corpus
 
-These are the 68 checks in `gate/data-layer/packs/data-layer/candidates/rr` (Data-layer-rule-expressivity), measured
+These are the 68 checks in `packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rr` (Data-layer-rule-expressivity), measured
 with `RERAIL_HAND_DIR=<that dir> RERAIL_MEASURE_HAND=only`. They need the data-layer engine's `core.rr` relations,
 merged at ca930d974. Of the 68 run one at a time on s50:
 

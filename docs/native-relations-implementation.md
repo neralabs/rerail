@@ -104,7 +104,7 @@ The bounded build uses native optimization level 1, thin LTO, and 256 code gener
 Dependencies retain their release optimization.
 Both controls use the profile feature and the same system-malloc shim.
 These results do not estimate performance under another build configuration or allocator.
-The [measurement record](../fixtures/host/data-layer-port/profiling/native-relations-implementation.json) contains individual pairs, hashes, and reproduction artifacts.
+The [measurement record](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/native-relations-implementation.json) contains individual pairs, hashes, and reproduction artifacts.
 
 ## Remaining costs
 

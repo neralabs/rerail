@@ -141,7 +141,7 @@ python3 scripts/profiling/run.py --trace off --deadline 115 \
 
 Use new controller and result paths. The executable refuses to overwrite a result.
 This binary has no production execution switch.
-The [recorded experiment](../../../fixtures/host/data-layer-port/profiling/fts-bulk-publication-20261023.json) preserves raw trials and build identity.
+The [recorded experiment](../../../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/fts-bulk-publication-20261023.json) preserves raw trials and build identity.
 The result motivates broad publication across ingestion packets. It does not establish a complete-pipeline speedup.
 
 ## Private owner projection replay

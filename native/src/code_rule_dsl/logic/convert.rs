@@ -19,8 +19,9 @@
 //!
 //! What the converter cannot say is written by hand, one `.rr` file per rule (decision 0043), and merged over the
 //! converted program (`overlay`):
-//! - the file is `gate/data-layer/packs/data-layer/candidates/datalog/authored/<rule-id>.rr`, the rule id as in the
-//!   policy (`data-layer-lazy-architecture`), read whenever the rule is converted (no rebuild);
+//! - the file is `candidates/datalog/authored/<rule-id>.rr` in the data-layer pack's test data
+//!   (`packs/data-layer/upstream/lint/authored/packs/data-layer/`, which `npm run fixtures:pull` fetches), the rule id
+//!   as in the policy (`data-layer-lazy-architecture`), read whenever the rule is converted (no rebuild);
 //! - it declares every relation it reads or defines but core.rr's, which are the engine's (decision 0141:
 //!   `rr::read_file` refuses a file that declares or derives one): core.rr's declarations are its prelude
 //!   (`rr::lower::core`), in the column types of the converter's (`BASE`): `doc(d, path, module)`,

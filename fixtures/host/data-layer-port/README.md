@@ -1,5 +1,10 @@
 # Data-layer migration corpus
 
+The recordings, probes and evidence named below (`batch-*.json`) are pack test data, not in git: `npm run fixtures:pull`
+puts them in `packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/` (packs/data-layer/upstream/lint/UPSTREAM.md).
+The profiling records are in the same way under `packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/`;
+the selections and the SQL execution ledger the tests read stay here in `profiling/`.
+
 `batches.json` assigns all 142 pinned source checks to migration batches.
 `batch-01-recording.json`, `batch-02-recording.json`, and `batch-03-recording.json` contain inputs and oracle results from each batch’s ten original pytest modules.
 Their corresponding `batch-XX-evidence.json` files record provenance, coverage, and repository measurements.

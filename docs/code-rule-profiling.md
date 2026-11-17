@@ -236,7 +236,7 @@ Workspace producer scans remain in the older aggregate AST counters and the unas
 These measurements used the existing release build settings: thin LTO and 256 code-generation units.
 The allocator was the existing system-malloc shim, not jemalloc.
 The native binding hash and policy digests are recorded in each result.
-[The evidence file](../fixtures/host/data-layer-port/profiling/evidence.json) retains the measurements and external sampling summaries.
+[The evidence file](../packs/data-layer/upstream/benchmarks/authored/fixtures/host/data-layer-port/profiling/evidence.json) retains the measurements and external sampling summaries.
 
 | Workload | Files / UTF-8 bytes | Compile | Cold | Unchanged | Edit | Peak RSS |
 | --- | --- | --- | --- | --- | --- | --- |

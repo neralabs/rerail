@@ -1,7 +1,7 @@
 // data-layer-serverplan-state-tripwires in Rerail logic, part file: clause `state-flow-1` (no `.policy`; the rule's main
 // file holds it). Options at their defaults: entryPoint "all" (so partitionBy "file"), oracleAnalyzer false,
 // sourceProvided true, returnKindsHex its default (decoded into `return_kind_entry` facts). Source:
-// gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json.
+// packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json.
 //
 // One relation per SQL stage, under the stage's name; helper relations are named after their stage. A row keyed by
 // (__path, id) is a node; a nullable or boolean column is a side relation that holds where it is not NULL / true.
