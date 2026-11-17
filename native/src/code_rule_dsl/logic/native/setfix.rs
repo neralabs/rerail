@@ -109,6 +109,10 @@ pub struct Interner { pub atoms: Arc<crate::content_store::atoms::Atoms>, buf: S
 #[derive(Default)]
 struct Deferred { texts: Vec<String>, at: HashMap<String, u32> }
 
+/// Walks in one piece that deferred their new texts and interned them in one batch (`whole`), and those texts: for
+/// the profile.
+pub static DEFERRED_WALKS: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+
 /// The first value of a text a morsel deferred (`Deferred`): past every atom (`Sym` is 32 bits) and below every node
 /// (whose document is in the high 32 bits, from 0x6000… on).
 const DEFERRED: i64 = 1 << 40;
@@ -6637,6 +6641,39 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         IN_MORSELS.with(|m| m.set(m.get() + 1));
         true
     }
+    /// A walk in one piece. One that may make atoms defers its new texts, as a morsel does (`Deferred`), and interns
+    /// them at its end with one `intern_all` (`settle_deferred`). Interned row by row, each new text took the arena's
+    /// write lock, and every thread reading a text (`cat_held`, `with_str`) waited behind it: over PostHog, the run's
+    /// most-waited lock once the planner's were gone (decision 0315). The walk's head rows go to a `Fresh` of its own
+    /// (its rows hold deferred values until settled), absorbed into the stratum's as a morsel's are.
+    fn whole(cx: &mut Ctx<'_, '_>, slots: &mut [i64]) {
+        if !makes_atoms(cx.j) || cx.syms.deferred.is_some() {
+            return go(cx, 0, slots);
+        }
+        cx.syms.deferred = Some(Default::default());
+        let (head, collecting) = (cx.head, cx.collect.is_some());
+        let from = cx.collect.as_ref().map_or(0, |c| c.len());
+        let before = if collecting { None } else { Some(std::mem::take(&mut cx.fresh[head])) };
+        go(cx, 0, slots);
+        let mut texts = cx.syms.deferred.take().map_or_else(Vec::new, |d| d.texts);
+        let mut mine = if collecting { Fresh::default() } else { std::mem::take(&mut cx.fresh[head]) };
+        let mut rows = cx.collect.as_deref_mut().map_or_else(Vec::new, |c| c.split_off(from));
+        if texts.is_empty() {
+            if !collecting { mine.settle(&cx.store.rels[head]); }
+        } else {
+            DEFERRED_WALKS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            DEFERRED_WALKS[1].fetch_add(texts.len() as u64, std::sync::atomic::Ordering::Relaxed);
+            settle_deferred(cx, &mut [(&mut texts, &mut mine, &mut rows)]);
+        }
+        match (cx.collect.as_deref_mut(), before) {
+            (Some(c), _) => c.extend_from_slice(&rows),
+            (None, Some(mut f)) => {
+                f.absorb(mine);
+                cx.fresh[head] = f;
+            }
+            (None, None) => unreachable!("a walk not collecting kept its head's rows"),
+        }
+    }
     /// The morsels' deferred texts interned, in the morsels' order (one `intern_all`), and each morsel's rows read
     /// with their atoms in place of its deferred values, in the head's columns that may hold a made text
     /// (`made_columns`); then each morsel's rows settled, on the pool, as a morsel that made no text settles its own.
@@ -6783,7 +6820,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 go(&mut cx, 2, &mut slots);
             }
         }
-        _ => if !morsels(&mut cx, &slots) { go(&mut cx, 0, &mut slots) },
+        _ => if !morsels(&mut cx, &slots) { whole(&mut cx, &mut slots) },
     }
     // The walk's counts, into the join's, and its CPU by step.
     for (c, l) in j.counts.iter().zip(&cx.counts) { c[0].add(l[0].get()); c[1].add(l[1].get()); }
