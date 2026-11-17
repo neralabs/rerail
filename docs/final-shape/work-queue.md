@@ -1453,3 +1453,21 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   relations go in its own block, released with the chunk, and only what outlives it (exports, kept rows) is frozen
   into a long-lived block; and a CPU-only run takes anonymous blocks, not pinned device buffers, which the memory
   line can then count by what is touched.
+
+### Q59. A demanded relation's rule sometimes keeps a plan that reads its demand last: +600 G a run
+
+- **Found** (2026-11-17, M3, PostHog cold, the memory line lifted, alternated runs): the 0325 engine retired
+  2,407–2,552 G in five runs; the current one 2,428–2,620 G in five, and 3,115 and 3,156 G in two. In the outlier
+  (against a normal run of the same build) all the extra is in the chunks' evaluation (+635 G, +60 s CPU), in three
+  strata: `xk_fz2220395310_fl3512803032_violation_3` 0.16 → 19.0 s, `xk_fz3398261162_…_rr_diagnostic_…_2` 0.12 →
+  16.2 s, `fzk2220395310_fl3512803032_violation` 1.3 → 15.6 s, at the same calls.
+- **Cause**: the demand split (decision 0048) is the same in both runs, and the demanded rule's body starts from its
+  demand (`overlaid`), but nothing keeps it there: the planner reordered it. Normal: `demand_xk…($v), node, line,
+  col, fzk…` (170 rows in, 33,629 between steps, summed over the chunks). Outlier: `col, node, fzk…, line,
+  demand_xk…($v)` (29.2M rows between steps). The plan cache (decision 0038) re-prices a kept order per chunk and
+  searches again only when its work per node grows over 4x; a bad first order costs the same per node in every
+  chunk, so it is kept the whole run.
+- **Not yet known**: why the first chunk's search chose it (which sizes it saw for the demand relation).
+- **Fix to make**: the guard 0048 states is structural: a demanded relation's rule is driven by its demand (it
+  never exceeds what the readers bind). Pin the demand atom as the driver of those rules, rather than leaving it to
+  the search and the cache.
