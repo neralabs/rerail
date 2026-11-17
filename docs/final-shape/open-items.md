@@ -50,7 +50,7 @@ choosing the same one are writing about the same thing. Numbered items keep thei
 | O43 | Phase 10 (step 30) | Launch cost on the device: each chunk pays one GPU wake-up from idle (about 0.85 ms, 12 of 19–22 ms of host wait on async-sync-boundary at 1 in 8, decision 0040) because the GPU sits idle while the CPU runs the chunk's joins. The joins themselves are small (about 0.1 s of 7.7 s CPU, at most 245K rows into a step over the run), so the goal is not join speed: it is to keep the chunk on the device in one launch. Close by running a chunk's native joins on Metal in the same command buffer as its nearest ancestors (one command buffer, one wait a chunk): plan chosen on the host from statistics as now; each step a sort or hash join kernel over the shared relations, counting then writing (or writing into a reused block and retrying on overflow); negation as an anti-join; text tests as chunked matchers; aggregates and cross-file rounds stay as they are. Loading inputs, building indexes and the per-chunk statistics (about 2.8 s of CPU) are the same shape and move with it. Validated by the profile's device phases: one launch per chunk, schedule (GPU waking) no longer paid per chunk, findings unchanged | open |
 | O60 | Phase 6 / 11 | The matcher atom's captures, `ast($D, $N, {…}, NAME: $v)`: parsed, no executor (t17) | open |
 | O61 | Phase 6 / 11 | A builtin catalogue: the data-layer programs use 30 builtins, one built (t17) | open |
-| O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions (t17) | narrowed (2026-11-16): the fold, a made text across rounds (0307) and `printf` run on Metal; a session keeps levels for `hierarchy`, which the device does not make; the sinks' programs fail their types and `@id` has no executor |
+| O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions (t17) | narrowed (2026-11-16): `hierarchy` runs on Metal in session runs (0307, 0311), with native's findings; the sinks' programs fail their types and `@id` has no executor |
 | O63 | Phase 6 / 11 | Tree built-ins beyond `nearest` are written as builtins (`@within`, `@depth`); two kind-filtered walks stay Datalog recursion (t17) | open, narrowed (2026-11-06): `.rr`'s `within(n, a)` is the engine's tree relation, read off the tape per looked-up node (decision 0050 §4); the `@within`/`@depth` programs and the two kind-filtered walks remain |
 | O64 | Phase 11 | The 113 regex forbid clauses of the data-layer rules have no logic form until rewritten as matcher atoms (PIAT §5.1, t17) | open |
 | O65 | Phase 11 | Two data-layer stages outside the fragment: `call_paths` (a value cycle) and `block_results` (`NotStratifiable` over the tree) (t17) | open |
@@ -1308,11 +1308,11 @@ shortlex probes run on the device with SQLite's rows, hierarchy's shape among th
 
 **Open.**
 
-1. **Levels on the device.** A session's cross part keeps levels for `hierarchy` (decision 0090), and the device
-   refuses a recursive component that keeps them: it hands its rows back at the end, with no round per row. On
-   public_api_triples `--metal` hierarchy is placed on the GPU and refused for this. To build: each row's round
-   recorded on the device (a lattice row's, the round that improved it), and carried back as its level.
-2. **The sinks.** `sink` and `project_sink`'s programs fail their types (`start` is not declared), and no executor
+Levels on the device (decision 0311, built 2026-11-16): each row's round is its level, so a session's leveled
+recursion runs on Metal. `hierarchy` ran as a device fixpoint in public_api_triples' and internal_dead_code's session
+runs, with native's findings.
+
+1. **The sinks.** `sink` and `project_sink`'s programs fail their types (`start` is not declared), and no executor
    has `@id`. Their shape (`@concat(r0, <number as text>, "|")`) runs on the device.
 
 **Closure:** the four recursions run on Metal and give SQLite's rows.

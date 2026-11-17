@@ -2387,6 +2387,10 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             lattices.insert(h, (mj::LatCode { code, top, after }, mj::LatKeys::default()));
         }
     }
+    // A head that keeps levels (decision 0311): each row's round, its level. A set head's rows are appended a round
+    // at a time, so its rounds are kept here by row; a lattice head's are a column of its total (`lat_merge`'s).
+    let leveled = |h: usize| store.rels[h].keeps_levels();
+    let mut set_levels: HashMap<usize, Vec<u32>> = HashMap::new();
     let mut made = vec![0u64; seeds.len() + deltas.len()];
     let mut rounds = 0;
     let mut first = true;
@@ -2433,11 +2437,12 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
                 at += n;
             }
             if let Some((lat, keys)) = lattices.get_mut(&h) {
-                let new_keys = mj::Table::new(k + 1, cap).map_err(|e| format!("{e:?}"))?;
+                let new_keys = mj::Table::new(k + 1 + usize::from(leveled(h)), cap).map_err(|e| format!("{e:?}"))?;
                 let changed = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
                 let counters = mj::Words::zeroed(2).map_err(|e| format!("{e:?}"))?;
                 let total = own.total.get(&h).cloned();
-                batch.lattice_fold(&union, cap, total.as_deref(), k - 1, *lat, keys, &counters, &new_keys, &changed, shared.as_deref()).map_err(|e| format!("{e:?}"))?;
+                let level = leveled(h).then_some(rounds as u32);
+                batch.lattice_fold(&union, cap, total.as_deref(), k - 1, *lat, keys, &counters, &new_keys, &changed, shared.as_deref(), level).map_err(|e| format!("{e:?}"))?;
                 folded.push((h, new_keys, changed, counters));
                 hold.push(union);
                 continue;
@@ -2490,6 +2495,12 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             let k = store.rels[h].k;
             let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
             let had = own.total.get(&h).map_or(0, |t| t.rows);
+            if leveled(h) {
+                // Rows held before this run's rounds (none of them new) take no level here.
+                let lv = set_levels.entry(h).or_default();
+                lv.resize(had, 0);
+                lv.resize(had + n, rounds as u32);
+            }
             let total = mj::DevRel::empty(k, had + n).map_err(|e| format!("{e:?}: a relation of {} rows", had + n))?;
             if let Some(old) = own.total.get(&h) {
                 batch.copy_rows(mj::Rows::Rel(old), had, &ident, mj::Rows::Rel(&total), 0).map_err(|e| format!("{e:?}"))?;
@@ -2513,9 +2524,10 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             any = true;
             let k = store.rels[h].k;
             if added > 0 {
-                let ident: Vec<mj::Col> = (0..=k).map(mj::Col::From).collect();
+                let width = k + 1 + usize::from(leveled(h));
+                let ident: Vec<mj::Col> = (0..width).map(mj::Col::From).collect();
                 let had = own.total.get(&h).map_or(0, |t| t.rows);
-                let total = mj::DevRel::empty(k + 1, had + added).map_err(|e| format!("{e:?}: a relation of {} rows", had + added))?;
+                let total = mj::DevRel::empty(width, had + added).map_err(|e| format!("{e:?}: a relation of {} rows", had + added))?;
                 if let Some(old) = own.total.get(&h) {
                     batch.copy_rows(mj::Rows::Rel(old), had, &ident, mj::Rows::Rel(&total), 0).map_err(|e| format!("{e:?}"))?;
                 }
@@ -2561,6 +2573,10 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             }
             _ => None,
         };
+        // Each row's round where the head keeps levels: a lattice's column after its changes, a set's kept by row.
+        let lattice_levels = (lattices.contains_key(&h) && leveled(h)).then(|| total.column(k + 1));
+        let levels: Option<&[i64]> = lattice_levels;
+        let set_rounds = set_levels.get(&h).filter(|_| !lattices.contains_key(&h) && leveled(h));
         let mut row = vec![0i64; k];
         for x in 0..total.rows {
             for c in 0..k {
@@ -2569,7 +2585,11 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             if let Some(m) = &symbols && let Some(&id) = m.get(&row[k - 1]) {
                 row[k - 1] = id;
             }
-            fresh[h].add(&row);
+            match (levels, set_rounds) {
+                (Some(l), _) => fresh[h].add_leveled(&row, l[x] as u32),
+                (None, Some(r)) => fresh[h].add_leveled(&row, r.get(x).copied().unwrap_or(0)),
+                (None, None) => fresh[h].add(&row),
+            }
         }
         rep.distinct += total.rows as u64;
     }

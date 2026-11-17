@@ -1,6 +1,6 @@
 # 0311: The device records each row's level, the round that made it
 
-Status: decided (the user, 2026-11-16); to build (O62).
+Status: decided (the user, 2026-11-16); built the same day.
 
 ## Intro
 
@@ -22,10 +22,38 @@ made texts (0307) and `@printf` all run on the device.
   round's range of rows.
 - A lattice head's improved rows are updated in place by `lat_merge`, so the device writes the round into a level
   column of the head's total as it merges.
-- The rows go back with their levels, as `lbase + round` in the CPU's terms.
+- The rows go back with their levels, `lbase + round + 1`: the CPU's seeds are its wave 1, the device's round 1.
 
 The alternative, a lattice component kept without levels in a session and derived again on any change, was not
 taken: it changes 0090's maintenance for these strata.
+
+## Built (2026-11-16)
+
+- `lat_merge` writes the round (`LatP::level`) into a column after the changes, for a changed key's row and a new
+  key's, where the head keeps levels (`Rel::keeps_levels`): the head's total and its new keys' table are one column
+  wider.
+- A set head's rounds are kept on the host by row, from each round's appended range (`set_levels`).
+- `Fresh::add_leveled` carries a row's round; the host pushes such rows one by one (`Rel::push_leveled`: `push`, or
+  `fold` for a lattice), not through `settle`'s sort, a new row at `lbase + round + 1`.
+- The device refuses only a component with levels lines (their checks are the CPU's).
+
+**Tests.**
+
+- `a_leveled_recursion_on_the_device_has_the_cpus_levels` (device crate): a set head and a `min` lattice head over
+  chains with shortcuts, rows and levels equal to the CPU's. The first run found the offset: the CPU's seeds are its
+  wave 1.
+- Session runs (`logic`, strict, cold), at load 16–30. `hierarchy` ran as a device fixpoint in both, and the
+  findings were byte-identical to native's:
+
+  | program | Metal CPU s | Metal wall s | native CPU s | native wall s |
+  |---|---|---|---|---|
+  | public_api_triples | 38.5 | 6.0 | 38.3 | 5.1 |
+  | internal_dead_code | 126.4 | 21.0 | 122.2 | 18.1 |
+
+  hierarchy's device fixpoint took 0.121 s wall on public_api_triples (0.006 s CPU). On the CPU it took 0.018 s.
+
+**Not tested here.** A session's maintenance after an edit, from device-made levels. The levels equal the CPU's,
+which is what maintenance reads.
 
 ## Closure
 

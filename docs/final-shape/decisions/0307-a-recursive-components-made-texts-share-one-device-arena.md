@@ -1,7 +1,7 @@
 # 0307: A recursive component's made texts share one device arena, interned at its end
 
-Status: decided (the user, 2026-11-16); built the same day for a component that keeps no levels. A session's cross
-part keeps levels for `hierarchy`, and the device keeps none yet (below, "Found").
+Status: decided (the user, 2026-11-16); built the same day. In a session, `hierarchy` reached the device once it
+made levels (decision 0311).
 
 ## Intro
 
@@ -64,7 +64,8 @@ insert per made text per round, and needs a table that grows on the device.
   recursive component that keeps levels (its maintenance runs on the CPU)". Every corpus run is a session's cross
   part, which keeps levels for a stratum with the `levels` qualifier (0090), and `--full` does too. The device
   hands its rows back once, at the end, so the host would give them one level. It needs each row's level, the
-  round that made it (a lattice row: the round that improved it), as the CPU's `lbase + wave + 1`.
+  round that made it (a lattice row: the round that improved it), as the CPU's `lbase + wave + 1`. Decided and
+  built as 0311: `hierarchy` now runs on the device in public_api_triples' and internal_dead_code's session runs.
 - **The sinks run nowhere.** `serverplan_state_tripwires.state_flow_1.rr` and `state_flow_project_1.rr` fail their
   types (`relation start is read by the rule for arg_before and not declared`). No executor has `@id` (no SQL for it,
   no native function).

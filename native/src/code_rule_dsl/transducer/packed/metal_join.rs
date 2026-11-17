@@ -1572,7 +1572,9 @@ kernel void rel_hash(device const long* R [[buffer(0)]], device uint* out [[buff
 // (min and max select one of their values), `flags` a flat key's conflict. A held key's row is updated in place; a
 // new key's row goes to `N` (as `R`'s columns), found next by `H` (key to `R`'s row, kept from round to round). Each
 // changed key's row (key and value) goes to `D`, the next round's delta: `counters[0]` of them, `counters[1]` new.
-struct LatP { long top; uint n; uint had; uint nkeys; uint code; uint after; uint pmask; uint hmask; uint pad; };
+// `level`: the round, written to a changed or new key's level column (`nkeys + 2`) where the relation keeps levels
+// (decision 0311); 0: no level column.
+struct LatP { long top; uint n; uint had; uint nkeys; uint code; uint after; uint pmask; uint hmask; uint level; };
 
 static inline uint lat_hash(thread const long* key, uint nk, uint mask) {
     ulong h = 0x9E3779B97F4A7C15ul;
@@ -1741,12 +1743,14 @@ kernel void lat_merge(device const long* U [[buffer(0)]], device const uint* P [
         }
         R[ulong(p.nkeys) * p.had + held] = m;
         R[ulong(k) * p.had + held] = changes + 1;
+        if (p.level != 0) R[ulong(k + 1) * p.had + held] = long(p.level);
         v = m;
     } else {
         uint a = atomic_fetch_add_explicit(&counters[1], 1u, memory_order_relaxed);
         for (uint c = 0; c < p.nkeys && c < 8; c++) N[ulong(c) * p.n + a] = key[c];
         N[ulong(p.nkeys) * p.n + a] = v;
         N[ulong(k) * p.n + a] = 1;
+        if (p.level != 0) N[ulong(k + 1) * p.n + a] = long(p.level);
         uint id = p.had + a;
         uint place = lat_hash(key, p.nkeys, p.hmask);
         for (uint i = 0; i < 2 * (p.hmask + 1); i++) {
@@ -2825,23 +2829,25 @@ pub(in crate::code_rule_dsl) struct LatCode {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct LatParams { top: i64, n: u32, had: u32, nkeys: u32, code: u32, after: u32, pmask: u32, hmask: u32, pad: u32 }
+struct LatParams { top: i64, n: u32, had: u32, nkeys: u32, code: u32, after: u32, pmask: u32, hmask: u32, level: u32 }
 
 impl Batch {
     /// A lattice relation's round (decision 0124): the `n` rows of `u` (its key's `nkeys` columns, then the value)
     /// folded by key into `total` (the relation's `nkeys + 2` columns, its last a key's changes; `had` rows): a held
     /// key's row updated in place, a new key's row into `new_keys` (as `total`'s columns), each changed key's row (key
-    /// and value) into `delta`. `counters`: `[changed, new]`.
+    /// and value) into `delta`. `counters`: `[changed, new]`. `level`: where the relation keeps levels (decision
+    /// 0311), the round, written to a changed or new key's row in a column after its changes (`total` and `new_keys`
+    /// then have one more).
     #[allow(clippy::too_many_arguments)]
     /// Code 3 compares its values' texts in `arena`, which holds every value the fold reads.
     pub(in crate::code_rule_dsl) fn lattice_fold(&mut self, u: &Table, n: usize, total: Option<&DevRel>, nkeys: usize, lat: LatCode, keys: &mut LatKeys,
-                                                 counters: &Words, new_keys: &Table, delta: &Table, arena: Option<&Arena>) -> Result<(), Error> {
+                                                 counters: &Words, new_keys: &Table, delta: &Table, arena: Option<&Arena>, level: Option<u32>) -> Result<(), Error> {
         assert!(lat.code != 3 || arena.is_some(), "a shortlex fold reads its values' texts");
         assert!(nkeys + 1 <= MAX_KEYS && u.cap == n && new_keys.cap == n && delta.cap == n);
         let had = total.map_or(0, |t| t.rows);
         let pplaces = (2 * n).next_power_of_two().max(16);
         let want = (2 * (had + n)).next_power_of_two().max(16);
-        let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32, hmask: 0, pad: 0 };
+        let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32, hmask: 0, level: level.unwrap_or(0) };
         let r: metal::Buffer = total.map_or_else(|| self.dummy.buffer.to_owned(), |t| t.buffer.buffer.to_owned());
         if keys.places < want {
             // Grown: every held row placed again.
