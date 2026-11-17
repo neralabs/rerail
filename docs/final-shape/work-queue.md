@@ -1493,8 +1493,11 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 
 - **Now** (2026-11-17): format 16's writer writes the newline index as region 9 (`tape_format::newlines`, layout 3),
   and the CLIF reads `tape_line` and `tape_line_start` answer from it (Rust and MSL, checked against counting the
-  source). 16z holds the index raw. The residency still counts newlines byte by byte on the host at every placement
-  and writes a `DeviceCode` table per document (`residency/slabs.rs`, `resident::device_codes_of`).
+  source). 16z holds the index raw. The residency reads a format 16 document's lines from it (no host count), and
+  Metal's batch runtime answers lines through the same reads; a language's `DeviceCode` table is placed once a slab
+  and shared by its documents, copied once into a gathered block (0336 §6–§7). Format 15 keeps both per document.
+  **Left**: the CPU JIT's packed batches (`native_cpu.rs`, `batch.line_starts`) still take host-built line starts;
+  they move to `tape_line` with the packed batch's own move to resident tapes.
 - **Done when**: format 16's writer writes the newline index (0156 §1.6, Elias–Fano, a node's line the rank of its
   start) and the reads answer a line from it; the language's code table is placed once per batch per language and
   named by the header's tag; the placement's line count and per-document table are gone.

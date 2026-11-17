@@ -20,7 +20,9 @@ inline device const uchar* tape_doc(device const uchar* chunk,ChunkTape d){retur
 inline uint tape_size(device const uchar* s,ChunkTape d,uint i){return clif_tape_size(TAPE_READ(s,d),i);}
 // The node's code's number in its document's (format 16: its language's) table.
 inline uint tape_number(device const uchar* doc,ChunkTape d,uint i){return clif_tape_number(doc,(thread const uint*)&d.nodes,i);}
-inline device const DeviceCode& tape_code(device const uchar* s,ChunkTape d,uint i){device const uchar* doc=tape_doc(s,d);return ((device const DeviceCode*)(doc+d.codes))[tape_number(doc,d,i)];}
+// The node's code: its document's table (format 15), or its language's, its block's (format 16): `at + codes`
+// modulo 2^32, so a table before the document is reached too (decision 0336 §7).
+inline device const DeviceCode& tape_code(device const uchar* s,ChunkTape d,uint i){return ((device const DeviceCode*)(s+(d.at+d.codes)))[tape_number(tape_doc(s,d),d,i)];}
 inline uint tape_kind(device const uchar* s,ChunkTape d,uint i){return tape_code(s,d,i).kind;}
 inline uint tape_field(device const uchar* s,ChunkTape d,uint i){return tape_code(s,d,i).field;}
 inline uint tape_flags(device const uchar* s,ChunkTape d,uint i){return tape_code(s,d,i).flags;}

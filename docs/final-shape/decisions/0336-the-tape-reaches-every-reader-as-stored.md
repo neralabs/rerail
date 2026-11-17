@@ -72,8 +72,18 @@ form. This decision says which of them go and what replaces them.
    (`tape_line_start`: select on the ones). Both are CLIF reads, so the CPU, the JIT and Metal run the same body;
    format 15 answers them from its line-start array. The writer takes the source, not its length. 16z stores the
    index raw after its checkpoints; a block decoded alone carries none (the whole tape's view answers lines).
-   Stores are keyed by layout 3 (316 and 1316). Still owed: the residency reading lines from the tape instead of
-   counting them, and the code table placed once per language.
+   Stores are keyed by layout 3 (316 and 1316). The residency places no line starts for format 16: the view's
+   `lines` is the tape's index, and Metal's batch runtime (`LineTable`: a node's line, a byte's line, a row and
+   column's byte) answers through the same reads. Format 15 keeps its placed line starts.
+
+7. **A language's code table is placed once a slab (2026-11-17, §1's second half).** A format 16 document's codes
+   are its language's table (`DeviceCode`s, made from the language's numbering and the grammar). A slab holds it
+   once per key (the tape's tag and the table's revision), placed after the first document of the language that
+   lands there (`rerail_metal::slabs::Slab::table`), and every format 16 document's view points at it: `codes` is
+   the table's offset from the document's `at` modulo 2^32, so `tape_code` reads `chunk + (at + codes)` whether
+   the table lies before or after it. A batch gathered into one block copies a language's table there once
+   (`gather`), and the copies' views point at it. Format 15 keeps a table a document. The residency's derived bytes
+   for a format 16 document are now none: no codes, no line starts.
 
 ## Consequences
 
