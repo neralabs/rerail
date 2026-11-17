@@ -52,6 +52,10 @@ pub struct Bytewise<'a> {
     /// of the token is made: a test of byte `s + j` (`1 <= j <= 16`) of exactly the term's set
     /// is the mask's lane `j - 1`, no byte read, as lean's number arm knows its digits.
     run_lanes: std::cell::Cell<Option<RunLanes>>,
+    /// The refill's words the body stores in its rows (decision 0361, `native_cpu_block::
+    /// refill_rows`): the outputs, and the row slot of the block's rare starts' word. The
+    /// refill loads them where its block is made, as simdjson's stage 2 reads stage 1's index.
+    pub rows: Option<(Vec<u16>, Option<i32>)>,
 }
 
 /// A split run's byte term's mask (`Bytewise::run_split`): its lanes from `s + 1`, `stride`
@@ -106,7 +110,7 @@ impl<'a> Bytewise<'a> {
                     _ => false,
                 };
         }
-        Bytewise { native, plan, can, carries: Vec::new(), bail: None, packs: Default::default(), before_start: None, run_lanes: Default::default() }
+        Bytewise { native, plan, can, carries: Vec::new(), bail: None, packs: Default::default(), before_start: None, run_lanes: Default::default(), rows: None }
     }
 
     /// The runs whose `escaped` the bytes make: each `a`, once.

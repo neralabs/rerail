@@ -710,6 +710,9 @@ pub struct Sinks<'a> {
     pub dst: Value,
     pub stride: i64,
     pub early: &'a [bool],
+    /// Values no output is, each stored in a row slot no output uses (`refill_rows`): `(value,
+    /// byte offset)`.
+    pub extra: &'a [(usize, i32)],
 }
 
 /// Output `k`'s word at delay `d > 0`, stored without holding a word across the loop. The
@@ -1581,6 +1584,16 @@ impl Emit<'_, '_> {
     fn sink(&mut self, f: &mut FunctionBuilder<'_>, x: usize, ks: &[usize]) {
         f.set_srcloc(cranelift_codegen::ir::SourceLoc::new(x as u32 + 1));
         let Some(sk) = self.sinks else { return };
+        for &(_, off) in sk.extra.iter().filter(|e| e.0 == x) {
+            let v = plain(&mut *f, &self.syms, &mut self.values, x);
+            let word = if self.full {
+                v
+            } else {
+                let inside = within_word(&mut *f, self.i, self.len, 0);
+                f.ins().band(v, inside)
+            };
+            f.ins().store(stores_flags(), word, sk.dst, off);
+        }
         for &k in ks {
             let v = plain(&mut *f, &self.syms, &mut self.values, x);
             let d = self.native.output_delays[k];
@@ -1702,14 +1715,16 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     for _ in 0..4 {
         signature.params.push(AbiParam::new(pointer));
     }
-    // The CPU's form: the walks made by walking, not by rounds (decision 0139).
-    let cpu = native.cpu_form();
+    // The records (`records`): made in the last pass at each file's end where it is a forward
+    // one, else in a pass of their own after the passes.
+    let mut tables = native.records.as_ref().map(|r| RecordTables::new(r, native)).transpose()?;
+    // The CPU's form: the walks made by walking, not by rounds (decision 0139); the refill's
+    // words the body makes for its rows kept (0361).
+    let keep: Vec<usize> = native.records.as_ref().zip(tables.as_ref()).and_then(|(r, t)| refill_outs(r, t, native)).unwrap_or_default().into_iter().map(usize::from).collect();
+    let cpu = native.cpu_form_keeping(&keep);
     let made = native;
     let native = &cpu;
     let passes = native.passes();
-    // The records (`records`): made in the last pass at each file's end where it is a forward
-    // one, else in a pass of their own after the passes.
-    let mut tables = native.records.as_ref().map(|r| RecordTables::new(r, made)).transpose()?;
     if let Some(t) = tables.as_mut() {
         t.layout = record_layout(native, t);
     }
@@ -2070,12 +2085,7 @@ impl RecordTables {
         }
         // The fused rules, as the loop chooses them with the main run's word in a register (as
         // `record_tokens` puts it there).
-        let first_bytes = |k: usize| (0..256).filter(|&b| r.ends.get(b).is_some_and(|&e| usize::from(e) == k)).count();
-        let main = (0..r.rules.len()).filter(|&k| matches!(r.rules[k], crate::records::EndRule::Run(_))).max_by_key(|&k| first_bytes(k));
-        let main_run: Vec<u16> = main.into_iter().filter_map(|k| match r.rules[k] {
-            crate::records::EndRule::Run(o) => Some(o),
-            _ => None,
-        }).collect();
+        let main_run: Vec<u16> = main_run(r).into_iter().collect();
         let fused = if r.skip.is_some() { fused_of(r, &filters, Some(made), &main_run) } else { None };
         // The fused pair rule's tokens' code bits, by first byte and length, where one value
         // each is the word table's (the code's own lookup, `WordTable::slot`): every pair of
@@ -5684,12 +5694,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         // One run word in a register a block: the run rule most first bytes take (a word's),
         // as the lean lexer's window has its `word` mask alone. A rarer run (a number's) reads
         // its word at its token, by a call: no window a block for a token in hundreds.
-        let first_bytes = |k: usize| (0..256).filter(|&b| r.ends.get(b).is_some_and(|&e| usize::from(e) == k)).count();
-        let main = (0..r.rules.len()).filter(|&k| matches!(r.rules[k], crate::records::EndRule::Run(_))).max_by_key(|&k| first_bytes(k));
-        let mut v: Vec<u16> = main.into_iter().filter_map(|k| match r.rules[k] {
-            crate::records::EndRule::Run(o) => Some(o),
-            _ => None,
-        }).collect();
+        let mut v: Vec<u16> = main_run(r).into_iter().collect();
         v.extend(lift.iter().chain(&at_marks).map(|&(_, o)| o));
         v.sort_unstable();
         v.dedup();
@@ -5977,7 +5982,18 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 }
                 _ => Vec::new(),
             };
+            // The body's rows (0361): its words loaded, no byte classified again. Only where the
+            // refill waits at the blocks made (`bounded`): their rows are final.
+            let from_rows = rd.bytes.and_then(|(b, _)| b.rows.as_ref()).filter(|(os, _)| bounded && term_sets.is_empty() && all.iter().all(|x| os.contains(x)));
             let (got, rare_got, term_words) = match (rare_need, rd.bytes.filter(|(b, _)| all.iter().all(|&x| b.can(x)))) {
+                _ if from_rows.is_some() => {
+                    let (_, rare_slot) = from_rows.expect("rows");
+                    let off = f.ins().imul_imm(q, 8 * outputs as i64);
+                    let row = f.ins().iadd(c.out, off);
+                    let w: Vec<Value> = all.iter().map(|&x| f.ins().load(types::I64, MemFlags::trusted(), row, 8 * i32::from(x))).collect();
+                    let rare = rare_slot.map(|s| f.ins().load(types::I64, MemFlags::trusted(), row, s));
+                    (w, rare, Vec::new())
+                }
                 (Some(need), Some((b, file))) => {
                     let p = f.ins().ishl_imm(q, 6);
                     let as_set = |set: &[u64; 4]| -> crate::class_pack::ByteSet { *set };
@@ -7183,6 +7199,8 @@ struct Loop<'a> {
     params: usize,
     /// The walks' functions, called by the full body and the general one alike.
     walks: Option<&'a crate::native_cpu_walk::WalkCalls>,
+    /// Values stored in row slots no output uses (`Sinks::extra`).
+    extra: &'a [(usize, i32)],
 }
 
 impl Loop<'_> {
@@ -7210,7 +7228,7 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
     let scratch = if lp.rowed() { p[lp.params - 1] } else { scratch };
     let (slot_of, slots) = (lp.slot_of, lp.slots);
     let sunk: Vec<bool> = early.iter().zip(lp.stored).map(|(&e, &s)| e && s).collect();
-    let sinks = slot_of.is_empty().then_some(Sinks { dst, stride: lp.stride, early: &sunk });
+    let sinks = slot_of.is_empty().then_some(Sinks { dst, stride: lp.stride, early: &sunk, extra: lp.extra });
     // The full body's one branch: an all-ASCII block runs a body with the values known on
     // ASCII bytes folded (`native_cpu_lanes`), the others the whole body. Both meet before
     // the sinks.
@@ -7331,6 +7349,74 @@ fn general_signature(module: &JITModule) -> cranelift_codegen::ir::Signature {
     signature
 }
 
+/// The refill's words from the body's rows (decision 0361): where the token loop is the lean
+/// lexer's (`RecordTables::lean`, fused rules, no marks it sets), the skip's and the main run's
+/// outputs, which the body then stores, and the value of the body whose bytes are the rare
+/// starts' set (`RecordTables::rare`) where a skipped byte's answer is free, with the row slot
+/// of a total no one reads by its rows (`rowless_totals`) to store it in. The body has those
+/// classes in its lookups: the refill then loads three words a block, no byte classified twice.
+fn refill_rows(rec: &crate::records::Records, rt: &RecordTables, native: &BlockNative, made: &BlockNative) -> Option<(Vec<u16>, Option<(usize, i32)>)> {
+    let o = rec.skip?;
+    let outs = refill_outs(rec, rt, made)?;
+    // Each kept by the CPU's form (`cpu_form_keeping`): not the zero the record pass's are.
+    if !outs.iter().all(|&x| !matches!(native.insts[usize::from(native.outputs[usize::from(x)])], BlockInst::Const(0))) {
+        return None;
+    }
+    let rare = rt.rare.and_then(|n| {
+        let set: [u64; 4] = std::array::from_fn(|k| (0..64).filter(|&i| {
+            let x = 64 * k + i;
+            n[0][x & 15] & n[1][x >> 4] != 0
+        }).fold(0u64, |a, i| a | 1 << i));
+        let skip = usize::from(native.outputs[usize::from(o)]);
+        let care: [u64; 4] = match crate::native_cpu_lanes::byte_set(native, skip) {
+            Some(sk) if native.output_delays[usize::from(o)] == 0 => std::array::from_fn(|k| !sk[k]),
+            _ => [u64::MAX; 4],
+        };
+        // A value the body makes (read from an output), whose bytes are the set's.
+        let mut live = vec![false; native.insts.len()];
+        for &v in &native.outputs {
+            live[usize::from(v)] = true;
+        }
+        for x in (0..native.insts.len()).rev() {
+            if live[x] {
+                for p in native.insts[x].operands() {
+                    live[p] = true;
+                }
+            }
+        }
+        let x = (0..native.insts.len()).find(|&x| live[x] && crate::native_cpu_lanes::byte_set(native, x).is_some_and(|b| (0..4).all(|k| (b[k] ^ set[k]) & care[k] == 0)))?;
+        let slot = made.rowless_totals().into_iter().find(|&t| t < native.outputs.len())?;
+        Some((x, 8 * slot as i32))
+    });
+    Some((outs, rare))
+}
+
+/// The outputs the refill reads from the body's rows (`refill_rows`): the skip's and the main
+/// run's, where the token loop is the lean lexer's and sets no mark.
+fn refill_outs(rec: &crate::records::Records, rt: &RecordTables, made: &BlockNative) -> Option<Vec<u16>> {
+    let o = rec.skip?;
+    rt.lean?;
+    rt.fused?;
+    let bytewise = crate::native_cpu_bytes::Bytewise::of(made);
+    let (lift, at) = loop_marks(rec, &|x| bytewise.can(x));
+    if !lift.is_empty() || !at.is_empty() {
+        return None;
+    }
+    let mut outs = vec![o];
+    outs.extend(main_run(rec));
+    outs.iter().all(|&x| bytewise.can(x)).then_some(outs)
+}
+
+/// The run rule most first bytes take (a word's), whose word the token loop keeps a block.
+fn main_run(r: &crate::records::Records) -> Option<u16> {
+    let first_bytes = |k: usize| (0..256).filter(|&b| r.ends.get(b).is_some_and(|&e| usize::from(e) == k)).count();
+    let main = (0..r.rules.len()).filter(|&k| matches!(r.rules[k], crate::records::EndRule::Run(_))).max_by_key(|&k| first_bytes(k))?;
+    match r.rules[main] {
+        crate::records::EndRule::Run(o) => Some(o),
+        _ => None,
+    }
+}
+
 /// A forward pass (`native_ir::Pass::Forward`): the body over each file's blocks, first to last.
 /// Before the last pass, `slot_of` gives each output's slot: the block's word is stored there as
 /// the body made it. The full blocks' body is the hot loop, inlined; the others call `outlined`,
@@ -7361,9 +7447,21 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     let (mut arms, mut known_entries) = (0, 0);
     // On the CPU, no row of an output the record pass makes (`records_made`).
     // Nor of a total no one reads by its rows (`rowless_totals`): its running word is its flag.
-    let unmade = if records.is_some() && made.outputs.len() == native.outputs.len() { made.records_made().into_iter().chain(made.rowless_totals()).collect() } else { Vec::new() };
+    let mut unmade: Vec<usize> = if records.is_some() && made.outputs.len() == native.outputs.len() { made.records_made().into_iter().chain(made.rowless_totals()).collect() } else { Vec::new() };
+    // The refill's words from the body's rows (0361): those outputs stored, the rare word in a
+    // free slot.
+    let rows = match records {
+        Some((rec, rt, _)) if slot_of.is_empty() && made.outputs.len() == native.outputs.len() => refill_rows(rec, rt, native, made),
+        _ => None,
+    };
+    let mut extra: Vec<(usize, i32)> = Vec::new();
+    if let Some((outs, rare)) = &rows {
+        unmade.retain(|k| !outs.iter().any(|&o| usize::from(o) == *k));
+        extra.extend(rare);
+        bytewise.rows = Some((outs.clone(), rare.map(|r| r.1)));
+    }
     let stored: Vec<bool> = (0..native.outputs.len()).map(|k| !unmade.contains(&k)).collect();
-    let lp = Loop { native, state: &state, counted: &counted, early: &early, stored: &stored, stride: 8 * native.outputs.len() as i64, slot_of, slots, params, walks: Some(&walks) };
+    let lp = Loop { native, state: &state, counted: &counted, early: &early, stored: &stored, stride: 8 * native.outputs.len() as i64, slot_of, slots, params, walks: Some(&walks), extra: &extra };
     general(general_context, &lp)?;
     let own = cranelift_codegen::ir::UserExternalName::new(0, outlined.0.as_u32());
     // Each gated region's function, declared here and built where the body lowers it.

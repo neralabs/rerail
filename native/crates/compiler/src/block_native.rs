@@ -200,7 +200,14 @@ impl BlockNative {
     /// goes, and with it whatever only the rounds read (an `else`'s `back_fill`, and the
     /// backward pass it took). Metal runs the program as it is.
     pub fn cpu_form(&self) -> BlockNative {
-        let made = self.records_made();
+        self.cpu_form_keeping(&[])
+    }
+
+    /// `cpu_form`, with outputs `keep` made by the body though the record pass reads them from
+    /// the bytes elsewhere: the refill's words it reads from the rows (decision 0361).
+    pub fn cpu_form_keeping(&self, keep: &[usize]) -> BlockNative {
+        let mut made = self.records_made();
+        made.retain(|k| !keep.contains(k));
         if self.walks.is_empty() && made.is_empty() {
             return self.clone();
         }
