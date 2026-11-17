@@ -820,3 +820,12 @@ impl crate::code_rule_dsl::logic::program_image::manager::Runs for StoredRuns<'_
         Run::assemble(name, &versions, int(&head[0])? as usize, int(&head[1])? as usize, steps.into_iter().map(|(_, s)| s).collect(), decided.into_iter().map(|(_, d)| d).collect()).map(Some)
     }
 }
+
+/// `facts` as a `.rr` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
+/// same rows.
+pub fn document(facts: &super::program_facts::Facts, extra: &std::collections::BTreeMap<super::front::name::Name, crate::code_rule_dsl::logic::front::name::List<(super::front::name::Name, super::front::name::Name)>>) -> Result<String, String> {
+    let mut decls = super::program_facts::schema();
+    decls.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
+    let prog = super::front::ast::Program { decls, facts: facts.clone(), ..super::front::ast::Program::default() };
+    super::rr::print(&prog).map_err(|e| format!("program facts: {e:?}"))
+}

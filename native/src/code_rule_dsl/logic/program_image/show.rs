@@ -5,19 +5,19 @@ use super::version::Version;
 use std::fmt::Write as _;
 
 impl Version {
-    /// Term `t` of rule `r`, as `front::Term` writes it.
+    /// Term `t` of rule `r`, as `front::ast::Term` writes it.
     pub fn show_term(&self, r: RuleRef<'_>, t: TermRef<'_>) -> String {
         let mut s = String::new();
         self.write_term(&mut s, r, t);
         s
     }
-    /// Atom `a` of rule `r`, as `front::Atom` writes it.
+    /// Atom `a` of rule `r`, as `front::ast::Atom` writes it.
     pub fn show_atom(&self, r: RuleRef<'_>, a: AtomRef<'_>) -> String {
         let mut s = String::new();
         self.write_atom(&mut s, r, a);
         s
     }
-    /// Literal `l` of rule `r`, as `front::Literal` writes it.
+    /// Literal `l` of rule `r`, as `front::ast::Literal` writes it.
     pub fn show_lit(&self, r: RuleRef<'_>, l: LitRef<'_>) -> String {
         let mut s = String::new();
         self.write_lit(&mut s, r, l);
@@ -42,7 +42,7 @@ impl Version {
         }
         s
     }
-    /// Rule `r`, as `front::Rule` writes it.
+    /// Rule `r`, as `front::ast::Rule` writes it.
     pub fn show_rule(&self, r: RuleRef<'_>) -> String {
         let mut s = String::new();
         self.write_atom(&mut s, r, r.head());

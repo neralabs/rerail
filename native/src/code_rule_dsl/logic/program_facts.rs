@@ -25,8 +25,8 @@
 //! Each list is indexed (`k`, `i`, `row`), so a row's place is in the row itself: the rows are a set, and any order
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
 
-use super::front::Name;
-use super::front::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, Shape, ShapeWait, SpanIn, Term, Value};
+use super::front::name::Name;
+use super::front::ast::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, Shape, ShapeWait, SpanIn, Term, Value};
 use super::front::ast::{Gate, Report};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -40,7 +40,7 @@ pub trait Cell {
 }
 
 /// A branded atom's class as the program's facts write it (`term`, `fact` rows of kind `atom`, decision 0270).
-fn brand_tag(b: crate::code_rule_dsl::logic::front::Branded) -> &'static str {
+fn brand_tag(b: crate::code_rule_dsl::logic::front::ast::Branded) -> &'static str {
     match b.tag() {
         'n' => "n",
         'k' => "k",
@@ -48,9 +48,9 @@ fn brand_tag(b: crate::code_rule_dsl::logic::front::Branded) -> &'static str {
     }
 }
 
-fn branded(tag: &str, atom: i64) -> Result<crate::code_rule_dsl::logic::front::Branded, String> {
+fn branded(tag: &str, atom: i64) -> Result<crate::code_rule_dsl::logic::front::ast::Branded, String> {
     let atom = u32::try_from(atom).map_err(|e| bad(e))?;
-    tag.chars().next().and_then(|c| crate::code_rule_dsl::logic::front::Branded::of_tag(c, atom)).ok_or_else(|| bad(format!("no atom class {tag:?}")))
+    tag.chars().next().and_then(|c| crate::code_rule_dsl::logic::front::ast::Branded::of_tag(c, atom)).ok_or_else(|| bad(format!("no atom class {tag:?}")))
 }
 
 impl Cell for Value {
@@ -71,7 +71,7 @@ impl Cell for Value {
 }
 
 /// Each relation of the schema and its columns (`int` or `sym`).
-pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name, Name)>> {
+pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::name::List<(Name, Name)>> {
     const SCHEMA: &[(&str, &[&str])] = &[
         ("program", &["p:sym"]),
         ("rule", &["p:sym", "r:int", "head:int"]),
@@ -737,7 +737,7 @@ impl<'a, C: Cell> Reader<'a, C> {
             }
             facts.entry(rel).or_default().push((k, row_values));
         }
-        prog.facts = facts.into_iter().map(|(rel, rows)| (rel, ordered(rows).into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect())).collect();
+        prog.facts = facts.into_iter().map(|(rel, rows)| (rel, ordered(rows).into_iter().map(crate::code_rule_dsl::logic::front::name::List::from).collect())).collect();
         let list = |rel: &str| -> Result<Vec<String>, String> { Ok(ordered(self.get(rel).iter().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?)) };
         prog.inputs = list("input")?;
         prog.outputs = list("output")?;
@@ -892,15 +892,6 @@ pub fn program(facts: &Facts, p: &str) -> Result<Program, String> {
     Reader::of(facts, p)?.program()
 }
 
-/// `facts` as a `.rr` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
-/// same rows.
-pub fn document(facts: &Facts, extra: &BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name, Name)>>) -> Result<String, String> {
-    let mut decls = schema();
-    decls.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
-    let prog = Program { decls, facts: facts.clone(), ..Program::default() };
-    super::rr::print(&prog).map_err(|e| bad(format!("{e:?}")))
-}
-
 /// `facts` as bytes: a compact encoding for the facts memo (strings in a table, each value a tag and a number).
 pub fn encode(facts: &Facts) -> Vec<u8> {
     // One pass: each string's id by first use (relation, then its rows' values, in order), the rows written as they
@@ -989,8 +980,8 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
                 row.push(match at.take(1)?[0] {
                     0 => Value::Int(i64::from_le_bytes(at.take(8)?.try_into().expect("eight bytes"))),
                     1 => Value::Str(string(at.u64()?)?.into()),
-                    tag @ 2..=4 => Value::Branded(crate::code_rule_dsl::logic::front::Branded {
-                        class: [crate::code_rule_dsl::logic::front::Class::Name, crate::code_rule_dsl::logic::front::Class::Kind, crate::code_rule_dsl::logic::front::Class::Field][usize::from(tag - 2)],
+                    tag @ 2..=4 => Value::Branded(crate::code_rule_dsl::logic::front::ast::Branded {
+                        class: [crate::code_rule_dsl::logic::front::ast::Class::Name, crate::code_rule_dsl::logic::front::ast::Class::Kind, crate::code_rule_dsl::logic::front::ast::Class::Field][usize::from(tag - 2)],
                         atom: u32::try_from(at.u64()?).map_err(|e| bad(e))?,
                     }),
                     tag => return Err(bad(format!("no value tag {tag}"))),
@@ -1008,7 +999,7 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
 
 /// A digest of `value`'s `Debug` text, made as it is written: two programs compared by it without either's text in
 /// memory (a 16 k-rule program's is tens of megabytes).
-pub(in crate::code_rule_dsl) fn debug_digest(value: &impl std::fmt::Debug) -> [u8; 32] {
+pub fn debug_digest(value: &impl std::fmt::Debug) -> [u8; 32] {
     use sha2::Digest as _;
     struct Hashing(sha2::Sha256);
     impl std::fmt::Write for Hashing {

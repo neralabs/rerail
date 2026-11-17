@@ -22,7 +22,7 @@ use super::encoder::{self, CellText, Decl, Encoder, FactRel, Parts};
 use super::handles::{AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
 use super::version::{Made, Version, max_ranges};
 use super::{ABOUT_BIT, AtomId, Cell, RelId, RuleId, Slot, kind};
-use crate::code_rule_dsl::logic::front::{List, Program, Rule, Value};
+use crate::code_rule_dsl::logic::front::{ast::{Program, Rule, Value}, name::List};
 use crate::code_rule_dsl::logic::program_facts::Facts;
 use std::sync::Arc;
 
@@ -36,7 +36,7 @@ pub enum T<'a> {
     Top,
     Int(i64),
     /// A branded atom (decision 0270).
-    Branded(crate::code_rule_dsl::logic::front::Branded),
+    Branded(crate::code_rule_dsl::logic::front::ast::Branded),
     Str(&'a str),
     StrAtom(AtomId),
     Call(&'a str, Vec<T<'a>>),
@@ -150,7 +150,7 @@ impl<'p> Builder<'p> {
         Builder { parent: None, ids: Some(input), enc: Encoder::with_ids_of(input), removed: Vec::new(), parts: Parts::default(), parts_changed: false, rows: 0 }
     }
     /// A base of all of `v`, under `v`'s atom and relation ids: each rule copied as it is, its source kept.
-    pub(crate) fn folding(v: &'p Version) -> Builder<'p> {
+    pub fn folding(v: &'p Version) -> Builder<'p> {
         let mut b = Builder::derive(v);
         for r in v.rules() {
             let id = b.copy(v, r);
@@ -208,7 +208,7 @@ impl<'p> Builder<'p> {
         }
     }
     /// The id the next added rule gets.
-    pub(crate) fn next_id(&self) -> RuleId {
+    pub fn next_id(&self) -> RuleId {
         RuleId(self.enc.rule_base() + self.enc.rules())
     }
     /// Adds `rule`, from the tree.
@@ -240,7 +240,7 @@ impl<'p> Builder<'p> {
     }
     /// Adds a copy of `rule`, one of `from`'s, recording it as the copy's source in an edit too: a rule a pass kept,
     /// when a pipeline runs it again over an edit of its input onto its last output (`manager`, 0281 §3).
-    pub(crate) fn keep_into(&mut self, from: &Version, rule: RuleRef<'_>) -> RuleId {
+    pub fn keep_into(&mut self, from: &Version, rule: RuleRef<'_>) -> RuleId {
         let id = self.copy(from, rule);
         self.enc.set_from(id.0 - self.enc.rule_base(), rule.id());
         id
@@ -272,7 +272,7 @@ impl<'p> Builder<'p> {
 
     // -- parts --
 
-    fn declare_names(&mut self, rel: &str, cols: &[(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)]) {
+    fn declare_names(&mut self, rel: &str, cols: &[(crate::code_rule_dsl::logic::front::name::Name, crate::code_rule_dsl::logic::front::name::Name)]) {
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
         self.declare(rel, &pairs);
     }
@@ -346,13 +346,13 @@ impl<'p> Builder<'p> {
         })))
     }
     /// The rows of about relation `name` this edit states, or its parent's (`about.rs` reads and writes them by type).
-    pub(crate) fn about_rows(&mut self, name: &str) -> Vec<Vec<Cell>> {
+    pub fn about_rows(&mut self, name: &str) -> Vec<Vec<Cell>> {
         self.own_about();
         let a = self.enc.atom(name);
         self.parts.facts.get(&(a | ABOUT_BIT)).map(|f| f.rows.clone()).unwrap_or_default()
     }
     /// States about relation `name`'s rows, every other about relation kept.
-    pub(crate) fn set_about_rows(&mut self, name: &str, rows: Vec<Vec<Cell>>) {
+    pub fn set_about_rows(&mut self, name: &str, rows: Vec<Vec<Cell>>) {
         self.own_about();
         let a = self.enc.atom(name);
         for &c in super::about::relation_columns(name) {
@@ -503,7 +503,7 @@ impl<'p> Builder<'p> {
 
 /// The view of `parent` less rules `removed` (its rules), if it is few enough ranges (`max_ranges`). A view of a view
 /// is of that view's parent, its ranges that view's less `removed`.
-pub(super) fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
+pub fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
     let (over, ranges): (&Arc<Version>, Vec<(u32, u32)>) = match &**parent {
         Version::View { parent: over, ranges, .. } => (over, ranges.clone()),
         _ => (parent, vec![(0, parent.rule_end())]),
@@ -621,8 +621,8 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
     }
     /// An aggregate `var = op over : { rel(args) }`, written as the encoder writes a tree's (`over` `None` for a
     /// count); `var` a variable. A join's separator and keys are not written term by term: refused.
-    pub fn agg(mut self, var: T<'_>, op: &crate::code_rule_dsl::logic::front::AggOp, over: Option<T<'_>>, rel: impl Into<Rel<'b>>, args: &[T<'_>]) -> Self {
-        use crate::code_rule_dsl::logic::front::AggOp;
+    pub fn agg(mut self, var: T<'_>, op: &crate::code_rule_dsl::logic::front::ast::AggOp, over: Option<T<'_>>, rel: impl Into<Rel<'b>>, args: &[T<'_>]) -> Self {
+        use crate::code_rule_dsl::logic::front::ast::AggOp;
         self.body();
         let code: u8 = match op {
             AggOp::Count => 0,

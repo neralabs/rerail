@@ -2,7 +2,7 @@
 //! numbers what it adds after its parent's id spaces, and finds what its parent holds by its parent's tables, so a
 //! delta holds only what it adds. Hashes are of texts, never of ids, so a rule or part hashes the same in any image.
 use super::{AtomId, Cell, R, RelId, Version, Writer, bad, csr, extents::Extents, kind, meta, strings::{self, Strings}};
-use crate::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Rule, Term};
+use crate::code_rule_dsl::logic::front::ast::{AggOp, Atom, Literal, Rule, Term};
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
 
@@ -15,7 +15,7 @@ fn put_text(h: &mut impl Hasher, s: &str) {
 }
 
 /// A declaration's hash: its relation and its columns' names and types.
-pub(crate) fn decl_hash<'a>(rel: &str, cols: impl Iterator<Item = (&'a str, &'a str)>) -> u64 {
+pub fn decl_hash<'a>(rel: &str, cols: impl Iterator<Item = (&'a str, &'a str)>) -> u64 {
     let mut h = hasher();
     h.write_u8(1);
     put_text(&mut h, rel);
@@ -28,14 +28,14 @@ pub(crate) fn decl_hash<'a>(rel: &str, cols: impl Iterator<Item = (&'a str, &'a 
 
 /// A fact's cell, by text.
 #[derive(Clone, Copy)]
-pub(crate) enum CellText<'a> {
+pub enum CellText<'a> {
     Int(i64),
     Str(&'a str),
-    Branded(crate::code_rule_dsl::logic::front::Branded),
+    Branded(crate::code_rule_dsl::logic::front::ast::Branded),
 }
 
 /// A fact relation's hash: its name, whether it is of the `.about` rows, and its rows.
-pub(crate) fn facts_hash<'a, Row: Iterator<Item = CellText<'a>>>(rel: &str, about: bool, rows: impl Iterator<Item = Row>) -> u64 {
+pub fn facts_hash<'a, Row: Iterator<Item = CellText<'a>>>(rel: &str, about: bool, rows: impl Iterator<Item = Row>) -> u64 {
     let mut h = hasher();
     h.write_u8(2);
     put_text(&mut h, rel);
@@ -64,7 +64,7 @@ pub(crate) fn facts_hash<'a, Row: Iterator<Item = CellText<'a>>>(rel: &str, abou
 }
 
 /// The hash of a list of names (inputs, outputs); `tag` tells the lists apart.
-pub(crate) fn names_hash<'a>(tag: u8, names: impl Iterator<Item = &'a str>) -> u64 {
+pub fn names_hash<'a>(tag: u8, names: impl Iterator<Item = &'a str>) -> u64 {
     let mut h = hasher();
     h.write_u8(6 + tag);
     for n in names {
@@ -74,18 +74,18 @@ pub(crate) fn names_hash<'a>(tag: u8, names: impl Iterator<Item = &'a str>) -> u
 }
 
 /// A part, by ids, with its hash.
-pub(crate) struct Decl {
+pub struct Decl {
     pub cols: Vec<(u32, u32)>,
     pub hash: u64,
 }
-pub(crate) struct FactRel {
+pub struct FactRel {
     pub rows: Vec<Vec<Cell>>,
     pub hash: u64,
 }
 
 /// The parts an image holds besides its rules, by ids. A delta's are what it replaces.
 #[derive(Default)]
-pub(crate) struct Parts {
+pub struct Parts {
     pub decls: std::collections::BTreeMap<u32, Decl>,
     pub decls_gone: std::collections::BTreeSet<u32>,
     /// By (atom | `ABOUT_BIT` for an `.about` relation).
@@ -97,7 +97,7 @@ pub(crate) struct Parts {
     pub owns_about: bool,
 }
 
-pub(crate) struct Encoder<'p> {
+pub struct Encoder<'p> {
     /// The version whose ids this image's extend (a delta's parent), if any.
     parent: Option<&'p Version>,
     atom_base: u32,

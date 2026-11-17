@@ -4094,6 +4094,7 @@ dependencies = [
  "rerail-lang",
  "rerail-logic",
  "rerail-prof",
+ "rerail-program-image",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
@@ -4238,6 +4239,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-program-image"
+version = "0.1.0"
+dependencies = [
+ "foldhash",
+ "rerail-prof",
+ "rerail-program-image",
+ "rerail-rr-syntax",
+ "rustc-hash",
+ "serde_json",
+ "sha2 0.11.1",
+]
+
+[[package]]
 name = "rerail-python-lean"
 version = "0.1.0"
 dependencies = [
@@ -4289,6 +4303,7 @@ dependencies = [
  "rerail-facts",
  "rerail-lang",
  "rerail-prof",
+ "rerail-program-image",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",

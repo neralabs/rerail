@@ -9,7 +9,7 @@
 //! less what the edit removes or replaces, plus what it adds.
 use super::handles::{AtomRef, RuleRef};
 use super::{AtomId, Cell, Image, RelId, RuleId, bad};
-use crate::code_rule_dsl::logic::front::{Lists, Program};
+use crate::code_rule_dsl::logic::front::{ast::Program, name::Lists};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
@@ -181,7 +181,7 @@ impl Version {
     }
 
     /// A view of `parent`'s rules in `ranges` (of its rule ids), of `size` rules and digest `digest` (the builder's).
-    pub(crate) fn view(parent: &Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64) -> Arc<Version> {
+    pub fn view(parent: &Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64) -> Arc<Version> {
         debug_assert!(!matches!(**parent, Version::View { .. }), "a view of a view is of its parent");
         Arc::new(Version::View { parent: parent.clone(), ranges, size, digest, analyses: Held::default() })
     }
@@ -199,14 +199,14 @@ impl Version {
         self.down().next().expect("a version has an image")
     }
     /// The base image this version is over, at the bottom of its stack.
-    pub(crate) fn root(&self) -> &Arc<Image> {
+    pub fn root(&self) -> &Arc<Image> {
         match self {
             Version::Base { image, .. } => image,
             Version::View { parent, .. } | Version::Overlay { parent, .. } => parent.root(),
         }
     }
     /// Whether `im` is one of this version's images: its ids are this version's.
-    pub(crate) fn holds_image(&self, im: &Image) -> bool {
+    pub fn holds_image(&self, im: &Image) -> bool {
         self.down().any(|x| std::ptr::eq(x, im))
     }
 
@@ -454,10 +454,10 @@ impl Version {
     pub fn outputs(&self) -> impl ExactSizeIterator<Item = AtomId> + '_ {
         self.owner(2).outputs().iter().map(|&a| AtomId(a))
     }
-    pub(crate) fn inputs_hash(&self) -> u64 {
+    pub fn inputs_hash(&self) -> u64 {
         self.owner(1).inputs_hash()
     }
-    pub(crate) fn outputs_hash(&self) -> u64 {
+    pub fn outputs_hash(&self) -> u64 {
         self.owner(2).outputs_hash()
     }
 

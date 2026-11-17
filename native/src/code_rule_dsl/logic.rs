@@ -96,8 +96,17 @@ pub mod profile {
     #[allow(unused_imports)]
     use std::sync::{LazyLock, Mutex};
 }
-pub mod program_facts;
-pub mod program_image;
+// The program image's core is a crate of its own, under the lowering (decision 0365); the pass manager, the passes and
+// the analyses, which read the planner, are this crate's, added to the core's module.
+pub use rerail_program_image::code_rule_dsl::logic::program_facts;
+#[path = "logic/program_image"]
+pub mod program_image {
+    pub use rerail_program_image::code_rule_dsl::logic::program_image::*;
+    pub mod analyses;
+    pub mod manager;
+    pub mod passes;
+    pub use analyses::{Edges, Strata};
+}
 pub mod program_text;
 pub mod version_trace;
 /// Main's JSON rules translated to `.rr` on read (decision 0175).
