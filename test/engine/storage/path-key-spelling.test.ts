@@ -861,6 +861,28 @@ describe("path keys an earlier build stored under another spelling", () => {
     expect(await pruned(databasePath)).toEqual({ forgotten: [stored, worktree].sort(), recorded: [folder], settings: [] });
   });
 
+  // A session that starts in a worktree made again at a removed one's path, while the pass looks at the others, records
+  // the folder under its own build's key only. The pass decided each row on its own: it kept the row seen again and
+  // forgot the other. Forgetting the earlier build's row ran its delete trigger, which took the copy's unchanged
+  // settings; forgetting the copy took this build's settings of a folder the earlier build still records.
+  it.each([
+    ["this build's copy", "worktree"],
+    ["the earlier build's row", "stored"],
+  ] as const)("stay, both with their settings, when %s is seen again while the pass runs", async (_row, seenAgain) => {
+    const { folder, databasePath } = await checkoutFolder();
+    onTheSystemDrive(folder);
+    const { worktree, stored } = worktreeRecordedEarlier(folder, databasePath);
+    execFileSync("git", ["worktree", "remove", "--force", worktree], { cwd: folder, stdio: "ignore" });
+    const path = seenAgain === "worktree" ? worktree : stored;
+    write(databasePath, [["UPDATE checkouts SET last_seen_at = ? WHERE checkout_path = ?", String(Date.now() + 60_000), path]]);
+
+    expect(await pruned(databasePath)).toEqual({
+      forgotten: [],
+      recorded: [folder, stored, worktree].sort(),
+      settings: [{ ownerId: worktree, on: 0 }, { ownerId: stored, on: 0 }],
+    });
+  });
+
   it("stay where the key cannot be resolved or is no whole path, and the database still opens", async () => {
     const { folder, databasePath } = await checkoutFolder();
     onTheSystemDrive(folder);

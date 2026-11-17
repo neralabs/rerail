@@ -6,7 +6,7 @@
 import { opendir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
-import { and, eq, getTableColumns, inArray, ne, sql, type SQL } from "drizzle-orm";
+import { and, eq, getTableColumns, gte, inArray, ne, sql, type SQL } from "drizzle-orm";
 import { physicalPath, storedPath, storedPathAsync, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGitAsync } from "../git.js";
@@ -938,7 +938,7 @@ const folderKey = sql<string>`coalesce(${pathKeySpellings.current}, ${checkouts.
  * that does not answer holds one pool thread or one Git. A checkout recorded or seen again since `now` stays, as when a
  * session starts in a worktree made again at a removed one's path while the others are looked at. A copy kept for an
  * earlier build under another spelling of a folder is looked at as its folder ({@link RecordedRow}): it stays while
- * that folder does, and goes with it.
+ * that folder does, also while only one of the folder's rows is seen again during the pass, and goes with it.
  */
 export async function pruneCheckouts(
   db: RerailDatabase,
@@ -992,12 +992,21 @@ async function onDiskOf({ folder, cloneId }: RecordedRow, pass: Pass): Promise<O
   return present ? await gitEntry(folder, cloneId, pass) : "unlisted";
 }
 
-/** Forget those of `gone` not recorded or seen again since `now`, with their own settings, and return their paths. */
+/**
+ * Forget those of `gone` whose folder has no row recorded or seen again since `now`, with their own settings, and return
+ * their paths. A folder's rows go together: an earlier build's row and this build's copy of it both stay while either is
+ * seen again, so forgetting one never takes the other's settings (the copy's through the delete triggers of
+ * `path-key-spelling-triggers.ts`).
+ */
 function forgetCheckouts(tx: Writer, gone: readonly string[], now: number): string[] {
+  const seenAgain = new Set(tx.select({ folder: folderKey }).from(checkouts)
+    .leftJoin(pathKeySpellings, eq(pathKeySpellings.stored, checkouts.checkoutPath))
+    .where(gte(checkouts.lastSeenAt, now)).all().map(row => row.folder));
   const forgotten = statementRuns(gone)
-    .flatMap(paths => tx.select({ path: checkouts.checkoutPath, lastSeenAt: checkouts.lastSeenAt }).from(checkouts)
+    .flatMap(paths => tx.select({ path: checkouts.checkoutPath, folder: folderKey }).from(checkouts)
+      .leftJoin(pathKeySpellings, eq(pathKeySpellings.stored, checkouts.checkoutPath))
       .where(inArray(checkouts.checkoutPath, paths)).all())
-    .filter(row => row.lastSeenAt < now)
+    .filter(row => !seenAgain.has(row.folder))
     .map(row => row.path);
   deleteCheckoutSettings(tx, forgotten);
   for (const paths of statementRuns(forgotten)) tx.delete(checkouts).where(inArray(checkouts.checkoutPath, paths)).run();
