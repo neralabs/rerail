@@ -642,11 +642,16 @@ export interface SourceScan {
    * `#firstSeenInWorktrees`), each with the sources the walk saw first there, by path.
    */
   readonly lateListings: Map<string, ReadonlyMap<string, Source>>;
+  /**
+   * Each file observed that has another name (a hard link): a write through a name outside the session folder is told
+   * by no change notice of it, so a pass of noticed paths reads these too (`SessionNotices`). Absent: not noted.
+   */
+  readonly linked?: Set<string>;
 }
 function emptyScan(): SourceScan {
   return {
     sources: new Map(), failedRoots: new Set(), errors: [], unread: new Map(), firstSeen: new Map(), checkouts: new Set(), unmerged: new Map(),
-    lateListings: new Map(),
+    lateListings: new Map(), linked: new Set(),
   };
 }
 /** What first-sight texts are taken against (`takeFirstSeen`): the sources as a walk saw them, and the texts taken so far. */
@@ -879,6 +884,26 @@ function discoveryGap(discovery: SourceDiscovery): string | undefined {
   if (errors.length > 0) return errors.join("; ");
   if (!discovery.baselineComplete) return "Initial source discovery is still pending";
   return discovery.idle === undefined ? undefined : "Source reconciliation is still pending";
+}
+/**
+ * What the session folder's path `path` (at `absolute`) a change notice named is now, for a pass of noticed paths:
+ * "gone" when the whole walk would not find it; undefined when only a whole walk reads it: a folder now, a path that
+ * cannot be looked at, or a file the notice spells otherwise than the folder holds it, as a volume that ignores case
+ * finds `m.py` as `M.py`, and Windows a file by its short name; the whole walk finds such a file under its own name.
+ */
+async function noticedEntry(absolute: string, path: string): Promise<Stats | "gone" | undefined> {
+  const info = await lstat(absolute).catch(goneOrUnknown);
+  if (info === "gone" || info === undefined) return info;
+  if (info.isDirectory()) return undefined;
+  return info.isFile() && !(await spelledAsHeld(absolute, path)) ? undefined : info;
+}
+function goneOrUnknown(error: unknown): "gone" | undefined {
+  return hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR") ? "gone" : undefined;
+}
+/** Whether the session folder's file `path` (at `absolute`) is spelled as its folders hold it: `realpath` gives each name as held. */
+async function spelledAsHeld(absolute: string, path: string): Promise<boolean> {
+  const held = await realpath(absolute).catch(() => undefined);
+  return held !== undefined && held.endsWith(sep + path.split("/").join(sep));
 }
 function hasErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
@@ -1879,7 +1904,7 @@ export class CodeRuleBridge {
     if (this.#abandoned(discovery)) return;
     await this.#enqueue(() => this.#applyWalk(discovery, walk, scan));
     // Only once applied: a pass whose audit failed leaves the next to read whole, which finds its changes again.
-    discovery.notices.ended(seen);
+    discovery.notices.ended(seen, scan.linked ?? new Set());
     // Reconcile changes to already-observed files made during the initial traversal.
     if (walk.baseline && discovery.requested === undefined) discovery.requested = checkpoint;
   }
@@ -1959,13 +1984,13 @@ export class CodeRuleBridge {
     return traversal.stack.length === 0 && traversal.scan.failedRoots.size === 0;
   }
 
-  /** Reads `path` (session-relative) as the whole walk reads a file it finds; false when it is a folder now or cannot be looked at. */
+  /** Reads `path` (session-relative) as the whole walk reads a file it finds; false when only a whole walk reads it (`noticedEntry`). */
   async #readNoticed(walk: SourceWalk, path: string): Promise<boolean> {
     const absolute = resolve(walk.discovery.root, path);
+    const entry = await noticedEntry(absolute, path);
     // Gone, as the whole walk would not find it: an edit when the last pass saw it.
-    const info = await lstat(absolute).catch((error: unknown) => (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR") ? "gone" : undefined));
-    if (info === "gone") return true;
-    if (info === undefined || info.isDirectory()) return false;
+    if (entry === "gone") return true;
+    if (entry === undefined) return false;
     await this.#observePath(walk, absolute);
     return true;
   }
@@ -2806,8 +2831,15 @@ export class CodeRuleBridge {
    */
   async #observeRegularFile(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
     const path = sessionPath(walk.discovery.root, absolute);
-    if (basename(path) === GITIGNORE || !walk.view.ignoresPath?.(path, false)) await this.#observeFile(walk, sourceLocation(absolute, path), info);
+    if (basename(path) === GITIGNORE || !walk.view.ignoresPath?.(path, false)) await this.#observeLinkedFile(walk, sourceLocation(absolute, path), info);
     else walk.scan.seen?.leftOut.add(path);
+  }
+
+  /** Observes a file, noting it when it has another name (`SourceScan.linked`). */
+  async #observeLinkedFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<void> {
+    const linked = walk.scan.linked;
+    if (linked !== undefined && info.nlink > 1) linked.add(location.path);
+    await this.#observeFile(walk, location, info);
   }
 
   async #observeFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<void> {

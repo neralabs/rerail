@@ -428,7 +428,11 @@ export type SessionReads = { readonly whole: true } | { readonly whole: false; r
  * walk finished with the watch up, when the folder cannot be watched (a network or WSL path, past Linux's watch budget),
  * after the watch ended or lost notices, after Linux's watch took up folders the last walk found (a write in one before
  * its watch is told by nothing), after a pass that did not finish, and when a notice names what changes which files a
- * walk reads: a `.gitignore`, a `.git` entry, a folder that came or went, or a path in a folder no walk walked.
+ * walk reads: a `.gitignore`, a `.git` entry, a folder that came or went, or a path in a folder no walk walked. A file
+ * with another name (a hard link) can be written through a name outside the folder, which no notice of the folder
+ * tells of: a pass of noticed paths reads each such file a pass found, too. A watch the engine refused is not asked
+ * for again until a whole walk walks fewer folders than it refused, or the watch it had ended: each ask costs the
+ * engine a look at the folder's file system, and on Linux each watch it took up before the refusal, then let go.
  */
 export class SessionNotices {
   readonly #root: string;
@@ -446,6 +450,10 @@ export class SessionNotices {
   #whole = true;
   /** The paths notices named since the last pass began. */
   #paths = new Set<string>();
+  /** The files with another name a pass found since the last whole one (`ended`), read again at every pass. */
+  #linked: ReadonlySet<string> = new Set();
+  /** How many folders the engine last refused to watch: none is asked for again until a whole walk walks fewer. */
+  #refused: number | undefined;
 
   /** `root`: the session folder (physical). */
   constructor(root: string, platform: NodeJS.Platform = process.platform) {
@@ -470,7 +478,7 @@ export class SessionNotices {
   begin(whole: boolean): SessionReads {
     this.#collect();
     const vouched = !whole && !this.#whole && this.#seen !== undefined;
-    const reads: SessionReads = vouched ? { whole: false, paths: this.#paths } : { whole: true };
+    const reads: SessionReads = vouched ? { whole: false, paths: new Set([...this.#paths, ...this.#linked]) } : { whole: true };
     this.#paths = new Set();
     this.#whole = true;
     if (!vouched) {
@@ -482,13 +490,17 @@ export class SessionNotices {
 
   /**
    * The pass that began last finished: a whole one with what it `seen`, which notices are weighed against from now on
-   * (on Linux the watch follows its folders), one that read only noticed paths with nothing.
+   * (on Linux the watch follows its folders), one that read only noticed paths with nothing. `linked`: the files with
+   * another name it found.
    */
-  ended(seen: WorktreeRead | undefined): void {
+  ended(seen: WorktreeRead | undefined, linked: ReadonlySet<string>): void {
     if (seen === undefined) {
+      this.#linked = new Set([...this.#linked, ...linked]);
       this.#whole = false;
       return;
     }
+    this.#linked = linked;
+    if (this.#refused !== undefined && seen.folders.size < this.#refused) this.#refused = undefined;
     this.#seen = this.#watching ? seen : undefined;
     this.#whole = this.#follow(seen.folders);
   }
@@ -500,9 +512,16 @@ export class SessionNotices {
   }
 
   #open(): void {
-    if (this.#watch === undefined || this.#watching) return;
+    if (this.#watch === undefined || this.#watching || this.#refused !== undefined) return;
     this.#folders = new Set([""]);
-    this.#watching = this.#watch.watch(this.#root, [""]);
+    this.#watching = this.#watchFolders([""]);
+  }
+
+  /** Watches the folder through `folders`; a refusal stands until a whole walk walks fewer folders (`ended`). */
+  #watchFolders(folders: readonly string[]): boolean {
+    const watching = this.#watch!.watch(this.#root, folders);
+    if (!watching) this.#refused = folders.length;
+    return watching;
   }
 
   /**
@@ -514,7 +533,7 @@ export class SessionNotices {
     if (!this.#byFolder) return false;
     const added = [...folders].some(folder => !this.#folders.has(folder));
     if (!added && folders.size === this.#folders.size) return false;
-    this.#watching = this.#watch!.watch(this.#root, [...folders]);
+    this.#watching = this.#watchFolders([...folders]);
     this.#folders = folders;
     return added || !this.#watching;
   }
@@ -525,7 +544,8 @@ export class SessionNotices {
   }
 
   #notice(notice: TreeNotice): void {
-    if (notice.ended) this.#watching = false;
+    // A watch that ended is asked for again at the next whole pass, whatever was refused before.
+    if (notice.ended) [this.#watching, this.#refused] = [false, undefined];
     if (notice.ended || notice.lost || this.#seen === undefined) this.#whole = true;
     else this.#named(this.#seen, notice);
   }

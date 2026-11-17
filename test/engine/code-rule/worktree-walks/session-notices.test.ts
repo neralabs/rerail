@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, realpath, unlink, writeFile } from "node:fs/promises";
+import type { Dir } from "node:fs";
+import { link, mkdir, mkdtemp, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,15 +11,24 @@ import { RepositoryWorktreeWalks, WorktreeWalks } from "../../../../src/engine/c
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 import { StampTreeWatch } from "./support/stamp-tree-watch.js";
 
-/** Every folder a walk listed, by its absolute path: a whole walk lists each folder of the session folder. */
-const listed = vi.hoisted(() => ({ folders: [] as string[] }));
+/**
+ * Every folder a walk listed, by its absolute path: a whole walk lists each folder of the session folder. `after` holds,
+ * by a folder's absolute path, what runs once the next listing of it was read to its end.
+ */
+const listed = vi.hoisted(() => ({ folders: [] as string[], after: new Map<string, () => Promise<void>>() }));
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
   return {
     ...actual,
     opendir: async (...args: Parameters<typeof actual.opendir>) => {
-      listed.folders.push(String(args[0]));
-      return await actual.opendir(...args);
+      const folder = String(args[0]);
+      listed.folders.push(folder);
+      const listing = await actual.opendir(...args);
+      const after = listed.after.get(folder);
+      if (after === undefined) return listing;
+      listed.after.delete(folder);
+      // Only the walk's `for await` reads the listing.
+      return { async *[Symbol.asyncIterator]() { yield* listing; await after(); } } as unknown as Dir;
     },
   };
 });
@@ -31,7 +41,13 @@ afterEach(async () => {
   for (const watch of watches.splice(0)) watch.close();
   await Promise.all(folders.splice(0).map(async folder => await removeFolder(folder)));
   listed.folders.length = 0;
+  listed.after.clear();
 });
+
+/** A watch that tells what the platform's engine watch tells: on Linux the entries of each folder it is given, else the whole tree. */
+function platformWatch(): StampTreeWatch {
+  return new StampTreeWatch({ byFolder: process.platform === "linux" });
+}
 
 /** A session folder of three packages of one Python file each. */
 async function workspace(): Promise<string> {
@@ -106,7 +122,7 @@ describe("a shell command's result reads the session folder by its change notice
 
   it("reads only the paths a notice named, and checks the write at the result", async () => {
     const root = await workspace();
-    const watch = new StampTreeWatch();
+    const watch = platformWatch();
     const { bridge, audits } = await opened(root, watch);
     // On Linux the watch follows each folder the whole walk walked into; elsewhere it holds the whole tree.
     expect(new Set(watch.folders.get(root))).toEqual(new Set(process.platform === "linux" ? ["", "src", "src/pkg_0", "src/pkg_1", "src/pkg_2"] : [""]));
@@ -128,7 +144,7 @@ describe("a shell command's result reads the session folder by its change notice
 
   it("does not check again at the next result what an edit tool wrote and its own result checked", async () => {
     const root = await workspace();
-    const { bridge, audits } = await opened(root, new StampTreeWatch());
+    const { bridge, audits } = await opened(root, platformWatch());
     const path = join(root, "src", "pkg_2", "m.py");
     await bridge.begin("edit-1", "Edit", { file_path: path });
     await writeFile(path, "def pkg_2():\n    return 2\n");
@@ -140,9 +156,9 @@ describe("a shell command's result reads the session folder by its change notice
 
   it("checks at the turn's end, by a whole walk, a write no notice told of", async () => {
     const root = await workspace();
-    const watch = new StampTreeWatch();
+    const watch = platformWatch();
     const { bridge, audits } = await opened(root, watch);
-    // As a write through a hard link or a memory map: the watch tells nothing of it.
+    // As a memory-mapped write: the watch tells nothing of it.
     await command(bridge, "shell-1", async () => {
       await writeFile(join(root, "src", "pkg_0", "m.py"), "eval(y)\n");
       watch.silence(root);
@@ -161,7 +177,7 @@ describe("a shell command's result reads the session folder by its change notice
 
   it("walks the whole folder at a result after notices were lost or the watch ended, and checks the write there", async () => {
     const root = await workspace();
-    const watch = new StampTreeWatch();
+    const watch = platformWatch();
     const { bridge, audits } = await opened(root, watch);
     await command(bridge, "shell-1", async () => {
       await writeFile(join(root, "src", "pkg_0", "m.py"), "eval(a)\n");
@@ -182,7 +198,7 @@ describe("a shell command's result reads the session folder by its change notice
 
   it("walks the whole folder at every result while the folder cannot be watched", async () => {
     const root = await workspace();
-    const watch = new StampTreeWatch();
+    const watch = platformWatch();
     watch.unwatchable(root);
     const { bridge, audits } = await opened(root, watch);
     await command(bridge, "shell-1", async () => await writeFile(join(root, "src", "pkg_0", "m.py"), "eval(a)\n"));
@@ -192,7 +208,7 @@ describe("a shell command's result reads the session folder by its change notice
 
   it("walks a folder a command made, and checks the files in it at the result", async () => {
     const root = await workspace();
-    const { bridge, audits } = await opened(root, new StampTreeWatch());
+    const { bridge, audits } = await opened(root, platformWatch());
     await command(bridge, "shell-1", async () => {
       await mkdir(join(root, "src", "pkg_3"));
       await writeFile(join(root, "src", "pkg_3", "m.py"), "eval(d)\n");
@@ -201,9 +217,69 @@ describe("a shell command's result reads the session folder by its change notice
     expect(checked(audits)).toEqual([["src/pkg_3/m.py"]]);
   });
 
+  it("walks the whole folder at the next result after a write into a new folder while a walk listed it", async () => {
+    const root = await workspace();
+    const { bridge, audits } = await opened(root, platformWatch());
+    const made = join(root, "src", "pkg_3");
+    // Written once the result's whole walk read the new folder, before Linux's watch takes the folder up.
+    listed.after.set(made, async () => await writeFile(join(made, "b.py"), "eval(f)\n"));
+    await command(bridge, "shell-1", async () => {
+      await mkdir(made);
+      await writeFile(join(made, "a.py"), "eval(d)\n");
+    });
+    expect(checked(audits)).toEqual([["src/pkg_3/a.py"]]);
+    listed.folders.length = 0;
+    await command(bridge, "shell-2", async () => undefined);
+    expect(checked(audits).at(-1)).toEqual(["src/pkg_3/b.py"]);
+  });
+
+  it("checks at the result a write through a name outside the session folder", async () => {
+    const root = await workspace();
+    const outside = await realpath(await mkdtemp(join(tmpdir(), "rerail-session-notices-link-")));
+    folders.push(outside);
+    await link(join(root, "src", "pkg_0", "m.py"), join(outside, "m.py"));
+    const watch = platformWatch();
+    const { bridge, audits } = await opened(root, watch);
+    await command(bridge, "shell-1", async () => {
+      await writeFile(join(outside, "m.py"), "eval(z)\n");
+      // No notice of the session folder tells of a write through another folder's name.
+      watch.silence(root);
+    });
+    expect(listed.folders).toEqual([]);
+    expect(audits).toEqual([expect.objectContaining({
+      checkpoints: ["edit", "function"],
+      edits: [expect.objectContaining({ path: "src/pkg_0/m.py", generatedText: "eval(z)\n" })],
+    })]);
+  });
+
+  it("records at the result a file renamed to another case as gone under its old name", async () => {
+    const root = await workspace();
+    const { bridge, audits } = await opened(root, platformWatch());
+    // On a volume that ignores case (Windows, macOS), the old name still finds the file.
+    await command(bridge, "shell-1", async () => await rename(join(root, "src", "pkg_0", "m.py"), join(root, "src", "pkg_0", "M.py")));
+    expect(audits).toEqual([expect.objectContaining({
+      edits: [
+        expect.objectContaining({ path: "src/pkg_0/M.py" }),
+        expect.objectContaining({ path: "src/pkg_0/m.py", deleted: true }),
+      ],
+    })]);
+  });
+
+  it("asks the engine to watch a folder it refused no more, until the watch it had ends", async () => {
+    const root = await workspace();
+    const watch = platformWatch();
+    watch.unwatchable(root);
+    const { bridge } = await opened(root, watch);
+    const asked = watch.asked.get(root);
+    await command(bridge, "shell-1", async () => await writeFile(join(root, "src", "pkg_0", "m.py"), "eval(a)\n"));
+    await bridge.checkpoint("turn");
+    expect(asked).toBe(1);
+    expect(watch.asked.get(root)).toBe(asked);
+  });
+
   it("walks the whole folder at a result after a command changed Git's ignore rules", async () => {
     const root = await workspace();
-    const { bridge, audits } = await opened(root, new StampTreeWatch());
+    const { bridge, audits } = await opened(root, platformWatch());
     await command(bridge, "shell-1", async () => {
       await writeFile(join(root, ".gitignore"), "build/\n");
       await writeFile(join(root, "src", "pkg_0", "m.py"), "eval(e)\n");
