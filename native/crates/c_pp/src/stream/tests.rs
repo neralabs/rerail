@@ -259,6 +259,8 @@ fn builtins_and_pragmas() {
     cfg.features.insert(("__has_feature".into(), "f".into()), 1);
     let (got, facts) = run_with(&files, &[], cfg);
     assert_eq!(got.join(" "), r#"1 "main.c" 0 1 1 "h.h" "main.c" 100 "x.c" 102 z 1 Q has"#);
+    // A call over lines: `__LINE__` is its `)`'s line.
+    assert_eq!(pp("#define F(x) __LINE__ x\nF(\n1\n)\n"), "4 1");
     assert_eq!(facts.pragmas.iter().map(|p| String::from_utf8_lossy(&p.2).into_owned()).collect::<Vec<_>>(), ["omp parallel", "push_macro(\"Q\")", "pop_macro(\"Q\")"]);
 }
 
@@ -279,6 +281,8 @@ fn diagnostics() {
     let kinds: Vec<&Diag> = facts.diags.iter().map(|d| &d.2).collect();
     assert_eq!(kinds, [&Diag::Error, &Diag::Warning, &Diag::ArgCount, &Diag::UnterminatedCall, &Diag::Unterminated]);
     assert_eq!(facts.diags[0].3, b"stop \"here\"");
+    // A call with the wrong count is its name, its arguments gone.
+    assert_eq!(pp("#define F(a, b) a\nx F() y\n"), "x F y");
 }
 
 #[test]

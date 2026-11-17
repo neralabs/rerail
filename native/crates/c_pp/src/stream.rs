@@ -146,6 +146,9 @@ enum Src {
 pub struct Expansion {
     pub def: u32,
     pub name: Tk,
+    /// The call's last token: its `)`, or the name of an object-like macro (`__LINE__` is its
+    /// line, as clang reads it).
+    pub end: Tk,
 }
 
 /// The symbols the pass knows by name.
@@ -210,6 +213,8 @@ pub struct Pp<'a> {
     s: Syms,
     /// The main file.
     base: u32,
+    /// The `__has_*` tests asked that the configuration does not answer (a profile's to add).
+    pub unanswered: Vec<(String, String)>,
 }
 
 /// A token's spelling.
@@ -260,6 +265,7 @@ impl<'a> Pp<'a> {
             lines,
             s,
             base: 0,
+            unanswered: Vec::new(),
         };
         for &(name, b, fnlike) in BUILTINS {
             let sym = pp.syms.get(name.as_bytes());
@@ -491,21 +497,29 @@ impl<'a> Pp<'a> {
                 return t;
             }
             if let Some(b) = builtin {
+                // `__has_include` and `__has_embed` are operators of `#if` alone (clang reads
+                // them as identifiers elsewhere).
+                if !self.in_if && matches!(b, Builtin::HasInclude { .. } | Builtin::HasEmbed) {
+                    return t;
+                }
                 let toks = self.builtin(b, t);
                 if !toks.is_empty() {
                     self.stack.push(Src::Toks { toks, pos: 0, def: None, stop: false });
                 }
                 continue;
             }
-            let args = if fnlike {
+            let (args, end) = if fnlike {
                 match self.collect_args(d, &t) {
-                    Some(a) => a,
-                    None => continue,
+                    Ok(a) => a,
+                    // A call with the wrong count of arguments is its name alone (clang's
+                    // output); one its file ends inside is nothing.
+                    Err(true) => return Tk { flags: t.flags | NOEXP, ..t },
+                    Err(false) => continue,
                 }
             } else {
-                Vec::new()
+                (Vec::new(), t)
             };
-            self.enter(d, t, args);
+            self.enter(d, t, end, args);
         }
     }
 
@@ -533,14 +547,16 @@ impl<'a> Pp<'a> {
         false
     }
 
-    /// A call's arguments after its name `name` (the next token is its `(`): `None` where the
-    /// call is not one (its file ends inside it, or its arguments are too few or many).
-    fn collect_args(&mut self, d: u32, name: &Tk) -> Option<Vec<Vec<Tk>>> {
+    /// A call's arguments after its name `name` (the next token is its `(`), and its `)`. `Err`
+    /// where the call is not one: `true` for the wrong count of arguments, `false` where its file
+    /// ends inside it.
+    fn collect_args(&mut self, d: u32, name: &Tk) -> Result<(Vec<Vec<Tk>>, Tk), bool> {
         self.collecting += 1;
         let _lp = self.lex_raw();
         let (n, variadic) = (self.defs[d as usize].params.len(), self.defs[d as usize].variadic);
         let mut args: Vec<Vec<Tk>> = vec![Vec::new()];
         let mut depth = 0u32;
+        let mut end = *name;
         let done = loop {
             let mut t = self.lex_raw();
             if t.kind == P::Eof {
@@ -550,6 +566,7 @@ impl<'a> Pp<'a> {
                 depth += 1;
             } else if t.is(T::RParen) {
                 if depth == 0 {
+                    end = t;
                     break true;
                 }
                 depth -= 1;
@@ -566,14 +583,14 @@ impl<'a> Pp<'a> {
         let file = self.cur_file();
         if !done {
             self.diag(file, name.start, Diag::UnterminatedCall, self.syms.text(name.sym).to_vec().as_slice());
-            return None;
+            return Err(false);
         }
         if n == 0 {
             if args.len() == 1 && args[0].is_empty() {
-                return Some(Vec::new());
+                return Ok((Vec::new(), end));
             }
             self.diag(file, name.start, Diag::ArgCount, b"");
-            return None;
+            return Err(true);
         }
         if args.len() + 1 == n && variadic {
             // The variadic arguments left out (C++20, C23, and GNU before them).
@@ -581,9 +598,9 @@ impl<'a> Pp<'a> {
         }
         if args.len() != n {
             self.diag(file, name.start, Diag::ArgCount, b"");
-            return None;
+            return Err(true);
         }
-        Some(args)
+        Ok((args, end))
     }
 
     /// The tokens of `toks`, expanded in isolation (an argument before substitution).
@@ -641,8 +658,8 @@ impl<'a> Pp<'a> {
     }
 
     /// Macro `d`'s expansion of the call `name` with `args`, entered as the next source.
-    fn enter(&mut self, d: u32, name: Tk, args: Vec<Vec<Tk>>) {
-        self.exps.push(Expansion { def: d, name });
+    fn enter(&mut self, d: u32, name: Tk, end: Tk, args: Vec<Vec<Tk>>) {
+        self.exps.push(Expansion { def: d, name, end });
         let id = self.exps.len() as u32;
         {
             let def = &self.defs[d as usize];
@@ -850,10 +867,10 @@ impl<'a> Pp<'a> {
     fn builtin(&mut self, b: Builtin, t: Tk) -> Vec<Tk> {
         match b {
             Builtin::Line => {
-                // The line of the outermost call.
+                // The line of the outermost call's end (clang's: its expansion range's end).
                 let mut r = t;
                 while r.exp != 0 {
-                    r = self.exps[r.exp as usize - 1].name;
+                    r = self.exps[r.exp as usize - 1].end;
                 }
                 let line = if r.buf != 0 { self.at(&r).line } else { 0 };
                 vec![self.number_tok(line as i64, &t)]
@@ -929,7 +946,14 @@ impl<'a> Pp<'a> {
                     name.extend_from_slice(self.text(x));
                 }
                 let key = (String::from_utf8_lossy(self.syms.text(t.sym)).into_owned(), String::from_utf8_lossy(&name).into_owned());
-                let v = self.cfg.features.get(&key).copied().unwrap_or(i64::from(key.0 == "__is_identifier"));
+                let v = match self.cfg.features.get(&key) {
+                    Some(&v) => v,
+                    None => {
+                        let v = i64::from(key.0 == "__is_identifier");
+                        self.unanswered.push(key);
+                        v
+                    }
+                };
                 vec![self.number_tok(v, &t)]
             }
         }

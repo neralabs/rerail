@@ -116,6 +116,7 @@ pub const BUILTINS: &[(&str, Builtin, bool)] = &[
     ("__is_target_variant_os", Builtin::Feature, true),
     ("__is_target_variant_environment", Builtin::Feature, true),
     ("__has_constexpr_builtin", Builtin::Feature, true),
+    ("__building_module", Builtin::Feature, true),
 ];
 
 /// A macro's definition.

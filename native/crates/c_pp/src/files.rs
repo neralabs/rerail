@@ -25,6 +25,9 @@ pub enum DirKind {
     Angle,
     /// `-isystem` (and the compiler's own).
     System,
+    /// A framework directory (`-F`, and the compiler's own): `<A/b.h>` is `A.framework/Headers/b.h`
+    /// there.
+    Framework,
     /// `-idirafter`.
     After,
 }
@@ -78,7 +81,12 @@ impl<R: FnMut(&str) -> Option<Vec<u8>>> Files for Search<R> {
             if angle && self.dirs[k].1 == DirKind::Quote {
                 continue;
             }
-            let p = join(&self.dirs[k].0, name);
+            let p = if self.dirs[k].1 == DirKind::Framework {
+                let Some((fw, rest)) = name.split_once('/') else { continue };
+                format!("{}/{fw}.framework/Headers/{rest}", self.dirs[k].0)
+            } else {
+                join(&self.dirs[k].0, name)
+            };
             if self.exists(&p) {
                 return Some((p, Some(k as u32)));
             }

@@ -184,6 +184,27 @@ must not become a per-token one (history index, lesson 6).
   token came first (`x /*\n*/ #define Z` is text); a line end inside a comment ends no directive.
   tree-sitter's preproc nodes were not used as the oracle: tree-sitter reads a directive only where
   its grammar can, and refuses most of what the preprocessor must still read.
+- **Measured (lean, mode b):** every file of both corpora, against `clang -E -P` (Apple clang 21,
+  `gnu17` and `gnu++20`), under clang's own profile. The profile is its predefined macros, its
+  search path, and its answers to every `__has_*` test the pass asked (probed). A project header
+  not here is an empty stub, after every other directory, for both. `__DATE__` and `__TIME__` are
+  the epoch's on both sides.
+
+  | corpus | files | same tokens | differ |
+  |---|---:|---:|---:|
+  | C | 1,574 | 1,574 | 0 |
+  | C++ | 1,561 | 1,561 | 0 |
+
+  The run is `c_pp/examples/pp_oracle.rs`. Where the two read differently, clang's reading was the
+  one kept:
+  - `__LINE__` in a call over several lines is the line of the call's `)`;
+  - a call with the wrong count of arguments is its name, its arguments dropped;
+  - `__has_include` and `__has_embed` outside `#if` are identifiers;
+  - a UTF-8 byte-order mark at a file's start is passed;
+  - `__building_module` is one of the built-ins.
+
+  Not compared: clang's error recovery. Where `"../x/y.h"` is missing, clang includes the
+  `x/y.h` it suggests.
 - **The compiled forms** are held to the lean preprocessor: the same rows and the same tokens, on
   every backend.
 

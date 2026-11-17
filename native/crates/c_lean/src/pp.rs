@@ -110,17 +110,24 @@ pub struct Phase2<'s> {
 
 impl<'s> Phase2<'s> {
     /// `src` with its `\`-newlines removed (a `\`, blanks, then `\r\n` or `\n`: the blanks are
-    /// clang's and GCC's extension), and its trigraphs replaced where `trigraphs`.
+    /// clang's and GCC's extension), its trigraphs replaced where `trigraphs`, and a UTF-8 byte
+    /// order mark at its start passed (as clang passes it).
     pub fn of(src: &'s [u8], trigraphs: bool) -> Self {
+        let bom = src.starts_with(b"\xef\xbb\xbf");
         let has_trigraph = trigraphs && rerail_simd8::micro::find_pair(src, 0, b'?', b'?').is_some();
         let first = first_splice(src, 0);
-        if first.is_none() && !has_trigraph {
+        if first.is_none() && !has_trigraph && !bom {
             return Phase2 { text: std::borrow::Cow::Borrowed(src), removed: Vec::new() };
         }
         let mut text = Vec::with_capacity(src.len());
         let mut removed = Vec::new();
         let mut gone = 0u32;
         let mut i = 0;
+        if bom {
+            gone = 3;
+            removed.push((0, 3));
+            i = 3;
+        }
         while i < src.len() {
             let c = src[i];
             if c == b'?' && trigraphs && src.get(i + 1) == Some(&b'?') {
@@ -623,6 +630,10 @@ mod tests {
         // No trigraphs where the dialect does not read them; a file with neither is read in place.
         assert_eq!(&*Phase2::of(b"??=x", false).text, b"??=x");
         assert!(Phase2::of(b"int x;\n", true).in_place());
+        // A byte order mark is passed; positions after it are the file's.
+        let p = Phase2::of(b"\xef\xbb\xbf#x", false);
+        assert_eq!(&*p.text, b"#x");
+        assert_eq!(p.orig(1), 4);
     }
 
     #[test]
