@@ -963,11 +963,15 @@ def syntax_docs():
 
     ok_last = statement_of_call({"nthChild": LAST, "inside": {"kind": "statement_block", "inside": {**any_func, "field": "body"}}})
     ok_before_return = statement_of_call({"nthChild": SECOND_LAST, "inside": {"kind": "statement_block", "has": {"kind": "return_statement", "nthChild": LAST}}})
+    # The two statement positions exempt a plain call only: ESTree wraps an optional call `cb?.()` in a ChainExpression,
+    # which upstream's `parentNode.expression === node` check never accepts, so upstream reports it there. The JavaScript
+    # grammar marks the call with an optional_chain child, the TypeScript grammar with a bare `?.` token.
+    optional_call = {"any": [{"has": {"kind": "optional_chain"}}, {"has": {"regex": "^\\?\\.$"}}]}
     docs.append(policy("n-callback-return", "n/callback-return", DESCRIPTIONS["n-callback-return"], [
         {"id": "upstream", "ast": {"rule": {"kind": "call_expression", **NOT_TAGGED, "all": [
             {"has": {"field": "function", "kind": "identifier", "regex": "^(?:callback|cb|next)$"}},
             {"not": {"inside": {"stopBy": stop, "any": [{"kind": "return_statement"}, {"kind": "arrow_function"}]}}},
-            {"not": ok_last}, {"not": ok_before_return},
+            {"any": [optional_call, {"all": [{"not": ok_last}, {"not": ok_before_return}]}]},
             {"inside": {"stopBy": "end", **any_func}}]}}, "message": "Expected return with your callback function."}]))
     return docs
 

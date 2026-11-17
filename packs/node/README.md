@@ -6,8 +6,7 @@
 the pack's conformance check, gates included (`upstream/eslint-plugin-n/gates.yaml`), and in `candidates/rules/`
 until then ([conformance/README.md](../../conformance/README.md)). Each port is scored through the engine's production workspace
 path, with every disagreement declared in `divergences.json` (`n-prefer-promises-fs` does not report `fs.watch`;
-`n-callback-return` does not report a final `callback?.()`; `n-no-unsupported-features-es-syntax` cannot read a tagged
-template with an invalid escape), against:
+`n-no-unsupported-features-es-syntax` cannot read a tagged template with an invalid escape), against:
 
 - **the plugin's own findings on its rule tests** (`fixtures`);
 - **the tool-pack's real-code samples** (`samples.lock`, `SAMPLES.md`): files from fastify and prettier labelled with
@@ -129,7 +128,7 @@ What each rule matches beyond its one-line description: exact matching, edge cas
 
 ### `n-callback-return`
 
-Default callback names: callback, cb, next. A call of one of those is allowed when its nearest block/return/arrow ancestor is a return or an arrow function, when it is the last statement of a function body (or the right side of a binary/logical expression statement there), or when it is the statement just before a block's final return. Calls with a template-string argument are not matched. An optional call (`callback?.()`) gets the same exemptions; upstream reports one in those positions, because ESTree's ChainExpression around it defeats its `parentNode.expression === node` check (declared in `divergences.json`).
+Default callback names: callback, cb, next. A call of one of those is allowed when its nearest block/return/arrow ancestor is a return or an arrow function, when it is the last statement of a function body (or the right side of a binary/logical expression statement there), or when it is the statement just before a block's final return. Calls with a template-string argument are not matched. An optional call (`callback?.()`) gets neither statement-position exemption, matching upstream: its `parentNode.expression === node` check fails on the ChainExpression ESTree wraps around the call.
 
 ### `n-global-require`
 
