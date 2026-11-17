@@ -1344,10 +1344,11 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                             }
                         }
                         (_, None) => {
+                            // Each wanted value read where it lies (`RowRef::Rows`), not the row copied whole.
                             for r in 0..n {
-                                let row = rel.row(row_of(r));
+                                let row = rel.at(row_of(r));
                                 for (c, &w) in want.iter().enumerate() {
-                                    v[c * n + r] = row[w];
+                                    v[c * n + r] = row.at(w);
                                 }
                             }
                         }

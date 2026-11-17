@@ -118,3 +118,21 @@ Step by step, each leaving the engine working (see the commits that name this de
     and `the_device_reads_a_relation_as_the_host_does` (every row's two columns over many chunks, its dead bit and
     its key's group, for a base and a delta in two blocks); `the_hosts_chunk_arithmetic_is_the_reads` (the range
     walks' `chunk_of` against `rows_at`).
+- **Step 2** (2026-11-16): setfix's rows are blocks relations.
+  - The seam first (b84b98d3e): `RowData::row` returns a `Row`, the row's `k` values written into the caller's
+    slot and read as a slice. No reference into the rows leaves them. `RowRef::Rows` reads one value of a derived
+    relation by id.
+  - `setfix::rows::Rows` keeps its shape (frozen segments shared by `Arc`, a tail, `MAX_SEGMENTS` merged from the
+    newest), but each segment and the tail is a `rerail_blocks` relation (`Part`), read through the generated
+    reads. A row's values are its relation's columns, 8 bytes each.
+  - The relations live in shared FACTS blocks (`Facts`, 64 MB): many relations a block, as 0266 wants blocks
+    big. A block is leased from the pool within the Metal budget (pinned, a no-copy buffer of the device's), or
+    reserved anonymously where the pool has no room or there is no Metal. A block never moves, so a relation's
+    address is stable while a part keeps its block; a tail whose block is full moves to another, one copy of its
+    rows (`Part::grow`, as a vector's growth copied them).
+  - `rerail_blocks` gains what a shared block needs: `Relation::try_create`, `Rows::try_init`,
+    `Rows::try_reserve` (a full block refuses, never panics), `Rows::claim_reserved` (a lone writer's claim, no
+    lock) and `Rows::reserved`.
+  - Open: a block is given back when its last part goes, so a long session's kept relations hold the blocks they
+    were made in, with whatever else died there. If the memory profile shows it, a freeze copies a kept segment
+    out of a block that is mostly dead.

@@ -87,7 +87,13 @@ pub struct Spec {
 impl Relation {
     /// Makes an empty relation in `block`: a delta of `base` when given. Returns its descriptor.
     pub fn create<'b>(block: &'b Block, spec: &Spec, base: Option<&Relation>) -> &'b Relation {
-        let p: *mut Relation = block.alloc_t(1);
+        Relation::try_create(block, spec, base).unwrap_or_else(|| panic!("block full: a relation of {} columns", spec.widths.len()))
+    }
+
+    /// `create`, or `None` when the block cannot hold the relation's descriptor and directories (what it took of
+    /// the block then stays unused).
+    pub fn try_create<'b>(block: &'b Block, spec: &Spec, base: Option<&Relation>) -> Option<&'b Relation> {
+        let p: *mut Relation = block.try_alloc_t(1)?;
         unsafe {
             (*p).arity = spec.widths.len() as u32;
             (*p).flags.store(if base.is_some() { DELTA } else { 0 }, Relaxed);
@@ -100,9 +106,10 @@ impl Relation {
                 (*p).okey[i] = c;
             }
             (*p).nokey = spec.order.len() as u32;
-            Rows::init(&raw mut (*p).rows, block, &spec.widths, spec.min_log);
-            Rows::init(&raw mut (*p).killed, block, &[4], 6);
-            &*p
+            if !Rows::try_init(&raw mut (*p).rows, block, &spec.widths, spec.min_log) || !Rows::try_init(&raw mut (*p).killed, block, &[4], 6) {
+                return None;
+            }
+            Some(&*p)
         }
     }
 

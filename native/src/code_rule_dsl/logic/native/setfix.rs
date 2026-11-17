@@ -499,7 +499,7 @@ impl Rel {
     fn new(table: &str, types: &[u8]) -> Rel {
         let k = types.len();
         assert!(k <= MAX_KEY, "{table}: {k} columns, past the {MAX_KEY} an order is probed with");
-        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Rows::default(), stored: 0, lo: 0, hi: 0, wave: 0,
+        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Rows::new(k), stored: 0, lo: 0, hi: 0, wave: 0,
               idx: vec![Index::new((0..k).collect())], serves: vec![Vec::new()], indexed: 0, pending: HashTable::new(),
               sketches: vec![Sketch::default(); k], dead: Vec::new(), ndead: 0, summaries: Default::default(), sorted: Default::default(), from: None,
               level: Vec::new(), lbase: 0, leveled: true, stats: None, stats_dead: Vec::new(), lat: None }
@@ -799,7 +799,7 @@ impl Rel {
         let _s = (self.n - self.indexed >= SPANNED_ROWS).then(|| crate::code_rule_dsl::logic::profile::span(|| "rows sketched and counted (indexed_to_n)".into()));
         let (data, k, lo, hi) = (&self.data, self.k, self.indexed, self.n);
         let sketch = |c: usize, sk: &mut Sketch| for id in lo..hi { sk.add(data.row(id as u32, k)[c]); };
-        let count = |stats: &mut Option<KeptStats>| if let Some(stats) = stats { stats.0.delta(data.range(lo, hi, k), &[], k); };
+        let count = |stats: &mut Option<KeptStats>| if let Some(stats) = stats { stats.0.delta(&data.to_vec(lo, hi, k), &[], k); };
         // Many rows: each column's sketch, and the statistics, a job of its own (decision 0294). A sketch takes its
         // column's values in the rows' order, as one thread gives them (its exact counts give way in that order).
         if hi - lo >= SPANNED_ROWS && crate::threads::max() > 1 {
@@ -3469,7 +3469,7 @@ pub fn hold_source(conn: impl Scoped, table: &str, src: Arc<dyn crate::code_rule
     let conn = conn.db();
     let k = types.len();
     let view = View { src, cols: (0..k).collect(), ids: None, eqs: Vec::new() };
-    let rel = Arc::new(InRel { k, n: 0, rows: Rows::default(), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
+    let rel = Arc::new(InRel { k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
     let _ = rel.name.set(table.to_owned());
     forgotten_on_close();
     DERIVED.lock(conn.at()).insert((conn.at(), table.to_owned()), rel);
@@ -4472,7 +4472,7 @@ impl InRel {
     }
     /// No rows, `k` columns.
     fn empty(k: usize) -> InRel {
-        InRel { k, n: 0, rows: Rows::default(), view: None, base: false, types: vec![b'i'; k], stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None }
+        InRel { k, n: 0, rows: Rows::new(k), view: None, base: false, types: vec![b'i'; k], stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None }
     }
     /// Rows, levels held, and whether it is a view (`RERAIL_LEVELS_WHY`).
     pub fn levels_shape(&self) -> (usize, usize, bool) {
@@ -4712,7 +4712,7 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
     if base && (types.iter().all(|&t| t == b'i') || !table.starts_with("main.")) {
         if let Some(view) = view(conn, &table, &cols) {
             let n = view.ids.as_ref().map_or(0, Vec::len);
-            let rel = Arc::new(InRel { k: types.len(), n, rows: Rows::default(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
+            let rel = Arc::new(InRel { k: types.len(), n, rows: Rows::new(types.len()), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
             LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
             if env_set!("RDL_PROFILE") {
                 eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
