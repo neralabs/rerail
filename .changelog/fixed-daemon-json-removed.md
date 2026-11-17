@@ -1,1 +1,0 @@
-A running daemon whose `daemon.json` was removed writes it back within a second, and `rerail daemon start` and `rerail daemon stop` wait for it. Before, they started a second daemon that refused to run, or found none to stop.
