@@ -1362,6 +1362,57 @@ longest match, so `\x41`, `\u0041` and `\u{41}` stay one escape each, and `\x4g`
 string literal still refuses `'\x'`, which ECMAScript never allows. The generated parser has one more token and
 symbol (268) and the same 2,348 states.
 
+## Patch 18: `using` is a name where no `using` declaration parses
+
+Upstream issue: none open for the statement start (tree-sitter/tree-sitter-javascript#391, open, is `using` in a
+`for (;;)` head, which Patch 5 fixes). Present at tag `v0.25.0` and at HEAD `58404d8`. The same change as Patch 30 in
+`grammars/tree-sitter-typescript/PATCHES.md`.
+
+Why: `using` is a contextual keyword. It starts a `using` declaration only before a binding name on the same line
+(ECMAScript's `using [no LineTerminator here] BindingList[~Pattern]`), and is a name everywhere else, so
+`let using = [1]; using.push(2); using = [2]` is a valid script. Upstream's `using_declaration` takes every statement
+that starts with `using`, and `using` is not in `_reserved_identifier`, so `using.push(2)`, `using = [2]`,
+`using(1)`, `using++` and `using: while (a) {}` are parse errors, and `using[i] = 1` silently reads as a declaration
+of the array pattern `[i]`. Any rule that reads the syntax tree then skips the file (`source-incomplete`).
+
+```diff
+--- a/grammar.js
++++ b/grammar.js
+@@ -145,6 +145,8 @@ module.exports = grammar({
+     [$.import_statement, $.import],
+     [$.export_statement, $.primary_expression],
+     [$.lexical_declaration, $.primary_expression],
++    // A `[` after `using` is a subscript (`using [0] = 1`): no `using` declaration binds an array pattern.
++    [$.primary_expression, $.using_declaration],
+   ],
+ 
+   conflicts: $ => [
+@@ -1357,6 +1359,8 @@ module.exports = grammar({
+       'static',
+       'export',
+       'let',
++      // A keyword only before a declaration's name, so it may name a variable: `let using = f(); using.x`.
++      'using',
+     ),
+ 
+     _semicolon: $ => choice($._automatic_semicolon, ';'),
+```
+
+`using` is now a `_reserved_identifier`, a name wherever a name parses: an operand, an assignment target, a label, a
+parameter, a `for … of` target. After a `using` that starts a statement, a binding name continues the declaration and
+any other token the expression. The one lookahead both read is `[`, where the precedence reads the subscript, as
+ECMAScript does: a `using` declaration binds no pattern. A `{` cannot follow a name on the same line, so
+`using {a} = b`, which ECMAScript rejects, still reads as a declaration of an object pattern. A `using` at the end of a
+line before a name now ends its statement, as ECMAScript's `[no LineTerminator here]` requires: the scanner inserts the
+semicolon there, as after any name. `using x = f()` and `await using x = f()` stay `using_declaration`s,
+`for (using r of rs)` and `for (using r = f(); ;)` keep their `using` heads, and `await using;` is an
+`await_expression`.
+
+Node kinds and field names are unchanged. A `using` that is a name is an `identifier`, as `let using` already gave.
+`using [a] = b` is an assignment to a subscript, and `using⏎x = f()` and `await using⏎x = f()` are two statements,
+where each was a `using_declaration`. The generated parser has the same tokens and symbols (268) and 9 more states
+(2,357).
+
 ## Corpus and tree comparison
 
 With all fifteen patches, upstream's corpus parses as before but for Patch 4's `Objects` case (115 of 116). With that
@@ -1390,3 +1441,8 @@ With Patch 17, upstream's corpus parses as before (115 of 116, the `Objects` cas
 16 alone, no tree changes and no file gains or loses an error over 21,633 `.js`, `.jsx`, `.mjs` and `.cjs` files: the
 20,310 of Rerail's npm dependencies (as `package-lock.json` pins them), the 1,134 of npm 11's own sources and the 189 in
 Rerail's repository. The 14 that fail to parse fail as before.
+
+With Patch 18, upstream's corpus parses as before (115 of 116, the `Objects` case aside). Compared with Patches 1 to
+17 alone, no tree changes and no file gains or loses an error over 20,574 `.js`, `.jsx`, `.mjs` and `.cjs` files, those
+of Rerail's npm dependencies (as `package-lock.json` pins them) and repository: none uses `using` as a name at the
+start of a statement. The 13 that fail to parse fail as before.
