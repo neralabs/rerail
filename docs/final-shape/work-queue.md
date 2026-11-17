@@ -1189,8 +1189,9 @@ pass.
 - **Found** (2026-11-16, t41 §4): `label_micro` (the loop tier) runs about 2,260 threads a dispatch, at 10 ms a
   dispatch, while `clause_patterns` runs 17.8 M threads in 3 ms. Its walks (`desc`, `child … jump`) average 420–800
   serial steps and reach 4,280.
-- **Done when**: `desc kind=K` is a range query on the preorder tape and a `child` loop a segmented pass, so a walk
-  costs its output, not its length; the longest walk at s1000 is under 100 steps.
+- **Done when**: a `desc kind=K` is a scan of the root's subtree range, 64 codes at a time, its groups spread over
+  threads (nothing posted, 0293 §6), and a `child` loop a segmented pass, so a walk costs its output, not its
+  length; the longest walk at s1000 is under 100 steps.
 
 ### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
 
@@ -1199,6 +1200,24 @@ pass.
   the CPU.
 - **Done when**: the next launch is encoded while the GPU runs this one, and the matcher's GPU price comes from
   measured samples.
+
+### Q53. On the device, a group of 64 nodes' roots run serially in one thread, and a parent is a search (oscar's to take)
+
+- **Found** (2026-11-16, t41's last section, measured on oscar's f51cab698 against the hub's tree at s1000): 0293
+  §10's thread per (pass, group of 64 nodes) runs the group's roots one after another. `clause_patterns` went from
+  18.1 M threads to 186 k, and the micro kernels from 139 ms of GPU time (68.7 M steps) to 474 ms (43.9 M). 0293
+  §9's device parent is a search (format 15: back 64 nodes, then a descent from the root), where the CPU kept its
+  projections' parents (0293 §6).
+- **Done when**: a group's roots are a SIMD group's (a lane a set bit of its mask, or a scan of the masks' counts),
+  a walk's frame carries its parent where its step knew it, and the micro kernels' GPU time on the same s1000
+  matches the hub's tree's or beats it, with the host still listing nothing.
+
+### Q54. Oscar's engine stops on the data-layer corpus in `step_histograms` (oscar's to check)
+
+- **Found** (2026-11-16, two runs of internal_dead_code with `--metal` over the whole corpus, f51cab698):
+  `setfix.rs:3043`, `RowRef::at`, index 5 of a view row's 2 columns, from `step_histograms` in
+  `Run::exact_statistics`. The hub's tree runs the same corpus.
+- **Done when**: oscar's next hub merge runs the corpus, or the cause is found and fixed there.
 
 ## Questions for the user
 
