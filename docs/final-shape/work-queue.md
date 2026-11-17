@@ -1801,7 +1801,12 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 - **Found** (2026-11-17, reading `guests::Guests::program`): each embedded program (a `<script>` in a Vue file, a
   Python string an embedder reads) parses its host's whole text into a tape again (`TapeImage::parse`) to find its
   root, though the host's tape is in hand (`Document::tape`, kept where a matcher or `taped` relation reads it).
-- **Done when**: the embedder reads the host's own tape, and no host is parsed for its guests.
+- **Closed, not a problem** (2026-11-17, measured): the 958 Vue fixtures of `packs/vue/upstream` under the 23 rules
+  of the Vue pack (the only dialect that embeds programs, besides a test grammar) make 6 embedded-program guests;
+  all guest work is 0.027 s of 1.19 s CPU, and a host parses (lean parser, facts included) in about 0.23 ms. Keeping
+  every Vue host's tape for its embedders would cost memory for every file to save a few milliseconds. Reopen if a
+  pack makes a guest per file. Noted: no corpus-run test reaches `Guests::program` (a mutant that fails there passes
+  `embeds_declare_guests_and_guests_off_leaves_them_out` and the HTML guest test).
 
 ### Q79. `Rows::frozen` gave an empty kept relation no width
 
