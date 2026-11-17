@@ -286,6 +286,9 @@ pub(super) fn sampled_report(r: &mut String) {
     let accounted = heap_mb(t.resident) + driver;
     let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; Metal driver {} (device pool {}, relational leases {} + {} idle); SQLite heap {}; host blocks {} ({} free on their lists); the rest {}",
         heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), driver, reserved, leased, idle, sqlite, host, host_free, heap_mb(t.footprint).saturating_sub(accounted + host));
+    // Blocks' memory handed out again and zeroed for it (decision 0342): a free list's chunk asked zeroed (a
+    // descriptor), a recycled slab's allocation; a relation's rows are written before read and never zeroed.
+    let _ = writeln!(r, "  blocks: {} MB zeroed as their memory was handed out again", rerail_accel::blocks::zeroed_bytes() >> 20);
     if !s.heap.is_empty() {
         let total: u64 = s.heap.iter().map(|h| h.1).sum();
         let _ = writeln!(r, "Live heap (and device leases) by the span that allocated it, near the peak (at {} MB footprint; sampled 1 in {} KB, all of 64 KB and more; {} MB in all, {} samples dropped):",

@@ -63,6 +63,22 @@ pub trait Backing: Send + Sync {
     }
 }
 
+/// The bytes zeroed as blocks' memory was handed out again (a free list's chunk, a dirty block's allocation).
+pub fn zeroed_bytes() -> u64 {
+    ZEROED.load(Relaxed)
+}
+
+static ZEROED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Zeroes `len` bytes at `p`, counted (`zeroed_bytes`).
+///
+/// # Safety
+/// `p..p + len` is writable memory of a block.
+unsafe fn zero(p: *mut u8, len: usize) {
+    unsafe { std::ptr::write_bytes(p, 0, len) };
+    ZEROED.fetch_add(len as u64, Relaxed);
+}
+
 /// What a block has used, and holds free (its free list's bytes): shared with a ledger that counts live blocks
 /// (`meter`), which reads it while the block lives.
 #[derive(Default)]
@@ -181,17 +197,29 @@ impl Block {
     /// A chunk of `bytes` at `align`: in a block with a free list, of `bytes`' class (a power of two of at least
     /// 64), taken from the list when one is there (zeroed); else from the front.
     pub fn try_alloc_chunk(&self, bytes: usize, align: usize) -> Option<usize> {
+        self.chunk(bytes, align, true)
+    }
+
+    fn chunk(&self, bytes: usize, align: usize, zeroed: bool) -> Option<usize> {
         if self.free == 0 {
-            return self.try_alloc(bytes, align);
+            return self.alloc_filled(bytes, align, zeroed);
         }
         let (class, size) = crate::free::class_of(bytes);
         // SAFETY: the block's own heads; its chunks lie in it.
         if let Some(at) = unsafe { crate::free::pop(self.base, self.heads(), class) } {
             self.ext.free.fetch_sub(size, Relaxed);
-            unsafe { std::ptr::write_bytes(self.base.add(at), 0, size) };
+            if zeroed {
+                unsafe { zero(self.base.add(at), size) };
+            }
             return Some(at);
         }
-        self.try_alloc(size, align.max(64))
+        self.alloc_filled(size, align.max(64), zeroed)
+    }
+
+    /// `try_alloc_chunk` for a chunk written before it is read (a relation's rows): a chunk taken again is left as
+    /// it was, and a dirty block's is not zeroed.
+    pub fn try_alloc_chunk_any(&self, bytes: usize, align: usize) -> Option<usize> {
+        self.chunk(bytes, align, false)
     }
 
     /// Gives back a chunk `try_alloc_chunk` gave (`bytes` as asked): to the free list, when the block keeps one;
@@ -304,6 +332,11 @@ impl Block {
 
     /// `size` bytes at `align`, or `None` when the block's reservation cannot hold them.
     pub fn try_alloc(&self, size: usize, align: usize) -> Option<usize> {
+        self.alloc_filled(size, align, true)
+    }
+
+    /// `try_alloc`; a dirty block's memory is zeroed only when `zeroed` asks it.
+    fn alloc_filled(&self, size: usize, align: usize, zeroed: bool) -> Option<usize> {
         assert!(self.writable, "alloc in a frozen block");
         let mut cur = self.ext.top.load(Relaxed);
         loop {
@@ -314,8 +347,8 @@ impl Block {
             }
             match self.ext.top.compare_exchange_weak(cur, end, AcqRel, Relaxed) {
                 Ok(_) => {
-                    if self.dirty {
-                        unsafe { std::ptr::write_bytes(self.base.add(start), 0, size) };
+                    if self.dirty && zeroed {
+                        unsafe { zero(self.base.add(start), size) };
                     }
                     return Some(start);
                 }

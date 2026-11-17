@@ -109,8 +109,17 @@ impl Rows {
     /// # Safety
     /// As `init`.
     pub unsafe fn try_init(this: *mut Rows, block: &Block, widths: &[u32], min_log: u32) -> bool {
-        assert!(min_log >= MIN_LOG, "min_log {min_log} under {MIN_LOG}");
         let Some(cols) = block.try_alloc_t::<ColDir>(widths.len()) else { return false };
+        unsafe { Rows::init_in(this, cols, widths, min_log) };
+        true
+    }
+
+    /// `init` with the columns' directories at `cols` (zeroed, `widths.len()` of them, in the same block).
+    ///
+    /// # Safety
+    /// As `init`, and `cols` as said.
+    pub unsafe fn init_in(this: *mut Rows, cols: *mut ColDir, widths: &[u32], min_log: u32) {
+        assert!(min_log >= MIN_LOG, "min_log {min_log} under {MIN_LOG}");
         unsafe {
             for (c, &w) in widths.iter().enumerate() {
                 assert!(w == 4 || w == 8);
@@ -120,7 +129,6 @@ impl Rows {
             (*this).ncols = widths.len() as u32;
             Span::set(&raw mut (*this).cols, cols, widths.len());
         }
-        true
     }
 
     #[inline]
@@ -206,7 +214,7 @@ impl Rows {
             for c in 0..self.ncols as usize {
                 let d = self.col(c);
                 let bytes = rows * d.width as usize;
-                let Some(off) = block.try_alloc_chunk(bytes, align(bytes)) else {
+                let Some(off) = block.try_alloc_chunk_any(bytes, align(bytes)) else {
                     // The chunks this round took go back (to the free list, when the block keeps one).
                     for (c2, &at) in taken.iter().enumerate().take(c.min(8)) {
                         block.free_chunk(at, rows * self.col(c2).width as usize);

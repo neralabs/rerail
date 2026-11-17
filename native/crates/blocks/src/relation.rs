@@ -93,7 +93,10 @@ impl Relation {
     /// `create`, or `None` when the block cannot hold the relation's descriptor and directories (what it took of
     /// the block then stays unused).
     pub fn try_create<'b>(block: &'b Block, spec: &Spec, base: Option<&Relation>) -> Option<&'b Relation> {
-        let p: *mut Relation = block.try_alloc_t(1)?;
+        // The descriptor and both row sets' column directories, one chunk: given back whole (`release`).
+        let at = block.try_alloc_chunk(Relation::descriptor_bytes(spec.widths.len()), 64)?;
+        let p: *mut Relation = block.ptr(at);
+        let cols: *mut crate::rows::ColDir = block.ptr(at + Relation::DIRS_AT);
         unsafe {
             (*p).arity = spec.widths.len() as u32;
             (*p).flags.store(if base.is_some() { DELTA } else { 0 }, Relaxed);
@@ -106,9 +109,8 @@ impl Relation {
                 (*p).okey[i] = c;
             }
             (*p).nokey = spec.order.len() as u32;
-            if !Rows::try_init(&raw mut (*p).rows, block, &spec.widths, spec.min_log) || !Rows::try_init(&raw mut (*p).killed, block, &[4], 6) {
-                return None;
-            }
+            Rows::init_in(&raw mut (*p).rows, cols, &spec.widths, spec.min_log);
+            Rows::init_in(&raw mut (*p).killed, cols.add(spec.widths.len()), &[4], 6);
             Some(&*p)
         }
     }
@@ -122,6 +124,17 @@ impl Relation {
             self.rows.release(block);
             self.killed.release(block);
         }
+        let (at, bytes) = (block.offset_of(std::ptr::from_ref(self)), Relation::descriptor_bytes(self.arity as usize));
+        // The last use of `self`: its own memory goes back.
+        block.free_chunk(at, bytes);
+    }
+
+    /// Where the column directories lie in a descriptor's chunk.
+    const DIRS_AT: usize = size_of::<Relation>().next_multiple_of(64);
+
+    /// A descriptor's chunk: the relation, and the directories of its `arity` columns and its killed rows' one.
+    pub fn descriptor_bytes(arity: usize) -> usize {
+        Relation::DIRS_AT + (arity + 1) * size_of::<crate::rows::ColDir>()
     }
 
     #[inline]
@@ -873,7 +886,7 @@ mod tests {
         assert!(block.free_bytes() >= 50_000 * 24, "its chunks are free: {}", block.free_bytes());
         let b = Relation::try_create(&block, &spec, None).unwrap();
         fill(b, 1_000_000);
-        assert!(block.used() - after_one < 64 << 10, "the next took them: grew {} bytes", block.used() - after_one);
+        assert_eq!(block.used(), after_one, "the next took its chunks and its descriptor: nothing new from the front");
         assert_eq!(b.rows.get(49_999, 2), 1_000_000 + 49_999 * 3 + 2);
     }
 

@@ -49,6 +49,11 @@ fn host(need: &Need) -> Block {
     b
 }
 
+/// The bytes zeroed as blocks' memory was handed out again (`rerail_blocks::block::zeroed_bytes`).
+pub fn zeroed_bytes() -> u64 {
+    rerail_blocks::block::zeroed_bytes()
+}
+
 /// The host blocks live now: bytes used in them, and of those the bytes their free lists hold.
 pub fn host_held() -> (usize, usize) {
     let mut live = HOST.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
