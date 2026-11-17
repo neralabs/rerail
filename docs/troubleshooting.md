@@ -469,11 +469,13 @@ was: `since <time>, as far back as the log goes`; when another program keeps `ho
 it counts from when `hook-failures.jsonl` began. When every failure it still holds came after the last recorded
 event, hooks may have failed before the time it leads with, and the line says `as far back as the log goes` too.
 
-A daemon that runs but does not answer costs one hook its 12 s wait, not every hook: that hook leaves its event in
-`untaken-events` in the Rerail home and answers, and while that event is still there each later hook leaves its own
-behind it at once without asking the daemon. A session's start still waits. The daemon records those events, in the
-order their hooks met them, as soon as it reads again and before any later event; it does not check them then, and a
-tool's output is not kept with them.
+A daemon that runs but does not answer costs only the hooks that start in its first 12 s their wait: each leaves its
+event in `untaken-events` in the Rerail home and answers, and while such an event is still there each later hook leaves
+its own behind it at once without asking the daemon. A session's start still waits. The daemon records those events, in
+the order their hooks met them, as soon as it reads again and before any later event; it does not check them then, and
+a tool's output is not kept with them. Hooks that start in the last 12 s before the daemon answers again answer at once
+too, so their events are recorded but not checked. In Cursor, prompts and answers read from the transcript stay unread
+until the next hook the daemon answers, which checks them.
 
 With `RERAIL_AUTOSTART=0` (or `false`) hooks start no daemon, and a hook that finds none logs nothing, since that is
 what you asked for. A session that starts with no daemon running says so as it starts: Claude Code and Codex
