@@ -1401,14 +1401,14 @@ function recordNames(home: string, pid: number): boolean {
 
 /**
  * Asks the daemon `state` records in `home` to shut down: SIGTERM, or on Windows a shutdown request, SIGTERM only if it
- * is refused. The signal goes only while `there` says the pid is still the daemon and daemon.json still names it, both
+ * is refused. The signal goes only while `mayEnd` says the pid is still the daemon and daemon.json still names it, both
  * read just before it is sent; false, and nothing sent, when daemon.json names it no longer: a start removes a record
  * that names no daemon of the home before it launches one, which takes the home's lock an instant before it records
  * its own pid beside it, so the lock's record may still name the pid daemon.json named.
  */
-async function askDaemonToStop(state: DaemonState, there: () => boolean, home: string, machine: DaemonMachine): Promise<boolean> {
+async function askDaemonToStop(state: DaemonState, mayEnd: () => boolean, home: string, machine: DaemonMachine): Promise<boolean> {
   if (machine.platform === "win32" && (await requestDaemonShutdown(state, machine))) return true;
-  if (!there()) return true;
+  if (!mayEnd()) return true;
   if (!recordNames(home, state.pid)) return false;
   signalDaemon(state.pid, "SIGTERM", machine);
   return true;
@@ -1436,35 +1436,44 @@ export async function stopDaemon(home: string, machine: DaemonMachine = THIS_MAC
 export type FoundDaemon = Exclude<DaemonLookup, { status: "absent" }>;
 
 /**
- * Whether the daemon `found` names is still there to stop, asked again at each step of a stop: its pid holds the home's
- * lock ({@link homeDaemonIs}), which the OS lets go however the daemon ends, so a pid given to another process since reads
- * as gone. A daemon from before the home's lock, found answering its health probe as itself, is watched by its pid.
- * Undefined when neither holds: the record names a process that is not the home's daemon, which is never signalled.
+ * Whether the pid the daemon `found` names may be signalled now, asked again just before each signal: while it holds the
+ * home's lock ({@link homeDaemonIs}), which the OS lets go however the daemon ends, so a pid given to another process
+ * since may not be. A daemon from before the home's lock, found answering its health probe as itself, may be while its
+ * pid runs. Undefined when neither holds: the record names a process that is not the home's daemon, never signalled.
  */
-function stopWatch(home: string, found: FoundDaemon, machine: DaemonMachine): (() => boolean) | undefined {
+function signalCheck(home: string, found: FoundDaemon, machine: DaemonMachine): (() => boolean) | undefined {
   const pid = found.state.pid;
   const holdsHome = (): boolean => homeDaemonIs(home, pid, machine);
-  if (holdsHome()) return () => processAlive(pid, machine.kill) && holdsHome();
+  if (holdsHome()) return holdsHome;
   return found.status === "running" ? () => processAlive(pid, machine.kill) : undefined;
 }
 
 /**
+ * Waits up to {@link STOP_TIMEOUT_MS} for the process `pid` to end, as its stop asked, then kills it while it may still be
+ * signalled (`mayEnd`), and waits {@link KILL_TIMEOUT_MS} more. A pid that may not be is left alone: the daemon let go of
+ * the home, and the pid is the daemon's last instant or another process's by now.
+ */
+async function endWhenStopped(pid: number, mayEnd: () => boolean, machine: DaemonMachine): Promise<void> {
+  const alive = (): boolean => processAlive(pid, machine.kill);
+  if ((await goneWithin(alive, STOP_TIMEOUT_MS)) || !mayEnd()) return;
+  signalDaemon(pid, "SIGKILL", machine);
+  // The state file stays, so a later stop can find the process again.
+  if (!(await goneWithin(alive, KILL_TIMEOUT_MS))) throw new Error(stillRunningMessage(pid, machine.platform));
+}
+
+/**
  * Stops the daemon `found`, which a {@link lookupDaemon} of `home` returned, as {@link stopDaemon} does: `not-daemon`,
- * and its record removed, when the pid it names is not the home's daemon by then ({@link stopWatch}).
+ * and its record removed, when the pid it names is not the home's daemon by then ({@link signalCheck}).
  */
 export async function stopFoundDaemon(home: string, found: FoundDaemon, machine: DaemonMachine = THIS_MACHINE): Promise<StopDaemonResult> {
   const pid = found.state.pid;
-  const there = stopWatch(home, found, machine);
-  if (there === undefined) {
+  const mayEnd = signalCheck(home, found, machine);
+  if (mayEnd === undefined) {
     await rm(join(home, DAEMON_STATE_FILE), { force: true });
     return "not-daemon";
   }
-  if (!(await askDaemonToStop(found.state, there, home, machine))) return "not-daemon";
-  if (!(await goneWithin(there, STOP_TIMEOUT_MS))) {
-    signalDaemon(pid, "SIGKILL", machine);
-    // The state file stays, so a later stop can find the process again.
-    if (!(await goneWithin(there, KILL_TIMEOUT_MS))) throw new Error(stillRunningMessage(pid, machine.platform));
-  }
+  if (!(await askDaemonToStop(found.state, mayEnd, home, machine))) return "not-daemon";
+  await endWhenStopped(pid, mayEnd, machine);
   // The daemon removes its own state file, main-instance record and home lock record on a clean shutdown; one killed, as
   // Windows always does, leaves them behind. A record naming a pid Windows reuses would keep the uninstall from the
   // cache, or have a later stop ask the home's lock.
