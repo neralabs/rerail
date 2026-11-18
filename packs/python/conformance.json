@@ -8647,7 +8647,7 @@
         "tool": "bandit",
         "rule": "B105"
       },
-      "policy": "candidates/rules/bandit-b105-hardcoded-password-string.json",
+      "policy": "rules/bandit-b105-hardcoded-password-string.json",
       "capabilities": [
         "suppression",
         "syntax"
