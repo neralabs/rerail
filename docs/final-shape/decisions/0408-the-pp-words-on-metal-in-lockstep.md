@@ -1,6 +1,6 @@
 # 0408: The pp words on Metal in lockstep: rooms by use, contexts across the batch, rounds as batches
 
-Status: draft (2026-11-18). Follows 0348's stage 5a, the spike.
+Status: draft (2026-11-18). Follows 0348's stage 5a, the spike. Built: L1–L4; the gate missed (L4).
 
 ## Intro
 
@@ -121,4 +121,46 @@ as one batch a round, checks the guard, and compares each TU with the interprete
 
 ## L4. The gate: the corpus on Metal
 
-To come.
+**Correct.** `the_corpus_on_metal_is_the_interpreters`: the corpus's 3,135 TUs, C and C++, in
+chunks of 512 TUs, each chunk's rounds the device's batches:
+- 3,073 the same as the interpreter, 62 refused by both, 0 differ;
+- 3,077 runs in 11 batches and 33 dispatches, the largest arena 224 MB;
+- runs by rung: 3,044, 16, 10, 5, 2.
+
+**The gate misses.** `the_corpus_on_metal_timed` (M5 Max, under Relax, not quiet):
+
+| Chunk | Dispatches | GPU |
+|---|---|---|
+| 512 TUs | 33 | 21.8 s |
+| 4,096 TUs (the corpus at once) | 13 | 18.7 s |
+
+rustc's build of the same words takes 487–556 M cycles for the corpus on one core (0348),
+about 0.15 s. The device is more than 100× slower, and a larger batch barely helps.
+
+**The split: one thread's latency, not occupancy or memory.** Single TUs alone on the device:
+
+| TU | Tokens | GPU, alone | GPU a token |
+|---|---|---|---|
+| The largest file (199 KB) | 30,344 | 791–816 ms | 26 µs |
+| The second largest | 23,953 | 212–217 ms | 8.9 µs |
+| 186 KB | 6,401 | 59–61 ms | 9.3 µs |
+| p90 | 4,046 | 35 ms | 8.7 µs |
+| The median | 1,403 | 12.4 ms | 8.9 µs |
+
+- **The rate:** a GPU thread runs the words at about 9 µs a token. rustc's build on a CPU core
+  runs about 66 cycles a token, some 20 ns: 400× faster.
+- **Why:** each token's words are a chain of dependent loads (a context field, a buffer, an
+  element). A thread alone waits out each one, and lockstep hides that latency only across
+  threads, never along one thread's chain.
+- **The critical path:** a dispatch lasts as long as its longest TU. The largest file alone
+  takes 0.8 s, more than the whole corpus takes on one CPU core.
+- **What L1–L3 did buy:** memory (the median TU 17 MB down to 230 KB) and throughput across
+  threads (128 copies at 15 µs a run, against 1.6 ms for one). Neither shortens a TU's own
+  chain.
+
+By the plan, stage M (the pass-through mask) waits on the user, as does any further device
+work on expansion. The mask would also shorten the CPU's path, since it skips tokens that
+can never expand.
+
+Tests: `the_corpus_on_metal_is_the_interpreters` and `the_corpus_on_metal_timed` (both
+ignored).

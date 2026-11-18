@@ -1007,8 +1007,18 @@ pass.
 - **Measured** (M5 Max, not quiet): a run takes 3,798 µs on one GPU thread against 6.4 µs on
   one core with Cranelift. A batch takes about 3.7 ms whatever its thread count, so 128 copies
   come to 25 µs a run. 1.4–3.2 MB of arena a run caps a 512 MB batch at about 128–170 runs.
-- **Waits on the user:** 5b–5e (a complete `clif_msl`, rounds as batches) build out a shape the
-  numbers say loses to one core. Question 3 below.
+- **Answered** (2026-11-18): (c), "lockstep at scale first, then the pass-through mask"
+  (decision 0408). L1–L4 are built:
+  - rooms by use on rungs (the median TU 17 MB down to 230 KB);
+  - contexts across the batch (the three context addresses in the IR are now fields);
+  - rounds as batches (`expand_tus_with`), with no host evaluation (`host_runs`).
+
+  The corpus on Metal: 3,073 the same as the interpreter, 0 differ.
+- **The gate missed:** 18.7 s of GPU against about 0.15 s for rustc's build on one core. A GPU
+  thread runs about 9 µs a token, and a dispatch lasts as long as its longest TU (the largest
+  alone: 0.8 s).
+- **Waits on the user:** stage M (the pass-through mask, which would also shorten the CPU's
+  path), and whether the device keeps expansion at all. Question 3 below.
 
 ## Questions for the user
 
@@ -1039,3 +1049,7 @@ pass.
    stage 1's masks; (b) build 5b–5e as planned anyway, for a Metal-only path; (c) a different
    device design: many TUs' steps in lockstep, or only the data-parallel parts (directive lines,
    `#if` values) on the device. Recommended: (a).
+   **Answered (2026-11-18): (c), lockstep first** (0408). The corpus on Metal is correct but more
+   than 100× slower than one core: a thread's chain of dependent loads, about 9 µs a token.
+   Open: (a) stop the device path for expansion here, keeping 0408's code as the measured basis;
+   (b) build stage M (the pass-through mask) for the CPU's path only; (c) both.

@@ -502,6 +502,11 @@ Metal) or many TUs' independent steps in lockstep. That would be a different des
 words. Stages 5b–5e (a complete `clif_msl`, the batch host, rounds as batches) wait on that
 decision. `clif_msl`, the split `run_native` and `pp_on` stay, tested, as the measured basis.
 
+The user chose (c), "lockstep at scale first, then the pass-through mask". That is decision
+0408: rooms by use, contexts across the batch, rounds as batches. The corpus equals the
+interpreter on Metal, but takes 18.7 s of GPU against about 0.15 s on one core. A thread runs
+about 9 µs a token, and a dispatch lasts as long as its longest TU.
+
 ## Open
 
 - **Header units:** a header expanded once per entry macro state (0327, open).
