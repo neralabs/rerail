@@ -92,8 +92,10 @@ PRAGMA journal_size_limit=16777216;
 ```
 
 It also sets a 128-entry statement cache and a busy handler, `wait_for_writer`, waiting up to
-`BUSY_TIMEOUT` (250 ms) per attempt for the write lock. A write meets that lock held only by a
-writer of another process: within the process, the writer line orders writers first.
+`BUSY_TIMEOUT` (250 ms) per attempt for the write lock. The store's connection guard gives no
+mutable access to the connection: a write transaction begins, and a statement batch outside a
+transaction runs, only in a turn of the writer line, so a write meets that lock held only by a
+writer of another process.
 
 </details>
 
@@ -113,15 +115,21 @@ writer of another process: within the process, the writer line orders writers fi
    write returns `StoreError::Busy`. An `OperationDeadline` shares one deadline across an
    operation's writes (an apply's publication passes, a snapshot's batches). In the line the bound is
    reached only when the writers ahead stop letting go (a disk that stalls).
-4. **Stall.** A waiter that reaches the bound marks the holder stalled (`writes_stalled`) until that
-   holder lets go. Meanwhile an apply leaves the store alone, keeping results in memory, and the
-   first apply after the holder lets go publishes them.
-5. **Cool down.** After a write waited out a writer of another process, whose end this process
+4. **Cancel.** A wait in the line also ends when its owner cancels it (`WaitsEndOn`, `end_waits`):
+   closing a workspace ends its applies' waits, and the maintenance handle ends its thread's waits
+   (lease renewal, collection, search indexes) before it joins that thread, so closing the last
+   workspace on the host's thread never waits on other writers. A cancelled write fails as
+   interrupted, is not retried and marks nothing.
+5. **Stall.** A waiter that itself waited the whole deadline marks the holder stalled
+   (`writes_stalled`) until that holder lets go. Meanwhile an apply leaves the store alone, keeping
+   results in memory, and the first apply after the holder lets go publishes them.
+6. **Cool down.** After a write waited out a writer of another process, whose end this process
    cannot see, the workspace skips the store for `STORE_BUSY_COOLDOWN` (30 s); the first apply
    afterwards publishes what it kept.
 
-A workspace result's `workspaceProfile` reports `storageRetries` and `storageRetryWaitNanoseconds`,
-the latter with each successful write's wait for its turn.
+A workspace result's `workspaceProfile` reports `storageRetries` and `storageRetryWaitNanoseconds`:
+each attempt that ended busy, the one that reached the deadline included, and each successful
+write's wait for its turn, so a stalled store shows there.
 
 </details>
 
