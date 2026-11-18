@@ -1193,6 +1193,27 @@ describe("Rerail daemon", () => {
     }
   });
 
+  // Windows fails a watch whose folder is removed, and gives the folder made again another id. Linux gives the next
+  // folder made the removed one's id at once, so there the moved folder's case shows the follow.
+  it.runIf(process.platform === "win32")("names in its state file the folder its watch follows to once the one it watched is removed", async () => {
+    root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
+    const stateFile = join(root, "daemon.json");
+    await start({ stateFile });
+    const before = (JSON.parse(await readFile(stateFile, "utf8")) as DaemonState).untakenFolder;
+    const home = watch(root);
+    try {
+      await removeFolder(join(root, UNTAKEN_EVENTS_DIR));
+      // Ends on the state file naming the folder made again at the path; before, it kept naming the removed one.
+      for await (const [, name] of on(home, "change") as AsyncIterable<[string, string | null]>) {
+        if (name !== "daemon.json") continue;
+        const named = (JSON.parse(await readFile(stateFile, "utf8")) as DaemonState).untakenFolder;
+        if (named !== undefined && named !== before && named === untakenFolderId(root)) break;
+      }
+    } finally {
+      home.close();
+    }
+  });
+
   it("accepts API writes whose Origin is a known host on the requested port and refuses every other", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     const daemon = await start();

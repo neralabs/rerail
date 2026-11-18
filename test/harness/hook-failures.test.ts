@@ -23,6 +23,7 @@ import { startTestRepository } from "../support/started-repository.js";
 import { DaemonUnreachableError, hookRerailStarted, runHostHook } from "../../src/harness/hook-host.js";
 import { leaveUntaken, LOCKS_DIR, loadNativeBinding, UNTAKEN_EVENTS_DIR, UNTAKEN_MOST_EVENTS, untakenFolderId } from "../../src/engine/index.js";
 import { daemonLeftEventUntaken, engineRequestBody, parseEngineRequest } from "../../src/runtime/index.js";
+import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { listenAsEngine } from "../support/platform/engine-endpoint.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { sourceModule } from "../support/processes/lock-race.js";
@@ -657,6 +658,58 @@ describe("a hook beside a daemon that runs but does not read", () => {
     expect(await daemonLeftEventUntaken()).toBeDefined();
     await closeEngine();
     expect(await daemonLeftEventUntaken()).toBeUndefined();
+  });
+
+  // macOS asks the pid alone, so there no later check covers a pid the machine says is gone.
+  it("skips no wait for a recorded daemon whose pid the machine says is gone", async () => {
+    const rerailHome = await home();
+    mkdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR));
+    writeFileSync(join(rerailHome, "daemon.json"), JSON.stringify({
+      pid: 4242, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/", version: "test", ui: "bundled", startedAt: 1, packageRoot: rerailHome,
+      databasePath: join(rerailHome, "rerail.sqlite"), kernelSocketPath: "/tmp/rerail-gone.sock", accessToken: "token", untakenFolder: untakenFolderId(rerailHome),
+    }));
+    await leaveUntaken(rerailHome, 4242, engineRequestBody(prompt("first")), 1_000);
+    const env = { RERAIL_HOME: rerailHome };
+    expect(await daemonLeftEventUntaken(fakeMachine("darwin", { env }))).toBeUndefined();
+    expect(await daemonLeftEventUntaken(fakeMachine("darwin", { env, kill: () => true }))).toMatchObject({ pid: 4242 });
+  });
+
+  it("logs its event lost as before, and leaves nothing, beside a daemon whose state file names no folder of left events", async () => {
+    const rerailHome = await home();
+    const closeEngine = await recordedDaemon(rerailHome, await closedPort());
+    try {
+      // What an older daemon writes, or one whose watch could not start: no untakenFolder, and no one takes the folder.
+      const older = JSON.parse(readFileSync(join(rerailHome, "daemon.json"), "utf8")) as Record<string, unknown>;
+      delete older.untakenFolder;
+      writeFileSync(join(rerailHome, "daemon.json"), JSON.stringify(older));
+      const handle = vi.fn(async (runtime: { ingest: (event: ReturnType<typeof prompt>) => Promise<unknown> }) => ({ answered: await runtime.ingest(prompt("first")) }));
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now(), arrivedAt: 1_000 };
+      expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "UserPromptSubmit")).toEqual({});
+      expect(handle).not.toHaveBeenCalled();
+      expect(readdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR))).toEqual([]);
+      expect(readHookFailures(rerailHome, 0).failures).toEqual([expect.objectContaining({
+        event: "UserPromptSubmit", reason: `the Rerail daemon (pid ${process.pid}) is running but did not answer within 12 s, so this event was not recorded`,
+      })]);
+    } finally {
+      await closeEngine();
+    }
+  });
+
+  it("leaves a tool's result without its output: the file holds the withheld marker, never what the tool printed", async () => {
+    const rerailHome = await home();
+    const closeEngine = await recordedDaemon(rerailHome, await closedPort());
+    try {
+      const result = { kind: "result" as const, eventId: "result", sessionId: "s", toolCallId: "t1", toolName: "Bash", output: { stdout: "PRINTED BY THE TOOL" } };
+      const handle = vi.fn(async (runtime: { ingest: (event: typeof result) => Promise<unknown> }) => ({ answered: await runtime.ingest(result) }));
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now(), arrivedAt: 1_000 };
+      expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "PostToolUse")).toEqual({ answered: [] });
+      const [name] = readdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR));
+      const text = readFileSync(join(rerailHome, UNTAKEN_EVENTS_DIR, name!), "utf8");
+      expect(parseEngineRequest(JSON.parse(text)).event).toMatchObject({ kind: "result", toolCallId: "t1", output: { withheld: "tool output" } });
+      expect(text).not.toContain("PRINTED BY THE TOOL");
+    } finally {
+      await closeEngine();
+    }
   });
 
   it("names the limit of one event, and no wait, when its event is too large to leave", async () => {
