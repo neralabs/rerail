@@ -358,9 +358,33 @@ impl napi::Task for ScanRrPolicies {
                 policies.push((program, files));
             }
             let mut reports = Vec::new();
+            let mut ephemeral = path == Path::new(":memory:");
             for (i, (program, files)) in policies.into_iter().enumerate() {
                 let out = Path::new(&self.output).join(i.to_string());
-                reports.push(tools::run_program(program, &files, root, &out, &options).map_err(Error::from_reason)?);
+                let report = if ephemeral {
+                    None
+                } else {
+                    match tools::run_program_checked(program.clone(), &files, root, &out, &options) {
+                        Ok(report) => Some(report),
+                        Err(tools::ProgramRunError::Cache(error)) => {
+                            if let Some(owner) = &self.owner { owner.warn(error.to_string()); }
+                            ephemeral = true;
+                            None
+                        }
+                        Err(error) => return Err(Error::from_reason(error.to_string())),
+                    }
+                };
+                let report = match report {
+                    Some(report) => report,
+                    None => {
+                        let mut options = options.clone();
+                        options["reuse"] = serde_json::Value::Bool(false);
+                        code_rule_dsl::logic::plan::corpus::with_tape_cache_path(Path::new(":memory:"), None, ||
+                            tools::run_program_checked(program, &files, root, &out, &options)
+                        ).map_err(|error| Error::from_reason(error.to_string()))?
+                    }
+                };
+                reports.push(report);
             }
             serde_json::to_string(&reports).map_err(|e| Error::from_reason(e.to_string()))
         })

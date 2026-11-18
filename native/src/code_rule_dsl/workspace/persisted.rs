@@ -806,7 +806,7 @@ pub(super) fn persist_files(
     ) {
         Ok(result) => result,
         Err(StoreError::Busy) => return Ok(Persisted::Busy { retries: busy }),
-        Err(error) => return Err(invalid(error.to_string())),
+        Err(error) => return Err(super::api::store_unavailable(error)),
     };
     if closed.load(Ordering::Acquire) {
         return Err(invalid("policy workspace is closed"));
@@ -823,7 +823,7 @@ pub(super) fn persist_files(
         |written: crate::content_store::StoreResult<()>, during: &'static str| match written {
             Ok(()) => Ok(None),
             Err(StoreError::Busy) => Ok(Some(during)),
-            Err(error) => Err(invalid(error.to_string())),
+            Err(error) => Err(super::api::store_unavailable(error)),
         };
     let clean_paths = prepared
         .iter()

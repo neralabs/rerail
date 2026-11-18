@@ -322,6 +322,7 @@ export class CheckoutCatalogs {
   readonly databasePath: string;
   readonly database: RerailDatabase;
   readonly #ruleCatalog: RuleCatalog | undefined;
+  readonly #checkoutRules: ((root: string) => RuleCatalog) | undefined;
   readonly #capabilities: CodeRuleCapabilities;
   readonly #entries = new Map<string, CheckoutEntry>();
 
@@ -329,10 +330,15 @@ export class CheckoutCatalogs {
    * `options.ruleCatalog` fixes the installed packs; without it each read follows them (`loadRuleCatalog`). Either way a
    * checkout's own rules are added to its catalog.
    */
-  constructor(databasePath: string = defaultRerailDatabasePath(), options: { capabilities?: CodeRuleCapabilities; ruleCatalog?: RuleCatalog } = {}) {
+  constructor(databasePath: string = defaultRerailDatabasePath(), options: {
+    capabilities?: CodeRuleCapabilities;
+    ruleCatalog?: RuleCatalog;
+    checkoutRules?: (root: string) => RuleCatalog;
+  } = {}) {
     this.databasePath = resolve(databasePath);
     this.database = openRerailDatabase(this.databasePath);
     this.#ruleCatalog = options.ruleCatalog;
+    this.#checkoutRules = options.checkoutRules;
     this.#capabilities = options.capabilities ?? loadCodeRuleCapabilities();
   }
 
@@ -342,7 +348,7 @@ export class CheckoutCatalogs {
    * checkout's configuration signature, so the next refresh rebuilds its rules.
    */
   #ruleCatalogOf(root: string): RuleCatalog {
-    return worktreeRuleCatalog(this.#ruleCatalog ?? loadRuleCatalog(), root);
+    return this.#checkoutRules?.(root) ?? worktreeRuleCatalog(this.#ruleCatalog ?? loadRuleCatalog(), root);
   }
 
   /** The checkout at `root` (a physical checkout top level) as last read; refreshed with `refresh`. */

@@ -635,10 +635,10 @@ impl CodeRuleDslWorkspace {
         &self,
         cursor: u32,
         maximum_bytes: u32,
-        include_match_text: Option<bool>,
+        include_fingerprints: Option<bool>,
     ) -> AsyncTask<WorkspaceResultPageTask> {
         let mut task = self.result_page_task(cursor, maximum_bytes);
-        task.include_match_text = include_match_text.unwrap_or_default();
+        task.include_fingerprints = include_fingerprints.unwrap_or_default();
         AsyncTask::new(task)
     }
 
@@ -652,7 +652,7 @@ impl CodeRuleDslWorkspace {
             closed: Arc::clone(&self.closed),
             cursor: cursor as usize,
             maximum_bytes: maximum_bytes as usize,
-            include_match_text: false,
+            include_fingerprints: false,
         }
     }
 
@@ -698,6 +698,13 @@ impl CodeRuleDslWorkspace {
             state.import_root = Some(root);
             state.import_generation += 1;
         }
+        Ok(())
+    }
+
+    #[napi(catch_unwind)]
+    pub fn set_scan_fingerprint_prefix(&self, prefix: String) -> Result<()> {
+        let mut state = self.state_now()?;
+        state.scan_fingerprints = Some(super::scan_fingerprints::ScanFingerprints::new(prefix));
         Ok(())
     }
 
@@ -938,6 +945,7 @@ thread_local! {
 pub struct StorageAttachment {
     pub attached: bool,
     pub reason: Option<String>,
+    pub cache_unavailable: bool,
     pub discovery_milliseconds: f64,
     pub publication_milliseconds: f64,
 }
@@ -972,6 +980,13 @@ impl Task for WorkspaceStorageTask {
             // and interactive edits evaluate without reuse. Only a root outside any repository is
             // expected; any other cause is reported, so reuse is never lost silently.
             let discovery_started = Instant::now();
+            let cache_failed = |error: StoreError| StorageAttachment {
+                attached: false,
+                reason: Some(error.to_string()),
+                cache_unavailable: true,
+                discovery_milliseconds: discovery_started.elapsed().as_secs_f64() * 1000.0,
+                publication_milliseconds: 0.0,
+            };
             let deferred = self.snapshot.is_some() || self.analysis_owner.is_some();
             let owner = if let Some(owner) = self.analysis_owner.take() {
                 if let Some(snapshot) = &self.snapshot { snapshot.set_analysis_owner(owner.clone()); }
@@ -979,18 +994,33 @@ impl Task for WorkspaceStorageTask {
             } else if self.store_path == Path::new(":memory:") {
                 None
             } else {
-                let store = crate::content_store::ContentStore::open(&self.store_path).map_err(|err| invalid(err.to_string()))?;
+                let store = match crate::content_store::ContentStore::open(&self.store_path) {
+                    Ok(store) => store,
+                    Err(error) => return Ok(cache_failed(error)),
+                };
                 if let Some(snapshot) = &self.snapshot {
-                    snapshot.begin_analysis(&store).map_err(|err| invalid(err.to_string()))?;
+                    if let Err(error) = snapshot.begin_analysis(&store) {
+                        return Ok(cache_failed(error));
+                    }
                 }
                 Some(match crate::git_workspace::snapshot::analysis_owner(Path::new(&self.root)) {
                     Some(owner) => owner,
-                    None => store.begin_analysis_scope_at(&analysis_scope::directory_in(Path::new(&self.root), self.analysis_home.as_deref()), self.analysis_generation)
-                        .map_err(|err| invalid(err.to_string()))?,
+                    None => match store.begin_analysis_scope_at(
+                        &analysis_scope::directory_in(Path::new(&self.root), self.analysis_home.as_deref()),
+                        self.analysis_generation,
+                    ) {
+                        Ok(owner) => owner,
+                        Err(error) => return Ok(cache_failed(error)),
+                    },
                 })
             };
             let discovered = if let Some(snapshot) = &self.snapshot {
-                snapshot.workspace(&self.store_path).map_err(crate::git_workspace::DiscoveryError::Failed)
+                use crate::git_workspace::snapshot::InventoryError;
+                match snapshot.workspace(&self.store_path) {
+                    Ok(discovered) => Ok(discovered),
+                    Err(InventoryError::Source(error)) => Err(crate::git_workspace::DiscoveryError::Failed(error)),
+                    Err(InventoryError::Cache(error)) => return Ok(cache_failed(error)),
+                }
             } else {
                 crate::git_workspace::discover(std::path::Path::new(&self.root))
             };
@@ -1001,6 +1031,7 @@ impl Task for WorkspaceStorageTask {
                     return Ok(StorageAttachment {
                         attached: false,
                         reason: (!error.is_no_repository()).then(|| error.to_string()),
+                        cache_unavailable: false,
                         discovery_milliseconds,
                         publication_milliseconds: 0.0,
                     });
@@ -1018,10 +1049,11 @@ impl Task for WorkspaceStorageTask {
             let publication_milliseconds = publication_started.elapsed().as_secs_f64() * 1000.0;
             let context = match attached {
                 Attached::Storage(context) => context,
-                Attached::Busy(reason) => {
+                Attached::Unavailable(reason) => {
                     return Ok(StorageAttachment {
                         attached: false,
                         reason: Some(reason),
+                        cache_unavailable: true,
                         discovery_milliseconds,
                         publication_milliseconds,
                     });
@@ -1069,6 +1101,7 @@ impl Task for WorkspaceStorageTask {
             Ok(StorageAttachment {
                 attached: true,
                 reason: None,
+                cache_unavailable: false,
                 discovery_milliseconds,
                 publication_milliseconds,
             })
@@ -1091,6 +1124,13 @@ pub struct WorkspaceApplyTask {
 /// constant (`isWorkspaceBusy`), pauses and calls again.
 #[napi]
 pub const WORKSPACE_BUSY: &str = "WORKSPACE_BUSY";
+
+/// An operation failed in the store, after the workspace had already attached it.
+const WORKSPACE_STORE_UNAVAILABLE: &str = "WORKSPACE_STORE_UNAVAILABLE";
+
+pub(super) fn store_unavailable(error: StoreError) -> napi::Error {
+    invalid(format!("{WORKSPACE_STORE_UNAVAILABLE}\n{error}"))
+}
 
 /// One apply at a time across the process's workspaces. It guards no data, so it is a mutex a
 /// panic does not poison: an apply that panics while holding it frees it for the next one.
@@ -1258,6 +1298,7 @@ impl WorkspaceApplyTask {
             return Err(error);
         }
         CrossFileScheduler::release_producer_scopes(&mut state, &producer_batch);
+        super::scan_fingerprints::capture_local(&mut state, &replaced)?;
         #[cfg(feature = "code-rule-profile")]
         let _storage_write_timer = profile::PhaseTimer::start(profile::Phase::StoreWrite);
         let storage_write_started = Instant::now();
@@ -1305,7 +1346,7 @@ impl WorkspaceApplyTask {
                 {
                     state.pending_removals.extend(pending);
                     if !matches!(error, StoreError::Busy) {
-                        return Err(invalid(error.to_string()));
+                        return Err(store_unavailable(error));
                     }
                     busy = true;
                     state.note_store_busy("while deleting removed files");
@@ -1476,6 +1517,7 @@ impl WorkspaceApplyTask {
                 }
                 metrics.visited_nodes += evaluation.metrics.visited_nodes;
                 metrics.observe_native_work(&evaluation.metrics);
+                super::scan_fingerprints::capture_global(&mut state, &evaluation.violations)?;
                 let previous = state.global_results.insert(index, evaluation);
                 complete |= !replace_global_changes(
                     previous.as_ref(),
@@ -1519,7 +1561,7 @@ pub struct WorkspaceResultPageTask {
     closed: Arc<AtomicBool>,
     cursor: usize,
     maximum_bytes: usize,
-    include_match_text: bool,
+    include_fingerprints: bool,
 }
 
 impl Task for WorkspaceResultPageTask {
@@ -1550,7 +1592,7 @@ impl Task for WorkspaceResultPageTask {
                 closed: &self.closed,
             };
             check_closed(&self.closed)?;
-            serialize_result_page(&mut state, self.cursor, self.maximum_bytes, self.include_match_text)
+            serialize_result_page(&mut state, self.cursor, self.maximum_bytes, self.include_fingerprints)
         })
     }
 

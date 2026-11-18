@@ -79,7 +79,7 @@ export type AuditBlindReason = (typeof AUDIT_BLIND_REASONS)[number];
  */
 export const AUDIT_FAILURE_CODES = [
   "budget-exceeded", "file-budget-exceeded", "witness-limit", "input-limit", "missing-capability", "source-incomplete",
-  "source-partial", "adapter-error",
+  "source-partial", "adapter-error", "cache-unavailable",
 ] as const;
 
 export interface AuditFailure {

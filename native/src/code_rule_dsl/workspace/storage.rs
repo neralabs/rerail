@@ -354,21 +354,19 @@ pub fn storage_context_in(
         .map_err(|error| invalid(error.to_string()))?;
     match attach_storage(root, discovered, store_path, StdArc::default(), false)? {
         Attached::Storage(context) => Ok(context),
-        Attached::Busy(reason) => Err(invalid(reason)),
+        Attached::Unavailable(reason) => Err(invalid(reason)),
     }
 }
 
 /// What a storage attach produced.
 pub(super) enum Attached {
     Storage(StorageContext),
-    /// Another writer held the store past the write deadline, so the workspace runs without
-    /// reuse: the store is a cache, and waiting on it costs time, never results. Says why.
-    Busy(String),
+    /// The store could not open or persist this workspace.
+    Unavailable(String),
 }
 
 /// The storage context of the workspace at `root` in the `discovered` Git worktree, over an
-/// explicit store file, never holding files `secret_names` names; `Attached::Busy` when the store
-/// stays busy.
+/// explicit store file, never holding files `secret_names` names.
 pub(super) fn attach_storage(
     root: &str,
     discovered: git_workspace::GitWorkspace,
@@ -377,7 +375,7 @@ pub(super) fn attach_storage(
     transient: bool,
 ) -> Result<Attached> {
     let busy = |during: &str| {
-        Attached::Busy(format!(
+        Attached::Unavailable(format!(
             "content store busy: another writer held it past the write deadline {during}"
         ))
     };
@@ -386,13 +384,16 @@ pub(super) fn attach_storage(
     let _deadline = OperationDeadline::enter();
     let repository_prefix = repository_prefix(root, &discovered.worktree_root)?;
     let (store, maintenance) = if store_path == std::path::Path::new(":memory:") {
-        let store = ContentStore::open_ephemeral().map_err(|error| invalid(error.to_string()))?;
+        let store = match ContentStore::open_ephemeral() {
+            Ok(store) => store,
+            Err(error) => return Ok(Attached::Unavailable(error.to_string())),
+        };
         (StdArc::new(store), None)
     } else {
         match shared_content_store(store_path) {
             Ok((store, maintenance)) => (store, Some(maintenance)),
             Err(StoreError::Busy) => return Ok(busy("while opening the store")),
-            Err(error) => return Err(invalid(error.to_string())),
+            Err(error) => return Ok(Attached::Unavailable(error.to_string())),
         }
     };
     let mut owner = format!(
@@ -425,7 +426,7 @@ pub(super) fn attach_storage(
         Ok(published) => published,
         Err(StoreError::Busy) => return Ok(busy("while publishing the Git snapshot")),
         Err(error) => {
-            return Err(invalid(format!(
+            return Ok(Attached::Unavailable(format!(
                 "snapshot publication failed: cannot persist Git snapshot: {error}"
             )));
         }

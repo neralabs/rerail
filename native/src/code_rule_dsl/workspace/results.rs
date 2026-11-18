@@ -257,14 +257,11 @@ pub(super) fn evicted_file_states(
     let injected = false;
     // A store read that fails reports each file's clauses as unavailable, as `api.rs` does for a
     // resident file: the stored results remain, so a later read answers them (O22).
-    let results = (!injected)
-        .then(|| {
-            storage
-                .store
-                .local_check_results_by_key(&keys, catalog)
-                .ok()
-        })
-        .flatten();
+    let results = match (!injected).then(|| storage.store.local_check_results_by_key(&keys, catalog)) {
+        Some(Ok(results)) => Some(results),
+        Some(Err(error)) if state.scan_fingerprints.is_some() => return Err(super::api::store_unavailable(error)),
+        _ => None,
+    };
     let mut candidate_sets = CandidateSets::new();
     evicted
         .into_iter()
@@ -524,7 +521,7 @@ pub(super) fn serialize_result_page(
     state: &mut WorkspaceState,
     cursor: usize,
     maximum_bytes: usize,
-    include_match_text: bool,
+    include_fingerprints: bool,
 ) -> Result<String> {
     if cursor == 0 {
         state.result_page_index = Some(build_result_page_index(state)?);
@@ -539,25 +536,11 @@ pub(super) fn serialize_result_page(
     let start = cursor.min(total);
     let mut next = start;
     let mut entries = Vec::new();
-    let mut current_source = None;
     for violation in &index.violations[start..] {
-        let entry = if include_match_text {
+        let entry = if include_fingerprints {
             let mut finding: Value = serde_json::from_str(violation).map_err(json_error)?;
-            if let (Some(path), Some(lo), Some(hi)) = (
-                finding["path"].as_str(),
-                finding["span"]["startByte"].as_u64(),
-                finding["span"]["endByte"].as_u64(),
-            ) {
-                let (previous, source) = current_source.get_or_insert_with(|| {
-                    (path.to_owned(), super::documents::source(state, path).ok())
-                });
-                if previous != path {
-                    *previous = path.to_owned();
-                    *source = super::documents::source(state, path).ok();
-                }
-                if let Some(text) = source.as_ref().and_then(|source| source.get(lo as usize..hi as usize)) {
-                    finding["matchedText"] = json!(text);
-                }
+            if let Some(fingerprint) = super::scan_fingerprints::of_violation(state, &finding)? {
+                finding["fingerprint"] = json!(fingerprint);
             }
             std::borrow::Cow::Owned(serde_json::to_string(&finding).map_err(json_error)?)
         } else {

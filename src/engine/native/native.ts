@@ -115,6 +115,7 @@ export interface NativeCodeRuleDslEditor {
 export interface NativeStorageAttachment {
   attached: boolean;
   reason?: string;
+  cacheUnavailable?: boolean;
   /** Wall time the attach spent discovering the Git checkout (0 if it did not get that far). */
   discoveryMilliseconds: number;
   /** Wall time the attach spent opening the store and publishing the checkout's snapshot (0 if that phase did not run). */
@@ -186,6 +187,7 @@ export interface NativeCodeRuleDslWorkspace {
    * targets resolve among the files the workspace holds.
    */
   setRoot(root: string): void;
+  setScanFingerprintPrefix(prefix: string): void;
   close(): void;
 }
 

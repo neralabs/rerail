@@ -3307,12 +3307,12 @@ fn run_observed(
     // compiler can see it, so the memo, the run record and their zstd frames are not linked.
     let tapes = if cfg!(feature = "tape-cache") {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "open tape store".into());
-        handed.tapes().map_err(|e| Error::Plan(e.to_string()))?
+        handed.tapes()?
     } else { &None };
     // Hold before any source/stat lookup, through parsing, memo publication and the run manifest. This shared lock is
     // the run's one hold on collection (O108): every collector takes it exclusively first (`try_collect`), and a run
     // that dies releases it with its process.
-    let reading = tapes.as_ref().map(|cache| cache.hold_collection()).transpose().map_err(|e| Error::Plan(e.to_string()))?;
+    let reading = tapes.as_ref().map(|cache| cache.hold_collection()).transpose()?;
     let own_store;
     let store: &ContentStore = match (&session, &tapes) {
         (Some(s), _) => &s.store,
@@ -4952,7 +4952,7 @@ fn run_observed(
         let cross_space = crate::content_store::FramesCrossSpace { space: main_cross, own: kept_strata::space(root) == main_cross, rels: cross_rels.as_ref(), cross_of: kept_strata::cross_space };
         let (frames, bytes) = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the kept frames, before the first wave (decision 0104)".into());
-            store.preload_frames_live(Some(cross_space)).map_err(|e| Error::Plan(e.to_string()))?
+            store.preload_frames_live(Some(cross_space))?
         };
         let preload_secs = preload_at.elapsed().as_secs_f64();
         // The run's memo entries its waves may look up (a load's files): each path's newest of its plan's space, but
@@ -10546,7 +10546,11 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     // A root Git sees no file under (one it ignores, such as fetched fixtures) is not described by Git: walked.
     install_git_inventory();
     if let Some(files) = crate::git_workspace::snapshot::scan_files(root) {
-        for (relative, grammar) in files.map_err(Error::Plan)? {
+        use crate::git_workspace::snapshot::InventoryError;
+        for (relative, grammar) in files.map_err(|error| match error {
+            InventoryError::Source(reason) => Error::Plan(reason),
+            InventoryError::Cache(error) => Error::Cache(error),
+        })? {
             if relative.rsplit_once('/').is_some_and(|(dirs, _)| dirs.split('/').any(|d| d.starts_with('.') || d == "target")) {
                 continue;
             }

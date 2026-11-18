@@ -43,7 +43,25 @@ pub struct SourceLanguages {
     pub names: std::collections::BTreeMap<String, String>,
 }
 
-type InventoryReader = fn(&Path, Option<&Path>) -> Result<Inventory, String>;
+#[derive(Debug)]
+pub enum InventoryError {
+    Source(String),
+    Cache(crate::content_store::StoreError),
+}
+
+impl From<String> for InventoryError {
+    fn from(error: String) -> Self {
+        Self::Source(error)
+    }
+}
+
+impl From<&str> for InventoryError {
+    fn from(error: &str) -> Self {
+        Self::Source(error.to_owned())
+    }
+}
+
+type InventoryReader = fn(&Path, Option<&Path>) -> Result<Inventory, InventoryError>;
 static READ_INVENTORY: OnceLock<InventoryReader> = OnceLock::new();
 
 pub fn install_inventory_reader(reader: InventoryReader) {
@@ -111,7 +129,7 @@ impl View {
         })).clone()
     }
 
-    fn inventory(&self, store: Option<&Path>) -> Result<&Inventory, String> {
+    fn inventory(&self, store: Option<&Path>) -> Result<&Inventory, InventoryError> {
         if let Some(value) = self.inventory.get() {
             return Ok(value);
         }
@@ -231,7 +249,7 @@ impl Snapshot {
         self.view.commit.map(|id| id.to_string())
     }
 
-    pub fn workspace(self: &Arc<Self>, store: &Path) -> Result<super::GitWorkspace, String> {
+    pub fn workspace(self: &Arc<Self>, store: &Path) -> Result<super::GitWorkspace, InventoryError> {
         let inventory = self.view.inventory(Some(store))?;
         self.view.with_repo(|repo| {
             Ok(super::GitWorkspace {
@@ -437,7 +455,7 @@ pub fn analysis_owner(path: &Path) -> Option<crate::content_store::analysis_scop
     view(path)?.owner.get().cloned()
 }
 
-pub fn scan_files(root: &Path) -> Option<Result<Vec<(String, Option<String>)>, String>> {
+pub fn scan_files(root: &Path) -> Option<Result<Vec<(String, Option<String>)>, InventoryError>> {
     let v = view(root)?;
     let prefix = v.prefix.join(root.strip_prefix(&v.root).ok()?);
     Some(v.inventory(None).map(|inventory|

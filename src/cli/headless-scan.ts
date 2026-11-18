@@ -26,7 +26,7 @@ import { rulePackPackageOf } from "../engine/catalog/rule-packs.js";
 import { resolveRrModes, setRuleSetting, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
-import { isWorktreePack, MAX_RULE_DOCUMENT_BYTES, rrPayloadHash, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeScanCatalog } from "../engine/catalog/worktree-pack.js";
+import { isWorktreePack, MAX_RULE_DOCUMENT_BYTES, rrPayloadHash, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCatalog, worktreeScanCatalog } from "../engine/catalog/worktree-pack.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
 import { loadNativeBinding, type NativeAnalysisScopeRun, type NativeGitRevisionSource } from "../engine/native/native.js";
@@ -434,7 +434,11 @@ function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGi
 type ScanAudit = AuditInput & { result?: AuditResult };
 
 /** Runs the audits of one session over `paths` (or the whole repository), recording them rather than storing them. */
-async function runScanAudits(databasePath: string, root: string, sessionId: string, paths: readonly string[] | null, revisionSource: NativeGitRevisionSource | undefined, analysisStore: string, analysisRun: NativeAnalysisScopeRun | undefined): Promise<ScanAudit[]> {
+async function runScanAudits(
+  databasePath: string, root: string, sessionId: string, paths: readonly string[] | null,
+  revisionSource: NativeGitRevisionSource | undefined, analysisStore: string, analysisRun: NativeAnalysisScopeRun | undefined,
+  checkoutRules: (root: string) => RuleCatalog,
+): Promise<ScanAudit[]> {
   const audits: ScanAudit[] = [];
   const recorder: AuditRecorder = {
     start(input) { audits.push({ ...input, paths: [...input.paths] }); return String(audits.length - 1); },
@@ -443,7 +447,7 @@ async function runScanAudits(databasePath: string, root: string, sessionId: stri
     progress(auditId, result) { audits[Number(auditId)]!.result = { status: "interrupted", ...result }; },
     interrupt() {},
   };
-  const catalogs = new CheckoutCatalogs(databasePath);
+  const catalogs = new CheckoutCatalogs(databasePath, { checkoutRules });
   const owners = new CheckoutOwners();
   const router = new CheckoutCodeRuleRouter({
     sessionRoot: root,
@@ -490,7 +494,7 @@ function scanViolations(audits: readonly ScanAudit[], rules: ReadonlyMap<string,
     start: violation.span === undefined ? null : position(violation.span.startLine, violation.span.startColumn),
     end: violation.span === undefined ? null : position(violation.span.endLine, violation.span.endColumn),
     message: violation.message,
-    fingerprint: findingFingerprint(violation.ruleId, violation.path ?? "", violation.code, violation.matchedText),
+    fingerprint: violation.fingerprint ?? findingFingerprint(violation.ruleId, violation.path ?? "", violation.code),
   }));
   return distinctFingerprints(violations);
 }
@@ -576,8 +580,17 @@ async function scanReport(
   const databasePath = join(scratch, "rerail.sqlite");
   const explicitRr = (options.rr?.length ?? 0) > 0;
   const refRules = options.rulesRef === undefined ? undefined : rulesAtRef(root, options.rulesRef);
+  const installed = loadRuleCatalog();
   const catalog = options.rulesRef !== undefined ? refRules?.rr?.catalog
-    : explicitRr ? undefined : worktreeScanCatalog(loadRuleCatalog(), root);
+    : explicitRr ? undefined : worktreeScanCatalog(installed, root);
+  const pinned = new Map<string, RuleCatalog>([[root, refRules === undefined ? catalog ?? installed : installed]]);
+  const checkoutRules = (checkout: string): RuleCatalog => {
+    const found = pinned.get(checkout);
+    if (found !== undefined) return found;
+    const loaded = worktreeRuleCatalog(installed, checkout);
+    pinned.set(checkout, loaded);
+    return loaded;
+  };
   const configuredPolicies = catalog?.rrPolicies ?? [];
   const rr = explicitRr ? options.rr! : configuredPolicies.map(policy => policy.path);
   let refRuleIds: Set<string>;
@@ -592,7 +605,14 @@ async function scanReport(
   }
   const { base, paths, failures: pathFailures = [] } = scanTarget(options, root, source);
   if (source !== undefined && paths !== null) source.restrictPaths(paths);
-  const audits = explicitRr ? [] : await runScanAudits(databasePath, root, `scan-${scanId}`, paths, source, analysisStore, analysisRun);
+  let audits = explicitRr ? [] : await runScanAudits(databasePath, root, `scan-${scanId}`, paths, source, analysisStore, analysisRun, checkoutRules);
+  const cacheFailure = audits.flatMap(audit => audit.result?.failures ?? []).find(failure => failure.code === "cache-unavailable");
+  if (source !== undefined && analysisRun !== undefined && cacheFailure !== undefined) {
+    analysisRun.warn(cacheFailure.message);
+    analysisStore = ":memory:";
+    analysisRun = undefined;
+    audits = await runScanAudits(databasePath, root, `scan-${scanId}-retry`, paths, source, analysisStore, analysisRun, checkoutRules);
+  }
   const rules = scanRules(audits, refRuleIds, options.rulesRef);
   const violations = scanViolations(audits, rules);
   const failures = [...pathFailures, ...refRules?.skipped ?? [], ...audits.flatMap(audit => audit.result?.failures ?? []).map((failure): ScanFailure => ({

@@ -175,7 +175,7 @@ const resultPageSchema = z.strictObject({
   revision: z.number().int().nonnegative(),
   cursor: z.number().int().nonnegative(),
   done: z.boolean(),
-  violations: z.array(violationSchema.extend({ matchedText: z.string().optional() })),
+  violations: z.array(violationSchema.extend({ fingerprint: z.string().optional() })),
   failures: z.array(failureSchema),
   coverage: z.array(coverageSchema),
   blindFiles: z.array(blindFileSchema).default([]),
@@ -470,6 +470,10 @@ function failure(
   path?: string,
   stage?: AuditFailure["stage"],
 ): AuditFailure {
+  const cacheErrorPrefix = "WORKSPACE_STORE_UNAVAILABLE\n";
+  if (message.startsWith(cacheErrorPrefix)) {
+    return { clauseId, code: "cache-unavailable", message: message.slice(cacheErrorPrefix.length), stage: "scan" };
+  }
   return { clauseId: clauseId, code, message, ...(path === undefined ? {} : { path }), ...(stage === undefined ? {} : { stage }) };
 }
 function auditBudgetFailure(message: string): AuditFailure {
@@ -1060,13 +1064,22 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       for (const codeRule of snapshot.codeRules) workspace.addCodeRule(codeRule.executable, JSON.stringify(codeRule.placement));
       // Import targets resolve against the files below the workspace root that the workspace does not hold.
       workspace.setRoot(this.#workspaceRoot);
+      if (this.#analysisStore !== undefined) workspace.setScanFingerprintPrefix(this.#presentPath(""));
       const attachStartedAt = performance.now();
       // The store is a cache every checkout shares, kept on disk: a file named like one holding secrets never goes into it.
       const secretNames = { files: SENSITIVE_FILE_NAMES, folders: SENSITIVE_FOLDER_NAMES };
-      const attachment = this.#revisionSource === undefined
-        ? workspace.enableStorageAsync(this.#workspaceRoot, storePath, secretNames, this.#analysisRun, generation, this.#analysisHome)
-        : workspace.enableRevisionStorageAsync(this.#revisionSource, storePath, secretNames, this.#analysisRun);
-      storage = attachment.then(({ attached, reason, discoveryMilliseconds, publicationMilliseconds }) => {
+      const source = this.#revisionSource;
+      const attach = async () => {
+        const result = source === undefined
+          ? await workspace.enableStorageAsync(this.#workspaceRoot, storePath, secretNames, this.#analysisRun, generation, this.#analysisHome)
+          : await workspace.enableRevisionStorageAsync(source, storePath, secretNames, this.#analysisRun);
+        if (!result.cacheUnavailable || storePath === ":memory:" || source === undefined) return result;
+        const warning = result.reason ?? "The durable cache is unavailable";
+        if (this.#analysisRun !== undefined) this.#analysisRun.warn(warning);
+        else process.stderr.write(`rerail: ${warning}\n`);
+        return workspace.enableRevisionStorageAsync(source, ":memory:", secretNames);
+      };
+      storage = attach().then(({ attached, reason, discoveryMilliseconds, publicationMilliseconds }) => {
         if (!attached && this.#revisionSource !== undefined) throw new Error(reason ?? "Cannot attach Git source");
         if (!attached) this.#analysisRun?.warn(reason ?? "Repository storage did not attach");
         this.#timingLog?.(

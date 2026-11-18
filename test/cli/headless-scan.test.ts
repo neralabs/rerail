@@ -414,6 +414,73 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     } finally { vi.unstubAllEnvs(); }
   });
 
+  it("retries a cache failure during Git attachment against the pinned tree", async () => {
+    const root = checkout();
+    const broken = join(`${root}-home`, "broken.sqlite");
+    mkdirSync(`${root}-home`, { recursive: true });
+    writeFileSync(broken, "this is not a database");
+    writeFileSync(join(root, "a.py"), "# changed after the commit\n");
+    const prototype = loadNativeBinding().CodeRuleDslWorkspace.prototype;
+    const attach = prototype.enableRevisionStorageAsync;
+    const observed: unknown[] = [];
+    const failure = vi.spyOn(prototype, "enableRevisionStorageAsync").mockImplementation(function (
+      this: typeof prototype, source, store, secrets, analysis,
+    ) {
+      observed.push(source);
+      return attach.call(this, source, store === ":memory:" ? store : broken, secrets, analysis);
+    });
+    try {
+      const report = await scan(root, { revision: "HEAD", analysisScope: "attach" });
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      expect(report.violations.map(finding => finding.path)).toEqual(["a.py"]);
+      expect(report.cacheWarnings).toEqual([expect.stringMatching(/file is not a database/u)]);
+      expect(observed.length).toBeGreaterThanOrEqual(2);
+      expect(observed.every(source => source === observed[0])).toBe(true);
+    } finally { failure.mockRestore(); }
+  });
+
+  it("retries relational evaluation in memory when its selected cache fails", async () => {
+    const root = checkout();
+    const home = `${root}-home`;
+    const broken = join(home, "broken.sqlite");
+    const policy = join(home, "committed.rr");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(broken, "this is not a database");
+    writeFileSync(policy, `#include "core.rr"\n.policy "committed" revision 1\n.language python\n.violation Seen(at: node) "needle"\nSeen(n) :- kind(n, "identifier"), text(n, "NEEDLE").\n`);
+    writeFileSync(join(root, "a.py"), "# changed after the commit\n");
+    const binding = loadNativeBinding();
+    const run = binding.scanRrPoliciesAsync;
+    const failure = vi.spyOn(binding, "scanRrPoliciesAsync").mockImplementation((paths, root, _store, ...args) =>
+      run(paths, root, broken, ...args));
+    try {
+      const report = await scan(root, { revision: "HEAD", analysisScope: "relational", rr: [policy] });
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      expect(report.violations.map(finding => finding.path)).toEqual(["a.py"]);
+      expect(report.cacheWarnings).toEqual([expect.stringMatching(/file is not a database/u)]);
+    } finally { failure.mockRestore(); }
+  });
+
+  it("retries unreadable stored results against the same source and policy", async () => {
+    const root = checkout();
+    const source = git(root, "rev-parse", "HEAD");
+    const prototype = loadNativeBinding().CodeRuleDslWorkspace.prototype;
+    const read = vi.spyOn(prototype, "resultPageAsync").mockImplementationOnce(async () => {
+      writeFileSync(join(root, "a.py"), "# no finding in the new commit\n");
+      writeRule(root, "needle.json", needle("new-rule", "OTHER"));
+      git(root, "add", "a.py");
+      git(root, "commit", "-qm", "move HEAD");
+      throw new Error("WORKSPACE_STORE_UNAVAILABLE\ncache read failed");
+    });
+    try {
+      const report = await scan(root, { revision: "HEAD", analysisScope: "reused-results" });
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      expect(report.source?.commit).toBe(source);
+      expect(report.violations.map(finding => finding.ruleId)).toEqual(["needle"]);
+      expect(report.cacheWarnings).toEqual(["cache read failed"]);
+      expect(read.mock.calls.length).toBeGreaterThanOrEqual(2);
+    } finally { read.mockRestore(); }
+  });
+
   it("releases directory ownership only for the stopped home in a shared store", async () => {
     const root = checkout();
     const first = join(`${root}-home`, "first.sqlite");
@@ -756,14 +823,15 @@ LanguageKey(@place(path, 1), k) :- source_language_key(path, k, _).
     const root = checkout();
     const baseline = await scan(root);
     const prototype = loadNativeBinding().CodeRuleDslWorkspace.prototype;
-    const retain = prototype.retainAnalysisScopeAsync;
-    const edit = vi.spyOn(prototype, "retainAnalysisScopeAsync").mockImplementation(async function (this: typeof prototype) {
-      await retain.call(this);
+    const complete = prototype.completeStorageRevisionAsync;
+    const edit = vi.spyOn(prototype, "completeStorageRevisionAsync").mockImplementation(async function (this: typeof prototype) {
+      await complete.call(this);
       writeFileSync(join(root, "a.py"), "# edited after evaluation\nx = NEEDLE\n");
     });
     try {
       const raced = await scan(root);
       expect(raced.status, JSON.stringify(raced.failures)).toBe("completed");
+      expect(edit).toHaveBeenCalled();
       expect(raced.violations).toEqual(baseline.violations);
     } finally { edit.mockRestore(); }
   });

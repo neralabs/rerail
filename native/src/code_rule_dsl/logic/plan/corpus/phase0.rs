@@ -208,7 +208,12 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
         if std::env::var_os("RERAIL_PHASE0_TRACE").is_some() {
             eprintln!("rerail: phase 0 derives {} seeds (images {})", wanted.len(), if Images::here().is_some() { "on" } else { "off" });
         }
-        let whole = derive(&wanted).map_err(|e| Error::Syntax(format!("phase 0: {e}")))?;
+        let whole = match derive(&wanted) {
+            Err(PlanError::Cache(_)) if super::tape_cache_path().is_some() => {
+                super::with_tape_cache_path(std::path::Path::new(":memory:"), None, || derive(&wanted))
+            }
+            result => result,
+        }.map_err(|e| Error::Syntax(format!("phase 0: {e}")))?;
         let made: HashMap<Seed, Arc<Graph>> = wanted.iter().enumerate().map(|(k, seed)| (seed.clone(), Arc::new(whole.of(seed, k)))).collect();
         // Kept as images (decision 0246) whichever process derived them: an image is the engine build's, not the
         // process's.

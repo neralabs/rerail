@@ -334,9 +334,9 @@ pub(super) fn metadata_only(program: &Program) -> bool {
 
 /// Materialize the placements from the source phase. Rust only adapts the rows to
 /// the snapshot store's inventory format.
-pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>) -> Result<crate::git_workspace::snapshot::Inventory, String> {
+pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>) -> Result<crate::git_workspace::snapshot::Inventory, crate::git_workspace::snapshot::InventoryError> {
     use crate::content_store::{GitTree, GitTreeEntry};
-    use crate::git_workspace::{BaseFile, snapshot};
+    use crate::git_workspace::{BaseFile, snapshot::{self, InventoryError}};
     use crate::code_rule_dsl::logic::plan::output::{Outputs, Value as Cell};
     use std::collections::BTreeMap;
 
@@ -350,10 +350,13 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>) -> 
     ))
         .map_err(|err| err.to_string())?;
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });
-    let image = super::run_fact_image(&program, root, &options).map_err(|err| err.to_string())?;
+    let image = super::run_fact_image(&program, root, &options).map_err(|error| match error {
+        super::Error::Cache(error) => InventoryError::Cache(error),
+        other => InventoryError::Source(other.to_string()),
+    })?;
     let outputs = Outputs::of(&image)?;
     if let Some(row) = outputs.rows("inventory_error").first() {
-        return Err(format!("cannot inventory Git tree {}: {}", row.get(0).text().unwrap_or(""), row.get(1).text().unwrap_or("unknown error")));
+        return Err(format!("cannot inventory Git tree {}: {}", row.get(0).text().unwrap_or(""), row.get(1).text().unwrap_or("unknown error")).into());
     }
     let key = |oid: &str| {
         let id = gix::ObjectId::from_hex(oid.as_bytes()).map_err(|err| err.to_string())?;

@@ -21,6 +21,7 @@ pub mod ingest;
 pub mod memory;
 pub mod persisted;
 pub mod results;
+mod scan_fingerprints;
 pub mod secret_names;
 pub mod storage;
 
@@ -459,6 +460,7 @@ pub struct WorkspaceState {
     /// Ordered reporting entries, retained for the current revision so result paging does not
     /// repeatedly restore and sort the entire workspace.
     pub result_page_index: Option<ResultPageIndex>,
+    scan_fingerprints: Option<scan_fingerprints::ScanFingerprints>,
     /// Cross-file adapters and their shared derived state.
     crossfile: crossfile::CrossFileScheduler,
     /// The files requests sent, as import target resolution reads them (`import_target::fs`).

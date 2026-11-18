@@ -382,12 +382,52 @@ fn diagnostic(row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> Resul
 
 /// `run_rr` of a program already read: a file's, or a test's (decision 0130, `rr::testing`).
 pub fn run_program(
-    mut program: super::logic::front::Program,
+    program: super::logic::front::Program,
     files: &[super::logic::rr::LibraryFile],
     root: &std::path::Path,
     out: &std::path::Path,
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    run_program_checked(program, files, root, out, options).map_err(|error| error.to_string())
+}
+
+#[derive(Debug)]
+pub enum ProgramRunError {
+    Evaluation(String),
+    Cache(crate::content_store::StoreError),
+}
+
+impl std::fmt::Display for ProgramRunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Evaluation(error) => f.write_str(error),
+            Self::Cache(error) => error.fmt(f),
+        }
+    }
+}
+
+impl From<String> for ProgramRunError {
+    fn from(reason: String) -> Self {
+        Self::Evaluation(reason)
+    }
+}
+
+impl From<super::logic::plan::Error> for ProgramRunError {
+    fn from(error: super::logic::plan::Error) -> Self {
+        match error {
+            super::logic::plan::Error::Cache(error) => Self::Cache(error),
+            other => Self::Evaluation(other.to_string()),
+        }
+    }
+}
+
+pub fn run_program_checked(
+    mut program: super::logic::front::Program,
+    files: &[super::logic::rr::LibraryFile],
+    root: &std::path::Path,
+    out: &std::path::Path,
+    options: &serde_json::Value,
+) -> Result<serde_json::Value, ProgramRunError> {
     use super::{
         logic::{plan::corpus, rr},
         typing::file_local::Binding,
@@ -415,7 +455,7 @@ pub fn run_program(
     // with files in scope: the first into `out`, each other into `out/<dialect>`, their findings together. A language
     // of one dialect, or none with files, runs as written. Each run holds the program read, its language the
     // dialect's (the `dialect` option, `corpus::added`): never printed and read again (decision 0249).
-    let dialects = corpus::run_dialects(root, &program, &with_reuse(options)).map_err(|e| e.to_string())?;
+    let dialects = corpus::run_dialects(root, &program, &with_reuse(options))?;
     // One dialect with files may be another than the one named: a `.js`-scoped TypeScript pack reads JavaScript.
     let runs: Vec<(Option<&str>, std::path::PathBuf)> = if dialects.is_empty() {
         vec![(None, out.to_path_buf())]
@@ -430,7 +470,7 @@ pub fn run_program(
         if let Some(dialect) = dialect {
             options["dialect"] = serde_json::json!(dialect);
         }
-        let report = corpus::run_read(&program, root, dir, "program", binding, 1 << 18, &Default::default(), &options).map_err(|e| e.to_string())?;
+        let report = corpus::run_read(&program, root, dir, "program", binding, 1 << 18, &Default::default(), &options)?;
         rows.extend(diagnostics(dir)?);
         files_read += report.files;
         nodes += report.nodes;
