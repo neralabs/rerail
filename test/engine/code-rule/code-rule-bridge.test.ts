@@ -2859,8 +2859,19 @@ describe("CodeRuleBridge and Git's own writes", () => {
     ]);
   });
 
+  // Reading Git again costs one more process only where a reading takes a change for Git's: a walk whose changes Git did
+  // not write reads `HEAD` once more than a walk that finds no change, for its verdicts, as before.
+  it("reads HEAD once for the Git verdicts of a shell edit Git did not write", async () => {
+    const root = await twoBranches();
+    const { bridge } = await opened(root);
+    const quiet = await gitReads(() => shell(bridge, () => undefined));
+    const edit = await gitReads(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n")));
+    expect(edit.heads).toBe(quiet.heads + 1);
+  });
+
   // A command that commits again as each reading of Git is made: no reading holds for one `HEAD`. The first reading then
-  // stands, as the walk's one reading did, so a file it found the command's own is still audited.
+  // stands, as the walk's one reading did: the file it found the command's own is audited, and the one it took for the
+  // branch's is not, as before. Dropping every reading would audit as the agent's files Git wrote while `HEAD` moved.
   it("audits what its first reading of Git found the command's own when HEAD moves through every reading", async () => {
     const root = await twoBranches();
     const { bridge, auditGeneratedEdits } = await opened(root);
@@ -2875,9 +2886,9 @@ describe("CodeRuleBridge and Git's own writes", () => {
         () => git(root, "commit", "--quiet", "--allow-empty", "-m", "more"),
       );
     });
-    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toContainEqual(
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
       { path: "src/late.py", language: "python", generatedText: "late\n" },
-    );
+    ]);
   });
 
   it("measures a file written in the command that moved the checkout from what Git wrote", async () => {
@@ -2911,6 +2922,27 @@ describe("CodeRuleBridge and Git's own writes", () => {
     git(nested, "config", "core.autocrlf", "false");
     const { bridge, auditGeneratedEdits } = await opened(root, extra);
     await shell(bridge, () => writeFile(join(nested, "src", "gone.py"), "gone\nours\nmine\n"));
+    await shell(bridge, () => git(nested, "restore", "src/gone.py"));
+    expect(auditGeneratedEdits.mock.calls.at(-1)?.[1]).toMatchObject({
+      mode: "log",
+      edits: [{ path: "lib/src/gone.py", language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\n" }],
+    });
+    expect(auditGeneratedEdits).toHaveBeenCalledTimes(2);
+  });
+
+  // The same, where a command commits there as the first walk to find a change in that checkout reads Git: the walk's
+  // first reading read `HEAD` before the commit. The reading that stands read it after, so the restore that follows is
+  // judged from the commit, not from a `HEAD` the checkout no longer had.
+  it("still tells the auditor, in log mode, of a file Git restored in a checkout inside the session's folder whose first walk met a commit", async () => {
+    const { root, nested, extra } = await nestedCheckout();
+    git(nested, "config", "core.autocrlf", "false");
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await shell(bridge, async () => {
+      await writeFile(join(nested, "src", "gone.py"), "gone\nours\nmine\n");
+      await writeFile(join(nested, "src", "mine.py"), "mine\n");
+      git(nested, "add", "src/mine.py");
+      whileVerdictsRead(listsBranches, () => git(nested, "commit", "--quiet", "-m", "mine"));
+    });
     await shell(bridge, () => git(nested, "restore", "src/gone.py"));
     expect(auditGeneratedEdits.mock.calls.at(-1)?.[1]).toMatchObject({
       mode: "log",
