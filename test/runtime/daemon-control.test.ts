@@ -616,6 +616,35 @@ describe("stopping the daemon", () => {
     expect(stillRunningMessage(123, "win32")).not.toContain("ps -p");
     expect(stillRunningMessage(123, "linux")).toContain("ps -p 123");
   });
+
+  it("counts a daemon that ends just as its signal is sent as stopped, at the SIGTERM or at the SIGKILL", async () => {
+    // A daemon's own shutdown waits out its sessions' requests, about as long as a stop waits before its SIGKILL; it can
+    // end between the stop's last look and the signal, which kill then answers with ESRCH. The stop failed with it.
+    const home = await mkdtemp(join(tmpdir(), "rerail-stop-race-"));
+    try {
+      for (const endsAt of ["SIGTERM", "SIGKILL"]) {
+        const stateFile = join(home, DAEMON_STATE_FILE);
+        const state = stateFor({});
+        await writeFile(stateFile, JSON.stringify(state));
+        const signals: Array<string | number | undefined> = [];
+        let running = true;
+        const machine = fakeMachine("linux", {
+          // The daemon ends as `endsAt` is sent, before kill reaches it; until then it outlives each signal.
+          kill: (_pid, signal) => {
+            signals.push(signal);
+            if (signal === endsAt) running = false;
+            if (!running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+            return true;
+          },
+        });
+        await stopFoundDaemon(home, { status: "unresponsive", state }, machine);
+        expect(signals.filter(signal => signal !== 0)).toEqual(endsAt === "SIGTERM" ? ["SIGTERM"] : ["SIGTERM", "SIGKILL"]);
+        expect(existsSync(stateFile)).toBe(false);
+      }
+    } finally {
+      await removeFolder(home);
+    }
+  }, 20_000);
 });
 
 describe("RERAIL_AUTOSTART", () => {

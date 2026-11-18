@@ -1335,12 +1335,19 @@ export function stillRunningMessage(pid: number, platform: NodeJS.Platform = pro
   return `Rerail daemon pid ${pid} is still running ${KILL_TIMEOUT_MS / 1_000}s after SIGKILL; check it with ${check}, then run rerail daemon stop again.`;
 }
 
-/** Sends `signal` to the daemon, saying who to ask when this user may not signal it (`EPERM`). */
+/**
+ * Sends `signal` to the daemon, saying who to ask when this user may not signal it (`EPERM`). A daemon that has ended
+ * (`ESRCH`) is what the stop wants: its own shutdown can finish between the stop's last look and the signal, as when it
+ * waits out a session's requests for about as long as the stop waits for it, and the stop then goes on as for a
+ * daemon gone by itself.
+ */
 function signalDaemon(pid: number, signal: string, machine: DaemonMachine): void {
   try {
     machine.kill(pid, signal);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return;
+    if (code !== "EPERM") throw error;
     throw new Error(`Rerail daemon pid ${pid} runs as another user or elevated, and this user may not stop it; stop it from there.`, { cause: error });
   }
 }
