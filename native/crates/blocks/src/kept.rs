@@ -16,6 +16,7 @@ use crate::block::{Block, FROZEN, kind};
 use crate::refs::{Ptr, Span};
 use crate::relation::{Relation, View};
 use crate::structure;
+use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::io;
 use std::path::Path;
@@ -118,13 +119,16 @@ fn str_at(strings: &[u8], at: u32, len: u32) -> &str {
 }
 
 /// A frozen kept block, mapped read-only from its file.
-pub struct KeptFacts {
-    block: Block,
+///
+/// It holds its block as `B`: its own mapping (`Block`, the default), or a holder that owns the mapping for another
+/// reader too (the engine's block of relations, whose parts read the entries' rows where they lie, 0401 F3).
+pub struct KeptFacts<B: Borrow<Block> = Block> {
+    block: B,
 }
 
 // SAFETY: a frozen block's mapping, read only.
-unsafe impl Send for KeptFacts {}
-unsafe impl Sync for KeptFacts {}
+unsafe impl<B: Borrow<Block>> Send for KeptFacts<B> {}
+unsafe impl<B: Borrow<Block>> Sync for KeptFacts<B> {}
 
 /// An entry as `KeptFacts::find` gives it: kept, or gone (a delta's).
 enum Found<'b> {
@@ -137,19 +141,39 @@ impl KeptFacts {
     /// checked.
     pub fn open(path: &Path, tag: u64) -> io::Result<KeptFacts> {
         let block = Block::map_file(path, kind::KEPT, false)?;
-        let invalid = |what: String| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {what}", path.display()));
-        if block.header().state != FROZEN {
-            return Err(invalid("not frozen".into()));
+        KeptFacts::over(block, tag).map_err(|what| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {what}", path.display())))
+    }
+}
+
+impl<B: Borrow<Block>> KeptFacts<B> {
+    /// A kept block held as `block` (mapped by `Block::map_file`, kind `KEPT`), checked: frozen, and tagged `tag`.
+    pub fn over(block: B, tag: u64) -> Result<KeptFacts<B>, String> {
+        let b = block.borrow();
+        if b.header().kind != kind::KEPT {
+            return Err(format!("a block of kind {}, not kept facts", b.header().kind));
         }
-        let got = block.root::<KeptRoot>().tag;
+        if b.header().state != FROZEN {
+            return Err("not frozen".into());
+        }
+        let got = b.root::<KeptRoot>().tag;
         if got != tag {
-            return Err(invalid(format!("its tag is {got:016x}, the store's row says {tag:016x}")));
+            return Err(format!("its tag is {got:016x}, the store's row says {tag:016x}"));
         }
         Ok(KeptFacts { block })
     }
 
+    /// Its holder of the block, given back.
+    pub fn into_inner(self) -> B {
+        self.block
+    }
+
+    /// Its block.
+    pub fn block(&self) -> &Block {
+        self.block.borrow()
+    }
+
     fn root(&self) -> &KeptRoot {
-        self.block.root()
+        self.block.borrow().root()
     }
 
     pub fn tag(&self) -> u64 {
@@ -163,14 +187,14 @@ impl KeptFacts {
 
     /// The bytes of its file (what a roll-up rule weighs).
     pub fn bytes(&self) -> usize {
-        self.block.header().length as usize
+        self.block.borrow().header().length as usize
     }
 
     /// Whether `rows` lie in this block's mapping.
     pub fn holds(&self, rows: &Relation) -> bool {
         let p = std::ptr::from_ref(rows) as usize;
-        let base = self.block.base_ptr() as usize;
-        p >= base && p < base + self.block.reserved()
+        let base = self.block.borrow().base_ptr() as usize;
+        p >= base && p < base + self.block.borrow().reserved()
     }
 
     /// The keys this delta records as gone (none in a base).
@@ -225,7 +249,7 @@ fn kept_only<'b>(it: impl Iterator<Item = (FactKey<'b>, Found<'b>)> + 'b) -> imp
     })
 }
 
-impl KeptRead for KeptFacts {
+impl<B: Borrow<Block>> KeptRead for KeptFacts<B> {
     fn get(&self, key: &FactKey) -> Option<Kept<'_>> {
         match self.find(key)? {
             Found::Kept(k) => Some(k),
@@ -243,9 +267,9 @@ impl KeptRead for KeptFacts {
 
 /// A space's base and its delta, read as one: the delta's entry for a key in place of the base's, and a key the
 /// delta records as gone not kept.
-pub struct KeptView<'a> {
-    pub base: Option<&'a KeptFacts>,
-    pub delta: Option<&'a KeptFacts>,
+pub struct KeptView<'a, B: Borrow<Block> = Block> {
+    pub base: Option<&'a KeptFacts<B>>,
+    pub delta: Option<&'a KeptFacts<B>>,
 }
 
 /// Two key-ordered runs of entries merged, the second's (the delta's) taking a key both hold.
@@ -274,7 +298,7 @@ fn merged<'b>(a: Vec<(FactKey<'b>, Found<'b>)>, b: Vec<(FactKey<'b>, Found<'b>)>
     out
 }
 
-impl KeptRead for KeptView<'_> {
+impl<B: Borrow<Block>> KeptRead for KeptView<'_, B> {
     fn get(&self, key: &FactKey) -> Option<Kept<'_>> {
         if let Some(d) = self.delta {
             match d.find(key) {
@@ -593,7 +617,7 @@ mod tests {
         let got = k.get(&FactKey { rel: "calls", ident: &A, part: 0 }).unwrap();
         assert!(k.holds(got.rows), "the rows lie in the kept block's mapping");
         let col0 = got.rows.rows.col(0) as *const _ as usize;
-        assert!(col0 >= k.block.base_ptr() as usize && col0 < k.block.base_ptr() as usize + k.bytes());
+        assert!(col0 >= k.block().base_ptr() as usize && col0 < k.block().base_ptr() as usize + k.bytes());
         assert_eq!((got.digest, got.types), (99, &[1u8, 2][..]));
         assert_eq!(got.reads().collect::<Vec<_>>(), [("defs", 5), ("uses", 6)]);
         let (was, now) = (View::full(rel), got.view());
@@ -602,6 +626,12 @@ mod tests {
         assert_eq!(now.probe(ix, &[5]), was.probe(ix, &[5]), "an index probe answers as the run's");
         assert!(k.get(&FactKey { rel: "calls", ident: &B, part: 0 }).is_none());
         assert!(KeptFacts::open(&d.join("b1.blk"), 12).is_err(), "a block not the row's is refused");
+        // Read through another holder of the same mapping (the engine's): the same entry, where it lies.
+        let held = Block::map_file(&d.join("b1.blk"), kind::KEPT, false).unwrap();
+        let other = KeptFacts::over(&held, 11).unwrap();
+        let again = other.get(&FactKey { rel: "calls", ident: &A, part: 0 }).unwrap();
+        assert!(other.holds(again.rows) && rows_of(&again.view()) == rows_of(&was));
+        assert!(KeptFacts::over(&run, 11).is_err(), "a block of another kind is refused");
         let _ = std::fs::remove_dir_all(&d);
     }
 
