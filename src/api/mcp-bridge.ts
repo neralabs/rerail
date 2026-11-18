@@ -102,8 +102,9 @@ const CALL_TIMEOUT_MS = 30_000;
 const DAEMON_NOT_ANSWERING = `Rerail daemon is running but did not answer within ${CALL_TIMEOUT_MS / 1_000} s; try again, and if it stays silent run rerail daemon stop, then rerail daemon start`;
 
 /**
- * The least time a wait of the call is given, the 2 s each check had before the call had a bound: a check that starts
- * late, such as the health check after a proof that passed only once the bound had, still gets that long.
+ * The least time a wait of the call is given: the 2 s that `probeDaemon` and the engine's proof wait by default, so a
+ * check that starts late, such as the health check after a proof that passed only once the checks' bound had, still
+ * gets as long as such a check gets anywhere else.
  */
 const WAIT_MIN_MS = 2_000;
 
