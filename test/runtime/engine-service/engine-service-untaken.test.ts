@@ -34,8 +34,8 @@ function wrotePrint(edit: EditBatch["edits"][number]): boolean {
  * An engine service over a checkout of its own that checks the events hooks leave in its home (the checkout's folder),
  * with a Claude Code session started: its auditor keeps each edit batch, steers once for each edit of the session that
  * wrote a print (`printSteer`), and steers `LATE` once at the first turn end whose checks it settles. Its evaluator
- * opens once `opening` settles, and `firstView` settles once its first walk records a change as another writer's. Takes
- * no event until the test asks (`untaken.taken()`) or sends one.
+ * opens once `opening` settles; `walking` settles once a walk of the session's folder asks about a file. Takes no event
+ * until the test asks (`untaken.taken()`) or sends one.
  */
 async function serviceWithUntaken(opening: Promise<void> = Promise.resolve()) {
   const root = await realpath(await mkdtemp(join(process.platform === "win32" ? tmpdir() : SOCKET_ROOT, "rerail-untaken-")));
@@ -47,7 +47,7 @@ async function serviceWithUntaken(opening: Promise<void> = Promise.resolve()) {
   startTestRepository(root, databasePath);
   const socketPath = testEngineEndpoint(root);
   const opened = Promise.withResolvers<void>();
-  const firstView = Promise.withResolvers<void>();
+  const walking = Promise.withResolvers<void>();
   const steered = Promise.withResolvers<void>();
   const batches: EditBatch[] = [];
   const passes: UntakenPass[] = [];
@@ -63,10 +63,12 @@ async function serviceWithUntaken(opening: Promise<void> = Promise.resolve()) {
         opened.resolve();
         await opening;
       },
-      acceptsPath: () => true,
+      acceptsPath: () => {
+        walking.resolve();
+        return true;
+      },
       auditGeneratedEdits: async (_sessionId, batch) => {
         batches.push(batch);
-        if (batch.mode === "log") firstView.resolve();
         const steering = batch.mode === "log" ? [] : batch.edits.filter(wrotePrint);
         for (const { path } of steering) await steerDelivery.requestSteer(SESSION, "steer", printSteer(path), { revision: batch.revision, scope: [path] });
         return { revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] };
@@ -89,7 +91,7 @@ async function serviceWithUntaken(opening: Promise<void> = Promise.resolve()) {
   const engine = { socketPath };
   const send = async (event: AdapterEvent) => (await ingestEngineEvent(engine, event)).map(delivery => delivery.content);
   const leave = async (event: AdapterEvent, arrivedAt: number) => await leaveUntaken(root, process.pid, engineRequestBody(event), arrivedAt);
-  return { root, databasePath, service, send, leave, steered: steered.promise, firstView: firstView.promise, batches, passes };
+  return { root, databasePath, service, send, leave, steered: steered.promise, walking: walking.promise, batches, passes };
 }
 
 /** The session's ledger, entry by entry. */
@@ -103,12 +105,24 @@ async function recordedDeliveries(root: string, content: string): Promise<number
   return (await ledgerEntries(root)).filter(entry => entry.type === "delivery" && JSON.stringify(entry).includes(content)).length;
 }
 
-/** A Write call the hooks left, the tool's write between its two events: the call a minute before, the result a minute after. */
+/** The events hooks left for a Write call that ran at `ran`: the call a minute before, the result a minute after. */
 async function leftWrite(held: Awaited<ReturnType<typeof serviceWithUntaken>>, toolCallId: string, path: string, content: string, ran: number): Promise<void> {
   const tool = { sessionId: SESSION, toolCallId, toolName: "Write" } as const;
   await held.leave({ kind: "call", eventId: `${toolCallId}:call`, ...tool, input: { file_path: path, content } }, ran - 60_000);
-  writeFileSync(join(held.root, path), content);
   await held.leave({ kind: "result", eventId: `${toolCallId}:result`, ...tool, output: "ok" }, ran + 60_000);
+}
+
+/**
+ * Lets the session's evaluator open once the tool has written `files`, and waits for its first view of the folder (a
+ * turn's end waits for it), which takes them as another writer's: they changed since the session started, while no
+ * call of it ran, as its calls are still untaken.
+ */
+async function firstViewAfter(held: Awaited<ReturnType<typeof serviceWithUntaken>>, opening: () => void, files: Record<string, string>): Promise<void> {
+  for (const [path, content] of Object.entries(files)) writeFileSync(join(held.root, path), content);
+  opening();
+  // Once the walk runs, the evaluator is open, so the turn's end waits for that walk rather than going on without it.
+  await held.walking;
+  await held.send({ kind: "turn-end", eventId: "view", sessionId: SESSION, text: "" });
 }
 
 function recordedEvents(databasePath: string): { eventId: string; observedAt: number }[] {
@@ -167,10 +181,9 @@ describe("an engine service beside the events hooks left while its daemon did no
     const held = await serviceWithUntaken(opening.promise);
     // The session started, and its evaluator still opens; the hooks left two Write calls, and the tool wrote both files.
     const ran = Date.now();
-    for (const name of ["w1.py", "w2.py"]) await leftWrite(held, name, name, `def ${name.slice(0, 2)}():\n    print(1)\n`, ran);
-    // The session's first view of its folder holds both files, written by calls it has not taken yet.
-    opening.resolve();
-    await held.firstView;
+    const files = { "w1.py": "def w1():\n    print(1)\n", "w2.py": "def w2():\n    print(1)\n" };
+    await firstViewAfter(held, opening.resolve, files);
+    for (const [name, content] of Object.entries(files)) await leftWrite(held, name, name, content, ran);
     await held.service.untaken.taken();
     // Read against that view, each edit was no change, and no steer for it ever reached the agent.
     expect(await held.send(prompt("next"))).toEqual(expect.arrayContaining([printSteer("w1.py"), printSteer("w2.py")]));
@@ -185,10 +198,9 @@ describe("an engine service beside the events hooks left while its daemon did no
     const opening = Promise.withResolvers<void>();
     const held = await serviceWithUntaken(opening.promise);
     const ran = Date.now();
+    await firstViewAfter(held, opening.resolve, { "w3.py": "def w3():\n    print(1)\n    print(2)\n" });
     await leftWrite(held, "first", "w3.py", "def w3():\n    print(1)\n", ran);
     await leftWrite(held, "second", "w3.py", "def w3():\n    print(1)\n    print(2)\n", ran + 1);
-    opening.resolve();
-    await held.firstView;
     await held.service.untaken.taken();
     // The first call's read of the file holds what the second wrote: taken as the second's "before", it was no change,
     // and the first call's steer, overtaken by the second's check of the file, never reached the agent.
