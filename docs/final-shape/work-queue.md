@@ -2532,6 +2532,9 @@ and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q82, 0
   again)`. It fails the same at `caa1bfdb2`, before the change (the change set aside and the test run on HEAD).
 - **Done when**: the warm run asks the observer's store inside the waves (or the guard is right to refuse, and the
   test's run is made to ask it), and the test passes.
+- **Update** (2026-11-18, porting 0276 §3): the warm run now fails on new manifests (9 and 8 sources), a SQLite
+  commit and 3 recomputations, not on the observer's store. It fails the same at `874e176cb` (the merge before
+  0276's steps), `7d1444a93` and `d09fd417f`, each tested alone on a farm host, so 0276's ports did not cause it.
 
 ### Q102. `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` fails at final-rerail-shape-rr-align's f7c563513
 
@@ -2543,10 +2546,6 @@ and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q82, 0
   new build still reads the old build's keeper, though `memo_whole` is now under `plan_digest`. ffbb65b15 (a stopped
   run marks itself under way of its program) came after the test's commit 5627413cd and changed those marks.
 - **Done when**: a new build's first edit counts every file in, and the test passes.
-
-- **Update** (2026-11-18, porting 0276 §3): the warm run now fails on new manifests (9 and 8 sources), a SQLite
-  commit and 3 recomputations, not on the observer's store. It fails the same at `874e176cb` (the merge before
-  0276's steps), `7d1444a93` and `d09fd417f`, each tested alone on a farm host, so 0276's ports did not cause it.
 
 ### Q103. Two rerail-logic corpus tests fail apart from 0276 §3
 
