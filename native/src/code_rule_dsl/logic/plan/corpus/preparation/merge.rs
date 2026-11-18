@@ -980,8 +980,12 @@ mod tests {
     fn a_repeated_request_rule_dropped_keeps_both_readers_by_rule() {
         use std::collections::BTreeSet;
         let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl q(x: number)\n.output q\n\
-                    q(x) :- a(x).\nq(x) :- b(x).\nq(x) :- a(x).\n";
+                    q(x) :- a(x).\nq(x) :- b(x).\n";
         let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        // The repeat added to the tree: a text's repeated rule is read as one (the version lowering, 0276 step 6), and
+        // a repeat reaches the pass from a merge of two programs' rules.
+        tree.rules.push(tree.rules[0].clone());
+        assert_eq!(tree.rules.len(), 3);
         tree.asked_by.insert("q".into(), ["r1", "r2", "r3"].iter().map(|r| BTreeSet::from([(*r).to_owned()])).collect());
         let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
         let mut p = Pipeline::new("test", v);
