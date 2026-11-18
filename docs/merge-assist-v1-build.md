@@ -52,10 +52,11 @@ so the daemon keeps answering sessions while it runs. It never runs while Merge 
   this branch once pointed at (its reflog holds it), so it stays left out after an amend or a rebase. Pull requests
   are listed through `gh`, read-only and with the person's own sign-in: afresh by a scan, else at most every five
   minutes, the 200 newest open ones; when more are open, the scan says so. A scan reads `gh`'s sign-in afresh first;
-  another listing starts from the kept reading while a status would show it without reading `gh` (same environment,
-  `hosts.yml` unmoved, under five minutes old, one while `gh` could not tell), and reads `gh` first otherwise, or when
-  that file's stat has not answered by the time the listing has, or when the kept reading lists nothing (not signed
-  in). So while `gh` is not signed in, each listing runs `gh auth status`: a listing that lists nothing ends before
+  another listing starts from the kept reading of its environment while that reading is under five minutes old (one
+  while `gh` could not tell), and reads `gh` first otherwise. When `hosts.yml` moved, or its stat has not answered by
+  the time that listing ends, or the kept reading lists nothing (not signed in), the listing then reads `gh` and lists
+  again with the new reading: one more `gh pr list` where the kept reading listed. So while `gh` is not signed in,
+  each listing runs `gh auth status`: a listing that lists nothing ends before
   the stat can show `hosts.yml` unmoved. `gh` is signed out only when `gh auth status` says it holds no login for the host; any other failure of it (a
   token it could not check, offline) is `unavailable`. A status shows the sign-in as `gh` last said it, with when
   (`readAt`). A reading is kept per `gh` environment, `hosts.yml`'s path and which of `GH_TOKEN` and `GITHUB_TOKEN`
