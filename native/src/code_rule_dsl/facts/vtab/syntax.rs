@@ -1848,9 +1848,10 @@ impl Projected {
                 }
             }
             let mut n = 0usize;
-            // The numbered nodes open around the walk: each one's subtree end, its tape node, and whether a numbered
-            // direct child of it was marked yet (a later one is after a sibling: `next_sibling`'s rows).
-            let mut open: Vec<(u32, u32, bool)> = Vec::new();
+            // The numbered nodes on the walk's path, each with whether a numbered direct child of it was marked yet (a
+            // later one is after a sibling: `next_sibling`'s rows). A node's tape parent comes with the walk, so the
+            // path is popped down to it, with no subtree's end read: a node above it on the path is closed.
+            let mut open: Vec<(u32, bool)> = Vec::new();
             for (id, above) in ranges.iter().flat_map(|&(a, b)| f.with_parents(a, b)) {
                 if !f.named(id) {
                     // A token (`Facts::tokens`) of an included node: its span is made on first read (`Projected::span`).
@@ -1878,19 +1879,20 @@ impl Projected {
                 if n != 0 && f.field(id) != 0 {
                     marks.mark(Item::Field, id);
                 }
-                while open.last().is_some_and(|&(end, _, _)| end <= id) {
-                    open.pop();
-                }
-                // A direct child of the innermost numbered node (an anchor that hangs from the root is no child of it).
-                if let (Some(q), Some(top)) = (above, open.last_mut())
-                    && top.1 == q
-                {
-                    if top.2 {
-                        marks.mark(Item::Sibling, id);
+                // A direct child of a numbered node: its parent is on the path. An anchor that hangs from the root is no
+                // child of it, and leaves the path as it is (what it closes, the next child of an open node pops).
+                if let Some(q) = above.filter(|&q| marks.has(Item::Node, q)) {
+                    while open.last().is_some_and(|&(x, _)| x != q) {
+                        open.pop();
                     }
-                    top.2 = true;
+                    if let Some(top) = open.last_mut() {
+                        if top.1 {
+                            marks.mark(Item::Sibling, id);
+                        }
+                        top.1 = true;
+                    }
                 }
-                open.push((f.subtree_end(id), id, false));
+                open.push((id, false));
                 n += 1;
             }
         });

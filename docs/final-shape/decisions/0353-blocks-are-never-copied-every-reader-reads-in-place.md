@@ -262,14 +262,18 @@ version's merges are the tree's"); `node_column_counts` indexed a text document'
 **Step 3's tape answers: `next_sibling` is a view** (2026-11-17). Its rows were core.rr's `CoreRows::node` pairs,
 each numbered node's numbered direct children, consecutive. Now:
 - the rank index marks a fourth item, `Item::Sibling`: a node after a numbered direct sibling (the projection's walk
-  keeps the open numbered nodes and whether each has had a direct child; an anchor that hangs from the root is no
-  child of it). A group is six words, 48 bytes for 64 tape nodes (40 before); `Numbering` holds four counts and
+  keeps the numbered nodes on its path and whether each has had a direct child, popped down to each node's tape
+  parent, which the walk gives; an anchor that hangs from the root is no child of it). Popped by subtree ends, the
+  marking added 0.014–0.032 s to hogql's identity maps (0.087–0.093 s); popped by parents, 0.108–0.116 s against
+  0.096–0.113 s at load 70–77, within the noise. A group is six words, 48 bytes for 64 tape nodes (40 before); `Numbering` holds four counts and
   samples, its Rust and MSL reads written again from the CLIF;
 - `View::Sibling` has a row per marked node, as `field`'s are its marked ones. Column `b` is the row's node; `a`
   comes with the scan's walk (the open subtree's last child), and a point read climbs from the tape node before `b`
   (`Projected::prev_sibling`); a lookup by `a` hops the tape's siblings after its subtree (`next_sibling`);
 - check: `node_ids_in_place_equal_the_numbered_ones` holds both reads to the old pairs in every format, whole and
   narrowed, and the rank reads of the new item to its walk. The device has no view of it yet (step 4).
+- hogql, 3 interleaved pairs against step 2's end (`s2s`), load 70–77: findings 1,629 in each; 76.3 B instructions
+  (median) against 79.2 B, within the noise (72.9–82.5 B against 74.5–81.8 B).
 
 `line`, `end_line`, `col` and `docof` were views already (`View::Loc`) except where `Extra` makes spans' rows; those
 and `visit_index` (CPython's visit order, a derived fact computed once for the documents a program reads it of),
