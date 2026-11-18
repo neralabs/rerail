@@ -15,6 +15,7 @@ import { access } from "node:fs/promises";
 import { basename } from "node:path";
 import type { CheckoutContext } from "../../engine/catalog/repository-model.js";
 import { mergeAssistEnabled } from "../../engine/catalog/repository-registry.js";
+import type { GitReads } from "../../engine/git.js";
 import {
   baseBranchAsync,
   branchBeingRebased,
@@ -73,10 +74,10 @@ export interface DetectContext {
   /** The person's GitHub login, as `gh` is signed in; absent or null when unknown. */
   readonly login?: string | null;
   /**
-   * Once aborted, the pass's Git read running ends and no other starts (`readsStoppedBy`), and the pass stores
-   * nothing and answers null.
+   * The owner of the pass's Git reads: once it stops, the pass's Git read running ends and no other starts
+   * (`readsStoppedBy`), and the pass stores nothing and answers null.
    */
-  readonly signal?: AbortSignal;
+  readonly reads?: GitReads;
 }
 
 /** This checkout's side: where its work starts, its head and branch, the person, and its changed hunks per file. */
@@ -528,14 +529,14 @@ export interface DetectedConflicts {
 
 /**
  * Find the checkout's conflicts and store them with the dismissed ones. A detection that finishes after Merge Assist
- * was turned off, or once its `signal` is aborted, stores nothing and answers null.
+ * was turned off, or once the owner of its `reads` stops, stores nothing and answers null.
  */
 export async function detectConflicts(context: DetectContext): Promise<DetectedConflicts | null> {
-  const detected = await readsStoppedBy(context.signal, () => detectPass(context));
-  return context.signal?.aborted === true ? null : detected;
+  const detected = await readsStoppedBy(context.reads, () => detectPass(context));
+  return context.reads?.stopped === true ? null : detected;
 }
 
-/** {@link detectConflicts}, its Git reads stopped by its signal. */
+/** {@link detectConflicts}, its Git reads run by its `reads`. */
 async function detectPass(context: DetectContext): Promise<DetectedConflicts | null> {
   const root = context.checkout.checkoutPath;
   // What the store held when this pass began: an open conflict another pass stores while this one runs was never
@@ -557,7 +558,7 @@ async function detectPass(context: DetectContext): Promise<DetectedConflicts | n
     ...failed.map(({ ref, reason }) => `Could not compare ${ref.label}: ${reason}`),
   ];
   // Stopped meanwhile: its reads ended early and what they gave is no finding, and the database may be closing.
-  if (context.signal?.aborted === true) return null;
+  if (context.reads?.stopped === true) return null;
   const now = context.now();
   const examined = new Set([...known.filter(entry => !kept(entry)), ...detected].map(entry => entry.conflict.id));
   return context.database.transaction(tx => {

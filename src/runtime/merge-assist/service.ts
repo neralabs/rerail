@@ -106,8 +106,9 @@ export interface MergeAssistRuntime extends MergeAssistService {
    * Stop: no conflict event is handed to the hook any more, and a handler that answers later records nothing. Every
    * hook command still running gets SIGTERM on its process group, then SIGKILL after a short grace. Waits at most
    * `waitMs` in all for the handlers, scans and detection passes running now: a pass that ends meanwhile stores what it
-   * found. A pass still reading Git after that ends at its next read and stores nothing, and the stop resolves once its
-   * Git has exited, so none runs on in the checkout.
+   * found. A pass still running after that ends at its next Git read and stores nothing, and the stop resolves once the
+   * Git it ended has exited, so none runs on in the checkout. It does not wait for a pass's other work, such as a file
+   * read on a drive that stopped answering: that pass ends by itself later, and stores nothing and starts no Git.
    */
   stop(waitMs?: number): Promise<void>;
 }
@@ -187,10 +188,16 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   /** Set once stopped: the database may be closing, so the hook's late answers are dropped. */
   #stopped = false;
   /**
-   * The detection passes reading Git in this process, scans or not, once `gh` has answered, each under the signal
-   * {@link stop} aborts once its wait is over: its Git read running ends, and it starts no other and stores nothing.
+   * Each Git read of the detection passes in this process, scans or not, and of a session's or an edit's locating of
+   * its checkout. {@link stop} stops them once its wait is over: a read running ends with its Git, no other starts, and
+   * a pass stores nothing. While they are not stopped the stop has not resolved, so the database is open.
    */
-  readonly #passes = new GitReads();
+  readonly #reads = new GitReads();
+  /**
+   * The sessions' scans and the edits' detections running now, each from when it was asked, its locating of the
+   * checkout included: {@link stop} waits for them.
+   */
+  readonly #hookWork = new Set<Promise<unknown>>();
 
   constructor(options: MergeAssistServiceOptions) {
     this.#options = options;
@@ -236,11 +243,28 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     return checkout;
   }
 
-  /** The recorded Git checkout at `checkoutPath` when Merge Assist is on for its repository; Git runs off the thread. */
+  /**
+   * The recorded Git checkout at `checkoutPath` when Merge Assist is on for its repository. Git runs off the thread,
+   * and {@link stop} ends it as it ends a pass's reads and waits for it, so the database is open for the lookup.
+   */
   async #activeCheckout(checkoutPath: string): Promise<CheckoutContext | undefined> {
-    const location = await repositoryIdentityLocationAsync(checkoutPath);
+    const location = await this.#reads.run(signal => repositoryIdentityLocationAsync(checkoutPath, signal));
     const checkout = location.git ? lookupCheckoutAt(this.#db, location) : undefined;
     return checkout === undefined || !mergeAssistEnabled(this.#db, checkout.repositoryKey) ? undefined : checkout;
+  }
+
+  /**
+   * Runs a session's or an edit's `work` where {@link stop} waits for it, its locating of the checkout included, as for
+   * a scan or detection that had begun when the stop came.
+   */
+  #duringHook<T>(work: () => Promise<T>): Promise<T> {
+    const running = work();
+    this.#hookWork.add(running);
+    const forget = (): void => {
+      this.#hookWork.delete(running);
+    };
+    running.then(forget, forget);
+    return running;
   }
 
   /** Tell the listeners the checkout's sessions may have something new to take. */
@@ -394,13 +418,14 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   /**
    * Find the checkout's in-flight conflicts for `session` (null outside a session), then hand the pass's events to the
    * conflict hook, without waiting for its handlers. A scan (`scan`) lists the pull requests afresh and records itself
-   * as the checkout's last scan. {@link stop} waits for its Git reads, and ends them once its wait is over.
+   * as the checkout's last scan. {@link stop} waits for it, and ends its Git reads once its wait is over.
    */
   async #detect(checkout: CheckoutContext, session: { id: string; host: RerailHost | null } | null, scan = false): Promise<void> {
     const { pulls, problems, login = null } = await this.#openPulls(checkout, scan);
-    // Stopped while `gh` answered: the database may be closed, and nothing found now would be heard.
-    if (this.#stopped) return;
-    const detected = await this.#passes.run(signal => detectConflicts({ database: this.#db, checkout, pulls, login, now: this.#now, signal }));
+    // The stop's wait ended while `gh` answered: the database may be closed. Within the wait, the pass runs and stores
+    // what it finds, as a pass that had begun when the stop came does.
+    if (this.#reads.stopped) return;
+    const detected = await detectConflicts({ database: this.#db, checkout, pulls, login, now: this.#now, reads: this.#reads });
     if (detected === null) return;
     if (scan) {
       const last: LastScan = { at: isoSeconds(this.#now()), peers: detected.peers, problems: [...problems, ...detected.problems] };
@@ -518,19 +543,26 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   async detectAfterEdit(checkoutPath: string, sessionId: string | null = null, host?: RerailHost): Promise<boolean> {
+    const session = sessionId === null ? null : { id: sessionId, host: host ?? null };
+    return await this.#duringHook(() => this.#detectAfterEdit(checkoutPath, session));
+  }
+
+  /** {@link detectAfterEdit}, which {@link stop} waits for. */
+  async #detectAfterEdit(checkoutPath: string, session: { id: string; host: RerailHost | null } | null): Promise<boolean> {
     const checkout = await this.#activeCheckout(checkoutPath);
     if (checkout === undefined) return false;
     const last = this.#detectedAt.get(checkout.checkoutPath);
     if (last !== undefined && this.#now() - last < CONFLICT_DETECT_INTERVAL_MS) return false;
     this.#detectedAt.set(checkout.checkoutPath, this.#now());
-    await this.#detect(checkout, sessionId === null ? null : { id: sessionId, host: host ?? null });
+    await this.#detect(checkout, session);
     return true;
   }
 
   async openSession(checkoutPath: string, host: RerailHost, sessionId: string): Promise<void> {
-    const checkout = await this.#activeCheckout(checkoutPath);
-    if (checkout === undefined) return;
-    await this.#scanOnce(checkout, { id: sessionId, host });
+    await this.#duringHook(async () => {
+      const checkout = await this.#activeCheckout(checkoutPath);
+      if (checkout !== undefined) await this.#scanOnce(checkout, { id: sessionId, host });
+    });
   }
 
   /** How a session on `host` takes the checkout's conflict notes: whether the host draws the footer. */
@@ -578,18 +610,20 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     await this.#commands.stop(Math.min(STOP_KILL_GRACE_MS, waitMs / 2));
     const timer = Promise.withResolvers<void>();
     const timeout = setTimeout(timer.resolve, Math.max(0, waitMs - (Date.now() - started)));
-    const scans = [...this.#scans.values()].map(scan => scan.work);
+    const running = [this.#hook.settled(), ...this.#hookWork, ...[...this.#scans.values()].map(scan => scan.work)];
     try {
-      // A pass that ends meanwhile stores what it found, as one that ended before the stop did.
-      await Promise.race([Promise.allSettled([this.#hook.settled(), this.#passes.settled(), ...scans]), timer.promise]);
+      // A scan or detection that ends meanwhile stores what it found, as one that ended before the stop did.
+      await Promise.race([Promise.allSettled(running), timer.promise]);
     } finally {
       clearTimeout(timeout);
     }
-    // A pass still reading Git ends at its next read and stores nothing, so no Git runs on in the checkout and nothing
-    // is written to a database that may be closing once the stop resolves.
-    await this.#passes.stop();
-    // A scan still waiting for `gh` gives up its mark while the database is open, so the next process scans at once;
-    // once `gh` answers it stops without touching the database.
+    // A pass still running ends at its next Git read and stores nothing. The stop waits for the Git it ends to exit, so
+    // none runs on in the checkout, and not for the pass itself: a file read on a drive that stopped answering would
+    // hold it until the drive answers. Such a pass ends by itself later: it stores nothing, starts no Git, and gives up
+    // its scan mark only while the database is open (`#releaseMark`).
+    await this.#reads.stop();
+    // A scan still running, waiting for `gh` or a file read, gives up its mark while the database is open, so the next
+    // process scans at once.
     for (const [path, { mark }] of this.#scans) this.#releaseMark(path, mark);
   }
 }

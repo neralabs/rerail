@@ -52,11 +52,12 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
 
 /**
  * {@link repositoryIdentityLocation} without blocking: its one Git process runs off the thread, so a daemon goes on
- * answering hooks meanwhile.
+ * answering hooks meanwhile. Once `signal` is aborted, that Git ends (or never starts) and the folder reads as outside
+ * Git.
  */
-export async function repositoryIdentityLocationAsync(workspace: string): Promise<RepositoryIdentityLocation> {
+export async function repositoryIdentityLocationAsync(workspace: string, signal?: AbortSignal): Promise<RepositoryIdentityLocation> {
   const requested = resolve(workspace);
-  const result = outsideGit(requested) ? undefined : await runGitAsync(requested, LOCATE_ARGS).catch(noGitInstalled);
+  const result = outsideGit(requested) ? undefined : await runGitAsync(requested, LOCATE_ARGS, { signal }).catch(noGitInstalled);
   return result === undefined || result.status !== 0 ? nonGitLocation(requested) : gitLocation(requested, result.stdout);
 }
 

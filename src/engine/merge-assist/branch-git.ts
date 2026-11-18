@@ -8,23 +8,26 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { runGitAsync, type GitResult, type RunGitOptions } from "../git.js";
+import { type GitReads, runGitAsync, type GitResult, type RunGitOptions } from "../git.js";
 
-/** The stop of the work a read runs in, as {@link readsStoppedBy} set it; none outside such work. */
-const readStop = new AsyncLocalStorage<AbortSignal | undefined>();
+/** The owner of the Git reads of the work a read runs in, as {@link readsStoppedBy} set it; none outside such work. */
+const readOwner = new AsyncLocalStorage<GitReads | undefined>();
 
 /**
- * Runs `work` with every Git read of this module it starts, however deep, stopped by `signal`: once it is aborted, a
- * read running ends its Git with every process that Git started and answers as a failed read once they have exited,
- * and a later read starts no Git. A detection pass is stopped this way at its next read, with no read naming the signal.
+ * Runs `work` with every Git read of this module it starts, however deep, run by `reads`: once `reads` stops, a read
+ * running ends its Git with every process that Git started and answers as a failed read once they have exited, and a
+ * later read starts no Git. A detection pass is stopped this way at its next read, with no read naming its owner, and
+ * the owner's stop waits for those Git processes, not for the pass's other awaits such as a file read.
  */
-export async function readsStoppedBy<T>(signal: AbortSignal | undefined, work: () => Promise<T>): Promise<T> {
-  return await readStop.run(signal, work);
+export async function readsStoppedBy<T>(reads: GitReads | undefined, work: () => Promise<T>): Promise<T> {
+  return await readOwner.run(reads, work);
 }
 
-/** `runGitAsync` stopped by the work it runs in ({@link readsStoppedBy}). */
+/** `runGitAsync` run by the owner of the work it runs in ({@link readsStoppedBy}). */
 async function runRead(root: string, args: readonly string[], options: RunGitOptions & { input?: string } = {}): Promise<GitResult> {
-  return await runGitAsync(root, args, { ...options, signal: readStop.getStore() });
+  const reads = readOwner.getStore();
+  if (reads === undefined) return await runGitAsync(root, args, options);
+  return await reads.run(signal => runGitAsync(root, args, { ...options, signal }));
 }
 
 /**
