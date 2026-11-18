@@ -101,6 +101,9 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "num_number_of_order", params: &[I32], ret: I32, hot: true, body: crate::id_reads::number_of_order },
     // A view's rows (decision 0353 step 4c): row `l` of the document's rows, column `col`.
     Read { family: Family::View, name: "view_node", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::node },
+    Read { family: Family::View, name: "view_child", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::child },
+    Read { family: Family::View, name: "view_field", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::field },
+    Read { family: Family::View, name: "view_core", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::core },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by

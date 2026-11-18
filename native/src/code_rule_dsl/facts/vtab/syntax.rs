@@ -2002,6 +2002,10 @@ impl Projected {
     /// projection's first point read (decision 0353 step 3). A scan carries the place in its walk and never makes it.
     #[inline]
     pub fn idx(&self, local: usize) -> u32 {
+        self.places_column()[local]
+    }
+    /// Every numbered node's place (`idx`), the derived column, made on its first read.
+    pub fn places_column(&self) -> &Cells<u32> {
         self.idx.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "projection places (derived, on a point read)".into());
             // copy: derived (each node's place, computed once here from the walk; no block holds it)
@@ -2012,7 +2016,7 @@ impl Projected {
                 out.len()
             })
             .expect("a batch's block holds its projection")
-        })[local]
+        })
     }
     /// Every node in preorder with its place among its parent's children and its depth (`idx`, `depth`), carried in
     /// one walk of the open subtrees: `(local id, place, depth)`.

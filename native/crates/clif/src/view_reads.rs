@@ -33,8 +33,11 @@ pub struct ViewDoc {
     /// name's canonical code's), and the field atom (`tag << 16 | field`).
     pub kinds: Run,
     pub fields: Run,
+    /// Each numbered node's place among its parent's children (u32s, by local id): the walk's, derived once
+    /// (`Projected::idx`, decision 0353 step 3), as the tape holds no sibling's place.
+    pub places: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 3);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4);
 
 /// A field's byte offset in the entry.
 pub mod at {
@@ -47,15 +50,21 @@ pub mod at {
     pub const NUMBERING: i32 = offset_of!(ViewDoc, numbering) as i32;
     pub const KINDS: i32 = offset_of!(ViewDoc, kinds) as i32;
     pub const FIELDS: i32 = offset_of!(ViewDoc, fields) as i32;
+    pub const PLACES: i32 = offset_of!(ViewDoc, places) as i32;
 }
 
 /// The `node` view's columns (`Viewed::columns`): the document, the node's id, its kind, start and end.
 pub const NODE_COLUMNS: u32 = 5;
+/// `child`'s: the parent's id, the child's, its place; `field`'s: the parent's id, the field atom, the child's id;
+/// `core_node`'s: the document, the tape node, the id.
+pub const CHILD_COLUMNS: u32 = 3;
+pub const FIELD_COLUMNS: u32 = 3;
+pub const CORE_COLUMNS: u32 = 3;
 
 /// The entry's MSL: `struct ViewDoc`, each field's offset and the size asserted against this definition's.
 pub fn msl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 7] = [
+    let fields: [(&str, &str, usize); 8] = [
         ("uint", "key", offset_of!(ViewDoc, key)),
         ("uint", "tag", offset_of!(ViewDoc, tag)),
         ("uint", "preorder", offset_of!(ViewDoc, preorder)),
@@ -63,6 +72,7 @@ pub fn msl() -> String {
         ("Run", "numbering", offset_of!(ViewDoc, numbering)),
         ("Run", "kinds", offset_of!(ViewDoc, kinds)),
         ("Run", "fields", offset_of!(ViewDoc, fields)),
+        ("Run", "places", offset_of!(ViewDoc, places)),
     ];
     let mut s = String::from("struct ViewDoc {\n");
     for (ty, name, _) in fields.iter() {
@@ -103,6 +113,24 @@ impl B<'_, '_> {
         let low = self.f.ins().uextend(I64, low);
         self.f.ins().bor(high, low)
     }
+    /// Numbered node `l`'s parent's id (`Projected::parent`): its tape parent's, or the root's where that is not
+    /// numbered (a narrowed projection's anchor); -1 for the root.
+    fn parent_id(&mut self, l: Value, x: Value) -> Value {
+        let root = self.f.ins().icmp_imm(IntCC::Equal, l, 0);
+        self.either(I64, root, |b| b.c64(-1), |b| {
+            let q = b.call_tape("tape_parent", &[x]);
+            let numbering = b.follow(b.tape, at::NUMBERING);
+            let node = b.c32(0);
+            let is = b.call_at("num_is", numbering, &[node, q]);
+            let numbered = b.f.ins().icmp_imm(IntCC::NotEqual, is, 0);
+            let local = b.either(I32, numbered, |b| {
+                let numbering = b.follow(b.tape, at::NUMBERING);
+                let node = b.c32(0);
+                b.call_at("num_rank", numbering, &[node, q])
+            }, |b| b.c32(0));
+            b.node_id(local)
+        })
+    }
     /// Numbered node `l`'s tape node (`num_select`).
     fn tape_node(&mut self, l: Value) -> Value {
         let numbering = self.follow(self.tape, at::NUMBERING);
@@ -131,5 +159,53 @@ pub fn node(b: &mut B<'_, '_>) -> Value {
                 b.f.ins().uextend(I64, v)
             })
         })
+    })
+}
+
+/// `view_child(i, col)`: column `col` of the document's `child` row `i`, of numbered node `i + 1` (every node but the
+/// root): the parent's id, the child's id, its place among the parent's children.
+pub fn child(b: &mut B<'_, '_>) -> Value {
+    let (i, col) = (b.arg(0), b.arg(1));
+    let l = b.f.ins().iadd_imm(i, 1);
+    let c = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
+    b.either(I64, c, |b| {
+        let x = b.tape_node(l);
+        b.parent_id(l, x)
+    }, |b| {
+        let c = b.f.ins().icmp_imm(IntCC::Equal, col, 1);
+        b.either(I64, c, |b| b.node_id(l), |b| b.entry_item(at::PLACES, l))
+    })
+}
+
+/// `view_field(i, col)`: column `col` of the document's `field` row `i`, of its `i`-th node under a field
+/// (`num_select` of the fielded nodes): the parent's id, the field atom, the child's id.
+pub fn field(b: &mut B<'_, '_>) -> Value {
+    let (i, col) = (b.arg(0), b.arg(1));
+    let numbering = b.follow(b.tape, at::NUMBERING);
+    let fielded = b.c32(2);
+    let x = b.call_at("num_select", numbering, &[fielded, i]);
+    let numbering = b.follow(b.tape, at::NUMBERING);
+    let node = b.c32(0);
+    let l = b.call_at("num_rank", numbering, &[node, x]);
+    let c = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
+    b.either(I64, c, |b| b.parent_id(l, x), |b| {
+        let c = b.f.ins().icmp_imm(IntCC::Equal, col, 1);
+        b.either(I64, c, |b| {
+            let code = b.call_tape("tape_number", &[x]);
+            b.entry_item(at::FIELDS, code)
+        }, |b| b.node_id(l))
+    })
+}
+
+/// `view_core(l, col)`: column `col` of `core_node`'s row of numbered node `l`: the document, its tape node, its id.
+pub fn core(b: &mut B<'_, '_>) -> Value {
+    let (l, col) = (b.arg(0), b.arg(1));
+    let c = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
+    b.either(I64, c, |b| b.entry_u32(at::KEY), |b| {
+        let c = b.f.ins().icmp_imm(IntCC::Equal, col, 1);
+        b.either(I64, c, |b| {
+            let x = b.tape_node(l);
+            b.f.ins().uextend(I64, x)
+        }, |b| b.node_id(l))
     })
 }

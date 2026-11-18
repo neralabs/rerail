@@ -8,8 +8,9 @@ struct ViewDoc {
     Run numbering;
     Run kinds;
     Run fields;
+    Run places;
 };
-static_assert(sizeof(ViewDoc) == 64, "ViewDoc: size");
+static_assert(sizeof(ViewDoc) == 80, "ViewDoc: size");
 static_assert(__builtin_offsetof(ViewDoc, key) == 0, "ViewDoc.key");
 static_assert(__builtin_offsetof(ViewDoc, tag) == 4, "ViewDoc.tag");
 static_assert(__builtin_offsetof(ViewDoc, preorder) == 8, "ViewDoc.preorder");
@@ -17,6 +18,7 @@ static_assert(__builtin_offsetof(ViewDoc, nodes) == 12, "ViewDoc.nodes");
 static_assert(__builtin_offsetof(ViewDoc, numbering) == 16, "ViewDoc.numbering");
 static_assert(__builtin_offsetof(ViewDoc, kinds) == 32, "ViewDoc.kinds");
 static_assert(__builtin_offsetof(ViewDoc, fields) == 48, "ViewDoc.fields");
+static_assert(__builtin_offsetof(ViewDoc, places) == 64, "ViewDoc.places");
 #ifndef CLIF_HELPERS
 #define CLIF_HELPERS 1
 #ifndef clif_view
@@ -35,6 +37,9 @@ inline uint clif_u32(device const uchar* t,uint a){return clif_lo(t,a);}
 inline ulong clif_u64(device const uchar* t,uint a){return clif_word(t,a);}
 #endif
 inline ulong clif_view_node(device const uchar* t,ulong a0,device const uchar* tt,thread const uint* v,uint a3,uint a4);
+inline ulong clif_view_child(device const uchar* t,ulong a0,device const uchar* tt,thread const uint* v,uint a3,uint a4);
+inline ulong clif_view_field(device const uchar* t,ulong a0,device const uchar* tt,thread const uint* v,uint a3,uint a4);
+inline ulong clif_view_core(device const uchar* t,ulong a0,device const uchar* tt,thread const uint* v,uint a3,uint a4);
 inline ulong clif_view_node(device const uchar* t,ulong a0,device const uchar* tt,thread const uint* v,uint a3,uint a4){
  ulong v0=0;
  ulong v1=0;
@@ -131,6 +136,361 @@ inline ulong clif_view_node(device const uchar* t,ulong a0,device const uchar* t
  }
  case 12u:{
   {ulong t0=v30;v10=t0;b=6u;continue;}
+ }
+ case 6u:{
+  {ulong t0=v10;v6=t0;b=3u;continue;}
+ }
+ case 3u:{
+  return v6;
+ }
+ default:return 0;
+ }}
+}
+inline ulong clif_view_child(device const uchar* t,ulong a0,device const uchar* tt,thread const uint* v,uint a3,uint a4){
+ ulong v0=0;
+ ulong v1=0;
+ ulong v2=0;
+ uint v3=0;
+ uint v4=0;
+ uint v5=0;
+ ulong v7=0;
+ uint v12=0;
+ ulong v14=0;
+ uint v16=0;
+ uint v23=0;
+ ulong v32=0;
+ uint v35=0;
+ ulong v44=0;
+ ulong v47=0;
+ uint v50=0;
+ v0=a0;
+ v1=0;
+ v2=0;
+ v3=a3;
+ v4=a4;
+ uint b=0;
+ while(true){switch(b){
+ case 0u:{
+  v5=v3+uint(1ul);
+  uchar v6=uchar((uint)(v4)==(uint)(uint(0ul)));
+  if(v6!=0){b=1u;continue;}else{b=2u;continue;}
+ }
+ case 1u:{
+  ulong v8=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+  ulong v9=v0+ulong(16ul);
+  ulong v10=v9+v8;
+  uint v11=uint(0ul);
+  v12=clif_num_select(t,v10,v11,v5);
+  uchar v13=uchar((uint)(v5)==(uint)(uint(0ul)));
+  if(v13!=0){b=4u;continue;}else{b=5u;continue;}
+ }
+ case 4u:{
+  ulong v15=ulong(18446744073709551615ul);
+  {ulong t0=v15;v14=t0;b=6u;continue;}
+ }
+ case 5u:{
+  v16=clif_tape_parent(tt,v,v12);
+  ulong v17=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+  ulong v18=v0+ulong(16ul);
+  ulong v19=v18+v17;
+  uint v20=uint(0ul);
+  uint v21=clif_num_is(t,v19,v20,v16);
+  uchar v22=uchar((uint)(v21)!=(uint)(uint(0ul)));
+  if(v22!=0){b=7u;continue;}else{b=8u;continue;}
+ }
+ case 7u:{
+  ulong v24=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+  ulong v25=v0+ulong(16ul);
+  ulong v26=v25+v24;
+  uint v27=uint(0ul);
+  uint v28=clif_num_rank(t,v26,v27,v16);
+  {uint t0=v28;v23=t0;b=9u;continue;}
+ }
+ case 8u:{
+  uint v29=uint(0ul);
+  {uint t0=v29;v23=t0;b=9u;continue;}
+ }
+ case 9u:{
+  uint v30=uint(*(device const uint*)(t+v0));
+  ulong v31=ulong(v30);
+  v32=ulong((ulong)(v31)<<(uint(32)&63u));
+  uint v33=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
+  uchar v34=uchar((uint)(v33)!=(uint)(uint(0ul)));
+  if(v34!=0){b=10u;continue;}else{b=11u;continue;}
+ }
+ case 10u:{
+  {uint t0=v23;v35=t0;b=12u;continue;}
+ }
+ case 11u:{
+  ulong v36=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+  ulong v37=v0+ulong(16ul);
+  ulong v38=v37+v36;
+  uint v39=uint(0ul);
+  uint v40=clif_num_low_of(t,v38,v39,v23);
+  {uint t0=v40;v35=t0;b=12u;continue;}
+ }
+ case 12u:{
+  ulong v41=ulong(v35);
+  ulong v42=v32|v41;
+  {ulong t0=v42;v14=t0;b=6u;continue;}
+ }
+ case 6u:{
+  {ulong t0=v14;v7=t0;b=3u;continue;}
+ }
+ case 2u:{
+  uchar v43=uchar((uint)(v4)==(uint)(uint(1ul)));
+  if(v43!=0){b=13u;continue;}else{b=14u;continue;}
+ }
+ case 13u:{
+  uint v45=uint(*(device const uint*)(t+v0));
+  ulong v46=ulong(v45);
+  v47=ulong((ulong)(v46)<<(uint(32)&63u));
+  uint v48=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
+  uchar v49=uchar((uint)(v48)!=(uint)(uint(0ul)));
+  if(v49!=0){b=16u;continue;}else{b=17u;continue;}
+ }
+ case 16u:{
+  {uint t0=v5;v50=t0;b=18u;continue;}
+ }
+ case 17u:{
+  ulong v51=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+  ulong v52=v0+ulong(16ul);
+  ulong v53=v52+v51;
+  uint v54=uint(0ul);
+  uint v55=clif_num_low_of(t,v53,v54,v5);
+  {uint t0=v55;v50=t0;b=18u;continue;}
+ }
+ case 18u:{
+  ulong v56=ulong(v50);
+  ulong v57=v47|v56;
+  {ulong t0=v57;v44=t0;b=15u;continue;}
+ }
+ case 14u:{
+  ulong v58=ulong(*(device const ulong*)(t+(v0+ulong(long(64)))));
+  ulong v59=v0+ulong(64ul);
+  ulong v60=v59+v58;
+  ulong v61=ulong(v5);
+  ulong v62=v61*ulong(4ul);
+  ulong v63=v60+v62;
+  uint v64=uint(*(device const uint*)(t+v63));
+  ulong v65=ulong(v64);
+  {ulong t0=v65;v44=t0;b=15u;continue;}
+ }
+ case 15u:{
+  {ulong t0=v44;v7=t0;b=3u;continue;}
+ }
+ case 3u:{
+  return v7;
+ }
+ default:return 0;
+ }}
+}
+inline ulong clif_view_field(device const uchar* t,ulong a0,device const uchar* tt,thread const uint* v,uint a3,uint a4){
+ ulong v0=0;
+ ulong v1=0;
+ ulong v2=0;
+ uint v3=0;
+ uint v4=0;
+ uint v9=0;
+ uint v14=0;
+ ulong v16=0;
+ ulong v18=0;
+ uint v20=0;
+ uint v27=0;
+ ulong v36=0;
+ uint v39=0;
+ ulong v48=0;
+ ulong v60=0;
+ uint v63=0;
+ v0=a0;
+ v1=0;
+ v2=0;
+ v3=a3;
+ v4=a4;
+ uint b=0;
+ while(true){switch(b){
+ case 0u:{
+  ulong v5=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+  ulong v6=v0+ulong(16ul);
+  ulong v7=v6+v5;
+  uint v8=uint(2ul);
+  v9=clif_num_select(t,v7,v8,v3);
+  ulong v10=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+  ulong v11=v0+ulong(16ul);
+  ulong v12=v11+v10;
+  uint v13=uint(0ul);
+  v14=clif_num_rank(t,v12,v13,v9);
+  uchar v15=uchar((uint)(v4)==(uint)(uint(0ul)));
+  if(v15!=0){b=1u;continue;}else{b=2u;continue;}
+ }
+ case 1u:{
+  uchar v17=uchar((uint)(v14)==(uint)(uint(0ul)));
+  if(v17!=0){b=4u;continue;}else{b=5u;continue;}
+ }
+ case 4u:{
+  ulong v19=ulong(18446744073709551615ul);
+  {ulong t0=v19;v18=t0;b=6u;continue;}
+ }
+ case 5u:{
+  v20=clif_tape_parent(tt,v,v9);
+  ulong v21=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+  ulong v22=v0+ulong(16ul);
+  ulong v23=v22+v21;
+  uint v24=uint(0ul);
+  uint v25=clif_num_is(t,v23,v24,v20);
+  uchar v26=uchar((uint)(v25)!=(uint)(uint(0ul)));
+  if(v26!=0){b=7u;continue;}else{b=8u;continue;}
+ }
+ case 7u:{
+  ulong v28=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+  ulong v29=v0+ulong(16ul);
+  ulong v30=v29+v28;
+  uint v31=uint(0ul);
+  uint v32=clif_num_rank(t,v30,v31,v20);
+  {uint t0=v32;v27=t0;b=9u;continue;}
+ }
+ case 8u:{
+  uint v33=uint(0ul);
+  {uint t0=v33;v27=t0;b=9u;continue;}
+ }
+ case 9u:{
+  uint v34=uint(*(device const uint*)(t+v0));
+  ulong v35=ulong(v34);
+  v36=ulong((ulong)(v35)<<(uint(32)&63u));
+  uint v37=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
+  uchar v38=uchar((uint)(v37)!=(uint)(uint(0ul)));
+  if(v38!=0){b=10u;continue;}else{b=11u;continue;}
+ }
+ case 10u:{
+  {uint t0=v27;v39=t0;b=12u;continue;}
+ }
+ case 11u:{
+  ulong v40=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+  ulong v41=v0+ulong(16ul);
+  ulong v42=v41+v40;
+  uint v43=uint(0ul);
+  uint v44=clif_num_low_of(t,v42,v43,v27);
+  {uint t0=v44;v39=t0;b=12u;continue;}
+ }
+ case 12u:{
+  ulong v45=ulong(v39);
+  ulong v46=v36|v45;
+  {ulong t0=v46;v18=t0;b=6u;continue;}
+ }
+ case 6u:{
+  {ulong t0=v18;v16=t0;b=3u;continue;}
+ }
+ case 2u:{
+  uchar v47=uchar((uint)(v4)==(uint)(uint(1ul)));
+  if(v47!=0){b=13u;continue;}else{b=14u;continue;}
+ }
+ case 13u:{
+  uint v49=clif_tape_number(tt,v,v9);
+  ulong v50=ulong(*(device const ulong*)(t+(v0+ulong(long(48)))));
+  ulong v51=v0+ulong(48ul);
+  ulong v52=v51+v50;
+  ulong v53=ulong(v49);
+  ulong v54=v53*ulong(4ul);
+  ulong v55=v52+v54;
+  uint v56=uint(*(device const uint*)(t+v55));
+  ulong v57=ulong(v56);
+  {ulong t0=v57;v48=t0;b=15u;continue;}
+ }
+ case 14u:{
+  uint v58=uint(*(device const uint*)(t+v0));
+  ulong v59=ulong(v58);
+  v60=ulong((ulong)(v59)<<(uint(32)&63u));
+  uint v61=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
+  uchar v62=uchar((uint)(v61)!=(uint)(uint(0ul)));
+  if(v62!=0){b=16u;continue;}else{b=17u;continue;}
+ }
+ case 16u:{
+  {uint t0=v14;v63=t0;b=18u;continue;}
+ }
+ case 17u:{
+  ulong v64=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+  ulong v65=v0+ulong(16ul);
+  ulong v66=v65+v64;
+  uint v67=uint(0ul);
+  uint v68=clif_num_low_of(t,v66,v67,v14);
+  {uint t0=v68;v63=t0;b=18u;continue;}
+ }
+ case 18u:{
+  ulong v69=ulong(v63);
+  ulong v70=v60|v69;
+  {ulong t0=v70;v48=t0;b=15u;continue;}
+ }
+ case 15u:{
+  {ulong t0=v48;v16=t0;b=3u;continue;}
+ }
+ case 3u:{
+  return v16;
+ }
+ default:return 0;
+ }}
+}
+inline ulong clif_view_core(device const uchar* t,ulong a0,device const uchar* tt,thread const uint* v,uint a3,uint a4){
+ ulong v0=0;
+ ulong v1=0;
+ ulong v2=0;
+ uint v3=0;
+ uint v4=0;
+ ulong v6=0;
+ ulong v10=0;
+ ulong v19=0;
+ uint v22=0;
+ v0=a0;
+ v1=0;
+ v2=0;
+ v3=a3;
+ v4=a4;
+ uint b=0;
+ while(true){switch(b){
+ case 0u:{
+  uchar v5=uchar((uint)(v4)==(uint)(uint(0ul)));
+  if(v5!=0){b=1u;continue;}else{b=2u;continue;}
+ }
+ case 1u:{
+  uint v7=uint(*(device const uint*)(t+v0));
+  ulong v8=ulong(v7);
+  {ulong t0=v8;v6=t0;b=3u;continue;}
+ }
+ case 2u:{
+  uchar v9=uchar((uint)(v4)==(uint)(uint(1ul)));
+  if(v9!=0){b=4u;continue;}else{b=5u;continue;}
+ }
+ case 4u:{
+  ulong v11=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+  ulong v12=v0+ulong(16ul);
+  ulong v13=v12+v11;
+  uint v14=uint(0ul);
+  uint v15=clif_num_select(t,v13,v14,v3);
+  ulong v16=ulong(v15);
+  {ulong t0=v16;v10=t0;b=6u;continue;}
+ }
+ case 5u:{
+  uint v17=uint(*(device const uint*)(t+v0));
+  ulong v18=ulong(v17);
+  v19=ulong((ulong)(v18)<<(uint(32)&63u));
+  uint v20=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
+  uchar v21=uchar((uint)(v20)!=(uint)(uint(0ul)));
+  if(v21!=0){b=7u;continue;}else{b=8u;continue;}
+ }
+ case 7u:{
+  {uint t0=v3;v22=t0;b=9u;continue;}
+ }
+ case 8u:{
+  ulong v23=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+  ulong v24=v0+ulong(16ul);
+  ulong v25=v24+v23;
+  uint v26=uint(0ul);
+  uint v27=clif_num_low_of(t,v25,v26,v3);
+  {uint t0=v27;v22=t0;b=9u;continue;}
+ }
+ case 9u:{
+  ulong v28=ulong(v22);
+  ulong v29=v19|v28;
+  {ulong t0=v29;v10=t0;b=6u;continue;}
  }
  case 6u:{
   {ulong t0=v10;v6=t0;b=3u;continue;}

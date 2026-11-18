@@ -47,6 +47,8 @@ impl ViewEntry {
             Run::set(&raw mut (*d).numbering, p.ranks().desc().cast::<rerail_clif::ids::Numbering>(), 1);
             Run::set(&raw mut (*d).kinds, kinds.as_ptr(), kinds.len());
             Run::set(&raw mut (*d).fields, fields.as_ptr(), fields.len());
+            let places = p.places_column();
+            Run::set(&raw mut (*d).places, places.as_ptr(), places.len());
         }
         ViewEntry { desc, _kinds: kinds, _fields: fields }
     }
