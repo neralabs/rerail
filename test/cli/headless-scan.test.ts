@@ -962,7 +962,8 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
     git(root, "init", "-q");
     mkdirSync(join(root, "src"));
     writeFileSync(join(root, "src/a.py"), "def helper():\n    pass\n\ndef caller():\n    helper()\n");
-    git(root, "add", "src/a.py");
+    writeFileSync(join(root, ".rerailignore"), "ignored/\n");
+    git(root, "add", "src/a.py", ".rerailignore");
     git(root, "commit", "-qm", "source");
     const walk = join(root, "walk.rr");
     writeFileSync(walk, `
@@ -970,7 +971,7 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
 .policy "walk" revision 1
 .violation Seen(at: span) "tree file"
 git_tree_walk_request(r, t) :- git_source_tree(r, t).
-Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _).
+Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), p != ".rerailignore".
 `);
     const references = join(root, "references.rr");
     writeFileSync(references, `
@@ -988,9 +989,12 @@ Referenced(src) :- reference_edge(src, _, _).
         scope: "repository", packs: [], version: "test",
       })));
     `;
-    for (const [caseName, paths] of [["walk-first", [walk, references]], ["references-first", [references, walk]]] as const) {
+    for (const [caseName, paths, warm] of [
+      ["walk-first", [walk, references], false], ["references-first", [references, walk], false],
+      ["references-first", [references, walk], true],
+    ] as const) {
       const home = join(root, caseName);
-      const profile = join(home, "profile");
+      const profile = join(home, warm ? "profile-warm" : "profile");
       const report = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, join(home, "home.sqlite"), ...paths], {
         input: script, encoding: "utf8",
         env: { ...process.env, RERAIL_PROFILE: profile, RERAIL_CONTENT_STORE_PATH: join(home, "content.sqlite") },
@@ -999,8 +1003,8 @@ Referenced(src) :- reference_edge(src, _, _).
       expect(report.violations.map(finding => finding.code).sort()).toEqual(["Referenced", "Seen"]);
       const counters = new Map([...readFileSync(join(profile, "profile.txt"), "utf8").matchAll(/^\s*count\s+(\d+)\s+([a-z._]+)$/gmu)]
         .map(([, count, name]) => [name, Number(count)]));
-      expect(counters.get("git.tree_decodes")).toBe(2);
-      expect(counters.get("reference.tape_summaries")).toBe(1);
+      expect(counters.get("git.tree_decodes") ?? 0).toBe(warm ? 0 : 2);
+      if (!warm) expect(counters.get("reference.tape_summaries")).toBe(1);
       expect(counters.get("source_ast.parses") ?? 0).toBe(0);
     }
   }, 60_000);

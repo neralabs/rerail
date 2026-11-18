@@ -69,6 +69,11 @@ fn decode_tree(tree: gix::Tree<'_>) -> io::Result<Arc<[RawTreeEntry]>> {
     }).collect()
 }
 
+pub fn raw_entry_name(hex: &str) -> Option<Vec<u8>> {
+    if hex.len() % 2 != 0 { return None; }
+    hex.as_bytes().chunks_exact(2).map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()).collect()
+}
+
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct SourceFailure {
     pub path: String,
@@ -155,8 +160,27 @@ impl View {
     }
 
     fn observed_tree(&self, id: gix::ObjectId, stamp: &str) -> Option<Arc<[RawTreeEntry]>> {
-        self.observed_trees.lock().unwrap_or_else(|err| err.into_inner())
-            .get(&id).filter(|tree| tree.stamp == stamp).map(|tree| Arc::clone(&tree.entries))
+        let mut observed = self.observed_trees.lock().unwrap_or_else(|err| err.into_inner());
+        if let Some(tree) = observed.get(&id).filter(|tree| tree.stamp == stamp) {
+            return Some(Arc::clone(&tree.entries));
+        }
+        let key = super::hash_key(id.as_ref()).ok()?;
+        let inventory = self.inventory.get()?;
+        if inventory.tree_observations.get(&key)?.as_str() != stamp {
+            return None;
+        }
+        let index = inventory.trees.binary_search_by_key(&key, |tree| tree.id).ok()?;
+        let entries = inventory.trees[index].entries.iter().map(|entry| {
+            let name = match entry.name.strip_prefix('\0') {
+                Some(hex) => raw_entry_name(hex)?,
+                None => entry.name.as_bytes().to_vec(),
+            };
+            let width = if entry.target.is_git_sha256() { 32 } else { 20 };
+            let target = gix::ObjectId::from_bytes_or_panic(&entry.target.key_bytes()[8..8 + width]);
+            Some(RawTreeEntry { name, mode: entry.mode, target })
+        }).collect::<Option<Arc<[RawTreeEntry]>>>()?;
+        observed.insert(id, ObservedTree { stamp: stamp.to_owned(), entries: Arc::clone(&entries) });
+        Some(entries)
     }
 
     fn remember_tree(&self, stamp: &str, tree: gix::Tree<'_>) -> io::Result<Arc<[RawTreeEntry]>> {
@@ -570,27 +594,23 @@ pub fn source_language(path: &Path) -> Option<Option<String>> {
     Some(inventory.languages.get(full.to_str()?).cloned())
 }
 
-/// A tree already read and checked by this view's source inventory.
-pub fn with_inventory_tree<T>(
-    root: &Path,
-    id: &gix::hash::oid,
-    stamp: &str,
-    read: impl FnOnce(&crate::content_store::GitTree) -> T,
-) -> Option<T> {
-    let view = view(root)?;
-    let id = super::hash_key(id).ok()?;
-    let inventory = view.inventory.get()?;
-    if inventory.tree_observations.get(&id)?.as_str() != stamp {
-        return None;
-    }
-    let trees = &inventory.trees;
-    let index = trees.binary_search_by_key(&id, |tree| tree.id).ok()?;
-    Some(read(&trees[index]))
-}
-
 /// The trees already read during this invocation, before or after source selection.
 pub fn observed_tree(root: &Path, id: gix::ObjectId, stamp: &str) -> Option<Arc<[RawTreeEntry]>> {
     view(root)?.observed_tree(id, stamp)
+}
+
+/// Whether this view already holds verified entries for its root.
+pub fn root_observed(root: &Path) -> bool {
+    view(root).is_some_and(|v| v.with_repo(|repo| {
+        v.storage_stamp(repo, v.tree).is_some_and(|stamp| v.observed_tree(v.tree, &stamp).is_some())
+    }))
+}
+
+pub fn remember_root(root: &Path, stamp: String, entries: Arc<[RawTreeEntry]>) {
+    if let Some(v) = view(root) {
+        v.observed_trees.lock().unwrap_or_else(|err| err.into_inner())
+            .insert(v.tree, ObservedTree { stamp, entries });
+    }
 }
 
 pub fn decode_verified_tree(root: Option<&Path>, stamp: Option<&str>, tree: gix::Tree<'_>) -> io::Result<Arc<[RawTreeEntry]>> {
@@ -637,9 +657,7 @@ impl InventoryFilter {
         if !parent.is_empty() {
             bytes.push(b'/');
         }
-        for pair in name.as_bytes().chunks_exact(2) {
-            bytes.push(u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?);
-        }
+        bytes.extend(raw_entry_name(name)?);
         if self.ignored(&bytes, directory) {
             return None;
         }
@@ -657,7 +675,7 @@ impl InventoryFilter {
 pub fn inventory_filter(root: &Path) -> Result<InventoryFilter, String> {
     let v = view(root).ok_or("Git source view is closed")?;
     let bytes = match v.ignore_blob()? {
-        Some(id) => v.with_repo(|repo| repo.find_blob(id).map(|blob| blob.data.clone()).map_err(|e| e.to_string()))?,
+        Some(id) => v.with_repo(|repo| verified_blob(repo, id).map(|blob| blob.data.clone()).map_err(|e| e.to_string()))?,
         None => Vec::new(),
     };
     let rules = super::ignore_patterns(Path::new("/"), gix::ignore::glob::pattern::Case::Sensitive, &bytes)
@@ -673,12 +691,18 @@ pub fn inventory_selection(root: &Path) -> Option<String> {
     let v = view(root)?;
     let paths = v.paths.lock().unwrap_or_else(|err| err.into_inner());
     let ignores = match v.ignore_blob() {
-        Ok(Some(id)) if v.with_repo(|repo| repo.find_header(id).is_ok()) => id.to_string(),
-        Ok(Some(id)) => format!("unreadable:{id}"),
+        Ok(Some(id)) => v.with_repo(|repo| {
+            v.storage_stamp(repo, id).filter(|_| repo.has_object(id))
+                .map(|stamp| format!("{id}:{stamp}"))
+                .unwrap_or_else(|| match verified_blob(repo, id) {
+                    Ok(_) => format!("verified:{id}"),
+                    Err(_) => format!("unreadable:{id}"),
+                })
+        }),
         Ok(None) => String::new(),
         Err(_) => format!("unreadable:{}", v.tree),
     };
-    serde_json::to_string(&("ignore-v5", ignores, &v.prefix, &*paths)).ok()
+    serde_json::to_string(&("ignore-v6", ignores, &v.prefix, &*paths)).ok()
 }
 
 pub fn source_languages(root: &Path) -> Option<SourceLanguages> {

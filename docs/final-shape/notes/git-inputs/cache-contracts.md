@@ -92,6 +92,10 @@ The empty tree has a complete successful decoder outcome with zero entry rows.
 That outcome is retained too. Zero rows alone do not encode completeness.
 The explicit walk, the source inventory, and direct path lookup use the same verified tree entries within a scan.
 Count a decode where the provider reads the entries from the Git object.
+Read the root's verified facts before a revision run looks up its settings or its ignore file.
+The root request uses the ordinary Git rules and can restore the retained tree entries.
+Later path lookups use verified inventory entries for directories the inventory has already read.
+The ignore selection reads the ignore blob's storage observation. A changed blob must pass verification before it can filter files.
 Commit decoding uses the same form for commit records, ordered parents, signatures, and extra headers.
 One native decoder request can answer all these families.
 

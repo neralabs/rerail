@@ -2870,6 +2870,9 @@ fn run_observed(
         let (probe, _) = combine_keyed(programs, masked, &given.graphs, &added::Added::of(&[], options), read, &lists)?;
         git::metadata_only(&probe) && !front::needed(&probe, probe.outputs.clone()).contains("env")
     } else { false };
+    if !metadata_without_env {
+        git::prime_root(root)?;
+    }
     let settings = crate::code_rule_dsl::logic::settings::settings_with_file(root, &flags, !metadata_without_env).map_err(Error::Plan)?;
     let mut added = added::Added::of(&settings, options);
     drop(setting);

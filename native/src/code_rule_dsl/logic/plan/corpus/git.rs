@@ -119,25 +119,6 @@ impl Git {
                 records.extend(tree.iter().map(raw_tree_record));
                 return Ok(records);
             }
-            if let Some(records) = snapshot::with_inventory_tree(root, &id, stamp, |tree| {
-                let mut records = Vec::with_capacity(tree.entries.len() + 1);
-                records.push(Record::text("kind", "tree"));
-                for entry in &tree.entries {
-                    let mut record = match entry.name.strip_prefix('\0') {
-                        Some(name) => Record::text("entry-bytes", name),
-                        None => Record::text("entry", &entry.name),
-                    };
-                    record.second = hex(&entry.target.key_bytes()[8..8 + id.as_slice().len()]);
-                    record.number = i64::from(entry.mode);
-                    records.push(record);
-                }
-                records
-            }) {
-                if !repo.has_object(id) { return Err("missing"); }
-                let mut records = records;
-                records.push(Record::text("storage", stamp));
-                return Ok(records);
-            }
         }
         let object = snapshot::verified_object(repo, id).map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }
@@ -457,6 +438,40 @@ pub(super) fn metadata_only(program: &Program) -> bool {
     })
 }
 
+/// Restore the root entries before the host looks up Git-backed control files.
+pub(super) fn prime_root(root: &Path) -> super::Result<()> {
+    use crate::code_rule_dsl::logic::plan::output::{Outputs, Value as Cell};
+    if !snapshot::contains(root) || snapshot::root_observed(root) {
+        return Ok(());
+    }
+    let program = crate::code_rule_dsl::logic::rr::parse(concat!(
+        include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
+        include_str!("../../../../../../docs/rule-syntax/lib/git.rr"), "\n",
+        include_str!("../../../typing/programs/git-root-tree.rr"),
+    )).map_err(|err| super::Error::Plan(err.to_string()))?;
+    let options = serde_json::json!({ "reuse": false, "inputFiles": [] });
+    let image = super::run_fact_image(&program, root, &options)?;
+    let outputs = Outputs::of(&image).map_err(super::Error::Plan)?;
+    if let Some(row) = outputs.rows("git_root_tree_error").first() {
+        return Err(super::Error::Plan(format!("cannot inventory Git tree {}: {}", row.get(0).text().unwrap_or(""), row.get(1).text().unwrap_or("unknown error"))));
+    }
+    let invalid = || super::Error::Plan("invalid Git root tree fact".to_owned());
+    let stamps = outputs.rows("git_root_tree_storage");
+    let stamp = stamps.first().and_then(|row| row.get(0).text()).ok_or_else(invalid)?;
+    let mut entries = Vec::new();
+    for (relation, bytes) in [("git_tree_entry", false), ("git_tree_entry_bytes", true)] {
+        for row in outputs.rows(relation) {
+            let (Cell::Text(name), Some(mode), Cell::Text(target)) = (row.get(2), row.get(3).int(), row.get(4))
+                else { return Err(invalid()) };
+            let name = if bytes { snapshot::raw_entry_name(name).ok_or_else(invalid)? } else { name.as_bytes().to_vec() };
+            let target = gix::ObjectId::from_hex(target.as_bytes()).map_err(|_| invalid())?;
+            entries.push(RawTreeEntry { name, mode: mode as u16, target });
+        }
+    }
+    snapshot::remember_root(root, stamp.to_owned(), entries.into());
+    Ok(())
+}
+
 /// Materialize the placements from the source phase. Rust only adapts the rows to
 /// the snapshot store's inventory format.
 pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>) -> Result<crate::git_workspace::snapshot::Inventory, crate::git_workspace::snapshot::InventoryError> {
@@ -466,6 +481,10 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>) -> 
     use std::collections::BTreeMap;
 
     let _store = store.map(super::ThreadStore::enter);
+    prime_root(root).map_err(|error| match error {
+        super::Error::Cache(error) => InventoryError::Cache(error),
+        other => InventoryError::Source(other.to_string()),
+    })?;
     // Installed addons have no source checkout. Embed the same library used by .rr policies.
     let program = crate::code_rule_dsl::logic::rr::parse(concat!(
         include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
