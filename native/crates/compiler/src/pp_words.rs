@@ -633,35 +633,44 @@ impl Default for DefState {
 /// The substitution being made (`SUB`, `STR`, `GLUE`): one at a time, as a call's arguments
 /// are expanded before it begins.
 #[derive(Clone, Copy, Default)]
-struct Sub {
+#[repr(C)]
+pub(crate) struct Sub {
     /// The expansion's index + 1 (`Tok::exp`).
-    id: u32,
+    pub(crate) id: u32,
     /// The body's range walked (all of it, or a `__VA_OPT__`'s content) and its next token.
-    lo: u32,
-    i: u32,
-    hi: u32,
+    pub(crate) lo: u32,
+    pub(crate) i: u32,
+    pub(crate) hi: u32,
     /// The output's first arena index, and the range's (a content's) being made.
-    base: u32,
-    out: u32,
+    pub(crate) base: u32,
+    pub(crate) out: u32,
     /// The body token taken last (`B`), and its index.
-    bt: Tok,
-    at: u32,
-    /// An open `__VA_OPT__`'s content: the walk after it, its output's start, whether it is
-    /// stringized, and its `#` or `__VA_OPT__` token.
-    va: Option<(u32, u32, u32, u32, bool, Tok)>,
-    /// The content closed last: its output's start, and whether it is stringized.
-    closed: (u32, bool, Tok),
+    pub(crate) bt: Tok,
+    pub(crate) at: u32,
+    /// An open `__VA_OPT__`'s content (`va_open`): the walk after it, its output's start,
+    /// whether it is stringized, and its `#` or `__VA_OPT__` token.
+    pub(crate) va_open: bool,
+    pub(crate) va_lo: u32,
+    pub(crate) va_i: u32,
+    pub(crate) va_hi: u32,
+    pub(crate) va_out: u32,
+    pub(crate) va_str: bool,
+    pub(crate) va_bt: Tok,
+    /// The content closed last: its output's start, whether it is stringized, its token.
+    pub(crate) closed_at: u32,
+    pub(crate) closed_str: bool,
+    pub(crate) closed_bt: Tok,
     /// The pastes: the range's start, the read and write cursors, and the range's end.
-    ps: u32,
-    r: u32,
-    w: u32,
-    end: u32,
+    pub(crate) ps: u32,
+    pub(crate) r: u32,
+    pub(crate) w: u32,
+    pub(crate) end: u32,
     /// The range to stringize, its first token, the literal's first scratch byte, and the token
     /// whose flags it takes.
-    s: (u32, u32),
-    s_first: u32,
-    sb: u32,
-    like: Tok,
+    pub(crate) s: (u32, u32),
+    pub(crate) s_first: u32,
+    pub(crate) sb: u32,
+    pub(crate) like: Tok,
 }
 
 type R<T> = Result<T, &'static str>;
@@ -821,6 +830,12 @@ pub(crate) struct Ctx {
     pub table_mask: u64,
     /// The definition `LOOKUP` found.
     pub d: u64,
+    /// `(Tok, Tok)`s, at their Rust layout (`EXP`).
+    pub exps: *mut u8,
+    pub nexps: u64,
+    pub room_exps: u64,
+    /// The substitution being made (`Machine::sub`).
+    pub sub: *mut Sub,
     pub returns: *mut u32,
     pub nreturns: u64,
     pub room_returns: u64,
@@ -847,6 +862,8 @@ pub(crate) const COND_SRC: usize = std::mem::offset_of!((u32, bool, bool), 0);
 pub(crate) const PAIR: (usize, usize, usize) = (std::mem::size_of::<(u32, u32)>(), std::mem::offset_of!((u32, u32), 0), std::mem::offset_of!((u32, u32), 1));
 /// An argument use: its size, its parameter's offset, its "inside `__VA_OPT__`"'s.
 pub(crate) const USE: (usize, usize, usize) = (std::mem::size_of::<(u16, bool)>(), std::mem::offset_of!((u16, bool), 0), std::mem::offset_of!((u16, bool), 1));
+/// An expansion's name and end tokens: its size, and their offsets.
+pub(crate) const EXP: (usize, usize, usize) = (std::mem::size_of::<(Tok, Tok)>(), std::mem::offset_of!((Tok, Tok), 0), std::mem::offset_of!((Tok, Tok), 1));
 /// A level: its size, its parameter's offset, its start's in `kept`.
 pub(crate) const LEVEL: (usize, usize, usize) = (std::mem::size_of::<(u16, u32)>(), std::mem::offset_of!((u16, u32), 0), std::mem::offset_of!((u16, u32), 1));
 
@@ -914,6 +931,10 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         table_mask: m.table.len() as u64 - 1,
         table: m.table.as_mut_ptr(),
         d: u64::from(m.d),
+        room_exps: room(&mut m.exps, bounds.output),
+        exps: m.exps.as_mut_ptr().cast(),
+        nexps: m.exps.len() as u64,
+        sub: &mut m.sub,
         returns: returns.as_mut_ptr(),
         nreturns: 0,
         room_returns: bounds.depth as u64,
@@ -941,6 +962,7 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         m.pres.set_len(c.npres as usize);
         m.uses.set_len(c.nuses as usize);
         m.levels.set_len(c.nlevels as usize);
+        m.exps.set_len(c.nexps as usize);
     }
     (m.collecting, m.t, m.from_file, m.in_if, m.d, m.line_last) = (c.collecting as u32, c.t, c.from_file != 0, c.in_if != 0, c.d as u32, c.line_last);
     if r == 0 {
@@ -1513,7 +1535,7 @@ impl<'a> Machine<'a> {
                 if !is {
                     return Ok(Some(false));
                 }
-                if self.sub.va.is_some() {
+                if self.sub.va_open {
                     return Err("a __VA_OPT__ inside a __VA_OPT__");
                 }
                 let (clo, chi, end) = self.va_opt_content(&def, k, v.hi);
@@ -1524,7 +1546,7 @@ impl<'a> Machine<'a> {
                     return Ok(Some(true));
                 }
                 let a = self.arena.len() as u32;
-                self.sub.va = Some((v.lo, end, v.hi, v.out, mode == 3, v.bt));
+                (self.sub.va_open, self.sub.va_lo, self.sub.va_i, self.sub.va_hi, self.sub.va_out, self.sub.va_str, self.sub.va_bt) = (true, v.lo, end, v.hi, v.out, mode == 3, v.bt);
                 // Not present, stringized: its content is empty, its literal `""`.
                 let (lo, hi) = if present { (clo, chi) } else { (chi, chi) };
                 (self.sub.lo, self.sub.i, self.sub.hi, self.sub.out) = (lo, lo, hi, a);
@@ -1535,29 +1557,29 @@ impl<'a> Machine<'a> {
                 return Ok(None);
             }
             6 => {
-                let (at, stringized, _) = v.closed;
+                let (at, stringized) = (v.closed_at, v.closed_str);
                 if stringized {
                     (self.sub.ps, self.sub.r, self.sub.w, self.sub.end) = (at, at, at, self.arena.len() as u32);
                 }
                 stringized
             }
-            7 => match v.va {
-                Some((lo, i, hi, out, stringized, bt)) => {
-                    let at = v.out;
-                    if !stringized && (at as usize) < self.arena.len() {
-                        let x = &mut self.arena[at as usize];
-                        x.flags = (x.flags & !SPACE) | (bt.flags & SPACE);
-                    }
-                    self.sub = Sub { lo, i, hi, out, va: None, closed: (at, stringized, bt), ..v };
-                    true
+            7 => {
+                if !v.va_open {
+                    return Ok(Some(false));
                 }
-                None => false,
-            },
+                let at = v.out;
+                if !v.va_str && (at as usize) < self.arena.len() {
+                    let x = &mut self.arena[at as usize];
+                    x.flags = (x.flags & !SPACE) | (v.va_bt.flags & SPACE);
+                }
+                self.sub = Sub { lo: v.va_lo, i: v.va_i, hi: v.va_hi, out: v.va_out, va_open: false, closed_at: at, closed_str: v.va_str, closed_bt: v.va_bt, ..v };
+                true
+            }
             8 => {
-                let at = v.closed.0;
+                let at = v.closed_at;
                 self.retain_from(at);
                 self.sub.s = (at, self.arena.len() as u32);
-                self.sub.like = v.closed.2;
+                self.sub.like = v.closed_bt;
                 return Ok(None);
             }
             9 => {

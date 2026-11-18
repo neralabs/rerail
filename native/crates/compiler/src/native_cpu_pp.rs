@@ -14,8 +14,8 @@
 
 use crate::Error;
 use crate::native_cpu_shape::Step;
-use crate::pp_words::{self, BOL, Bounds, COND_SIZE, COND_SRC, Ctx, Def, DefState, EOF, Env, Expanded, File, FileC, Frame, HASH, HASHHASH, IDENT, LEVEL, NO_PARAM, NOEXP, NONE, NUMBER, PAIR, PASTE_MARK, Refused, SPACE, Slot, Src, Tok, USE, VA_ARGS, VA_OPT, VA_OPT_MARK};
-use crate::program::{ACCEPT, ARG, DEFINE, DEFINED, FRAME, GOTO, IS, KEEP, LINE, LOOKUP, MACRO, PAINT, PEEK, PRE, PUSH, PUT, READ, RETURN, SKIPLINE, STOP, UNDEF, Words, split};
+use crate::pp_words::{self, BOL, Bounds, COND_SIZE, COND_SRC, Ctx, DIGRAPH, Def, DefState, EOF, EXP, Env, Expanded, File, FileC, Frame, HASH, HASHHASH, IDENT, LEVEL, LITERAL, NO_PARAM, NOEXP, NONE, NUMBER, PAIR, PASTE, PASTE_MARK, PLACEMARKER, PUNCT, Refused, SPACE, Slot, Src, Sub, Tok, USE, VA_ARGS, VA_OPT, VA_OPT_MARK};
+use crate::program::{ACCEPT, ARG, DEFINE, DEFINED, FRAME, GLUE, GOTO, IS, KEEP, LINE, LOOKUP, MACRO, PAINT, PEEK, PRE, PUSH, PUT, PpTables, READ, RETURN, SKIPLINE, STOP, STR, SUB, UNDEF, Words, split};
 use cranelift_codegen::ir::{AbiParam, Block, BlockCall, InstBuilder, JumpTableData, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -53,6 +53,10 @@ const REASONS: &[&str] = &[
     "past the definitions' bound",
     "a __VA_OPT__ inside a __VA_OPT__",
     "past the scratch bytes' bound",
+    "a substitution with no frame",
+    "past the expansions' bound",
+    "an argument substituted before its expansion",
+    "a raw string's prefix pasted",
 ];
 const R_STOPPED: u64 = 1;
 const R_CALLS: u64 = 2;
@@ -76,6 +80,10 @@ const R_PARAMS: u64 = 17;
 const R_DEFS: u64 = 18;
 const R_VA_OPT: u64 = 19;
 const R_SCRATCH: u64 = 20;
+const R_SUB_FRAME: u64 = 21;
+const R_EXPS: u64 = 22;
+const R_EARLY: u64 = 23;
+const R_RAW: u64 = 24;
 
 /// One of the machine's buffers in `Ctx`: its start's, length's and room's fields, its
 /// element's size, and why a push past its room refuses.
@@ -105,6 +113,26 @@ const LEVELS: V = v!(levels, nlevels, room_levels, LEVEL.0, R_SOURCES);
 const DEFS: V = v!(defs, ndefs, room_defs, size_of::<Def>(), R_DEFS);
 const PARAMS: V = v!(params, nparams, room_params, size_of::<Tok>(), R_ARENA);
 const MARKS: V = v!(marks, nmarks, room_marks, 4, R_ARENA);
+const EXPS: V = v!(exps, nexps, room_exps, EXP.0, R_EXPS);
+
+/// `Sub`'s field `$f`'s offset.
+macro_rules! sb {
+    ($f:ident) => {
+        offset_of!(Sub, $f) as i32
+    };
+    ($f:ident . $g:tt) => {
+        (offset_of!(Sub, $f) + offset_of!((u32, u32), $g)) as i32
+    };
+}
+
+/// A token's fields' offsets.
+const T_KIND: i32 = offset_of!(Tok, kind) as i32;
+const T_FLAGS: i32 = offset_of!(Tok, flags) as i32;
+
+/// Eight bytes' words: each byte 1, each byte 0x7f, each byte's high bit.
+const ONES: i64 = 0x0101_0101_0101_0101;
+const LOW7: i64 = 0x7f7f_7f7f_7f7f_7f7f;
+const HIGH: i64 = 0x8080_8080_8080_8080_u64 as i64;
 
 /// `DefState`'s field `$f`'s offset, and its definition's (`d`) field `$g`'s.
 macro_rules! ds {
@@ -195,6 +223,7 @@ struct Lower<'a, 'b> {
     heads: Vec<(Block, Step)>,
     /// A word not lowered refuses the TU when it runs (`NOT_LOWERED`), not the compile.
     partial: bool,
+    pp: &'a PpTables,
 }
 
 impl Lower<'_, '_> {
@@ -302,17 +331,16 @@ impl Lower<'_, '_> {
     }
 
     /// `Src::arena(a, b, def, stop)` pushed (refusing past the sources' bound).
-    fn push_arena_src(&mut self, pc: usize, a: Value, b: Value, def: u32, stop: bool) {
+    fn push_arena_src(&mut self, pc: usize, a: Value, b: Value, def: Value, stop: bool) {
         let s = self.vpush(SOURCES, pc);
         let f = &mut *self.f;
         let none = f.ins().iconst(types::I32, i64::from(NONE));
         let z = f.ins().iconst(types::I32, 0);
-        let d = f.ins().iconst(types::I32, i64::from(def));
         let stop = f.ins().iconst(types::I8, i64::from(stop));
         f.ins().store(flags(), none, s, offset_of!(Src, file) as i32);
         st(f, types::I32, a, s, offset_of!(Src, pos) as i32);
         st(f, types::I32, b, s, offset_of!(Src, end) as i32);
-        f.ins().store(flags(), d, s, offset_of!(Src, def) as i32);
+        st(f, types::I32, def, s, offset_of!(Src, def) as i32);
         f.ins().store(flags(), stop, s, offset_of!(Src, stop) as i32);
         f.ins().store(flags(), none, s, offset_of!(Src, hash) as i32);
         f.ins().store(flags(), z, s, offset_of!(Src, delta) as i32);
@@ -656,7 +684,8 @@ impl Lower<'_, '_> {
         let l_ok = self.f.ins().icmp(IntCC::UnsignedLessThan, nl, room);
         let ok = self.f.ins().band(s_ok, l_ok);
         self.check(ok, pc, R_SOURCES);
-        self.push_arena_src(pc, a, b, NONE, true);
+        let none = self.f.ins().iconst(types::I32, i64::from(NONE));
+        self.push_arena_src(pc, a, b, none, true);
         let nk = self.vlen(KEPT);
         let lp = self.vpush(LEVELS, pc);
         st(self.f, types::I16, p, lp, LEVEL.1 as i32);
@@ -789,7 +818,11 @@ impl Lower<'_, '_> {
     fn body_pasted(&mut self, d: Value, off: i32, k: Value) -> Value {
         let m = self.body_mark(d, off, k);
         let x = self.f.ins().band_imm(m, i64::from(PASTE_MARK));
-        self.f.ins().icmp_imm(IntCC::NotEqual, x, 0)
+        let t = self.body_tok(d, off, k);
+        let fl = ldu(self.f, types::I8, t, T_FLAGS);
+        let y = self.f.ins().band_imm(fl, i64::from(PASTE));
+        let z = self.f.ins().bor(x, y);
+        self.f.ins().icmp_imm(IntCC::NotEqual, z, 0)
     }
 
     /// `Machine::mark_body`: the token at `tok + off` the next of the body being read, marked.
@@ -1462,6 +1495,1041 @@ impl Lower<'_, '_> {
         self.f.ins().jump(next, &[]);
     }
 
+    fn sub_state(&mut self) -> Value {
+        ld(self.f, types::I64, self.ctx, at!(sub))
+    }
+
+    /// A token's six fields stored at `to + off`.
+    #[allow(clippy::too_many_arguments)]
+    fn put_tok(&mut self, to: Value, off: i32, kind: Value, fl: Value, buf: Value, start: Value, end: Value, exp: Value) {
+        st(self.f, types::I8, kind, to, off + T_KIND);
+        st(self.f, types::I8, fl, to, off + T_FLAGS);
+        st(self.f, types::I32, buf, to, off + offset_of!(Tok, buf) as i32);
+        st(self.f, types::I32, start, to, off + offset_of!(Tok, start) as i32);
+        st(self.f, types::I32, end, to, off + offset_of!(Tok, end) as i32);
+        st(self.f, types::I32, exp, to, off + offset_of!(Tok, exp) as i32);
+    }
+
+    /// `flags = (flags & !clear) | (from & keep)` on the token at `to + off`.
+    fn set_flags(&mut self, to: Value, off: i32, clear: u8, from: Value, keep: u8) {
+        let fl = ldu(self.f, types::I8, to, off + T_FLAGS);
+        let a = self.f.ins().band_imm(fl, !i64::from(clear));
+        let b = self.f.ins().band_imm(from, i64::from(keep));
+        let x = self.f.ins().bor(a, b);
+        st(self.f, types::I8, x, to, off + T_FLAGS);
+    }
+
+    /// The token at `from + off` pushed to the arena, its flags then `PLACEMARKER` alone where
+    /// `placemarker`, its expansion `exp` where given.
+    fn push_tok_as(&mut self, pc: usize, from: Value, off: i32, placemarker: bool, exp: Option<Value>) {
+        let p = self.vpush(ARENA, pc);
+        copy_tok(self.f, from, off, p, 0);
+        if placemarker {
+            let pm = self.f.ins().iconst(types::I8, i64::from(PLACEMARKER));
+            self.f.ins().store(flags(), pm, p, T_FLAGS);
+        }
+        if let Some(e) = exp {
+            st(self.f, types::I32, e, p, offset_of!(Tok, exp) as i32);
+        }
+    }
+
+    /// The constant bytes `b` appended to scratch (`Machine::scratch_push`).
+    fn scratch_push(&mut self, pc: usize, b: &[u8]) {
+        let ctx = self.ctx;
+        let n = ld(self.f, types::I64, ctx, at!(nscratch));
+        let room = ld(self.f, types::I64, ctx, at!(room_scratch));
+        let end = self.f.ins().iadd_imm(n, b.len() as i64);
+        let ok = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, room);
+        self.check(ok, pc, R_SCRATCH);
+        let base = ld(self.f, types::I64, ctx, at!(scratch));
+        let p = self.f.ins().iadd(base, n);
+        for (i, &c) in b.iter().enumerate() {
+            let c = self.f.ins().iconst(types::I8, i64::from(c));
+            self.f.ins().store(bytes_flags(), c, p, i as i32);
+        }
+        st(self.f, types::I64, end, ctx, at!(nscratch));
+    }
+
+    /// `w`'s first `k` bytes (`k` at least 1) stored at `p`: one store where `k` is 8 or more,
+    /// else the few one by one (straight code: at most seven).
+    fn store_bytes(&mut self, p: Value, w: Value, k: Value) {
+        let f = &mut *self.f;
+        let done = f.create_block();
+        let full = f.create_block();
+        let tail = f.create_block();
+        let eight = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, k, 8);
+        f.ins().brif(eight, full, &[], tail, &[]);
+        f.switch_to_block(full);
+        f.ins().store(bytes_flags(), w, p, 0);
+        f.ins().jump(done, &[]);
+        f.switch_to_block(tail);
+        for i in 0..7i64 {
+            let more = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, k, i);
+            let put = f.create_block();
+            f.ins().brif(more, put, &[], done, &[]);
+            f.switch_to_block(put);
+            let b = f.ins().ushr_imm(w, 8 * i);
+            let b = f.ins().ireduce(types::I8, b);
+            f.ins().store(bytes_flags(), b, p, i as i32);
+        }
+        f.ins().jump(done, &[]);
+        f.switch_to_block(done);
+    }
+
+    /// The high bit of each of a word's bytes that is zero (exact: no borrow between bytes).
+    fn zero_bytes(&mut self, x: Value) -> Value {
+        let f = &mut *self.f;
+        let a = f.ins().band_imm(x, LOW7);
+        let a = f.ins().iadd_imm(a, LOW7);
+        let a = f.ins().bor(a, x);
+        let a = f.ins().bor_imm(a, LOW7);
+        f.ins().bnot(a)
+    }
+
+    /// The high bit of each byte equal to `c`.
+    fn bytes_eq(&mut self, w: Value, c: u8) -> Value {
+        let x = self.f.ins().bxor_imm(w, ONES.wrapping_mul(i64::from(c)));
+        self.zero_bytes(x)
+    }
+
+    /// The high bit of each byte `c` with `lo < c < hi` (`hi` at most 128; exact, bytes of
+    /// 128 and more clear).
+    fn bytes_between(&mut self, w: Value, lo: u8, hi: u8) -> Value {
+        let f = &mut *self.f;
+        let low = f.ins().band_imm(w, LOW7);
+        let top = f.ins().iconst(types::I64, ONES.wrapping_mul(127 + i64::from(hi)));
+        let a = f.ins().isub(top, low);
+        let nw = f.ins().bnot(w);
+        let a = f.ins().band(a, nw);
+        let b = f.ins().iadd_imm(low, ONES.wrapping_mul(127 - i64::from(lo)));
+        let a = f.ins().band(a, b);
+        f.ins().band_imm(a, HIGH)
+    }
+
+    /// The high bits of a word's first `k` bytes (`k` from 1).
+    fn valid_bytes(&mut self, k: Value) -> Value {
+        let f = &mut *self.f;
+        let bits = f.ins().ishl_imm(k, 3);
+        let one = f.ins().iconst(types::I64, 1);
+        let m = f.ins().ishl(one, bits);
+        let m = f.ins().iadd_imm(m, -1);
+        let all = f.ins().iconst(types::I64, -1);
+        let eight = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, k, 8);
+        let m = f.ins().select(eight, all, m);
+        f.ins().band_imm(m, HIGH)
+    }
+
+    /// Whether every one of the `n` bytes at `p` is in the class `class` makes the high bits of
+    /// (a word's bytes), eight a step (`Step::Word`).
+    fn all_bytes(&mut self, p: Value, n: Value, class: fn(&mut Self, Value) -> Value) -> Value {
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Word));
+        let join = self.f.create_block();
+        self.f.append_block_param(join, types::I8);
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().jump(head, &[z.into()]);
+        self.f.switch_to_block(head);
+        let i = self.f.block_params(head)[0];
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, i, n);
+        let step = self.f.create_block();
+        let yes = self.f.ins().iconst(types::I8, 1);
+        self.f.ins().brif(more, step, &[], join, &[yes.into()]);
+        self.f.switch_to_block(step);
+        let rem = self.f.ins().isub(n, i);
+        let q = self.f.ins().iadd(p, i);
+        let w = self.chunk(q, rem);
+        let m = class(self, w);
+        let valid = self.valid_bytes(rem);
+        let m = self.f.ins().band(m, valid);
+        let ok = self.f.ins().icmp(IntCC::Equal, m, valid);
+        let i8 = self.f.ins().iadd_imm(i, 8);
+        let on = self.f.create_block();
+        let no = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().brif(ok, on, &[], join, &[no.into()]);
+        self.f.switch_to_block(on);
+        self.f.ins().jump(head, &[i8.into()]);
+        self.f.switch_to_block(join);
+        self.f.block_params(join)[0]
+    }
+
+    /// `pp_words::word_byte`'s bytes: letters, digits, `_` and `$`.
+    fn word_class(&mut self, w: Value) -> Value {
+        let a = self.bytes_between(w, b'0' - 1, b'9' + 1);
+        let b = self.bytes_between(w, b'A' - 1, b'Z' + 1);
+        let c = self.bytes_between(w, b'a' - 1, b'z' + 1);
+        let d = self.bytes_eq(w, b'_');
+        let e = self.bytes_eq(w, b'$');
+        let f = &mut *self.f;
+        let x = f.ins().bor(a, b);
+        let x = f.ins().bor(x, c);
+        let x = f.ins().bor(x, d);
+        f.ins().bor(x, e)
+    }
+
+    fn dot_class(&mut self, w: Value) -> Value {
+        self.bytes_eq(w, b'.')
+    }
+
+    /// The `n` bytes at `p` appended to scratch (`Machine::copy_spell`), `"` and `\\` escaped
+    /// where `escape`: eight bytes a step, or the bytes before an escaped one and it
+    /// (`Step::Word`); the worst case checked against the bound first.
+    fn scratch_append(&mut self, pc: usize, p: Value, n: Value, escape: bool) {
+        let ctx = self.ctx;
+        let n0 = ld(self.f, types::I64, ctx, at!(nscratch));
+        let room = ld(self.f, types::I64, ctx, at!(room_scratch));
+        let worst = if escape { self.f.ins().ishl_imm(n, 1) } else { n };
+        let end = self.f.ins().iadd(n0, worst);
+        let ok = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, room);
+        self.check(ok, pc, R_SCRATCH);
+        let base = ld(self.f, types::I64, ctx, at!(scratch));
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Word));
+        let done = self.f.create_block();
+        self.f.append_block_param(done, types::I64);
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().jump(head, &[z.into(), n0.into()]);
+        self.f.switch_to_block(head);
+        let (at, d) = (self.f.block_params(head)[0], self.f.block_params(head)[1]);
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, at, n);
+        let step = self.f.create_block();
+        self.f.ins().brif(more, step, &[], done, &[d.into()]);
+        self.f.switch_to_block(step);
+        let rem = self.f.ins().isub(n, at);
+        let src = self.f.ins().iadd(p, at);
+        let w = self.chunk(src, rem);
+        let eight = self.f.ins().iconst(types::I64, 8);
+        let k = self.f.ins().umin(rem, eight);
+        let dst = self.f.ins().iadd(base, d);
+        let plain = self.f.create_block();
+        if escape {
+            let q = self.bytes_eq(w, b'"');
+            let b = self.bytes_eq(w, b'\\');
+            let m = self.f.ins().bor(q, b);
+            let valid = self.valid_bytes(k);
+            let m = self.f.ins().band(m, valid);
+            let esc = self.f.create_block();
+            self.f.ins().brif(m, esc, &[], plain, &[]);
+            self.f.switch_to_block(esc);
+            let tz = self.f.ins().ctz(m);
+            let j = self.f.ins().ushr_imm(tz, 3);
+            let some = self.f.create_block();
+            let put = self.f.create_block();
+            self.f.ins().brif(j, some, &[], put, &[]);
+            self.f.switch_to_block(some);
+            self.store_bytes(dst, w, j);
+            self.f.ins().jump(put, &[]);
+            self.f.switch_to_block(put);
+            let sh = self.f.ins().ishl_imm(j, 3);
+            let c = self.f.ins().ushr(w, sh);
+            let c = self.f.ins().ireduce(types::I8, c);
+            let at_c = self.f.ins().iadd(dst, j);
+            let bs = self.f.ins().iconst(types::I8, i64::from(b'\\'));
+            self.f.ins().store(bytes_flags(), bs, at_c, 0);
+            self.f.ins().store(bytes_flags(), c, at_c, 1);
+            let j1 = self.f.ins().iadd_imm(j, 1);
+            let at1 = self.f.ins().iadd(at, j1);
+            let j2 = self.f.ins().iadd_imm(j, 2);
+            let d1 = self.f.ins().iadd(d, j2);
+            self.f.ins().jump(head, &[at1.into(), d1.into()]);
+        } else {
+            self.f.ins().jump(plain, &[]);
+        }
+        self.f.switch_to_block(plain);
+        self.store_bytes(dst, w, k);
+        let at1 = self.f.ins().iadd(at, k);
+        let d1 = self.f.ins().iadd(d, k);
+        self.f.ins().jump(head, &[at1.into(), d1.into()]);
+        self.f.switch_to_block(done);
+        let d = self.f.block_params(done)[0];
+        st(self.f, types::I64, d, ctx, at!(nscratch));
+    }
+
+    /// The token at `tok + off`'s spelling appended to scratch (`Machine::scratch_copy`).
+    fn scratch_copy(&mut self, pc: usize, tok: Value, off: i32, escape: bool) {
+        let (p, n) = self.spelling(tok, off);
+        self.scratch_append(pc, p, n, escape);
+    }
+
+    /// `Machine::retain_from`: the arena's placemarkers from `at` on dropped, a token a step
+    /// (`Step::Item`).
+    fn retain_from(&mut self, at: Value) {
+        let n = self.vlen(ARENA);
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Item));
+        let done = self.f.create_block();
+        self.f.append_block_param(done, types::I64);
+        self.f.ins().jump(head, &[at.into(), at.into()]);
+        self.f.switch_to_block(head);
+        let (r, w) = (self.f.block_params(head)[0], self.f.block_params(head)[1]);
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, r, n);
+        let step = self.f.create_block();
+        self.f.ins().brif(more, step, &[], done, &[w.into()]);
+        self.f.switch_to_block(step);
+        let rp = self.vat(ARENA, r);
+        let fl = ldu(self.f, types::I8, rp, T_FLAGS);
+        let pm = self.f.ins().band_imm(fl, i64::from(PLACEMARKER));
+        let r1 = self.f.ins().iadd_imm(r, 1);
+        let keep = self.f.create_block();
+        self.f.ins().brif(pm, head, &[r1.into(), w.into()], keep, &[]);
+        self.f.switch_to_block(keep);
+        let wp = self.vat(ARENA, w);
+        copy_tok(self.f, rp, 0, wp, 0);
+        let w1 = self.f.ins().iadd_imm(w, 1);
+        self.f.ins().jump(head, &[r1.into(), w1.into()]);
+        self.f.switch_to_block(done);
+        let w = self.f.block_params(done)[0];
+        self.vset_len(ARENA, w);
+    }
+
+    /// `Machine::body_tok`: body token `k` of the definition at `def` into `to + off`: the
+    /// first without space before it, a `##` its paste mark.
+    fn load_body_tok(&mut self, def: Value, k: Value, to: Value, off: i32) {
+        let t = self.body_tok(def, 0, k);
+        copy_tok(self.f, t, 0, to, off);
+        let m = self.body_mark(def, 0, k);
+        let fl = ldu(self.f, types::I8, to, off + T_FLAGS);
+        let first = self.f.ins().icmp_imm(IntCC::Equal, k, 0);
+        let cleared = self.f.ins().band_imm(fl, !i64::from(SPACE));
+        let fl = self.f.ins().select(first, cleared, fl);
+        let pm = self.f.ins().band_imm(m, i64::from(PASTE_MARK));
+        let pasted = self.f.ins().bor_imm(fl, i64::from(PASTE));
+        let fl = self.f.ins().select(pm, pasted, fl);
+        st(self.f, types::I8, fl, to, off + T_FLAGS);
+    }
+
+    /// Body token `k`'s parameter (its mark less the paste flag).
+    fn body_param(&mut self, def: Value, k: Value) -> Value {
+        let m = self.body_mark(def, 0, k);
+        self.f.ins().band_imm(m, 0xffff)
+    }
+
+    /// `SUB` (`Machine::sub`), its modes.
+    fn sub(&mut self, pc: usize, mode: u8) {
+        let next = self.blocks[pc + 1];
+        let skip = self.blocks.get(pc + 2).copied().unwrap_or(next);
+        let fr = self.vtop(FRAMES, pc, R_SUB_FRAME);
+        let def = self.frame_def(fr);
+        let sv = self.sub_state();
+        let i = ldu(self.f, types::I32, sv, sb!(i));
+        let hi = ldu(self.f, types::I32, sv, sb!(hi));
+        let at = ldu(self.f, types::I32, sv, sb!(at));
+        let out = ldu(self.f, types::I32, sv, sb!(out));
+        let bt = sb!(bt);
+        match mode {
+            0 => {
+                let e = self.vpush(EXPS, pc);
+                copy_tok(self.f, fr, offset_of!(Frame, name) as i32, e, EXP.1 as i32);
+                copy_tok(self.f, fr, offset_of!(Frame, end) as i32, e, EXP.2 as i32);
+                let z = self.f.ins().iconst(types::I32, 0);
+                for w in 0..(size_of::<Sub>() as i32 / 4) {
+                    self.f.ins().store(flags(), z, sv, 4 * w);
+                }
+                let id = self.vlen(EXPS);
+                let de = ldu(self.f, types::I32, def, offset_of!(Def, end) as i32);
+                let df = ldu(self.f, types::I32, def, offset_of!(Def, first) as i32);
+                let n = self.f.ins().isub(de, df);
+                let a = self.vlen(ARENA);
+                st(self.f, types::I32, id, sv, sb!(id));
+                st(self.f, types::I32, n, sv, sb!(hi));
+                st(self.f, types::I32, a, sv, sb!(base));
+                st(self.f, types::I32, a, sv, sb!(out));
+                self.f.ins().jump(next, &[]);
+            }
+            1 => {
+                let end = self.f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, i, hi);
+                let take = self.f.create_block();
+                self.f.ins().brif(end, skip, &[], take, &[]);
+                self.f.switch_to_block(take);
+                self.load_body_tok(def, i, sv, bt);
+                st(self.f, types::I32, i, sv, sb!(at));
+                let i1 = self.f.ins().iadd_imm(i, 1);
+                st(self.f, types::I32, i1, sv, sb!(i));
+                self.f.ins().jump(next, &[]);
+            }
+            2 => {
+                // `#` and a parameter: the argument's raw range to stringize.
+                let fnlike = ldu(self.f, types::I8, def, offset_of!(Def, fnlike) as i32);
+                let k = ldu(self.f, types::I8, sv, bt + T_KIND);
+                let hash = self.f.ins().icmp_imm(IntCC::Equal, k, i64::from(HASH));
+                let a1 = self.f.ins().iadd_imm(at, 1);
+                let within = self.f.ins().icmp(IntCC::UnsignedLessThan, a1, hi);
+                let fl = self.f.ins().icmp_imm(IntCC::NotEqual, fnlike, 0);
+                let go = self.f.ins().band(fl, hash);
+                let go = self.f.ins().band(go, within);
+                let look = self.f.create_block();
+                self.f.ins().brif(go, look, &[], skip, &[]);
+                self.f.switch_to_block(look);
+                let p = self.body_param(def, a1);
+                let is = self.f.ins().icmp_imm(IntCC::UnsignedLessThan, p, i64::from(VA_OPT_MARK));
+                let yes = self.f.create_block();
+                self.f.ins().brif(is, yes, &[], skip, &[]);
+                self.f.switch_to_block(yes);
+                let args = ldu(self.f, types::I32, fr, offset_of!(Frame, args) as i32);
+                let ai = self.f.ins().iadd(args, p);
+                let ap = self.vat(ARGV, ai);
+                let (a, b) = self.pair(ap);
+                let a2 = self.f.ins().iadd_imm(at, 2);
+                st(self.f, types::I32, a2, sv, sb!(i));
+                st(self.f, types::I32, a, sv, sb!(s.0));
+                st(self.f, types::I32, b, sv, sb!(s.1));
+                copy_tok(self.f, sv, bt, sv, sb!(like));
+                self.f.ins().jump(next, &[]);
+            }
+            3 | 4 => self.sub_va_opt(pc, mode, fr, def),
+            5 => self.substitute_one(pc, fr, def),
+            6 => {
+                let cs = ldu(self.f, types::I8, sv, sb!(closed_str));
+                let yes = self.f.create_block();
+                self.f.ins().brif(cs, yes, &[], skip, &[]);
+                self.f.switch_to_block(yes);
+                let ca = ldu(self.f, types::I32, sv, sb!(closed_at));
+                let n = self.vlen(ARENA);
+                for o in [sb!(ps), sb!(r), sb!(w)] {
+                    st(self.f, types::I32, ca, sv, o);
+                }
+                st(self.f, types::I32, n, sv, sb!(end));
+                self.f.ins().jump(next, &[]);
+            }
+            7 => {
+                // A `__VA_OPT__`'s content closed: the walk after it.
+                let open = ldu(self.f, types::I8, sv, sb!(va_open));
+                let yes = self.f.create_block();
+                self.f.ins().brif(open, yes, &[], skip, &[]);
+                self.f.switch_to_block(yes);
+                let vs = ldu(self.f, types::I8, sv, sb!(va_str));
+                let n = self.vlen(ARENA);
+                let inside = self.f.ins().icmp(IntCC::UnsignedLessThan, out, n);
+                let not_str = self.f.ins().icmp_imm(IntCC::Equal, vs, 0);
+                let fix = self.f.ins().band(inside, not_str);
+                let fixb = self.f.create_block();
+                let close = self.f.create_block();
+                self.f.ins().brif(fix, fixb, &[], close, &[]);
+                self.f.switch_to_block(fixb);
+                let xp = self.vat(ARENA, out);
+                let vf = ldu(self.f, types::I8, sv, sb!(va_bt) + T_FLAGS);
+                self.set_flags(xp, 0, SPACE, vf, SPACE);
+                self.f.ins().jump(close, &[]);
+                self.f.switch_to_block(close);
+                for (from, to) in [(sb!(va_lo), sb!(lo)), (sb!(va_i), sb!(i)), (sb!(va_hi), sb!(hi)), (sb!(va_out), sb!(out))] {
+                    let x = self.f.ins().load(types::I32, flags(), sv, from);
+                    self.f.ins().store(flags(), x, sv, to);
+                }
+                let z = self.f.ins().iconst(types::I8, 0);
+                self.f.ins().store(flags(), z, sv, sb!(va_open));
+                st(self.f, types::I32, out, sv, sb!(closed_at));
+                st(self.f, types::I8, vs, sv, sb!(closed_str));
+                copy_tok(self.f, sv, sb!(va_bt), sv, sb!(closed_bt));
+                self.f.ins().jump(next, &[]);
+            }
+            8 => {
+                let ca = ldu(self.f, types::I32, sv, sb!(closed_at));
+                self.retain_from(ca);
+                let n = self.vlen(ARENA);
+                st(self.f, types::I32, ca, sv, sb!(s.0));
+                st(self.f, types::I32, n, sv, sb!(s.1));
+                copy_tok(self.f, sv, sb!(closed_bt), sv, sb!(like));
+                self.f.ins().jump(next, &[]);
+            }
+            9 => {
+                let base = ldu(self.f, types::I32, sv, sb!(base));
+                let n = self.vlen(ARENA);
+                for o in [sb!(ps), sb!(r), sb!(w)] {
+                    st(self.f, types::I32, base, sv, o);
+                }
+                st(self.f, types::I32, n, sv, sb!(end));
+                self.f.ins().jump(next, &[]);
+            }
+            _ => {
+                // The output a source to rescan, its macro disabled.
+                let base = ldu(self.f, types::I32, sv, sb!(base));
+                self.retain_from(base);
+                let n = self.vlen(ARENA);
+                let nf = ldu(self.f, types::I8, fr, offset_of!(Frame, name) as i32 + T_FLAGS);
+                let d = ldu(self.f, types::I32, fr, offset_of!(Frame, def) as i32);
+                let some = self.f.ins().icmp(IntCC::UnsignedLessThan, base, n);
+                let fixb = self.f.create_block();
+                let on = self.f.create_block();
+                self.f.ins().brif(some, fixb, &[], on, &[]);
+                self.f.switch_to_block(fixb);
+                let xp = self.vat(ARENA, base);
+                self.set_flags(xp, 0, BOL | SPACE, nf, BOL | SPACE);
+                self.f.ins().jump(on, &[]);
+                self.f.switch_to_block(on);
+                self.drop_frame(fr);
+                let one = self.f.ins().iconst(types::I8, 1);
+                self.f.ins().store(flags(), one, def, offset_of!(Def, disabled) as i32);
+                self.push_arena_src(pc, base, n, d, false);
+                self.f.ins().jump(next, &[]);
+            }
+        }
+    }
+
+    /// `SUB m=3` (`#__VA_OPT__(…)`) and `m=4` (`__VA_OPT__(…)`), tests: the content walked in
+    /// place of the body, or (not present, not stringized) a placemarker.
+    fn sub_va_opt(&mut self, pc: usize, mode: u8, fr: Value, def: Value) {
+        let (next, skip) = (self.blocks[pc + 1], self.blocks[pc + 2]);
+        let sv = self.sub_state();
+        let lo = ldu(self.f, types::I32, sv, sb!(lo));
+        let hi = ldu(self.f, types::I32, sv, sb!(hi));
+        let at = ldu(self.f, types::I32, sv, sb!(at));
+        let out = ldu(self.f, types::I32, sv, sb!(out));
+        let k = if mode == 3 { self.f.ins().iadd_imm(at, 1) } else { at };
+        let variadic = ldu(self.f, types::I8, def, offset_of!(Def, variadic) as i32);
+        let va = self.f.ins().icmp_imm(IntCC::NotEqual, variadic, 0);
+        let within = self.f.ins().icmp(IntCC::UnsignedLessThan, k, hi);
+        let go = self.f.ins().band(va, within);
+        let go = if mode == 3 {
+            let fnlike = ldu(self.f, types::I8, def, offset_of!(Def, fnlike) as i32);
+            let fl = self.f.ins().icmp_imm(IntCC::NotEqual, fnlike, 0);
+            let kind = ldu(self.f, types::I8, sv, sb!(bt) + T_KIND);
+            let hash = self.f.ins().icmp_imm(IntCC::Equal, kind, i64::from(HASH));
+            let x = self.f.ins().band(fl, hash);
+            self.f.ins().band(go, x)
+        } else {
+            go
+        };
+        let look = self.f.create_block();
+        self.f.ins().brif(go, look, &[], skip, &[]);
+        self.f.switch_to_block(look);
+        let m = self.body_param(def, k);
+        let is = self.f.ins().icmp_imm(IntCC::Equal, m, i64::from(VA_OPT_MARK));
+        let yes = self.f.create_block();
+        self.f.ins().brif(is, yes, &[], skip, &[]);
+        self.f.switch_to_block(yes);
+        let open = ldu(self.f, types::I8, sv, sb!(va_open));
+        let flat = self.f.ins().icmp_imm(IntCC::Equal, open, 0);
+        self.check(flat, pc, R_VA_OPT);
+        let (clo, chi, end) = self.va_opt_content(def, 0, k, hi);
+        let present = self.va_present(fr, def);
+        let sv = self.sub_state();
+        if mode == 4 {
+            let absent = self.f.create_block();
+            let walk = self.f.create_block();
+            self.f.ins().brif(present, walk, &[], absent, &[]);
+            self.f.switch_to_block(absent);
+            self.push_tok_as(pc, sv, sb!(bt), true, None);
+            st(self.f, types::I32, end, sv, sb!(i));
+            self.f.ins().jump(next, &[]);
+            self.f.switch_to_block(walk);
+        }
+        let a = self.vlen(ARENA);
+        let one = self.f.ins().iconst(types::I8, 1);
+        self.f.ins().store(flags(), one, sv, sb!(va_open));
+        st(self.f, types::I32, lo, sv, sb!(va_lo));
+        st(self.f, types::I32, end, sv, sb!(va_i));
+        st(self.f, types::I32, hi, sv, sb!(va_hi));
+        st(self.f, types::I32, out, sv, sb!(va_out));
+        let vs = self.f.ins().iconst(types::I8, i64::from(mode == 3));
+        self.f.ins().store(flags(), vs, sv, sb!(va_str));
+        copy_tok(self.f, sv, sb!(bt), sv, sb!(va_bt));
+        // Not present (stringized): its content empty.
+        let nlo = self.f.ins().select(present, clo, chi);
+        st(self.f, types::I32, nlo, sv, sb!(lo));
+        st(self.f, types::I32, nlo, sv, sb!(i));
+        st(self.f, types::I32, chi, sv, sb!(hi));
+        st(self.f, types::I32, a, sv, sb!(out));
+        self.f.ins().jump(next, &[]);
+    }
+
+    /// `SUB m=5` (`Machine::substitute_one`): `B` substituted, a parameter's argument (its
+    /// tokens copied a step each, `Step::Item`) or `B` itself.
+    fn substitute_one(&mut self, pc: usize, fr: Value, def: Value) {
+        let next = self.blocks[pc + 1];
+        let sv = self.sub_state();
+        let lo = ldu(self.f, types::I32, sv, sb!(lo));
+        let hi = ldu(self.f, types::I32, sv, sb!(hi));
+        let i = ldu(self.f, types::I32, sv, sb!(at));
+        let out = ldu(self.f, types::I32, sv, sb!(out));
+        let id = ldu(self.f, types::I32, sv, sb!(id));
+        let p = self.body_param(def, i);
+        let is_param = self.f.ins().icmp_imm(IntCC::UnsignedLessThan, p, i64::from(VA_OPT_MARK));
+        let param = self.f.create_block();
+        let itself = self.f.create_block();
+        self.f.ins().brif(is_param, param, &[], itself, &[]);
+        self.f.switch_to_block(itself);
+        self.push_tok_as(pc, sv, sb!(bt), false, Some(id));
+        self.f.ins().jump(next, &[]);
+
+        self.f.switch_to_block(param);
+        let variadic = ldu(self.f, types::I8, def, offset_of!(Def, variadic) as i32);
+        let params = ldu(self.f, types::I16, def, offset_of!(Def, params) as i32);
+        let last = self.f.ins().iadd_imm(params, -1);
+        let is_last = self.f.ins().icmp(IntCC::Equal, p, last);
+        let vb = self.f.ins().icmp_imm(IntCC::NotEqual, variadic, 0);
+        let is_va = self.f.ins().band(vb, is_last);
+        // A `##` before it, after it.
+        let bj = self.f.create_block();
+        self.f.append_block_param(bj, types::I8);
+        let has_before = self.f.ins().icmp(IntCC::UnsignedGreaterThan, i, lo);
+        let bl = self.f.create_block();
+        let no = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().brif(has_before, bl, &[], bj, &[no.into()]);
+        self.f.switch_to_block(bl);
+        let im = self.f.ins().iadd_imm(i, -1);
+        let x = self.body_pasted(def, 0, im);
+        self.f.ins().jump(bj, &[x.into()]);
+        self.f.switch_to_block(bj);
+        let before = self.f.block_params(bj)[0];
+        let aj = self.f.create_block();
+        self.f.append_block_param(aj, types::I8);
+        let i1 = self.f.ins().iadd_imm(i, 1);
+        let has_after = self.f.ins().icmp(IntCC::UnsignedLessThan, i1, hi);
+        let al = self.f.create_block();
+        let no = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().brif(has_after, al, &[], aj, &[no.into()]);
+        self.f.switch_to_block(al);
+        let x = self.body_pasted(def, 0, i1);
+        self.f.ins().jump(aj, &[x.into()]);
+        self.f.switch_to_block(aj);
+        let after = self.f.block_params(aj)[0];
+        let args = ldu(self.f, types::I32, fr, offset_of!(Frame, args) as i32);
+        let ai = self.f.ins().iadd(args, p);
+        let ap = self.vat(ARGV, ai);
+        let (ra, rb) = self.pair(ap);
+        // GNU's `, ## __VA_ARGS__`: the arena's last two a `,` and the `##`.
+        let n = self.vlen(ARENA);
+        let cj = self.f.create_block();
+        self.f.append_block_param(cj, types::I8);
+        let o2 = self.f.ins().iadd_imm(out, 2);
+        let room = self.f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, n, o2);
+        let bv = self.f.ins().band(before, is_va);
+        let go = self.f.ins().band(room, bv);
+        let cl = self.f.create_block();
+        let no = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().brif(go, cl, &[], cj, &[no.into()]);
+        self.f.switch_to_block(cl);
+        let n2 = self.f.ins().iadd_imm(n, -2);
+        let n1 = self.f.ins().iadd_imm(n, -1);
+        let t2 = self.vat(ARENA, n2);
+        let t1 = self.vat(ARENA, n1);
+        let comma = self.tok_spelled(t2, 0, b",");
+        let k2 = ldu(self.f, types::I8, t2, T_KIND);
+        let punct = self.f.ins().icmp_imm(IntCC::Equal, k2, i64::from(PUNCT));
+        let f1 = ldu(self.f, types::I8, t1, T_FLAGS);
+        let pf = self.f.ins().band_imm(f1, i64::from(PASTE));
+        let pasted = self.f.ins().icmp_imm(IntCC::NotEqual, pf, 0);
+        let c = self.f.ins().band(comma, punct);
+        let c = self.f.ins().band(c, pasted);
+        self.f.ins().jump(cj, &[c.into()]);
+        self.f.switch_to_block(cj);
+        let comma_paste = self.f.block_params(cj)[0];
+        let empty = self.f.ins().icmp(IntCC::Equal, ra, rb);
+        let drop2 = self.f.ins().band(comma_paste, empty);
+        let gone = self.f.create_block();
+        let kept = self.f.create_block();
+        self.f.ins().brif(drop2, gone, &[], kept, &[]);
+        // ...with no variadic arguments the comma goes...
+        self.f.switch_to_block(gone);
+        let n2 = self.f.ins().iadd_imm(n, -2);
+        self.vset_len(ARENA, n2);
+        self.f.ins().jump(next, &[]);
+        // ...and with some, the `##` is no paste.
+        self.f.switch_to_block(kept);
+        let n1 = self.f.ins().iadd_imm(n, -1);
+        let nn = self.f.ins().select(comma_paste, n1, n);
+        self.vset_len(ARENA, nn);
+        let raw_b = self.f.ins().bor(before, after);
+        let range = self.f.create_block();
+        self.f.append_block_param(range, types::I64);
+        self.f.append_block_param(range, types::I64);
+        let expanded = self.f.create_block();
+        self.f.ins().brif(raw_b, range, &[ra.into(), rb.into()], expanded, &[]);
+        self.f.switch_to_block(expanded);
+        let pres = ldu(self.f, types::I32, fr, offset_of!(Frame, pres) as i32);
+        let pi = self.f.ins().iadd(pres, p);
+        let pp = self.vat(PRES, pi);
+        let (x, y) = self.pair(pp);
+        let made = self.f.ins().icmp_imm(IntCC::NotEqual, x, i64::from(NONE));
+        self.check(made, pc, R_EARLY);
+        self.f.ins().jump(range, &[x.into(), y.into()]);
+        self.f.switch_to_block(range);
+        let (a, b) = (self.f.block_params(range)[0], self.f.block_params(range)[1]);
+        let none = self.f.ins().icmp(IntCC::Equal, a, b);
+        let pm = self.f.create_block();
+        let copy = self.f.create_block();
+        self.f.ins().brif(none, pm, &[], copy, &[]);
+        self.f.switch_to_block(pm);
+        let sv = self.sub_state();
+        self.push_tok_as(pc, sv, sb!(bt), true, None);
+        self.f.ins().jump(next, &[]);
+        self.f.switch_to_block(copy);
+        let k = self.vlen(ARENA);
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Item));
+        let done = self.f.create_block();
+        self.f.ins().jump(head, &[a.into()]);
+        self.f.switch_to_block(head);
+        let x = self.f.block_params(head)[0];
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, x, b);
+        let body = self.f.create_block();
+        self.f.ins().brif(more, body, &[], done, &[]);
+        self.f.switch_to_block(body);
+        let xp = self.vat(ARENA, x);
+        self.push_tok_as(pc, xp, 0, false, None);
+        let x1 = self.f.ins().iadd_imm(x, 1);
+        self.f.ins().jump(head, &[x1.into()]);
+        self.f.switch_to_block(done);
+        let kp = self.vat(ARENA, k);
+        let sv = self.sub_state();
+        let bf = ldu(self.f, types::I8, sv, sb!(bt) + T_FLAGS);
+        self.set_flags(kp, 0, BOL | SPACE, bf, SPACE);
+        self.f.ins().jump(next, &[]);
+    }
+
+    /// `STR` (`Machine::str_word`), its modes: a stringized literal begun, an argument's token
+    /// added (a test), the literal closed.
+    fn str_word(&mut self, pc: usize, mode: u8) {
+        let next = self.blocks[pc + 1];
+        let sv = self.sub_state();
+        match mode {
+            0 => {
+                let s0 = ldu(self.f, types::I32, sv, sb!(s.0));
+                st(self.f, types::I32, s0, sv, sb!(s_first));
+                let n = ld(self.f, types::I64, self.ctx, at!(nscratch));
+                st(self.f, types::I32, n, sv, sb!(sb));
+                self.scratch_push(pc, b"\"");
+                self.f.ins().jump(next, &[]);
+            }
+            1 => {
+                let skip = self.blocks[pc + 2];
+                let s0 = ldu(self.f, types::I32, sv, sb!(s.0));
+                let s1 = ldu(self.f, types::I32, sv, sb!(s.1));
+                let end = self.f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, s0, s1);
+                let take = self.f.create_block();
+                self.f.ins().brif(end, skip, &[], take, &[]);
+                self.f.switch_to_block(take);
+                let t = self.vat(ARENA, s0);
+                let s01 = self.f.ins().iadd_imm(s0, 1);
+                st(self.f, types::I32, s01, sv, sb!(s.0));
+                let fl = ldu(self.f, types::I8, t, T_FLAGS);
+                let pm = self.f.ins().band_imm(fl, i64::from(PLACEMARKER));
+                let real = self.f.create_block();
+                self.f.ins().brif(pm, next, &[], real, &[]);
+                self.f.switch_to_block(real);
+                let first = ldu(self.f, types::I32, sv, sb!(s_first));
+                let sbv = ldu(self.f, types::I32, sv, sb!(sb));
+                let n = ld(self.f, types::I64, self.ctx, at!(nscratch));
+                let later = self.f.ins().icmp(IntCC::UnsignedGreaterThan, s0, first);
+                let sp = self.f.ins().band_imm(fl, i64::from(SPACE | BOL));
+                let spaced = self.f.ins().icmp_imm(IntCC::NotEqual, sp, 0);
+                let sb1 = self.f.ins().iadd_imm(sbv, 1);
+                let begun = self.f.ins().icmp(IntCC::UnsignedGreaterThan, n, sb1);
+                let gap = self.f.ins().band(later, spaced);
+                let gap = self.f.ins().band(gap, begun);
+                let space = self.f.create_block();
+                let copy = self.f.create_block();
+                self.f.ins().brif(gap, space, &[], copy, &[]);
+                self.f.switch_to_block(space);
+                self.scratch_push(pc, b" ");
+                self.f.ins().jump(copy, &[]);
+                self.f.switch_to_block(copy);
+                let kind = ldu(self.f, types::I8, t, T_KIND);
+                let lit = self.f.ins().icmp_imm(IntCC::Equal, kind, i64::from(LITERAL));
+                let esc = self.f.create_block();
+                let plain = self.f.create_block();
+                self.f.ins().brif(lit, esc, &[], plain, &[]);
+                self.f.switch_to_block(esc);
+                self.scratch_copy(pc, t, 0, true);
+                self.f.ins().jump(next, &[]);
+                self.f.switch_to_block(plain);
+                self.scratch_copy(pc, t, 0, false);
+                self.f.ins().jump(next, &[]);
+            }
+            _ => {
+                self.scratch_push(pc, b"\"");
+                let sv = self.sub_state();
+                if mode == 3 {
+                    let first = ldu(self.f, types::I32, sv, sb!(s_first));
+                    self.vset_len(ARENA, first);
+                }
+                let lf = ldu(self.f, types::I8, sv, sb!(like) + T_FLAGS);
+                let fl = self.f.ins().band_imm(lf, i64::from(BOL | SPACE));
+                let start = ldu(self.f, types::I32, sv, sb!(sb));
+                let id = ldu(self.f, types::I32, sv, sb!(id));
+                let end = ld(self.f, types::I64, self.ctx, at!(nscratch));
+                let p = self.vpush(ARENA, pc);
+                let k = self.f.ins().iconst(types::I8, i64::from(LITERAL));
+                let z = self.f.ins().iconst(types::I32, 0);
+                self.put_tok(p, 0, k, fl, z, start, end, id);
+                self.f.ins().jump(next, &[]);
+            }
+        }
+    }
+
+    /// `GLUE` (`Machine::paste_step`), a test: one step of the pastes of `arena[r..end]`,
+    /// written from `w`; at the end the arena cut to `w`.
+    fn glue(&mut self, pc: usize) {
+        let (next, skip) = (self.blocks[pc + 1], self.blocks[pc + 2]);
+        let sv = self.sub_state();
+        let r = ldu(self.f, types::I32, sv, sb!(r));
+        let w = ldu(self.f, types::I32, sv, sb!(w));
+        let ps = ldu(self.f, types::I32, sv, sb!(ps));
+        let end = ldu(self.f, types::I32, sv, sb!(end));
+        let id = ldu(self.f, types::I32, sv, sb!(id));
+        let done = self.f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, r, end);
+        let fin = self.f.create_block();
+        let step = self.f.create_block();
+        self.f.ins().brif(done, fin, &[], step, &[]);
+        self.f.switch_to_block(fin);
+        self.vset_len(ARENA, w);
+        self.f.ins().jump(skip, &[]);
+        self.f.switch_to_block(step);
+        let t = self.vat(ARENA, r);
+        let fl = ldu(self.f, types::I8, t, T_FLAGS);
+        let pf = self.f.ins().band_imm(fl, i64::from(PASTE));
+        let pasted = self.f.ins().icmp_imm(IntCC::NotEqual, pf, 0);
+        let after = self.f.ins().icmp(IntCC::UnsignedGreaterThan, w, ps);
+        let r1 = self.f.ins().iadd_imm(r, 1);
+        let r2 = self.f.ins().iadd_imm(r, 2);
+        let w1 = self.f.ins().iadd_imm(w, 1);
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, r1, end);
+        let go = self.f.ins().band(pasted, after);
+        let go = self.f.ins().band(go, more);
+        let paste = self.f.create_block();
+        let plain = self.f.create_block();
+        self.f.ins().brif(go, paste, &[], plain, &[]);
+        self.f.switch_to_block(plain);
+        let wp = self.vat(ARENA, w);
+        copy_tok(self.f, t, 0, wp, 0);
+        st(self.f, types::I32, w1, sv, sb!(w));
+        st(self.f, types::I32, r1, sv, sb!(r));
+        self.f.ins().jump(next, &[]);
+
+        self.f.switch_to_block(paste);
+        let wm = self.f.ins().iadd_imm(w, -1);
+        let lp = self.vat(ARENA, wm);
+        let rp = self.vat(ARENA, r1);
+        let wp = self.vat(ARENA, w);
+        st(self.f, types::I32, r2, sv, sb!(r));
+        let lf = ldu(self.f, types::I8, lp, T_FLAGS);
+        let rf = ldu(self.f, types::I8, rp, T_FLAGS);
+        // A placemarker on the right: the left alone; on the left: the right, the left's spacing.
+        let rpm = self.f.ins().band_imm(rf, i64::from(PLACEMARKER));
+        let both = self.f.create_block();
+        self.f.ins().brif(rpm, next, &[], both, &[]);
+        self.f.switch_to_block(both);
+        let lpm = self.f.ins().band_imm(lf, i64::from(PLACEMARKER));
+        let left_pm = self.f.create_block();
+        let spell = self.f.create_block();
+        self.f.ins().brif(lpm, left_pm, &[], spell, &[]);
+        self.f.switch_to_block(left_pm);
+        copy_tok(self.f, rp, 0, lp, 0);
+        let a = self.f.ins().band_imm(rf, !i64::from(BOL | SPACE));
+        let b = self.f.ins().band_imm(lf, i64::from(BOL | SPACE));
+        let x = self.f.ins().bor(a, b);
+        st(self.f, types::I8, x, lp, T_FLAGS);
+        self.f.ins().jump(next, &[]);
+        // The two spelled together in scratch.
+        self.f.switch_to_block(spell);
+        let s0 = ld(self.f, types::I64, self.ctx, at!(nscratch));
+        self.scratch_copy(pc, lp, 0, false);
+        let m = ld(self.f, types::I64, self.ctx, at!(nscratch));
+        self.scratch_copy(pc, rp, 0, false);
+        let e = ld(self.f, types::I64, self.ctx, at!(nscratch));
+        let base = ld(self.f, types::I64, self.ctx, at!(scratch));
+        let lb = self.f.ins().iadd(base, s0);
+        let ln = self.f.ins().isub(m, s0);
+        let rb = self.f.ins().iadd(base, m);
+        let rn = self.f.ins().isub(e, m);
+        let tn = self.f.ins().isub(e, s0);
+        let lk = ldu(self.f, types::I8, lp, T_KIND);
+        let rk = ldu(self.f, types::I8, rp, T_KIND);
+        let (has, kind) = self.pasted_kind(pc, lk, rk, (lb, ln), (rb, rn), tn);
+        let one = self.f.create_block();
+        let two = self.f.create_block();
+        self.f.ins().brif(has, one, &[], two, &[]);
+        // One token: in the left's place.
+        self.f.switch_to_block(one);
+        let fl = self.f.ins().band_imm(lf, i64::from(BOL | SPACE));
+        let z = self.f.ins().iconst(types::I32, 0);
+        self.put_tok(lp, 0, kind, fl, z, s0, e, id);
+        self.f.ins().jump(next, &[]);
+        // None: the right written after the left.
+        self.f.switch_to_block(two);
+        st(self.f, types::I64, s0, self.ctx, at!(nscratch));
+        copy_tok(self.f, rp, 0, wp, 0);
+        let sv = self.sub_state();
+        st(self.f, types::I32, w1, sv, sb!(w));
+        self.f.ins().jump(next, &[]);
+    }
+
+    /// `Machine::pasted_kind`: whether `l`'s and `r`'s bytes (`lb`, `rb`, and the two together,
+    /// `tn` bytes from `lb`) spell one token, and its kind.
+    fn pasted_kind(&mut self, pc: usize, lk: Value, rk: Value, (lp, ln): (Value, Value), (rp, rn): (Value, Value), tn: Value) -> (Value, Value) {
+        let join = self.f.create_block();
+        self.f.append_block_param(join, types::I8);
+        self.f.append_block_param(join, types::I64);
+        let none = |l: &mut Self| {
+            let z8 = l.f.ins().iconst(types::I8, 0);
+            let z = l.f.ins().iconst(types::I64, 0);
+            l.f.ins().jump(join, &[z8.into(), z.into()]);
+        };
+        let kind = |l: &mut Self, k: u8| {
+            let y = l.f.ins().iconst(types::I8, 1);
+            let k = l.f.ins().iconst(types::I64, i64::from(k));
+            l.f.ins().jump(join, &[y.into(), k.into()]);
+        };
+        let when = |l: &mut Self, c: Value, k: u8| {
+            let yes = l.f.create_block();
+            let no = l.f.create_block();
+            l.f.ins().brif(c, yes, &[], no, &[]);
+            l.f.switch_to_block(yes);
+            kind(l, k);
+            l.f.switch_to_block(no);
+            none(l);
+        };
+        let is = |l: &mut Self, x: Value, k: u8| l.f.ins().icmp_imm(IntCC::Equal, x, i64::from(k));
+        let branch = |l: &mut Self, c: Value| {
+            let yes = l.f.create_block();
+            let no = l.f.create_block();
+            l.f.ins().brif(c, yes, &[], no, &[]);
+            l.f.switch_to_block(yes);
+            no
+        };
+        // (IDENT, …)
+        let li = is(self, lk, IDENT);
+        let not_ident = branch(self, li);
+        let ri = is(self, rk, IDENT);
+        let r_not_ident = branch(self, ri);
+        kind(self, IDENT);
+        self.f.switch_to_block(r_not_ident);
+        let rnum = is(self, rk, NUMBER);
+        let r_not_num = branch(self, rnum);
+        let all = self.all_bytes(rp, rn, Self::word_class);
+        when(self, all, IDENT);
+        self.f.switch_to_block(r_not_num);
+        let rlit = is(self, rk, LITERAL);
+        let r_not_lit = branch(self, rlit);
+        let some = self.f.ins().icmp_imm(IntCC::NotEqual, rn, 0);
+        let r_empty = branch(self, some);
+        let c0 = ldu(self.f, types::I8, rp, 0);
+        let dq = self.f.ins().icmp_imm(IntCC::Equal, c0, i64::from(b'"'));
+        let sq = self.f.ins().icmp_imm(IntCC::Equal, c0, i64::from(b'\''));
+        let quoted = self.f.ins().bor(dq, sq);
+        let not_quoted = branch(self, quoted);
+        let mut prefix = self.f.ins().iconst(types::I8, 0);
+        for p in [&b"L"[..], b"u", b"U", b"u8"] {
+            let e = self.spelled_at(lp, ln, p);
+            prefix = self.f.ins().bor(prefix, e);
+        }
+        let not_prefix = branch(self, prefix);
+        kind(self, LITERAL);
+        self.f.switch_to_block(not_prefix);
+        let mut raw = self.f.ins().iconst(types::I8, 0);
+        for p in [&b"R"[..], b"LR", b"uR", b"UR", b"u8R"] {
+            let e = self.spelled_at(lp, ln, p);
+            raw = self.f.ins().bor(raw, e);
+        }
+        let not_raw = branch(self, raw);
+        self.refuse(pc, R_RAW);
+        self.f.switch_to_block(not_raw);
+        none(self);
+        for b in [not_quoted, r_empty, r_not_lit] {
+            self.f.switch_to_block(b);
+            none(self);
+        }
+        // (NUMBER, …)
+        self.f.switch_to_block(not_ident);
+        let lnum = is(self, lk, NUMBER);
+        let not_number = branch(self, lnum);
+        let a = is(self, rk, IDENT);
+        let b = is(self, rk, NUMBER);
+        let ab = self.f.ins().bor(a, b);
+        let not_word = branch(self, ab);
+        kind(self, NUMBER);
+        self.f.switch_to_block(not_word);
+        let rpunct = is(self, rk, PUNCT);
+        let not_punct = branch(self, rpunct);
+        let dots = self.all_bytes(rp, rn, Self::dot_class);
+        let not_dots = branch(self, dots);
+        kind(self, NUMBER);
+        self.f.switch_to_block(not_dots);
+        let plus = self.spelled_at(rp, rn, b"+");
+        let minus = self.spelled_at(rp, rn, b"-");
+        let sign = self.f.ins().bor(plus, minus);
+        let has_l = self.f.ins().icmp_imm(IntCC::NotEqual, ln, 0);
+        let sign = self.f.ins().band(sign, has_l);
+        let no_sign = branch(self, sign);
+        let lastp = self.f.ins().iadd(lp, ln);
+        let c = self.f.ins().load(types::I8, bytes_flags(), lastp, -1);
+        let mut e = self.f.ins().iconst(types::I8, 0);
+        for x in [b'e', b'E', b'p', b'P'] {
+            let q = self.f.ins().icmp_imm(IntCC::Equal, c, i64::from(x));
+            e = self.f.ins().bor(e, q);
+        }
+        when(self, e, NUMBER);
+        self.f.switch_to_block(no_sign);
+        none(self);
+        self.f.switch_to_block(not_punct);
+        none(self);
+        // (PUNCT, NUMBER)
+        self.f.switch_to_block(not_number);
+        let lp_ = is(self, lk, PUNCT);
+        let rn_ = is(self, rk, NUMBER);
+        let pn = self.f.ins().band(lp_, rn_);
+        let not_pn = branch(self, pn);
+        let dot = self.spelled_at(lp, ln, b".");
+        let some = self.f.ins().icmp_imm(IntCC::NotEqual, rn, 0);
+        let go = self.f.ins().band(dot, some);
+        let no_dot = branch(self, go);
+        let c0 = ldu(self.f, types::I8, rp, 0);
+        let dig = self.f.ins().iadd_imm(c0, -i64::from(b'0'));
+        let digit = self.f.ins().icmp_imm(IntCC::UnsignedLessThan, dig, 10);
+        when(self, digit, NUMBER);
+        self.f.switch_to_block(no_dot);
+        none(self);
+        // (LITERAL, IDENT): a suffix, where the dialect has them.
+        self.f.switch_to_block(not_pn);
+        let ll = is(self, lk, LITERAL);
+        let ri = is(self, rk, IDENT);
+        let lr = self.f.ins().band(ll, ri);
+        let not_lr = branch(self, lr);
+        if self.pp.suffix {
+            kind(self, LITERAL);
+        } else {
+            none(self);
+        }
+        // Two punctuators: the dialect's punctuators, compared one by one (straight code).
+        self.f.switch_to_block(not_lr);
+        let op_like = |l: &mut Self, k: Value| {
+            let mut x = l.f.ins().iconst(types::I8, 0);
+            for c in [PUNCT, DIGRAPH, HASH, HASHHASH] {
+                let q = l.f.ins().icmp_imm(IntCC::Equal, k, i64::from(c));
+                x = l.f.ins().bor(x, q);
+            }
+            x
+        };
+        let a = op_like(self, lk);
+        let b = op_like(self, rk);
+        let ops = self.f.ins().band(a, b);
+        let not_ops = branch(self, ops);
+        let ops: Vec<Vec<u8>> = self.pp.ops.iter().map(|&i| self.strings[usize::from(i)].clone()).collect();
+        for op in ops {
+            let eq = self.spelled_at(lp, tn, &op);
+            let k = match &op[..] {
+                b"#" | b"%:" => HASH,
+                b"##" | b"%:%:" => HASHHASH,
+                b"<:" | b":>" | b"<%" | b"%>" => DIGRAPH,
+                _ => PUNCT,
+            };
+            let not_this = branch(self, eq);
+            kind(self, k);
+            self.f.switch_to_block(not_this);
+        }
+        none(self);
+        self.f.switch_to_block(not_ops);
+        none(self);
+        self.f.switch_to_block(join);
+        let r = self.f.block_params(join);
+        (r[0], r[1])
+    }
+
     fn word(&mut self, pc: usize) -> Result<(), Error> {
         let (op, mode, operand) = split(self.words[pc]);
         let ctx = self.ctx;
@@ -1556,6 +2624,9 @@ impl Lower<'_, '_> {
             }
             FRAME => self.frame(pc),
             DEFINE => self.define(pc, mode),
+            SUB => self.sub(pc, mode),
+            STR => self.str_word(pc, mode),
+            GLUE => self.glue(pc),
             UNDEF => self.undef(pc),
             DEFINED => self.defined(pc),
             ARG => self.arg(pc, mode),
@@ -2119,7 +3190,7 @@ fn compile_as(program: &Words, partial: bool) -> Result<CompiledPp, Error> {
         f.switch_to_block(entry);
         let ctx = f.block_params(entry)[0];
         f.ins().jump(blocks[0], &[]);
-        let mut l = Lower { f: &mut f, ctx, words: &program.words, strings: &program.strings, blocks, exit, heads: Vec::new(), partial };
+        let mut l = Lower { f: &mut f, ctx, words: &program.words, strings: &program.strings, blocks, exit, heads: Vec::new(), partial, pp: &program.pp };
         for pc in 0..program.words.len() {
             let b = l.blocks[pc];
             l.f.switch_to_block(b);
