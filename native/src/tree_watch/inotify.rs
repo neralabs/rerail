@@ -41,7 +41,9 @@ const MAX_WATCHES: usize = 131_072;
 const FALLBACK_WATCHES: usize = 8_192 / 4;
 
 const NAMED: u32 = libc::IN_CREATE | libc::IN_DELETE | libc::IN_MOVED_FROM | libc::IN_MOVED_TO;
-const CONTENT: u32 = libc::IN_MODIFY | libc::IN_ATTRIB;
+/// A file's text, size or attributes. A write through a memory map makes no `IN_MODIFY`: the
+/// file's close (`IN_CLOSE_WRITE`, once its last handle and map are let go of) tells of it.
+const CONTENT: u32 = libc::IN_MODIFY | libc::IN_ATTRIB | libc::IN_CLOSE_WRITE;
 const SELF_GONE: u32 = libc::IN_DELETE_SELF | libc::IN_MOVE_SELF | libc::IN_UNMOUNT;
 /// A folder above a root: only its own going. Added to the watch's mask (`IN_MASK_ADD`), so a
 /// watch it shares with a folder under another root keeps reporting that folder's entries.
@@ -705,6 +707,53 @@ mod tests {
                 .chain(&notice.renamed)
                 .all(|path| !path.starts_with("node_modules/"))
         );
+        backend.close();
+    }
+
+    /// Writes `bytes` over the start of `path` through a shared memory map, with no `write` call,
+    /// then lets go of the map and of the file, as a program that maps a file and ends does.
+    fn write_mapped(path: &std::path::Path, bytes: &[u8]) {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .expect("open for writing");
+        // SAFETY: maps the first `bytes.len()` bytes of a file at least that long, writes only
+        // inside them, and unmaps them before the file is closed.
+        unsafe {
+            let map = libc::mmap(
+                std::ptr::null_mut(),
+                bytes.len(),
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                file.as_raw_fd(),
+                0,
+            );
+            assert_ne!(map, libc::MAP_FAILED, "map the file");
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), map.cast::<u8>(), bytes.len());
+            assert_eq!(libc::munmap(map, bytes.len()), 0, "unmap the file");
+        }
+        drop(file);
+    }
+
+    #[test]
+    fn a_write_through_a_memory_map_is_a_changed_path_once_the_file_is_let_go_of() {
+        let notices = Arc::new(Notices::default());
+        let mut backend = paused(&notices);
+        let scratch = Scratch::new("mapped");
+        scratch.write("src/a.ts", "aaaa");
+        let root = scratch.root();
+        notices.start(&root);
+        assert!(backend.watch(&root, &[String::new(), "src".to_owned()]));
+        write_mapped(&scratch.path("src/a.ts"), b"bbbb");
+        // The close's event is queued by the time the program's close returns.
+        deliver(&backend);
+        let notice = notice_of(&notices, &root);
+        assert!(
+            notice.changed.iter().any(|path| path == "src/a.ts"),
+            "{notice:?}"
+        );
+        assert!(!notice.lost && !notice.ended, "{notice:?}");
         backend.close();
     }
 

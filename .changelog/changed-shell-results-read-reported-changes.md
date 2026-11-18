@@ -1,0 +1,1 @@
+Shell command results read only the files Rerail's watch reported changed: at 100,000 files on Linux, 0.15 s instead of 0.95 s. Unreported writes (through an outside hard link, a held memory map, or on Windows a same-size write to a file held open) are found at most 10 minutes after the last full read, or at the turn's end.
