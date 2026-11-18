@@ -615,10 +615,19 @@ impl Frame {
     }
 }
 
-/// Holds the atoms an entry's symbols name (`image::hold`), as it is read before a run's waves.
+/// Holds the atoms an entry's symbols name (`image::hold`), as it is read before a run's waves: none of an entry whose
+/// symbols this process holds already. The profile says how many it read.
 pub(super) fn hold<'a>(store: &ContentStore, blobs: impl IntoIterator<Item = &'a crate::content_store::MemoBlob>) -> StoreResult<()> {
     let bytes: Vec<_> = blobs.into_iter().map(|b| &b.bytes).collect();
-    image::hold(&bytes, &store.atoms_handle())
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let read = image::hold(&bytes, &store.atoms_handle())?;
+    crate::code_rule_dsl::prof::count("corpus.memo_entries_held_read", read);
+    crate::code_rule_dsl::logic::profile::decision("the memo's entries' atoms, before the first wave (decision 0397)", || {
+        format!("{read} of {} entries read; the others' symbols held already", bytes.len())
+    });
+    Ok(())
 }
 
 /// The newest corpus run of `root`: the relations its memo plan holds, by name, as recorded (`.decl` columns as
