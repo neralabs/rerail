@@ -7408,6 +7408,13 @@ impl<'a> Run<'a, '_> {
         lines.push(SpecLine::NoWrite);
         let recursive = bodies.iter().any(|b| (0..b.len()).any(|i| matches!(b.view(i), Lit::Atom(a) if scc.contains(b.rel(a)))));
         if recursive {
+            // The static check (0364 §5, R6): whether the component cannot hold a row up by itself.
+            let types = |r: &str| pf.types(r).into_iter().map(str::to_owned).collect::<Vec<_>>();
+            let proved = wellfounded::check(&vs.placed(self.version).v, &types, scc);
+            super::profile::decision("the static check (decision 0364 §5)", || format!("{}: {}", stratum_key(scc), proved.as_ref().map_or_else(|w| format!("not proved: {w}"), |m| format!("proved, {:?}", m.order))));
+            if std::env::var_os("RERAIL_MODE_TRACE").is_some() {
+                eprintln!("RERAIL_MODE_TRACE {}: the static check: {}", stratum_key(scc), proved.as_ref().map_or_else(|w| format!("not proved: {w}"), |m| format!("proved, {:?}", m.order)));
+            }
             // Its rows keep levels, and its kept rows are no wave's delta: the first wave's is what the removals put back.
             lines.push(SpecLine::Leveled((0..scc.len()).collect()));
             lines.push(SpecLine::KeptOld);
@@ -12588,6 +12595,7 @@ impl Shown {
 pub mod emit;
 pub mod fields;
 pub mod acyclic;
+pub mod wellfounded;
 pub mod estimates;
 pub mod sql_kernel;
 pub mod tree_text;
