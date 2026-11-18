@@ -1975,7 +1975,7 @@ are the same.
   targeted set (548), `the_request_record_follows_the_preparation_steps` (logic crate), the prune case in
   `a_request_is_kept_for_a_gone_reader_and_for_a_readers_copy`.
 
-### Q120. (Q51 on benchmarks-on-integration at 9a9b270ce) The engine's library built with `test-hooks` alone warns in the generated mounts
+### Q120. (Q51 on benchmarks-on-integration at 9a9b270ce) (closed: the mounts are clean; the generator no longer regenerates) The engine's library built with `test-hooks` alone warns in the generated mounts
 
 Seen 2026-11-17 (`cargo check --lib --features test-hooks`, the CLI's feature set): 90 warnings, every one in
 `native/src/code_rule_dsl/mod.rs` (tools/cratify/mounts.py's mounts). Two kinds: a facade's glob re-export under
@@ -1988,7 +1988,12 @@ regenerated since keep the wider condition. The profiling build has none (Q13).
 - **Done when**: the generator gives each re-export and `#[path]` the condition of what reads it (`dir_attr`'s union,
   apply.py's test-hooks rule), the mounts are regenerated, and the `test-hooks` library and the test build list no
   warning.
-- **Record**: —
+- **Record** (2026-11-18, at c52041356): `cargo build --lib --features test-hooks` and the library's test build list
+  no warning from the mounts; the one warning left is the linker's (`__eh_frame` over 16 MB). The mounts were made
+  clean by hand: e2572ec31 (Q53) gated 53 module paths used only by test modules on `test`. The generator's half
+  no longer applies: since 625dc89e7 (0365 step 2) `tools/cratify` "can no longer regenerate the split as a whole",
+  and the mounts are kept by hand in its shape, so a regeneration can't bring the wider condition back. A mount
+  written by hand that has the wider condition shows up as the compiler's warning in the `test-hooks` build.
 
 ## Questions for the user
 
