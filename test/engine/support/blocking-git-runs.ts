@@ -47,19 +47,26 @@ function heldRun(pidFile: string, script: string, limits: GitRunLimits): { answe
 }
 
 /**
- * A blocking run, past its 300 ms time limit, of a script that takes the SIGTERM and then writes 1 MB to its stdout:
- * what the run answered, and how that write ended, as the script writes it to `statusFile`: 141 when it met a closed
- * output (EPIPE), 124 when it filled the buffers and waited until `timeout` ended it.
+ * The time limit of a run whose script must reach a point before it: print, or set its TERM trap. At 300 ms a script
+ * on a machine with a load of 18 on 16 cores once had printed nothing by its limit, in 1 of 20 runs; the run then
+ * answers differently through each start by chance. A run that waits for its limit takes this long.
+ */
+const READY_LIMIT_MS = 1000;
+
+/**
+ * A blocking run, past its {@link READY_LIMIT_MS} time limit, of a script that takes the SIGTERM and then writes 1 MB
+ * to its stdout: what the run answered, and how that write ended, as the script writes it to `statusFile`: 141 when
+ * it met a closed output (EPIPE), 124 when it filled the buffers and waited until `timeout` ended it.
  */
 function writtenAfterTerm(statusFile: string): { answer: unknown; write: string } {
   const script = `sleep 10 & s=$!; trap 'timeout 5 head -c 1000000 /dev/zero; echo $? > "$1"; kill $s; exit 0' TERM; echo started; wait`;
-  const run = runGitSync("/bin/sh", ["-c", script, "sh", statusFile], process.env, { timeout: 300 });
+  const run = runGitSync("/bin/sh", ["-c", script, "sh", statusFile], process.env, { timeout: READY_LIMIT_MS });
   return { answer: answered(run), write: readFileSync(statusFile, "utf8") };
 }
 
 /** A run's output, its exit, and SIGTERM at its time limit or past its output limit, and an output exactly at it. */
 function limits(): unknown {
-  const late = runGitSync("/bin/sh", ["-c", "echo started; exec sleep 5"], process.env, { timeout: 200 });
+  const late = runGitSync("/bin/sh", ["-c", "echo started; exec sleep 5"], process.env, { timeout: READY_LIMIT_MS });
   const long = runGitSync("/bin/sh", ["-c", "head -c 3000000 /dev/zero; exec sleep 5"], process.env, { maxBuffer: 1024 * 1024 });
   const plain = runGitSync("/bin/sh", ["-c", "read nothing || echo no-input; echo warned >&2; exit 5"], process.env);
   // Exactly the output limit: a run may reach it and not pass it.
@@ -67,12 +74,12 @@ function limits(): unknown {
   return { late: answered(late), long: ending(long), plain, exact: ending(exact) };
 }
 
-/** Runs past their 300 ms time limit while a process Git started holds the output, has closed it, or prints. */
+/** Runs past their time limit while a process Git started holds the output, has closed it, or prints. */
 function timeLimitHeld(files: string): unknown {
   return {
-    running: heldRun(join(files, "running.pid"), "echo started; exec sleep 10", { timeout: 300 }),
-    exited: heldRun(join(files, "exited.pid"), "echo started; exit 0", { timeout: 300 }),
-    closed: answered(runGitSync("/bin/sh", ["-c", "echo started; exec > /dev/null 2>&1; exec sleep 10"], process.env, { timeout: 300 })),
+    running: heldRun(join(files, "running.pid"), "echo started; exec sleep 10", { timeout: READY_LIMIT_MS }),
+    exited: heldRun(join(files, "exited.pid"), "echo started; exit 0", { timeout: READY_LIMIT_MS }),
+    closed: answered(runGitSync("/bin/sh", ["-c", "echo started; exec > /dev/null 2>&1; exec sleep 10"], process.env, { timeout: READY_LIMIT_MS })),
     printing: ending(runGitSync("/bin/sh", ["-c", "while :; do printf x; done"], process.env, { timeout: 300, maxBuffer: 8 << 20 })),
     writing: writtenAfterTerm(join(files, "writing.status")),
   };
@@ -96,8 +103,8 @@ export function blockingRuns(set: BlockingRunSet, files: string): unknown {
   return heldRun(join(files, "holder.pid"), "head -c 1001 /dev/zero; exec sleep 10", { maxBuffer: 1000 });
 }
 
-/** How long the child may take: many times the runs' limits of 200 to 300 ms, and the child's start. */
-const ENGINE_RUNS_BOUND_MS = 20_000;
+/** How long the child may take: several times the runs' limits of 300 ms to 1 s added up, and the child's start. */
+const ENGINE_RUNS_BOUND_MS = 30_000;
 
 const sourceUrl = (path: string): string => pathToFileURL(resolve(import.meta.dirname, path)).href;
 
