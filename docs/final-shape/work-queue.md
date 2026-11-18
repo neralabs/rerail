@@ -863,6 +863,22 @@ pass.
 - **Record** (2026-11-17): the values test lists the five cases as refused by the grammar, in C
   and C++, and compares the other 95.
 
+### Q36. The compiled pp words stall: 45% of the interpreter's instructions, 1.09× its cycles
+
+- **Keep**: the compiled words equal the interpreter on the examples and the corpus; the shape
+  test (no function over 128 KB, stated steps only).
+- **Done when**: a profile of the corpus run on the compiled words (xctrace's CPU Counters, or
+  the Time Profiler mapped to words by Cranelift's block offsets) names where the cycles go
+  (branch misses, cache misses, a load chain), and the cause is fixed in the lowering's shape.
+- **Record** (2026-11-17, 0348 stage 4d): ruled out by measurement: reservations per TU,
+  `readonly` invariant loads, `T` and `D` in SSA variables (patch not kept). Small and
+  expansion-light TUs are worst (1.28–1.48×); the half that expand most run at 0.92×.
+
+### Q37. The pp words' ahead-of-time Rust (`clif_rust`), checked once
+
+- **Done when**: `clif_rust` writes the run's function and the outlined words as Rust, it
+  compiles, and it equals the interpreter on the examples (0348's plan, stage 4b).
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
