@@ -9,6 +9,7 @@
     "blade-parser.md",
     "content-addressed-workspace-store.md",
     "merge-assist-v1-build.md",
+    "repository-packs.md",
     "transducer-design.md",
     "windows.md"
   ],
