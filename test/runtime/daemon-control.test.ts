@@ -1111,6 +1111,13 @@ describe("a record whose live pid is not the home's daemon", () => {
     await expect(stopDaemon(home, later)).rejects.toThrow(new RegExp(`could not prove that pid ${LIVE_PID}`, "u"));
     expect(signals).toEqual([]);
     expect(existsSync(stateFile)).toBe(true);
+    // A holder record its writer left beside a lock no process holds proves nothing either.
+    const free = withHolderStarted(machineWith(platform, signals, () => false), holderRecordWritten() - 1_000);
+    expect(await lookupDaemon(home, free)).toEqual({ status: "unresponsive", state: state(platform) });
+    // A pid started after daemon.json's record is another process's, whatever the holder record shows.
+    const reused = withHolderStarted(machineWith(platform, signals, () => true, anHourLater), holderRecordWritten() + 3_600_000);
+    expect(await lookupDaemon(home, reused)).toEqual({ status: "absent", notDaemon: LIVE_PID });
+    expect(signals).toEqual([]);
   });
 
   // The home's lock is held and its holder never writes daemon.json: a start or a stop waits its 15 s, then says which
