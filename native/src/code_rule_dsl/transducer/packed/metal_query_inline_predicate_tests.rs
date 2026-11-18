@@ -86,7 +86,7 @@ fn query_inline_text_values_preserve_false_paths_and_inherited_work_before_later
         for rows in outputs.iter_mut().flatten() {
             rows.truncate(limit as usize);
         }
-        let actual = metal_grid_backend::execute_packed_with_result_limits(
+        let actual = metal_packed(
             &programs,
             &files,
             &anchors,
@@ -199,10 +199,10 @@ fn bounded_body_admission_preserves_guarded_capture_identity_and_multiplicity() 
             );
         }
     }
-    for backend in [ExecutionBackend::CpuJit, ExecutionBackend::Metal] {
+    for backend in [ExecutionBackend::CpuJit, ExecutionBackend::MetalJit] {
         let actual = execute_with_backend_outcomes(backend, &programs, &files, &anchors).unwrap();
-        assert_eq!(actual.errors, expected.errors);
-        assert_eq!(actual.outputs, expected.outputs);
+        assert_eq!(actual.errors, expected.errors, "{backend:?}");
+        assert_eq!(actual.outputs, expected.outputs, "{backend:?}");
     }
 }
 
@@ -283,7 +283,7 @@ fn bounded_body_join_admits_equal_frames_before_charging_later_work() {
     assert_eq!(native.outputs, expected.outputs);
     for limit in [0, 1] {
         let scope = metal_backend::launch::LaunchScope::enter();
-        let actual = metal_grid_backend::execute_packed_with_result_limits(
+        let actual = metal_packed(
             &programs,
             &files,
             &anchors,
@@ -445,7 +445,7 @@ fn query_bulk_and_bounded_jobs_keep_exact_budget_edges_and_logical_failure_prece
     for limit in [0, 1] {
         let scope = metal_backend::launch::LaunchScope::enter();
         let start = std::time::Instant::now();
-        let actual = metal_grid_backend::execute_packed_with_result_limits(
+        let actual = metal_packed(
             &programs,
             &files,
             &anchors,
@@ -589,7 +589,7 @@ fn bulk_work_accounts_for_the_losing_attempt_before_an_earlier_entry_or_guard() 
     assert_eq!(native.outputs, expected.outputs);
     let scope = metal_backend::launch::LaunchScope::enter();
     let actual =
-        execute_with_backend_outcomes(ExecutionBackend::Metal, &programs, &files, &anchors);
+        execute_with_backend_outcomes(ExecutionBackend::MetalJit, &programs, &files, &anchors);
     let trace = scope.snapshot();
     let mut kernels = std::collections::BTreeMap::<String, usize>::new();
     for record in &trace {
@@ -751,7 +751,7 @@ fn query_join_suppresses_later_duplicate_work_but_retains_errors_before_the_join
     assert_eq!(native.outputs, expected.outputs);
     for limit in [0, 1] {
         let scope = metal_backend::launch::LaunchScope::enter();
-        let actual = metal_grid_backend::execute_packed_with_result_limits(
+        let actual = metal_packed(
             &programs,
             &files,
             &anchors,

@@ -796,7 +796,7 @@ pub fn cli(args: &[String]) -> Result<String, String> {
     crate::code_rule_dsl::logic::plan::joins::drain_at_end(true);
     // Decision 0288: the command's clocks, for its time before its run and after it.
     crate::code_rule_dsl::logic::profile::command_begins();
-    // Decision 0387: a run never waits on a Metal compile of a kernel it has another form of; the kernels it went
+    // Decision 0395: a run never waits on a Metal compile of a kernel it has another form of; the kernels it went
     // without are compiled by maintenance (below, upkeep, `kernels compile`).
     #[cfg(target_os = "macos")]
     if args.first().is_none_or(|c| c != "kernels") {
@@ -804,7 +804,7 @@ pub fn cli(args: &[String]) -> Result<String, String> {
     }
     let out = cli_in(args, &mut Default::default());
     // The kernels this run went without, compiled after it by the engine in a process of its own, at the
-    // background priority (decision 0387; `RERAIL_METAL_MAINTENANCE=off`: not).
+    // background priority (decision 0395; `RERAIL_METAL_MAINTENANCE=off`: not).
     #[cfg(target_os = "macos")]
     if let Ok(engine) = std::env::current_exe() {
         rerail_accel::gpu::kernels::spawn_maintenance(&engine);
@@ -1238,7 +1238,7 @@ fn gc_command(args: &[String]) -> Result<String, String> {
 /// statistics' store and model. `--cpu` is the share of one core the jobs average (the setting's default, 25);
 /// `--jobs` is `RERAIL_UPKEEP_JOBS`'s list. Prints each job's steps, wall and CPU.
 #[cfg(feature = "tape-cache")]
-/// `rerail-engine kernels` (decision 0387): the store of compiled Metal kernels.
+/// `rerail-engine kernels` (decision 0395): the store of compiled Metal kernels.
 ///
 /// ```text
 /// kernels [list]                   the store, the shipped kernels, and the kernels runs went without

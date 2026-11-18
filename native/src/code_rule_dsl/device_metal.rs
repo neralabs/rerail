@@ -115,26 +115,25 @@ impl SolverDevice for Metal {
 
 pub mod matcher {
     use std::collections::BTreeSet;
-    use std::sync::Arc;
 
-    use crate::code_rule_dsl::tape::{TapeDoc, TapeSource};
-    use crate::code_rule_dsl::transducer::packed::device::{Engine, MatcherDevice, Outcome, PageConsumer, RootJobs};
+    use crate::code_rule_dsl::tape::TapeDoc;
+    use crate::code_rule_dsl::transducer::packed::device::{Engine, MatcherDevice, Outcome, RootJobs};
     use crate::code_rule_dsl::transducer::packed::{
-        BatchOutcome, Error, ExecutionBackend, LoweredMatcher, LoweredWave, PackedExecution, Program, matcher_metal, metal_grid_backend as grid,
+        BatchOutcome, Error, ExecutionBackend, LoweredMatcher, Budget, LoweredWave, PackedExecution, Program, matcher_metal,
         metal_program_backend as programs,
     };
 
     impl MatcherDevice for super::Metal {
-        fn execute_packed(&self, engine: Engine, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>) -> Result<PackedExecution, Error> {
+        fn execute_packed(&self, engine: Engine, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>, budget: Budget) -> Result<PackedExecution, Error> {
             match engine {
                 Engine::Interpreter => {
                     let engine = programs::compile_interpreter()?;
-                    programs::execute_packed_with_result_limits(&engine, batch, files, anchors, result_limits)
+                    programs::execute_packed_budgeted(&engine, batch, files, anchors, result_limits, budget)
                 }
                 Engine::Jit => {
                     let engine = crate::code_rule_dsl::prof::time("roots.jit", || programs::compile_jit_cached(batch))?;
                     let _run = crate::code_rule_dsl::prof::Stage::start("roots.metal");
-                    programs::execute_packed_with_result_limits(&engine, batch, files, anchors, result_limits)
+                    programs::execute_packed_budgeted(&engine, batch, files, anchors, result_limits, budget)
                 }
             }
         }
@@ -149,7 +148,6 @@ pub mod matcher {
                     let engine = programs::compile_jit_cached(batch)?;
                     programs::execute_outcomes(&engine, batch, files, anchors)
                 }
-                ExecutionBackend::Metal => grid::execute_outcomes(batch, files, anchors),
                 _ => Err(Error::UnsupportedBackend),
             }
         }
@@ -171,19 +169,11 @@ pub mod matcher {
             programs::compile_jit_cached(batch).map(|_| ())
         }
 
-        fn execute_shared_corpus(&self, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<Arc<[u32]>>], result_limits: &[u32]) -> Result<PackedExecution, Error> {
-            grid::execute_shared_corpus(batch, files, anchors, result_limits)
-        }
-
-        fn execute_shared_corpus_pages(&self, batch: &[Program], files: &[TapeSource], anchors: &[Vec<Arc<[u32]>>], result_limits: &[u32], consumer: &mut PageConsumer<'_>) -> Result<(), Error> {
-            grid::execute_shared_corpus_pages(batch, files, anchors, result_limits, consumer)
-        }
-
         fn matcher_roots(&self, matcher: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error> {
             matcher_metal::matcher_roots(matcher, tapes)
         }
 
-        fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: &[Vec<Vec<u32>>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error> {
+        fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: crate::code_rule_dsl::transducer::packed::device::ClauseRoots<'_>) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error> {
             matcher_metal::wave_roots(wave, tapes, roots)
         }
 
@@ -195,8 +185,8 @@ pub mod matcher {
             matcher_metal::wave_pattern_sources(wave)
         }
 
-        fn patterns_ready(&self, sources: &[String]) -> bool {
-            crate::code_rule_dsl::transducer::packed::metal_program_backend::label_passes::patterns_ready(sources)
+        fn patterns_ready(&self, sources: &[String], format: u32) -> bool {
+            crate::code_rule_dsl::transducer::packed::metal_program_backend::label_passes::patterns_ready(sources, format)
         }
 
         fn warm_labels(&self) {

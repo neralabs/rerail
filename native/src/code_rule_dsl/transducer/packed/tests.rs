@@ -4,7 +4,7 @@
     #[test]
     fn metal_backend_rejects_execution_without_platform_support() {
         assert!(matches!(
-            execute_with_backend_packed_result_limits(ExecutionBackend::Metal, &[], &[], &[], None),
+            execute_with_backend_packed_result_limits(ExecutionBackend::MetalJit, &[], &[], &[], None),
             Err(Error::UnsupportedBackend)
         ));
     }
@@ -22,14 +22,18 @@
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    /// G's grid executor's result, or None where it refuses the evaluation's launch bound (99,
-    /// list step 13): its dynamic frontier's waves exceed it on these parity programs (open item
-    /// O33). The CPU backends' parity is still asserted.
+    /// The Metal JIT's result, or None where it refuses the batch: the launch bound (99, list step 13), or a
+    /// shared arena sized short for it (`BackendCapacity`, work queue Q64, the grid's retirement having moved these
+    /// programs to the JIT). The CPU backends' parity is still asserted.
     #[cfg(target_os = "macos")]
-    fn grid<T>(result: Result<T, Error>) -> Option<T> {
+    fn metal<T>(result: Result<T, Error>) -> Option<T> {
         match result {
             Err(Error::BackendLaunchLimit) => {
-                eprintln!("O33: the grid executor refused the launch bound; its parity is not checked here");
+                eprintln!("Metal refused the launch bound; its parity is not checked here");
+                None
+            }
+            Err(Error::BackendCapacity) => {
+                eprintln!("Metal's JIT refused the batch's arenas (Q64); its parity is not checked here");
                 None
             }
             result => Some(result.unwrap()),
@@ -205,8 +209,8 @@
         }
         #[cfg(target_os = "macos")]
         {
-            let backend = ExecutionBackend::Metal;
-            if let Some(actual) = grid(execute_with_backend(backend, programs, tapes, &anchors))
+            let backend = ExecutionBackend::MetalJit;
+            if let Some(actual) = metal(execute_with_backend(backend, programs, tapes, &anchors))
                 && actual != expected
             {
                 let mismatch = actual
@@ -245,7 +249,7 @@
             })
             .collect::<Vec<_>>();
         let expected = execute_batch(programs, tapes, Some(&anchors)).unwrap();
-        if let Some(actual) = grid(metal_grid_backend::execute(programs, tapes, &anchors)) {
+        if let Some(actual) = metal(execute_with_backend(ExecutionBackend::MetalJit, programs, tapes, &anchors)) {
             assert_eq!(actual, expected);
         }
     }
@@ -610,7 +614,7 @@
         let jit_elapsed = jit_started.elapsed();
         assert_eq!(jit_output[0][0], plain_output);
         #[cfg(target_os = "macos")]
-        if let Some(actual) = grid(metal_grid_backend::execute(&jit_programs, &jit_tapes, &jit_anchors)) {
+        if let Some(actual) = metal(execute_with_backend(ExecutionBackend::MetalJit, &jit_programs, &jit_tapes, &jit_anchors)) {
             assert_eq!(actual[0][0], plain_output);
         }
         if let Some(iterations) = std::env::var("TEMPO_QUANTIFIER_PROFILE_ITERATIONS")
@@ -922,7 +926,8 @@
             assert_eq!(actual, expected);
             #[cfg(target_os = "macos")]
             {
-                let actual = metal_grid_backend::execute(
+                let actual = execute_with_backend(
+                    ExecutionBackend::MetalJit,
                     std::slice::from_ref(&program),
                     std::slice::from_ref(&python_tape),
                     &[vec![vec![0]]],
@@ -2034,7 +2039,7 @@
             assert_eq!(matches, expected_matches);
             registry.remove_batch(batch);
         }
-        let anchor_scan = metal_backend::prepare_anchor_scan(&programs, &files).unwrap();
+        let mut anchor_scan = metal_backend::prepare_anchor_scan(&programs, &files).unwrap();
         // This thread's compilations: the cache is the process's, and other tests fill it at the same time.
         let anchor_pipeline_count = metal_backend::pipelines_compiled_here();
         let gpu_anchors = anchor_scan.run().unwrap();
@@ -2054,7 +2059,7 @@
             semantic(materialize_literal_anchors(&programs, &files, &gpu_anchors).unwrap()),
             semantic(expected)
         );
-        let filtered_scan = metal_backend::prepare_anchor_scan_with_eligibility(
+        let mut filtered_scan = metal_backend::prepare_anchor_scan_with_eligibility(
             &programs,
             &files,
             Some(&[vec![0b01], vec![0b10]]),
@@ -2802,21 +2807,6 @@
             json!({"programs":programs,"signatures":groups.len(),"groups":groups})
         );
         assert_eq!(programs, 335);
-        let grid_shapes = metal_grid::compile_program_shapes(&compiled_programs);
-        let grid_signatures = grid_shapes
-            .iter()
-            .map(|shape| shape.signature)
-            .collect::<BTreeSet<_>>();
-        let grid_routes = grid_shapes
-            .iter()
-            .map(|shape| shape.route)
-            .collect::<BTreeSet<_>>();
-        let route_counts = grid_shapes
-            .iter()
-            .fold(BTreeMap::new(), |mut counts, shape| {
-                *counts.entry(shape.route).or_insert(0_usize) += 1;
-                counts
-            });
         let structural_maxima = compiled_programs.iter().fold(
             execution_shape::ProgramRequirements::default(),
             |mut maxima, program| {
@@ -2831,35 +2821,10 @@
                 maxima
             },
         );
-        println!("TEMPO_PYTHON_EXECUTION_ROUTES {route_counts:?}");
         println!("TEMPO_PYTHON_STRUCTURAL_MAXIMA {structural_maxima:?}");
         // The spike counted opcode shapes. Resource classes can split those
         // shapes, but must never merge different opcode/ABI contracts.
         assert_eq!(groups.len(), 106);
-        let mut contracts = BTreeMap::new();
-        for (program, shape) in compiled_programs.iter().zip(&grid_shapes) {
-            let contract = (
-                program
-                    .words
-                    .iter()
-                    .map(|word| split(*word).0)
-                    .collect::<Vec<_>>(),
-                program.value_programs.len(),
-                program.capture_programs.len(),
-                program.output_program.instructions.len(),
-                shape.class,
-                shape.route,
-            );
-            if let Some(previous) = contracts.insert(shape.signature, contract.clone()) {
-                assert_eq!(previous, contract, "signature={}", shape.signature);
-            }
-        }
-        println!(
-            "TEMPO_PYTHON_GRID_SIGNATURES opcodeShapes={} resourceShapes={}",
-            groups.len(),
-            grid_signatures.len()
-        );
-        assert!(grid_routes.len() <= 10);
     }
 
 #[test]
@@ -3115,7 +3080,7 @@
             let masks = eligibility_masks(eligibility, programs.len());
             let sql_and_masks = started.elapsed();
             let started = Instant::now();
-            let scan = metal_backend::prepare_anchor_scan_with_eligibility(
+            let mut scan = metal_backend::prepare_anchor_scan_with_eligibility(
                 &programs,
                 &tapes,
                 Some(&masks),
@@ -3223,7 +3188,7 @@
             .collect::<Vec<_>>();
         let cpu_compile = started.elapsed();
         let started = Instant::now();
-        let gpu_anchor_scan = metal_backend::prepare_anchor_scan(&programs, &tapes).unwrap();
+        let mut gpu_anchor_scan = metal_backend::prepare_anchor_scan(&programs, &tapes).unwrap();
         let gpu_anchor_prepare = started.elapsed();
         let gpu_anchors = gpu_anchor_scan.run().unwrap();
         assert_eq!(

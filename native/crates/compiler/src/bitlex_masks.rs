@@ -8,8 +8,9 @@
 //! Built one construct at a time (`docs/parser-generators/13-tape-on-the-gpu.md` §7, step 2).
 //!
 //! - **Classes.** Each class is a union of products of a set of high nibbles and a set of low
-//!   nibbles. Products are shared between classes and packed eight to a nibble table. A one-byte
-//!   class is an `eq`.
+//!   nibbles, packed eight to a nibble table. A class's products are placed together, in one
+//!   table (`place`), so a class is one lookup, as simdjson's are; a product two classes share
+//!   in one table serves both. A one-byte class is an `eq`.
 //! - **Masks** over `~ & | ^`, `empty`, `prev`, `next`, `starts`, `lasts`, `after`, `span`,
 //!   `aligned`, `toggle`, `after_odd_run` and `fill`.
 //! - **Counts** as bit-planes, and `C.frame(a)` (below).
@@ -167,14 +168,123 @@ pub type ByteSet = [u64; 4];
 /// The largest delay: the outputs are brought to it by `prev`s, and the executors shift it out.
 pub const MAX_DELAY: u8 = 63;
 
+/// What a value's word is known to be, over a file's words end to end (bit `i` of word `w` is
+/// position `64 w + i`; `len` the file's length):
+/// - `zero_from`: no bit at a position from it on (`first_bits`);
+/// - `ones`: `(g, e)`, a bit at every position from `g` up to `len + e` (`None`: past the end
+///   too);
+/// - `zero_past`: no bit at a position from `len + zero_past` on.
+#[derive(Clone, Copy, Debug, Default)]
+struct Bounds {
+    zero_from: Option<u32>,
+    ones: Option<(u32, Option<u32>)>,
+    zero_past: Option<u32>,
+}
+
+/// The positions value `v`'s bits lie below, when they all lie in a file's first bytes: a
+/// file's first byte, `~prev(~empty)`, has none from position 1 on, and so has an `and` with
+/// it; a `prev` of such a value, and an `or` of two, are bounded too. A value bounded so moves
+/// its bits down in the word with no carry (`BlockOp::Early`, `Lowering::early_to`). `None`
+/// where the operations do not show it.
+pub fn first_bits(ops: &[BlockOp], tables: &[ClassTable], v: u16) -> Option<u32> {
+    fn go(ops: &[BlockOp], tables: &[ClassTable], v: u16, memo: &mut HashMap<u16, Bounds>, depth: u32) -> Bounds {
+        if let Some(&b) = memo.get(&v) {
+            return b;
+        }
+        if depth > 256 {
+            return Bounds::default();
+        }
+        let mut get = |x: u16| go(ops, tables, x, memo, depth + 1);
+        // The smaller of two bounds, either one known; the larger, both known.
+        let min = |x: Option<u32>, y: Option<u32>| match (x, y) {
+            (Some(x), Some(y)) => Some(x.min(y)),
+            (x, None) | (None, x) => x,
+        };
+        let max = |x: Option<u32>, y: Option<u32>| Some(x?.max(y?));
+        // The end of a run of ones, `None` past the end: the nearer of two.
+        let end = |x: Option<u32>, y: Option<u32>| match (x, y) {
+            (Some(x), Some(y)) => Some(x.min(y)),
+            (x, None) | (None, x) => x,
+        };
+        let b = match ops[usize::from(v)] {
+            BlockOp::Const(0) => Bounds { zero_from: Some(0), ones: None, zero_past: Some(0) },
+            BlockOp::Const(u64::MAX) => Bounds { zero_from: None, ones: Some((0, None)), zero_past: None },
+            // A test the padding's 0x00 fails is zero past the end; one every byte passes, all
+            // ones.
+            BlockOp::Eq(c) => Bounds { zero_from: None, ones: None, zero_past: (c != 0).then_some(0) },
+            BlockOp::Class { table, bits } => {
+                let t = &tables[usize::from(table)];
+                let all = (0..=255u8).all(|b| t.member(b, bits));
+                Bounds { zero_from: None, ones: all.then_some((0, None)), zero_past: (!t.member(0, bits)).then_some(0) }
+            }
+            BlockOp::Within(d) => Bounds { zero_from: None, ones: Some((u32::from(d), Some(u32::from(d)))), zero_past: Some(u32::from(d)) },
+            BlockOp::And(a, c) => {
+                let (x, y) = (get(a), get(c));
+                let ones = match (x.ones, y.ones) {
+                    (Some((g, e)), Some((h, f))) => Some((g.max(h), end(e, f))),
+                    _ => None,
+                };
+                Bounds { zero_from: min(x.zero_from, y.zero_from), ones, zero_past: min(x.zero_past, y.zero_past) }
+            }
+            BlockOp::Or(a, c) => {
+                let (x, y) = (get(a), get(c));
+                // Either run of ones is one of the result's.
+                let ones = match (x.ones, y.ones) {
+                    (Some(o), Some(p)) => Some(if o.0 <= p.0 { o } else { p }),
+                    (o, None) | (None, o) => o,
+                };
+                Bounds { zero_from: max(x.zero_from, y.zero_from), ones, zero_past: max(x.zero_past, y.zero_past) }
+            }
+            BlockOp::Xor(a, c) => {
+                let (x, y) = (get(a), get(c));
+                Bounds { zero_from: max(x.zero_from, y.zero_from), ones: None, zero_past: max(x.zero_past, y.zero_past) }
+            }
+            // `a & ~c`: zero where `a` is, and where `c` is ones as far as `a` reaches; ones
+            // where `a` is and `c` is zero.
+            BlockOp::AndNot(a, c) => {
+                let (x, y) = (get(a), get(c));
+                let under = match y.ones {
+                    Some((g, None)) => Some(g),
+                    Some((g, Some(e))) if x.zero_past.is_some_and(|z| z <= e) => Some(g),
+                    _ => None,
+                };
+                let ones = match (x.ones, y.zero_from) {
+                    (Some((g, e)), Some(z)) => Some((g.max(z), e)),
+                    _ => None,
+                };
+                Bounds { zero_from: min(x.zero_from, under), ones, zero_past: x.zero_past }
+            }
+            BlockOp::Not(a) => {
+                let x = get(a);
+                Bounds { zero_from: match x.ones {
+                    Some((g, None)) => Some(g),
+                    _ => None,
+                }, ones: x.zero_from.map(|z| (z, None)), zero_past: None }
+            }
+            BlockOp::Prev(a, k) => {
+                let (x, k) = (get(a), u32::from(k));
+                Bounds { zero_from: x.zero_from.map(|z| z + k), ones: x.ones.map(|(g, e)| (g + k, e.map(|e| e + k))), zero_past: x.zero_past.map(|z| z + k) }
+            }
+            BlockOp::Early(a, k) => {
+                let (x, k) = (get(a), u32::from(k));
+                Bounds { zero_from: x.zero_from.map(|z| z.saturating_sub(k)), ones: None, zero_past: x.zero_past.map(|z| z.saturating_sub(k)) }
+            }
+            _ => Bounds::default(),
+        };
+        memo.insert(v, b);
+        b
+    }
+    go(ops, tables, v, &mut HashMap::new(), 0).zero_from
+}
+
 pub struct Lowering {
     /// Tier 2's shape.
     pub shape: Shape,
     pub program: BlockProgram,
     /// Each operation's value, so an operation is emitted once.
     pub seen: HashMap<BlockOp, u16>,
-    /// Each product's table and bit.
-    pub products: HashMap<Product, (u16, u8)>,
+    /// Each table's products, bit by bit (`place`).
+    pub table_products: Vec<Vec<Product>>,
     /// Classes, lowered when first used.
     pub classes: HashMap<String, Vec<(u32, u32)>>,
     pub names: HashMap<String, Val>,
@@ -202,10 +312,30 @@ pub struct Lowering {
     /// The tokens read by a reader (`read K | …`, `records::Reader`): each region's opener,
     /// closer, last byte's offset from the closer, and what no closer means.
     pub token_reads: HashMap<String, Vec<(Val, Val, i8, crate::records::ReadNone)>>,
+    /// A region read in parts with `closes`: its closer's last (`ReadArm::last`).
+    pub token_closer_last: HashMap<String, Val>,
+    /// A kind read in parts (`read K parts { … }`): each part's start mask and bytes, in order.
+    /// Each part's start, and its bytes or its last (`ReadPart`).
+    pub token_parts: HashMap<String, Vec<(Val, u8, Option<Val>)>>,
+    /// A region read in parts: its fill (`f_R`), by the reader's kind (`Reader::quiet`).
+    pub token_fills: HashMap<String, Val>,
+    /// Each token row's (`tokens`, in order): read inside a region by its reader (`Inside`),
+    /// so no first byte ends it by a rule.
+    pub inside: Vec<bool>,
     pub keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, bool)>,
     /// Each row's soft keywords: a word's kind where the grammar takes it, the row's elsewhere.
     pub soft: Vec<(String, Vec<Vec<u8>>)>,
     pub skip: Option<Val>,
+    /// The prefix (`Stmt::Prefix`, decision 0335): its bytes, and its value, the bytes it covers
+    /// where the file starts with it (a value of the file's first bytes, `first_bits`). The
+    /// stream (`within`) is then the file's bytes past it, and a class that holds one of its
+    /// bytes is cut to the stream.
+    pub prefix: Option<(Vec<u8>, Val)>,
+    /// Lowering a mask read only at and after a token's first byte (`ahead`): no cut by the
+    /// prefix, whose bytes lie before every token's.
+    pub ahead: bool,
+    /// Each `mask`'s expression, for `ahead`, which lowers it again.
+    pub mask_exprs: HashMap<String, Expr>,
     /// The tree section's rules (`node`, `choice`), in order, and its extra kinds.
     pub tree: Vec<Stmt>,
     pub extra: Vec<String>,
@@ -221,6 +351,11 @@ pub struct Lowering {
     pub unless: HashMap<usize, Vec<Vec<u8>>>,
     /// The marks with an `else escape`, by their index in `marks` (`Records::unplaced`).
     pub unplaced: Vec<usize>,
+    /// The marks that settle the extras before their bit (`, settles`), by their index in
+    /// `marks` (`program::SETTLE`).
+    pub settles: Vec<usize>,
+    /// The marks a level that may end ends at (`, ends`), by their index in `marks`.
+    pub ends: Vec<usize>,
     /// Each token test (`Stmt::TokenEscape`): its kind, whether a count, its mask and count
     /// (`Records::checks`).
     pub token_escapes: Vec<(String, bool, Val, u32, crate::records::CheckThen)>,
@@ -237,7 +372,7 @@ pub struct Lowering {
     /// Each `check`: a token kind and its grammar over the token's bytes.
     pub checks: Vec<(String, ::bitlex::syntax::Gram)>,
     /// Each `toggle(x)`: its value and `x`'s, the modes tier 2's states are read in
-    /// (`row_modes`).
+    /// (`row_modes`); each region's fill and its flips likewise.
     pub toggles: Vec<(Val, Val)>,
     /// Each cost's source and its operations' range (`Compiled::costs`).
     pub costs: Vec<(String, usize, usize)>,
@@ -303,7 +438,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         shape,
         program: BlockProgram::default(),
         seen: HashMap::new(),
-        products: HashMap::new(),
+        table_products: Vec::new(),
         classes: HashMap::new(),
         names: HashMap::new(),
         fallbacks: Vec::new(),
@@ -316,8 +451,15 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         token_rules: HashMap::new(),
         token_pairs: HashMap::new(),
         token_reads: HashMap::new(),
+        token_closer_last: HashMap::new(),
+        token_parts: HashMap::new(),
+        token_fills: HashMap::new(),
+        inside: Vec::new(),
         keywords: Vec::new(),
         skip: None,
+        prefix: None,
+        ahead: false,
+        mask_exprs: HashMap::new(),
         tree: Vec::new(),
         extra: Vec::new(),
         marks: Vec::new(),
@@ -325,6 +467,8 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         token_marks: HashMap::new(),
         unless: HashMap::new(),
         unplaced: Vec::new(),
+        settles: Vec::new(),
+        ends: Vec::new(),
         token_escapes: Vec::new(),
         tested_only: Vec::new(),
         mark_tests: Vec::new(),
@@ -338,11 +482,13 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     // Every class's products first: the tables come before the operations.
     for stmt in stmts {
         if let Stmt::Class(name, ranges) = stmt {
-            for product in products(ranges) {
-                low.product(product);
-            }
+            low.place(&products(ranges));
             low.classes.insert(name.clone(), ranges.clone());
         }
+    }
+    if let Some(bytes) = ::bitlex::syntax::prefix_of(stmts)? {
+        let v = low.prefix_value(&bytes)?;
+        low.prefix = Some((bytes, v));
     }
     low.stmts(stmts)?;
     let from = low.program.ops.len();
@@ -406,8 +552,9 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
             vals.push((STREAM_MARK.to_owned(), m));
         }
     }
-    let delay = vals.iter().map(|x| x.1.d).max().unwrap_or(0);
-    // Each output once.
+    let mut delay = vals.iter().map(|x| x.1.d).max().unwrap_or(0);
+    // Each output once, at one delay: its value's (`outputs`, the masks and the records find an
+    // output by its value).
     let mut index: HashMap<u16, u16> = HashMap::new();
     let mut labels = Vec::new();
     let mut at = Vec::new();
@@ -421,6 +568,19 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         } else {
             *x
         };
+        // One value at two delays (`x` and `prev(x)`, a `prev` of a delayed value being its
+        // delay less one): the second its own value, a `prev` by one at a delay one more.
+        let mut x = x;
+        while let Some(&k) = index.get(&x.v) {
+            if low.program.output_delays[usize::from(k)] == x.d {
+                break;
+            }
+            if x.d >= MAX_DELAY {
+                return Err("an output at two delays, the second past the largest".into());
+            }
+            x = Val { v: low.prev_op(x.v, 1), d: x.d + 1, ..x };
+            delay = delay.max(x.d);
+        }
         // At its own delay: the host shifts each output by its own (decision 0069).
         let v = x.v;
         let k = *index.entry(v).or_insert_with(|| {
@@ -460,9 +620,17 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                 t.o = low.program.outputs.iter().position(|&o| o == v).ok_or("a reader's start mask not an output")? as u16;
             }
             for a in r.readers.iter_mut().flat_map(|rd| rd.arms.iter_mut()) {
-                for k in [&mut a.opener, &mut a.closer] {
+                for k in [&mut a.opener, &mut a.closer].into_iter().chain(a.last.as_mut()) {
                     let v = low.program.masks[usize::from(*k)];
                     *k = low.program.outputs.iter().position(|&o| o == v).ok_or("a reader's mask not an output")? as u16;
+                }
+            }
+            for p in r.readers.iter_mut().flat_map(|rd| rd.parts.iter_mut()) {
+                let v = low.program.masks[usize::from(p.start)];
+                p.start = low.program.outputs.iter().position(|&o| o == v).ok_or("a part's start mask not an output")? as u16;
+                if let Some(l) = &mut p.last {
+                    let v = low.program.masks[usize::from(*l)];
+                    *l = low.program.outputs.iter().position(|&o| o == v).ok_or("a part's last mask not an output")? as u16;
                 }
             }
             for c in r.checks.iter_mut() {
@@ -556,6 +724,9 @@ impl Lowering {
                 Stmt::Mask(name, expr) => {
                     let value = self.expr(expr)?;
                     self.names.insert(name.clone(), value);
+                    if self.prefix.is_some() {
+                        self.mask_exprs.insert(name.clone(), expr.clone());
+                    }
                 }
                 // The token loop's error (decision 0177): its mask an output of its own, among the
                 // totals; the CPU's loop refuses its bytes instead.
@@ -606,6 +777,50 @@ impl Lowering {
                 }
                 Stmt::Token { kind, start, through, last, rule } => {
                     match rule {
+                        // A region read in parts: its reader's arm, and each part's start and
+                        // bytes; the closer and the parts are rows of their own (`Inside`).
+                        Some(::bitlex::syntax::TokenRule::ReadParts(rs, parts)) => {
+                            // One region: its opener and closer. Several (`read K | L parts`):
+                            // one arm, at their openers taken (`o_K`), to each one's closer
+                            // outside the others' fills (a `"` in a raw string closes no
+                            // string), each closer's last by `closer_last`. The first closer
+                            // after the opener is its own region's: the bytes before it are
+                            // its fill's.
+                            let (opener, closer) = match rs.as_slice() {
+                                [r] => (self.expr(&r.opener)?, self.expr(&r.closer)?),
+                                _ => {
+                                    let name = |x: String| Expr::Name(x);
+                                    let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
+                                    let o = rs.iter().map(|r| name(format!("o_{}", r.kind))).reduce(or).expect("a region");
+                                    let c = rs
+                                        .iter()
+                                        .map(|r| {
+                                            rs.iter().filter(|q| q.kind != r.kind).fold(r.closer.clone(), |c, q| Expr::And(Box::new(c), Box::new(Expr::Not(Box::new(name(format!("f_{}", q.kind)))))))
+                                        })
+                                        .reduce(or)
+                                        .expect("a region");
+                                    (self.expr(&o)?, self.expr(&c)?)
+                                }
+                            };
+                            self.token_reads.insert(kind.clone(), vec![(opener, closer, rs[0].bytes as i8 - 1, crate::records::ReadNone::Refuse)]);
+                            if let Some(l) = parts.closer_last(rs) {
+                                let l = self.expr(&l)?;
+                                self.token_closer_last.insert(kind.clone(), l);
+                            }
+                            let mut ps = Vec::new();
+                            for (_, e, len) in &parts.parts {
+                                let start = self.expr(e)?;
+                                ps.push(match len {
+                                    ::bitlex::syntax::PartLen::Bytes(n) => (start, *n, None),
+                                    ::bitlex::syntax::PartLen::Last(l) => (start, 0, Some(self.expr(l)?)),
+                                });
+                            }
+                            self.token_parts.insert(kind.clone(), ps);
+                            let fill = rs.iter().map(|r| Expr::Name(format!("f_{}", r.kind))).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a region");
+                            let fill = self.expr(&fill)?;
+                            self.token_fills.insert(kind.clone(), fill);
+                        }
+                        Some(::bitlex::syntax::TokenRule::Inside(_)) => {}
                         Some(::bitlex::syntax::TokenRule::Read(regions)) => {
                             let mut arms = Vec::new();
                             for r in regions {
@@ -623,14 +838,22 @@ impl Lowering {
                         Some(r) => {
                             let (pair, e) = match r {
                                 ::bitlex::syntax::TokenRule::Run(e) => (false, e),
+                                // `pair empty`: no byte pairs, a table of none (`EndRule::Next`), as
+                                // `pair P` with no spellings. Its tokens are one byte, read from the
+                                // first byte's entry (the fused pair rule's), not a mask's word that is
+                                // always zero, by a call a token (0355).
+                                ::bitlex::syntax::TokenRule::Pair(e @ ::bitlex::syntax::Expr::Empty) => {
+                                    self.token_pairs.insert(kind.clone(), Vec::new());
+                                    (true, e)
+                                }
                                 ::bitlex::syntax::TokenRule::Pair(e) => (true, e),
                                 ::bitlex::syntax::TokenRule::Pairs { pairs, mask } => {
                                     self.token_pairs.insert(kind.clone(), pairs.clone());
                                     (true, mask)
                                 }
-                                ::bitlex::syntax::TokenRule::Read(_) => unreachable!(),
+                                ::bitlex::syntax::TokenRule::Read(_) | ::bitlex::syntax::TokenRule::ReadParts(..) | ::bitlex::syntax::TokenRule::Inside(_) => unreachable!(),
                             };
-                            let v = self.expr(e)?;
+                            let v = self.ahead(e)?;
                             self.token_rules.insert(kind.clone(), (pair, v));
                         }
                         None => {}
@@ -644,6 +867,7 @@ impl Lowering {
                         },
                     };
                     self.tokens.push((kind.clone(), start, through));
+                    self.inside.push(matches!(rule, Some(::bitlex::syntax::TokenRule::Inside(_))));
                 }
                 Stmt::Keywords { kind, words, soft, required } => {
                     self.keywords.push((kind.clone(), words.clone(), *required));
@@ -651,6 +875,8 @@ impl Lowering {
                         self.soft.push((kind.clone(), soft.clone()));
                     }
                 }
+                // Made first (`prefix_value`).
+                Stmt::Prefix(_) => {}
                 Stmt::Skip(expr) => {
                     let x = self.expr(expr)?;
                     self.skip = Some(match self.skip {
@@ -666,7 +892,13 @@ impl Lowering {
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
                 Stmt::Hidden(kinds) => self.hidden.extend(kinds.iter().cloned()),
-                Stmt::Mark { kind, at, end, unless, unplaced, checks } => {
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends } => {
+                    if *settles {
+                        self.settles.push(self.marks.len());
+                    }
+                    if *ends {
+                        self.ends.push(self.marks.len());
+                    }
                     // Its token tests (decision 0177): the token loop's, each a bit of the mark.
                     let k = self.marks.len();
                     for c in checks {
@@ -776,7 +1008,8 @@ impl Lowering {
     /// every value is at one delay `D`, the largest of its openers' and closers' (one more with
     /// an `else`), so a word's bit is one byte throughout and the group is a walk
     /// (`block::Walk`) as well as a fixed point. Each opener and closer brought to `D` and cut to
-    /// the stream; the carry `H`; per kind `o_K = O & ~H`, `f_K = fill(o_K, C)`, and the hidden
+    /// the stream; the carry `H`; per kind `o_K = O & ~H & ~(an earlier kind's O)` (a byte two
+    /// kinds open is the first's, as the walk takes it), `f_K = fill(o_K, C)`, and the hidden
     /// bytes after them by `prev`s at `D`. An `else`'s "a closer after the byte" is the closer's
     /// `back_fill` at `D - 1`: the same bits, a byte on.
     pub fn regions(&mut self, regions: &::bitlex::syntax::Regions) -> Result<(), String> {
@@ -793,6 +1026,25 @@ impl Lowering {
             let w = me.within(d)?;
             Ok(me.op(BlockOp::And(v, w)))
         };
+        // One kind whose opener is its closer, one byte, with no `else`: simdjson's string,
+        // `prefix_xor(quote)`. Its fill is the toggle of its quotes, with no fixed point and no
+        // walk: by induction, with `t = toggle(q)` and the fill `t` a byte before, the hidden
+        // byte is `prev(t)`, the opener `q & ~prev(t)`, and the fill
+        // `open | (prev(t) & ~q) = q ^ prev(t) = t`.
+        if let ([r], [(o, c)]) = (regions.kinds.as_slice(), inputs.as_slice()) {
+            if r.empty.is_none() && !r.outside && r.bytes == 1 && (o.v, o.d) == (c.v, c.d) {
+                let q = Val { v: clean(self, *o, d)?, d, dirty: false, set: None };
+                let fill = self.carried(q, BlockOp::Toggle);
+                let hidden = self.op(BlockOp::Prev(fill.v, 1));
+                let open = self.op(BlockOp::AndNot(q.v, hidden));
+                for (name, v) in [(regions.hidden.clone(), hidden), (format!("o_{}", r.kind), open), (format!("f_{}", r.kind), fill.v)] {
+                    self.names.insert(name, Val { v, d, dirty: true, set: None });
+                }
+                // A mode of tier 2's states, as a toggle is (`row_modes`).
+                self.toggles.push((fill, q));
+                return Ok(());
+            }
+        }
         let mut ins = Vec::new();
         for &(o, c) in &inputs {
             let later = if later { Some(clean(self, c, d - 1)?) } else { None };
@@ -803,11 +1055,20 @@ impl Lowering {
         let code = self.op(BlockOp::AndNot(w, hidden));
         let mut hide: Vec<u16> = Vec::new();
         let mut kinds = Vec::new();
+        // The earlier kinds' openers: a byte one of them opens is not a later kind's.
+        let mut earlier: Option<u16> = None;
         let named = |me: &mut Self, name: String, v: u16| {
             me.names.insert(name, Val { v, d, dirty: true, set: None });
         };
         for (r, &(opener, closer, c_before)) in regions.kinds.iter().zip(&ins) {
-            let taken = self.op(BlockOp::And(opener, code));
+            let mut taken = self.op(BlockOp::And(opener, code));
+            if let Some(e) = earlier {
+                taken = self.op(BlockOp::AndNot(taken, e));
+            }
+            earlier = Some(match earlier {
+                Some(e) => self.op(BlockOp::Or(e, opener)),
+                None => opener,
+            });
             let (open, empty) = match &r.empty {
                 Some((e, m)) => {
                     let later = self.op(BlockOp::BackFill(c_before.expect("made with an else"), zero));
@@ -832,6 +1093,12 @@ impl Lowering {
             }
             named(self, format!("o_{}", r.kind), open);
             named(self, format!("f_{}", r.kind), fill);
+            // A region is a mode as a toggle is: `f` the mode, `f ^ prev(f)` its flips, the
+            // opener's first byte and the closer's (`row_modes`).
+            let f = Val { v: fill, d, dirty: true, set: None };
+            let before = self.prev(f, 1)?;
+            let flips = self.xor(f, before)?;
+            self.toggles.push((f, flips));
             kinds.push(crate::block::WalkKind { opener, closer, open, fill, bytes: r.bytes, outside: r.outside, empty });
         }
         let mut next = *hide.first().ok_or("regions that hide nothing")?;
@@ -861,26 +1128,45 @@ impl Lowering {
         Ok(by_delay)
     }
 
-    pub fn product(&mut self, product: Product) -> (u16, u8) {
-        if let Some(&at) = self.products.get(&product) {
-            return at;
+    /// A class's products placed together, and the bits of each table it reads: a table that
+    /// holds them all, else the one with room for the fewest missing, else a new one. So a
+    /// class of eight products or fewer is one lookup, as each of simdjson's classes is, though
+    /// a product may then be in two tables. More than eight: eight to a table.
+    pub fn place(&mut self, ps: &[Product]) -> Vec<(u16, u8)> {
+        if ps.len() > 8 {
+            return ps.chunks(8).flat_map(|c| self.place(c)).collect();
         }
-        let n = self.products.len();
-        let (table, bit) = ((n / 8) as u16, 1u8 << (n % 8));
-        if usize::from(table) == self.program.tables.len() {
-            self.program.tables.push(ClassTable::default());
-        }
-        let t = &mut self.program.tables[usize::from(table)];
-        for h in 0..16 {
-            if product.0 >> h & 1 == 1 {
-                t.hi[h] |= bit;
+        let missing = |held: &Vec<Product>| ps.iter().filter(|p| !held.contains(p)).count();
+        let room = self.table_products.iter().enumerate().filter(|(_, held)| held.len() + missing(held) <= 8).min_by_key(|(t, held)| (missing(held), *t)).map(|(t, _)| t);
+        let t = match room {
+            Some(t) => t,
+            None => {
+                self.table_products.push(Vec::new());
+                self.program.tables.push(ClassTable::default());
+                self.table_products.len() - 1
             }
-            if product.1 >> h & 1 == 1 {
-                t.lo[h] |= bit;
-            }
+        };
+        let mut bits = 0u8;
+        for &p in ps {
+            let bit = match self.table_products[t].iter().position(|&q| q == p) {
+                Some(bit) => bit,
+                None => {
+                    self.table_products[t].push(p);
+                    let (bit, table) = (self.table_products[t].len() - 1, &mut self.program.tables[t]);
+                    for h in 0..16 {
+                        if p.0 >> h & 1 == 1 {
+                            table.hi[h] |= 1 << bit;
+                        }
+                        if p.1 >> h & 1 == 1 {
+                            table.lo[h] |= 1 << bit;
+                        }
+                    }
+                    bit
+                }
+            };
+            bits |= 1 << bit;
         }
-        self.products.insert(product, (table, bit));
-        (table, bit)
+        vec![(t as u16, bits)]
     }
 
     pub fn op(&mut self, op: BlockOp) -> u16 {
@@ -922,15 +1208,121 @@ impl Lowering {
         }
     }
 
-    /// `within`, the stream's bytes, at delay `d`: a leaf, never a carry.
+    /// `x` at delay `d`, below its own, when every bit of it lies in a file's first
+    /// `block::EARLY_BITS` bits (`first_bits`): the same bytes' bits, `x.d - d` earlier in the
+    /// word (`BlockOp::Early`). So a test of a file's start that looks ahead, as a byte order
+    /// mark's, delays nothing it is combined with (decision 0330). Else `x` as it is.
+    pub fn early_to(&mut self, x: Val, d: u8) -> Val {
+        if x.d <= d || !first_bits(&self.program.ops, &self.program.tables, x.v).is_some_and(|s| s <= crate::block::EARLY_BITS) {
+            return x;
+        }
+        let k = x.d - d;
+        let v = match self.program.ops[usize::from(x.v)] {
+            // A `prev` of at least `k`: its first `k` bits are the zeros it shifted in.
+            BlockOp::Prev(p, j) if j > k => self.op(BlockOp::Prev(p, j - k)),
+            BlockOp::Prev(p, j) if j == k => p,
+            BlockOp::Early(p, j) if u16::from(j) + u16::from(k) <= 63 => self.op(BlockOp::Early(p, j + k)),
+            _ => self.op(BlockOp::Early(x.v, k)),
+        };
+        Val { v, d, set: None, ..x }
+    }
+
+    /// The stream's bytes at delay `d`: `within`, a leaf, never a carry; with a prefix, less
+    /// its bytes (`prefix`), which a full block knows are none.
     pub fn within(&mut self, d: u8) -> Result<u16, String> {
         if d > MAX_DELAY {
             return Err(format!("a delay of {d} bytes: more than {MAX_DELAY}"));
         }
-        Ok(self.op(BlockOp::Within(d)))
+        let w = self.op(BlockOp::Within(d));
+        match self.prefix.as_ref().map(|p| p.1).filter(|_| !self.ahead) {
+            Some(p) => {
+                let p = self.at(p, d)?;
+                Ok(self.op(BlockOp::AndNot(w, p)))
+            }
+            None => Ok(w),
+        }
+    }
+
+    /// A rule's mask (`run R`, `pair P`): read at the bytes from a token's first on, never
+    /// before it, so never at the prefix's, which lie before every token's. With a prefix, the
+    /// mask without its cut where it is a byte class, which reads its own byte alone; else as
+    /// any value is, since a `prev` in it reaches back from the stream's first bytes into the
+    /// prefix's (decision 0335).
+    pub fn ahead(&mut self, e: &Expr) -> Result<Val, String> {
+        if self.prefix.is_none() || !self.of_classes(e, 0) {
+            return self.expr(e);
+        }
+        self.ahead = true;
+        let x = self.expr(e);
+        self.ahead = false;
+        match x? {
+            x if x.set.is_some() && x.d == 0 => Ok(x),
+            _ => self.expr(e),
+        }
+    }
+
+    /// Whether `e` is made of byte classes alone (`~`, `&`, `|`, `^` of classes and of masks
+    /// that are), so that lowering it again (`ahead`) makes nothing but byte tests.
+    fn of_classes(&self, e: &Expr, depth: u32) -> bool {
+        depth < 64 && match e {
+            Expr::Empty => true,
+            Expr::Name(n) => self.classes.contains_key(n) || self.mask_exprs.get(n).is_some_and(|x| self.of_classes(x, depth + 1)),
+            Expr::Not(a) => self.of_classes(a, depth + 1),
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => self.of_classes(a, depth + 1) && self.of_classes(b, depth + 1),
+            _ => false,
+        }
+    }
+
+    /// The operations as the prover reads them (`bitlex_prove`): with a prefix, its value zero.
+    /// The prover's positions are the stream's, and every bit of the prefix's lies before the
+    /// stream, where its model has no byte in any class and every carried value 0, as the cut
+    /// classes and `within` are there. Without a prefix, the operations as they are.
+    pub fn proof_ops(&self) -> std::borrow::Cow<'_, [BlockOp]> {
+        match &self.prefix {
+            Some((_, p)) => {
+                let mut ops = self.program.ops.clone();
+                ops[usize::from(p.v)] = BlockOp::Const(0);
+                std::borrow::Cow::Owned(ops)
+            }
+            None => std::borrow::Cow::Borrowed(&self.program.ops),
+        }
+    }
+
+    /// A prefix's value (`Stmt::Prefix`): at the file's first byte where its bytes follow, and
+    /// at the bytes after it that it covers. Made before the prefix is set, from the file's own
+    /// `within`. Its `n` bytes are a test at delay `n - 1` (at least 1), brought to delay 0 by
+    /// one `early` over the whole of it: every value that reads the prefix reads that `early`,
+    /// so a window past the file's first bytes makes none of it (`native_cpu_bytes`), and a full
+    /// block knows it is zero (`native_cpu_lanes`' `full_words`).
+    pub fn prefix_value(&mut self, bytes: &[u8]) -> Result<Val, String> {
+        debug_assert!(self.prefix.is_none());
+        let all = self.within_val(0)?;
+        let before = self.prev(all, 1)?;
+        let mut at = self.andnot(all, before)?;
+        for (j, &b) in bytes.iter().enumerate() {
+            let mut set = [0u64; 4];
+            set[usize::from(b) / 64] |= 1 << (b % 64);
+            let x = self.class_set(set);
+            let x = self.next(x, j as u64)?;
+            at = self.and(at, x)?;
+        }
+        // The test and the bytes after it, at delay `top`, by `prev`s of the test there.
+        let top = (bytes.len() as u8 - 1).max(1);
+        let t = self.at(at, top)?;
+        let mut v = t;
+        for j in 1..bytes.len() {
+            let x = self.prev_op(t, j as u8);
+            v = self.op(BlockOp::Or(v, x));
+        }
+        let v = self.op(BlockOp::Early(v, top));
+        if !first_bits(&self.program.ops, &self.program.tables, v).is_some_and(|s| s <= crate::block::EARLY_BITS) {
+            return Err(format!("a prefix of {} bytes is not a value of the file's first {} bytes", bytes.len(), crate::block::EARLY_BITS));
+        }
+        Ok(Val { v, d: 0, dirty: false, set: None })
     }
 
     pub fn two(&mut self, a: Val, b: Val, f: fn(u16, u16) -> BlockOp, dirty: bool) -> Result<Val, String> {
+        let (a, b) = (self.early_to(a, b.d), self.early_to(b, a.d));
         let d = a.d.max(b.d);
         let (x, y) = (self.at(a, d)?, self.at(b, d)?);
         Ok(Val { v: self.op(f(x, y)), d, dirty, set: None })
@@ -1129,6 +1521,8 @@ impl Lowering {
         let by_a = match x {
             BlockOp::Const(0) => true,
             BlockOp::Prev(p, k) => self.implied(p, da - i32::from(k), b, db, steps),
+            // The same bytes' bits as its operand's, at a delay `k` smaller.
+            BlockOp::Early(p, k) => self.implied(p, da + i32::from(k), b, db, steps),
             BlockOp::And(p, q) => self.implied(p, da, b, db, steps) || self.implied(q, da, b, db, steps),
             BlockOp::AndNot(p, _) => self.implied(p, da, b, db, steps),
             BlockOp::Or(p, q) => self.implied(p, da, b, db, steps) && self.implied(q, da, b, db, steps),
@@ -1138,6 +1532,7 @@ impl Lowering {
         by_a || match y {
             // Its first `k` bits are the bytes before the stream's: only at a delay of `k` or more.
             BlockOp::Prev(q, k) if db >= i32::from(k) => self.implied(a, da, q, db - i32::from(k), steps),
+            BlockOp::Early(q, k) => self.implied(a, da, q, db + i32::from(k), steps),
             BlockOp::Or(p, q) => self.implied(a, da, p, db, steps) || self.implied(a, da, q, db, steps),
             BlockOp::And(p, q) => self.implied(a, da, p, db, steps) && self.implied(a, da, q, db, steps),
             _ => false,
@@ -1200,6 +1595,14 @@ impl Lowering {
     }
 
     pub fn name(&mut self, name: &str) -> Result<Val, String> {
+        if self.ahead {
+            if let Some(e) = self.mask_exprs.get(name).cloned() {
+                return self.expr(&e);
+            }
+            if let Some(ranges) = self.classes.get(name).cloned() {
+                return Ok(self.class(&ranges));
+            }
+        }
         if let Some(&v) = self.names.get(name) {
             return Ok(v);
         }
@@ -1220,9 +1623,23 @@ impl Lowering {
         self.class_set(set)
     }
 
+    /// A class (`class_bytes`), cut to the stream where it holds a byte of the prefix
+    /// (`prefix`): the prefix's bytes are no class's. Still a class to `sets`, which makes the
+    /// combined class here again.
+    pub fn class_set(&mut self, set: ByteSet) -> Val {
+        let x = self.class_bytes(set);
+        match &self.prefix {
+            Some((bytes, p)) if !self.ahead && bytes.iter().any(|&b| set[usize::from(b) / 64] >> (b % 64) & 1 == 1) => {
+                let p = p.v;
+                Val { v: self.op(BlockOp::AndNot(x.v, p)), ..x }
+            }
+            _ => x,
+        }
+    }
+
     /// A class: an `eq` for one byte, otherwise one `class` per table its products use, ORed.
     /// Dirty when the class holds the padding's byte, 0x00.
-    pub fn class_set(&mut self, set: ByteSet) -> Val {
+    fn class_bytes(&mut self, set: ByteSet) -> Val {
         let has = |b: u32| set[b as usize / 64] >> (b % 64) & 1 == 1;
         let bytes: Vec<u8> = (0..=255u8).filter(|&b| has(u32::from(b))).collect();
         let dirty = has(0);
@@ -1239,14 +1656,7 @@ impl Lowering {
                 _ => ranges.push((u32::from(b), u32::from(b))),
             }
         }
-        let mut per_table: Vec<(u16, u8)> = Vec::new();
-        for product in products(&ranges) {
-            let (table, bit) = self.product(product);
-            match per_table.iter_mut().find(|(t, _)| *t == table) {
-                Some((_, bits)) => *bits |= bit,
-                None => per_table.push((table, bit)),
-            }
-        }
+        let per_table = self.place(&products(&ranges));
         let mut value = None;
         for (table, bits) in per_table {
             let v = self.op(BlockOp::Class { table, bits });
@@ -1391,6 +1801,22 @@ impl Lowering {
                     let ge = self.at_least(&b, &a)?;
                     self.not(ge)
                 }
+            }
+            // The bytes at `i`, `i + 1`, …: each byte's class, from the byte that far ahead.
+            "text" => {
+                let Some(Arg::S(bytes)) = args.first() else { return Err("text: a string".into()) };
+                let mut out: Option<Val> = None;
+                for (k, &b) in bytes.iter().enumerate() {
+                    let mut one: ByteSet = [0; 4];
+                    one[usize::from(b) / 64] |= 1 << (b % 64);
+                    let c = self.class_set(one);
+                    let c = if k == 0 { c } else { self.next(c, k as u64)? };
+                    out = Some(match out {
+                        Some(o) => self.and(o, c)?,
+                        None => c,
+                    });
+                }
+                out.ok_or_else(|| "text: an empty string".into())
             }
             _ => Err(format!("not compiled yet: {f}")),
         }
@@ -1947,7 +2373,7 @@ fn is_keyword_kind(keywords: &[(String, Vec<(Vec<u8>, Option<String>)>, bool)], 
 /// The row whose tokens hold every bit of `a`, proved: `a` at its starts, or inside a
 /// `fill(s, e)` whose runs are its tokens (its start `s`, its last the run's next byte).
 fn token_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows: &[(String, Val, Val)]) -> Result<Option<usize>, String> {
-    let proved = |low: &Lowering, x: Val| bitlex_prove::never(&low.program.ops, &low.program.tables, x.v, x.d) || bitlex_prove::never_unrolled(&low.program.ops, &low.program.tables, &[], x.v, x.d, 4, 1000);
+    let proved = |low: &Lowering, x: Val| bitlex_prove::never(&low.proof_ops(), &low.program.tables, x.v, x.d) || bitlex_prove::never_unrolled(&low.proof_ops(), &low.program.tables, &[], x.v, x.d, 4, 1000);
     let grammar_rows: Vec<usize> = (0..rows.len()).filter(|&r| !low.extra.contains(&token_rows[r].0) && !row_kinds(&rows[r]).is_empty()).collect();
     for &r in &grammar_rows {
         let off = low.andnot(a, token_rows[r].1)?;
@@ -2088,7 +2514,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         (st, ar, wh, rules)
     };
     low.shape = if by_rules { Shape::Rules } else { Shape::Machine };
-    grammar::without_mark_leaves(&mut arms, &mark_kinds)?;
+    let settling: Vec<u16> = low.settles.iter().map(|&k| mark_kinds[k]).collect();
+    grammar::without_mark_leaves(&mut arms, &mark_kinds, &settling)?;
     // A node a reading drops has no supertype: tier 2 places the supertypes by their nodes.
     let gone: Vec<u16> = readings.maps.iter().flat_map(|r| r.kinds.iter().filter(|x| x.1 == crate::stream_ir::GONE).map(|x| x.0)).collect();
     for a in &arms {
@@ -2137,11 +2564,18 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             kind: if required.contains(kind) { 0 } else { id(kind)? },
             soft,
             one_byte: start.v == last.v && start.d == last.d,
-            first: bitlex_prove::first_bytes(&low.program.ops, &low.program.tables, start.v, start.d),
+            first: bitlex_prove::first_bytes(&low.proof_ops(), &low.program.tables, start.v, start.d),
             keywords,
             check: check_of.get(&r).copied(),
             mask: None,
         });
+    }
+    // `RERAIL_TIER2_SIZES` (`bitlex_tier2::lower`): each row's first bytes, and each mark's, on
+    // stderr, as what makes tier 2's tests.
+    if std::env::var_os("RERAIL_TIER2_SIZES").is_some() {
+        for (r, row) in rows.iter().enumerate() {
+            eprintln!("row {r} {}: {} first bytes", token_rows[r].0, row.first.iter().map(|w| w.count_ones()).sum::<u32>());
+        }
     }
     // Two rows that can begin with one byte and can start at one byte: that byte sends the
     // file to tree-sitter, as the evaluator's "both start at byte" does. A pair whose starts
@@ -2151,17 +2585,19 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         for b in a + 1..rows.len() {
             if shares(a, b) {
                 let both = low.and(token_rows[a].1, token_rows[b].1)?;
-                if !bitlex_prove::never(&low.program.ops, &low.program.tables, both.v, both.d) {
+                if !bitlex_prove::never(&low.proof_ops(), &low.program.tables, both.v, both.d) {
                     low.fallbacks.push(both);
                 }
             }
         }
     }
     // The extras (grammar::with_extras): taken in the token step (`TOKEN_EXTRAS`), as the lean
-    // parser places comments, where they are of one kind and the records' codes have a mark's
-    // bit for them (fewer marks than `records::MARKS`); else an arm in every state, which tells
-    // an extra from a token beginning with the same byte by their rows' start masks (`ROW`).
-    let token_extras = matches!(low.extra.as_slice(), [_]) && mark_kinds.len() < crate::records::MARKS;
+    // parser places comments, where the records' codes have a mark's bit for them: one bit
+    // every extra's token has (the extra's mark), and one more for each kind after the first,
+    // which tells its leaf's kind (Kotlin's line and block comments); so a mark for each kind,
+    // within `records::MARKS`. Else an arm in every state, which tells an extra from a token
+    // beginning with the same byte by their rows' start masks (`ROW`).
+    let token_extras = !low.extra.is_empty() && mark_kinds.len() + low.extra.len() <= crate::records::MARKS;
     let (states, arms) = {
         let extras = low.extra.iter().map(|k| id(k)).collect::<Result<Vec<u16>, String>>()?;
         let apart = |_: u16, _: u16| true;
@@ -2170,9 +2606,11 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // Each mark's bits at the grammar's token starts (not the extras'): a token that starts
     // with a bit since the start before it, `starts & (m | prev(fill(m & ~starts, starts)))`.
     // Its mask is the program's `k`.
+    // A row read inside a region (`inside`, a string's content) is left out: marks are of the
+    // grammar's tokens in code, and none holds inside a region read in parts (`Reader::quiet`).
     let mut grammar_starts: Option<Val> = None;
-    for (kind, start, _) in token_rows {
-        let is_extra = low.extra.contains(kind);
+    for (r, (kind, start, _)) in token_rows.iter().enumerate() {
+        let is_extra = low.extra.contains(kind) || low.inside.get(r).copied().unwrap_or(false);
         if !is_extra {
             grammar_starts = Some(match grammar_starts {
                 Some(g) => low.or(g, *start)?,
@@ -2211,6 +2649,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let looped = (!low.token_rules.is_empty() || !low.token_reads.is_empty()) && low.skip.is_some();
     let mut gaps = 0u32;
     let mut alone = vec![false; low.marks.len()];
+    let mut settle_masks: Vec<(usize, Val)> = Vec::new();
     for (k, (kind, m, end)) in low.marks.clone().into_iter().enumerate() {
         let gs = grammar_starts.ok_or("marks with no grammar token")?;
         // A token mark: its bit at every grammar token (its first element's word's, where it is
@@ -2242,7 +2681,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 [TokenElem::Word(w)] => Some(w.clone()),
                 _ => None,
             };
-            marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: Some((before, seq)), unless: vec![] });
+            marks.push(bitlex_tier2::Mark { settle: None, ends: false, kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: Some((before, seq)), unless: vec![] });
             continue;
         }
         let mut expr = low.mark_exprs[k].clone();
@@ -2336,11 +2775,11 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             let t = low.expr(term)?;
             // Only at the grammar's token starts.
             let elsewhere = low.andnot(t, gs)?;
-            if !settled.never(&low.program.ops, &low.program.tables, elsewhere.v, elsewhere.d) {
+            if !settled.never(&low.proof_ops(), &low.program.tables, elsewhere.v, elsewhere.d) {
                 continue;
             }
             // The words whose first byte the term may be at.
-            let firsts = settled.first_bytes(&low.program.ops, &low.program.tables, t.v, t.d);
+            let firsts = settled.first_bytes(&low.proof_ops(), &low.program.tables, t.v, t.d);
             for w in candidates.iter().filter(|w| firsts[usize::from(w[0]) / 64] >> (w[0] % 64) & 1 == 1) {
                 // A token's record pairs its start with its row's last: one row starts at a
                 // byte (two that can go to the fallback), and the record pass checks the
@@ -2360,7 +2799,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 }
                 let Some(e) = e else { continue };
                 let differs = low.xor(t, e)?;
-                let ok = settled.never(&low.program.ops, &low.program.tables, differs.v, differs.d);
+                let ok = settled.never(&low.proof_ops(), &low.program.tables, differs.v, differs.d);
                 if ok {
                     let mut rest = if looped { None } else { Some(gs) };
                     for (_, other) in parts.iter().enumerate().filter(|&(j, _)| j != i) {
@@ -2405,7 +2844,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         // out is proved apart, `never`). A state that refuses it tests it only on those bytes.
         // Proved on `m`, the mark's own: where it holds only at the grammar's starts
         // (`m & ~starts` never), the lift to the next start adds nothing.
-        let on_starts = bitlex_prove::never(&low.program.ops, &low.program.tables, before.v, before.d);
+        let on_starts = bitlex_prove::never(&low.proof_ops(), &low.program.tables, before.v, before.d);
         let mut first: ByteSet = [u64::MAX; 4];
         if on_starts {
             first = [0; 4];
@@ -2414,7 +2853,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     continue;
                 }
                 let both = low.and(m, token_rows[r].1)?;
-                if !bitlex_prove::never(&low.program.ops, &low.program.tables, both.v, both.d) {
+                if !bitlex_prove::never(&low.proof_ops(), &low.program.tables, both.v, both.d) {
                     for i in 0..4 {
                         first[i] |= rows[r].first[i];
                     }
@@ -2430,13 +2869,21 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 one[usize::from(b) / 64] |= 1 << (b % 64);
                 let class = low.class_set(one);
                 let both = low.and(m, class)?;
-                if bitlex_prove::never(&low.program.ops, &low.program.tables, both.v, both.d) {
+                if bitlex_prove::never(&low.proof_ops(), &low.program.tables, both.v, both.d) {
                     first[usize::from(b) / 64] &= !(1 << (b % 64));
                 }
             }
         }
+        if std::env::var_os("RERAIL_TIER2_SIZES").is_some() {
+            eprintln!("mark {k} {kind}: on starts {on_starts}, word {:?}, {} first bytes", word.as_ref().map(|w| String::from_utf8_lossy(w).into_owned()), first.iter().map(|w| w.count_ones()).sum::<u32>());
+        }
         let unless = low.unless.get(&k).cloned().unwrap_or_default();
-        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: None, unless });
+        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: None, unless, settle: None, ends: low.ends.contains(&k) });
+        if low.settles.contains(&k) {
+            // From each bit up to the next grammar token's start: an extra that starts there is
+            // after the mark's bit. Its mask after the marks' (below).
+            settle_masks.push((k, low.fill(m, gs)?));
+        }
     }
     // Any mark at a token: the marks' masks joined, after them. Marks hold at few tokens (0.8%
     // of the tests of `.rr`'s corpus), so `TOKEN` reads this once and the marks are live only
@@ -2454,6 +2901,10 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
         None => None,
     };
+    for (k, v) in settle_masks {
+        mark_masks.push(v);
+        marks[k].settle = Some(mark_masks.len() as u16 - 1);
+    }
     let row_masks = mark_masks.len() as u16;
     // The rows each state can meet, by the modes its tokens are read in (`row_modes`): tier 2
     // tells apart by their start masks (`ROW`) only the rows a state can meet that begin
@@ -2465,7 +2916,10 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let real_first: Vec<ByteSet> = rows.iter().map(|x| x.first).collect();
     let mut moved: Vec<(usize, u8)> = Vec::new();
     if looped {
-        let starts = |r: usize, b: usize| real_first[r][b / 64] >> (b % 64) & 1 == 1;
+        // A row read inside a region (`inside`) is its reader's, met only in the region's mode
+        // (`row_modes`): it begins no token at a byte's dispatch, so it takes no byte here.
+        let inside = |r: usize| low.inside.get(r).copied().unwrap_or(false);
+        let starts = |r: usize, b: usize| !inside(r) && real_first[r][b / 64] >> (b % 64) & 1 == 1;
         let mut free: Vec<u8> = (0..256usize).rev().filter(|&b| !(0..rows.len()).any(|r| starts(r, b))).map(|b| b as u8).collect();
         let mut byte_of: HashMap<String, u8> = HashMap::new();
         for r in 0..rows.len() {
@@ -2494,6 +2948,17 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             rows[r].first = [0; 4];
             rows[r].first[usize::from(f) / 64] |= 1 << (f % 64);
         }
+        // A moved kind's byte is its alone: tier 2 switches on a record's kind (its least
+        // byte's target), so a row read inside a region, whose bytes may be any, never meets
+        // a state there.
+        for r in 0..rows.len() {
+            if moved.iter().any(|&(m, _)| m == r) {
+                continue;
+            }
+            for &(_, f) in &moved {
+                rows[r].first[usize::from(f) / 64] &= !(1 << (f % 64));
+            }
+        }
     }
     let meets = row_modes(low, &token_rows, &rows, &states, &arms, &mark_kinds)?;
     // The totals are one flag (`BlockRun::totals`), tested once: `EMPTY 0`.
@@ -2515,7 +2980,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 for (r, w) in &words {
                     let k = low.keyword(token_rows[*r].1, token_rows[*r].2, w)?;
                     let both = low.and(x, k)?;
-                    if bitlex_prove::never(&low.program.ops, &low.program.tables, both.v, both.d) {
+                    if bitlex_prove::never(&low.proof_ops(), &low.program.tables, both.v, both.d) {
                         continue;
                     }
                     kinds.push(id(&String::from_utf8_lossy(w))?);
@@ -2526,7 +2991,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 }
                 let Some(all) = all else { return Ok(None) };
                 let differs = low.xor(x, all)?;
-                Ok(bitlex_prove::never(&low.program.ops, &low.program.tables, differs.v, differs.d).then_some(kinds))
+                Ok(bitlex_prove::never(&low.proof_ops(), &low.program.tables, differs.v, differs.d).then_some(kinds))
             };
             let (u, d) = (kinds_of(up, low)?, kinds_of(down, low)?);
             match (u, d, u16::try_from(max)) {
@@ -2591,9 +3056,13 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         rows[r].first = real_first[r];
     }
     let starts_kind = |name: &str, b: usize| (0..rows.len()).any(|r| token_rows[r].0 == name && rows[r].first[b / 64] >> (b % 64) & 1 == 1);
+    // A row read inside a region (`inside`, a string's content) is left out: its tokens are only
+    // inside the region, whose rule takes no mark, so a mark that holds there is skipped (hidden)
+    // or refuses the file, and never reads a token otherwise.
+    let inside = |r: usize| low.inside.get(r).copied().unwrap_or(false);
     for name in &mark_kind_names {
         for b in 0..256 {
-            if starts_kind(name, b) && (0..rows.len()).any(|r| token_rows[r].0 != *name && !low.extra.contains(&token_rows[r].0) && rows[r].first[b / 64] >> (b % 64) & 1 == 1) {
+            if starts_kind(name, b) && (0..rows.len()).any(|r| token_rows[r].0 != *name && !inside(r) && !low.extra.contains(&token_rows[r].0) && rows[r].first[b / 64] >> (b % 64) & 1 == 1) {
                 return Err(format!("a token mark's kind `{name}` shares byte {b:#04x} with another token"));
             }
         }
@@ -2649,6 +3118,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
     }
     let mut extra_mark = None;
+    // The extras' kinds after the first, each with its bit (`Words::extras`).
+    let mut extra_kind_bits: Vec<(String, u8)> = Vec::new();
     // The extra's bit, after the marks': its rows' starts (`TOKEN_EXTRAS`, `Words::extras`).
     if token_extras {
         let mut starts: Option<Val> = None;
@@ -2664,11 +3135,39 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         in_code.push((mark_masks.len() as u16 - 1, 0));
         let bit = (in_code.len() - 1) as u8;
         extra_mark = Some(bit);
-        crate::rir_text::extra_rows(&mut lowered.text, &[(bit, id(&low.extra[0])?)]);
+        let mut bits = vec![(bit, id(&low.extra[0])?)];
+        // Each kind after the first: its rows' starts, a bit of its own (`Words::extras`).
+        let later: Vec<String> = low.extra[1..].to_vec();
+        for kind in &later {
+            let mut starts: Option<Val> = None;
+            let rows_of: Vec<Val> = token_rows.iter().filter(|(k, _, _)| k == kind).map(|r| r.1).collect();
+            for r in rows_of {
+                starts = Some(match starts {
+                    Some(s) => low.or(s, r)?,
+                    None => r,
+                });
+            }
+            mark_masks.push(starts.ok_or("an extra with no rows")?);
+            in_code.push((mark_masks.len() as u16 - 1, 0));
+            let b = (in_code.len() - 1) as u8;
+            extra_kind_bits.push((kind.clone(), b));
+            bits.push((b, id(kind)?));
+        }
+        crate::rir_text::extra_rows(&mut lowered.text, &bits);
     }
+    // The mark bits an extra's token has: the extra's, and its kind's own after the first.
+    let extra_kinds: Vec<String> = low.extra.clone();
+    let extra_marks = |kind: &String| -> u32 {
+        if !extra_kinds.contains(kind) {
+            return 0;
+        }
+        extra_mark.map_or(0, |e| 1u32 << e) | extra_kind_bits.iter().filter(|(k, _)| k == kind).fold(0, |m, &(_, b)| m | 1u32 << b)
+    };
     // The token marks, their kinds the records' (`Words::token_marks`).
     if !lowered.token_marks.is_empty() {
-        if !token_extras {
+        // Extras between a mark's tokens are placed in the token step only; a grammar with none
+        // has nothing to place.
+        if !token_extras && !low.extra.is_empty() {
             return Err("token marks with extras not taken in the token step".into());
         }
         let mut tms = Vec::new();
@@ -2676,7 +3175,17 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             let mut out = Vec::new();
             for (offset, names, words, not, end) in elems {
                 let mut set = 0u64;
+                // The kinds' hard keywords: a record of the kind with one of these words is the
+                // keyword's token (`TokenElem::except`). Not a row of keywords only (`required`,
+                // kind 0): its kind names the row, every token of it a keyword.
+                let mut except: Vec<u16> = Vec::new();
                 for name in names {
+                    for r in (0..rows.len()).filter(|&r| &token_rows[r].0 == name && rows[r].kind != 0) {
+                        for (w, _) in &rows[r].keywords {
+                            let s = lowered.strings.iter().position(|x| x == w).ok_or("a keyword not among the words")?;
+                            except.push(s as u16);
+                        }
+                    }
                     for b in (0..256).filter(|&b| starts_kind(name, b)) {
                         let k = kinds[b];
                         if k >= 64 {
@@ -2685,7 +3194,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         set |= 1 << k;
                     }
                 }
-                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), not: *not, end: *end });
+                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), except, not: *not, end: *end });
             }
             tms.push(crate::program::TokenMark { order: *order, elems: out, refuses: *refuses });
         }
@@ -2707,6 +3216,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // with tests is its kind's alone.
     let mut rule_tests: Vec<Vec<usize>> = Vec::new();
     let mut readers: Vec<crate::records::Reader> = Vec::new();
+    let mut reader_starts: Vec<(usize, Val)> = Vec::new();
     let mut nexts: Vec<crate::records::PairTable> = Vec::new();
     // Each table's pairs, to find it again.
     let mut tabled: Vec<Vec<[u8; 2]>> = Vec::new();
@@ -2757,7 +3267,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             Some(crate::records::EndRule::Next(at as u16))
         };
         for b in 0..256usize {
-            let these: Vec<usize> = (0..rows.len()).filter(|&r| rows[r].first[b / 64] >> (b % 64) & 1 == 1).collect();
+            // A row read inside a region (`inside`) its reader starts: no byte's rule.
+            let these: Vec<usize> = (0..rows.len()).filter(|&r| !low.inside.get(r).copied().unwrap_or(false) && rows[r].first[b / 64] >> (b % 64) & 1 == 1).collect();
             if these.is_empty() {
                 continue;
             }
@@ -2765,9 +3276,11 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             let reads: Vec<usize> = these.iter().copied().filter(|&r| low.token_reads.contains_key(&token_rows[r].0)).collect();
             if let Some(&r0) = reads.first() {
                 let kind = token_rows[r0].0.clone();
-                if reads.iter().any(|&r| token_rows[r].0 != kind) {
-                    return Err(format!("two kinds read by readers start at byte {b:#x}"));
-                }
+                // The other kinds read here (Kotlin's block comment beside its line comment):
+                // their regions are arms of this reader, each with its kind's tag.
+                let mut also: Vec<String> = reads.iter().map(|&r| token_rows[r].0.clone()).filter(|k| *k != kind).collect();
+                also.sort();
+                also.dedup();
                 let rest: Vec<usize> = these.iter().copied().filter(|r| !reads.contains(r)).collect();
                 let other = match rest.first() {
                     None => crate::records::NO_RULE,
@@ -2794,19 +3307,49 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         u8::try_from(at).map_err(|_| "more than 256 end rules")?
                     }
                 };
-                let arms: Vec<crate::records::ReadArm> = low.token_reads[&kind].clone().into_iter().map(|(o, c, off, none)| crate::records::ReadArm { opener: mask_of(low, o, &mut mark_masks), closer: mask_of(low, c, &mut mark_masks), off, none }).collect();
                 // Its kind's own, where its rows were moved (above).
-                let retag = moved.iter().find(|&&(r, _)| token_rows[r].0 == kind).map(|&(_, f)| (kinds[usize::from(f)], if low.extra.contains(&kind) { extra_mark.map_or(0, |e| 1u32 << e) } else { 0 }));
-                let reader = crate::records::Reader { arms, other, retag };
+                let retag_of = |k: &String| moved.iter().find(|&&(r, _)| token_rows[r].0 == *k).map(|&(_, f)| (kinds[usize::from(f)], extra_marks(k)));
+                let retag = retag_of(&kind);
+                // An output of its own: one shared with a mark's may be the token loop's alone
+                // (`loop_marks`), not stored.
+                let last = low.token_closer_last.get(&kind).copied().map(|l| {
+                    mark_masks.push(l);
+                    (mark_masks.len() - 1) as u16
+                });
+                let mut arms: Vec<crate::records::ReadArm> = low.token_reads[&kind].clone().into_iter().map(|(o, c, off, none)| crate::records::ReadArm { opener: mask_of(low, o, &mut mark_masks), closer: mask_of(low, c, &mut mark_masks), off, last, none, retag: None }).collect();
+                for k in &also {
+                    // A kind's own tag tells its tokens from the reader's: it needs one, as does
+                    // the reader's kind, and neither is read in parts.
+                    let Some(tag) = retag_of(k).filter(|_| retag.is_some()) else {
+                        return Err(format!("two kinds read by readers start at byte {b:#x}, not told apart by their tags"));
+                    };
+                    if low.token_parts.contains_key(k) || low.token_parts.contains_key(&kind) {
+                        return Err(format!("two kinds read by readers start at byte {b:#x}, one in parts"));
+                    }
+                    for (o, c, off, none) in low.token_reads[k].clone() {
+                        arms.push(crate::records::ReadArm { opener: mask_of(low, o, &mut mark_masks), closer: mask_of(low, c, &mut mark_masks), off, last: None, none, retag: Some(tag) });
+                    }
+                }
+                // A region read in parts: each part's start, a mask output.
+                let parts = match low.token_parts.get(&kind).cloned() {
+                    Some(ps) => ps.into_iter().map(|(v, bytes, last)| crate::records::ReadPart { start: mask_of(low, v, &mut mark_masks), bytes, last: last.map(|l| mask_of(low, l, &mut mark_masks)) }).collect(),
+                    None => Vec::new(),
+                };
+                let reader = crate::records::Reader { arms, other, retag, parts, split: crate::records::Split::Tier1, quiet: false };
                 let at = match readers.iter().position(|x| *x == reader) {
                     Some(at) => at,
                     None => {
                         readers.push(reader);
+                        // A reader in parts: its token's start mask, from which its region is
+                        // proved quiet below (`Reader::quiet`).
+                        if let Some(&fill) = low.token_fills.get(&kind) {
+                            reader_starts.push((readers.len() - 1, fill));
+                        }
                         readers.len() - 1
                     }
                 };
                 let rule = crate::records::EndRule::Read(at as u16);
-                let tests: Vec<usize> = (0..low.token_escapes.len()).filter(|&i| low.token_escapes[i].0 == kind).collect();
+                let tests: Vec<usize> = (0..low.token_escapes.len()).filter(|&i| low.token_escapes[i].0 == kind || also.contains(&low.token_escapes[i].0)).collect();
                 let at = match rules.iter().zip(&rule_tests).position(|(&x, t)| x == rule && *t == tests) {
                     Some(at) => at,
                     None => {
@@ -2902,16 +3445,40 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let mut retags = Vec::new();
     for &(r, f) in &moved {
         let o = mask_of_val(token_rows[r].1, &mut mark_masks);
-        let marks = if low.extra.contains(&token_rows[r].0) { extra_mark.map_or(0, |e| 1u32 << e) } else { 0 };
+        let marks = extra_marks(&token_rows[r].0);
         retags.push(crate::records::Retag { o, kind: kinds[usize::from(f)], marks });
     }
-    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), check_masks: local_checks.iter().map(|c| c.mask).collect() };
+    // A region read in parts whose bytes past its opener, through its closer, hold no mask mark
+    // and no retag (proved, with the regions' fixed point): its walk's codes need no marks
+    // (`Reader::quiet`), as a lexer's string arm marks nothing inside the string.
+    for &(k, fill) in &reader_starts {
+        let rd = &mut readers[k];
+        if rd.parts.is_empty() || rd.arms.len() != 1 {
+            continue;
+        }
+        // The region's fill past its opener's byte, and its closer's first byte.
+        let opens = low.prev(fill, 1)?;
+        let body = low.and(fill, opens)?;
+        let ends = low.andnot(opens, fill)?;
+        let within = low.or(body, ends)?;
+        let mut quiet = true;
+        let held: Vec<u16> = in_code.iter().map(|&(m, _)| m).filter(|&m| m != crate::records::WORD_ALONE).chain(retags.iter().map(|t| t.o)).collect();
+        for m in held {
+            let both = low.and(mark_masks[usize::from(m)], within)?;
+            if !settled.never(&low.proof_ops(), &low.program.tables, both.v, both.d) {
+                quiet = false;
+                break;
+            }
+        }
+        rd.quiet = quiet;
+    }
+    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), check_masks: local_checks.iter().map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default() };
     crate::records::WordTable::new(&records.words)?;
     // A mark's tests pass over an extra's token by its mark (`records::gap_marks`): the token
     // loop knows it only where the reader gives it (`Reader::retag`).
     if let Some(e) = records.extra {
         let tested = records.checks.iter().any(|c| c.then != crate::records::CheckThen::Escape);
-        if tested && !records.readers.iter().any(|rd| rd.retag.is_some_and(|(_, m)| m >> e & 1 == 1)) {
+        if tested && !records.readers.iter().any(|rd| rd.tags().any(|(_, m)| m >> e & 1 == 1)) {
             return Err("a mark's token tests need the extra's mark from its reader".into());
         }
     }
@@ -2941,7 +3508,13 @@ fn row_modes(
     arms: &[grammar::ArmRow],
     marks: &[u16],
 ) -> Result<Vec<Vec<bool>>, String> {
-    let proved = |low: &Lowering, v: Val| bitlex_prove::never(&low.program.ops, &low.program.tables, v.v, v.d);
+    // With the fixed points' equations (a region's carry is its fills' bytes after the openers)
+    // where the plain search does not prove it, as the marks' proofs.
+    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
+    let mut proved = |low: &Lowering, v: Val| {
+        let ops = low.proof_ops();
+        bitlex_prove::never(&ops, &low.program.tables, v.v, v.d) || settled.never(&ops, &low.program.tables, v.v, v.d)
+    };
     // The toggles whose `x` bits are all token starts, at most eight.
     let mut starts: Option<Val> = None;
     for (_, s, _) in token_rows {
@@ -2959,7 +3532,7 @@ fn row_modes(
         }
     }
     // Each row's mode at its start, and its flips: per toggle, `Some(bit)` when fixed.
-    let fixed = |low: &mut Lowering, s: Val, v: Val| -> Result<Option<bool>, String> {
+    let mut fixed = |low: &mut Lowering, s: Val, v: Val| -> Result<Option<bool>, String> {
         let off = low.andnot(s, v)?;
         let on = low.and(s, v)?;
         Ok(match (proved(low, off), proved(low, on)) {

@@ -99,6 +99,20 @@ pub(in crate::code_rule_dsl) fn text_header_key(src: &str) -> [u8; 32] {
 /// as `LibraryFile::unchanged` checks it, by its `stat` while that holds and by its bytes' sha256 when it moved: the
 /// first key that settles it.
 pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Vec<LibraryFile>)>> {
+    let Some((digest, read)) = entry_read(store, key)? else { return Ok(None) };
+    Ok(program_text::load(store, &digest, lists)?.map(|(program, _)| (program, read)))
+}
+
+/// `lookup`'s program as its version, opened from its image with no tree decoded (decision 0281's path, step 7a-1;
+/// Typing-support's, taken at the merge of e829e72a7).
+pub(super) fn lookup_version(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
+    let Some((digest, _)) = entry_read(store, key)? else { return Ok(None) };
+    Ok(program_text::load_image(store, &digest, lists)?.map(|(v, _)| v))
+}
+
+/// The digest of the program `key`'s entry keeps, and the library files it read, when the store (or the engine's
+/// bundle) keeps one whose files all still read as recorded.
+fn entry_read(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<([u8; 32], Vec<LibraryFile>)>> {
     // The store's entry, or, where the store has none, the one the engine ships (decision 0264).
     let entry = match store.source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? {
         Some(source) => {
@@ -129,7 +143,7 @@ pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32]
     }
     let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(|r| r.as_slice()) else { return Ok(None) };
     let Some(digest) = unhex(&digest) else { return Ok(None) };
-    Ok(program_text::load(store, &digest, lists)?.map(|(program, _)| (program, read)))
+    Ok(Some((digest, read)))
 }
 
 thread_local! {
@@ -168,6 +182,25 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
 /// does not read back as written is not kept: the next run combines it again.
 pub(in crate::code_rule_dsl) fn record(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], program: &Program, images: &[HashKey]) {
     let Some(encoded) = program_text::encode(program) else { return };
+    record_encoded(store, what, key, read, encoded, images);
+}
+
+/// `record` of the program's version (Typing-support's `remember_version`, taken at the merge of e829e72a7 as an item
+/// of the run's record): its image kept as it is (`program_text::encode_version`); with images off, its tree, decoded
+/// at this edge alone.
+pub(super) fn record_version(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], v: &crate::code_rule_dsl::logic::program_image::Version, images: &[HashKey]) {
+    let encoded = match program_text::encode_version(v) {
+        Some(encoded) => encoded,
+        None => {
+            let Ok(program) = v.program(&crate::code_rule_dsl::logic::front::Lists::default()) else { return };
+            let Some(encoded) = program_text::encode(&program) else { return };
+            encoded
+        }
+    };
+    record_encoded(store, what, key, read, encoded, images);
+}
+
+fn record_encoded(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], encoded: program_text::Encoded, images: &[HashKey]) {
     let mut facts = Facts::new();
     facts.insert(PROGRAM.to_owned(), vec![[Value::Str(hex(&encoded.digest).into())].into()]);
     let rows = read.iter().map(|f| [Value::Str(f.path.to_string_lossy().into_owned().into()), Value::Str(f.sha256.map(|d| hex(&d)).unwrap_or_default().into())].into()).collect();

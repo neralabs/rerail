@@ -9,8 +9,8 @@ description = "The language registry and what every crate reads of a language: t
 build = "build.rs"
 
 [features]
-default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
-all-languages = ["lang-blade", "lang-c", "lang-cpp", "lang-csharp", "lang-css", "lang-go", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue"]
+default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-clif/default"]
+all-languages = ["lang-blade", "lang-c", "lang-cpp", "lang-csharp", "lang-css", "lang-go", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-kotlin", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-scala", "lang-sql", "lang-swift", "lang-typescript", "lang-vue"]
 lang-blade = []
 lang-csharp = ["ast-grep-language/tree-sitter-c-sharp"]
 lang-css = ["ast-grep-language/tree-sitter-css"]
@@ -21,12 +21,15 @@ lang-c = ["ast-grep-language/tree-sitter-c"]
 lang-cpp = ["ast-grep-language/tree-sitter-cpp"]
 lang-javascript = []
 lang-json = ["ast-grep-language/tree-sitter-json"]
+lang-kotlin = ["ast-grep-language/tree-sitter-kotlin"]
 lang-markdown = []
 lang-php = ["ast-grep-language/tree-sitter-php"]
 lang-python = []
 lang-rr = []
 lang-rust = ["ast-grep-language/tree-sitter-rust"]
+lang-scala = ["ast-grep-language/tree-sitter-scala"]
 lang-sql = []
+lang-swift = ["ast-grep-language/tree-sitter-swift"]
 lang-typescript = []
 lang-vue = []
 headless = ["napi-derive/noop"]
@@ -93,6 +96,8 @@ rerail-prof = { path = "../prof" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 # The tape's format and the writer the parsers write it with (decision 0140).
 rerail-tape-format = { path = "../tape_format" }
+# The view the tape's reads take a document by (decision 0310), without the reads' IR.
+rerail-clif = { path = "../clif", default-features = false }
 # Python's lean parser: tree-sitter-python's tape, written as the parse goes (`tape::python_lean`).
 rerail-python-lean = { path = "../python_lean" }
 # JavaScript's, TypeScript's and TSX's lean parser: their tree-sitter tapes, written as the parse
@@ -108,6 +113,11 @@ rerail-go-lean = { path = "../go_lean" }
 rerail-c-lean = { path = "../c_lean" }
 # C#'s lean parser: tree-sitter-c-sharp's tape, written as the parse goes (`tape::csharp_lean`).
 rerail-csharp-lean = { path = "../csharp_lean" }
+# Kotlin's, Swift's and Scala's lean parsers: their tree-sitter tapes, written as the parse goes
+# (`tape::kotlin_lean`, `tape::swift_lean`, `tape::scala_lean`).
+rerail-kotlin-lean = { path = "../kotlin_lean" }
+rerail-swift-lean = { path = "../swift_lean" }
+rerail-scala-lean = { path = "../scala_lean" }
 # PHP's lean parser: tree-sitter-php's tape, written as the parse goes (`tape::php_lean`).
 rerail-php-lean = { path = "../php_lean" }
 # HTML's lean parser: tree-sitter-html's tape, written as the parse goes (`tape::html_lean`).

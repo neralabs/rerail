@@ -9,7 +9,7 @@ use super::{AtomId, Cell, RelId};
 
 /// The columns of each about relation that name a relation (column 0 is the program's name). The builder gives each
 /// such cell's atom a relation id.
-pub(crate) const RELATION_COLUMNS: &[(&str, &[usize])] = &[
+pub const RELATION_COLUMNS: &[(&str, &[usize])] = &[
     ("answer", &[1, 3]),
     ("asked", &[1, 3]),
     ("native_dfs", &[1, 2, 3]),
@@ -23,6 +23,7 @@ pub(crate) const RELATION_COLUMNS: &[(&str, &[usize])] = &[
     ("native_components", &[1, 2, 3]),
     ("native_reach", &[1, 2, 3]),
     ("native_reach_through", &[1, 2, 3]),
+    ("native_rank", &[1, 2, 3]),
     ("lattice", &[1]),
     ("lattice_merge", &[1]),
     ("lattice_widen", &[1]),
@@ -36,11 +37,11 @@ pub(crate) const RELATION_COLUMNS: &[(&str, &[usize])] = &[
 ];
 
 /// The relation columns of about relation `rel`.
-pub(crate) fn relation_columns(rel: &str) -> &'static [usize] {
+pub fn relation_columns(rel: &str) -> &'static [usize] {
     RELATION_COLUMNS.iter().find(|(r, _)| *r == rel).map_or(&[], |(_, c)| c)
 }
 
-/// A native relation's kind (`front::Native`'s variants).
+/// A native relation's kind (`front::ast::Native`'s variants).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeKind {
     DfsFirst,
@@ -51,9 +52,10 @@ pub enum NativeKind {
     Components,
     Reach,
     ReachThrough,
+    Rank,
 }
 
-/// A native relation: its kind, the relations it reads (`front::Native::reads`, in its order) and its every field.
+/// A native relation: its kind, the relations it reads (`front::ast::Native::reads`, in its order) and its every field.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeRef {
     pub rel: RelId,
@@ -62,7 +64,7 @@ pub struct NativeRef {
     pub spec: NativeSpec,
 }
 
-/// A native relation's fields (`front::Native`'s, variant by variant): each relation by its id, each other name by
+/// A native relation's fields (`front::ast::Native`'s, variant by variant): each relation by its id, each other name by
 /// its atom.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NativeSpec {
@@ -76,6 +78,8 @@ pub enum NativeSpec {
     Components { edge: RelId, own: RelId },
     Reach { seed: RelId, edge: RelId },
     ReachThrough { reach: RelId, map: RelId },
+    /// Its op's text.
+    Rank { query: RelId, counted: RelId, group: usize, op: AtomId },
 }
 
 /// A lattice relation's declaration, as the analyses read it.
@@ -123,7 +127,7 @@ pub struct About {
     pub shapes: Vec<ShapeRef>,
 }
 
-/// A gate (`front::Gate`): its key, its relation, its level, its source, and the relations it quiets and depends on,
+/// A gate (`front::ast::Gate`): its key, its relation, its level, its source, and the relations it quiets and depends on,
 /// in order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GateRef {
@@ -135,7 +139,7 @@ pub struct GateRef {
     pub deps: Vec<RelId>,
 }
 
-/// A join shape directive (`front::Shape`), each part by its atom.
+/// A join shape directive (`front::ast::Shape`), each part by its atom.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShapeRef {
     pub head: AtomId,
@@ -144,7 +148,7 @@ pub struct ShapeRef {
     pub text: AtomId,
 }
 
-/// When a shape's literal may join (`front::ShapeWait`).
+/// When a shape's literal may join (`front::ast::ShapeWait`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShapeWaitRef {
     After(AtomId),
@@ -234,6 +238,14 @@ impl About {
                     "native_python" => about.natives.extend(native(NativeKind::Python, &[3, 4], a(2).zip(r(3)).map(|(kind, input)| NativeSpec::Python { kind, input, targets: opt(4) }))),
                     "native_components" => about.natives.extend(native(NativeKind::Components, &[2, 3], r(2).zip(r(3)).map(|(edge, own)| NativeSpec::Components { edge, own }))),
                     "native_reach" => about.natives.extend(native(NativeKind::Reach, &[2, 3], r(2).zip(r(3)).map(|(seed, edge)| NativeSpec::Reach { seed, edge }))),
+                    "native_rank" => about.natives.extend(native(
+                        NativeKind::Rank,
+                        &[2, 3],
+                        match (r(2), r(3), int(row.get(4).copied()), a(5)) {
+                            (Some(query), Some(counted), Some(group), Some(op)) => Some(NativeSpec::Rank { query, counted, group: group as usize, op }),
+                            _ => None,
+                        },
+                    )),
                     "native_reach_through" => about.natives.extend(native(NativeKind::ReachThrough, &[2, 3], r(2).zip(r(3)).map(|(reach, map)| NativeSpec::ReachThrough { reach, map }))),
                     "lattice" => {
                         if let (Some(rel), Some(Cell::Int(keys)), Some(ty)) = (r(1), row.get(2).copied(), row.get(3).copied().and_then(atom)) {

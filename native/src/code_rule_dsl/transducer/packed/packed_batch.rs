@@ -2,7 +2,7 @@ use super::{
     metal_batch_abi::{
         ARENA_KIND_COUNT, FORMAT_VERSION, FinalCaptureRecord, GreedyEntryRecord, LinkRecord, LuaInstructionRecord,
         LuaSetMemberRecord, MetalBatchHeader, MetalEvaluation, MetalFile as BatchFile,
-        MetalGlobalArenas, MetalNode as BatchNode, MetalProgram as BatchProgram,
+        MetalGlobalArenas, MetalProgram as BatchProgram,
         MetalString as BatchString, MetalSupertype as BatchSupertype, MetalTask as BatchTask, NONE,
         NfaRangeRecord, NfaStateRecord, PendingRecord, PropertyRecord, QueryBucketRecord,
         QueryMemberRecord, QueuedStateRecord, RepeatRecord, ResultRecord, TaskStatus, ValueRecord,
@@ -65,14 +65,23 @@ struct OutputInstructionRecord {
     fifth: u32,
 }
 
+/// What a batch packs of its documents: never their trees, which every executor reads on the tape (decisions 0310,
+/// 0324).
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Layout {
+    /// The source and line starts: the executor reads each document's tape in place (`new_in_place`).
+    InPlace,
+    /// Nothing: the device reads the documents resident in the slabs (`new_resident`).
+    Resident,
+}
+
 #[derive(Clone, Default)]
+// copy (0353 step 7): the packed batch's node records (44 bytes a node) and child lists are copies of the
+// tape. They go: the transducer reads the tape (decisions 0293, 0353).
 pub struct PackedBatch {
     pub header: MetalBatchHeader,
-    pub nodes: Vec<BatchNode>,
-    pub children: Vec<u32>,
     pub source: Vec<u8>,
     pub line_starts: Vec<u32>,
-    pub supertypes: Vec<BatchSupertype>,
     /// The files' derived classes (`TapeDoc::with_labels`) over the batch's nodes: per class from
     /// `DERIVED_CLASS_BASE`, `derived_words` words of bits, class after class.
     pub(super) derived: Vec<u32>,
@@ -97,8 +106,8 @@ pub struct PackedBatch {
     pub evaluations: Vec<MetalEvaluation>,
     pub evaluation_lanes: Vec<MetalEvaluation>,
     pub global_arenas: MetalGlobalArenas,
-    /// A resident batch's (`new_resident`): each task's root's source length, as the nodes a
-    /// packed batch holds give it.
+    /// A batch without node records' (`new_resident`, `new_in_place`): each task's root's source length, as the
+    /// nodes a packed batch holds give it.
     pub(super) root_spans: Vec<u32>,
     /// A resident label batch's tasks (decision 0033), with no task records: lanes are sized
     /// from them (`assign_resident`).
@@ -107,6 +116,25 @@ pub struct PackedBatch {
     /// ...): 65,536 where `None`. A lane reserves the most of its evaluations' up front, so the
     /// cap bounds a dispatch's lanes (`metal_label_passes`).
     pub state_cap: Option<u32>,
+    /// Each program's result limit (`assign_workspace_with_result_limits`), empty for none: a selection of the
+    /// evaluation's first results in their order, made as the page is compacted, never a capacity.
+    pub(super) result_limits: Vec<u32>,
+    /// Each task's size and predicted steps, and its states in the worst case (decision 0334), host-side: what its
+    /// budgets are made from (`apply_budget`). Empty for a resident batch's.
+    pub(super) sizing: Vec<TaskSizing>,
+    /// A resident label batch's step budget (`assign_resident`): the run's, doubled where its tasks ran over
+    /// (`metal_label_passes`); `None`, the process's (`WorkBudget::current`).
+    pub resident_budget: Option<super::WorkBudget>,
+}
+
+/// A task's size and predicted steps (`evaluation_costs`), and its states of each kind in the worst case: the
+/// workspace formula (its subtree, or file where the program repeats, times its words times 4,096, within [4,096,
+/// 2^26]), capped as `task_capacities` caps it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct TaskSizing {
+    pub size: u64,
+    pub predicted: u64,
+    pub worst: u32,
 }
 
 fn checked_u32(value: usize) -> Result<u32, Error> {
@@ -119,21 +147,23 @@ fn global_node(base: u32, node: Option<u32>) -> Result<u32, Error> {
     })
 }
 
+/// A task's states of each kind at most, where the batch has no `state_cap`.
+const MAX_STATES_PER_KIND: u32 = 65_536;
+
 const DURABLE_RESULT_PAGE_CAPACITY: u32 = 4_194_304;
 const DURABLE_CAPTURE_PAGE_CAPACITY: u32 = 8_388_608;
 const DURABLE_PROPERTY_PAGE_CAPACITY: u32 = 2_097_152;
 const DURABLE_OUTPUT_BYTE_PAGE_CAPACITY: u32 = 64 * 1024 * 1024;
 
 impl PackedBatch {
-    /// Metal's supertypes buffer and files: with derived classes, the buffer starts with them as
-    /// the interpreter's `has_supertype` reads them (one record of the class and word counts, then
-    /// the bits), and each file's supertypes start past them.
-    pub fn metal_supertypes(&self) -> (std::borrow::Cow<'_, [BatchSupertype]>, std::borrow::Cow<'_, [BatchFile]>) {
+    /// Metal's supertypes buffer: the derived classes as the interpreter's `has_supertype` reads them (one record
+    /// of the class and word counts, then the bits), or nothing without them. A node's other classes are its
+    /// code's, read on the tape.
+    pub fn metal_supertypes(&self) -> Vec<BatchSupertype> {
         if self.derived_classes == 0 {
-            return (std::borrow::Cow::Borrowed(&self.supertypes), std::borrow::Cow::Borrowed(&self.files));
+            return Vec::new();
         }
-        let prefix = 1 + self.derived.len().div_ceil(2);
-        let mut supertypes = Vec::with_capacity(prefix + self.supertypes.len());
+        let mut supertypes = Vec::with_capacity(1 + self.derived.len().div_ceil(2));
         supertypes.push(BatchSupertype {
             node: self.derived_classes,
             kind: self.derived_words,
@@ -142,12 +172,7 @@ impl PackedBatch {
             node: pair[0],
             kind: pair.get(1).copied().unwrap_or(0),
         }));
-        supertypes.extend_from_slice(&self.supertypes);
-        let mut files = self.files.clone();
-        for file in &mut files {
-            file.supertype_start += prefix as u32;
-        }
-        (std::borrow::Cow::Owned(supertypes), std::borrow::Cow::Owned(files))
+        supertypes
     }
 
     pub(super) fn arena_start(&self, kind: ArenaKind) -> u32 {
@@ -182,12 +207,24 @@ impl PackedBatch {
         Ok(index)
     }
 
-    pub fn new(
+    /// The batch a host executor's results are published over (`PackedExecution::interpret`): the files' source
+    /// and line starts and the programs, with no tasks.
+    pub(super) fn new_published(
         programs: &[Program],
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
     ) -> Result<Self, Error> {
-        Self::build(programs, files, anchors, true)
+        Self::build_tapes(programs, files, anchors, false, Layout::InPlace)
+    }
+
+    /// The tasks of `programs` over `files` for an executor that reads each document's tape in place (the CPU
+    /// JIT, decision 0310).
+    pub fn new_in_place(
+        programs: &[Program],
+        files: &[TapeDoc],
+        anchors: &[Vec<Vec<u32>>],
+    ) -> Result<Self, Error> {
+        Self::build_tapes(programs, files, anchors, true, Layout::InPlace)
     }
 
     /// The tasks of `programs` over `files` resident in the slabs (decision 0032): each file's
@@ -198,91 +235,53 @@ impl PackedBatch {
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
     ) -> Result<Self, Error> {
-        Self::build_tapes(programs, files.len(), anchors, true, true, |file| Ok(std::borrow::Cow::Borrowed(&files[file])), |_| Ok(()))
+        Self::build_tapes(programs, files, anchors, true, Layout::Resident)
     }
 
-    pub fn new_grid_inputs(
+    /// Every task's budgets (decision 0334): the batch as `budget` runs it. Its steps (`work_limit`) from its
+    /// predicted steps, and its states (`workspace_work_estimate`, which sizes them) from its size.
+    pub fn apply_budget(&mut self, budget: super::Budget, growth: &super::StateGrowth) {
+        for (task, sizing) in self.tasks.iter_mut().zip(&self.sizing) {
+            task.work_limit = budget.work.task_limit(sizing.predicted);
+            let root = task.root - self.files[task.file as usize].node_start;
+            let grown = if growth.is_empty() { 0 } else { growth.get(&(task.file as usize, task.program as usize, root)).copied().unwrap_or(0) };
+            task.workspace_work_estimate = budget.task_states(sizing.size, sizing.worst, grown);
+        }
+    }
+
+    /// A task's states of each kind as its workspace holds them (`task_capacities`).
+    fn task_state_capacity(&self, task: &BatchTask) -> u32 {
+        task.workspace_work_estimate.min(self.state_cap.unwrap_or(MAX_STATES_PER_KIND))
+    }
+
+    /// Task `at`'s status as its evaluation's error (`status_error`), where a state quota run out below the worst
+    /// case's states is `StatesOutgrown`: unfinished, restarted with twice the states (decision 0334 §9).
+    pub(super) fn task_error(&self, at: usize, status: &TaskStatus) -> Option<Error> {
+        let task = &self.tasks[at];
+        // `TEMPO_PACKED_BATCH_PROFILE`: why a task stopped, with its budgets (decision 0334's restarts read it).
+        if status.error != 0 && std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+            eprintln!("TEMPO_TASK_STATUS {status:?} work_limit={} states={}", task.work_limit, self.task_state_capacity(task));
+        }
+        match status_error(status, task.work_limit) {
+            Some(Error::BackendCapacity)
+                if self.sizing.get(at).is_some_and(|sizing| {
+                    self.task_state_capacity(task) < sizing.worst.min(self.state_cap.unwrap_or(MAX_STATES_PER_KIND))
+                }) =>
+            {
+                Some(Error::StatesOutgrown)
+            }
+            other => other,
+        }
+    }
+
+    fn build_tapes(
         programs: &[Program],
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
-    ) -> Result<Self, Error> {
-        Self::build(programs, files, anchors, false)
-    }
-
-    pub(super) fn new_shared_grid_inputs(
-        programs: &[Program],
-        files: &[TapeDoc],
-        anchors: &[Vec<Arc<[u32]>>],
-    ) -> Result<Self, Error> {
-        Self::build(programs, files, anchors, false)
-    }
-
-    fn build<R: AsRef<[u32]>>(
-        programs: &[Program],
-        files: &[TapeDoc],
-        anchors: &[Vec<R>],
         materialize_tasks: bool,
+        layout: Layout,
     ) -> Result<Self, Error> {
-        Self::build_from_tapes(
-            programs,
-            files.len(),
-            anchors,
-            materialize_tasks,
-            |file| Ok(std::borrow::Cow::Borrowed(&files[file])),
-            |_| Ok(()),
-        )
-    }
-
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub(super) fn new_streamed_grid_inputs(
-        programs: &[Program],
-        files: &[crate::code_rule_dsl::tape::TapeSource],
-        anchors: &[Vec<Arc<[u32]>>],
-    ) -> Result<Self, Error> {
-        Self::new_streamed_grid_inputs_with_upload(programs, files, anchors, |_| Ok(()))
-    }
-
-    pub(super) fn new_streamed_grid_inputs_with_upload(
-        programs: &[Program],
-        files: &[crate::code_rule_dsl::tape::TapeSource],
-        anchors: &[Vec<Arc<[u32]>>],
-        after_file: impl FnMut(&mut Self) -> Result<(), Error>,
-    ) -> Result<Self, Error> {
-        Self::build_from_tapes(
-            programs,
-            files.len(),
-            anchors,
-            false,
-            |file| {
-                files[file]
-                    .restore(&|| false)
-                    .map(std::borrow::Cow::Owned)
-                    .map_err(|_| Error::BackendFailure)
-            },
-            after_file,
-        )
-    }
-
-    fn build_from_tapes<'a, R: AsRef<[u32]>>(
-        programs: &[Program],
-        file_count: usize,
-        anchors: &[Vec<R>],
-        materialize_tasks: bool,
-        load: impl FnMut(usize) -> Result<std::borrow::Cow<'a, TapeDoc>, Error>,
-        after_file: impl FnMut(&mut Self) -> Result<(), Error>,
-    ) -> Result<Self, Error> {
-        Self::build_tapes(programs, file_count, anchors, materialize_tasks, false, load, after_file)
-    }
-
-    fn build_tapes<'a, R: AsRef<[u32]>>(
-        programs: &[Program],
-        file_count: usize,
-        anchors: &[Vec<R>],
-        materialize_tasks: bool,
-        resident: bool,
-        mut load: impl FnMut(usize) -> Result<std::borrow::Cow<'a, TapeDoc>, Error>,
-        mut after_file: impl FnMut(&mut Self) -> Result<(), Error>,
-    ) -> Result<Self, Error> {
+        let file_count = files.len();
         if anchors.len() != file_count || anchors.iter().any(|file| file.len() != programs.len()) {
             return Err(Error::InvalidAnchor);
         }
@@ -290,18 +289,19 @@ impl PackedBatch {
             nfa_data: super::value_packing::unicode_word_data(),
             ..Self::default()
         };
+        let budget = super::WorkBudget::current();
         let mut navigation = [0usize; 4];
         // Per file, its first node and its derived classes' bits, copied as shifted words after
         // every file is placed (06 S7: bit by bit, 0.7 s of 1.3 s of roots).
         let mut derived: Vec<(u32, Arc<Vec<Vec<u64>>>)> = Vec::new();
         let stage = crate::code_rule_dsl::prof::Stage::start("batch.files");
-        // A resident batch keeps its documents for its tasks' sizes, and its source and line
-        // counters in place of the bytes.
+        // A batch without node records keeps its documents for its tasks' sizes; a resident one also keeps its
+        // source and line counters in place of the bytes.
         let mut documents = Vec::new();
         let (mut source_length, mut line_length) = (0usize, 0usize);
         for file in 0..file_count {
-            let tape = load(file)?;
-            if resident {
+            let tape = &files[file];
+            if layout == Layout::Resident {
                 let source = tape.transducer_source();
                 let lines = 1 + source.iter().filter(|&&byte| byte == b'\n').count();
                 let nodes = tape.transducer_len();
@@ -337,76 +337,25 @@ impl PackedBatch {
                     .filter(|(_, byte)| **byte == b'\n')
                     .map(|(index, _)| source_start + index as u32 + 1),
             );
-            let supertype_start = checked_u32(navigation[2])?;
-            let first_supertype = batch.supertypes.len();
-            batch
-                .supertypes
-                .extend(
-                    tape.transducer_supertypes()
-                        .map(|(node, kind)| BatchSupertype {
-                            node: node_start + node,
-                            kind: u32::from(kind),
-                        }),
-                );
             if !tape.transducer_labels().is_empty() {
                 derived.push((node_start, tape.transducer_labels_shared()));
             }
-            // One pass over the tape in preorder (decision 0293): a node's children, read off its subtree, set
-            // their parent and next siblings, so no parent or sibling is searched for.
-            let mut local_children = Vec::new();
-            let base = batch.nodes.len();
-            let count = tape.transducer_len();
-            batch.nodes.resize(base + count, BatchNode { parent: NONE, next_any: NONE, next_named: NONE, ..BatchNode::default() });
-            for node in 0..count as u32 {
-                let child_start = checked_u32(navigation[1] + local_children.len())?;
-                let first_child = local_children.len();
-                for child in tape.transducer_children(node) {
-                    local_children
-                        .push(node_start.checked_add(child).ok_or(Error::BackendFailure)?);
-                }
-                let (mut next_any, mut next_named) = (NONE, NONE);
-                for &child in local_children[first_child..].iter().rev() {
-                    let local = child - node_start;
-                    let record = &mut batch.nodes[base + local as usize];
-                    (record.parent, record.next_any, record.next_named) = (node_start + node, next_any, next_named);
-                    next_any = child;
-                    if tape.transducer_is_named(local) {
-                        next_named = child;
-                    }
-                }
-                let span = tape.transducer_span(node);
-                let record = &mut batch.nodes[base + node as usize];
-                record.child_start = child_start;
-                record.child_count = checked_u32(local_children.len() - first_child)?;
-                record.descendant_end = node_start
-                    .checked_add(tape.transducer_descendants(node).end)
-                    .ok_or(Error::BackendFailure)?;
-                record.source_start = source_start
-                    .checked_add(checked_u32(span.start)?)
-                    .ok_or(Error::BackendFailure)?;
-                record.source_end = source_start
-                    .checked_add(checked_u32(span.end)?)
-                    .ok_or(Error::BackendFailure)?;
-                record.kind = u32::from(tape.transducer_kind(node));
-                record.field = u32::from(tape.transducer_field(node));
-                record.flags = u32::from(tape.transducer_flags(node));
-            }
-            navigation[0] += tape.transducer_len();
-            navigation[1] += local_children.len();
-            navigation[2] += batch.supertypes.len() - first_supertype;
+            // The source and line starts are the batch's; the nodes are read on the tape.
+            let nodes = tape.transducer_len();
+            navigation[0] += nodes;
+            navigation[1] += nodes.saturating_sub(1);
             navigation[3] += batch.line_starts.len() - first_line;
-            batch.children.extend(local_children);
             batch.files.push(BatchFile {
                 node_start,
-                node_count: checked_u32(tape.transducer_len())?,
+                node_count: checked_u32(nodes)?,
                 source_start,
                 source_length: checked_u32(source.len())?,
                 line_start,
                 line_count: checked_u32(batch.line_starts.len() - first_line)?,
-                supertype_start,
-                supertype_count: checked_u32(batch.supertypes.len() - first_supertype)?,
+                supertype_start: 0,
+                supertype_count: 0,
             });
-            after_file(&mut batch)?;
+            documents.push(tape);
         }
         drop(stage);
         let stage = crate::code_rule_dsl::prof::Stage::start("batch.derived");
@@ -667,9 +616,14 @@ impl PackedBatch {
         }
         drop(stage);
         let _tasks = crate::code_rule_dsl::prof::Stage::start("batch.tasks");
+        // Each program's measured steps per unit of size, from the cost store: read once a batch.
+        let rates = if materialize_tasks {
+            programs.iter().map(|program| super::evaluation_costs::rate(program.plain_digest())).collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         for (file, file_anchors) in anchors.iter().enumerate() {
             for (program, roots) in file_anchors.iter().enumerate() {
-                let roots = roots.as_ref();
                 if roots.windows(2).any(|pair| pair[0] >= pair[1]) {
                     return Err(Error::InvalidAnchor);
                 }
@@ -685,18 +639,11 @@ impl PackedBatch {
                         .node_start
                         .checked_add(root)
                         .ok_or(Error::BackendFailure)?;
-                    let task_nodes = if resident {
-                        let local = root - batch.files[file].node_start;
-                        let document = &documents[file];
-                        let span = document.transducer_span(local);
-                        batch.root_spans.push(checked_u32(span.end - span.start)?);
-                        document.transducer_descendants(local).end.saturating_sub(local).max(1)
-                    } else {
-                        batch.nodes[root as usize]
-                            .descendant_end
-                            .saturating_sub(root)
-                            .max(1)
-                    };
+                    let local = root - batch.files[file].node_start;
+                    let document = &documents[file];
+                    let span = document.transducer_span(local);
+                    batch.root_spans.push(checked_u32(span.end - span.start)?);
+                    let task_nodes = document.transducer_descendants(local).end.saturating_sub(local).max(1);
                     let has_repeats = programs[program]
                         .words
                         .iter()
@@ -711,12 +658,16 @@ impl PackedBatch {
                         .saturating_mul(4_096)
                         .clamp(4_096, MAX_WORK_PER_TASK as u64)
                         as u32;
+                    let size = super::evaluation_costs::size(&programs[program], scoped_nodes, span.end.saturating_sub(span.start) as u32);
+                    let predicted = super::evaluation_costs::predict(&programs[program], rates[program], size);
+                    batch.sizing.push(TaskSizing { size, predicted, worst: workspace_work_estimate });
                     batch.tasks.push(BatchTask {
                         batch_ordinal: ordinal,
                         file: checked_u32(file)?,
                         program: checked_u32(program)?,
                         root,
                         workspace_work_estimate,
+                        work_limit: budget.task_limit(predicted),
                         ..BatchTask::default()
                     });
                 }
@@ -864,7 +815,7 @@ impl PackedBatch {
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
     ) -> Result<(), Error> {
-        let mut batch = Self::new(programs, files, anchors)?;
+        let mut batch = Self::new_in_place(programs, files, anchors)?;
         batch.assign_workspace(programs).map(|_| ())
     }
 
@@ -930,7 +881,10 @@ impl PackedBatch {
                     .any(|instruction| matches!(instruction, output::OutputInstruction::LanguageFromMime { .. }));
                 let one_result = packed_program.flags & ONE_RESULT != 0;
                 let marks = packed_program.flags & MARKS != 0;
-                Ok::<_, Error>((program_values, strip_states, source_transform, mime_transform, one_result, marks))
+                // A tree-sitter query with repeats (`program_flags` bit 1): the only programs whose query states are
+                // admitted, queued once and reduced, as the CPU's (`finalize_outputs`, `admit_query_state`).
+                let query = packed_program.flags & 2 != 0;
+                Ok::<_, Error>((program_values, strip_states, source_transform, mime_transform, one_result, marks, query))
             })
             .collect::<Result<Vec<_>, _>>()?;
         let capacities = self
@@ -938,30 +892,29 @@ impl PackedBatch {
             .iter()
             .map(|task| {
                 let facts = facts[task.program as usize];
-                let (program_values, strip_states, source_transform, mime_transform, one_result, marks) = per_program[task.program as usize];
+                let (program_values, strip_states, source_transform, mime_transform, one_result, marks, query) = per_program[task.program as usize];
                 let file = &self.files[task.file as usize];
-                let root = match self.root_spans.get(task.batch_ordinal as usize) {
-                    // A resident batch's root: its span alone is read.
-                    Some(&length) if self.nodes.is_empty() => BatchNode { source_start: 0, source_end: length, ..BatchNode::default() },
-                    _ => self.nodes[task.root as usize],
-                };
+                // The task's root: its span's length alone is read.
+                let root_length = *self.root_spans.get(task.batch_ordinal as usize).ok_or(Error::BackendFailure)?;
                 let work_capacity = |operations: u32| {
                     if operations == 0 {
                         0
                     } else {
-                        task.workspace_work_estimate.min(self.state_cap.unwrap_or(65_536))
+                        self.task_state_capacity(task)
                     }
                 };
                 let pending_states = work_capacity(facts.pending_operations);
                 let capture_states = work_capacity(facts.capture_operations);
                 let cursor_states = work_capacity(facts.cursor_operations);
                 let repeat_states = work_capacity(facts.repeat_operations);
-                let repeat_bound = repeat_states;
+                // The query arenas (states, members, queued states) gate the device's admission, queueing and
+                // reduction (`evaluation.quotas[4]`): none for a program the CPU neither admits nor reduces.
+                let repeat_bound = if query { repeat_states } else { 0 };
                 let greedy_states = work_capacity(facts.greedy_operations);
                 let result_states = work_capacity(facts.emit_operations);
                 // Candidates are still every path's; only the first accepted is kept.
                 let (candidate_states, result_states) = (result_states, if marks { 0 } else if one_result { result_states.min(1) } else { result_states });
-                let node_source_length = root.source_end.saturating_sub(root.source_start);
+                let node_source_length = root_length;
                 let value_states = program_values.iter().try_fold(0_u32, |maximum, value| {
                     let needed = if value.kind == 2 {
                         value
@@ -1067,6 +1020,7 @@ impl PackedBatch {
     /// workspace is lanes times that, whatever the roots.
     pub fn assign_resident(&mut self, programs: &[Program], specs: &[[u32; 5]], lanes: usize) -> Result<super::packed_workspace::WorkspaceTotals, Error> {
         let total = specs.iter().try_fold(0_u32, |total, spec| total.checked_add(spec[4])).ok_or(Error::BackendCapacity)?;
+        let budget = self.resident_budget.unwrap_or_else(super::WorkBudget::current);
         self.tasks = specs
             .iter()
             .enumerate()
@@ -1076,6 +1030,7 @@ impl PackedBatch {
                     file: spec[1],
                     program: spec[0],
                     workspace_work_estimate: super::MAX_WORK_PER_TASK as u32,
+                    work_limit: super::MAX_WORK_PER_TASK as u32,
                     ..BatchTask::default()
                 })
             })
@@ -1096,13 +1051,21 @@ impl PackedBatch {
             evaluation.file = spec[1];
             evaluation.root_rule = spec[2];
             evaluation.root_reserved = spec[3];
-            // The work per node of a task's subtree (`resident_work` on the device).
-            evaluation.workspace_work_estimate =
-                checked_u32(program.words.len().saturating_mul(4_096).min(0x7fff_ffff))? | u32::from(repeats) << 31;
+            // The work per node of a task's subtree (`resident_work` on the device): under the full budget, the
+            // CPU's limit whatever the subtree (`resident_work` clamps a node's 2^26 to 2^26). Replanned, the
+            // program's predicted steps per node (its rate, else the prior) times the slack, doubled per rerun
+            // (decision 0334); bit 31: the program repeats, so its tasks' subtree is the file.
+            evaluation.workspace_work_estimate = match budget {
+                super::WorkBudget::Full => super::MAX_WORK_PER_TASK as u32,
+                super::WorkBudget::Replan { .. } => {
+                    budget.task_limit(super::evaluation_costs::per_node(program)) | u32::from(repeats) << 31
+                }
+            };
             start += spec[4];
         }
         self.tasks.clear();
         self.root_spans.clear();
+        self.sizing.clear();
         self.header.task_count = total;
         Ok(totals)
     }
@@ -1129,24 +1092,10 @@ impl PackedBatch {
         self.tasks = shared.tasks;
         self.evaluations = shared.evaluations;
         self.global_arenas = shared.global;
-        if let Some(result_limits) = result_limits {
-            let mut result_capacity = 0_u32;
-            for evaluation in &mut self.evaluations {
-                let program = self.tasks[evaluation.task_start as usize].program as usize;
-                let quota = &mut evaluation.quotas[ArenaKind::Result as usize];
-                quota.limit = quota.limit.min(result_limits[program]);
-                result_capacity = if lanes_per_evaluation > 0 {
-                    result_capacity
-                        .saturating_add(quota.limit)
-                        .min(DURABLE_RESULT_PAGE_CAPACITY)
-                } else {
-                    result_capacity
-                        .checked_add(quota.limit)
-                        .ok_or(Error::BackendCapacity)?
-                };
-            }
-            self.global_arenas.arenas[ArenaKind::Result as usize].capacity = result_capacity;
-        }
+        // A result limit selects the evaluation's first results (`PackedResultPage::compact`), as the CPU
+        // interpreter's: every result is still found, so a later failure of the evaluation is never hidden, and
+        // the results' order (by root, then start and capture) is known only once all are. It sizes nothing.
+        self.result_limits = result_limits.map(<[u32]>::to_vec).unwrap_or_default();
         let transient_kinds = [
             ArenaKind::Pending,
             ArenaKind::Capture,
@@ -1277,13 +1226,16 @@ impl PackedBatch {
 // mechanism; kept as copied (open item O21).
 #[allow(dead_code)]
 pub(super) fn stable_status_error(statuses: &[TaskStatus]) -> Option<Error> {
-    statuses.iter().find_map(status_error)
+    statuses.iter().find_map(|status| status_error(status, super::MAX_WORK_PER_TASK as u32))
 }
 
-fn status_error(status: &TaskStatus) -> Option<Error> {
+/// A task's status as its evaluation's error. A work stop below the ceiling is the task's budget
+/// (`WorkBudget::Replan`): `OverBudget`, unfinished; at the ceiling it is `WorkLimit`.
+fn status_error(status: &TaskStatus, work_limit: u32) -> Option<Error> {
     (status.error != 0).then_some(match status.error {
         1 | 3 | 5 | 6 => Error::InvalidOpcode(status.program_counter as usize),
         2 => Error::BackendCapacity,
+        4 if work_limit < super::MAX_WORK_PER_TASK as u32 => Error::OverBudget,
         4 => Error::WorkLimit,
         7 => Error::InvalidOperand(status.program_counter as usize),
         _ => Error::BackendFailure,
@@ -1386,19 +1338,28 @@ impl<'a> PackedResults<'a> {
         let mut result_property_counts = vec![(0_u32, 0_u32); result_range.len()];
         let mut capture_files = vec![None; capture_range.len()];
         let mut capture_property_counts = vec![0_u32; capture_range.len()];
+        // Results no evaluation keeps: a slot whose candidate its output directives rejected (`NONE`), and a
+        // failed task's results published before it failed (its evaluation publishes none). Their captures and
+        // properties are left unowned.
+        let mut dropped = vec![false; result_range.len()];
         for (offset, result) in self.results[result_range.clone()].iter().enumerate() {
+            if result.task_ordinal == NONE {
+                dropped[offset] = true;
+                continue;
+            }
             let task_index = task_by_ordinal
                 .get(result.task_ordinal as usize)
                 .and_then(|index| *index)
                 .ok_or(Error::BackendFailure)?;
+            if self.statuses[task_index].error != 0 {
+                dropped[offset] = true;
+                continue;
+            }
             result_counts[task_index] = result_counts[task_index]
                 .checked_add(1)
                 .ok_or(Error::BackendFailure)?;
             result_tasks[offset] = Some(task_index);
             let task = &self.batch.tasks[task_index];
-            if self.statuses[task_index].error != 0 {
-                return Err(Error::BackendFailure);
-            }
             let file = self
                 .batch
                 .files
@@ -1412,7 +1373,7 @@ impl<'a> PackedResults<'a> {
                 .source_start
                 .checked_add(file.source_length)
                 .ok_or(Error::BackendFailure)?;
-            if file_node_end as usize > self.batch.nodes.len()
+            if file_node_end > self.batch.header.node_count
                 || file_source_end as usize > self.batch.source.len()
             {
                 return Err(Error::BackendFailure);
@@ -1453,6 +1414,7 @@ impl<'a> PackedResults<'a> {
                 }
             }
         }
+        let any_dropped = dropped.contains(&true);
         for property in &self.properties[property_range] {
             match property.kind {
                 0 | 2 => {
@@ -1462,6 +1424,9 @@ impl<'a> PackedResults<'a> {
                         .map(|offset| offset as usize)
                         .filter(|offset| *offset < result_tasks.len())
                         .ok_or(Error::BackendFailure)?;
+                    if dropped[offset] {
+                        continue;
+                    }
                     let task_index = result_tasks[offset].ok_or(Error::BackendFailure)?;
                     let counts = &mut result_property_counts[offset];
                     if property.kind == 0 {
@@ -1515,6 +1480,10 @@ impl<'a> PackedResults<'a> {
                         .map(|offset| offset as usize)
                         .filter(|offset| *offset < capture_files.len())
                         .ok_or(Error::BackendFailure)?;
+                    // A dropped result's capture: no result owns it.
+                    if capture_files[offset].is_none() && any_dropped {
+                        continue;
+                    }
                     capture_files[offset].ok_or(Error::BackendFailure)?;
                     capture_property_counts[offset] = capture_property_counts[offset]
                         .checked_add(1)
@@ -1524,24 +1493,31 @@ impl<'a> PackedResults<'a> {
             }
         }
         for (offset, result) in self.results[result_range.clone()].iter().enumerate() {
-            if result_property_counts[offset] != (result.property_count, result.dynamic_count) {
+            if !dropped[offset] && result_property_counts[offset] != (result.property_count, result.dynamic_count) {
                 return Err(Error::BackendFailure);
             }
         }
         for (offset, capture) in self.final_captures[capture_range].iter().enumerate() {
-            if capture_property_counts[offset] != capture.property_count {
+            if (capture_files[offset].is_some() || !any_dropped) && capture_property_counts[offset] != capture.property_count {
                 return Err(Error::BackendFailure);
             }
         }
         if result_counts
             .iter()
             .zip(self.statuses)
-            .any(|(count, status)| *count != status.result_count)
+            .any(|(count, status)| status.error == 0 && *count != status.result_count)
         {
             return Err(Error::BackendFailure);
         }
         Ok(())
     }
+}
+
+/// A batch's restarted evaluations (`PackedExecution::with_restarted`): the restart's execution (the same programs
+/// and files, those evaluations' anchors alone) and, per (file, program), whether it is taken from there.
+struct Restarts {
+    execution: PackedExecution,
+    taken: Vec<bool>,
 }
 
 #[derive(Clone)]
@@ -1551,6 +1527,9 @@ pub struct PackedExecution {
     evaluation_indexes: Arc<Vec<Option<usize>>>,
     file_task_ordinal_bases: Arc<Vec<u32>>,
     grid_errors: Option<Arc<Vec<Option<Error>>>>,
+    /// The evaluations restarted with twice the budget after a task of theirs stopped at it (decision 0334): their
+    /// results and errors are the restart's, as if they had run here.
+    restarts: Option<Arc<Restarts>>,
     file_start: usize,
     file_count: usize,
     program_start: usize,
@@ -1570,6 +1549,89 @@ fn grid_result_failure() -> Error {
 }
 
 impl PackedExecution {
+    /// The (file, program) evaluations a task of which stopped at its step budget or ran out of its states, below
+    /// the ceilings (decision 0334): unfinished, to be restarted (`restarting`), and why.
+    pub(super) fn unfinished(&self) -> Vec<(usize, usize, super::Unfinished)> {
+        let Ok(page) = self.single_page() else {
+            return Vec::new();
+        };
+        let mut found: Vec<(usize, usize, super::Unfinished)> = Vec::new();
+        for (index, (task, status)) in self.batch.tasks.iter().zip(&page.statuses).enumerate() {
+            let (work, outgrown) = match self.batch.task_error(index, status) {
+                Some(Error::OverBudget) => (true, None),
+                Some(Error::StatesOutgrown) => (false, Some(task.root - self.batch.files[task.file as usize].node_start)),
+                _ => continue,
+            };
+            let at = (task.file as usize, task.program as usize);
+            if found.last().is_none_or(|(file, program, _)| (*file, *program) != at) {
+                found.push((at.0, at.1, super::Unfinished::default()));
+            }
+            let seen = &mut found.last_mut().expect("pushed").2;
+            seen.work |= work;
+            seen.outgrown.extend(outgrown);
+        }
+        found
+    }
+
+    /// Each evaluation's run, for the cost store (`evaluation_costs`): the steps its tasks took (at least the budget
+    /// where one stopped over it), its size and its prediction. Evaluations that measured no steps (the
+    /// interpreter's) and restarted ones (their restart's run counts) are left out.
+    pub(super) fn observations(&self, programs: &[Program]) -> Vec<super::evaluation_costs::Observation> {
+        let Ok(page) = self.single_page() else {
+            return Vec::new();
+        };
+        let mut found: Vec<((u32, u32), super::evaluation_costs::Observation)> = Vec::new();
+        for (index, (task, status)) in self.batch.tasks.iter().zip(&page.statuses).enumerate() {
+            let Some(sizing) = self.batch.sizing.get(index) else { break };
+            let error = self.batch.task_error(index, status);
+            let over_budget = matches!(error, Some(Error::OverBudget));
+            if error.is_some() && !over_budget {
+                continue;
+            }
+            let steps = u64::from(if over_budget { task.work_limit } else { status.reserved & 0x7fff_ffff });
+            let at = (task.file, task.program);
+            match found.last_mut() {
+                Some((seen, observation)) if *seen == at => {
+                    observation.steps += steps;
+                    observation.size += sizing.size;
+                    observation.predicted += sizing.predicted;
+                    observation.over_budget |= over_budget;
+                }
+                _ => found.push((at, super::evaluation_costs::Observation {
+                    program: programs.get(task.program as usize).map_or_else(String::new, |program| program.plain_digest().to_owned()),
+                    steps,
+                    size: sizing.size,
+                    predicted: sizing.predicted,
+                    over_budget,
+                })),
+            }
+        }
+        found.into_iter().map(|(_, observation)| observation).filter(|observation| observation.steps > 0 && !observation.program.is_empty()).collect()
+    }
+
+    /// This execution with `evaluations` taken from `restarted`: the same programs and files, run again for those
+    /// evaluations alone with twice the budget (`execute_planned`).
+    pub(super) fn with_restarted(mut self, restarted: PackedExecution, evaluations: &[(usize, usize)]) -> Result<Self, Error> {
+        let programs = self.batch.programs.len();
+        if restarted.batch.programs.len() != programs || restarted.batch.files.len() != self.batch.files.len() || self.restarts.is_some() {
+            return Err(Error::BackendFailure);
+        }
+        let mut taken = vec![false; self.batch.files.len() * programs];
+        for &(file, program) in evaluations {
+            taken[file * programs + program] = true;
+        }
+        self.restarts = Some(Arc::new(Restarts { execution: restarted, taken }));
+        Ok(self)
+    }
+
+    /// The evaluations restarted, here and in the restarts' own restarts.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn restarted_evaluations(&self) -> usize {
+        self.restarts.as_ref().map_or(0, |restarts| {
+            restarts.taken.iter().filter(|taken| **taken).count() + restarts.execution.restarted_evaluations()
+        })
+    }
+
     fn single_page(&self) -> Result<&PackedResultPage, Error> {
         match self.pages.as_slice() {
             [page] => Ok(page),
@@ -1611,7 +1673,8 @@ impl PackedExecution {
         {
             return Err(Error::InvalidAnchor);
         }
-        let input = super::metal_grid::MetalGridInput::build(programs, files, anchors)?;
+        let batch = PackedBatch::new_published(programs, files, anchors)?;
+        let spans = EvaluationSpan::of(anchors)?;
         let BatchOutcome { outputs, errors } = super::execute_batch_outcomes(programs, files, anchors)?;
         if outputs.len() != files.len()
             || errors.len() != files.len()
@@ -1624,7 +1687,7 @@ impl PackedExecution {
         let mut properties = Vec::new();
         let mut bytes = Vec::new();
         // The interpreter's nodes and spans are the file's; the batch's are past the files before.
-        let bases = input.packed.files.iter().map(|file| (file.node_start, file.source_start)).collect::<Vec<_>>();
+        let bases = batch.files.iter().map(|file| (file.node_start, file.source_start)).collect::<Vec<_>>();
         for ((base, source), program, error, mut outputs) in outputs
             .into_iter()
             .zip(&errors)
@@ -1713,15 +1776,13 @@ impl PackedExecution {
                 });
             }
         }
-        let errors = input
-            .grid
-            .evaluation_spans
+        let errors = spans
             .iter()
             .map(|span| errors[span.file as usize][span.program as usize].clone())
             .collect();
         Self::from_grid_arenas(
-            input.packed,
-            &input.grid.evaluation_spans,
+            batch,
+            &spans,
             results,
             captures,
             properties,
@@ -1752,6 +1813,7 @@ impl PackedExecution {
             evaluation_indexes: Arc::new(evaluation_indexes),
             file_task_ordinal_bases: Arc::new(file_task_ordinal_bases),
             grid_errors: None,
+            restarts: None,
             file_start: 0,
             file_count,
             program_start: 0,
@@ -1762,7 +1824,7 @@ impl PackedExecution {
 
     pub fn from_grid_records(
         batch: impl Into<Arc<PackedBatch>>,
-        evaluations: &[super::metal_grid::EvaluationSpan],
+        evaluations: &[EvaluationSpan],
         results: Vec<ResultRecord>,
         captures: Vec<FinalCaptureRecord>,
         errors: Vec<Option<Error>>,
@@ -1780,7 +1842,7 @@ impl PackedExecution {
 
     pub(super) fn from_grid_arenas(
         batch: impl Into<Arc<PackedBatch>>,
-        evaluations: &[super::metal_grid::EvaluationSpan],
+        evaluations: &[EvaluationSpan],
         results: Vec<ResultRecord>,
         captures: Vec<FinalCaptureRecord>,
         properties: Vec<PropertyRecord>,
@@ -1800,7 +1862,7 @@ impl PackedExecution {
         {
             return Err(Error::InvalidAnchor);
         }
-        if self.grid_errors.is_some() {
+        if self.grid_errors.is_some() || self.restarts.is_some() {
             let mut outputs = vec![vec![Vec::new(); self.program_count]; self.file_count];
             let mut errors = vec![vec![None; self.program_count]; self.file_count];
             for file in 0..self.file_count {
@@ -1809,7 +1871,8 @@ impl PackedExecution {
                     errors[file][program] = error;
                     for result in results {
                         outputs[file][program].push(Output {
-                            task_ordinal: result.record.task_ordinal,
+                            // The batch's ordinal, a restarted evaluation's too (`program_results`).
+                            task_ordinal: result.task_ordinal().wrapping_add(self.file_task_ordinal_bases[file]),
                             local_ordinal: result.local_ordinal(),
                             start: result.start_node(),
                             label: result.label(),
@@ -1908,6 +1971,28 @@ impl PackedExecution {
         let Some(evaluation) = evaluation else {
             return Ok((Vec::new(), None));
         };
+        if let Some(restarts) = &self.restarts
+            && restarts.taken[file * self.batch.programs.len() + program]
+        {
+            let restart = &restarts.execution;
+            let (mut results, error) = restart.program_results(file, program)?;
+            // The restart's task ordinals as this batch's: an evaluation's tasks are its roots in order, here and
+            // there, so a result's ordinal moves by the gap between the two evaluations' first tasks (each from
+            // its file's first task).
+            let first = |execution: &PackedExecution| -> Option<u32> {
+                let at = execution.evaluation_indexes[file * execution.batch.programs.len() + program]?;
+                let task = execution.batch.evaluations[at].task_start as usize;
+                Some(execution.batch.tasks[task].batch_ordinal.wrapping_sub(execution.file_task_ordinal_bases[file]))
+            };
+            let (Some(here), Some(there)) = (first(self), first(restart)) else {
+                return Err(Error::BackendFailure);
+            };
+            let shift = here.wrapping_sub(there);
+            for result in &mut results {
+                result.task_ordinal_base = result.task_ordinal_base.wrapping_sub(shift);
+            }
+            return Ok((results, error));
+        }
         if let Some(errors) = &self.grid_errors {
             if let Some(error) = &errors[evaluation] {
                 return Ok((Vec::new(), Some(error.clone())));
@@ -1916,7 +2001,10 @@ impl PackedExecution {
             let record = &self.batch.evaluations[evaluation];
             let statuses = &self.single_page()?.statuses
                 [record.task_start as usize..(record.task_start + record.task_count) as usize];
-            if let Some(error) = statuses.iter().find_map(status_error) {
+            let tasks = &self.batch.tasks
+                [record.task_start as usize..(record.task_start + record.task_count) as usize];
+            let first = record.task_start as usize;
+            if let Some(error) = statuses.iter().zip(tasks).enumerate().find_map(|(at, (status, _))| self.batch.task_error(first + at, status)) {
                 return Ok((Vec::new(), Some(error)));
             }
         }
@@ -1989,7 +2077,8 @@ pub struct PackedResultView<'a> {
 
 impl<'a> PackedResultView<'a> {
     pub fn task_ordinal(self) -> u32 {
-        self.record.task_ordinal - self.task_ordinal_base
+        // Wrapping: a restarted evaluation's base is shifted to this batch's ordinals (`program_results`).
+        self.record.task_ordinal.wrapping_sub(self.task_ordinal_base)
     }
 
     pub fn local_ordinal(self) -> u32 {
@@ -2078,6 +2167,32 @@ impl EvaluationRows {
         Ok(self.rows.get(&evaluation).map_or(&[], Vec::as_slice))
     }
 }
+/// One (file, program) evaluation with roots, as results published per evaluation are grouped: its roots'
+/// task ordinals are `semantic_start..semantic_start + root_count`, the files' and programs' roots in order.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct EvaluationSpan {
+    pub file: u32,
+    pub program: u32,
+    pub root_count: u32,
+    pub semantic_start: u32,
+}
+
+impl EvaluationSpan {
+    /// The evaluations of `anchors` (per file, per program) that have roots.
+    fn of(anchors: &[Vec<Vec<u32>>]) -> Result<Vec<Self>, Error> {
+        let mut spans = Vec::new();
+        let mut semantic_start = 0_u32;
+        for (file, programs) in anchors.iter().enumerate() {
+            for (program, roots) in programs.iter().enumerate().filter(|(_, roots)| !roots.is_empty()) {
+                let root_count = checked_u32(roots.len())?;
+                spans.push(Self { file: checked_u32(file)?, program: checked_u32(program)?, root_count, semantic_start });
+                semantic_start = semantic_start.checked_add(root_count).ok_or(Error::BackendCapacity)?;
+            }
+        }
+        Ok(spans)
+    }
+}
+
 type GridOrder = (u32, u32, Option<u32>, u32);
 pub struct GridFragment {
     page: PackedResultPage,
@@ -2086,12 +2201,12 @@ pub struct GridFragment {
 }
 pub struct GridPublication {
     template: PackedExecution,
-    evaluations: Vec<super::metal_grid::EvaluationSpan>,
+    evaluations: Vec<EvaluationSpan>,
 }
 impl GridPublication {
     pub fn new(
         batch: Arc<PackedBatch>,
-        evaluations: &[super::metal_grid::EvaluationSpan],
+        evaluations: &[EvaluationSpan],
         errors: Vec<Option<Error>>,
     ) -> Result<Self, Error> {
         if !batch.tasks.is_empty() || errors.len() != evaluations.len() {
@@ -2128,6 +2243,7 @@ impl GridPublication {
                 evaluation_indexes: Arc::new(evaluation_indexes),
                 file_task_ordinal_bases: Arc::new(file_bases),
                 grid_errors: Some(Arc::new(errors)),
+                restarts: None,
                 file_start: 0,
                 file_count,
                 program_start: 0,
@@ -2470,6 +2586,10 @@ impl PackedResultPage {
         };
         let mut result_evaluations = Vec::new();
         for (result_offset, source_result) in results[result_range.clone()].iter().enumerate() {
+            // A slot whose candidate its output directives rejected (the device reserves before it applies them).
+            if source_result.task_ordinal == NONE {
+                continue;
+            }
             let task_index = task_by_ordinal[source_result.task_ordinal as usize]
                 .ok_or(Error::BackendFailure)?;
             let task = &batch.tasks[task_index];
@@ -2579,6 +2699,16 @@ impl PackedResultPage {
                 result.local_ordinal,
             )
         });
+        // Each (file, program)'s first results, to its limit, in their order.
+        if !batch.result_limits.is_empty() {
+            let mut kept = BTreeMap::<(u32, u32), u32>::new();
+            page.result_order.retain(|&index| {
+                let task = &batch.tasks[task_by_ordinal[page.results[index as usize].task_ordinal as usize].unwrap()];
+                let count = kept.entry((task.file, task.program)).or_default();
+                *count += 1;
+                *count <= batch.result_limits[task.program as usize]
+            });
+        }
         for &result in &page.result_order {
             page.evaluation_results
                 .push(result_evaluations[result as usize] as usize, result)?;
@@ -2599,8 +2729,8 @@ impl PackedResultPage {
         let mut errors = (0..batch.files.len())
             .map(|_| batch.programs.iter().map(|_| None).collect::<Vec<_>>())
             .collect::<Vec<_>>();
-        for (task, status) in batch.tasks.iter().zip(&self.statuses) {
-            if let Some(error) = status_error(status) {
+        for (index, (task, status)) in batch.tasks.iter().zip(&self.statuses).enumerate() {
+            if let Some(error) = batch.task_error(index, status) {
                 errors[task.file as usize][task.program as usize].get_or_insert(error);
                 outputs[task.file as usize][task.program as usize].clear();
                 continue;
@@ -2717,8 +2847,8 @@ impl PackedBatch {
         let mut errors = (0..self.files.len())
             .map(|_| self.programs.iter().map(|_| None).collect::<Vec<_>>())
             .collect::<Vec<_>>();
-        for (task, status) in packed.batch.tasks.iter().zip(packed.statuses) {
-            if let Some(error) = status_error(status) {
+        for (index, (task, status)) in packed.batch.tasks.iter().zip(packed.statuses).enumerate() {
+            if let Some(error) = packed.batch.task_error(index, status) {
                 errors[task.file as usize][task.program as usize].get_or_insert(error);
                 outputs[task.file as usize][task.program as usize].clear();
                 continue;
@@ -2856,76 +2986,6 @@ pub mod tests {
     use crate::code_rule_dsl::language::GrammarDialect as SupportLang;
     use ast_grep_core::tree_sitter::LanguageExt;
 
-    #[test]
-    fn streamed_tapes_preserve_all_immutable_grid_input_bytes() {
-        use crate::code_rule_dsl::tape::{Grammar, TapeImage, TapeSource};
-        use ast_grep_core::tree_sitter::StrDoc;
-        let grammar = Grammar::new(SupportLang::Python).unwrap();
-        let inputs = ["# comment\nvalue = f'{item}'\n", "def broken(\n  pass\n"].map(|text| {
-            let source = Arc::new(text.to_owned());
-            let native = StrDoc::new(text, SupportLang::Python);
-            TapeSource {
-                source: Arc::clone(&source),
-                grammar: Arc::clone(&grammar),
-                image: Arc::new(
-                    TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false)
-                        .unwrap(),
-                ),
-                lines: Arc::new(crate::code_rule_dsl::lines::LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Newlines)),
-            }
-        });
-        let docs = inputs
-            .iter()
-            .map(|input| input.restore(&|| false).unwrap())
-            .collect::<Vec<_>>();
-        let programs = [Program::compile_tree_sitter_query_pattern(
-            "(_) @node",
-            &SupportLang::Python.get_ts_language(),
-        )
-        .unwrap()];
-        let anchors = docs
-            .iter()
-            .map(|doc| {
-                vec![Arc::<[u32]>::from(
-                    (0..doc.transducer_len() as u32).collect::<Vec<_>>(),
-                )]
-            })
-            .collect::<Vec<_>>();
-        let expected = PackedBatch::new_shared_grid_inputs(&programs, &docs, &anchors).unwrap();
-        let actual = PackedBatch::new_streamed_grid_inputs(&programs, &inputs, &anchors).unwrap();
-        assert_eq!(actual.header, expected.header);
-        assert_eq!(actual.nodes, expected.nodes);
-        assert_eq!(actual.children, expected.children);
-        assert_eq!(actual.supertypes, expected.supertypes);
-        assert_eq!(actual.line_starts, expected.line_starts);
-        assert_eq!(actual.files, expected.files);
-        assert_eq!(actual.source, expected.source);
-        assert_eq!(actual.words, expected.words);
-        assert!(actual.tasks.is_empty());
-        let (mut nodes, mut children, mut supertypes, mut lines) =
-            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        let streamed = PackedBatch::new_streamed_grid_inputs_with_upload(
-            &programs,
-            &inputs,
-            &anchors,
-            |batch| {
-                nodes.append(&mut batch.nodes);
-                children.append(&mut batch.children);
-                supertypes.append(&mut batch.supertypes);
-                lines.append(&mut batch.line_starts);
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(streamed.header, expected.header);
-        assert_eq!(streamed.files, expected.files);
-        assert_eq!(nodes, expected.nodes);
-        assert_eq!(children, expected.children);
-        assert_eq!(supertypes, expected.supertypes);
-        assert_eq!(lines, expected.line_starts);
-        assert!(streamed.nodes.is_empty() && streamed.children.is_empty());
-    }
-
     fn batch() -> PackedBatch {
         let mut batch = PackedBatch::default();
         batch.files.push(BatchFile {
@@ -2948,13 +3008,14 @@ pub mod tests {
         }
         batch.evaluations.push(evaluation);
         batch.source.push(b'x');
-        batch.nodes.push(BatchNode::default());
+        batch.root_spans.push(1);
+        batch.header.node_count = 1;
         batch
     }
 
     #[test]
     fn direct_grid_result_validation_rejects_malformed_typed_records() {
-        let evaluation = super::super::metal_grid::EvaluationSpan {
+        let evaluation = EvaluationSpan {
             root_count: 1,
             ..Default::default()
         };
@@ -3036,7 +3097,7 @@ pub mod tests {
     }
 
     #[test]
-    fn production_result_limit_caps_evaluation_and_global_result_capacity() {
+    fn production_result_limit_selects_results_and_sizes_nothing() {
         let program = Program::new(
             vec![word(STOP, 0, 0), word(EMIT, 0, 0)],
             vec![b"match".to_vec()],
@@ -3047,14 +3108,19 @@ pub mod tests {
         .unwrap();
         let programs = [program];
         let mut batch = batch();
+        let mut unlimited = batch.clone();
+        let unlimited_totals = unlimited.assign_workspace_with_result_limits(&programs, None).unwrap();
         let totals = batch
             .assign_workspace_with_result_limits(&programs, Some(&[0]))
             .unwrap();
-        assert_eq!(totals.results, 0);
+        // A limit selects results as the page is compacted: the workspace is the unlimited one's.
+        assert_eq!(totals.results, unlimited_totals.results);
         assert_eq!(
             batch.evaluations[0].quotas[ArenaKind::Result as usize].limit,
-            0
+            unlimited.evaluations[0].quotas[ArenaKind::Result as usize].limit
         );
+        assert_eq!(batch.result_limits, [0]);
+        assert!(unlimited.result_limits.is_empty());
     }
 
     #[test]
@@ -3207,6 +3273,51 @@ pub mod tests {
         assert_eq!(page.decode_outcomes(&batch).unwrap(), expected);
         assert_eq!(page.results.len(), 1);
         assert_eq!(page.results[0].local_ordinal, 3);
+    }
+
+    #[test]
+    fn compact_result_page_keeps_each_evaluations_first_results_to_its_limit() {
+        let mut batch = batch();
+        batch.evaluations[0].quotas[ArenaKind::Result as usize].limit = 3;
+        batch.global_arenas.arenas[ArenaKind::Result as usize].capacity = 3;
+        batch.global_arenas.arenas[ArenaKind::Result as usize].cursor = 3;
+        batch.result_limits = vec![1];
+        let statuses = [TaskStatus {
+            result_count: 2,
+            ..TaskStatus::default()
+        }];
+        // Published out of order, with a slot its output directives rejected between them.
+        let results = [
+            ResultRecord {
+                task_ordinal: 0,
+                local_ordinal: 1,
+                ..ResultRecord::default()
+            },
+            ResultRecord {
+                task_ordinal: NONE,
+                ..ResultRecord::default()
+            },
+            ResultRecord {
+                task_ordinal: 0,
+                local_ordinal: 0,
+                ..ResultRecord::default()
+            },
+        ];
+        let page = PackedResultPage::compact(
+            &batch,
+            &statuses,
+            &results,
+            &[FinalCaptureRecord::default()],
+            &[PropertyRecord::default()],
+            &[0],
+        )
+        .unwrap();
+        let outcome = page.decode_outcomes(&batch).unwrap();
+        assert_eq!(outcome.errors, vec![vec![None]]);
+        assert_eq!(
+            outcome.outputs[0][0].iter().map(|output| output.local_ordinal).collect::<Vec<_>>(),
+            [0]
+        );
     }
 
     #[test]

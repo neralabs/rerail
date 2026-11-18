@@ -31,6 +31,8 @@ pub mod pages;
 pub mod producers;
 #[allow(dead_code)]
 pub mod propagate;
+/// Rows in blocks the CPU and GPU read in place (decision 0325): setfix's relations' and the vtab's `Relation`'s.
+pub mod rows;
 #[allow(dead_code)]
 pub mod runs;
 // cratify: `set_census` is rerail-transducer's (it mounts it)

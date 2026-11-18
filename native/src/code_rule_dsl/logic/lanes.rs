@@ -630,6 +630,21 @@ pub mod prof {
         Ok(r)
     }
 
+    /// Per form and lane with launches: (form, lane, launches, wall seconds, the lane's job CPU seconds).
+    pub fn by_lane() -> Vec<(&'static str, Lane, u64, f64, f64)> {
+        let forms = FORMS.lock().unwrap();
+        let mut out = Vec::new();
+        for (name, f) in forms.iter() {
+            for l in Lane::ALL {
+                let i = l.index();
+                if f.launches[i] > 0 {
+                    out.push((*name, l, f.launches[i], f.wall[i], f.lane_cpu[i]));
+                }
+            }
+        }
+        out
+    }
+
     /// The section: per form, the host phases, then per lane the launches and where the submission's time went, then
     /// the executor's own time.
     pub fn report() -> String {

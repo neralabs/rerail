@@ -7,7 +7,7 @@ use metal::{
 use std::mem::size_of_val;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::launch;
 
@@ -686,25 +686,17 @@ impl MappedBuffer {
     }
 }
 
-static METAL_EXECUTION_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-
-pub struct MetalExecutionGuard {
-    _lock: MutexGuard<'static, ()>,
-    _launch_scope: launch::LaunchScope,
-}
-
-pub fn metal_execution_guard() -> Result<MetalExecutionGuard, Error> {
-    // A lock over no data (it makes Metal executions serial): a caller that panicked while holding it, a failed
-    // test's assertion among them, leaves nothing to distrust, so the next execution goes ahead.
-    let lock = METAL_EXECUTION_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    Ok(MetalExecutionGuard {
-        _lock: lock,
-        _launch_scope: launch::LaunchScope::enter(),
-    })
+/// An evaluation: its launch budget on this thread ([`launch::LaunchScope`]), which nested runs share. It is no lock:
+/// executions run side by side, one encoding while another's command buffers run, each on device memory it holds
+/// alone (a lease: the label passes' kept buffers, the program backend's workspaces, a run's own buffers), and what
+/// they share (pipelines, libraries) is behind its own mutex. (Until 2026-11-17 it was also a process-wide lock,
+/// copied from Tempo and held for a whole run, so no run could encode while another waited on the GPU.)
+pub fn evaluation_scope() -> launch::LaunchScope {
+    launch::LaunchScope::enter()
 }
 
 /// Releases the compiled pipelines and libraries (the residency's drop): the process's; the store keeps them
-/// (`rerail_accel::gpu::kernels`, decision 0387).
+/// (`rerail_accel::gpu::kernels`, decision 0395).
 pub fn drop_pipelines() {
     rerail_accel::gpu::kernels::release();
     if let Ok(mut kernels) = crate::block_program::serial::KERNELS.lock() {
@@ -717,10 +709,10 @@ pub fn pipeline_named(source: &str, name: &str) -> Result<ComputePipelineState, 
 }
 
 /// [`pipeline_named`] of an interpreter's fixed source (the same for every rule set): recorded for the kernels the
-/// engine ships compiled (`rerail_accel::gpu::kernels::pipeline_fixed`, decision 0387).
-pub fn pipeline_named_fixed(source: &str, name: &str) -> Result<ComputePipelineState, Error> {
+/// engine ships compiled (`rerail_accel::gpu::kernels::pipeline_fixed`, decision 0395).
+pub fn pipeline_named_fixed(source: &str, name: &str, constant: Option<u32>) -> Result<ComputePipelineState, Error> {
     crate::device()?;
-    Ok(rerail_accel::gpu::kernels::pipeline_fixed(source, name, None))
+    Ok(rerail_accel::gpu::kernels::pipeline_fixed(source, name, constant))
 }
 
 /// `source`'s pipeline `name` when a form of it is at hand (made by this process, or archived); otherwise `None`
@@ -733,7 +725,7 @@ pub fn pipeline_ready(source: &str, name: &str) -> Option<ComputePipelineState> 
 }
 
 /// `source`'s pipeline `name` (with `constant` at function constant 0), compiled on this thread unless this
-/// process or the store has it (decision 0387). A kernel that does not compile is fatal.
+/// process or the store has it (decision 0395). A kernel that does not compile is fatal.
 pub fn pipeline_named_constant(
     source: &str,
     name: &str,
@@ -766,24 +758,6 @@ pub fn pipelines_compiled_here() -> usize {
 }
 
 #[cfg(test)]
-mod execution_lock_tests {
-    use super::*;
-
-    #[test]
-    fn metal_execution_is_process_serial() {
-        let guard = metal_execution_guard().unwrap();
-        assert!(matches!(
-            METAL_EXECUTION_LOCK.try_lock(),
-            Err(std::sync::TryLockError::WouldBlock)
-        ));
-        drop(guard);
-        // Released, it is taken again: by a blocking take, since another test may hold it by now (a `try_lock`
-        // here failed when one did).
-        drop(metal_execution_guard().unwrap());
-    }
-}
-
-#[cfg(test)]
 mod memory_budget_tests {
     use super::*;
 
@@ -803,7 +777,7 @@ mod memory_budget_tests {
 
     #[test]
     fn operation_allocation_observation_excludes_unrelated_retirement() {
-        let _guard = metal_execution_guard().unwrap();
+        let _scope = evaluation_scope();
         let device = Device::system_default().unwrap();
         let previous = MappedBuffer::zeroed::<u8>(&device, 65_536).unwrap();
         let observation = BufferObservation::enter();
@@ -820,7 +794,7 @@ mod memory_budget_tests {
 
     #[test]
     fn operation_allocation_observation_tracks_retained_owners_on_other_threads() {
-        let _guard = metal_execution_guard().unwrap();
+        let _scope = evaluation_scope();
         let device = Device::system_default().unwrap();
         let outer = BufferObservation::enter();
         let first = MappedBuffer::zeroed::<u8>(&device, 16_384).unwrap();

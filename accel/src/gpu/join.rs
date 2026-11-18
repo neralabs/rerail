@@ -95,7 +95,7 @@ pub fn gpu_seconds(command: &CommandBufferRef) -> f64 {
     (end - start).max(0.0)
 }
 
-/// `name` of `source` on the shared device: through the store of compiled kernels (decision 0387).
+/// `name` of `source` on the shared device: through the store of compiled kernels (decision 0395).
 pub fn compile(source: &str, name: &str) -> Result<ComputePipelineState, String> {
     device()?;
     Ok(super::kernels::pipeline_fixed(source, name, None))
@@ -116,7 +116,7 @@ pub fn scratch_set(set: usize) -> usize {
 
 /// The pipeline `name` of the variant `variant`, its source made by `source` the first time: kept by the one
 /// manager (decision 0100 §2), so every thread finds it compiled, and in the store of compiled kernels (decision
-/// 0387). A variant's source is compiled once, into one library, and each of its kernels made from that library.
+/// 0395). A variant's source is compiled once, into one library, and each of its kernels made from that library.
 pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Result<ComputePipelineState, String> {
     shared::pipeline(&format!("join {variant} {name}"), || {
         device()?;
@@ -242,6 +242,14 @@ impl Submitted {
         }
         gpu_seconds(&self.command)
     }
+
+    /// `wait`, and whether the GPU ran it to the end: a command buffer the GPU failed (out of memory, a fault)
+    /// completes too, its outputs partly written. A caller that keeps what it wrote must check.
+    pub fn wait_ok(self) -> (f64, bool) {
+        let command = self.command.clone();
+        let seconds = self.wait();
+        (seconds, command.status() != metal::MTLCommandBufferStatus::Error)
+    }
 }
 
 /// Scratch slots.
@@ -285,14 +293,21 @@ pub struct Held {
     pub buffer: Buffer,
 }
 
-/// What keeps a held buffer's memory: a lease of the pool, or a staged column whose shared buffer the device reads
-/// in place (`crate::col`).
+/// What keeps a held buffer's memory: a lease of the pool, a staged column whose shared buffer the device reads
+/// in place (`crate::col`), or what holds a block the device reads in place (its owner's handle: decision 0325).
 enum Lease {
     Pooled(#[allow(dead_code)] shared::Pooled),
     Col(#[allow(dead_code)] crate::col::Col),
+    Kept(#[allow(dead_code)] Box<dyn std::any::Any + Send + Sync>),
 }
 
 impl Held {
+    /// A block's own device buffer (`rerail_blocks::Block::gpu_buffer`), kept bound while `keep` (what holds the
+    /// block) lives: the device reads the block where it is, nothing copied (decision 0325).
+    pub fn kept(buffer: Buffer, keep: Box<dyn std::any::Any + Send + Sync>) -> Held {
+        Held { _lease: Lease::Kept(keep), buffer }
+    }
+
     /// A buffer of at least `bytes` (its contents are a previous user's: every reader writes first).
     pub fn new(bytes: usize) -> Result<Held, String> {
         device()?;
@@ -924,6 +939,9 @@ pub struct SortParts {
 /// Encodes into `pass` a stable LSD radix sort of the `n` values of `lead` (each `width` wide, their span `bits`
 /// bits) and the runs of equal values: the passes only its span needs. Intermediates are in scratch; the results are
 /// buffers of their own. `nruns` is not written when `n` is 0.
+///
+/// Every allocation that can fail is made before the first dispatch: a sort refused after encoding would drop
+/// buffers (`perm`, `starts`) that work already in the command buffer writes, back to the pool at once.
 pub fn encode_sort(pass: &Pass<'_>, lead: &BufferRef, width: Width, bits: u32, n: usize) -> Result<SortParts, String> {
     let key = width.key();
     let [init, hist, scatter, heads, compact] = sort_pipes(width)?;
@@ -942,6 +960,11 @@ pub fn encode_sort(pass: &Pass<'_>, lead: &BufferRef, width: Width, bits: u32, n
         let histogram = scratch(HIST, 4 * 256 * tiles)?;
         let hscan = Scan::new(256 * tiles)?;
         let heads_buf = scratch(HEADS, 4 * n)?;
+        // The heads' scan after the histograms': the two share scratch levels, one after the other in the command
+        // buffer. Made here, before any dispatch, so its levels are at their size for both.
+        let rscan = Scan::new(n)?;
+        pipeline("scan", "scan_block", || SCAN_SOURCE.to_owned())?;
+        pipeline("scan", "scan_add", || SCAN_SOURCE.to_owned())?;
         let nn = n as u32;
         pass.run(&init, &[lead, &keys_a, idx_a], &[nn], &[], groups(n));
         for p in 0..passes {
@@ -951,8 +974,6 @@ pub fn encode_sort(pass: &Pass<'_>, lead: &BufferRef, width: Width, bits: u32, n
             pass.run(&scatter, &[ki, ii, &histogram, ko, io], &[nn, 8 * p], &[], tiles);
         }
         let keys = if passes % 2 == 0 { &keys_a } else { &keys_b };
-        // The heads' scan after the histograms': the two share scratch, one after the other.
-        let rscan = Scan::new(n)?;
         pass.run(&heads, &[keys, &heads_buf], &[nn], &[], groups(n));
         rscan.encode(pass, &heads_buf)?;
         pass.run(&compact, &[keys, &heads_buf, &starts.buffer, &rkeys.buffer, &nruns.buffer], &[nn], &[], groups(n));
@@ -1041,7 +1062,9 @@ kernel void col_top(device const uint* perm [[buffer(0)]], device const uint* le
 /// the device already holds (a resident relation's column, `rows` longs from long `at` of `buffer`), read in place.
 pub enum StatCol<'a> {
     Host(&'a [i64]),
-    Device { buffer: &'a BufferRef, at: usize, rows: usize },
+    /// Values the device holds: `rows` of them at value `at` of `buffer`, or, with `col`, column `col` of the
+    /// `rerail_blocks` relation whose descriptor is `at` bytes into the block `buffer` binds (decision 0325).
+    Device { buffer: &'a BufferRef, at: usize, rows: usize, col: Option<u32> },
 }
 
 impl StatCol<'_> {
@@ -1056,8 +1079,20 @@ impl StatCol<'_> {
 /// A device column's span and its keys (`col_span`, `col_base`, `col_narrow`): each tile's least and greatest into
 /// `part`, then the least (the base) and whether the span passes 32 bits into `span`, then each value less the base
 /// as a sort key, 32 bits wide, or 64 when `p[3]` says the span is wide (the batch is encoded again for those).
+/// The column span kernels' source: `COL_SPAN_SOURCE` after the relation's reads written once
+/// (`rerail_blocks::RELATION_READS`), which a relation's column is read in its block with (decision 0325).
+fn col_span_source() -> String {
+    COL_SPAN_SOURCE.replacen("using namespace metal;\n", &format!("using namespace metal;\n{}", rerail_blocks::RELATION_READS), 1)
+}
+
 const COL_SPAN_SOURCE: &str = r#"#include <metal_stdlib>
 using namespace metal;
+
+// Value `r` of a column: at `at` of `src`, or (`rel_col` its number + 1) column `rel_col - 1` of the relation whose
+// descriptor is `at` bytes into the block `src` binds.
+static inline long col_value(device const long* src, ulong at, uint rel_col, uint r) {
+    return rel_col == 0u ? src[at + r] : long(clif_rel_get((device const uchar*)src, at, r, rel_col - 1u));
+}
 
 constant long LEAST = long(0x8000000000000000UL);
 constant long MOST = long(0x7fffffffffffffffUL);
@@ -1070,7 +1105,7 @@ kernel void col_span(device const long* src [[buffer(0)]], device long* part [[b
     for (uint i = 0; i < 4; i++) {
         uint r = g * 1024 + i * 256 + t;
         if (r >= n) break;
-        long v = src[at + r];
+        long v = col_value(src, at, p[3], r);
         lo = min(lo, v);
         hi = max(hi, v);
     }
@@ -1107,7 +1142,7 @@ kernel void col_narrow(device const long* src [[buffer(0)]], device const long* 
     uint n = p[0];
     if (r >= n) return;
     ulong at = ulong(p[1]) | (ulong(p[2]) << 32);
-    ulong d = ulong(src[at + r]) - ulong(span[0]);
+    ulong d = ulong(col_value(src, at, p[4], r)) - ulong(span[0]);
     if (p[3] == 0) ((device uint*)keys)[r] = uint(d); else ((device ulong*)keys)[r] = d;
 }
 "#;
@@ -1132,7 +1167,7 @@ pub fn column_stats_of(cols: &[StatCol<'_>], k: usize) -> Result<Vec<ColStats>, 
     let wide: Vec<usize> = got.iter().enumerate().filter(|(_, g)| g.is_none()).map(|(i, _)| i).collect();
     if !wide.is_empty() {
         let again: Vec<StatCol<'_>> = wide.iter().map(|&i| match &cols[i] {
-            StatCol::Device { buffer, at, rows } => StatCol::Device { buffer, at: *at, rows: *rows },
+            StatCol::Device { buffer, at, rows, col } => StatCol::Device { buffer, at: *at, rows: *rows, col: *col },
             StatCol::Host(v) => StatCol::Host(v),
         }).collect();
         for (i, g) in wide.into_iter().zip(stats_round(&again, k, true)?) {
@@ -1166,18 +1201,20 @@ fn stats_round(cols: &[StatCol<'_>], k: usize, wide: bool) -> Result<Vec<Option<
                 reads.push(c);
                 got
             }
-            StatCol::Device { buffer, at, rows: _ } => {
-                let spans = pipeline("column span", "col_span", || COL_SPAN_SOURCE.to_owned())?;
-                let based = pipeline("column span", "col_base", || COL_SPAN_SOURCE.to_owned())?;
-                let narrow = pipeline("column span", "col_narrow", || COL_SPAN_SOURCE.to_owned())?;
+            StatCol::Device { buffer, at, rows: _, col } => {
+                let spans = pipeline("column span", "col_span", col_span_source)?;
+                let based = pipeline("column span", "col_base", col_span_source)?;
+                let narrow = pipeline("column span", "col_narrow", col_span_source)?;
                 let (lo, hi) = (*at as u32, (*at >> 32) as u32);
+                // A relation's column (its number + 1), or 0 for values at `at`.
+                let rel_col = col.map_or(0, |c| c + 1);
                 let part = Held::new(16 * tiles)?;
                 let span = Held::new(16)?;
                 let width = if wide { Width::W64 } else { Width::W32 };
                 let keys = Held::new(width.bytes() * n)?;
-                pass.run(&spans, &[buffer, &part.buffer], &[nn, lo, hi], &[], tiles);
+                pass.run(&spans, &[buffer, &part.buffer], &[nn, lo, hi, rel_col], &[], tiles);
                 pass.run(&based, &[&part.buffer, &span.buffer], &[tiles as u32], &[], 1);
-                pass.run(&narrow, &[buffer, &span.buffer, &keys.buffer], &[nn, lo, hi, u32::from(wide)], &[], groups(n));
+                pass.run(&narrow, &[buffer, &span.buffer, &keys.buffer], &[nn, lo, hi, u32::from(wide), rel_col], &[], groups(n));
                 let buf = keys.buffer.clone();
                 keep.extend([part, keys]);
                 (buf, width, if wide { 64 } else { 32 }, Err(span))

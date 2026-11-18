@@ -32,8 +32,9 @@ fn atom(rel: &str, args: Vec<Term>) -> Literal {
 /// tested without a kind stays a join. The number of rules rewritten.
 pub fn absorb(prog: &mut Program, capture: bool) -> usize {
     let mut rewritten = 0;
-    let mut fresh = 0;
     for rule in &mut prog.rules {
+        // Fresh names counted per rule: a rule's do not depend on the others'.
+        let mut fresh = 0;
         // A kind or field name as the program holds it (`python:call`), as the matcher names it (`call`).
         let str_of = |t: &Term| match t {
             Term::Str(s) => Some(s.strip_prefix("python:").unwrap_or(s).to_owned()),
@@ -116,7 +117,19 @@ pub fn absorb(prog: &mut Program, capture: bool) -> usize {
 /// Rewrites `prog`'s `ast` atoms over the matchers' relations: each relation, its matcher's text and the names it
 /// captures (an atom naming more than [`MOST_CAPTURES`] is left as written).
 pub fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
-    let mut texts: Vec<(String, Vec<String>)> = Vec::new();
+    // Each distinct matcher (its text and captured names) numbered in its content's order, not the rules': a
+    // program's names do not depend on the order its rules come in.
+    let texts: Vec<(String, Vec<String>)> = prog
+        .rules
+        .iter()
+        .flat_map(|r| &r.body)
+        .filter_map(|l| match l {
+            Literal::Ast { matcher, captures, .. } if captures.len() <= MOST_CAPTURES => Some((matcher.clone(), captures.iter().map(|(name, _)| name.clone()).collect())),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     for rule in &mut prog.rules {
         if !rule.body.iter().any(|l| matches!(l, Literal::Ast { captures, .. } if captures.len() <= MOST_CAPTURES)) {
             continue;
@@ -135,10 +148,7 @@ pub fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
             match l {
                 Literal::Ast { document, node, matcher, captures } if captures.len() <= MOST_CAPTURES => {
                     let names: Vec<String> = captures.iter().map(|(name, _)| name.clone()).collect();
-                    let k = texts.iter().position(|(t, n)| t == matcher && *n == names).unwrap_or_else(|| {
-                        texts.push((matcher.clone(), names.clone()));
-                        texts.len() - 1
-                    });
+                    let k = texts.iter().position(|(t, n)| t == matcher && *n == names).expect("numbered above");
                     let mut args = vec![Term::Var(node.clone().into())];
                     args.extend(captures.iter().map(|(_, var)| Term::Var(var.clone().into())));
                     made.push(atom(&relation(k, names.len()), args));

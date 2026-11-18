@@ -190,7 +190,11 @@ fn a_column_pushed_in_order_answers_as_its_sorted_index_does() {
         };
         for v in [-1, 0, 7, 50, 99, 100, 200] {
             assert_eq!(r.lookup(column, &[v]).unwrap(), sorted(v, v), "column {column}, {v}");
+            // A probe's slice (no list made) holds the same rows: the ids of an ordered column's run, or the index's.
+            let slice: Vec<usize> = r.sorted_rows(column, v).unwrap().iter().map(|&i| i as usize).collect();
+            assert_eq!(slice, sorted(v, v), "sorted_rows, column {column}, {v}");
         }
+        assert!(r.sorts_rows(column));
         assert_eq!(r.lookup(column, &[3, 9]).unwrap(), [sorted(3, 3), sorted(9, 9)].concat());
         assert_eq!(r.range_lookup(column, Some((10, true)), Some((20, false))).unwrap(), sorted(10, 19));
     }
@@ -200,4 +204,18 @@ fn a_column_pushed_in_order_answers_as_its_sorted_index_does() {
     [[1], [2], [2], [1]].iter().for_each(|row| late.push(row));
     assert!(!late.ordered(0));
     assert_eq!(late.lookup(0, &[1]).unwrap(), vec![0, 3]);
+}
+
+/// A column pushed in order with each value once is a key (`Source::keys_rows`): `key_row` finds what `lookup` does,
+/// absent values none. One with repeats, or out of order, is not a key.
+#[test]
+fn a_column_pushed_in_order_once_a_value_is_a_key() {
+    // `n` ascending once each, `d` ascending with repeats, `l` out of order.
+    let mut r = Relation::new(&["n", "d", "l"]);
+    (0..300i64).for_each(|i| r.push(&[i * 2 + 5, i / 3, (i * 37) % 101]));
+    assert!(r.keys_rows(0) && !r.keys_rows(1) && !r.keys_rows(2));
+    for v in [-1, 4, 5, 6, 7, 299, 603, 604, 605, i64::MAX] {
+        assert_eq!(r.key_row(0, v), r.lookup(0, &[v]).unwrap().first().copied(), "{v}");
+    }
+    assert!(Relation::new(&["n"]).keys_rows(0), "no rows: every value once");
 }

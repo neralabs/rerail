@@ -8,6 +8,76 @@
     use ast_grep_core::tree_sitter::LanguageExt;
     use std::sync::Arc;
 
+    /// A test's nodes as the tape the JIT reads (decision 0310): format 15's columns over `nodes` in preorder, the
+    /// tree their parent links describe (a later node with none is a child of node 0), each node its own code
+    /// (its kind, field and flags; its supertype memberships from `classes`, (node, kind) pairs), its span as
+    /// written. A node's other links (siblings, children, subtree end) are the tree's.
+    struct TestTape {
+        bytes: Vec<u8>,
+        view: rerail_clif::view::TapeView,
+        codes: Vec<crate::code_rule_dsl::tape::resident::DeviceCode>,
+    }
+
+    impl TestTape {
+        fn of(nodes: &[MetalNode]) -> Self {
+            Self::with_classes(nodes, &[])
+        }
+
+        fn with_classes(nodes: &[MetalNode], classes: &[(u32, u16)]) -> Self {
+            let n = nodes.len();
+            let parent = |i: usize| match nodes[i].parent {
+                p if i > 0 && (p == NONE || p as usize >= i) => 0,
+                p => p as usize,
+            };
+            let mut size = vec![1_u32; n];
+            for i in (1..n).rev() {
+                size[parent(i)] += size[i];
+            }
+            for i in 1..n {
+                let p = parent(i);
+                assert!(i < p + size[p] as usize, "node {i} lies outside its parent {p}'s subtree: the nodes are not in preorder");
+            }
+            let block_base = |k: usize| nodes[k * 16..n.min(k * 16 + 16)].iter().map(|node| node.source_start).min().unwrap_or(0);
+            let words = |values: &mut dyn Iterator<Item = u32>| values.flat_map(u32::to_le_bytes).collect::<Vec<u8>>();
+            let code: Vec<u8> = (0..n as u16).flat_map(u16::to_le_bytes).collect();
+            let sizes = words(&mut size.iter().copied());
+            let base = words(&mut (0..n.div_ceil(16)).map(block_base));
+            let off = words(&mut (0..n).map(|i| nodes[i].source_start - block_base(i / 16)));
+            let tail = words(&mut nodes.iter().map(|node| node.source_end - node.source_start));
+            let mut bytes = Vec::new();
+            let mut at = [0_u32; 5];
+            for (k, column) in [code, sizes, base, off, tail].into_iter().enumerate() {
+                at[k] = bytes.len() as u32;
+                bytes.extend_from_slice(&column);
+                bytes.resize(bytes.len().next_multiple_of(8), 0);
+            }
+            let view = rerail_clif::view::TapeView { nodes: n as u32, format: 15, widths: 4 | 4 << 4 | 4 << 8 | 1 << 12, columns: at, ..Default::default() };
+            let codes = nodes
+                .iter()
+                .enumerate()
+                .map(|(i, node)| {
+                    let mut code = crate::code_rule_dsl::tape::resident::DeviceCode::default();
+                    (code.kind, code.field, code.flags) = (node.kind as u16, node.field as u16, node.flags as u8);
+                    for &(_, kind) in classes.iter().filter(|(of, _)| *of as usize == i) {
+                        code.classes[usize::from(code.class_count)] = kind;
+                        code.class_count += 1;
+                    }
+                    code
+                })
+                .collect();
+            Self { bytes, view, codes }
+        }
+
+        /// The context reads this tape, as the batch's only document.
+        fn bind(&self, context: &mut NativeTaskContext) {
+            context.tape = self.bytes.as_ptr();
+            context.view = &self.view;
+            context.codes = self.codes.as_ptr();
+            (context.node_base, context.source_base) = (0, 0);
+            context.node_count = self.view.nodes;
+        }
+    }
+
     #[test]
     fn demand_zero_cpu_workspace_has_typed_zeroed_storage() {
         let mut values = DemandZeroRegion::<u32>::new(17).unwrap();
@@ -524,13 +594,14 @@
         }];
         let mut results = [ResultRecord::default(); 1];
         let mut status = TaskStatus::default();
+        let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            nodes: nodes.as_ptr(),
+            tape: tape.bytes.as_ptr(),
+            view: &tape.view,
+            codes: tape.codes.as_ptr(),
+            node_base: 0,
+            source_base: 0,
             node_count: 1,
-            children: std::ptr::null(),
-            child_count: 0,
-            supertypes: std::ptr::null(),
-            supertype_count: 0,
             source: std::ptr::null(),
             source_length: 0,
             values: std::ptr::null(),
@@ -597,6 +668,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -626,13 +698,14 @@
         }];
         let mut results = [ResultRecord::default(); 1];
         let mut status = TaskStatus::default();
+        let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            nodes: nodes.as_ptr(),
+            tape: tape.bytes.as_ptr(),
+            view: &tape.view,
+            codes: tape.codes.as_ptr(),
+            node_base: 0,
+            source_base: 0,
             node_count: 1,
-            children: std::ptr::null(),
-            child_count: 0,
-            supertypes: std::ptr::null(),
-            supertype_count: 0,
             source: std::ptr::null(),
             source_length: 0,
             values: std::ptr::null(),
@@ -699,6 +772,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(
@@ -735,13 +809,14 @@
         let mut final_captures = [FinalCaptureRecord::default(); 2];
         let mut results = [ResultRecord::default(); 2];
         let mut status = TaskStatus::default();
+        let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            nodes: nodes.as_ptr(),
+            tape: tape.bytes.as_ptr(),
+            view: &tape.view,
+            codes: tape.codes.as_ptr(),
+            node_base: 0,
+            source_base: 0,
             node_count: 1,
-            children: std::ptr::null(),
-            child_count: 0,
-            supertypes: std::ptr::null(),
-            supertype_count: 0,
             source: std::ptr::null(),
             source_length: 0,
             values: std::ptr::null(),
@@ -808,6 +883,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -849,22 +925,11 @@
         )
         .unwrap();
         let compiled = compile_straight_line(&native_ir::lower(&program).unwrap()).unwrap();
+        // A root over two siblings, the walk from the first: it and its next sibling are captured.
         let nodes = [
-            MetalNode {
-                next_any: 1,
-                next_named: 1,
-                parent: NONE,
-                source_end: 2,
-                ..MetalNode::default()
-            },
-            MetalNode {
-                parent: NONE,
-                next_any: NONE,
-                next_named: NONE,
-                source_start: 1,
-                source_end: 2,
-                ..MetalNode::default()
-            },
+            MetalNode { parent: NONE, source_end: 2, ..MetalNode::default() },
+            MetalNode { parent: 0, source_end: 2, ..MetalNode::default() },
+            MetalNode { parent: 0, source_start: 1, source_end: 2, ..MetalNode::default() },
         ];
         let mut pending = [PendingRecord::default(); 1];
         let mut captures = [LinkRecord::default(); 2];
@@ -872,9 +937,9 @@
         let mut results = [ResultRecord::default(); 2];
         let mut status = TaskStatus::default();
         let mut context: NativeTaskContext = unsafe { mem::zeroed() };
-        context.nodes = nodes.as_ptr();
-        context.node_count = nodes.len() as u32;
-        context.current_node = 0;
+        let tape = TestTape::of(&nodes);
+        tape.bind(&mut context);
+        context.current_node = 1;
         context.pending = pending.as_mut_ptr();
         context.pending_quota_limit = 1;
         context.task_work_limit = 32;
@@ -894,7 +959,7 @@
                 final_captures[results[0].capture_start as usize].node,
                 final_captures[results[1].capture_start as usize].node,
             ],
-            [0, 1],
+            [1, 2],
         );
         assert_eq!([results[0].local_ordinal, results[1].local_ordinal], [1, 0]);
     }
@@ -930,13 +995,14 @@
         let mut greedy_entries = [GreedyEntryRecord::default(); 1];
         let mut results = [ResultRecord::default(); 2];
         let mut status = TaskStatus::default();
+        let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            nodes: nodes.as_ptr(),
+            tape: tape.bytes.as_ptr(),
+            view: &tape.view,
+            codes: tape.codes.as_ptr(),
+            node_base: 0,
+            source_base: 0,
             node_count: 1,
-            children: std::ptr::null(),
-            child_count: 0,
-            supertypes: std::ptr::null(),
-            supertype_count: 0,
             source: std::ptr::null(),
             source_length: 0,
             values: std::ptr::null(),
@@ -1003,6 +1069,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -1047,27 +1114,21 @@
             native.tree_sitter_query = true;
             native.has_repeats = true;
             let compiled = compile_straight_line(&native).unwrap();
-            let mut nodes = [MetalNode {
-                parent: NONE,
-                next_any: NONE,
-                next_named: NONE,
-                ..MetalNode::default()
-            }; 4];
-            nodes[2].source_start = 4;
-            nodes[2].source_end = 4;
-            match (mode, expected) {
-                (_, 0) => {}
-                (0, 1) => nodes[0].next_any = 3,
-                (0, 3) => {
-                    nodes[0].next_any = 1;
-                    nodes[1].next_any = 2;
-                    nodes[2].next_any = 3;
-                }
-                (NAMED, 2) => {
-                    nodes[0].next_named = 2;
-                    nodes[2].next_named = 3;
-                }
+            // A root over the siblings the walk follows, from the first: none after it, one, three, or (named)
+            // three of which the last two are named.
+            let siblings = match (mode, expected) {
+                (_, 0) => 1,
+                (0, 1) => 2,
+                (0, 3) | (NAMED, 2) => 4,
                 _ => panic!("unsupported following test shape"),
+            };
+            let mut nodes = vec![MetalNode { parent: NONE, ..MetalNode::default() }];
+            nodes.extend((0..siblings).map(|_| MetalNode { parent: 0, ..MetalNode::default() }));
+            if let Some(third) = nodes.get_mut(3) {
+                (third.source_start, third.source_end) = (4, 4);
+            }
+            if mode == NAMED {
+                (nodes[3].flags, nodes[4].flags) = (1, 1);
             }
             let mut pending = [PendingRecord::default(); 1];
             let mut query_buckets = [QueryBucketRecord::default(); 8];
@@ -1075,13 +1136,14 @@
             let mut queued_states = [QueuedStateRecord::default(); 1];
             let mut results = [ResultRecord::default(); 3];
             let mut status = TaskStatus::default();
+            let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                nodes: nodes.as_ptr(),
+                tape: tape.bytes.as_ptr(),
+                view: &tape.view,
+                codes: tape.codes.as_ptr(),
+                node_base: 0,
+                source_base: 0,
                 node_count: nodes.len() as u32,
-                children: std::ptr::null(),
-                child_count: 0,
-                supertypes: std::ptr::null(),
-                supertype_count: 0,
                 source: std::ptr::null(),
                 source_length: 0,
                 values: std::ptr::null(),
@@ -1099,8 +1161,8 @@
                 value_work: std::ptr::null_mut(),
                 value_start: 0,
                 value_capacity: 0,
-                current_node: 0,
-                start_node: 0,
+                current_node: 1,
+                start_node: 1,
                 task_ordinal: 0,
                 pending: pending.as_mut_ptr(),
                 pending_count: 0,
@@ -1148,6 +1210,7 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                most_steps: 0,
             };
             compiled.execute(&mut context);
             assert_eq!(status.error, 0);
@@ -1161,10 +1224,10 @@
             }
         }
 
-        run(0, 0, 0);
-        run(0, 1, 3);
-        run(0, 3, 3);
-        run(NAMED, 2, 3);
+        run(0, 0, 1);
+        run(0, 1, 2);
+        run(0, 3, 4);
+        run(NAMED, 2, 4);
     }
 
     #[test]
@@ -1195,13 +1258,14 @@
         let mut queued_states = [QueuedStateRecord::default(); 1];
         let mut results = [ResultRecord::default(); 2];
         let mut status = TaskStatus::default();
+        let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            nodes: nodes.as_ptr(),
+            tape: tape.bytes.as_ptr(),
+            view: &tape.view,
+            codes: tape.codes.as_ptr(),
+            node_base: 0,
+            source_base: 0,
             node_count: 1,
-            children: std::ptr::null(),
-            child_count: 0,
-            supertypes: std::ptr::null(),
-            supertype_count: 0,
             source: std::ptr::null(),
             source_length: 0,
             values: std::ptr::null(),
@@ -1268,6 +1332,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -1294,13 +1359,14 @@
         let nodes = [MetalNode::default()];
         let mut results = [ResultRecord::default(); 2];
         let mut status = TaskStatus::default();
+        let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            nodes: nodes.as_ptr(),
+            tape: tape.bytes.as_ptr(),
+            view: &tape.view,
+            codes: tape.codes.as_ptr(),
+            node_base: 0,
+            source_base: 0,
             node_count: 1,
-            children: std::ptr::null(),
-            child_count: 0,
-            supertypes: std::ptr::null(),
-            supertype_count: 0,
             source: std::ptr::null(),
             source_length: 0,
             values: std::ptr::null(),
@@ -1367,6 +1433,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 2);
@@ -1411,13 +1478,14 @@
         let mut pending = [PendingRecord::default(); 1];
         let mut results = [ResultRecord::default(); 1];
         let mut status = TaskStatus::default();
+        let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            nodes: nodes.as_ptr(),
+            tape: tape.bytes.as_ptr(),
+            view: &tape.view,
+            codes: tape.codes.as_ptr(),
+            node_base: 0,
+            source_base: 0,
             node_count: 1,
-            children: std::ptr::null(),
-            child_count: 0,
-            supertypes: std::ptr::null(),
-            supertype_count: 0,
             source: std::ptr::null(),
             source_length: 0,
             values: std::ptr::null(),
@@ -1484,6 +1552,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 2);
@@ -1589,13 +1658,14 @@
         let mut queued_states = [QueuedStateRecord::default(); 2];
         let mut greedy_entries = [GreedyEntryRecord::default(); 1];
         let mut status = TaskStatus::default();
+        let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            nodes: nodes.as_ptr(),
+            tape: tape.bytes.as_ptr(),
+            view: &tape.view,
+            codes: tape.codes.as_ptr(),
+            node_base: 0,
+            source_base: 0,
             node_count: nodes.len() as u32,
-            children: std::ptr::null(),
-            child_count: 0,
-            supertypes: std::ptr::null(),
-            supertype_count: 0,
             source: std::ptr::null(),
             source_length: 0,
             values: std::ptr::null(),
@@ -1662,6 +1732,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         unsafe {
             assert_eq!((compiled.cursor_equal)(&mut context, 2, 3), 1);
@@ -1792,8 +1863,8 @@
                 ordered
             })
             .collect::<Vec<_>>();
-        context.nodes = nodes.as_ptr();
-        context.node_count = nodes.len() as u32;
+        let tape = TestTape::of(&nodes);
+        tape.bind(&mut context);
         context.captures = links.as_ptr();
         for (left, captures) in ordered.iter().enumerate() {
             for (right, other) in ordered.iter().enumerate() {
@@ -1856,13 +1927,14 @@
             let mut greedy = [GreedyEntryRecord::default(); 4];
             let mut results = [ResultRecord::default(); 8];
             let mut status = TaskStatus::default();
+            let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                nodes: nodes.as_ptr(),
+                tape: tape.bytes.as_ptr(),
+                view: &tape.view,
+                codes: tape.codes.as_ptr(),
+                node_base: 0,
+                source_base: 0,
                 node_count: 1,
-                children: std::ptr::null(),
-                child_count: 0,
-                supertypes: std::ptr::null(),
-                supertype_count: 0,
                 source: std::ptr::null(),
                 source_length: 0,
                 values: std::ptr::null(),
@@ -1929,6 +2001,7 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                most_steps: 0,
             };
             compiled.execute(&mut context);
             status
@@ -2078,7 +2151,6 @@
         nodes[0].child_count = 2;
         nodes[1].parent = 0;
         nodes[2].parent = 0;
-        let children = [1_u32, 2];
         let mut pending = [PendingRecord::default(); 1];
         let mut captures = [LinkRecord::default(); 2];
         let mut cursors = [LinkRecord::default(); 1];
@@ -2086,13 +2158,14 @@
         let mut final_captures = [FinalCaptureRecord::default(); 2];
         let mut results = [ResultRecord::default(); 2];
         let mut status = TaskStatus::default();
+        let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            nodes: nodes.as_ptr(),
+            tape: tape.bytes.as_ptr(),
+            view: &tape.view,
+            codes: tape.codes.as_ptr(),
+            node_base: 0,
+            source_base: 0,
             node_count: nodes.len() as u32,
-            children: children.as_ptr(),
-            child_count: children.len() as u32,
-            supertypes: std::ptr::null(),
-            supertype_count: 0,
             source: std::ptr::null(),
             source_length: 0,
             values: std::ptr::null(),
@@ -2159,6 +2232,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -2288,20 +2362,20 @@
             nodes[2].source_end = 3;
             nodes[3].parent = 0;
             nodes[3].flags = 1;
-            let children = [1_u32, 2, 3];
             let mut pending = [PendingRecord::default(); 2];
             let mut query_buckets = [QueryBucketRecord::default(); 8];
             let mut query_members = [QueryMemberRecord::default(); 8];
             let mut queued_states = [QueuedStateRecord::default(); 2];
             let mut results = [ResultRecord::default(); 3];
             let mut status = TaskStatus::default();
+            let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                nodes: nodes.as_ptr(),
+                tape: tape.bytes.as_ptr(),
+                view: &tape.view,
+                codes: tape.codes.as_ptr(),
+                node_base: 0,
+                source_base: 0,
                 node_count: nodes.len() as u32,
-                children: children.as_ptr(),
-                child_count: children.len() as u32,
-                supertypes: std::ptr::null(),
-                supertype_count: 0,
                 source: std::ptr::null(),
                 source_length: 0,
                 values: std::ptr::null(),
@@ -2368,6 +2442,7 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                most_steps: 0,
             };
             compiled.execute(&mut context);
             assert_eq!(status.error, 0, "operation {operation} mode {mode}");
@@ -2411,8 +2486,8 @@
         let mut results = [ResultRecord::default(); 1];
         let mut status = TaskStatus::default();
         let mut context: NativeTaskContext = unsafe { mem::zeroed() };
-        context.nodes = nodes.as_ptr();
-        context.node_count = nodes.len() as u32;
+        let tape = TestTape::of(&nodes);
+        tape.bind(&mut context);
         context.source = source.as_ptr();
         context.source_length = source.len() as u32;
         context.current_node = 0;
@@ -2538,7 +2613,8 @@
             let mut results = [ResultRecord::default(); 1];
             let mut status = TaskStatus::default();
             let mut context: NativeTaskContext = unsafe { mem::zeroed() };
-            context.nodes = nodes.as_ptr();
+            let tape = TestTape::of(&nodes);
+            tape.bind(&mut context);
             context.node_count = 1;
             context.source = source.as_ptr();
             context.source_length = source.len() as u32;
@@ -2604,7 +2680,8 @@
             let mut results = [ResultRecord::default(); 1];
             let mut status = TaskStatus::default();
             let mut context: NativeTaskContext = unsafe { mem::zeroed() };
-            context.nodes = nodes.as_ptr();
+            let tape = TestTape::of(&nodes);
+            tape.bind(&mut context);
             context.node_count = 1;
             context.source = source.as_ptr();
             context.source_length = source.len() as u32;
@@ -2666,7 +2743,8 @@
         let mut properties = [PropertyRecord::default(); 2];
         let mut status = TaskStatus::default();
         let mut context: NativeTaskContext = unsafe { mem::zeroed() };
-        context.nodes = nodes.as_ptr();
+        let tape = TestTape::of(&nodes);
+        tape.bind(&mut context);
         context.node_count = 1;
         context.current_node = 0;
         context.task_work_limit = 16;
@@ -2726,7 +2804,8 @@
         let mut results = [ResultRecord::default(); 1];
         let mut status = TaskStatus::default();
         let mut context: NativeTaskContext = unsafe { mem::zeroed() };
-        context.nodes = nodes.as_ptr();
+        let tape = TestTape::of(&nodes);
+        tape.bind(&mut context);
         context.node_count = 1;
         context.source = source.as_ptr();
         context.source_length = source.len() as u32;
@@ -2780,7 +2859,8 @@
         let mut results = [ResultRecord::default(); 1];
         let mut status = TaskStatus::default();
         let mut context: NativeTaskContext = unsafe { mem::zeroed() };
-        context.nodes = nodes.as_ptr();
+        let tape = TestTape::of(&nodes);
+        tape.bind(&mut context);
         context.node_count = 1;
         context.source = source.as_ptr();
         context.source_length = source.len() as u32;
@@ -2838,7 +2918,7 @@
             descendant_end: 4,
             ..MetalNode::default()
         }; 4];
-        nodes[0].child_count = 1;
+        // The root's three children: CHILD forks a path for each, and only the first's reaches EMIT.
         nodes[1].parent = 0;
         nodes[1].next_any = 2;
         nodes[1].source_end = 1;
@@ -2849,20 +2929,20 @@
         nodes[3].parent = 0;
         nodes[3].source_start = 5;
         nodes[3].source_end = 6;
-        let children = [1_u32];
         let line_starts = [0_u32, 2, 3];
-        let mut captures = [LinkRecord::default(); 3];
+        let mut pending = [PendingRecord::default(); 4];
+        let mut captures = [LinkRecord::default(); 8];
         let mut final_captures = [FinalCaptureRecord::default(); 3];
         let mut results = [ResultRecord::default(); 1];
         let mut status = TaskStatus::default();
         let mut context: NativeTaskContext = unsafe { mem::zeroed() };
-        context.nodes = nodes.as_ptr();
-        context.node_count = nodes.len() as u32;
-        context.children = children.as_ptr();
-        context.child_count = 1;
+        let tape = TestTape::of(&nodes);
+        tape.bind(&mut context);
         context.source = source.as_ptr();
         context.source_length = source.len() as u32;
         context.current_node = 0;
+        context.pending = pending.as_mut_ptr();
+        context.pending_quota_limit = pending.len() as u32;
         context.task_work_limit = 32;
         context.path_work_limit = 32;
         context.captures = captures.as_mut_ptr();
@@ -2920,7 +3000,8 @@
         let mut bytes = [0_u8; 16];
         let mut status = TaskStatus::default();
         let mut context: NativeTaskContext = unsafe { mem::zeroed() };
-        context.nodes = nodes.as_ptr();
+        let tape = TestTape::of(&nodes);
+        tape.bind(&mut context);
         context.node_count = 1;
         context.source = source.as_ptr();
         context.source_length = source.len() as u32;
@@ -2979,7 +3060,8 @@
         let mut bytes = [0_u8; 16];
         let mut status = TaskStatus::default();
         let mut context: NativeTaskContext = unsafe { mem::zeroed() };
-        context.nodes = nodes.as_ptr();
+        let tape = TestTape::of(&nodes);
+        tape.bind(&mut context);
         context.node_count = 1;
         context.source = source.as_ptr();
         context.source_length = source.len() as u32;
@@ -3036,7 +3118,8 @@
         let mut bytes = [0_u8; 32];
         let mut status = TaskStatus::default();
         let mut context: NativeTaskContext = unsafe { mem::zeroed() };
-        context.nodes = nodes.as_ptr();
+        let tape = TestTape::of(&nodes);
+        tape.bind(&mut context);
         context.node_count = 1;
         context.source = source.as_ptr();
         context.source_length = source.len() as u32;
@@ -3253,13 +3336,14 @@
             }];
             let mut results = [ResultRecord::default(); 1];
             let mut status = TaskStatus::default();
+            let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                nodes: nodes.as_ptr(),
+                tape: tape.bytes.as_ptr(),
+                view: &tape.view,
+                codes: tape.codes.as_ptr(),
+                node_base: 0,
+                source_base: 0,
                 node_count: 1,
-                children: std::ptr::null(),
-                child_count: 0,
-                supertypes: std::ptr::null(),
-                supertype_count: 0,
                 source: source.as_ptr(),
                 source_length: source.len() as u32,
                 values: std::ptr::null(),
@@ -3326,6 +3410,7 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                most_steps: 0,
             };
             compiled.execute(&mut context);
             assert_eq!(status.error, 0);
@@ -3334,7 +3419,7 @@
     }
 
     #[test]
-    fn cranelift_supertype_reads_checked_persisted_memberships() {
+    fn cranelift_supertype_reads_the_codes_memberships() {
         use crate::code_rule_dsl::transducer::packed::SUPERTYPE;
 
         let program = Program::new(
@@ -3353,20 +3438,16 @@
             next_named: NONE,
             ..MetalNode::default()
         }];
-        let memberships = [
-            MetalSupertype { node: 0, kind: 9 },
-            MetalSupertype { node: 0, kind: 9 },
-        ];
-        let malformed = [MetalSupertype { node: 1, kind: 9 }];
         let mut results = [ResultRecord::default(); 1];
         let mut status = TaskStatus::default();
+        let tape = TestTape::with_classes(&nodes, &[(0, 9)]);
         let mut context = NativeTaskContext {
-            nodes: nodes.as_ptr(),
+            tape: tape.bytes.as_ptr(),
+            view: &tape.view,
+            codes: tape.codes.as_ptr(),
+            node_base: 0,
+            source_base: 0,
             node_count: nodes.len() as u32,
-            children: std::ptr::null(),
-            child_count: 0,
-            supertypes: memberships.as_ptr(),
-            supertype_count: memberships.len() as u32,
             source: std::ptr::null(),
             source_length: 0,
             values: std::ptr::null(),
@@ -3433,29 +3514,24 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
         assert_eq!(status.result_count, 1);
 
+        // A code with no memberships: the node is not of the supertype.
         status = TaskStatus::default();
         context.current_steps = 0;
-        context.supertype_count = 0;
+        let plain = TestTape::of(&nodes);
+        plain.bind(&mut context);
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
-        assert_eq!(status.result_count, 0);
-
-        status = TaskStatus::default();
-        context.current_steps = 0;
-        context.supertypes = malformed.as_ptr();
-        context.supertype_count = 1;
-        compiled.execute(&mut context);
-        assert_eq!(status.error, 1);
         assert_eq!(status.result_count, 0);
     }
 
     #[test]
-    fn cranelift_absent_field_scans_the_checked_child_range() {
+    fn cranelift_absent_field_scans_the_nodes_children() {
         use crate::code_rule_dsl::transducer::packed::ABSENT_FIELD;
 
         let program = Program::new(
@@ -3474,20 +3550,19 @@
             next_named: NONE,
             ..MetalNode::default()
         }; 3];
-        nodes[0].child_count = 2;
         nodes[1].field = 3;
         nodes[2].field = 7;
         nodes[2].flags = 0b1100;
-        let children = [1_u32, 2];
         let mut results = [ResultRecord::default(); 1];
         let mut status = TaskStatus::default();
+        let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            nodes: nodes.as_ptr(),
+            tape: tape.bytes.as_ptr(),
+            view: &tape.view,
+            codes: tape.codes.as_ptr(),
+            node_base: 0,
+            source_base: 0,
             node_count: nodes.len() as u32,
-            children: children.as_ptr(),
-            child_count: children.len() as u32,
-            supertypes: std::ptr::null(),
-            supertype_count: 0,
             source: std::ptr::null(),
             source_length: 0,
             values: std::ptr::null(),
@@ -3554,29 +3629,20 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
         assert_eq!(status.result_count, 0);
 
-        let mut without_field = nodes;
-        without_field[0].child_count = 1;
+        // The root's one child is under another field.
+        let without_field = TestTape::of(&nodes[..2]);
         status = TaskStatus::default();
-        context.nodes = without_field.as_ptr();
+        without_field.bind(&mut context);
         context.current_steps = 0;
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
         assert_eq!(status.result_count, 1);
-
-        let mut malformed = without_field;
-        malformed[0].child_start = 2;
-        malformed[0].child_count = 1;
-        status = TaskStatus::default();
-        context.nodes = malformed.as_ptr();
-        context.current_steps = 0;
-        compiled.execute(&mut context);
-        assert_eq!(status.error, 1);
-        assert_eq!(status.result_count, 0);
     }
 
     #[test]
@@ -3604,13 +3670,14 @@
             }];
             let mut results = [ResultRecord::default(); 1];
             let mut status = TaskStatus::default();
+            let tape = TestTape::of(&nodes);
             let mut context = NativeTaskContext {
-                nodes: nodes.as_ptr(),
+                tape: tape.bytes.as_ptr(),
+                view: &tape.view,
+                codes: tape.codes.as_ptr(),
+                node_base: 0,
+                source_base: 0,
                 node_count: 1,
-                children: std::ptr::null(),
-                child_count: 0,
-                supertypes: std::ptr::null(),
-                supertype_count: 0,
                 source: std::ptr::null(),
                 source_length: 0,
                 values: std::ptr::null(),
@@ -3677,6 +3744,7 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                most_steps: 0,
             };
             compiled.execute(&mut context);
             assert_eq!(status.error, 0);
@@ -3698,13 +3766,14 @@
         let compiled = compile_straight_line(&native).unwrap();
         let nodes = [MetalNode::default()];
         let mut status = TaskStatus::default();
+        let tape = TestTape::of(&nodes);
         let mut context = NativeTaskContext {
-            nodes: nodes.as_ptr(),
+            tape: tape.bytes.as_ptr(),
+            view: &tape.view,
+            codes: tape.codes.as_ptr(),
+            node_base: 0,
+            source_base: 0,
             node_count: 1,
-            children: std::ptr::null(),
-            child_count: 0,
-            supertypes: std::ptr::null(),
-            supertype_count: 0,
             source: std::ptr::null(),
             source_length: 0,
             values: std::ptr::null(),
@@ -3771,6 +3840,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 2);

@@ -65,8 +65,8 @@ fn census(path: &Path, rel: &str, scopes: &[(String, u32)], names: &HashMap<u32,
     let file = FileInput::new(rel.to_owned(), "python".to_owned(), Arc::new(source), None, None, "core").ok()?;
     let Ok(Built::Facts(f)) = core::build(&file) else { return None };
     // The engine's ids: named, non-extra (comment) nodes in preorder. rank[id] = kept nodes before id.
-    let n = f.kind.len();
-    let keep: Vec<bool> = (0..n).map(|i| f.flags[i] & 1 == 1 && f.flags[i] & 2 == 0).collect();
+    let n = f.len();
+    let keep: Vec<bool> = (0..n).map(|i| f.flags(i as u32) & 1 == 1 && f.flags(i as u32) & 2 == 0).collect();
     let mut rank = vec![0u32; n + 1];
     for i in 0..n {
         rank[i + 1] = rank[i] + u32::from(keep[i]);
@@ -90,7 +90,7 @@ fn census(path: &Path, rel: &str, scopes: &[(String, u32)], names: &HashMap<u32,
     let mut by_kind: HashMap<u32, Vec<u32>> = HashMap::new();
     for i in 0..n {
         if keep[i] {
-            by_kind.entry(f.kind[i]).or_default().push(rank[i]);
+            by_kind.entry(f.kind(i as u32)).or_default().push(rank[i]);
         }
     }
     for (k, ids) in &by_kind {
@@ -100,8 +100,8 @@ fn census(path: &Path, rel: &str, scopes: &[(String, u32)], names: &HashMap<u32,
     // Inside-sets: the union of the subtrees (strictly below) of the nodes of a scope kind.
     for (name, atom) in scopes {
         let mut intervals: Vec<(u32, u32)> = (0..n)
-            .filter(|&i| keep[i] && f.kind[i] == *atom)
-            .map(|i| (rank[i] + 1, rank[f.subtree_end[i] as usize]))
+            .filter(|&i| keep[i] && f.kind(i as u32) == *atom)
+            .map(|i| (rank[i] + 1, rank[f.subtree_end(i as u32) as usize]))
             .filter(|(a, b)| a < b)
             .collect();
         intervals.sort_unstable();
@@ -228,21 +228,21 @@ fn doc_sets(path: &Path, rel: &str, scopes: &[(String, u32)], names: &HashMap<u3
     let source = std::fs::read_to_string(path).ok()?;
     let file = FileInput::new(rel.to_owned(), "python".to_owned(), Arc::new(source), None, None, "core").ok()?;
     let Ok(Built::Facts(f)) = core::build(&file) else { return None };
-    let n = f.kind.len();
-    let keep: Vec<bool> = (0..n).map(|i| f.flags[i] & 1 == 1 && f.flags[i] & 2 == 0).collect();
+    let n = f.len();
+    let keep: Vec<bool> = (0..n).map(|i| f.flags(i as u32) & 1 == 1 && f.flags(i as u32) & 2 == 0).collect();
     let mut rank = vec![0u32; n + 1];
     for i in 0..n {
         rank[i + 1] = rank[i] + u32::from(keep[i]);
     }
     let mut kinds: HashMap<String, Vec<u32>> = HashMap::new();
     for i in (0..n).filter(|&i| keep[i]) {
-        let name = names.get(&f.kind[i]).cloned().unwrap_or_default();
+        let name = names.get(&f.kind(i as u32)).cloned().unwrap_or_default();
         kinds.entry(name).or_default().push(rank[i]);
     }
     let mut inside = HashMap::new();
     for (name, atom) in scopes {
         let mut iv: Vec<(u32, u32)> =
-            (0..n).filter(|&i| keep[i] && f.kind[i] == *atom).map(|i| (rank[i] + 1, rank[f.subtree_end[i] as usize])).filter(|(a, b)| a < b).collect();
+            (0..n).filter(|&i| keep[i] && f.kind(i as u32) == *atom).map(|i| (rank[i] + 1, rank[f.subtree_end(i as u32) as usize])).filter(|(a, b)| a < b).collect();
         iv.sort_unstable();
         let mut merged: Vec<(u32, u32)> = Vec::new();
         for (a, b) in iv {

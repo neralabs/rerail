@@ -228,7 +228,7 @@ impl Lowerer {
         if !self.prog.outputs.iter().any(|name| *name == rel) {
             self.prog.outputs.push(rel.clone());
         }
-        self.prog.rules.push(Rule { head: Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }, body: body.into() });
+        self.write(Rule { head: Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }, body: body.into() });
         Ok(())
     }
 }

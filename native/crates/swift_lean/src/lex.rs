@@ -13,7 +13,8 @@
 //! The scanner's implicit semicolon is read from the bytes after a token (`Lexer::semi`), where
 //! the parser's state takes one, with the scanner's valid keywords (`SemiCtx`).
 
-use crate::block::{self, Blocks};
+use crate::block::{self, Blocks, Lexed};
+use rerail_simd8::swar::{self, Class};
 
 /// Why the parser left a file to tree-sitter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -214,7 +215,7 @@ fn wordc(c: u8) -> bool {
 
 /// An operator character (`is_legal_custom_operator` at the run's start, ASCII).
 #[inline(always)]
-pub fn op_char(c: u8) -> bool {
+pub const fn op_char(c: u8) -> bool {
     matches!(c, b'/' | b'=' | b'-' | b'+' | b'!' | b'*' | b'%' | b'<' | b'>' | b'&' | b'|' | b'^' | b'?' | b'~' | b'.')
 }
 
@@ -241,6 +242,90 @@ pub struct SemiCtx {
     /// After an expression: `.`, `=`, `==`, `+ `, `- `, `as`, a custom operator continue it.
     pub expr: bool,
 }
+
+/// Digit classes (`swar::class_end`, 8 bytes a step) and a quoted name's body (any byte but
+/// `` ` `` and a line end).
+static DEC: Class = swar::class_of(b"0123456789");
+static HEX: Class = swar::class_of(b"0123456789abcdefABCDEF");
+static BIN: Class = swar::class_of(b"01");
+static OCT: Class = swar::class_of(b"01234567");
+static TICK_BODY: Class = {
+    let mut t = [true; 256];
+    t[b'`' as usize] = false;
+    t[b'\n' as usize] = false;
+    t[b'\r' as usize] = false;
+    t
+};
+
+/// Bytes that start a name (`[A-Za-z_]`; one past ASCII goes the long way).
+static NAME_START: [bool; 256] = {
+    let mut t = [false; 256];
+    let mut c = 0;
+    while c < 256 {
+        t[c] = (c as u8).is_ascii_alphabetic() || c == b'_' as usize;
+        c += 1;
+    }
+    t
+};
+
+// The bytes after a one-byte token that make it longer, or another (`FOLLOW`'s bits, a token's
+// `ONE`): an operator character but `.`, a `.`, a byte past ASCII.
+const F_OP: u8 = 1;
+const F_DOT: u8 = 2;
+const F_WIDE: u8 = 4;
+
+static FOLLOW: [u8; 256] = {
+    let mut t = [0u8; 256];
+    let mut c = 0;
+    while c < 256 {
+        t[c] = if c >= 0x80 {
+            F_WIDE
+        } else if c == b'.' as usize {
+            F_DOT
+        } else if op_char(c as u8) {
+            F_OP
+        } else {
+            0
+        };
+        c += 1;
+    }
+    t
+};
+
+/// A one-byte token by its byte (`token_at`'s, `operator`'s of one byte): its kind, and the next
+/// bytes that make it another (`u8::MAX`: no one-byte token, or one read the long way).
+static ONE: [(T, u8); 256] = {
+    let mut t = [(T::Eof, u8::MAX); 256];
+    t[b'(' as usize] = (T::LParen, 0);
+    t[b')' as usize] = (T::RParen, 0);
+    t[b'[' as usize] = (T::LBracket, 0);
+    t[b']' as usize] = (T::RBracket, 0);
+    t[b'{' as usize] = (T::LBrace, 0);
+    t[b'}' as usize] = (T::RBrace, 0);
+    t[b';' as usize] = (T::Semi, 0);
+    t[b',' as usize] = (T::Comma, 0);
+    t[b':' as usize] = (T::Colon, 0);
+    t[b'@' as usize] = (T::At, 0);
+    t[b'\\' as usize] = (T::Backslash, 0);
+    // An operator run goes on through operator characters, and `.` only after a first `.`.
+    let op = F_OP | F_WIDE;
+    t[b'.' as usize] = (T::Dot, op | F_DOT);
+    t[b'=' as usize] = (T::Eq, op);
+    t[b'!' as usize] = (T::Bang, op);
+    t[b'?' as usize] = (T::Question, op);
+    t[b'+' as usize] = (T::Plus, op);
+    t[b'-' as usize] = (T::Minus, op);
+    t[b'*' as usize] = (T::Star, op);
+    t[b'/' as usize] = (T::Slash, op);
+    t[b'%' as usize] = (T::Percent, op);
+    t[b'<' as usize] = (T::Lt, op);
+    t[b'>' as usize] = (T::Gt, op);
+    t[b'&' as usize] = (T::Amp, op);
+    t[b'|' as usize] = (T::Pipe, op);
+    t[b'^' as usize] = (T::Caret, op);
+    t[b'~' as usize] = (T::Tilde, op);
+    t
+};
 
 /// The implicit semicolon where the parser's state takes one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -360,6 +445,59 @@ impl<'s> Lexer<'s> {
         }
     }
 
+    /// Tokens from `at` on into `out`, a block at a time (`Blocks::lex_blocks`): names and
+    /// one-byte punctuation and operators straight from the block's masks and two tables,
+    /// comments in place, every other token by `token_at` from its start (by `token` where a
+    /// character past ASCII starts it). Returns where the next is to be read from; at least `min`
+    /// tokens are made unless the text ends.
+    pub fn lex_run(&self, at: usize, out: &mut Vec<Tok>, min: usize, extras: &mut Vec<(u32, u32, u32)>) -> R<usize> {
+        let src = self.src;
+        self.blocks.lex_blocks(
+            at,
+            out,
+            min,
+            extras,
+            #[inline(always)]
+            |extras, pos, run, nl| {
+                let c = src[pos];
+                let tok = |kind, word, tick, e: usize| Ok(Lexed::Tok(Tok { kind, word, nl, tick, start: pos as u32, end: e as u32 }, e));
+                if NAME_START[c as usize] {
+                    // A name of ASCII bytes (past the block too), ended before ASCII other than
+                    // the keycap bases (`*`, `#`: `name_end`).
+                    let e = if run == usize::MAX { self.blocks.word_end(pos) } else { pos + run };
+                    let d = self.at(e);
+                    if d < 0x80 && d != b'*' && d != b'#' {
+                        return tok(T::Name, word(src, pos, e), false, e);
+                    }
+                } else {
+                    let (kind, bad) = ONE[c as usize];
+                    if bad != u8::MAX && FOLLOW[self.at(pos + 1) as usize] & bad == 0 {
+                        return tok(kind, 0, false, pos + 1);
+                    }
+                    if c >= 0x80 {
+                        // White space past ASCII is refused (`skip`): the long way.
+                        return Ok(Lexed::Slow);
+                    }
+                    if c == b'/' {
+                        if let Some((end, block)) = self.comment(pos)? {
+                            let kind = if block { crate::K::MultilineComment } else { crate::K::Comment };
+                            extras.push((crate::tw::key(kind, 0, true), pos as u32, end as u32));
+                            return Ok(Lexed::Extra(end));
+                        }
+                    }
+                }
+                // Any other token from its first byte, as `token` reads it there.
+                let (kind, e, word, tick) = self.token_at(pos)?;
+                tok(kind, word, tick, e)
+            },
+            |extras, gap, nl| {
+                let mut t = self.token(gap, extras)?;
+                t.nl |= nl;
+                Ok((t, t.end as usize, t.kind == T::Eof))
+            },
+        )
+    }
+
     /// The next token from `at`, white space and comments passed.
     #[inline]
     pub fn token(&self, at: usize, extras: &mut Vec<(u32, u32, u32)>) -> R<Tok> {
@@ -384,10 +522,7 @@ impl<'s> Lexer<'s> {
                 return Ok((Name, end, code, wide));
             }
             b'`' => {
-                let mut i = s + 1;
-                while i < self.src.len() && !matches!(self.src[i], b'`' | b'\n' | b'\r') {
-                    i += 1;
-                }
+                let i = swar::class_end(self.src, s + 1, &TICK_BODY);
                 if i == s + 1 || self.at(i) != b'`' {
                     return refuse;
                 }
@@ -396,11 +531,7 @@ impl<'s> Lexer<'s> {
             b'$' => {
                 // `$0`, or `$name`.
                 if next.is_ascii_digit() {
-                    let mut i = s + 1;
-                    while self.at(i).is_ascii_digit() {
-                        i += 1;
-                    }
-                    return Ok((Name, i, 0, true));
+                    return Ok((Name, swar::class_end(self.src, s + 1, &DEC), 0, true));
                 }
                 let (end, _) = self.name_end(s + 1)?;
                 if end == s + 1 {
@@ -567,19 +698,14 @@ impl<'s> Lexer<'s> {
 
     /// Digits from `i` (runs of `digit` with runs of `_` between them): the end, `None` where no
     /// digit starts it.
-    fn digits(&self, mut i: usize, digit: impl Fn(u8) -> bool) -> Option<usize> {
-        if !digit(self.at(i)) {
+    fn digits(&self, mut i: usize, digit: &Class) -> Option<usize> {
+        if !digit[self.at(i) as usize] {
             return None;
         }
         loop {
-            while digit(self.at(i)) {
-                i += 1;
-            }
-            let mut k = i;
-            while self.at(k) == b'_' {
-                k += 1;
-            }
-            if k > i && digit(self.at(k)) {
+            i = swar::class_end(self.src, i, digit);
+            let k = swar::run_end(self.src, i, b'_');
+            if k > i && digit[self.at(k) as usize] {
                 i = k;
                 continue;
             }
@@ -592,43 +718,41 @@ impl<'s> Lexer<'s> {
             return None;
         }
         let k = if matches!(self.at(i + 1), b'+' | b'-') { i + 2 } else { i + 1 };
-        self.digits(k, |c| c.is_ascii_digit())
+        self.digits(k, &DEC)
     }
 
     /// A number at `s` (a digit): the longest of the grammar's literals.
     fn number(&self, s: usize) -> R<(T, usize, u8, bool)> {
-        let dec = |c: u8| c.is_ascii_digit();
-        let hex = |c: u8| c.is_ascii_hexdigit();
         let (c0, c1) = (self.at(s), self.at(s + 1));
         let mut best = (T::Int, s);
         if c0 == b'0' && matches!(c1, b'x' | b'X') {
-            if let Some(e) = self.digits(s + 2, hex) {
+            if let Some(e) = self.digits(s + 2, &HEX) {
                 best = (T::Hex, e);
                 // A hex float: `0x` digits (`.` digits)? `p` exponent (only `0x`, not `0X`).
                 if c1 == b'x' {
-                    let f = if self.at(e) == b'.' { self.digits(e + 1, hex) } else { Some(e) };
+                    let f = if self.at(e) == b'.' { self.digits(e + 1, &HEX) } else { Some(e) };
                     if let Some(x) = f.and_then(|f| self.exponent(f, [b'p', b'P'])) {
                         best = (T::Real, x);
                     }
                 }
             }
         } else if c0 == b'0' && matches!(c1, b'o' | b'O') {
-            if let Some(e) = self.digits(s + 2, |c| (b'0'..=b'7').contains(&c)) {
+            if let Some(e) = self.digits(s + 2, &OCT) {
                 best = (T::Oct, e);
             }
         } else if c0 == b'0' && matches!(c1, b'b' | b'B') {
-            if let Some(e) = self.digits(s + 2, |c| c == b'0' || c == b'1') {
+            if let Some(e) = self.digits(s + 2, &BIN) {
                 best = (T::Bin, e);
             }
         }
         if best.1 == s {
-            let e = self.digits(s, dec).expect("a digit");
+            let e = self.digits(s, &DEC).expect("a digit");
             best = (T::Int, e);
             if let Some(x) = self.exponent(e, [b'e', b'E']) {
                 best = (T::Real, x);
             }
             if self.at(e) == b'.' {
-                if let Some(f) = self.digits(e + 1, dec) {
+                if let Some(f) = self.digits(e + 1, &DEC) {
                     let x = self.exponent(f, [b'e', b'E']).unwrap_or(f);
                     best = (T::Real, x);
                 }
@@ -827,4 +951,74 @@ impl<'s> Lexer<'s> {
         Semi::Implicit(i as u32)
     }
 
+}
+
+#[cfg(test)]
+mod block_lexer_tests {
+    use super::*;
+
+    type Run = (Vec<String>, Vec<(u32, u32, u32)>, Option<Refusal>);
+
+    /// The tokens, the comments and the refusal from `at`, by the token loop (`token` a token at
+    /// a time) and by the block lexer (`lex_run`).
+    fn both(src: &[u8], at: usize) -> [Run; 2] {
+        let lx = Lexer::new(src);
+        let one = {
+            let (mut toks, mut extras, mut at) = (Vec::new(), Vec::new(), at);
+            let r = loop {
+                match lx.token(at, &mut extras) {
+                    Ok(t) => {
+                        toks.push(format!("{t:?}"));
+                        if t.kind == T::Eof {
+                            break None;
+                        }
+                        at = t.end as usize;
+                    }
+                    Err(e) => break Some(e),
+                }
+            };
+            (toks, extras, r)
+        };
+        let run = {
+            let (mut toks, mut extras, mut at) = (Vec::new(), Vec::new(), at);
+            let r = loop {
+                match lx.lex_run(at, &mut toks, 3, &mut extras) {
+                    Ok(next) => {
+                        if toks.last().is_some_and(|t: &Tok| t.kind == T::Eof) {
+                            break None;
+                        }
+                        at = next;
+                    }
+                    Err(e) => break Some(e),
+                }
+            };
+            (toks.iter().map(|t| format!("{t:?}")).collect(), extras, r)
+        };
+        [one, run]
+    }
+
+    #[test]
+    fn the_block_lexer_is_the_token_loop() {
+        // Texts of the bytes the lexer treats apart, long enough to cross blocks.
+        let alphabet: &[&[u8]] = &[b"a", b"bc", b"_x9", b"func", b"let", b"i*4", b"a#", b"0", b"12", b"1.5", b"0x1F", b" ", b"  ", b"\n", b"\r\n", b"\t", b"//c\n", b"/*c*/", b"/*\n*/", b"/* /* */ */", b"\"s\"", b"#\"r\"#", b"\"\\(a)\"", b"`n`", b"$0", b"$a", b"#if", b"#", b".", b"..", b"...", b"..<", b"?", b"??", b":", b"=", b"==", b"===", b"!", b"!=", b"+", b"++", b"+=", b"-", b"->", b"*", b"/", b"%", b"&", b"&&", b"|", b"||", b"^", b"~", b"<", b">", b"<<", b"+.", b"(", b")", b"[", b"]", b"{", b"}", b";", b",", b"@", b"\\", b"\xc3\xa9", b"\xe2\x80\x83", b"\xe2\x86\x92", b"\xe3\x81\x82"];
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for round in 0..3000 {
+            let n = (next() % 200) as usize;
+            let mut src = Vec::new();
+            while src.len() < n {
+                src.extend_from_slice(alphabet[(next() % alphabet.len() as u64) as usize]);
+            }
+            let starts: Vec<usize> = if round % 10 == 0 { (0..=src.len()).collect() } else { vec![0] };
+            for at in starts {
+                let [one, run] = both(&src, at);
+                assert_eq!(one, run, "{:?} from {at}", String::from_utf8_lossy(&src));
+            }
+        }
+    }
 }

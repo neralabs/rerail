@@ -33,7 +33,7 @@
 //! never moved: a row's id is stable, and reading it takes no lock. The two sides keep their rows apart:
 //! rows made from `inner` are ids `0..`, rows made from `outer` ids from `OUTER` on. A scan makes every
 //! node's containers and reads ids `0..len`, so it sees each pair once. The planner's statistics come from the tree (depths and subtree sizes), not the rows.
-use super::{Batch, NONE, Projected};
+use super::{Batch, NONE, Projected, View};
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::tape::formats::{DocTape, Format};
 use rerail_tape_format::tape::{CodeSet, Tape, nearest_all};
@@ -110,7 +110,10 @@ pub struct Within {
     /// The format a test reads the documents' tapes in (`reading`); else each is read as held.
     format: Option<Format>,
     /// Per document, the axis's set as its tape's code numbers (all of them for the tree's containment).
-    sets: Box<[OnceLock<CodeSet>]>,
+    sets: Box<[OnceLock<Arc<CodeSet>>]>,
+    /// The sets made, by language and table: format 16's documents share their language's table (decision 0336 §7),
+    /// so the set is made once for all of them, not once per document over the whole table.
+    shared: Mutex<FxHashMap<(u16, usize), Arc<CodeSet>>>,
 }
 
 /// An axis's `n` side for every node of the batch: per node row its run in `pairs` (`start[row]..start[row + 1]`),
@@ -157,6 +160,7 @@ impl Within {
             on_device: OnceLock::new(),
             format: None,
             sets: (0..batch.docs.len()).map(|_| OnceLock::new()).collect(),
+            shared: Mutex::new(FxHashMap::default()),
             batch,
         }
     }
@@ -186,16 +190,25 @@ impl Within {
     /// tree's containment).
     fn set<T: Tape>(&self, doc: usize, t: &T) -> &CodeSet {
         self.sets[doc].get_or_init(|| {
-            if self.mode == Mode::Tree {
-                return t.table().set(|_| true);
-            }
-            // An ERROR node's kind is `ERROR_SYMBOL` (`Facts::kind`), slot 0 of its tag's stride whatever kind its entry
-            // holds: a member where the set names ERROR, as `member` and the device's bits read it (0289).
-            let members = self.members.get(&self.batch.docs[doc].tag);
-            t.table().set(|e| {
-                let slot = if e.flags & rerail_tape_format::CODE_ERROR != 0 { 0 } else { usize::from(e.kind) };
-                members.is_some_and(|m| m.get(slot).is_some_and(|&x| x))
-            })
+            let tag = self.batch.docs[doc].tag;
+            let key = (if self.mode == Mode::Tree { u16::MAX } else { u16::from(tag) }, std::ptr::from_ref(t.table()) as usize);
+            let mut shared = self.shared.lock();
+            shared
+                .entry(key)
+                .or_insert_with(|| {
+                    if self.mode == Mode::Tree {
+                        return Arc::new(t.table().set(|_| true));
+                    }
+                    // An ERROR node's kind is `ERROR_SYMBOL` (`Facts::kind`), slot 0 of its tag's stride whatever kind
+                    // its entry holds: a member where the set names ERROR, as `member` and the device's bits read it
+                    // (0289).
+                    let members = self.members.get(&tag);
+                    Arc::new(t.table().set(|e| {
+                        let slot = if e.flags & rerail_tape_format::CODE_ERROR != 0 { 0 } else { usize::from(e.kind) };
+                        members.is_some_and(|m| m.get(slot).is_some_and(|&x| x))
+                    }))
+                })
+                .clone()
         })
     }
 
@@ -205,7 +218,7 @@ impl Within {
         match self.doc_tape(doc) {
             Some(dt) => with_tape!(self.tape_of(dt), |t| {
                 let set = self.set(doc, &t);
-                for (l, &id) in p.core.iter().enumerate() {
+                for (l, id) in p.nodes().map(|(l, x)| (l as usize, x)) {
                     f(l as u32, set.contains(t.code(id as usize)));
                 }
             }),
@@ -220,14 +233,14 @@ impl Within {
             Mode::Axis(axis) => Some(axis),
             _ => None,
         };
-        let id = p.core[local as usize] as usize;
+        let id = p.node(local as u32) as usize;
         let mut out = Vec::new();
         if axis == Some(Axis::Has) && !set.contains(t.code(id)) {
             return out;
         }
         let mut up = t.parent(id);
         while let Some(a) = up {
-            let l = p.local[a];
+            let l = p.local_of_node(a as u32);
             if l != NONE && (matches!(axis, None | Some(Axis::Has)) || set.contains(t.code(a))) {
                 out.push(l);
                 if axis == Some(Axis::Nearest) {
@@ -246,14 +259,14 @@ impl Within {
             Mode::Axis(axis) => Some(axis),
             _ => None,
         };
-        let id = p.core[local as usize] as usize;
+        let id = p.node(local as u32) as usize;
         let mut out = Vec::new();
         if matches!(axis, Some(Axis::Nearest | Axis::Inside)) && !set.contains(t.code(id)) {
             return out;
         }
         let (mut n, end) = (id + 1, t.subtree_end(id));
         while n < end {
-            let l = p.local[n];
+            let l = p.local_of_node(n as u32);
             if l != NONE {
                 match axis {
                     None | Some(Axis::Inside) => out.push(l),
@@ -296,6 +309,12 @@ impl Within {
     /// or containment in the tree, the ancestors of every kind (`inside` of the set of all kinds; decision 0277).
     fn solvable(&self) -> bool {
         matches!(self.mode, Mode::Axis(Axis::Nearest | Axis::Inside) | Mode::Tree)
+    }
+
+    /// Tests: whether the batch's solve has been made.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn is_solved(&self) -> bool {
+        self.solved.get().is_some()
     }
 
     /// The first id of the rows made per looked-up `n`.
@@ -373,11 +392,11 @@ impl Within {
             let base = self.batch.nodes[doc] as u32;
             let dt = self.doc_tape(doc).expect("every document holds its tape");
             with_tape!(self.tape_of(dt), |t| {
-                nearest_all(&t, self.set(doc, &t), |id| p.local[id] != NONE, &mut near);
+                nearest_all(&t, self.set(doc, &t), |id| p.local_of_node(id as u32) != NONE, &mut near);
             });
-            found.extend(p.core.iter().map(|&id| match near[id as usize] {
+            found.extend(p.nodes().map(|(_, id)| match near[id as usize] {
                 rerail_tape_format::tape::NONE => file_local::NONE,
-                a => base + p.local[a as usize],
+                a => base + p.local_of_node(a as u32),
             }));
         }
         Self::solved_from(&found, inside)
@@ -465,7 +484,7 @@ impl Within {
         let p = &self.batch.docs[doc];
         // The table's slot is the atom's place in its stride: ERROR's atom is slot 0 (`kind_atom`), as on the tape and
         // in the device's bits. `kind_code` gives ERROR as `u16::MAX`, past the table, which left it out of every set.
-        let slot = p.facts.kind(p.core[local as usize]) % crate::code_rule_dsl::facts::core::KIND_STRIDE;
+        let slot = p.facts.kind(p.node(local as u32)) % crate::code_rule_dsl::facts::core::KIND_STRIDE;
         self.members.get(&p.tag).is_some_and(|t| t.get(slot as usize).is_some_and(|&m| m))
     }
 
@@ -477,7 +496,7 @@ impl Within {
 
     fn span(&self, doc: usize, local: u32) -> (u32, u32) {
         let p = &self.batch.docs[doc];
-        let id = p.core[local as usize] as usize;
+        let id = p.node(local as u32) as usize;
         (p.facts.start(id as u32), p.facts.end(id as u32))
     }
 
@@ -559,9 +578,8 @@ impl Within {
         if let Some(dt) = self.doc_tape(doc) {
             return with_tape!(self.tape_of(dt), |t| self.contained_on(&t, doc, p, local));
         }
-        let sizes = p.sizes();
         if let Mode::Axis(axis) = self.mode {
-            let end = local + sizes[local as usize];
+            let end = local + p.size(local as usize);
             return match axis {
                 _ if axis != Axis::Has && !self.member(doc, local) => Vec::new(),
                 Axis::Inside => (local + 1..=end).collect(),
@@ -571,17 +589,17 @@ impl Within {
                     let (mut out, mut n) = (Vec::new(), local + 1);
                     while n <= end {
                         out.push(n);
-                        n += if self.member(doc, n) { sizes[n as usize] + 1 } else { 1 };
+                        n += if self.member(doc, n) { p.size(n as usize) + 1 } else { 1 };
                     }
                     out
                 }
             };
         }
         if self.mode == Mode::Tree {
-            return (local + 1..=local + sizes[local as usize]).collect();
+            return (local + 1..=local + p.size(local as usize)).collect();
         }
         let (s, e) = self.span(doc, local);
-        let end = local + sizes[local as usize];
+        let end = local + p.size(local as usize);
         let mut out: Vec<u32> = (local..=end).collect();
         let mut up = p.parent(local as usize);
         while up != NONE && self.span(doc, up) == (s, e) {
@@ -650,11 +668,10 @@ impl Within {
             }
             let (mut rows, mut nodes, mut ancestors, mut sq_inner) = (0i64, 0i64, 0i64, 0i64);
             for p in &self.batch.docs {
-                let (depths, sizes) = (p.depths(), p.sizes());
-                for l in 0..p.len() as usize {
+                for (l, _, depth) in p.places() {
                     // Span mode counts the node itself on both sides.
                     let own = i64::from(self.mode == Mode::Span);
-                    let (d, s) = (i64::from(depths[l]) + own, i64::from(sizes[l]) + own);
+                    let (d, s) = (i64::from(depth) + own, i64::from(p.size(l as usize)) + own);
                     rows += d;
                     nodes += 1;
                     ancestors += i64::from(s > 0);
@@ -678,8 +695,6 @@ impl Within {
     fn axis_shape(&self, axis: Axis) -> Shape {
         let (mut members, mut covered, mut below, mut below_sq, mut above, mut above_sq, mut nodes) = (0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64);
         for (doc, p) in self.batch.docs.iter().enumerate() {
-            // The first member demands these columns; documents without members allocate neither.
-            let mut columns = None;
             // The end of the outermost member's subtree the walk is in.
             let mut until: Option<u32> = None;
             self.each_member(doc, |l, member| {
@@ -690,11 +705,11 @@ impl Within {
                 if !member {
                     return;
                 }
-                let (sizes, depths) = *columns.get_or_insert_with(|| (p.sizes(), p.depths()));
+                let size = p.size(l as usize);
                 if !until.is_some_and(|u| l <= u) {
-                    until = Some(l + sizes[l as usize]);
+                    until = Some(l + size);
                 }
-                let (s, d) = (i64::from(sizes[l as usize]), i64::from(depths[l as usize]));
+                let (s, d) = (i64::from(size), i64::from(p.depth(l as usize)));
                 members += 1;
                 below += s;
                 below_sq += s * s;
@@ -728,6 +743,7 @@ impl Source for Within {
         // Solved in the chunk, the pairs are there already; else copied in once.
         let at = match &self.solved().in_chunk {
             Some(c) => c.pairs,
+// copy (0353 step 5): the pairs copied for the device (decision 0353).
             None => (*self.on_device.get_or_init(|| device_chunk::put_pairs(chunk, pairs)))?,
         };
         Some(crate::code_rule_dsl::facts::vtab::DeviceView { block: &chunk.block, root: chunk.root, view: device_chunk::VIEW_AXIS, rows: pairs.len(), pairs: at })
@@ -735,10 +751,15 @@ impl Source for Within {
     fn columns(&self) -> Vec<String> {
         self.names().iter().map(|&c| c.to_owned()).collect()
     }
-    /// Every pair once: a scan makes each node's containers, ids `0..len`.
+    /// Every pair once: a scan makes each node's containers, ids `0..len`. A solvable axis's are its solve's pairs,
+    /// counted exactly from the tree (`shape`) until something reads them: a guest round digests each input by its
+    /// length, and the solve made for that count alone held 780 MB of a PostHog run's 2.5 GB peak.
     fn len(&self) -> usize {
         if self.solvable() {
-            return self.pairs().len();
+            if self.solved.get().is_some() {
+                return self.pairs().len();
+            }
+            return self.shape().rows as usize;
         }
         *self.all.get_or_init(|| {
             for row in 0..self.batch.nodes.last().copied().unwrap_or(0) as u32 {
@@ -782,6 +803,23 @@ impl Source for Within {
         }
         true
     }
+    /// By `n`, a document's nodes looked up: a node's pairs are its own document's (none crosses documents), so
+    /// the rows of the documents `owned` names are found without the batch's solve or a scan.
+    fn rows_owned(&self, g: usize, owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+        if g != 0 {
+            return None;
+        }
+        let mut out = Vec::new();
+        for doc in 0..self.batch.docs.len() {
+            let (from, to) = (self.batch.nodes[doc], *self.batch.nodes.get(doc + 1)?);
+            if from == to || !owned(self.batch.id(from)) {
+                continue;
+            }
+            let ids: Vec<i64> = (from..to).map(|r| self.batch.id(r)).collect();
+            out.extend(self.lookup(0, &ids)?);
+        }
+        Some(out)
+    }
     fn expect_lookups(&self, column: usize, keys: f64) {
         if column == 0 {
             self.expect(keys);
@@ -801,6 +839,16 @@ impl Source for Within {
             out.extend(start as usize..(start + n) as usize);
         }
         Some(out)
+    }
+    /// A pair's node's document: the key of the document its row is in (`Batch::locate`), no id read.
+    fn documents_of(&self, column: usize, each: &mut dyn FnMut(usize, i64)) {
+        for r in 0..self.len() {
+            let pair = self.pair(r);
+            let node = if column == 0 { (pair >> 32) as usize } else { (pair & 0xffff_ffff) as usize };
+            let p = self.batch.locate(View::Node, node).0;
+            // A document keyed 0 has ids below `1 << 32`, each its own "document" (`memo::document_of`).
+            each(r, if p.key == 0 { self.value(r, column) } else { i64::from(p.key) });
+        }
     }
     fn value(&self, row: usize, column: usize) -> i64 {
         let pair = self.pair(row);

@@ -21,7 +21,7 @@
 //! is already in the chunk (0289 §4). Until the kernels read it there, the chunk holds those four answers for the
 //! projected nodes, made once per batch on the device's first read. The canonical tables are copied in once a batch.
 
-use super::{Batch, Place, View};
+use super::{Batch, Item, Place, View};
 use crate::code_rule_dsl::facts::core::NONE;
 use rerail_blocks::{Block, Cells, Span, structure};
 use std::sync::Arc;
@@ -57,6 +57,13 @@ structure! {
         /// The spans past the nodes, `[start, end]` each, and the line starts, for the `Loc` views (`fill_locs`).
         pub spans: Span<u32>,
         pub lines: Span<u32>,
+        /// A guest's places (decision 0055), per `Loc` local: its first line, last line and start column in its
+        /// file, `Locs::place`'s, through its placement and its host's lines. Empty for a file's own tree, whose
+        /// places the kernel finds in `lines`.
+        pub placed: Span<u32>,
+        /// The facts' line starts (`LineTable::starts`), for the `line` view (`fill_lines`): a node's line is the
+        /// number of them at or before its start (`Facts::start_line`).
+        pub flines: Span<u32>,
     }
 }
 
@@ -84,6 +91,8 @@ pub const VIEW_LOC_LINE: u32 = 5;
 pub const VIEW_LOC_END: u32 = 6;
 pub const VIEW_LOC_COL: u32 = 7;
 pub const VIEW_LOC_DOCOF: u32 = 8;
+/// The `line` view (`View::Line`): each node's id and the line its start is on, by the facts' own lines.
+pub const VIEW_LINE: u32 = 9;
 
 /// The device's code of `view`, for the views it makes.
 pub fn device_view(view: View) -> Option<u32> {
@@ -96,11 +105,14 @@ pub fn device_view(view: View) -> Option<u32> {
         View::Loc(Place::EndLine) => VIEW_LOC_END,
         View::Loc(Place::Col) => VIEW_LOC_COL,
         View::Loc(Place::Docof) => VIEW_LOC_DOCOF,
+        View::Line => VIEW_LINE,
         _ => return None,
     })
 }
 
 /// `pairs` copied into the chunk: their offset in the block, or `None` when its reservation cannot hold them.
+// copy (0353 step 5): an axis's pairs copied into the chunk. It goes: the solve writes its answer once,
+// as ids, into a relation in the chunk block (decision 0353).
 pub fn put_pairs(chunk: &Chunk, pairs: &[u64]) -> Option<usize> {
     let p: *mut u64 = chunk.block.try_alloc_t(pairs.len().max(1))?;
     // SAFETY: `p` holds `pairs.len()` items, just allocated in the block.
@@ -115,6 +127,8 @@ pub struct Chunk {
     pub root: usize,
     /// Whether the `Loc` views' arrays are in the block (`fill_locs`), once asked.
     locs: std::sync::OnceLock<bool>,
+    /// Whether the facts' line starts are in the block (`fill_lines`), once asked.
+    lines: std::sync::OnceLock<bool>,
 }
 
 /// Copies `src` into the block and points `span` at it.
@@ -139,18 +153,36 @@ fn made<T: Copy>(b: &Block, span: *const Span<T>, n: usize, at: impl Fn(usize) -
     }
 }
 
-/// Points `span` at `cells`, which are in `b` (a projection's, made in its batch's block); copied in when they are
-/// not (a projection made apart from the batch).
-fn point<T: Copy + rerail_blocks::Pod>(b: &Arc<Block>, span: *const Span<T>, cells: &Cells<T>) {
-    if Arc::ptr_eq(cells.block(), b) {
-        // SAFETY: `cells` are in `b`, as `span` is, and live as long as the batch, which holds both.
-        unsafe { Span::set(span, cells.as_ptr(), cells.len()) }
-    } else {
-        put(b, span, cells);
+/// `n` values written by `fill` in `b`, and `span` set to them.
+fn made_with<T: Copy + Default>(b: &Block, span: *const Span<T>, n: usize, fill: impl FnOnce(&mut [T])) {
+    let p: *mut T = b.alloc_t(n.max(1));
+    // SAFETY: `p` holds `n` items, just allocated in `b` and set to their default before `fill` reads or writes them.
+    unsafe {
+        for k in 0..n {
+            p.add(k).write(T::default());
+        }
+        fill(std::slice::from_raw_parts_mut(p, n));
+        Span::set(span, p, n);
+    }
+}
+
+/// `n` values from `values`, in order, put in `b`, and `span` set to them.
+fn made_in_order<T: Copy>(b: &Block, span: *const Span<T>, n: usize, values: impl Iterator<Item = T>) {
+    let p: *mut T = b.alloc_t(n.max(1));
+    let mut k = 0;
+    // SAFETY: `p` holds `n` items, just allocated in `b`, as `span` is.
+    unsafe {
+        for v in values.take(n) {
+            p.add(k).write(v);
+            k += 1;
+        }
+        Span::set(span, p, k);
     }
 }
 
 /// The batch's chunk, in the batch's block: every document's arrays the views read.
+// copy (0353 step 4): the node columns (`core`, `up`, `ord`, `fielded`, `start`, `end`, `kind`, `field`), the canonical codes
+// and the projection's arrays copied or made here. They go: the kernels read the placed tapes (decision 0353).
 pub fn build(batch: &Batch) -> Chunk {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "a batch's chunk block".into());
     let b = Arc::clone(&batch.block);
@@ -175,23 +207,38 @@ pub fn build(batch: &Batch) -> Chunk {
             (*d).node_row = batch.nodes[i] as u32;
             (*d).child_row = batch.children[i] as u32;
             (*d).field_row = batch.fields[i] as u32;
-            let fielded = p.fielded();
-            (*d).nfielded = fielded.len() as u32;
+            (*d).nfielded = p.fielded();
             (*d).preorder = u32::from(p.defs.is_none());
-            point(&b, &raw const (*d).core, &p.core);
+            // The tape node and the parent of each local id, made from the rank index and the tape (the host reads
+            // them there, decision 0353 step 2): node columns, as `start` and `end` are, until the kernels read the
+            // placed tapes.
+            let n = p.len() as usize;
+            made_in_order(&b, &raw const (*d).core, n, p.nodes().map(|(_, x)| x));
+            made_in_order(&b, &raw const (*d).up, n, p.walk().map(|(_, _, q)| q));
+            let core: &[u32] = (*d).core.as_slice();
+            let ids = |l: usize| core[l];
             // Every local's, past the nodes too: a token's id is by definition as well (`Projected::global`).
-            match p.defs.as_ref() {
-                Some(x) => point(&b, &raw const (*d).low, &x.low),
+            // The ids' low bits, made by one scan of the granule table (nodes and tokens each come in local order).
+            match p.table() {
+                Some(table) => {
+                    let tokens = p.ranks().count(Item::Token) as usize;
+                    made_with(&b, &raw const (*d).low, n + tokens, |out| {
+                        let (mut a, mut k) = (0, n);
+                        table.scan(p.ranks(), |_, low, item| {
+                            let at = if item == Item::Node { &mut a } else { &mut k };
+                            out[*at] = low;
+                            *at += 1;
+                        });
+                    });
+                }
                 None => put(&b, &raw const (*d).low, &[]),
             }
-            point(&b, &raw const (*d).ord, p.ordinals());
-            point(&b, &raw const (*d).fielded, fielded);
-            point(&b, &raw const (*d).up, &p.up);
-            let ids = &p.core;
-            made(&b, &raw const (*d).start, ids.len(), |l| f.start(ids[l]));
-            made(&b, &raw const (*d).end, ids.len(), |l| f.end(ids[l]));
-            made(&b, &raw const (*d).kind, ids.len(), |l| f.kind(ids[l]));
-            made(&b, &raw const (*d).field, ids.len(), |l| f.field(ids[l]));
+            made_in_order(&b, &raw const (*d).ord, n, p.places().map(|(_, idx, _)| idx));
+            made_in_order(&b, &raw const (*d).fielded, p.fielded() as usize, p.nodes().filter(|&(_, x)| p.ranks().is(Item::Field, x)).map(|(l, _)| l));
+            made(&b, &raw const (*d).start, n, |l| f.start(ids(l)));
+            made(&b, &raw const (*d).end, n, |l| f.end(ids(l)));
+            made(&b, &raw const (*d).kind, n, |l| f.kind(ids(l)));
+            made(&b, &raw const (*d).field, n, |l| f.field(ids(l)));
             match canon.get(&p.tag) {
                 Some(&(c, n)) => Span::set(&raw const (*d).canonical, c, n),
                 None => Span::set(&raw const (*d).canonical, std::ptr::null::<u16>(), 0),
@@ -208,16 +255,43 @@ pub fn build(batch: &Batch) -> Chunk {
     }
     let at = b.offset_of(root);
     b.set_root(root);
-    Chunk { block: b, root: at, locs: std::sync::OnceLock::new() }
+    Chunk { block: b, root: at, locs: std::sync::OnceLock::new(), lines: std::sync::OnceLock::new() }
+}
+
+/// Puts each document's facts' line starts into `batch`'s chunk, once, for the `line` view made on the device (decision
+/// 0325 step 3: it was read on the host, a row at a time, for an upload). False when the block cannot hold them: the
+/// view is then made on the host.
+pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
+    *chunk.lines.get_or_init(|| {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "the facts' lines in the chunk block".into());
+        let b = &chunk.block;
+        // SAFETY: the root `build` wrote; its document table.
+        let docs = unsafe { (*b.ptr::<ChunkRoot>(chunk.root)).docs.as_ptr() as *mut ChunkDoc };
+        for (i, p) in batch.docs.iter().enumerate() {
+            let starts = p.facts.lines.starts();
+            let Some(ls) = b.try_alloc_t::<u32>(starts.len().max(1)) else { return false };
+            // SAFETY: `ls` holds the starts, just allocated in the block; entry `i` of the table, whose `flines` no
+            // reader reads before this returns.
+            unsafe {
+                for (j, &s) in starts.iter().enumerate() {
+                    *ls.add(j) = u32::try_from(s).expect("a line start within 4 GB");
+                }
+                Span::set(&raw const (*docs.add(i)).flines, ls, starts.len());
+            }
+        }
+        true
+    })
 }
 
 /// Puts the `Loc` views' arrays into `batch`'s chunk, once: each document's first row in them, its spans past its
-/// nodes and its line starts. False when a document's places are not its own lines' (a guest placed in its host
-/// file, decision 0055) or the block cannot hold them: the views are then made on the host.
+/// nodes and its line starts; a guest's places too (decision 0055: its host's lines, through its placement), as the
+/// host finds them. False when a document has no places (no `core.rr` extra) or the block cannot hold them: the views
+/// are then made on the host. A batch with a guest was refused, and its views read on the host for an upload (28 MB
+/// on posthog/hogql).
 pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
     *chunk.locs.get_or_init(|| {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "core.rr's places in the chunk block".into());
-        if batch.docs.iter().any(|p| p.extra.as_ref().is_none_or(|x| x.host.is_some())) {
+        if batch.docs.iter().any(|p| p.extra.is_none()) {
             return false;
         }
         let rows = batch.offsets(View::Loc(Place::Line));
@@ -245,6 +319,18 @@ pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
                 (*d).locs = locs;
                 Span::set(&raw const (*d).spans, sp, 2 * (locs - len) as usize);
                 Span::set(&raw const (*d).lines, ls, starts.len());
+            }
+            if x.host.is_some() {
+                let Some(pl) = b.try_alloc_t::<u32>(3 * locs as usize + 1) else { return false };
+                // SAFETY: `pl` holds `3 * locs` values, just allocated in the block; entry `i` of the table, as above.
+                unsafe {
+                    for (local, span) in p.spans().take(locs as usize) {
+                        let (line, last, col) = x.place(span);
+                        let at = pl.add(3 * local as usize);
+                        (*at, *at.add(1), *at.add(2)) = (line, last, col);
+                    }
+                    Span::set(&raw const (*docs.add(i)).placed, pl, 3 * locs as usize);
+                }
             }
         }
         true

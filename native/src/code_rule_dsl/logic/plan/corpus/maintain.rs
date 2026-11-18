@@ -53,6 +53,7 @@
 //! changed read whose old rows were not kept, is derived again from its inputs: its rules unchanged.
 //! Either way its relations' deltas feed the strata after it, and an empty delta derives nothing there.
 
+use crate::code_rule_dsl::logic::program_image::t_of;
 use super::retain::{Cut, Retained};
 use super::{Error, Result, lower};
 use crate::code_rule_dsl::facts::vtab::Source;
@@ -380,18 +381,6 @@ impl<'v> Named<'v> {
     }
 }
 
-/// A term of `v`'s rule `r`, to write into a builder under `v`'s ids.
-fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
-    match t {
-        TermRef::Var(s) => T::VarAtom(r.var(s)),
-        TermRef::Wild => T::Wild,
-        TermRef::Top => T::Top,
-        TermRef::Int(i) => T::Int(i),
-        TermRef::Branded(b) => T::Branded(b),
-        TermRef::Str(a) => T::StrAtom(a),
-        TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| t_of(v, r, a)).collect()),
-    }
-}
 
 fn tm(t: &Tm) -> T<'_> {
     match t {
@@ -1318,7 +1307,7 @@ pub(in crate::code_rule_dsl) struct Form {
 
 /// The about rows of the run's version a form keeps of its stratum's relations (its lattices and natives: few
 /// rows, each a relation's).
-const STRATUM_ABOUT: [&str; 14] = [
+const STRATUM_ABOUT: [&str; 15] = [
     "lattice",
     "lattice_merge",
     "lattice_widen",
@@ -1331,6 +1320,7 @@ const STRATUM_ABOUT: [&str; 14] = [
     "native_components",
     "native_reach",
     "native_reach_through",
+    "native_rank",
     "native_text_test",
     "native_text_pattern",
 ];

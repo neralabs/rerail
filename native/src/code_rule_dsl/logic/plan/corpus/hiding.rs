@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// columns, grammar column, tape column).
 /// `string_annotation(s)` is one: Ruff's strings that are type definitions, nested ones too, whose nodes are in an
 /// annotation's document (not shown, `guests::key`).
-const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
+pub(super) const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
     ("guest", &[0], Some(3), None),
     ("string_annotation", &[0], None, None),
     ("parsed", &[2], Some(1), None),
@@ -45,7 +45,7 @@ const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
 ];
 
 /// Views of base relations the lowering writes as rules.
-const VIEWS: [&str; 3] = ["kind", "docof", "precedes"];
+pub(super) const VIEWS: [&str; 3] = ["kind", "docof", "precedes"];
 
 /// The grammar a guest's kinds are named in: a dialect label (`annotation` is Python's expression).
 pub(super) fn dialect_label(grammar: &str) -> &str {
@@ -65,15 +65,15 @@ pub(super) fn bound(prog: &Program) -> u32 {
 /// a guest's node, not only maybe one (O110). A variable read from a derived column that host rows fill too is
 /// scoped (no bound on it) but not definite: it is specialized to a guest grammar only in a clone of its rule.
 /// For a derived relation's column, `definite` says every rule fills it with a definite variable.
-#[derive(Clone, Default, PartialEq)]
-struct Fact {
-    scoped: bool,
-    grammar: Option<String>,
-    definite: bool,
+#[derive(Clone, Default, PartialEq, Debug)]
+pub(super) struct Fact {
+    pub(super) scoped: bool,
+    pub(super) grammar: Option<String>,
+    pub(super) definite: bool,
 }
 
 impl Fact {
-    fn join(&mut self, other: &Fact) -> bool {
+    pub(super) fn join(&mut self, other: &Fact) -> bool {
         let mut changed = (other.scoped && !self.scoped) || (other.definite && !self.definite);
         self.scoped |= other.scoped;
         self.definite |= other.definite;
@@ -514,6 +514,8 @@ fn asking(prog: &Program) -> BTreeSet<String> {
 /// qualified kind of `label` is written plainly; a clone (O110) is then its rule again, dropped as a repeat by
 /// `merge_and_drop_repeats`. With guests not shown (`bound`, `.guests off`) nothing is folded. Gives the copies folded.
 /// `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
+// The tree's edit, kept as a debug build's check of the version's (`run_typed`'s `Beside`).
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
 pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
     use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
     if bound != ANNOTATION_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|v| v == "on") {
@@ -991,6 +993,28 @@ pub fn qualified(s: &str) -> Option<(&str, &str)> {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    /// The version's hide is the tree's on a guest's kind tested against a host relation's rows, read negated too:
+    /// the port copied only a positive read (`!def_or_class(k)` kept the host's rows, so no guest kind was one), and
+    /// the combine's check stopped on the 317 rules of ep2.
+    #[test]
+    fn a_negated_read_of_a_kinds_rows_is_copied_for_the_guest_as_the_tree_copies_it() {
+        let text = concat!(
+            ".decl parsed(s: node, g: symbol, r: node)\n.input parsed\n",
+            ".decl def_or_class(k: symbol)\ndef_or_class(\"class_definition\").\n",
+            ".decl out(n: node)\n.output out\nout(r) :- parsed(_, \"python\", r), kind(r, k), !def_or_class(k).\n",
+        );
+        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).unwrap();
+        hide(&mut tree, 1 << 30);
+        let out = tree.rules.iter().find(|r| r.head.rel == "out").unwrap().to_string();
+        assert!(out.contains("!rr_in_python_rows_def_or_class("), "{out}");
+        let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("hide", v);
+        p.program(&mut super::super::preparation::hide::Hide { bound: 1 << 30 });
+        let (v, _) = p.finish().unwrap();
+        let (tv, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).unwrap();
+        assert_eq!((tv.size(), tv.digest()), (v.size(), v.digest()), "{}", crate::code_rule_dsl::logic::program_image::differences(&tv, &v));
+    }
 
     /// A relation read with guest variables in two columns its rules bind apart is copied once, with both seeded:
     /// copying the copy lost the first seed, so its reader read it at that column again, and schema-architecture's

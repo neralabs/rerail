@@ -1,6 +1,6 @@
 # 0386. Device work belongs to its job, and is committed before any wait
 
-Status: built (2026-11-17). Work queue Q52. Builds on 0100 §2 (one queue for the process), 0113 §3 (a level's
+Status: built (2026-11-17). Work queue Q177 (Q52 until the hub merge). Builds on 0100 §2 (one queue for the process), 0113 §3 (a level's
 strata wait for one device wave), 0123 §6 (a component's launches handed back to the run's wave) and Q48 (a batch
 run apart commits the thread's wave first). Agrees with the ledger's lesson that a shared resource is held only
 across work that cannot wait on its other holders.

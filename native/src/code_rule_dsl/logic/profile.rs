@@ -273,10 +273,13 @@ impl State {
             s.planned_work += t.planned_work;
             s.planned_scanned += t.planned_scanned;
             s.steps += t.steps;
+            s.rules += t.rules;
             s.work += t.work;
             s.cpu_estimate += t.cpu_estimate;
             s.gpu_estimate += t.gpu_estimate;
             s.cpu += t.cpu;
+            s.gpu_cpu += t.gpu_cpu;
+            s.gpu_work += t.gpu_work;
             for (a, b) in s.joins.iter_mut().zip(t.joins) {
                 a.0 += b.0;
                 a.1 += b.1;
@@ -284,6 +287,9 @@ impl State {
                 a.3 += b.3;
             }
             s.gpu.add(&t.gpu);
+            for (a, b) in s.gpu_terms.iter_mut().zip(t.gpu_terms) {
+                *a += b;
+            }
             if t.refused.is_some() {
                 s.refused = t.refused;
             }
@@ -325,10 +331,15 @@ pub struct PlacedTotal {
     /// Of the planned work, the rows its scans read (`Shape::scanned`), and its rules' steps, over its runs.
     pub planned_scanned: f64,
     pub steps: u64,
+    /// Its rules, over its runs.
+    pub rules: u64,
     pub work: u64,
     pub cpu_estimate: f64,
     pub gpu_estimate: f64,
     pub cpu: f64,
+    /// Of `cpu` and `work`, the runs that ran on the device: the rest ran on the CPU.
+    pub gpu_cpu: f64,
+    pub gpu_work: u64,
     /// Its join steps by the form placement chose (CPU index, GPU sort and probe, GPU tile): how many, their
     /// estimate on the CPU's index, and on the form chosen (of the steps estimated under `JOIN_ESTIMATE_CAP`), and
     /// how many were estimated over it.
@@ -338,6 +349,9 @@ pub struct PlacedTotal {
     /// refused it, when it was placed there and did not run there.
     pub gpu: GpuTotal,
     pub refused: Option<String>,
+    /// The device price's terms over its runs on the device, as priced (`placement::DeviceTerms::array`: rules,
+    /// steps, sorts, values read, rows made, joins' device seconds, other work, views read).
+    pub gpu_terms: [f64; 8],
 }
 
 #[derive(Default, Clone)]
@@ -359,10 +373,14 @@ pub struct GpuTotal {
     /// Uploads by what was read (`UPLOAD_KINDS`): bytes and the host's CPU.
     pub upload_by: [(u64, f64); 4],
     pub resident: u64,
+    /// Relations read where they lie, in their block (decision 0325): nothing uploaded.
+    pub in_place: u64,
     pub sorts: u64,
     pub sort_hits: u64,
     pub rows: u64,
     pub distinct: u64,
+    /// Head rows written in place into their head's block (decision 0325 step 4).
+    pub placed: u64,
     pub bindings: u64,
     /// Texts made on the device into heads, stored as symbols.
     pub made: u64,
@@ -395,10 +413,12 @@ impl GpuTotal {
             a.1 += b.1;
         }
         self.resident += o.resident;
+        self.in_place += o.in_place;
         self.sorts += o.sorts;
         self.sort_hits += o.sort_hits;
         self.rows += o.rows;
         self.distinct += o.distinct;
+        self.placed += o.placed;
         self.bindings += o.bindings;
         self.made += o.made;
         self.waved += o.waved;
@@ -1336,6 +1356,8 @@ pub fn peaks() -> String {
     memory::sampled_report(&mut r);
     if let Some(dir) = directory() {
         let _ = std::fs::write(dir.join("memory.tsv"), memory::sampled_tsv());
+        let _ = std::fs::write(dir.join("heap.tsv"), memory::heap_tsv());
+        if !rerail_prof::heap::snapshot_frames().is_empty() || std::env::var_os("RERAIL_HEAP_FRAMES").is_some() { let _ = std::fs::write(dir.join("heap-frames.tsv"), memory::heap_frames_tsv()); }
     }
     r
 }
@@ -1477,9 +1499,6 @@ pub fn warm() -> bool {
 /// Changing this list needs the user's approval (decision 0211). `scripts/check/check-warm-mode.py` holds a copy
 /// and refuses a commit that changes one without the other.
 pub const WARM_WRITES_ALLOWED: &[(&str, &str)] = &[
-    ("the run's hold on its plans", "a lock: a lease on the run's plans against a collection in another process (decision 0053)"),
-    ("the run's hold released", "a lock: the lease's release"),
-    ("a source's pin", "a lock: a lease on a source the run reads, until its manifest names it (O95)"),
     ("the combined program's pins released", "a lock: the release of the combined program's leases"),
     ("the run's manifest", "a timestamp, only for a manifest identical to one stored: its last run and time move, by which collection keeps a root's last two. A new manifest is a fault (`warm_fault`, in the job)"),
     ("the journal's aged cursor", "a timestamp: a root's journal cursor, or a run record's (the cutoff's checks), stored again once it is a million events behind with nothing named since (`observe::CURSOR_AGE`), as a replay from far back is slow"),
@@ -1902,7 +1921,8 @@ pub fn now() -> f64 {
 /// function of the step's inputs, not of whether the process that made them profiled.
 pub fn decision(topic: &str, text: impl FnOnce() -> String) {
     let deciding = DECIDING.with(|d| !d.borrow().is_empty());
-    if !on() && !deciding {
+    // A debug build's tree check beside a pass decides nothing (`quiet`): the pass itself records its decisions.
+    if QUIET.get() || (!on() && !deciding) {
         return;
     }
     // The text first: making it may profile too (a split's span), and the state's lock is not reentrant.
@@ -1975,6 +1995,19 @@ pub fn reused(from: &'static str, made: &[Decided]) {
     }
 }
 
+thread_local! {
+    static QUIET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with this thread's decisions unrecorded: a debug build's check that runs a pass's tree form beside it,
+/// whose decisions the pass itself records.
+pub fn quiet<T>(f: impl FnOnce() -> T) -> T {
+    let was = QUIET.replace(true);
+    let out = f();
+    QUIET.set(was);
+    out
+}
+
 /// The decisions made so far (none when profiling is off).
 pub fn decisions() -> BTreeMap<(String, String), u64> {
     if !on() {
@@ -2006,24 +2039,29 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
     for (_, t) in &ran {
         sum.add(&t.gpu);
     }
-    let cpu: f64 = ran.iter().map(|(_, t)| t.cpu).sum();
+    let cpu: f64 = ran.iter().map(|(_, t)| t.gpu_cpu).sum();
+    let elsewhere: f64 = ran.iter().map(|(_, t)| t.cpu - t.gpu_cpu).sum();
+    let all_runs: u64 = ran.iter().map(|(_, t)| t.runs).sum();
     let ms = |s: f64| s * 1e3;
-    let _ = writeln!(r, "Strata run on the GPU: {} strata, {} runs, {} rules in {} stages; their CPU {:.2} s (the whole stratum: planning its replans, the store, the device's host part)",
-        ran.len(), sum.runs, sum.rules, sum.stages, cpu);
+    let _ = writeln!(r, "Strata run on the GPU: {} strata, {} runs, {} rules in {} stages; those runs' CPU {:.2} s (the whole run: planning its replans, the store, the device's host part); the same strata's other {} runs, on the CPU: {:.2} s",
+        ran.len(), sum.runs, sum.rules, sum.stages, cpu, all_runs - sum.runs, elsewhere);
     let _ = writeln!(r, "  GPU {:.1} ms (command buffers' timestamps) in {} submissions, {} dispatches ({} stages run again after an overflow, {} after the text arena filled); {} runs sent in their level's wave; {} stages' grids sized on the device",
         ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.sized);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
-    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device); texts made {}",
-        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.made);
+    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}, found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
+        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
     let by: Vec<String> = UPLOAD_KINDS.iter().zip(&sum.upload_by).map(|(k, (b, c))| format!("{k} {:.1} MB in {:.1} ms", *b as f64 / 1e6, ms(*c))).collect();
     let _ = writeln!(r, "  uploads by what they read: {}", by.join(", "));
     let mut top = ran.clone();
     top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
-    let _ = writeln!(r, "{:>8} {:>8} {:>8} {:>8} {:>5} {:>6} {:>6} {:>10}  stratum (costliest 25 on the GPU)", "cpu ms", "host ms", "gpu ms", "est ms", "runs", "rules", "subm", "rows");
+    // A stratum runs once per chunk and may run some on each side: its GPU runs' CPU and work beside its CPU runs'.
+    let _ = writeln!(r, "{:>8} {:>8} {:>8} {:>8} {:>8} {:>9} {:>9} {:>6} {:>6} {:>10}  stratum (costliest 25 on the GPU; g = its GPU runs, c = its CPU runs)",
+        "g cpu ms", "host ms", "gpu ms", "c cpu ms", "est ms", "runs g/all", "work g/c", "rules", "subm", "rows");
     for (key, t) in top.iter().take(25) {
         let g = &t.gpu;
-        let _ = writeln!(r, "{:>8.2} {:>8.2} {:>8.3} {:>8.3} {:>5} {:>6} {:>6} {:>10}  {}", ms(t.cpu), ms(g.host()), ms(g.gpu), ms(t.gpu_estimate), g.runs, g.rules, g.submissions, g.rows, short(key, 60));
+        let _ = writeln!(r, "{:>8.2} {:>8.2} {:>8.3} {:>8.2} {:>8.3} {:>9} {:>9} {:>6} {:>6} {:>10}  {}", ms(t.gpu_cpu), ms(g.host()), ms(g.gpu), ms(t.cpu - t.gpu_cpu), ms(t.gpu_estimate),
+            format!("{}/{}", g.runs, t.runs), format!("{}/{}", si(t.gpu_work), si(t.work - t.gpu_work)), g.rules, g.submissions, g.rows, short(key, 60));
     }
     if !refused.is_empty() {
         let mut by: BTreeMap<&str, (u64, f64, Vec<(f64, &str)>)> = BTreeMap::new();
@@ -2560,6 +2598,11 @@ pub fn projection_plan(prog: &crate::code_rule_dsl::logic::front::Program, reads
     if on() { analysis_report::projection(prog, reads); }
 }
 
+/// `projection_plan` from the relations' readers and the outputs (`analysis_report::projection_of`).
+pub fn projection_plan_of(users: impl FnOnce() -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>>, outputs: &std::collections::BTreeSet<String>, reads: &std::collections::BTreeSet<String>) {
+    if on() { analysis_report::projection_of(&users(), outputs, reads); }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -2819,6 +2862,9 @@ pub struct Report {
     pub decode_cpu: f64,
     /// Head rows left once made distinct on the device (of `rows`).
     pub distinct: u64,
+    /// Of those, rows the device wrote in place into their head's block, which the store takes as they lie
+    /// (decision 0325 step 4): none read back.
+    pub placed: u64,
     pub upload_cpu: f64,
     /// Relations uploaded (and their bytes), found resident; sorts made, found resident.
     pub uploads: u32,
@@ -2826,6 +2872,8 @@ pub struct Report {
     /// The uploads by what they read (`UPLOAD_KINDS`, in order): bytes and this thread's CPU.
     pub upload_by: [(u64, f64); 4],
     pub resident_hits: u32,
+    /// Relations read where they lie, in their block (decision 0325).
+    pub in_place: u32,
     pub sorts: u32,
     pub sort_hits: u32,
     /// Rows the heads made (before the store's set), and bindings the stages made.
@@ -2838,4 +2886,14 @@ pub struct Report {
     /// Why the device refused the stratum (at open, or at run time: a table past its budget), which then ran on the
     /// CPU; `None` when it ran here.
     pub refused: Option<String>,
+}
+
+/// A count in three significant figures, with k, M or G.
+fn si(n: u64) -> String {
+    match n {
+        0..1_000 => n.to_string(),
+        1_000..1_000_000 => format!("{:.3}k", n as f64 / 1e3),
+        1_000_000..1_000_000_000 => format!("{:.3}M", n as f64 / 1e6),
+        _ => format!("{:.3}G", n as f64 / 1e9),
+    }
 }

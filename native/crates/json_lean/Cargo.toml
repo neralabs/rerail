@@ -1,0 +1,15 @@
+[package]
+name = "rerail-json-lean"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "simdjson's arm64 stage 1 and our stage 2 (kernel.inc), translated to Rust line for line: the reference the generated JSON parser is read against."
+
+[dependencies]
+# The tape, the kinds and the refusals the C++ kernel gives: the translation gives the same.
+rerail-simdjson = { path = "../simdjson" }
+
+[dev-dependencies]
+rerail-simdjson-native = { path = "../simdjson_native" }
+# The process's instructions and cycles (`proc_pid_rusage`), for the measurement against simdjson.
+libc = "0.2.189"

@@ -17,6 +17,8 @@
 //! The operations' results are vectors of `0xff` (true) and `0` (false) bytes, as simdjson's
 //! `simd8<bool>`; `to_bitmask` packs one into the mask.
 
+pub mod blocks;
+pub mod micro;
 pub mod swar;
 pub mod words;
 

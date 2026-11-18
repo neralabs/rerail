@@ -360,6 +360,7 @@ pub(super) fn define(
             );
             if predicate_index == 0 {
                 // Query predicates share one fresh budget for this candidate.
+                super::native_cpu::fold_most_steps(&mut function, task);
                 function.ins().store(
                     MemFlags::trusted(),
                     zero,

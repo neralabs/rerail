@@ -187,18 +187,11 @@ impl<'a> P<'a> {
             self.toks.push(t);
             return;
         }
-        self.toks.reserve(BATCH);
-        for _ in 0..BATCH {
-            let t = match self.lx.token(self.next, &mut self.t.extras) {
-                Ok(t) => t,
-                Err(Refusal::Lex(at)) | Err(Refusal::Parse(at)) => Tok { kind: T::Eof, code: u8::MAX, nl: false, start: at, end: at },
-                Err(Refusal::TooLarge) => Tok { kind: T::Eof, code: u8::MAX, nl: false, start: 0, end: 0 },
-            };
-            self.next = t.end as usize;
-            self.toks.push(t);
-            if t.kind == T::Eof {
-                return;
-            }
+        // A block at a time (`Lexer::lex_run`), at least a batch.
+        match self.lx.lex_run(self.next, &mut self.toks, BATCH, &mut self.t.extras) {
+            Ok(next) => self.next = next,
+            Err(Refusal::Lex(at)) | Err(Refusal::Parse(at)) => self.toks.push(Tok { kind: T::Eof, code: u8::MAX, nl: false, start: at, end: at }),
+            Err(Refusal::TooLarge) => self.toks.push(Tok { kind: T::Eof, code: u8::MAX, nl: false, start: 0, end: 0 }),
         }
     }
 
@@ -416,9 +409,13 @@ impl<'a> P<'a> {
             }
         }
         loop {
-            let mut sc = self.sc.clone();
+            let mut sc = self.sc;
             let pos = self.sp as usize;
-            match sc.scan(self.src, pos, valid) {
+            let r = sc.scan(self.src, pos, valid);
+            if sc.indents.deep {
+                return self.refuse();
+            }
+            match r {
                 Some((Ext::BlockComment, s, e)) => {
                     self.fit_comment(s as u32, e as u32)?;
                     self.sc = sc;
@@ -446,7 +443,7 @@ impl<'a> P<'a> {
                         self.sp = e as u32;
                         continue;
                     }
-                    self.memo = Some((self.sp, valid, None, self.sc.clone()));
+                    self.memo = Some((self.sp, valid, None, self.sc));
                     return Ok(None);
                 }
             }

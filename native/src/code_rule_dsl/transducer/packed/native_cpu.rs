@@ -2,12 +2,12 @@ use super::{
     BatchOutcome, Error, Output, Program,
     metal_batch_abi::{
         ARENA_KIND_COUNT, FORMAT_VERSION, FinalCaptureRecord, GreedyEntryRecord, LinkRecord,
-        LuaInstructionRecord, LuaSetMemberRecord, MetalNode, MetalSupertype, NONE, NfaRangeRecord,
+        LuaInstructionRecord, LuaSetMemberRecord, NONE, NfaRangeRecord,
         NfaStateRecord, PENDING_FOLLOWING, PENDING_GREEDY, PENDING_PATH, PathRecord, PendingRecord,
         PropertyRecord, QueryBucketRecord, QueryMemberRecord, QueuedStateRecord, RepeatRecord,
         ResultRecord, TaskStatus, ValueRecord,
     },
-    native_cpu_capture, native_cpu_output, native_cpu_reduction, native_cpu_scheduler,
+    native_cpu_capture, native_cpu_output, native_cpu_reduction, native_cpu_scheduler, native_cpu_tape,
     native_cpu_value,
     native_ir::{ArenaKind, FunctionRef, NativeModule, StructuralOperation},
     packed_batch::{PackedBatch, PackedExecution, PackedResultPage},
@@ -164,12 +164,17 @@ impl<T> Drop for DemandZeroRegion<T> {
 
 #[repr(C)]
 pub struct NativeTaskContext {
-    pub nodes: *const MetalNode,
+    /// The task's document's tape where it is held, and the view its reads take (decision 0310): the bytes every
+    /// offset of the view counts from (`DocTape::in_place`).
+    pub tape: *const u8,
+    pub view: *const rerail_clif::view::TapeView,
+    /// The document's codes (`resident::doc_codes`), by a node's number.
+    pub codes: *const crate::code_rule_dsl::tape::resident::DeviceCode,
+    /// The document's first node and first source byte in the batch's numbering.
+    pub node_base: u32,
+    pub source_base: u32,
+    /// The batch's nodes.
     pub node_count: u32,
-    pub children: *const u32,
-    pub child_count: u32,
-    pub supertypes: *const MetalSupertype,
-    pub supertype_count: u32,
     pub source: *const u8,
     pub source_length: u32,
     pub values: *const ValueRecord,
@@ -238,6 +243,20 @@ pub struct NativeTaskContext {
     pub derived: *const u32,
     pub derived_classes: u32,
     pub derived_words: u32,
+    /// The most steps a path or a candidate's predicates or outputs took (`current_steps` before each reset): with
+    /// the task's total, what the task needed of its budget (decision 0334). Folded where `current_steps` is
+    /// replaced (`fold_most_steps`), never per step.
+    pub most_steps: u32,
+}
+
+/// Folds `current_steps` into `most_steps`, before `current_steps` is replaced (decision 0334): once a path or a
+/// candidate, so a step costs nothing more.
+pub(super) fn fold_most_steps(function: &mut FunctionBuilder<'_>, task: cranelift_codegen::ir::Value) {
+    let flags = MemFlags::trusted();
+    let current = function.ins().load(types::I32, flags, task, mem::offset_of!(NativeTaskContext, current_steps) as i32);
+    let most = function.ins().load(types::I32, flags, task, mem::offset_of!(NativeTaskContext, most_steps) as i32);
+    let most = function.ins().umax(current, most);
+    function.ins().store(flags, most, task, mem::offset_of!(NativeTaskContext, most_steps) as i32);
 }
 
 // Each packed task owns disjoint mutable ranges. Shared pointers are read-only.
@@ -410,6 +429,39 @@ fn emit_task_error(
     }
 }
 
+/// The pending records pushed since `from` reversed in place: a stack's order made the order they were pushed in.
+fn reverse_pending(function: &mut FunctionBuilder<'_>, task: cranelift_codegen::ir::Value, from: cranelift_codegen::ir::Value, pointer_type: types::Type) {
+    let flags = MemFlags::trusted();
+    let pending = context_pointer(function, task, mem::offset_of!(NativeTaskContext, pending));
+    let count = function.ins().load(types::I32, flags, task, mem::offset_of!(NativeTaskContext, pending_count) as i32);
+    let (head, swap, done) = (function.create_block(), function.create_block(), function.create_block());
+    function.append_block_param(head, types::I32);
+    function.append_block_param(head, types::I32);
+    function.ins().jump(head, &[from.into(), count.into()]);
+    function.switch_to_block(head);
+    let (low, high) = (function.block_params(head)[0], function.block_params(head)[1]);
+    let next = function.ins().iadd_imm(low, 1);
+    let more = function.ins().icmp(IntCC::UnsignedGreaterThan, high, next);
+    function.ins().brif(more, swap, &[], done, &[]);
+    function.switch_to_block(swap);
+    let record = |function: &mut FunctionBuilder<'_>, at: cranelift_codegen::ir::Value| {
+        let offset = function.ins().imul_imm(at, mem::size_of::<PendingRecord>() as i64);
+        let offset = function.ins().uextend(pointer_type, offset);
+        function.ins().iadd(pending, offset)
+    };
+    let last = function.ins().iadd_imm(high, -1);
+    let (a, b) = (record(function, low), record(function, last));
+    const _: () = assert!(mem::size_of::<PendingRecord>() % 4 == 0);
+    for word in 0..mem::size_of::<PendingRecord>() as i32 / 4 {
+        let x = function.ins().load(types::I32, flags, a, 4 * word);
+        let y = function.ins().load(types::I32, flags, b, 4 * word);
+        function.ins().store(flags, y, a, 4 * word);
+        function.ins().store(flags, x, b, 4 * word);
+    }
+    function.ins().jump(head, &[next.into(), last.into()]);
+    function.switch_to_block(done);
+}
+
 fn context_pointer(
     function: &mut FunctionBuilder<'_>,
     context: cranelift_codegen::ir::Value,
@@ -478,6 +530,9 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
 
     let builder = JITBuilder::new(default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     let mut module = JITModule::new(builder);
+    // The tape's reads (decision 0310): declared once, the cold ones defined; every function's pass inlines the hot.
+    super::native_cpu_codegen::define_reads(&mut module).map_err(|_| Error::BackendFailure)?;
+    let reads = rerail_clif::inline::ReadIds::declare(&mut module).map_err(|_| Error::BackendFailure)?;
     let scheduler = native_cpu_scheduler::define(&mut module).map_err(|error| {
         #[cfg(any(test, feature = "test-hooks"))]
         eprintln!("native scheduler definition failed: {error:?}");
@@ -715,34 +770,19 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                 .ins()
                 .brif(within_limit, body, &[], work_error, &[]);
             function.switch_to_block(body);
-            let nodes = context_pointer(
-                &mut function,
-                task,
-                mem::offset_of!(NativeTaskContext, nodes),
-            );
             let current = function.ins().load(
                 types::I32,
                 flags,
                 task,
                 mem::offset_of!(NativeTaskContext, current_node) as i32,
             );
-            let node_stride = function
-                .ins()
-                .imul_imm(current, mem::size_of::<MetalNode>() as i64);
-            let node_offset = function.ins().uextend(pointer_type, node_stride);
-            let node = function.ins().iadd(nodes, node_offset);
             let next = block.next.map(|next| blocks[usize::from(next)]);
             match block.operation {
                 StructuralOperation::Stop => {
                     function.ins().jump(resume, &[]);
                 }
                 StructuralOperation::Kind { kind } => {
-                    let actual = function.ins().load(
-                        types::I32,
-                        flags,
-                        node,
-                        mem::offset_of!(MetalNode, kind) as i32,
-                    );
+                    let actual = native_cpu_tape::kind(&mut function, &reads, task, current);
                     let keep = function
                         .ins()
                         .icmp_imm(IntCC::Equal, actual, i64::from(kind));
@@ -751,12 +791,7 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                         .brif(keep, next.unwrap_or(resume), &[], resume, &[]);
                 }
                 StructuralOperation::Field { field } => {
-                    let actual = function.ins().load(
-                        types::I32,
-                        flags,
-                        node,
-                        mem::offset_of!(MetalNode, field) as i32,
-                    );
+                    let actual = native_cpu_tape::field(&mut function, &reads, task, current);
                     let keep = function
                         .ins()
                         .icmp_imm(IntCC::Equal, actual, i64::from(field));
@@ -768,12 +803,7 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                     required,
                     forbidden,
                 } => {
-                    let actual = function.ins().load(
-                        types::I32,
-                        flags,
-                        node,
-                        mem::offset_of!(MetalNode, flags) as i32,
-                    );
+                    let actual = native_cpu_tape::flags(&mut function, &reads, task, current);
                     let required_bits = function.ins().band_imm(actual, i64::from(required));
                     let required_ok =
                         function
@@ -838,18 +868,7 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                     );
                 }
                 StructuralOperation::Size { mode, operand } if mode & 0x80 == 0 => {
-                    let start = function.ins().load(
-                        types::I32,
-                        flags,
-                        node,
-                        mem::offset_of!(MetalNode, source_start) as i32,
-                    );
-                    let end = function.ins().load(
-                        types::I32,
-                        flags,
-                        node,
-                        mem::offset_of!(MetalNode, source_end) as i32,
-                    );
+                    let (start, end) = native_cpu_tape::span(&mut function, &reads, task, current);
                     let actual = function.ins().isub(end, start);
                     let condition = match mode {
                         0 => IntCC::Equal,
@@ -865,18 +884,7 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                         .brif(keep, next.unwrap_or(resume), &[], resume, &[]);
                 }
                 StructuralOperation::Size { mode, operand } => {
-                    let start = function.ins().load(
-                        types::I32,
-                        flags,
-                        node,
-                        mem::offset_of!(MetalNode, source_start) as i32,
-                    );
-                    let end = function.ins().load(
-                        types::I32,
-                        flags,
-                        node,
-                        mem::offset_of!(MetalNode, source_end) as i32,
-                    );
+                    let (start, end) = native_cpu_tape::span(&mut function, &reads, task, current);
                     let actual = function.ins().isub(end, start);
                     let actual = function.ins().uextend(types::I64, actual);
                     let expected = native.longs[usize::from(operand)];
@@ -893,12 +901,9 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                         .brif(keep, next.unwrap_or(resume), &[], resume, &[]);
                 }
                 StructuralOperation::First { named } | StructuralOperation::Last { named } => {
-                    let parent = function.ins().load(
-                        types::I32,
-                        flags,
-                        node,
-                        mem::offset_of!(MetalNode, parent) as i32,
-                    );
+                    // The current node is its parent's first (last) child, named if asked: hops over the
+                    // parent's children's subtrees.
+                    let parent = native_cpu_tape::parent(&mut function, &reads, task, current);
                     let root = function
                         .ins()
                         .icmp_imm(IntCC::Equal, parent, i64::from(NONE));
@@ -910,28 +915,8 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                     function.switch_to_block(accept_root);
                     function.ins().jump(next.unwrap_or(resume), &[]);
                     function.switch_to_block(inspect_parent);
-                    let parent_stride = function
-                        .ins()
-                        .imul_imm(parent, mem::size_of::<MetalNode>() as i64);
-                    let parent_stride = function.ins().uextend(pointer_type, parent_stride);
-                    let parent_node = function.ins().iadd(nodes, parent_stride);
-                    let child_start = function.ins().load(
-                        types::I32,
-                        flags,
-                        parent_node,
-                        mem::offset_of!(MetalNode, child_start) as i32,
-                    );
-                    let child_count = function.ins().load(
-                        types::I32,
-                        flags,
-                        parent_node,
-                        mem::offset_of!(MetalNode, child_count) as i32,
-                    );
-                    let children = context_pointer(
-                        &mut function,
-                        task,
-                        mem::offset_of!(NativeTaskContext, children),
-                    );
+                    let end = native_cpu_tape::subtree_end(&mut function, &reads, task, parent);
+                    let first = native_cpu_tape::first_child(&mut function, &reads, task, parent);
                     let scan = function.create_block();
                     function.append_block_param(scan, types::I32);
                     function.append_block_param(scan, types::I32);
@@ -940,48 +925,28 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                     function.append_block_param(inspect, types::I32);
                     let finish = function.create_block();
                     function.append_block_param(finish, types::I32);
-                    let zero = function.ins().iconst(types::I32, 0);
                     let none = function.ins().iconst(types::I32, i64::from(NONE));
-                    function.ins().jump(scan, &[zero.into(), none.into()]);
+                    function.ins().jump(scan, &[first.into(), none.into()]);
                     function.switch_to_block(scan);
-                    let index = function.block_params(scan)[0];
+                    let child = function.block_params(scan)[0];
                     let found = function.block_params(scan)[1];
                     let in_range = function
                         .ins()
-                        .icmp(IntCC::UnsignedLessThan, index, child_count);
+                        .icmp_imm(IntCC::NotEqual, child, i64::from(NONE));
                     function.ins().brif(
                         in_range,
                         inspect,
-                        &[index.into(), found.into()],
+                        &[child.into(), found.into()],
                         finish,
                         &[found.into()],
                     );
                     function.switch_to_block(inspect);
-                    let index = function.block_params(inspect)[0];
+                    let child = function.block_params(inspect)[0];
                     let found = function.block_params(inspect)[1];
-                    let absolute = function.ins().iadd(child_start, index);
-                    let offset = function
-                        .ins()
-                        .imul_imm(absolute, mem::size_of::<u32>() as i64);
-                    let offset = function.ins().uextend(pointer_type, offset);
-                    let address = function.ins().iadd(children, offset);
-                    let child = function.ins().load(types::I32, flags, address, 0);
                     let eligible = if named {
-                        let stride = function
-                            .ins()
-                            .imul_imm(child, mem::size_of::<MetalNode>() as i64);
-                        let stride = function.ins().uextend(pointer_type, stride);
-                        let child_node = function.ins().iadd(nodes, stride);
-                        let child_flags = function.ins().load(
-                            types::I32,
-                            flags,
-                            child_node,
-                            mem::offset_of!(MetalNode, flags) as i32,
-                        );
-                        let named_bit = function.ins().band_imm(child_flags, 1);
-                        function.ins().icmp_imm(IntCC::NotEqual, named_bit, 0)
+                        native_cpu_tape::named(&mut function, &reads, task, child)
                     } else {
-                        function.ins().icmp(IntCC::Equal, index, index)
+                        function.ins().iconst(types::I8, 1)
                     };
                     let choose = if matches!(block.operation, StructuralOperation::First { .. }) {
                         let missing = function
@@ -992,8 +957,8 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                         eligible
                     };
                     let found = function.ins().select(choose, child, found);
-                    let index = function.ins().iadd_imm(index, 1);
-                    function.ins().jump(scan, &[index.into(), found.into()]);
+                    let child = native_cpu_tape::next_in(&mut function, &reads, task, child, end);
+                    function.ins().jump(scan, &[child.into(), found.into()]);
                     function.switch_to_block(finish);
                     let found = function.block_params(finish)[0];
                     let keep = function.ins().icmp(IntCC::Equal, found, current);
@@ -1042,338 +1007,130 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                         .brif(bit, next.unwrap_or(resume), &[], resume, &[]);
                 }
                 StructuralOperation::Supertype { kind } => {
-                    // The batch's memberships are sorted by (node, kind), as the interpreters'
-                    // binary search reads them: the lower bound of (current, kind), then one test.
-                    let memberships = context_pointer(
-                        &mut function,
-                        task,
-                        mem::offset_of!(NativeTaskContext, supertypes),
-                    );
-                    let membership_count = function.ins().load(
-                        types::I32,
-                        flags,
-                        task,
-                        mem::offset_of!(NativeTaskContext, supertype_count) as i32,
-                    );
-                    let key = |function: &mut FunctionBuilder<'_>, node: cranelift_codegen::ir::Value, kind: cranelift_codegen::ir::Value| {
-                        let node = function.ins().uextend(types::I64, node);
-                        let node = function.ins().ishl_imm(node, 32);
-                        let kind = function.ins().uextend(types::I64, kind);
-                        function.ins().bor(node, kind)
-                    };
-                    let member = |function: &mut FunctionBuilder<'_>, index: cranelift_codegen::ir::Value| {
-                        let stride = function
-                            .ins()
-                            .imul_imm(index, mem::size_of::<MetalSupertype>() as i64);
-                        let stride = function.ins().uextend(pointer_type, stride);
-                        let membership = function.ins().iadd(memberships, stride);
-                        let node = function.ins().load(
-                            types::I32,
-                            flags,
-                            membership,
-                            mem::offset_of!(MetalSupertype, node) as i32,
-                        );
-                        let kind = function.ins().load(
-                            types::I32,
-                            flags,
-                            membership,
-                            mem::offset_of!(MetalSupertype, kind) as i32,
-                        );
-                        (node, kind)
-                    };
-                    let wanted = function.ins().iconst(types::I32, i64::from(kind));
-                    let target = key(&mut function, current, wanted);
-                    let search = function.create_block();
-                    function.append_block_param(search, types::I32);
-                    function.append_block_param(search, types::I32);
-                    let probe = function.create_block();
-                    function.append_block_param(probe, types::I32);
-                    function.append_block_param(probe, types::I32);
-                    let finish = function.create_block();
-                    function.append_block_param(finish, types::I32);
-                    let test = function.create_block();
-                    function.append_block_param(test, types::I32);
-                    let zero = function.ins().iconst(types::I32, 0);
-                    function
-                        .ins()
-                        .jump(search, &[zero.into(), membership_count.into()]);
-                    function.switch_to_block(search);
-                    let low = function.block_params(search)[0];
-                    let high = function.block_params(search)[1];
-                    let open = function.ins().icmp(IntCC::UnsignedLessThan, low, high);
-                    function.ins().brif(
-                        open,
-                        probe,
-                        &[low.into(), high.into()],
-                        finish,
-                        &[low.into()],
-                    );
-                    function.switch_to_block(probe);
-                    let low = function.block_params(probe)[0];
-                    let high = function.block_params(probe)[1];
-                    let width = function.ins().isub(high, low);
-                    let half = function.ins().ushr_imm(width, 1);
-                    let middle = function.ins().iadd(low, half);
-                    let (node, member_kind) = member(&mut function, middle);
-                    let probed = key(&mut function, node, member_kind);
-                    let below = function.ins().icmp(IntCC::UnsignedLessThan, probed, target);
-                    let past = function.ins().iadd_imm(middle, 1);
-                    let low = function.ins().select(below, past, low);
-                    let high = function.ins().select(below, high, middle);
-                    function.ins().jump(search, &[low.into(), high.into()]);
-                    function.switch_to_block(finish);
-                    let low = function.block_params(finish)[0];
-                    let in_range =
-                        function
-                            .ins()
-                            .icmp(IntCC::UnsignedLessThan, low, membership_count);
-                    function
-                        .ins()
-                        .brif(in_range, test, &[low.into()], resume, &[]);
-                    function.switch_to_block(test);
-                    let low = function.block_params(test)[0];
-                    let (node, member_kind) = member(&mut function, low);
-                    let node_count = function.ins().load(
-                        types::I32,
-                        flags,
-                        task,
-                        mem::offset_of!(NativeTaskContext, node_count) as i32,
-                    );
-                    let valid_node = function.ins().icmp(IntCC::UnsignedLessThan, node, node_count);
-                    let compare = function.create_block();
-                    function
-                        .ins()
-                        .brif(valid_node, compare, &[], invalid_input, &[]);
-                    function.switch_to_block(compare);
-                    let found = key(&mut function, node, member_kind);
-                    let matched = function.ins().icmp(IntCC::Equal, found, target);
-                    function
-                        .ins()
-                        .brif(matched, next.unwrap_or(resume), &[], resume, &[]);
-                }
-                StructuralOperation::AbsentField { field } => {
-                    let child_start = function.ins().load(
-                        types::I32,
-                        flags,
-                        node,
-                        mem::offset_of!(MetalNode, child_start) as i32,
-                    );
-                    let child_count = function.ins().load(
-                        types::I32,
-                        flags,
-                        node,
-                        mem::offset_of!(MetalNode, child_count) as i32,
-                    );
-                    let child_end = function.ins().iadd(child_start, child_count);
-                    let no_overflow = function.ins().icmp(
-                        IntCC::UnsignedGreaterThanOrEqual,
-                        child_end,
-                        child_start,
-                    );
-                    let packed_child_count = function.ins().load(
-                        types::I32,
-                        flags,
-                        task,
-                        mem::offset_of!(NativeTaskContext, child_count) as i32,
-                    );
-                    let in_bounds = function.ins().icmp(
-                        IntCC::UnsignedLessThanOrEqual,
-                        child_end,
-                        packed_child_count,
-                    );
-                    let valid = function.ins().band(no_overflow, in_bounds);
+                    // The node's code's memberships (ascending, a handful): one is `kind`.
+                    let (count, classes) = native_cpu_tape::classes(&mut function, &reads, task, current);
                     let scan = function.create_block();
                     function.append_block_param(scan, types::I32);
+                    let test = function.create_block();
+                    let zero = function.ins().iconst(types::I32, 0);
+                    function.ins().jump(scan, &[zero.into()]);
+                    function.switch_to_block(scan);
+                    let at = function.block_params(scan)[0];
+                    let in_range = function.ins().icmp(IntCC::UnsignedLessThan, at, count);
+                    function.ins().brif(in_range, test, &[], resume, &[]);
+                    function.switch_to_block(test);
+                    let offset = function.ins().imul_imm(at, 2);
+                    let offset = function.ins().uextend(pointer_type, offset);
+                    let address = function.ins().iadd(classes, offset);
+                    let class = function.ins().uload16(types::I32, flags, address, 0);
+                    let matched = function.ins().icmp_imm(IntCC::Equal, class, i64::from(kind));
+                    let advance = function.create_block();
                     function
                         .ins()
-                        .brif(valid, scan, &[child_start.into()], invalid_input, &[]);
+                        .brif(matched, next.unwrap_or(resume), &[], advance, &[]);
+                    function.switch_to_block(advance);
+                    let at = function.ins().iadd_imm(at, 1);
+                    function.ins().jump(scan, &[at.into()]);
+                }
+                StructuralOperation::AbsentField { field } => {
+                    // No child of the node is under `field`: hops over its children's subtrees.
+                    let end = native_cpu_tape::subtree_end(&mut function, &reads, task, current);
+                    let first = native_cpu_tape::first_child(&mut function, &reads, task, current);
+                    let scan = function.create_block();
+                    function.append_block_param(scan, types::I32);
+                    function.ins().jump(scan, &[first.into()]);
                     function.switch_to_block(scan);
-                    let index = function.block_params(scan)[0];
+                    let child = function.block_params(scan)[0];
                     let has_child = function
                         .ins()
-                        .icmp(IntCC::UnsignedLessThan, index, child_end);
+                        .icmp_imm(IntCC::NotEqual, child, i64::from(NONE));
                     let inspect = function.create_block();
                     function
                         .ins()
                         .brif(has_child, inspect, &[], next.unwrap_or(resume), &[]);
                     function.switch_to_block(inspect);
-                    let children = context_pointer(
-                        &mut function,
-                        task,
-                        mem::offset_of!(NativeTaskContext, children),
-                    );
-                    let offset = function.ins().imul_imm(index, mem::size_of::<u32>() as i64);
-                    let offset = function.ins().uextend(pointer_type, offset);
-                    let address = function.ins().iadd(children, offset);
-                    let child = function.ins().load(types::I32, flags, address, 0);
-                    let node_count = function.ins().load(
-                        types::I32,
-                        flags,
-                        task,
-                        mem::offset_of!(NativeTaskContext, node_count) as i32,
-                    );
-                    let valid_child =
-                        function
-                            .ins()
-                            .icmp(IntCC::UnsignedLessThan, child, node_count);
-                    let inspect_field = function.create_block();
-                    function
-                        .ins()
-                        .brif(valid_child, inspect_field, &[], invalid_input, &[]);
-                    function.switch_to_block(inspect_field);
-                    let stride = function
-                        .ins()
-                        .imul_imm(child, mem::size_of::<MetalNode>() as i64);
-                    let stride = function.ins().uextend(pointer_type, stride);
-                    let child_node = function.ins().iadd(nodes, stride);
-                    let actual = function.ins().load(
-                        types::I32,
-                        flags,
-                        child_node,
-                        mem::offset_of!(MetalNode, field) as i32,
-                    );
+                    let actual = native_cpu_tape::field(&mut function, &reads, task, child);
                     let present = function
                         .ins()
                         .icmp_imm(IntCC::Equal, actual, i64::from(field));
                     let advance = function.create_block();
                     function.ins().brif(present, resume, &[], advance, &[]);
                     function.switch_to_block(advance);
-                    let index = function.ins().iadd_imm(index, 1);
-                    function.ins().jump(scan, &[index.into()]);
+                    let child = native_cpu_tape::next_in(&mut function, &reads, task, child, end);
+                    function.ins().jump(scan, &[child.into()]);
                 }
                 StructuralOperation::Child { named } => {
-                    let child_count = function.ins().load(
-                        types::I32,
-                        flags,
-                        node,
-                        mem::offset_of!(MetalNode, child_count) as i32,
-                    );
-                    let child_start = function.ins().load(
-                        types::I32,
-                        flags,
-                        node,
-                        mem::offset_of!(MetalNode, child_start) as i32,
-                    );
-                    let children = context_pointer(
-                        &mut function,
-                        task,
-                        mem::offset_of!(NativeTaskContext, children),
-                    );
+                    // The node's first child (named if asked) runs on; every later one is a pending path,
+                    // enqueued as they are reached (hops over the children's subtrees), then the pushed
+                    // range reversed, so they run in order after it, as the device's kernel does.
+                    let end = native_cpu_tape::subtree_end(&mut function, &reads, task, current);
+                    let first = native_cpu_tape::first_child(&mut function, &reads, task, current);
                     let scan = function.create_block();
                     function.append_block_param(scan, types::I32);
                     let inspect = function.create_block();
                     function.append_block_param(inspect, types::I32);
                     let found = function.create_block();
                     function.append_block_param(found, types::I32);
+                    let alternates = function.create_block();
+                    function.append_block_param(alternates, types::I32);
+                    let alternate = function.create_block();
+                    function.append_block_param(alternate, types::I32);
                     let reverse = function.create_block();
-                    function.append_block_param(reverse, types::I32);
-                    function.append_block_param(reverse, types::I32);
-                    let reverse_inspect = function.create_block();
-                    function.append_block_param(reverse_inspect, types::I32);
-                    function.append_block_param(reverse_inspect, types::I32);
                     let execute = function.create_block();
                     function.append_block_param(execute, types::I32);
-                    let zero = function.ins().iconst(types::I32, 0);
-                    function.ins().jump(scan, &[zero.into()]);
+                    function.ins().jump(scan, &[first.into()]);
                     function.switch_to_block(scan);
-                    let index = function.block_params(scan)[0];
+                    let child = function.block_params(scan)[0];
                     let in_range = function
                         .ins()
-                        .icmp(IntCC::UnsignedLessThan, index, child_count);
+                        .icmp_imm(IntCC::NotEqual, child, i64::from(NONE));
                     function
                         .ins()
-                        .brif(in_range, inspect, &[index.into()], resume, &[]);
+                        .brif(in_range, inspect, &[child.into()], resume, &[]);
                     function.switch_to_block(inspect);
-                    let index = function.block_params(inspect)[0];
-                    let absolute = function.ins().iadd(child_start, index);
-                    let offset = function
-                        .ins()
-                        .imul_imm(absolute, mem::size_of::<u32>() as i64);
-                    let offset = function.ins().uextend(pointer_type, offset);
-                    let address = function.ins().iadd(children, offset);
-                    let child = function.ins().load(types::I32, flags, address, 0);
+                    let child = function.block_params(inspect)[0];
                     let eligible = if named {
-                        let stride = function
-                            .ins()
-                            .imul_imm(child, mem::size_of::<MetalNode>() as i64);
-                        let stride = function.ins().uextend(pointer_type, stride);
-                        let child_node = function.ins().iadd(nodes, stride);
-                        let child_flags = function.ins().load(
-                            types::I32,
-                            flags,
-                            child_node,
-                            mem::offset_of!(MetalNode, flags) as i32,
-                        );
-                        let named_bit = function.ins().band_imm(child_flags, 1);
-                        function.ins().icmp_imm(IntCC::NotEqual, named_bit, 0)
+                        native_cpu_tape::named(&mut function, &reads, task, child)
                     } else {
-                        function.ins().icmp(IntCC::Equal, index, index)
+                        function.ins().iconst(types::I8, 1)
                     };
                     let advance_scan = function.create_block();
                     function
                         .ins()
                         .brif(eligible, found, &[child.into()], advance_scan, &[]);
                     function.switch_to_block(advance_scan);
-                    let index = function.ins().iadd_imm(index, 1);
-                    function.ins().jump(scan, &[index.into()]);
+                    let child = native_cpu_tape::next_in(&mut function, &reads, task, child, end);
+                    function.ins().jump(scan, &[child.into()]);
                     function.switch_to_block(found);
                     let first = function.block_params(found)[0];
-                    function
-                        .ins()
-                        .jump(reverse, &[child_count.into(), first.into()]);
-                    function.switch_to_block(reverse);
-                    let index = function.block_params(reverse)[0];
-                    let first = function.block_params(reverse)[1];
-                    let remaining = function.ins().icmp_imm(IntCC::NotEqual, index, 0);
-                    function.ins().brif(
-                        remaining,
-                        reverse_inspect,
-                        &[index.into(), first.into()],
-                        execute,
-                        &[first.into()],
+                    let pushed = function.ins().load(
+                        types::I32,
+                        flags,
+                        task,
+                        mem::offset_of!(NativeTaskContext, pending_count) as i32,
                     );
-                    function.switch_to_block(reverse_inspect);
-                    let reverse_index = function.block_params(reverse_inspect)[0];
-                    let index = function.ins().iadd_imm(reverse_index, -1);
-                    let first = function.block_params(reverse_inspect)[1];
-                    let absolute = function.ins().iadd(child_start, index);
-                    let offset = function
+                    let later = native_cpu_tape::next_in(&mut function, &reads, task, first, end);
+                    function.ins().jump(alternates, &[later.into()]);
+                    function.switch_to_block(alternates);
+                    let child = function.block_params(alternates)[0];
+                    let remaining = function
                         .ins()
-                        .imul_imm(absolute, mem::size_of::<u32>() as i64);
-                    let offset = function.ins().uextend(pointer_type, offset);
-                    let address = function.ins().iadd(children, offset);
-                    let child = function.ins().load(types::I32, flags, address, 0);
-                    let reached_first = function.ins().icmp(IntCC::Equal, child, first);
-                    let consider = function.create_block();
+                        .icmp_imm(IntCC::NotEqual, child, i64::from(NONE));
                     function
                         .ins()
-                        .brif(reached_first, execute, &[first.into()], consider, &[]);
-                    function.switch_to_block(consider);
+                        .brif(remaining, alternate, &[child.into()], reverse, &[]);
+                    function.switch_to_block(alternate);
+                    let child = function.block_params(alternate)[0];
+                    let after = native_cpu_tape::next_in(&mut function, &reads, task, child, end);
                     let eligible = if named {
-                        let stride = function
-                            .ins()
-                            .imul_imm(child, mem::size_of::<MetalNode>() as i64);
-                        let stride = function.ins().uextend(pointer_type, stride);
-                        let child_node = function.ins().iadd(nodes, stride);
-                        let child_flags = function.ins().load(
-                            types::I32,
-                            flags,
-                            child_node,
-                            mem::offset_of!(MetalNode, flags) as i32,
-                        );
-                        let named_bit = function.ins().band_imm(child_flags, 1);
-                        function.ins().icmp_imm(IntCC::NotEqual, named_bit, 0)
+                        native_cpu_tape::named(&mut function, &reads, task, child)
                     } else {
-                        function.ins().icmp(IntCC::Equal, index, index)
+                        function.ins().iconst(types::I8, 1)
                     };
                     let enqueue = function.create_block();
-                    function.ins().brif(
-                        eligible,
-                        enqueue,
-                        &[],
-                        reverse,
-                        &[index.into(), first.into()],
-                    );
+                    function
+                        .ins()
+                        .brif(eligible, enqueue, &[], alternates, &[after.into()]);
                     function.switch_to_block(enqueue);
                     let target_pc = function
                         .ins()
@@ -1388,13 +1145,12 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                         .call(path_enqueue, &[task, target_pc, child, mode, sibling, kind]);
                     let outcome = function.inst_results(call)[0];
                     let ok = function.ins().icmp_imm(IntCC::NotEqual, outcome, 2);
-                    function.ins().brif(
-                        ok,
-                        reverse,
-                        &[index.into(), first.into()],
-                        capacity_error,
-                        &[],
-                    );
+                    function
+                        .ins()
+                        .brif(ok, alternates, &[after.into()], capacity_error, &[]);
+                    function.switch_to_block(reverse);
+                    reverse_pending(&mut function, task, pushed, pointer_type);
+                    function.ins().jump(execute, &[first.into()]);
                     function.switch_to_block(execute);
                     let first = function.block_params(execute)[0];
                     function.ins().store(
@@ -1406,12 +1162,7 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                     function.ins().jump(next.unwrap_or(resume), &[]);
                 }
                 StructuralOperation::Next { named } => {
-                    let offset = if named {
-                        mem::offset_of!(MetalNode, next_named)
-                    } else {
-                        mem::offset_of!(MetalNode, next_any)
-                    };
-                    let target = function.ins().load(types::I32, flags, node, offset as i32);
+                    let target = native_cpu_tape::next(&mut function, &reads, task, current, named);
                     let found = function
                         .ins()
                         .icmp_imm(IntCC::NotEqual, target, i64::from(NONE));
@@ -1427,12 +1178,7 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                     function.ins().jump(next.unwrap_or(resume), &[]);
                 }
                 StructuralOperation::Descend { named } => {
-                    let end = function.ins().load(
-                        types::I32,
-                        flags,
-                        node,
-                        mem::offset_of!(MetalNode, descendant_end) as i32,
-                    );
+                    let end = native_cpu_tape::subtree_end(&mut function, &reads, task, current);
                     let first_candidate = function.ins().iadd_imm(current, 1);
                     let scan = function.create_block();
                     function.append_block_param(scan, types::I32);
@@ -1458,21 +1204,9 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                     function.switch_to_block(inspect);
                     let candidate = function.block_params(inspect)[0];
                     let eligible = if named {
-                        let stride = function
-                            .ins()
-                            .imul_imm(candidate, mem::size_of::<MetalNode>() as i64);
-                        let stride = function.ins().uextend(pointer_type, stride);
-                        let candidate_node = function.ins().iadd(nodes, stride);
-                        let candidate_flags = function.ins().load(
-                            types::I32,
-                            flags,
-                            candidate_node,
-                            mem::offset_of!(MetalNode, flags) as i32,
-                        );
-                        let named_bit = function.ins().band_imm(candidate_flags, 1);
-                        function.ins().icmp_imm(IntCC::NotEqual, named_bit, 0)
+                        native_cpu_tape::named(&mut function, &reads, task, candidate)
                     } else {
-                        function.ins().icmp(IntCC::Equal, candidate, candidate)
+                        function.ins().iconst(types::I8, 1)
                     };
                     let advance = function.create_block();
                     function
@@ -1509,21 +1243,9 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                         .brif(reached_first, execute, &[first.into()], consider, &[]);
                     function.switch_to_block(consider);
                     let eligible = if named {
-                        let stride = function
-                            .ins()
-                            .imul_imm(candidate, mem::size_of::<MetalNode>() as i64);
-                        let stride = function.ins().uextend(pointer_type, stride);
-                        let candidate_node = function.ins().iadd(nodes, stride);
-                        let candidate_flags = function.ins().load(
-                            types::I32,
-                            flags,
-                            candidate_node,
-                            mem::offset_of!(MetalNode, flags) as i32,
-                        );
-                        let named_bit = function.ins().band_imm(candidate_flags, 1);
-                        function.ins().icmp_imm(IntCC::NotEqual, named_bit, 0)
+                        native_cpu_tape::named(&mut function, &reads, task, candidate)
                     } else {
-                        function.ins().icmp(IntCC::Equal, candidate, candidate)
+                        function.ins().iconst(types::I8, 1)
                     };
                     let enqueue = function.create_block();
                     function.ins().brif(
@@ -1566,26 +1288,14 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                     function.ins().jump(next.unwrap_or(resume), &[]);
                 }
                 StructuralOperation::Following { named } => {
-                    let offset = if named {
-                        mem::offset_of!(MetalNode, next_named)
-                    } else {
-                        mem::offset_of!(MetalNode, next_any)
-                    };
-                    let first = function.ins().load(types::I32, flags, node, offset as i32);
+                    let first = native_cpu_tape::next(&mut function, &reads, task, current, named);
                     let found = function
                         .ins()
                         .icmp_imm(IntCC::NotEqual, first, i64::from(NONE));
                     let advance = function.create_block();
                     function.ins().brif(found, advance, &[], resume, &[]);
                     function.switch_to_block(advance);
-                    let first_stride = function
-                        .ins()
-                        .imul_imm(first, mem::size_of::<MetalNode>() as i64);
-                    let first_offset = function.ins().uextend(pointer_type, first_stride);
-                    let first_node = function.ins().iadd(nodes, first_offset);
-                    let second = function
-                        .ins()
-                        .load(types::I32, flags, first_node, offset as i32);
+                    let second = native_cpu_tape::next(&mut function, &reads, task, first, named);
                     let has_second =
                         function
                             .ins()
@@ -1642,12 +1352,7 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                     function.ins().jump(next.unwrap_or(resume), &[]);
                 }
                 StructuralOperation::Parent => {
-                    let target = function.ins().load(
-                        types::I32,
-                        flags,
-                        node,
-                        mem::offset_of!(MetalNode, parent) as i32,
-                    );
+                    let target = native_cpu_tape::parent(&mut function, &reads, task, current);
                     let found = function
                         .ins()
                         .icmp_imm(IntCC::NotEqual, target, i64::from(NONE));
@@ -2429,30 +2134,19 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
                 task,
                 mem::offset_of!(NativeTaskContext, current_node) as i32,
             );
-            let nodes = context_pointer(
-                &mut function,
-                task,
-                mem::offset_of!(NativeTaskContext, nodes),
-            );
-            let stride = function
-                .ins()
-                .imul_imm(current, mem::size_of::<MetalNode>() as i64);
-            let offset = function.ins().uextend(pointer_type, stride);
-            let node = function.ins().iadd(nodes, offset);
-            let next_any = function.ins().load(
-                types::I32,
-                flags,
-                node,
-                mem::offset_of!(MetalNode, next_any) as i32,
-            );
-            let next_named = function.ins().load(
-                types::I32,
-                flags,
-                node,
-                mem::offset_of!(MetalNode, next_named) as i32,
-            );
+            // The next sibling, of any kind (mode 1) or named.
             let any_mode = function.ins().icmp_imm(IntCC::Equal, mode, 1);
-            let later = function.ins().select(any_mode, next_any, next_named);
+            let (any, named_only, merged) = (function.create_block(), function.create_block(), function.create_block());
+            function.append_block_param(merged, types::I32);
+            function.ins().brif(any_mode, any, &[], named_only, &[]);
+            function.switch_to_block(any);
+            let next_any = native_cpu_tape::next(&mut function, &reads, task, current, false);
+            function.ins().jump(merged, &[next_any.into()]);
+            function.switch_to_block(named_only);
+            let next_named = native_cpu_tape::next(&mut function, &reads, task, current, true);
+            function.ins().jump(merged, &[next_named.into()]);
+            function.switch_to_block(merged);
+            let later = function.block_params(merged)[0];
             let has_later = function
                 .ins()
                 .icmp_imm(IntCC::NotEqual, later, i64::from(NONE));
@@ -2606,6 +2300,7 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
             path,
             pending_path_field(mem::offset_of!(PathRecord, steps)),
         );
+        fold_most_steps(&mut function, task);
         function.ins().store(
             flags,
             resumed_steps,
@@ -2943,8 +2638,37 @@ pub fn execute_batch_packed_with_work_limit(
     result_limits: Option<&[u32]>,
     work_limit: u32,
 ) -> Result<PackedExecution, Error> {
+    super::restarting(programs, anchors, super::Budget::current(), &mut |anchors, budget, growth| {
+        execute_batch_packed_once(programs, files, anchors, result_limits, work_limit, budget, growth)
+    })
+}
+
+/// The batch with `budget` (decision 0334): an evaluation that outgrows its steps or states restarts with twice as
+/// much (`restarting`).
+pub(super) fn execute_batch_packed_budgeted(
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+    budget: super::Budget,
+) -> Result<PackedExecution, Error> {
+    super::restarting(programs, anchors, budget, &mut |anchors, budget, growth| {
+        execute_batch_packed_once(programs, files, anchors, result_limits, super::MAX_STEPS_PER_PATH as u32, budget, growth)
+    })
+}
+
+fn execute_batch_packed_once(
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+    work_limit: u32,
+    budget: super::Budget,
+    growth: &super::StateGrowth,
+) -> Result<PackedExecution, Error> {
     let stage = crate::code_rule_dsl::prof::Stage::start("jit.batch");
-    let mut batch = PackedBatch::new(programs, files, anchors)?;
+    let mut batch = PackedBatch::new_in_place(programs, files, anchors)?;
+    batch.apply_budget(budget, growth);
     drop(stage);
     crate::code_rule_dsl::prof::count("jit.tasks", batch.tasks.len());
     if batch.tasks.is_empty() {
@@ -3003,6 +2727,25 @@ pub fn execute_batch_packed_with_work_limit(
     }
     drop(regions);
     let _contexts = crate::code_rule_dsl::prof::Stage::start("jit.contexts");
+    // Each file's tape where it is held, the view its reads take, and its codes (decision 0310); a table its files
+    // share (format 16's: its language's) made once.
+    let mut tables: std::collections::HashMap<usize, Arc<Vec<crate::code_rule_dsl::tape::resident::DeviceCode>>> = std::collections::HashMap::new();
+    let mut tapes = Vec::with_capacity(files.len());
+    for (doc, file) in files.iter().zip(&batch.files) {
+        let (bytes, mut view) = doc.doc_tape().in_place().map_err(|_| Error::BackendFailure)?;
+        (view.node_base, view.source_base) = (file.node_start, file.source_start);
+        let table = crate::code_rule_dsl::tape::resident::codes_key(doc);
+        let codes = match tables.get(&table) {
+            Some(codes) => Arc::clone(codes),
+            None => {
+                let codes = Arc::new(crate::code_rule_dsl::tape::resident::doc_codes(doc).map_err(|_| Error::BackendFailure)?);
+                tables.insert(table, Arc::clone(&codes));
+                codes
+            }
+        };
+        tapes.push((bytes.as_ptr(), view, codes));
+    }
+    let node_count = batch.files.iter().map(|file| file.node_count).sum::<u32>();
     let mut contexts = Vec::with_capacity(batch.tasks.len());
 
     for (task_index, task) in batch.tasks.iter().enumerate() {
@@ -3017,12 +2760,13 @@ pub fn execute_batch_packed_with_work_limit(
             .checked_sub(program.value_start)
             .ok_or(Error::BackendFailure)?;
         let mut context: NativeTaskContext = unsafe { mem::zeroed() };
-        context.nodes = batch.nodes.as_ptr();
-        context.node_count = batch.nodes.len() as u32;
-        context.children = batch.children.as_ptr();
-        context.child_count = batch.children.len() as u32;
-        context.supertypes = batch.supertypes.as_ptr();
-        context.supertype_count = batch.supertypes.len() as u32;
+        let (tape, view, codes) = &tapes[task.file as usize];
+        context.tape = *tape;
+        context.view = view;
+        context.codes = codes.as_ptr();
+        context.node_base = view.node_base;
+        context.source_base = view.source_base;
+        context.node_count = node_count;
         context.source = batch.source.as_ptr();
         context.source_length = batch.source.len() as u32;
         context.values = unsafe { batch.values.as_ptr().add(program.value_start as usize) };
@@ -3052,8 +2796,10 @@ pub fn execute_batch_packed_with_work_limit(
                 .add(arena_starts[ArenaKind::Pending as usize] as usize)
         };
         context.pending_quota_limit = batch.evaluation_limit(task, ArenaKind::Pending);
-        context.task_work_limit = super::MAX_WORK_PER_TASK as u32;
-        context.path_work_limit = work_limit;
+        // The task's budget, as the device's (decision 0334): the ceiling unless replanned.
+        context.task_work_limit = task.work_limit;
+        // A path's and a value's steps, held to the task's budget too, as the device's (`step_limit`).
+        context.path_work_limit = work_limit.min(task.work_limit);
         context.captures = unsafe {
             captures
                 .as_mut_ptr()
@@ -3191,7 +2937,14 @@ pub fn execute_batch_packed_with_work_limit(
                         );
                     }
                 }
+                context.most_steps = 0;
                 unsafe { entries[*program](context) };
+                // The task's steps: its total, or its longest path's or candidate's where that is more (what its
+                // budget had to hold, decision 0334).
+                unsafe {
+                    let most = context.most_steps.max(context.current_steps);
+                    (*context.status).reserved = (*context.status).reserved.max(most);
+                }
                 let status = unsafe { *context.status };
                 if status.error != 0 {
                     return Ok(TaskPackedOutput {

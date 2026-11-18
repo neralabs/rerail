@@ -65,6 +65,8 @@ pub struct Report {
     pub(in crate::code_rule_dsl) keyed: usize,
     /// Relations nothing kept reads, dropped.
     pub(in crate::code_rule_dsl) unread: Vec<String>,
+    /// Request rules another of their relation's subsumes, dropped (`front::subsume_requests`).
+    pub(in crate::code_rule_dsl) subsumed: usize,
     /// Parts of bodies that meet the rest only at a document, made relations of documents (`exists_k`).
     pub(in crate::code_rule_dsl) existentials: Vec<String>,
     /// Span comparisons of two nodes of one document, made `span_within(inner, outer)` (decision 0050).
@@ -139,6 +141,9 @@ pub fn simplify(prog: &mut Program) -> Report {
     }
     report.existentials = project_existentials(prog);
     report.climbs = climbs_as_axes(prog);
+    // A request rule another of its relation subsumes (decision 0291's whole request beside its narrowed one), before
+    // relations merge: a request and its widened copy are compared with what is left.
+    report.subsumed = super::front::subsume_requests(prog);
     if merge(prog, &mut report) {
         // A merge can leave a literal twice (`!m1($n), !m2($n)` became `!m1($n), !m1($n)`).
         report.implied += prog.rules.iter_mut().map(drop_implied).sum::<usize>();
@@ -874,7 +879,7 @@ fn kept(prog: &Program, rel: &str) -> bool {
 /// An attribute's request (decision 0174): read by name, so neither inlined nor merged into another relation. The
 /// fact layer answers `value` only where `rr_value_req` is derived (`syntax::VALUE_REQ`); inlined into its one
 /// reader, a request over one node (`rr_value_req($n) :- node(_, $n, "number", _, _)`) left `value` empty.
-fn request(rel: &str) -> bool {
+pub(in crate::code_rule_dsl) fn request(rel: &str) -> bool {
     super::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.req == rel)
 }
 
@@ -1929,9 +1934,7 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
                 return Some(g);
             }
             let (mut kept, unread): (Vec<String>, Vec<String>) = g.into_iter().partition(|r| read.contains(r.as_str()));
-            let copies = |u: &str| {
-                super::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| kept.iter().any(|k| *k == format!("rr_wide_{}_{u}", a.rel)))
-            };
+            let copies = |u: &str| kept.iter().any(|k| copy_of(k, u));
             let own = unread.into_iter().find(|u| copies(u));
             kept.extend(own);
             kept.sort();
@@ -2142,8 +2145,9 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
         let spaces: BTreeSet<Option<&str>> = g.iter().map(|r| namespace(r).map(|(p, _)| p)).collect();
         let is_output = |r: &str| prog.outputs.iter().any(|o| o == r);
         let unread = g.iter().find(|r| !read.contains(r.as_str()));
-        // A relation nothing reads is read by name if at all: it names its class (`congruence` gives it one).
-        let to = if let Some(u) = unread { u.clone() } else { match (suffixes.iter().next(), suffixes.len(), spaces.len()) {
+        // A relation nothing reads is read by name if at all: it names its class (`congruence` gives it one), as a
+        // request does (the class of its own widened copies).
+        let to = if let Some(u) = unread.or_else(|| g.iter().find(|r| request(r))) { u.clone() } else { match (suffixes.iter().next(), suffixes.len(), spaces.len()) {
             (Some(Some(s)), 1, n) if n > 1 => {
                 let mut name = format!("s_{s}");
                 let mut k = 1;
@@ -2239,6 +2243,13 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
         }
         if let Some(rows) = prog.facts.remove(from) {
             prog.facts.entry(t.clone()).or_insert(rows);
+        }
+        // A request rule's gate (`Program::asked_by`) goes with its rules: kept where the class keeps this member's
+        // (its first, under a new name), else dropped with them.
+        if let Some(by) = prog.asked_by.remove(from.as_str())
+            && firsts.contains(from.as_str())
+        {
+            prog.asked_by.entry(t.clone()).or_insert(by);
         }
         report.merged.push((t.clone(), from.clone()));
     }

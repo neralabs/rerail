@@ -44,6 +44,16 @@ impl ContentStore {
             .map_err(StoreError::from)
     }
 
+    /// `source_lease` of many sources, in their order, under one hold of the connection.
+    pub fn source_leases(&self, source_ids: &[SourceId], owner: &str) -> StoreResult<Vec<Option<i64>>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT p.lease_until FROM object_pins p JOIN strings s ON s.string_id=p.owner_string_id \
+             WHERE p.object_kind_id=?1 AND p.object_id=?2 AND s.domain_id=?3 AND s.value=?4",
+        )?;
+        source_ids.iter().map(|id| statement.query_row(params![OBJECT_SOURCE, id.0, STRING_OWNER, owner], |row| row.get(0)).optional().map_err(StoreError::from)).collect()
+    }
+
     pub fn pin_tape(&self, tape_id: TapeId, owner: &str, lease_until: i64) -> StoreResult<()> {
         self.pin_object(OBJECT_TAPE, tape_id.0, owner, lease_until)
     }

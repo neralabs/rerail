@@ -1,5 +1,5 @@
 //! Metal kernels: the one path from MSL source to a compute pipeline, and the store of compiled kernels every
-//! process of the user shares (decision 0387).
+//! process of the user shares (decision 0395).
 //!
 //! ```text
 //! RERAIL_METAL_KERNELS=<dir>|off      the store: ~/Library/Caches/rerail/metal-kernels by default
@@ -850,7 +850,7 @@ pub fn spawn_maintenance(engine: &Path) -> Option<u32> {
 mod tests {
     use super::*;
 
-    /// Decision 0387: a pipeline compiled once is in the store, and made from its archive once this process's
+    /// Decision 0395: a pipeline compiled once is in the store, and made from its archive once this process's
     /// memory is released (as a process that never compiled it would); `ready` in `defer` says `None` for one not
     /// compiled and records it as wanted; once compiled (as maintenance does), `ready` finds it.
     #[test]

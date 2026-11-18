@@ -195,6 +195,8 @@ pub(in crate::code_rule_dsl) fn run_with(
     let s = span("plan and evaluate");
     let got = match kept.as_ref().filter(|_| driven) {
         Some(k) => {
+            // Nothing is handed off in a chunk's guest rounds: the relations derived again are noted for none.
+            let derived_again = std::cell::RefCell::new(BTreeSet::new());
             let mut driver = super::Driver {
                 cross: prog,
                 // The slice's strata get their forms as they are reached: no general forms are written for it (0298
@@ -212,6 +214,7 @@ pub(in crate::code_rule_dsl) fn run_with(
                 has_delta: given_rels,
                 bound_olds: BTreeSet::new(),
                 no_delta: BTreeSet::new(),
+                derived_again: &derived_again,
                 maintains: BTreeSet::new(),
                 seeds,
                 counts: (0, 0, 0),

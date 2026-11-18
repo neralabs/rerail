@@ -1,7 +1,7 @@
 use super::{
-    metal_batch_abi::{LinkRecord, MetalNode},
+    metal_batch_abi::LinkRecord,
     native_cpu::NativeTaskContext,
-    native_cpu_capture_pair,
+    native_cpu_capture_pair, native_cpu_tape,
     native_ir::NativeModule,
     value::CaptureProgram,
 };
@@ -9,6 +9,7 @@ use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, condcodes::IntCC, t
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Linkage, Module};
+use rerail_clif::inline::ReadIds;
 use std::mem;
 
 fn pointer(
@@ -22,40 +23,15 @@ fn pointer(
         .load(ty, MemFlags::trusted(), base, offset as i32)
 }
 
-fn node_pointer(
-    function: &mut FunctionBuilder<'_>,
-    task: cranelift_codegen::ir::Value,
-    node: cranelift_codegen::ir::Value,
-) -> cranelift_codegen::ir::Value {
-    let ty = function.func.dfg.value_type(task);
-    let nodes = pointer(function, task, mem::offset_of!(NativeTaskContext, nodes));
-    let stride = function
-        .ins()
-        .imul_imm(node, mem::size_of::<MetalNode>() as i64);
-    let stride = function.ins().uextend(ty, stride);
-    function.ins().iadd(nodes, stride)
-}
-
 fn string_equal(
     function: &mut FunctionBuilder<'_>,
+    reads: &ReadIds,
     task: cranelift_codegen::ir::Value,
     node_id: cranelift_codegen::ir::Value,
     expected: &[u8],
 ) -> cranelift_codegen::ir::Value {
     let ty = function.func.dfg.value_type(task);
-    let node = node_pointer(function, task, node_id);
-    let start = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        node,
-        mem::offset_of!(MetalNode, source_start) as i32,
-    );
-    let end = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        node,
-        mem::offset_of!(MetalNode, source_end) as i32,
-    );
+    let (start, end) = native_cpu_tape::span(function, reads, task, node_id);
     let length = function.ins().isub(end, start);
     let length_matches = function
         .ins()
@@ -91,6 +67,7 @@ fn string_equal(
 
 fn string_contains(
     function: &mut FunctionBuilder<'_>,
+    reads: &ReadIds,
     task: cranelift_codegen::ir::Value,
     node_id: cranelift_codegen::ir::Value,
     expected: &[u8],
@@ -99,19 +76,7 @@ fn string_contains(
         return function.ins().iconst(types::I8, 1);
     }
     let ty = function.func.dfg.value_type(task);
-    let node = node_pointer(function, task, node_id);
-    let start = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        node,
-        mem::offset_of!(MetalNode, source_start) as i32,
-    );
-    let end = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        node,
-        mem::offset_of!(MetalNode, source_end) as i32,
-    );
+    let (start, end) = native_cpu_tape::span(function, reads, task, node_id);
     let length = function.ins().isub(end, start);
     let search = function.create_block();
     function.append_block_param(search, types::I32);
@@ -176,18 +141,13 @@ fn string_contains(
 
 fn relation_matches(
     function: &mut FunctionBuilder<'_>,
+    reads: &ReadIds,
     task: cranelift_codegen::ir::Value,
     node_id: cranelift_codegen::ir::Value,
     kinds: &[u16],
     ancestor: bool,
 ) -> cranelift_codegen::ir::Value {
-    let node = node_pointer(function, task, node_id);
-    let parent = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        node,
-        mem::offset_of!(MetalNode, parent) as i32,
-    );
+    let parent = native_cpu_tape::parent(function, reads, task, node_id);
     let inspect = function.create_block();
     function.append_block_param(inspect, types::I32);
     let check = function.create_block();
@@ -209,13 +169,7 @@ fn relation_matches(
         .brif(exists, check, &[parent.into()], reject, &[]);
     function.switch_to_block(check);
     let parent = function.block_params(check)[0];
-    let node = node_pointer(function, task, parent);
-    let actual = function.ins().load(
-        types::I32,
-        MemFlags::trusted(),
-        node,
-        mem::offset_of!(MetalNode, kind) as i32,
-    );
+    let actual = native_cpu_tape::kind(function, reads, task, parent);
     let mut found = function.ins().iconst(types::I8, 0);
     for kind in kinds {
         let equal = function
@@ -229,13 +183,7 @@ fn relation_matches(
             .brif(found, accept, &[], advance, &[parent.into()]);
         function.switch_to_block(advance);
         let parent = function.block_params(advance)[0];
-        let node = node_pointer(function, task, parent);
-        let parent = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            node,
-            mem::offset_of!(MetalNode, parent) as i32,
-        );
+        let parent = native_cpu_tape::parent(function, reads, task, parent);
         function.ins().jump(inspect, &[parent.into()]);
     } else {
         function.ins().brif(found, accept, &[], reject, &[]);
@@ -257,6 +205,7 @@ fn define_one(
     program: &CaptureProgram,
     values: &[FuncId],
 ) -> Result<(), Box<cranelift_module::ModuleError>> {
+    let reads = ReadIds::declare(module)?;
     let mut context = module.make_context();
     context.func.signature = module.make_signature();
     let pointer_type = module.target_config().pointer_type();
@@ -436,6 +385,7 @@ fn define_one(
                 for string in strings {
                     let found = string_equal(
                         &mut function,
+                        &reads,
                         task,
                         node,
                         &native.strings[usize::from(*string)],
@@ -446,13 +396,7 @@ fn define_one(
                 (result, negative)
             }
             CaptureProgram::Kind { kinds, .. } => {
-                let node = node_pointer(&mut function, task, node);
-                let actual = function.ins().load(
-                    types::I32,
-                    MemFlags::trusted(),
-                    node,
-                    mem::offset_of!(MetalNode, kind) as i32,
-                );
+                let actual = native_cpu_tape::kind(&mut function, &reads, task, node);
                 let mut result = function.ins().iconst(types::I8, 0);
                 for kind in kinds {
                     let found = function
@@ -471,6 +415,7 @@ fn define_one(
                 for string in strings {
                     let found = string_contains(
                         &mut function,
+                        &reads,
                         task,
                         node,
                         &native.strings[usize::from(*string)],
@@ -492,7 +437,7 @@ fn define_one(
             CaptureProgram::Relation {
                 kinds, ancestor, ..
             } => {
-                let result = relation_matches(&mut function, task, node, kinds, *ancestor);
+                let result = relation_matches(&mut function, &reads, task, node, kinds, *ancestor);
                 let negative = function.ins().bxor_imm(result, 1);
                 (result, negative)
             }

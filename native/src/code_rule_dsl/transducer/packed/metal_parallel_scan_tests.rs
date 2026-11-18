@@ -1,7 +1,17 @@
 //! Paired scans preserve eight independent count meanings and checked saturation.
 use super::super::metal_backend::launch::{LaunchScope, commit_checked, wait_checked};
-use super::super::metal_backend::metal_execution_guard;
+use super::super::metal_backend::evaluation_scope;
 use super::*;
+
+/// `count` values of `buffer`, from its start.
+fn read<T: Copy>(buffer: &MappedBuffer, count: usize) -> Result<Vec<T>, Error> {
+    let length = count.checked_mul(std::mem::size_of::<T>()).ok_or(Error::BackendFailure)?;
+    if length as u64 > buffer.buffer.length() {
+        return Err(Error::BackendFailure);
+    }
+    // SAFETY: `length` bytes lie in the buffer, which the finished command no longer writes.
+    Ok(unsafe { std::slice::from_raw_parts(buffer.buffer.contents().cast::<T>(), count).to_vec() })
+}
 
 fn oracle(values: &[[u32; 4]]) -> (Vec<[u32; 4]>, [u32; 4]) {
     let mut offsets = Vec::new();
@@ -34,7 +44,7 @@ fn independent_arenas_share_each_scan_level_without_mixing_columns_or_overflows(
         let expected_a = oracle(&a);
         let expected_b = oracle(&b);
         let (actual_a, actual_b, launches) = metal::objc::rc::autoreleasepool(|| {
-            let _guard = metal_execution_guard().unwrap();
+            let _scope = evaluation_scope();
             let scope = LaunchScope::enter();
             let device = Device::system_default().unwrap();
             let queue = device.new_command_queue();
@@ -58,7 +68,7 @@ fn independent_arenas_share_each_scan_level_without_mixing_columns_or_overflows(
             wait_checked(command).unwrap();
             let get = |scan: &Scan| {
                 let offsets =
-                    super::super::metal_register_execution::read::<[u32; 4]>(&scan.values, count)
+                    read::<[u32; 4]>(&scan.values, count)
                         .unwrap();
                 let sum = unsafe { scan.total().contents().cast::<[u32; 4]>().read() };
                 (offsets, sum)
@@ -76,7 +86,7 @@ fn independent_arenas_share_each_scan_level_without_mixing_columns_or_overflows(
 #[test]
 fn paired_scans_reject_aliases_and_different_domains_before_dispatch() {
     let (alias, different, trace) = {
-        let _guard = metal_execution_guard().unwrap();
+        let _scope = evaluation_scope();
         let scope = LaunchScope::enter();
         let device = Device::system_default().unwrap();
         let queue = device.new_command_queue();
@@ -96,7 +106,7 @@ fn paired_scans_reject_aliases_and_different_domains_before_dispatch() {
 
 #[test]
 fn independent_scan_domains_refuse_aliases_and_inconsistent_hierarchies_before_dispatch() {
-    let _guard = metal_execution_guard().unwrap();
+    let _scope = evaluation_scope();
     let scope = LaunchScope::enter();
     let before = scope.snapshot().len();
     let device = Device::system_default().unwrap();
@@ -126,7 +136,7 @@ fn independent_scan_domains_keep_every_saturated_prefix_with_one_dispatch() {
         (65_537, 257),
         (2_800_001, 10_938),
     ] {
-        let _guard = metal_execution_guard().unwrap();
+        let _scope = evaluation_scope();
         let scope = LaunchScope::enter();
         let before = scope.snapshot().len();
         let device = Device::system_default().unwrap();
@@ -158,7 +168,7 @@ fn independent_scan_domains_keep_every_saturated_prefix_with_one_dispatch() {
         wait_checked(command).unwrap();
         let execution_seconds = started.elapsed().as_secs_f64();
         for (scan, values) in [(&left, &left_values), (&right, &right_values)] {
-            let actual = super::super::metal_register_execution::read::<[u32; 4]>(
+            let actual = read::<[u32; 4]>(
                 &scan.values,
                 values.len(),
             )
@@ -191,7 +201,7 @@ fn bounded_scans_preserve_every_prefix_and_saturated_total_in_one_dispatch() {
         0, 1, 255, 256, 257, 65_536, 65_537, 1_048_577, 8_388_608, 8_388_609,
     ] {
         metal::objc::rc::autoreleasepool(|| {
-            let _guard = metal_execution_guard().unwrap();
+            let _scope = evaluation_scope();
             let scope = LaunchScope::enter();
             let device = Device::system_default().unwrap();
             let queue = device.new_command_queue();
@@ -214,7 +224,7 @@ fn bounded_scans_preserve_every_prefix_and_saturated_total_in_one_dispatch() {
             wait_checked(command).unwrap();
             let seconds = started.elapsed().as_secs_f64();
             let actual =
-                super::super::metal_register_execution::read::<[u32; 4]>(&scan.values, count)
+                read::<[u32; 4]>(&scan.values, count)
                     .unwrap();
             let total = unsafe { scan.total().contents().cast::<[u32; 4]>().read() };
             assert_eq!((actual, total), expected, "count={count}");
@@ -241,7 +251,7 @@ fn bounded_scans_preserve_every_prefix_and_saturated_total_in_one_dispatch() {
 fn gpu_counted_bounded_scans_preserve_inactive_values_and_every_live_prefix() {
     for count in [0usize, 1, 255, 256, 257, 65_536, 65_537] {
         metal::objc::rc::autoreleasepool(|| {
-            let _guard = metal_execution_guard().unwrap();
+            let _scope = evaluation_scope();
             let scope = LaunchScope::enter();
             let device = Device::system_default().unwrap();
             let queue = device.new_command_queue();
@@ -275,7 +285,7 @@ fn gpu_counted_bounded_scans_preserve_inactive_values_and_every_live_prefix() {
             commit_checked(command).unwrap();
             wait_checked(command).unwrap();
             let actual =
-                super::super::metal_register_execution::read::<[u32; 4]>(&scan.values, capacity)
+                read::<[u32; 4]>(&scan.values, capacity)
                     .unwrap();
             assert_eq!(actual, expected, "count={count}");
             assert_eq!(

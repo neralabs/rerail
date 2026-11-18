@@ -1,5 +1,24 @@
 # Agent instructions
 
+## Blocks are never copied
+
+Read [decision 0353](docs/final-shape/decisions/0353-blocks-are-never-copied-every-reader-reads-in-place.md)
+before touching how the engine holds or reads data. Data lives in one place, in one layout: a document's tape, the
+relations the rules derive, and their indexes, each in its block. Every reader reads it there: the CPU executor, the
+JIT, the Metal kernels and SQLite's virtual tables, all through the reads written once in CLIF (decision 0310).
+
+- **Never copy a block or a tape into another data structure.** That includes columns, rows, per-node arrays, a
+  device relation, an upload, a staging vector or a "view made" for a kernel. No exception for convenience, speed,
+  a layout a kernel prefers, or a missing accessor. Write the missing read instead, once.
+- **A view (`node`, `child`, `field`, `line`, …) is a read of the tape, not a relation.** Nothing makes its rows.
+- **Not copies:**
+  - a load from disk to the exact in-memory bytes;
+  - a derived fact (a rule's head, an axis's answer, an interned text), written once where it is computed, into a
+    relation in a block;
+  - an index in its relation's block.
+- **The copies that still exist are listed in 0353** and marked `copy (0353 step N)` in the code. The list only
+  shrinks. `scripts/check/check-no-block-copies.py` (pre-commit) refuses a commit that adds one.
+
 ## Builds and test runs
 
 Run every build and test run at a high nice value, so it never starves other work on the

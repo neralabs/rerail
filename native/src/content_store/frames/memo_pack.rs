@@ -178,10 +178,10 @@ impl ContentStore {
 
     /// A run's memo entries its waves may look up (decision 0104: read before its first wave): in `space` (its
     /// plan's, `local_space`), each path's newest but those of `looked_up` (paths looked up before the first wave,
-    /// from the store), held with the snapshot; `hold` is given each, to hold what it names before the waves. Once a
+    /// from the store), held with the snapshot; `hold` is given them all at once, to hold what they name before the waves. Once a
     /// process for each space. Returns how many it read, their bytes, and the paths whose entries it admitted:
     /// `None` when this process admitted the space's already (or holds no snapshot).
-    pub fn admit_memo_entries(&self, space: &[u8; 32], looked_up: &HashSet<&str>, hold: &dyn Fn(&MemoBlob) -> StoreResult<()>) -> StoreResult<(usize, usize, Option<HashSet<String>>)> {
+    pub fn admit_memo_entries(&self, space: &[u8; 32], looked_up: &HashSet<&str>, hold: &dyn Fn(&[&MemoBlob]) -> StoreResult<()>) -> StoreResult<(usize, usize, Option<HashSet<String>>)> {
         let Some(snapshot) = self.snapshot() else { return Ok((0, 0, None)) };
         if !snapshot.lock().expect("the frames' snapshot").admitted.insert(*space) {
             return Ok((0, 0, None));
@@ -203,9 +203,7 @@ impl ContentStore {
         }
         paths.retain(|p| !looked_up.contains(p.as_str()));
         let got = self.blobs_of(newest);
-        for blob in got.values() {
-            hold(blob)?;
-        }
+        hold(&got.values().map(|b| &**b).collect::<Vec<&MemoBlob>>())?;
         let bytes = got.values().map(|b| b.bytes.len()).sum::<usize>();
         let n = got.len();
         let mut snapshot = snapshot.lock().expect("the frames' snapshot");

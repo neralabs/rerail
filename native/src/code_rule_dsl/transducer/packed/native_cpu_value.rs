@@ -1,11 +1,12 @@
 use super::{
-    metal_batch_abi::MetalNode, native_cpu::NativeTaskContext, native_cpu_lua, native_cpu_regex,
+    native_cpu::NativeTaskContext, native_cpu_lua, native_cpu_regex, native_cpu_tape,
     native_ir::NativeModule, output::OutputInstruction, value::ValueProgram,
 };
 use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Linkage, Module};
+use rerail_clif::inline::ReadIds;
 use std::mem;
 
 fn context_pointer(
@@ -25,6 +26,7 @@ fn define_bytes(
     expected: &[u8],
     prefix: bool,
 ) -> Result<(), Box<cranelift_module::ModuleError>> {
+    let reads = ReadIds::declare(module)?;
     let mut context = module.make_context();
     context.func.signature = module.make_signature();
     let pointer_type = module.target_config().pointer_type();
@@ -68,28 +70,7 @@ fn define_bytes(
         function.ins().brif(valid_node, inspect, &[], invalid, &[]);
 
         function.switch_to_block(inspect);
-        let nodes = context_pointer(
-            &mut function,
-            task,
-            mem::offset_of!(NativeTaskContext, nodes),
-        );
-        let stride = function
-            .ins()
-            .imul_imm(node_index, mem::size_of::<MetalNode>() as i64);
-        let stride = function.ins().uextend(pointer_type, stride);
-        let node = function.ins().iadd(nodes, stride);
-        let start = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            node,
-            mem::offset_of!(MetalNode, source_start) as i32,
-        );
-        let end = function.ins().load(
-            types::I32,
-            MemFlags::trusted(),
-            node,
-            mem::offset_of!(MetalNode, source_end) as i32,
-        );
+        let (start, end) = native_cpu_tape::span(&mut function, &reads, task, node_index);
         let ordered = function
             .ins()
             .icmp(IntCC::UnsignedGreaterThanOrEqual, end, start);

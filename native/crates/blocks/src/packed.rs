@@ -143,7 +143,7 @@ fn plan<'s>(scratch: &'s Scratch, arity: usize, spec: &Spec, cols: &'s [i64], n:
 /// Lays out the block (descriptors, and every column's words, zero), then packs the columns into it in
 /// parallel: each column into its own words.
 fn place(plan: &Plan, spec: &Spec, kind: u32) -> (Block, PackStats) {
-    let block = Block::anon(kind, plan.bytes());
+    let block = crate::alloc::host(kind, plan.bytes());
     let p: *mut Packed = block.alloc_t(1);
     let cp: *mut IntCol = block.alloc_t(plan.arity);
     let ip: *mut PIndex = block.alloc_t(plan.indexes.len().max(1));
