@@ -390,3 +390,30 @@ rules make it one (`written == 1`, before any is left out). `cparam` is derived,
 readers are maintained (O125 steps 00–02: no stratum "changed without a version", 186 maintained against 180).
 R3's test holds the case: `defq` copies `def` and joins `lonely`, a cross-file relation that is always empty.
 Without the check it fails ("not reached, its rows not kept").
+
+## Step 7: the static check in the engine (R6)
+
+`plan/wellfounded.rs` is `wf.py` ported (decision 0364 §5). It is an analysis of the whole program's version
+(`Proofs`), made once, and a run asks it by component:
+- the session's driver gives the one made of the program the parts were split from (`Programs::program`,
+  `Maintain::proofs`);
+- a run with no split (a plain run, a chunk's guest rounds) makes it of its own version.
+
+It must read the whole program. In the cross part, a file-local helper (`attr_of`, `rasg`) is an input, and a join
+pushed into the chunks (`fl<n>_<rule>`, decision 0051) holds tree steps whose rules the part does not have. Checked
+over the cross part's version alone, every one of the corpus's nine maintained recursive components failed, `walk`,
+`qn` and `icall/vpos/vroot` included, which `wf.py` proves. The check also reads `nearest` as the engine lowers it,
+`rr_nearest_<set>(n, a)`, a step up.
+
+A proved component:
+- keeps no levels: neither its first derivation's `leveled` line nor the mode's;
+- is maintained with no levels on its kept rows;
+- gets a `measured` line in setfix in place of `leveled`. Its candidates go in a heap keyed by the measure, then the
+  relation's rank: the node's depth (`ast_depth`) ascending or descending, its document order (`node_order`)
+  descending, or the index;
+- has each candidate rechecked once, over the relations as they are (no `cap`), and a row gone is never derived
+  again: every row a candidate's derivations read is before it in that order, so already decided;
+- is counted maintained, not by levels.
+
+`r6_a_component_that_cannot_cycle_keeps_no_levels` passes and is no longer ignored. With the proof forced off it
+fails (by levels: 1). R5's ring, which can cycle, is still maintained by levels.

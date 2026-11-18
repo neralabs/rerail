@@ -1233,9 +1233,36 @@ struct MaintMode {
     /// row gone, found from the row.
     drivers: Vec<(usize, usize, JoinRule, Vec<Arg>)>,
     leveled: bool,
+    /// A component the static check proved (`Line::Measured`): candidates in its measure's order, rechecked once
+    /// each, with no levels.
+    measured: Option<Measured>,
     done: bool,
     /// Candidates, those killed, and checked adds added: the run's report.
     counts: [u64; 3],
+}
+
+/// A proved component's measure (`Line::Measured`).
+struct Measured {
+    desc: bool,
+    key: Option<String>,
+    cols: Vec<usize>,
+    ranks: Vec<usize>,
+}
+
+impl Measured {
+    /// Row `row` of relation `r`'s place in the order, as the heap pops it (least first): its key, then its rank.
+    fn key(&self, conn: Option<&Connection>, r: usize, row: &[i64]) -> Result<(i64, u32)> {
+        let v = *row.get(self.cols[r]).ok_or_else(|| err(format!("measured: relation {r} has no column {}", self.cols[r])))?;
+        let k = match &self.key {
+            None => v,
+            Some(sql) => {
+                let conn = conn.ok_or_else(|| err("measured: a key read with no connection".to_owned()))?;
+                let mut st = conn.prepare_cached(sql).map_err(|e| err(format!("measured key {sql}: {e}")))?;
+                st.query_row([v], |r| r.get::<_, i64>(0)).map_err(|e| err(format!("measured key {sql} of {v}: {e}")))?
+            }
+        };
+        Ok((if self.desc { !k } else { k }, self.ranks[r] as u32))
+    }
 }
 
 impl MaintMode {
@@ -1309,38 +1336,54 @@ impl MaintMode {
     /// and the rows that read it are candidates at their own levels. Then each row gone that a rule derives now is
     /// added again (a new row, above every kept level: a rewrite is a kill and an add), with the checked adds, as the
     /// first wave's delta: the waves carry them on.
-    fn run_leveled(&mut self, store: &mut Store, syms: &mut Interner) -> Result<()> {
+    ///
+    /// A component the static check proved (`measured`, decision 0364 §5) keeps no levels: its candidates go in its
+    /// measure's order, and a row's derivations read only rows before it there, all decided. So each is rechecked
+    /// once, over the relations as they are (no `cap`), and a row gone is never derived again.
+    fn run_leveled(&mut self, store: &mut Store, syms: &mut Interner, conn: Option<&Connection>) -> Result<()> {
         use std::cmp::Reverse;
+        type Heap = std::collections::BinaryHeap<Reverse<(i64, u32, usize, u32)>>;
         let mut out = Vec::new();
-        let mut heap: std::collections::BinaryHeap<Reverse<(u32, usize, u32)>> = Default::default();
+        let mut heap: Heap = Default::default();
         let mut seen: rustc_hash::FxHashSet<(usize, u32)> = Default::default();
-        let level_of = |store: &Store, r: usize, id: u32| store.rels[r].level.get(id as usize).copied().unwrap_or(0);
-        let push = |heap: &mut std::collections::BinaryHeap<Reverse<(u32, usize, u32)>>, store: &Store, r: usize, rows: &[i64], seen: &mut rustc_hash::FxHashSet<(usize, u32)>, counts: &mut [u64; 3]| {
+        let measured = self.measured.take();
+        let what = if measured.is_some() { "measure" } else { "levels" };
+        let push = |heap: &mut Heap, store: &Store, r: usize, rows: &[i64], seen: &mut rustc_hash::FxHashSet<(usize, u32)>, counts: &mut [u64; 3]| -> Result<()> {
             let rel = &store.rels[r];
             for row in rows.chunks_exact(rel.k.max(1)) {
                 if let Some(id) = rel.find(row, |id| is_dead(&rel.dead, id)) && seen.insert((r, id)) {
                     counts[0] += 1;
-                    heap.push(Reverse((level_of(store, r, id), r, id)));
+                    let (k, rank) = match &measured {
+                        Some(m) => m.key(conn, r, row)?,
+                        None => (i64::from(rel.level.get(id as usize).copied().unwrap_or(0)), 0),
+                    };
+                    heap.push(Reverse((k, rank, r, id)));
                 }
             }
+            Ok(())
         };
         for (head, j) in &self.removes {
-            let _s = crate::code_rule_dsl::logic::profile::span(|| "mode: a removal join (levels)".into());
+            let _s = crate::code_rule_dsl::logic::profile::span(|| format!("mode: a removal join ({what})"));
             let mut rows = Vec::new();
             run_join_collect(j, store, syms, &[], &mut rows)?;
-            push(&mut heap, store, *head, &rows, &mut seen, &mut self.counts);
+            push(&mut heap, store, *head, &rows, &mut seen, &mut self.counts)?;
         }
         let mut gone: Vec<(usize, Vec<i64>)> = Vec::new();
-        let _s = crate::code_rule_dsl::logic::profile::span(|| format!("mode: candidates by levels ({} first)", heap.len()));
-        while let Some(Reverse((l, r, id))) = heap.pop() {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| format!("mode: candidates by {what} ({} first)", heap.len()));
+        while let Some(Reverse((l, _, r, id))) = heap.pop() {
             let row: Vec<i64> = store.rels[r].row(id as usize).to_vec();
-            for rel in &mut store.rels {
-                rel.cap = l;
-            }
-            let stays = self.derives(r, &row, store, syms, &mut out);
-            for rel in &mut store.rels {
-                rel.cap = u32::MAX;
-            }
+            let stays = if measured.is_some() {
+                self.derives(r, &row, store, syms, &mut out)
+            } else {
+                for rel in &mut store.rels {
+                    rel.cap = l as u32;
+                }
+                let stays = self.derives(r, &row, store, syms, &mut out);
+                for rel in &mut store.rels {
+                    rel.cap = u32::MAX;
+                }
+                stays
+            };
             if stays? {
                 continue;
             }
@@ -1352,10 +1395,12 @@ impl MaintMode {
             for d in self.drivers.iter().filter(|d| d.0 == r) {
                 Self::readers(d, &row, store, syms, &mut out)?;
                 let rows = std::mem::take(&mut out);
-                push(&mut heap, store, d.1, &rows, &mut seen, &mut self.counts);
+                push(&mut heap, store, d.1, &rows, &mut seen, &mut self.counts)?;
                 out = rows;
             }
-            gone.push((r, row));
+            if measured.is_none() {
+                gone.push((r, row));
+            }
         }
         drop(_s);
         // Added again where a rule derives it now, and the checked adds; then the first wave's delta.
@@ -1369,7 +1414,7 @@ impl MaintMode {
         }
         drop(_s);
         for (head, j) in &self.adds {
-            let _s = crate::code_rule_dsl::logic::profile::span(|| "mode: a checked add (levels)".into());
+            let _s = crate::code_rule_dsl::logic::profile::span(|| format!("mode: a checked add ({what})"));
             let mut rows = Vec::new();
             run_join_collect(j, store, syms, &[], &mut rows)?;
             let k = store.rels[*head].k;
@@ -1395,7 +1440,7 @@ impl MaintMode {
 
     /// The removals, then the checked adds (decision 0364 stage 3). A non-recursive component's rules read no
     /// relation of it, so a recheck reads only lower strata, whose rows are final: candidates are decided in any order.
-    fn run(&mut self, store: &mut Store, syms: &mut Interner) -> Result<()> {
+    fn run(&mut self, store: &mut Store, syms: &mut Interner, conn: Option<&Connection>) -> Result<()> {
         if self.done {
             return Ok(());
         }
@@ -1407,7 +1452,7 @@ impl MaintMode {
             }
         }
         if self.leveled {
-            return self.run_leveled(store, syms);
+            return self.run_leveled(store, syms, conn);
         }
         let mut out = Vec::new();
         let mut kills: Vec<(usize, u32)> = Vec::new();
@@ -1777,6 +1822,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             Line::Unplanned { head, delta } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Unplanned, whole: None, wkey: None, budget: Default::default() }),
             Line::Device => device_wanted = solver().is_some(),
             Line::Leveled(rels) => { leveled = true; cyclic.extend(rels.iter().copied()); }
+            Line::Measured { desc, key, cols, ranks } => maint.measured = Some(Measured { desc: *desc, key: key.clone(), cols: cols.clone(), ranks: ranks.clone() }),
             Line::KeptOld => kept_old = true,
             Line::KeptRows(_) => {}
             Line::Lattice { rel, keys, name, widen } => {
@@ -2074,7 +2120,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         let mut maint = std::mem::take(&mut comp.maint);
         let store = Arc::clone(&comp.store);
         let mut guard = store.write().unwrap();
-        let ran = maint.run(&mut guard, &mut cursor);
+        let ran = maint.run(&mut guard, &mut cursor, conn.sql().ok());
         drop(guard);
         crate::code_rule_dsl::logic::profile::decision("the maintain mode (decision 0364)", || format!("{name}: {} candidates, {} killed, {} checked adds added", maint.counts[0], maint.counts[1], maint.counts[2]));
         comp.maint = maint;

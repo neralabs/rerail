@@ -4969,6 +4969,9 @@ pub struct Run<'a, 'b> {
     answer_logs: HashMap<usize, BTreeMap<String, BTreeSet<Vec<i64>>>>,
     /// The run's quiet strata, shared with its strands (`QuietTally`).
     quiet: Arc<QuietTally>,
+    /// The static check of the program the run's part is of (decision 0364 §5): given by the caller
+    /// (`Maintain::proofs`), else made of the run's own version when first asked.
+    proofs: std::sync::OnceLock<Arc<wellfounded::Proofs>>,
 }
 
 /// The runner's answer to requests (`Run::answer`): a request relation and its new rows (atoms and integers), to the
@@ -6758,6 +6761,7 @@ impl<'a> Run<'a, '_> {
             logging: None,
             answer_logs: HashMap::new(),
             quiet: Arc::clone(&self.quiet),
+            proofs: self.proofs.clone(),
         }, arena, (0, 0)))
     }
 
@@ -7320,6 +7324,17 @@ impl<'a> Run<'a, '_> {
     /// rule of it reading it (not recursive), each rule's body joins, negations and comparisons with a head of
     /// variables and constants, its kept rows in memory, and each read that changed (`moved`) a native relation
     /// that started from its kept one this run (it has a version).
+    /// The static check's verdict on recursive component `scc` (decision 0364 §5).
+    fn proof(&self, scc: &BTreeSet<String>) -> std::result::Result<wellfounded::Measure, String> {
+        let proofs = match self.proofs.get() {
+            Some(p) => p,
+            None => {
+                let made = super::program_image::manager::analysis::<wellfounded::Proofs>(&self.versions.placed(self.version).v)?;
+                self.proofs.get_or_init(|| made)
+            }
+        };
+        proofs.of(scc)
+    }
     fn maintain_mode_blocks(&self, scc: &BTreeSet<String>, rules: &[RuleKey], moved: &BTreeSet<String>, olds: &BTreeMap<String, Arc<super::native::component::InRel>>, ins: &ModeInputs) -> Option<String> {
         if std::env::var("RERAIL_MAINTAIN_MODE").is_ok_and(|v| v == "off") {
             return Some("RERAIL_MAINTAIN_MODE=off".into());
@@ -7337,9 +7352,10 @@ impl<'a> Run<'a, '_> {
                 return Some("a native, lattice, gate, request, produced, input or fact relation".into());
             }
         }
-        // Recursive: by levels (decision 0364 §2), every relation's kept rows with theirs.
+        // Recursive: by levels (decision 0364 §2), every relation's kept rows with theirs; or proved by the static
+        // check (§5), which keeps none.
         let recursive = rules.iter().any(|&r| { let b = self.versions.at(r); (0..b.len()).any(|i| matches!(b.view(i), Lit::Atom(a) if scc.contains(b.rel(a)))) });
-        if recursive && !olds.values().all(|o| o.has_levels() || o.rows() == 0) {
+        if recursive && !olds.values().all(|o| o.has_levels() || o.rows() == 0) && self.proof(scc).is_err() {
             return Some("recursive, its kept rows without levels".into());
         }
         if rules.is_empty() {
@@ -7408,15 +7424,34 @@ impl<'a> Run<'a, '_> {
         lines.push(SpecLine::NoWrite);
         let recursive = bodies.iter().any(|b| (0..b.len()).any(|i| matches!(b.view(i), Lit::Atom(a) if scc.contains(b.rel(a)))));
         if recursive {
-            // The static check (0364 §5, R6): whether the component cannot hold a row up by itself.
-            let types = |r: &str| pf.types(r).into_iter().map(str::to_owned).collect::<Vec<_>>();
-            let proved = wellfounded::check(&vs.placed(self.version).v, &types, scc);
-            super::profile::decision("the static check (decision 0364 §5)", || format!("{}: {}", stratum_key(scc), proved.as_ref().map_or_else(|w| format!("not proved: {w}"), |m| format!("proved, {:?}", m.order))));
+            // The static check (0364 §5, R6): a component that cannot hold a row up by itself keeps no levels, its
+            // candidates rechecked once each in its measure's order: by the depth or document order of the node at
+            // each relation's measure column (read from `ast_depth`, `node_order`), or by its index.
+            let proved = self.proof(scc);
+            let shown = proved.as_ref().map_or_else(|w| format!("not proved: {w}"), |m| format!("proved, {:?}", m.order));
+            super::profile::decision("the static check (decision 0364 §5)", || format!("{}: {shown}", stratum_key(scc)));
             if std::env::var_os("RERAIL_MODE_TRACE").is_some() {
-                eprintln!("RERAIL_MODE_TRACE {}: the static check: {}", stratum_key(scc), proved.as_ref().map_or_else(|w| format!("not proved: {w}"), |m| format!("proved, {:?}", m.order)));
+                eprintln!("RERAIL_MODE_TRACE {}: the static check: {shown}", stratum_key(scc));
             }
-            // Its rows keep levels, and its kept rows are no wave's delta: the first wave's is what the removals put back.
-            lines.push(SpecLine::Leveled((0..scc.len()).collect()));
+            match proved {
+                Ok(m) => {
+                    use wellfounded::Order;
+                    let facts = &self.model.inputs.facts;
+                    let (desc, key) = match m.order {
+                        Order::Down => (false, Some(format!("SELECT k FROM {facts}ast_depth WHERE n = ?1"))),
+                        Order::Up => (true, Some(format!("SELECT k FROM {facts}ast_depth WHERE n = ?1"))),
+                        Order::Back => (true, Some(format!("SELECT k FROM {facts}node_order WHERE n = ?1"))),
+                        Order::Climbs | Order::Same => (false, None),
+                        Order::Falls => (true, None),
+                    };
+                    let cols = scc.iter().map(|r| m.col.get(r).copied().unwrap_or(0)).collect();
+                    let ranks = scc.iter().map(|r| m.rank.get(r).copied().unwrap_or(0) as usize).collect();
+                    lines.push(SpecLine::Measured { desc, key, cols, ranks });
+                }
+                // Its rows keep levels.
+                Err(_) => lines.push(SpecLine::Leveled((0..scc.len()).collect())),
+            }
+            // Its kept rows are no wave's delta: the first wave's is what the removals put back.
             lines.push(SpecLine::KeptOld);
         }
         // The changed inputs' versions, given in place over their sources beside each input (`give_versions`) while
@@ -7903,8 +7938,9 @@ impl<'a> Run<'a, '_> {
         // The relations' lines go here, once the seeds SQL derives are known (below).
         let rel_at = lines.len();
         lines.push(SpecLine::NoWrite);
-        // Its rows keep levels where a session maintains it by them (decision 0090, the `levels` qualifier).
-        if scc.iter().any(|r| f.qualified(r, "levels")) {
+        // Its rows keep levels where a session maintains it by them (decision 0090, the `levels` qualifier), unless
+        // the static check proves it needs none (decision 0364 §5).
+        if scc.iter().any(|r| f.qualified(r, "levels")) && self.proof(scc).is_err() {
             lines.push(SpecLine::Leveled(rels.iter().enumerate().filter(|(_, r)| cyclic.contains(r.as_str())).map(|(i, _)| i).collect()));
         }
         // A component that answers requests (decision 0065 §2a) cannot fall back to SQL whole: a rule with no native
@@ -9787,6 +9823,11 @@ pub trait Maintain {
     fn given(&self, rel: &str) -> Option<[Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 2]>;
     /// Input `rel`'s rows as the last run had them, read in place (the maintain mode's `old` of an input).
     fn old_input(&self, rel: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>;
+    /// The static check of the whole program the run's part was split from (decision 0364 §5); `None`: the run
+    /// checks its own version, which holds only the part's rules.
+    fn proofs(&self) -> Option<Arc<wellfounded::Proofs>> {
+        None
+    }
 }
 
 
@@ -10849,7 +10890,10 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     let mut unread: BTreeSet<String> = BTreeSet::new();
     let mut prepared_to = 0usize;
     let projections0: HashMap<String, Vec<(usize, i64)>> = super::program_image::analyses::projections(&p0.v).into_iter().map(|(r, eqs)| (p0.v.rel_name(r).to_owned(), eqs)).collect();
-    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, mode_reads: Default::default(), answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
+    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, mode_reads: Default::default(), answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default(), proofs: Default::default() };
+    if let Some(p) = maintaining.as_deref().and_then(|m| m.proofs()) {
+        let _ = run.proofs.set(p);
+    }
     // A native run makes no views: a projection of an input is a stratum like any, run from the input where it is
     // held (decision 0104: no SQL in the run's waves). A SQL run reads its inputs through views in place.
     let planned_views = if atoms && !native.is_empty() { Vec::new() } else { plan_views(f0, &Arc::clone(&run.versions), &mut run.model, &rules_by)? };
@@ -11514,7 +11558,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                         outcome.native.insert(key);
                         continue;
                     }
-                    m.mode_ran(scc, recursive);
+                    m.mode_ran(scc, recursive && run.proof(scc).is_err());
                     for r in scc {
                         let rel = super::native::component::held(db, r).ok_or_else(|| Error::Plan(format!("{r}: not held after its maintain mode")))?;
                         let (gone, added) = rel.version_counts().ok_or_else(|| Error::Plan(format!("{r}: no version after its maintain mode")))?;

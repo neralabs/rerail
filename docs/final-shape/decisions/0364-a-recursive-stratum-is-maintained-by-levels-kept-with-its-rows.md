@@ -438,8 +438,10 @@ against the forms' figures (t43, "Measurements").
 
 - **Instructions.** Every real-data figure is rows, candidates, probes and rewrites. Instructions come when the
   evaluator's mode runs it. The only instruction figures for levels are the spike's.
-- **The static check in the engine.** `wf.py` is a script. It would also be worth teaching it string length
-  (`@pkg_up`-style chains) and the tree helpers it cannot read yet.
+- **The static check in the engine** is `plan/wellfounded.rs` (2026-11-18, t43 step 7): `wf.py` ported, an analysis
+  of the whole program's version that a part's run asks by component. It reads `nearest` as the engine lowers it
+  (`rr_nearest_<set>`). Still worth teaching it string length (`@pkg_up`-style chains) and the tree helpers it
+  cannot read yet.
 - **A dump artifact.** In the data-layer history's first state, the run split into 2 chunks and dumped 210
   `dotted_expr` rows that no `drv` rule derives. It is a file-local relation, and the rows measured are the heads,
   but the cause is not known (`REC_LAX`).

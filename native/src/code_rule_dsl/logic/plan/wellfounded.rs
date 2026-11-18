@@ -11,6 +11,9 @@
 //! conservative, as the script is: a step it cannot read (a helper between the two nodes it does not know) fails the
 //! component, with the reason. It is more so in two places: only variables link one step to the next (the script
 //! linked through `_` too), and a tree step with an index step in one component is refused.
+use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
+use crate::code_rule_dsl::logic::program_image::analyses::Components;
+use crate::code_rule_dsl::logic::program_image::manager::{Analysis, Cx, Reads};
 use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -149,7 +152,9 @@ fn order(rule: &Rule, helpers: &Helpers, x: u32, y: u32) -> Option<Step> {
     }
     for at in &rule.atoms {
         let col = |c: usize| at.args.get(c).and_then(Arg::var);
-        if let Some(&(_, b, u)) = BELOW.iter().find(|(r, _, _)| *r == at.rel) {
+        // `nearest(n, a, set)` as the engine lowers it: `rr_nearest_<set>(n, a)`, `n` strictly below `a`.
+        let below = BELOW.iter().find(|(r, _, _)| *r == at.rel).copied().or_else(|| at.rel.starts_with(crate::code_rule_dsl::logic::front::ast::NEAREST).then_some(("", 0, 1)));
+        if let Some((_, b, u)) = below {
             if let (Some(b), Some(u)) = (col(b), col(u)) {
                 e.entry(u).or_default().push((b, Step::D));
                 e.entry(b).or_default().push((u, Step::U));
@@ -310,6 +315,49 @@ pub fn check(v: &Version, types: &dyn Fn(&str) -> Vec<String>, comp: &BTreeSet<S
     let rules = rules_of(v);
     let helpers = summarize(&rules, types);
     classify(&rules, &helpers, types, comp)
+}
+
+/// The static check of every recursive component of a program (preparation's, decision 0364 §5): an analysis of its
+/// version, made once and shared. A part's run asks it of the program the part was split from, whose rules it reads
+/// whole: a part reads a file-local helper as an input, or a join pushed into the chunks (`fl<n>_<rule>`, decision
+/// 0051), whose rules the part does not hold.
+#[derive(Debug, PartialEq)]
+pub struct Proofs {
+    /// Each recursive component, its relations sorted, and its verdict.
+    comps: Vec<(BTreeSet<String>, Result<Measure, String>)>,
+}
+
+impl Proofs {
+    /// The verdict on `scc`, which must be a component of the program: else not proved.
+    pub fn of(&self, scc: &BTreeSet<String>) -> Result<Measure, String> {
+        let first = scc.iter().next().ok_or("an empty component")?;
+        match self.comps.iter().find(|(c, _)| c.contains(first)) {
+            Some((c, v)) if c == scc => v.clone(),
+            Some(_) => Err("not the program's component".into()),
+            None => Err("not a recursive component of the program".into()),
+        }
+    }
+    /// Proved and not, counted.
+    pub fn counts(&self) -> (usize, usize) {
+        let proved = self.comps.iter().filter(|(_, v)| v.is_ok()).count();
+        (proved, self.comps.len() - proved)
+    }
+}
+
+impl Analysis for Proofs {
+    const NAME: &'static str = "well-founded components";
+    const READS: Reads = Reads::RULES.or(Reads::DECLS).or(Reads::ABOUT);
+    fn compute(cx: &Cx<'_>) -> Result<Proofs, String> {
+        let d = cx.get::<FieldsData>()?;
+        let f = Fields::over(cx.v(), &d);
+        let types = |r: &str| f.types(r).into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let rules = rules_of(cx.v());
+        let helpers = summarize(&rules, &types);
+        let comps = cx.get::<Components>()?;
+        let recursive = |c: &BTreeSet<String>| rules.iter().any(|r| c.contains(&r.head.rel) && r.atoms.iter().any(|a| c.contains(&a.rel)));
+        let comps = comps.0.iter().filter(|c| recursive(c)).map(|c| (c.clone(), classify(&rules, &helpers, &types, c))).collect();
+        Ok(Proofs { comps })
+    }
 }
 
 fn classify(rules: &[Rule], helpers: &Helpers, types: &dyn Fn(&str) -> Vec<String>, comp: &BTreeSet<String>) -> Result<Measure, String> {
@@ -501,6 +549,36 @@ mod tests {
             &["a", "b"],
         );
         assert_eq!(cycle, Err("a cycle at one node".into()));
+    }
+
+    /// `nearest(n, a, set)` as the engine lowers it (`rr_nearest_<set>(n, a)`) is a step up: a walk out through
+    /// scopes (calls.rr's `walk`) is proved, nearer scopes first.
+    #[test]
+    fn a_walk_out_through_lowered_nearest_scopes() {
+        let m = check_of(
+            ".decl rr_nearest_fscope(n: node, a: node)\n.decl start(n: node, s: node)\nstart(n, s) :- rr_nearest_fscope(n, s).\n\
+             .decl walk(n: node, s: node)\nwalk(n, s) :- start(n, s).\nwalk(n, p) :- walk(n, s), rr_nearest_fscope(s, p).\n",
+            &["walk"],
+        )
+        .expect("proved");
+        assert_eq!((m.order, m.col["walk"]), (Order::Up, 1));
+    }
+
+    /// The program's proofs answer for its components, and for no set that is not one.
+    #[test]
+    fn the_programs_proofs_answer_by_component() {
+        let p = crate::code_rule_dsl::logic::rr::parse(&format!(
+            "{DECLS}.decl below(a: node, c: node)\nbelow(a, c) :- child(a, c, _).\nbelow(a, c) :- below(a, b), child(b, c, _).\n\
+             .decl reach(a: symbol, b: symbol)\nreach(a, b) :- edge(a, b).\nreach(a, c) :- reach(a, b), edge(b, c).\n.output below\n.output reach\n"
+        ))
+        .expect("parses");
+        let placed = super::super::body::Placed::of_program(&p).expect("placed");
+        let proofs = crate::code_rule_dsl::logic::program_image::manager::analysis::<Proofs>(&placed.v).expect("proofs");
+        let set = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<String>>();
+        assert_eq!(proofs.counts(), (1, 1));
+        assert_eq!(proofs.of(&set(&["below"])).map(|m| m.order), Ok(Order::Down));
+        assert!(proofs.of(&set(&["reach"])).is_err());
+        assert_eq!(proofs.of(&set(&["below", "reach"])), Err("not the program's component".into()));
     }
 
     /// Same-node steps without a cycle are ranked: a relation after the ones it reads at its node.

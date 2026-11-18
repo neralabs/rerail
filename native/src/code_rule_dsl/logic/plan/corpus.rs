@@ -9058,6 +9058,7 @@ fn run_observed(
                                 maintains: BTreeSet::new(),
                                 seeds: std::mem::take(&mut seeds),
                                 given: maintained.given.clone(),
+                                proofs: Some(crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::plan::wellfounded::Proofs>(&split.program).map_err(Error::Plan)?),
                             };
                             let hooks = crate::code_rule_dsl::logic::plan::Hooks { maintain: Some(&mut driver), hand_off: hand_off.then_some(&mut hand as &mut dyn FnMut(&str) -> Result<bool>), unload: let_go_inputs.then_some(&mut unload as &mut dyn FnMut(&[String]) -> Result<()>), texts: Some(Arc::clone(&vocabulary)), ..Default::default() };
                             let got = super::run_atoms_native_hooked(part, &db, "main", stats, keep, modes, hooks)?;
@@ -9782,6 +9783,8 @@ struct Driver<'d, 'k> {
     seeds: Vec<String>,
     /// The changed inputs' rows gone and added (`driven_part`).
     given: maintain::Given,
+    /// The static check of the whole program (decision 0364 §5), when the caller has it.
+    proofs: Option<Arc<crate::code_rule_dsl::logic::plan::wellfounded::Proofs>>,
 }
 
 
@@ -9844,6 +9847,10 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
 
     fn old_input(&self, rel: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
         self.kept.old_source(rel, rel).filter(|(_, held)| held.is_none()).map(|(s, _)| s)
+    }
+
+    fn proofs(&self) -> Option<Arc<crate::code_rule_dsl::logic::plan::wellfounded::Proofs>> {
+        self.proofs.clone()
     }
 
     fn mode_ran(&mut self, scc: &BTreeSet<String>, recursive: bool) {

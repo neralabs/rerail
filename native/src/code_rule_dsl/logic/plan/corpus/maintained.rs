@@ -210,6 +210,8 @@ pub(in crate::code_rule_dsl) fn run_with(
                 maintains: BTreeSet::new(),
                 seeds,
                 given: maintained.given.clone(),
+                // A chunk's guest rounds have no split: the run checks its part's own version.
+                proofs: None,
             };
             let hooks = super::super::Hooks { maintain: Some(&mut driver), texts: Some(Arc::clone(texts)), ..Default::default() };
             let got = super::super::run_atoms_native_hooked(part, db, "main", stats.clone(), wanted, modes, hooks)?;

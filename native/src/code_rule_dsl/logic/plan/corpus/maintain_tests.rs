@@ -302,7 +302,6 @@ fn r5_a_ring_that_loses_its_entry_loses_every_row_it_held() {
 /// the static check proves it) keeps no levels; its candidates are rechecked once each, as a non-recursive
 /// stratum's are.
 #[test]
-#[ignore = "R6: the static check is not in the engine (t43 step 6)"]
 fn r6_a_component_that_cannot_cycle_keeps_no_levels() {
     let program = r#"
 .decl def(n: node, q: symbol)
