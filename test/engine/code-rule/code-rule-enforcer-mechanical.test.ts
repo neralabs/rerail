@@ -623,6 +623,29 @@ describe("mechanical code rule regressions", () => {
     } finally { await enforcer.close(); }
   });
 
+  it("evaluates a tool call's own edit before the log edits of a walk queued ahead of it", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { root, enforcer } = await fixture({ audits: recorder });
+    try {
+      const logged = ["l0", "l1", "l2", "l3", "l4"].map(name => `api/${name}.py`);
+      for (const path of logged) await writeFile(join(root, path), "safe()\n");
+      await writeFile(join(root, "api", "own.py"), "NEEDLE\n");
+      await enforcer.openWorkspace("steer-first");
+      // What a walk of the other worktrees found, which steers no session, then the session's own edit.
+      await enforcer.auditGeneratedEdits("steer-first", {
+        revision: 1, checkpoints: ["edit"], mode: "log", edits: logged.map(path => ({ path, language: "python" as const, generatedText: "safe()\n" })),
+      });
+      await enforcer.auditGeneratedEdits("steer-first", {
+        revision: 2, checkpoints: ["edit"], edits: [{ path: "api/own.py", language: "python", generatedText: "NEEDLE\n" }],
+      });
+      await settled(enforcer);
+      // The order each edit's audit began in: the own edit's at most behind the one log edit already under way.
+      const order = [...audits.values()].filter(audit => audit.paths.length === 1).map(audit => audit.paths[0]);
+      expect(order.toSorted()).toEqual([...logged, "api/own.py"].toSorted());
+      expect(order.indexOf("api/own.py")).toBeLessThan(2);
+    } finally { await enforcer.close(); }
+  });
+
   it("limits AI-output reporting to disjoint changed ranges with UTF-8 byte offsets", async () => {
     const { enforcer, requestSteer } = await fixture({ scope: "ai-output" });
     try {

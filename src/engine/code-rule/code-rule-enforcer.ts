@@ -621,6 +621,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #workspacePackages = new Map<NativeCodeRuleDslWorkspace, Map<string, string>>();
   readonly #workspaceStorage = new Map<NativeCodeRuleDslWorkspace, Promise<boolean>>();
   readonly #pending = new Map<string, StoredEdit>();
+  /**
+   * The paths of `#pending` whose edit may steer the session (a mode other than `log`), in the order they were queued:
+   * the pump evaluates these first. A walk of the other worktrees queues what it found in `log` mode, which steers no
+   * session (`CodeRuleBridge`); behind a batch of those, a tool call's own edit came to its result's wait late.
+   */
+  readonly #steering = new Set<string>();
   readonly #applied = new Map<string, StoredEdit>();
   readonly #readFailures = new Map<string, AuditFailure>();
   /** The quarantined set last reported, so each catalog load reports a skipped rule once rather than on every edit. */
@@ -914,6 +920,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       if (previous !== undefined) {
         // Out of the queue before any await, so the pump never evaluates an edit whose audit ends here.
         this.#pending.delete(edit.path);
+        this.#steering.delete(edit.path);
         previous.auditId ??= this.#startAudit(previous.scope, previous.mode, previous.revision, [edit.path], null);
         this.#finishAudit(previous.auditId, "superseded", [], []);
         try {
@@ -930,6 +937,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         }
       }
       this.#pending.set(edit.path, stored);
+      if (stored.mode !== "log") this.#steering.add(edit.path);
     } catch (error) {
       if (this.#closing) {
         this.#startAudit(scope, mode, revision, [edit.path], null);
@@ -1020,6 +1028,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     for (const stored of this.#pending.values()) this.#release(stored);
     for (const stored of this.#applied.values()) this.#release(stored);
     this.#pending.clear();
+    this.#steering.clear();
     this.#applied.clear();
     await Promise.all(this.#spoolRemovals);
     // Retried while Windows holds a spooled file, then left in the temp directory: a failure here would stop the close
@@ -1152,6 +1161,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
           this.#release(stored);
         }
         this.#pending.clear();
+        this.#steering.clear();
         this.#recordImmediate(this.#scope, this.#mode, this.#revision, [], [problem]);
       })
       .finally(() => {
@@ -1164,10 +1174,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     await yieldToHost();
     while (!this.#closing) {
       while (this.#replacement !== undefined && !this.#closing) await this.#replaceWorkspace(this.#replacement);
-      const entry = this.#pending.entries().next().value;
+      const entry = this.#nextPending();
       if (entry === undefined) return;
       const [path, stored] = entry;
       this.#pending.delete(path);
+      this.#steering.delete(path);
       this.#ensureStoredAudit(stored, path, this.#workspace?.provenance ?? []);
       this.#busy = true;
       try {
@@ -1179,6 +1190,13 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         this.#release(stored);
       }
     }
+  }
+
+  /** The next edit the pump evaluates: the first queued that may steer the session (`#steering`), else the first queued. */
+  #nextPending(): [string, StoredEdit] | undefined {
+    const steering = this.#steering.values().next().value;
+    if (steering !== undefined) return [steering, this.#pending.get(steering)!];
+    return this.#pending.entries().next().value;
   }
 
   async #evaluatePendingEdit(path: string, stored: StoredEdit): Promise<void> {
