@@ -57,6 +57,19 @@ async function temporaryRoot(): Promise<string> {
   return root;
 }
 
+/** The rule count the newest rule coverage of `sessionId` recorded, current or not; null where none was recorded. */
+function recordedRuleCount(databasePath: string, sessionId: string): number | null {
+  const database = openRerailDatabase(databasePath);
+  try {
+    const row = database.$client
+      .prepare("select json_extract(payload_json, '$.activeRuleCount') as count from events where session_id = ? and kind = 'rule-coverage' order by sequence desc limit 1")
+      .get(sessionId) as { count: number | null } | undefined;
+    return row?.count ?? null;
+  } finally {
+    database.$client.close();
+  }
+}
+
 /** A committed Git repository at `path`; returns its physical path. */
 async function repository(path: string): Promise<string> {
   await mkdir(join(path, "api"), { recursive: true });
@@ -946,7 +959,7 @@ describe("rules as they are at a scan and at a session's start", () => {
     const main = await repository(join(root, "main"));
     git(main, "worktree", "add", "--quiet", "--detach", join(root, "w"), "HEAD");
     const worktree = await realpath(join(root, "w"));
-    setUpTestRepository(main, { library: [file(needle("test:main", "MAIN"))] }, databasePath);
+    const repositoryKey = setUpTestRepository(main, { library: [file(needle("test:main", "MAIN"))] }, databasePath);
     const runtime = new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: main, embedder: testEmbedder, autostart: false });
     cleanups.push(() => runtime.dispose());
     const reader = new SqliteSessionReader(databasePath);
@@ -954,18 +967,23 @@ describe("rules as they are at a scan and at a session's start", () => {
 
     await runtime.ingest({ kind: "session-start", eventId: "first-start", session: { host: "claude-code", sessionId: "first", cwd: main } });
     await runtime.codeRulesOpened("first");
-    // Its edit in the worktree opens a lane there.
+    // Its edit in the worktree opens a lane there, which reads the worktree's one rule.
     const edited = { sessionId: "first", toolCallId: "write", toolName: "Write" };
     await runtime.ingest({ kind: "call", eventId: "write", ...edited, input: { file_path: join(worktree, "api", "x.py"), content: "x = 1\n" } });
     await runtime.ingest({ kind: "result", eventId: "written", ...edited, output: "ok" });
-    // A rule file written in the worktree's own `.rerail/rules` changes nothing in the database, so the first session's
-    // next event leaves its lane there as it read it.
-    await mkdir(join(worktree, ".rerail", "rules"), { recursive: true });
-    await writeFile(join(worktree, ".rerail", "rules", "own.json"), JSON.stringify(needle("test:own", "OWN")));
-    await runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId: "first", text: "next" });
+    // A setting made elsewhere turns that rule off. No walk reads a setting, and no event of the first session follows,
+    // so its lane in the worktree holds the rules as it read them when the second session starts there.
+    const database = openRerailDatabase(databasePath);
+    try {
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: "test:main", on: false, mode: null });
+    } finally {
+      database.$client.close();
+    }
     await runtime.ingest({ kind: "session-start", eventId: "second-start", session: { host: "claude-code", sessionId: "second", cwd: worktree } });
 
-    expect(reader.hud("second").activeRuleCount).toBe(2);
+    // The count the start wrote, which an older read would leave at 1, and the one a person sees, null while stale.
+    expect(recordedRuleCount(databasePath, "second")).toBe(0);
+    expect(reader.hud("second").activeRuleCount).toBe(0);
   }, 60_000);
 
   it.runIf(process.platform === "win32")("leaves a nested checkout's files out of the folder around it, recorded under another spelling of that folder", async () => {
