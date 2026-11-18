@@ -459,6 +459,90 @@ impl<'p> Builder<'p> {
         let Some(a) = self.enc.find(rel) else { return false };
         self.parts.decls.contains_key(&a) || (!self.parts.decls_gone.contains(&a) && self.parent.is_some_and(|p| p.decl(AtomId(a)).is_some()))
     }
+    /// States the fields edit `e` states (its declarations, facts, inputs, outputs and `.about` rows, by name), as
+    /// this builder's: an edit staged against the same input (`fields::Edit`), its rules this builder's own.
+    pub fn state_fields_of(&mut self, e: &Builder<'_>) {
+        let text = |a: u32| e.enc.text(a).to_owned();
+        let value = |c: &Cell| match *c {
+            Cell::Int(i) => Value::Int(i),
+            Cell::Str(a) => Value::Str(e.enc.text(a.0).to_owned().into()),
+            Cell::Branded(b) => Value::Branded(b),
+        };
+        for (&a, d) in &e.parts.decls {
+            let cols: Vec<(String, String)> = d.cols.iter().map(|&(n, t)| (text(n), text(t))).collect();
+            let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+            self.declare(&text(a), &pairs);
+        }
+        for &a in &e.parts.decls_gone {
+            self.undeclare(&text(a));
+        }
+        for (&k, f) in e.parts.facts.iter().filter(|(k, _)| *k & ABOUT_BIT == 0) {
+            let rows: Vec<List<Value>> = f.rows.iter().map(|row| row.iter().map(value).collect::<Vec<_>>().into()).collect();
+            self.set_facts(&text(k), &rows);
+        }
+        for &a in &e.parts.facts_gone {
+            self.drop_facts(&text(a));
+        }
+        if let Some((ids, _)) = &e.parts.inputs {
+            self.set_inputs(&ids.iter().map(|&a| text(a)).collect::<Vec<_>>());
+        }
+        if let Some((ids, _)) = &e.parts.outputs {
+            self.set_outputs(&ids.iter().map(|&a| text(a)).collect::<Vec<_>>());
+        }
+        if e.parts.owns_about {
+            let about: Vec<(String, Vec<List<Value>>)> = e
+                .parts
+                .facts
+                .iter()
+                .filter(|(k, _)| *k & ABOUT_BIT != 0)
+                .map(|(&k, f)| (text(k & !ABOUT_BIT), f.rows.iter().map(|row| row.iter().map(value).collect::<Vec<_>>().into()).collect()))
+                .collect();
+            self.own_about();
+            self.parts.facts.retain(|k, _| k & ABOUT_BIT == 0);
+            for (name, rows) in about {
+                let cells: Vec<Vec<Cell>> = rows.iter().map(|row| row.iter().map(|v| self.cell(v)).collect()).collect();
+                self.set_about_rows(&name, cells);
+            }
+        }
+    }
+    /// Relation `rel`'s declared columns (name, type), as this edit leaves them.
+    pub fn columns_of(&self, rel: &str) -> Option<Vec<(String, String)>> {
+        let a = self.enc.find(rel)?;
+        if let Some(d) = self.parts.decls.get(&a) {
+            return Some(d.cols.iter().map(|&(n, t)| (self.enc.text(n).to_owned(), self.enc.text(t).to_owned())).collect());
+        }
+        if self.parts.decls_gone.contains(&a) {
+            return None;
+        }
+        self.parent.and_then(|p| p.columns_of(rel))
+    }
+    /// The declared relations' names, in name order, as this edit leaves them.
+    pub fn declared_names(&self) -> Vec<String> {
+        let mut names: std::collections::BTreeSet<String> = self.parent.map(|p| p.declared_names()).unwrap_or_default().into_iter().collect();
+        for a in &self.parts.decls_gone {
+            names.remove(self.enc.text(*a));
+        }
+        names.extend(self.parts.decls.keys().map(|&a| self.enc.text(a).to_owned()));
+        names.into_iter().collect()
+    }
+    /// The relations with facts stated, in name order, as this edit leaves them.
+    pub fn fact_names(&self) -> Vec<String> {
+        let mut names: std::collections::BTreeSet<String> = self.parent.map(|p| p.fact_names()).unwrap_or_default().into_iter().collect();
+        for a in &self.parts.facts_gone {
+            names.remove(self.enc.text(*a));
+        }
+        names.extend(self.parts.facts.keys().filter(|&&k| k & ABOUT_BIT == 0).map(|&a| self.enc.text(a).to_owned()));
+        names.into_iter().collect()
+    }
+    /// The rows of about relation `name` as this edit leaves them, read without taking them over (`about_rows`).
+    pub fn about_cells(&self, name: &str) -> Vec<Vec<Cell>> {
+        if self.parts.owns_about {
+            let Some(a) = self.enc.find(name) else { return Vec::new() };
+            return self.parts.facts.get(&(a | ABOUT_BIT)).map(|f| f.rows.clone()).unwrap_or_default();
+        }
+        let Some(p) = self.parent else { return Vec::new() };
+        p.about_facts().into_iter().filter(|f| p.text(f.name()) == name).flat_map(|f| f.rows().map(|r| r.collect::<Vec<Cell>>()).collect::<Vec<_>>()).collect()
+    }
     /// Adds rows `rows` to relation `rel`'s facts, after the parent's.
     pub fn add_facts(&mut self, rel: &str, rows: &[List<Value>]) {
         if rows.is_empty() {

@@ -153,9 +153,10 @@ impl Lowerer {
 /// core.rr's declaration of each relation `read` names (with the arity it is read with: what the rules read, `reads`)
 /// that `prog` does not declare, as an input; `docof_of_locs` set where it is core.rr's `docof` (over spans). `prog`
 /// may be a header alone (a version's), since it reads no rules.
-pub fn declare_core(prog: &mut crate::code_rule_dsl::logic::front::Program, read: &BTreeSet<(String, usize)>, docof_of_locs: &mut bool) -> Result<(), Error> {
+pub fn declare_core(prog: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), read: &BTreeSet<(String, usize)>, docof_of_locs: &mut bool) -> Result<(), Error> {
+    use crate::code_rule_dsl::logic::program_facts::Field;
     for (rel, arity) in read {
-        if prog.decls.contains_key(rel.as_str()) || is_axis(rel) {
+        if prog.declares(rel) || is_axis(rel) {
             continue;
         }
         let Some(cols) = DECLS.get(rel) else { continue };
@@ -166,15 +167,16 @@ pub fn declare_core(prog: &mut crate::code_rule_dsl::logic::front::Program, read
             // core.rr's `docof(x: loc, d)`: an input that spans have rows in, not `node`'s projection.
             *docof_of_locs = true;
         }
-        prog.decls.insert(rel.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
+        let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+        prog.declare(rel, &pairs);
         // Its tape columns stay tapes (the engine's `sym`): a printed program declares them `tape` again.
         let tapes = super::super::tape_type::tape_columns(rel);
         if !tapes.is_empty() {
-            prog.tapes.entry(rel.clone()).or_default().extend(tapes);
+            let mut all = prog.tapes();
+            all.entry(rel.clone()).or_default().extend(tapes);
+            prog.set_field(Field::Tapes(&all));
         }
-        if !prog.inputs.contains(rel) {
-            prog.inputs.push(rel.clone());
-        }
+        prog.add_input(rel);
     }
     Ok(())
 }
