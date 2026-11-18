@@ -185,13 +185,19 @@ fn stdio(spawn: &mut Spawn, pipe_stderr: bool) -> io::Result<(Vec<OwnedFd>, Vec<
     Ok((ours, theirs))
 }
 
+/// The exit watch's thread: named, on the stack std gives any thread (2 MiB, or `RUST_MIN_STACK`), of which it touches
+/// only the pages it uses. Its own work is small, but jemalloc's on the same thread is not when jemalloc is built
+/// unoptimised: its malloc slow path takes 35 to 40 KiB of stack in one frame, and flushing the thread's cache as the
+/// thread ended ran past a 64 KiB stack.
+fn watch_thread() -> std::thread::Builder {
+    std::thread::Builder::new().name("rerail-git-exit".into())
+}
+
 /// A thread that waits for the pid it is sent to exit, leaves it unreaped, and then drops `write`, which closes
 /// the exit pipe. Started before the child, so a thread that cannot start leaves no child behind.
 fn exit_watch(write: OwnedFd) -> io::Result<mpsc::Sender<libc::pid_t>> {
     let (send, receive) = mpsc::channel::<libc::pid_t>();
-    std::thread::Builder::new()
-        .name("rerail-git-exit".into())
-        .stack_size(64 * 1024)
+    watch_thread()
         .spawn(move || {
             if let Ok(pid) = receive.recv() {
                 wait_unreaped(pid);
@@ -354,6 +360,39 @@ mod tests {
         assert_eq!(
             (out.as_str(), exit.code, exit.signal, started.stderr),
             ("got one\n", Some(3), None, -1)
+        );
+    }
+
+    /// The size of the stack the calling thread runs on, as glibc reports it, without its guard page.
+    fn own_stack_size() -> usize {
+        // SAFETY: pthread_getattr_np initialises `attr` before it is read, and it is destroyed once.
+        unsafe {
+            let mut attr: libc::pthread_attr_t = std::mem::zeroed();
+            let this = libc::pthread_self();
+            assert_eq!(libc::pthread_getattr_np(this, &mut attr), 0);
+            let mut size = 0;
+            assert_eq!(libc::pthread_attr_getstacksize(&attr, &mut size), 0);
+            libc::pthread_attr_destroy(&mut attr);
+            size
+        }
+    }
+
+    #[test]
+    fn the_exit_watch_runs_on_the_stack_std_gives_any_thread() {
+        let size_on = |builder: std::thread::Builder| {
+            builder
+                .spawn(own_stack_size)
+                .expect("a thread")
+                .join()
+                .expect("its stack size")
+        };
+        let (watch, any) = (
+            size_on(super::watch_thread()),
+            size_on(std::thread::Builder::new()),
+        );
+        assert!(
+            watch >= any,
+            "the exit watch's stack is {watch} bytes, std's default {any}"
         );
     }
 }
