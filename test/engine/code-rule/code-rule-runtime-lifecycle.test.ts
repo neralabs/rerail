@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, opendir, realpath, rm, writeFile } from "node:fs/promises";
 import type * as FsPromises from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery, RerailHost } from "../../../src/engine/adapter-contract.js";
 import type { CodeRuleAuditor, RuleSteerDelivery } from "../../../src/engine/code-rule/code-rule.js";
 import { languageFor, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
@@ -816,15 +816,24 @@ describe("source-scoped steers", () => {
   });
 
   describe("a Claude Code session reopened while its rules open again", () => {
+    /** The case's fixture (`reopenedFixture`), closed once the case ends. */
+    let fixture: { close(): Promise<void> } | undefined;
+    // However the case ends: one that times out never reaches its own last lines, and the next case must not start
+    // under its faked setTimeout, its storage gate or its runtimes. This runs before the file's temporary folders are
+    // removed, which Windows refuses while the runtimes still hold their database and Git processes there.
+    afterEach(async () => {
+      await fixture?.close();
+      fixture = undefined;
+    });
+
     /** The steer the needle rule gives for `file`. */
     const needle = (file: string) => expect.objectContaining({ content: expect.stringContaining(`- ${file}:1:1 — No needle [`) });
 
     /**
      * A Claude Code session whose rules opened, then a runtime of its own: `restart` gives the session to a second one,
      * as a daemon restart does. `reopen` sends the person's prompt to `runtime` after the idle close, which opens the
-     * session again; either way its rules then stay held in their storage attach until the test releases them. Its
-     * clean-up runs when the case ends, however it ends: a case that times out never reaches its own last lines, and
-     * the next case must not start under its faked setTimeout, its storage gate or its runtimes.
+     * session again; either way its rules then stay held in their storage attach until the test releases them. It is
+     * closed once the case ends (`fixture`).
      */
     async function reopenedFixture() {
       const root = await realpath(await temporaryDirectory());
@@ -903,7 +912,7 @@ describe("source-scoped steers", () => {
           for (const each of runtimes) await each.dispose();
         },
       };
-      onTestFinished(test.close);
+      fixture = test;
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
       await runtime.codeRulesOpened(session.sessionId);
       await test.turnEnd("baseline");
