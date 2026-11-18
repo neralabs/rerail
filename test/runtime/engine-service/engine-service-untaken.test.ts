@@ -204,6 +204,16 @@ describe("an engine service beside the events hooks left while its daemon did no
     expect(recorded[0]!.observedAt).toBe(1_000);
   });
 
+  it("checks each one, at the time its hook met it, before an event given to the service in its own process", async () => {
+    const held = await serviceWithUntaken();
+    await held.leave(prompt("left"), 1_000);
+    // No watch runs and nothing asked for a pass: only the step before the event given takes what was left.
+    expect(await held.service.ingest(prompt("given"))).toEqual([]);
+    const recorded = recordedEvents(held.databasePath);
+    expect(recorded.map(event => event.eventId)).toEqual(["left", "given"]);
+    expect(recorded[0]!.observedAt).toBe(1_000);
+  });
+
   it("checks a turn end left untaken as one sent, and the steer its checks find goes with the session's next answer, once", async () => {
     const held = await serviceWithUntaken();
     await held.leave({ kind: "turn-end", eventId: "stop", sessionId: SESSION, text: "" }, 1_000);
