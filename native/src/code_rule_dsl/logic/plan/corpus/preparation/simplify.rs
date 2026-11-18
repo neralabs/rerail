@@ -2861,3 +2861,6 @@ impl ProgramPass for CpythonFunctors {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;
