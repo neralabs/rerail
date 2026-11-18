@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 import { mkdtemp, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFailed, onTestFinished } from "vitest";
 import { type AdapterEvent, type CodeRuleAuditor, leaveUntaken, type UntakenPass } from "../../../src/engine/index.js";
 import { engineRequestBody, ingestEngineEvent, startEngineService } from "../../../src/runtime/engine-service.js";
 import { SqliteSessionReader } from "../../../src/runtime/index.js";
@@ -124,9 +124,25 @@ async function leftWrite(held: HeldService, toolCallId: string, path: string, co
   await leftCall(held, toolCallId, "Write", { file_path: path, content }, ran);
 }
 
+/**
+ * Waits for `settles`; a test that fails meanwhile, as by its time limit on a loaded machine, says it was still waiting
+ * for `what`, so a slow step is told from a wrong result.
+ */
+async function waitingFor<T>(what: string, settles: Promise<T>): Promise<T> {
+  let waiting = true;
+  onTestFailed(() => {
+    if (waiting) throw new Error(`still waiting for ${what}`);
+  });
+  try {
+    return await settles;
+  } finally {
+    waiting = false;
+  }
+}
+
 /** Waits for the session's first view of its folder: its walk asks about a file, and a turn's end waits for that walk. */
 async function firstView(held: HeldService): Promise<void> {
-  await held.walking;
+  await waitingFor("the session's first walk to ask about a file", held.walking);
   await held.send({ kind: "turn-end", eventId: "view", sessionId: SESSION, text: "" });
 }
 
