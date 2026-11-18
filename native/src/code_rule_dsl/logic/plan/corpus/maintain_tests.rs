@@ -221,8 +221,9 @@ fn r3_a_reached_stratum_is_derived_again_only_on_its_first_run_or_past_the_thres
     }
 }
 
-/// R4: an edit that reaches too much of a stratum (0090 §4: its changed reads past θ of its kept rows) derives it
-/// again, and its levels come fresh from that derive. A small edit does not.
+/// R4: an edit that reaches too much of a stratum (0090 §4: its changed reads' deltas past θ of the rows those reads
+/// hold, or the mode's lines priced above a derive) derives it again, and its levels come fresh from that derive. A
+/// small edit does not.
 #[test]
 fn r4_an_edit_that_reaches_most_of_a_stratum_derives_it_again() {
     // The test's relations are small: a floor under θ (0090 §4's is 1,024 rows) above a small edit's deltas and below
@@ -241,6 +242,24 @@ fn r4_an_edit_that_reaches_most_of_a_stratum_derives_it_again() {
     }
     let big = s.edit("every definition renamed");
     assert!(big.report.cross_again.contains_key(maintain::THRESHOLD), "R4: an edit that reaches most of a stratum derives it again: {:?}", big.report.cross_again);
+}
+
+/// R4 at scale: a maintained line's work follows its changed read's delta, not the corpus. Each line is led by its
+/// driver's delta, a negated read's too: its delta read positively first, the body planned with its variables bound.
+/// Left where the plan tested it, a negated read's line walked its other reads whole (the data layer's 2-file edit
+/// at 334 files: 113 removal joins, 10 s of 31).
+#[test]
+fn r4_a_changed_read_s_delta_leads_its_line() {
+    let mut s = kinds("r4-led");
+    s.run();
+    let mut led = 0;
+    for (file, body, what) in SMALL_EDITS {
+        s.write(file, body);
+        let ran = s.edit(what);
+        assert_eq!(ran.shape.drivers_unled, 0, "R4: after {what}, every changed read's delta leads its line");
+        led += ran.shape.negated_led;
+    }
+    assert!(led > 0, "R4: `unused`'s negated read of `used` drove lines of its own");
 }
 
 /// R4 with readers: a stratum derived again past θ hands its readers its delta against its kept rows, and a reader

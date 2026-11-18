@@ -132,6 +132,8 @@ pub mod shape {
     static MAINTENANCE_HELD: AtomicUsize = AtomicUsize::new(0);
     static FRAMES_READ: AtomicUsize = AtomicUsize::new(0);
     static RECHECKS_UNPRICED: AtomicUsize = AtomicUsize::new(0);
+    static NEGATED_LED: AtomicUsize = AtomicUsize::new(0);
+    static DRIVERS_UNLED: AtomicUsize = AtomicUsize::new(0);
 
     /// The counts so far.
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -145,16 +147,35 @@ pub mod shape {
         pub frames_read: usize,
         /// R7: recheck lines ordered without a price.
         pub rechecks_unpriced: usize,
+        /// R4 at scale: mode lines driven by a negated changed read whose delta leads the line.
+        pub negated_led: usize,
+        /// R4 at scale: mode lines whose changed read's delta does not lead the line (a negated read's line planned
+        /// with its variables bound had no order): it walks its other reads whole.
+        pub drivers_unled: usize,
     }
 
     pub fn now() -> Shape {
-        Shape { rows_copied: ROWS_COPIED.load(Relaxed), maintenance_held: MAINTENANCE_HELD.load(Relaxed), frames_read: FRAMES_READ.load(Relaxed), rechecks_unpriced: RECHECKS_UNPRICED.load(Relaxed) }
+        Shape {
+            rows_copied: ROWS_COPIED.load(Relaxed),
+            maintenance_held: MAINTENANCE_HELD.load(Relaxed),
+            frames_read: FRAMES_READ.load(Relaxed),
+            rechecks_unpriced: RECHECKS_UNPRICED.load(Relaxed),
+            negated_led: NEGATED_LED.load(Relaxed),
+            drivers_unled: DRIVERS_UNLED.load(Relaxed),
+        }
     }
 
     /// What happened between `before` and now.
     pub fn since(before: Shape) -> Shape {
         let n = now();
-        Shape { rows_copied: n.rows_copied - before.rows_copied, maintenance_held: n.maintenance_held - before.maintenance_held, frames_read: n.frames_read - before.frames_read, rechecks_unpriced: n.rechecks_unpriced - before.rechecks_unpriced }
+        Shape {
+            rows_copied: n.rows_copied - before.rows_copied,
+            maintenance_held: n.maintenance_held - before.maintenance_held,
+            frames_read: n.frames_read - before.frames_read,
+            rechecks_unpriced: n.rechecks_unpriced - before.rechecks_unpriced,
+            negated_led: n.negated_led - before.negated_led,
+            drivers_unled: n.drivers_unled - before.drivers_unled,
+        }
     }
 
     pub fn rows_copied(n: usize) {
@@ -165,6 +186,12 @@ pub mod shape {
     }
     pub fn recheck_unpriced() {
         RECHECKS_UNPRICED.fetch_add(1, Relaxed);
+    }
+    pub fn negated_led() {
+        NEGATED_LED.fetch_add(1, Relaxed);
+    }
+    pub fn driver_unled() {
+        DRIVERS_UNLED.fetch_add(1, Relaxed);
     }
     /// Notes a relation held under `name`, if it is a maintenance name.
     pub fn held(name: &str) {

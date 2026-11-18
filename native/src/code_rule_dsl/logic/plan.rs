@@ -7617,13 +7617,19 @@ impl<'a> Run<'a, '_> {
                     };
                     let mut spec = versioned(&spec, &order, k, by, if removing { V::Old } else { V::New });
                     // The negated driver's item, now its delta read positively, to the front (with its plan step).
-                    if led.is_some() && let Some(at) = (0..spec.items.len()).find(|&i| lit_of(&spec, &order, i) == Some(k) && matches!(spec.items[i], JoinItem::Atom { .. })) {
-                        let item = spec.items.remove(at);
-                        spec.items.insert(0, item);
-                        if !spec.from.is_empty() {
-                            let step = spec.from.remove(at);
-                            spec.from.insert(0, step);
+                    let at = led.as_ref().and_then(|_| (0..spec.items.len()).find(|&i| lit_of(&spec, &order, i) == Some(k) && matches!(spec.items[i], JoinItem::Atom { .. })));
+                    match at {
+                        Some(at) => {
+                            let item = spec.items.remove(at);
+                            spec.items.insert(0, item);
+                            if !spec.from.is_empty() {
+                                let step = spec.from.remove(at);
+                                spec.from.insert(0, step);
+                            }
+                            crate::code_rule_dsl::logic::plan::corpus::maintain::shape::negated_led();
                         }
+                        None if a.neg() => crate::code_rule_dsl::logic::plan::corpus::maintain::shape::driver_unled(),
+                        None => {}
                     }
                     let spec = Arc::new(spec);
                     lines.push(match (removing, a.neg()) {
