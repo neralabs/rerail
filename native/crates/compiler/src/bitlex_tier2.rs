@@ -141,8 +141,12 @@ enum Pre {
 /// Tier 2 as words: their `rir` text (strings, switches, words).
 /// One element of a token mark's run, as `Lowered::token_marks` holds it: its offset, its kinds'
 /// names, its words (strings), whether it is a `~`, whether the file's end takes it, and
-/// whether it is a run of its choices (`program::TokenElem`).
-pub type TokenElemRow = (i8, Vec<String>, Vec<u16>, bool, bool, bool);
+/// whether it is a run of its choices (`program::TokenElem`), and a run's depths' sides: each its
+/// counter, whether it opens, its kinds' names and its words (`program::Nest`).
+pub type TokenElemRow = (i8, Vec<String>, Vec<u16>, bool, bool, bool, Vec<NestRow>);
+
+/// One side of a run's depth, as `TokenElemRow` holds it: counter, opens, kinds, words.
+pub type NestRow = (u8, bool, Vec<String>, Vec<u16>);
 
 pub struct Lowered {
     pub text: String,
@@ -1162,26 +1166,42 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
             let at = std::iter::once((-1i8, before)).filter(|(_, b)| !b.is_empty()).chain(seq.iter().enumerate().map(|(i, x)| (i as i8, x)));
             for (offset, choices) in at {
                 let (mut kinds, mut words, mut end) = (Vec::new(), Vec::new(), false);
-                let (not, run, choices) = match choices.as_slice() {
-                    [::bitlex::syntax::TokenElem::Not(inner)] => (true, false, inner.as_slice()),
+                let none_nest = Vec::new();
+                let (not, run, choices, nests) = match choices.as_slice() {
+                    [::bitlex::syntax::TokenElem::Not(inner)] => (true, false, inner.as_slice(), &none_nest),
                     // A run of tokens none of the choices.
-                    [::bitlex::syntax::TokenElem::Many(inner)] => match inner.as_slice() {
-                        [::bitlex::syntax::TokenElem::Not(none)] => (true, true, none.as_slice()),
-                        _ => (false, true, inner.as_slice()),
+                    [::bitlex::syntax::TokenElem::Many(inner, nests)] => match inner.as_slice() {
+                        [::bitlex::syntax::TokenElem::Not(none)] => (true, true, none.as_slice(), nests),
+                        _ => (false, true, inner.as_slice(), nests),
                     },
-                    c => (false, false, c),
+                    c => (false, false, c, &none_nest),
                 };
+                // The run's depths (Q222): each side its counter's.
+                let mut nest_rows = Vec::new();
+                for (k, n) in nests.iter().enumerate() {
+                    for (open, side) in [(true, &n.open), (false, &n.close)] {
+                        let (mut ks, mut ws) = (Vec::new(), Vec::new());
+                        for c in side {
+                            match c {
+                                ::bitlex::syntax::TokenElem::Kind(name) => ks.push(name.clone()),
+                                ::bitlex::syntax::TokenElem::Word(w) => ws.push(e.string(w)),
+                                _ => return Err("a depth's side of kinds and words".into()),
+                            }
+                        }
+                        nest_rows.push((k as u8, open, ks, ws));
+                    }
+                }
                 for c in choices {
                     match c {
                         ::bitlex::syntax::TokenElem::Kind(name) => kinds.push(name.clone()),
                         ::bitlex::syntax::TokenElem::Word(w) => words.push(e.string(w)),
                         ::bitlex::syntax::TokenElem::End => end = true,
-                        ::bitlex::syntax::TokenElem::Not(_) | ::bitlex::syntax::TokenElem::Many(_) => return Err("a `~` or a run inside a `~` or a run".into()),
+                        ::bitlex::syntax::TokenElem::Not(_) | ::bitlex::syntax::TokenElem::Many(..) => return Err("a `~` or a run inside a `~` or a run".into()),
                     }
                 }
                 // The token before, `~`: it holds with no token before too (`end` there).
                 let end = end || (offset == -1 && not);
-                elems.push((offset, kinds, words, not, end, run));
+                elems.push((offset, kinds, words, not, end, run, nest_rows));
             }
             // A refusing one's word: its bit in the record is the word's alone (no state tests
             // it, so no `MARK` names the word).

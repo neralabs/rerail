@@ -480,6 +480,39 @@ pub struct TokenElem {
     /// A run (decision 0406): any number of records the element takes, then the elements after
     /// it from any of them on (one run at most, after offset 0, never last).
     pub run: bool,
+    /// A run's depths (Q222, Bitlex's `nest`): each side of one, the run's records it takes go
+    /// one deeper (`open`) or one out. The elements after the run are tried only where every
+    /// depth is 0; a closer where its depth is 0 ends the run.
+    pub nests: Vec<Nest>,
+}
+
+/// One side of a run's depth (`TokenElem::nests`): its counter (0 to 3), whether it opens, and
+/// the records it takes (`test`'s kinds and words; never a `~`, an `end` or a run).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Nest {
+    pub counter: u8,
+    pub open: bool,
+    pub test: TokenElem,
+}
+
+/// The depths a run counts (`TokenElem::nests`): 4 at most.
+pub const NESTS: usize = 4;
+
+/// A run's depths after it takes a record (`code`): `None` where a closer's depth is 0, which
+/// ends the run (Q222).
+pub fn nest_step(nests: &[Nest], depth: [u32; NESTS], code: u32) -> Option<[u32; NESTS]> {
+    let mut d = depth;
+    for n in nests.iter().filter(|n| n.test.takes(code)) {
+        let k = usize::from(n.counter);
+        if n.open {
+            d[k] += 1;
+        } else if d[k] == 0 {
+            return None;
+        } else {
+            d[k] -= 1;
+        }
+    }
+    Some(d)
 }
 
 impl TokenElem {

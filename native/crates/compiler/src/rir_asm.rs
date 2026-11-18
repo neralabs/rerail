@@ -497,6 +497,8 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 return Err(format!("tokenmark {order} out of order"));
             }
             let mut elems: Vec<crate::program::TokenElem> = Vec::new();
+            // Inside a run's depth's side (`program::Nest`): its words and keywords are the side's.
+            let mut in_nest = false;
             let refuses = line.peek_word().as_deref() == Some("refuses");
             if refuses {
                 line.word()?;
@@ -507,11 +509,21 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             }
             while let Some(w) = line.peek_word() {
                 line.word()?;
-                if let Some(o) = w.strip_prefix('o') {
+                // `o` and an offset; `open…` is a depth's side.
+                if let Some(o) = w.strip_prefix('o').filter(|_| !w.starts_with("open")) {
                     let offset = o.parse().map_err(|_| format!("a bad offset `{w}`"))?;
                     let k = line.word()?;
                     let kinds = k.strip_prefix('k').and_then(|h| u64::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad kind set `{k}`"))?;
-                    elems.push(crate::program::TokenElem { offset, kinds, words: Vec::new(), except: Vec::new(), not: false, end: false, run: false });
+                    elems.push(crate::program::TokenElem { offset, kinds, ..Default::default() });
+                    in_nest = false;
+                } else if let Some((open, c)) = w.strip_prefix("open").map(|c| (true, c)).or_else(|| w.strip_prefix("close").map(|c| (false, c))) {
+                    let counter: u8 = c.parse().map_err(|_| format!("a bad depth `{w}`"))?;
+                    let k = line.word()?;
+                    let kinds = k.strip_prefix('k').and_then(|h| u64::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad kind set `{k}`"))?;
+                    let el = elems.last_mut().ok_or("a depth before its run")?;
+                    let test = crate::program::TokenElem { offset: el.offset, kinds, ..Default::default() };
+                    el.nests.push(crate::program::Nest { counter, open, test });
+                    in_nest = true;
                 } else if w == "not" {
                     elems.last_mut().ok_or("a `not` before its element")?.not = true;
                 } else if w == "end" {
@@ -520,10 +532,18 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     elems.last_mut().ok_or("a `run` before its element")?.run = true;
                 } else if let Some(s) = w.strip_prefix('s') {
                     let s: u16 = s.parse().map_err(|_| format!("a bad word `{w}`"))?;
-                    elems.last_mut().ok_or("a word before its element")?.words.push(s);
+                    let el = elems.last_mut().ok_or("a word before its element")?;
+                    match el.nests.last_mut().filter(|_| in_nest) {
+                        Some(n) => n.test.words.push(s),
+                        None => el.words.push(s),
+                    }
                 } else if let Some(s) = w.strip_prefix('x') {
                     let s: u16 = s.parse().map_err(|_| format!("a bad keyword `{w}`"))?;
-                    elems.last_mut().ok_or("a keyword before its element")?.except.push(s);
+                    let el = elems.last_mut().ok_or("a keyword before its element")?;
+                    match el.nests.last_mut().filter(|_| in_nest) {
+                        Some(n) => n.test.except.push(s),
+                        None => el.except.push(s),
+                    }
                 } else {
                     return Err(format!("a bad token mark's part `{w}`"));
                 }

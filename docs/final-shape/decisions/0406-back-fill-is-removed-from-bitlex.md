@@ -168,11 +168,41 @@ Each mark statement that has a pattern of its own takes a bit of the record's co
 holds 16 (the extras take 2). Two statements of one kind whose patterns start with different
 tokens share a mask (`dotted`, `generic`).
 
-The forward scans differ from the lean parser's in two places, each an open item:
-- A run stops at the first place its rest holds, not where a depth closes.
-  `type_args_end` counts `<` and `>`.
+The forward scans differed from the lean parser's in two places:
+- A run stopped at the first place its rest held, not where a depth closes (`type_args_end`
+  counts `<` and `>`). Now it counts them (`nest`, below, Q222).
 - A run passes line breaks: they are no tokens. The annotation before `if` / `when` ran to
-  a line break before.
+  a line break before. Open: Q223.
+
+## A run's depths: `nest` (Q222)
+
+The lean parser's forward scans count brackets. `type_args_end` keeps a depth of `<` and one of
+`(`: it ends at the `>` that closes the first `<`, and gives up at a `)` with no `(`.
+`lambda_params_end` keeps one depth over `(`, `[` and `<`, and ends at a `->` where it is 0. A
+run says the same with `nest`, after its `*`:
+
+```
+# Type arguments: the `>` that closes the `<`, then a `(`.
+before "<" (simple_identifier | "<" | ">" | "(" | ")" | …)* nest ("<" to ">") ("(" to ")") ">" "("
+# A lambda's parameters: one depth over three kinds of bracket.
+tokens "{" (simple_identifier | "(" | ")" | "[" | "]" | "<" | ">" | "->" | …)* nest ("(" | "[" | "<" to ")" | "]" | ">") "->"
+```
+
+Each `(O to C)` is a depth, four at most. A token of the run among the openers goes one deeper,
+one among the closers one out. The elements after the run are tried only where every depth is
+0, and a closer whose depth is 0 ends the run: the mark fails there unless they hold. So
+`a<b>c>(d)` is no call (its first `>` closes, and `c` follows), as in the lean parser.
+
+The program gives the run element its depths' sides (`program::TokenElem::nests`, a counter, a
+direction and a token test each; `open0 k… s…` in the text). Each executor counts as it walks the
+run: Bitlex's reference (`eval::seq_holds`), the interpreter (`program::nest_step`), Cranelift
+(a block parameter a depth on the run's loop), the generated Rust (`let mut d = [0u32; N]`).
+
+Kotlin's `generic` (its type arguments' `before`) and `lam_params` count their depths. The lambda's
+run now starts at the token after the `{`, as `lambda_params_end` does, so it holds at `{ ->` too;
+`lam_bare`, declared before it, is tested first and takes that. A destructuring lambda parameter
+may now have a type (`{ (a, b): Pair<A, B> -> a }`), as the lean parser reads it. The corpus is
+unchanged (429 the same, 62 refused, 0 differ), and the generated Rust's tapes are the JIT's.
 
 ## Tests
 
@@ -186,6 +216,14 @@ The forward scans differ from the lean parser's in two places, each an open item
 - `syntax::tier2_tests::a_mark_is_before_a_token`: `before` and `unless before` parse to their
   sequences, several on one mark, a run among them; `before ~X`, `before end`, a run first or
   last, two runs and a run of a `~` are refused.
+- `eval::run_tests::a_run_counts_its_depths`: the reference's run with and without depths, on
+  nested type arguments, an early `>`, an unmatched `)`.
+- `ladder_tests::a_run_counts_its_depths`: a `<` opens type arguments where its depth closes
+  before a `(`; the reference's nodes are the interpreter's and Cranelift's.
+- `kotlin_parser::tests::depths_are_the_lean_parsers`: nested type arguments, a function type in
+  them, a lambda parameter with brackets and an inner `->`, a typed destructuring, `a<b>c>(d)`.
+- `syntax::tier2_tests::a_mark_is_before_a_token`: `nest` parsed; none, a token both, a `~`
+  refused.
 - `ladder_tests::a_gap_mark_is_decided_by_the_token_after`: a line break ends a header unless a
   `.` and a name, or `.*`, come after it (two `unless before`s), past a comment; an import's
   alias is a token mark with a run (`simple_identifier (simple_identifier | ".")* "as"`), over

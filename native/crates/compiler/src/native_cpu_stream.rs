@@ -1761,20 +1761,67 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
         }
     }
     if let Some(r) = rest.get(run) {
+        // The run's depths (Q222): a block parameter each, from 0.
+        let counters = r.nests.iter().map(|n| usize::from(n.counter) + 1).max().unwrap_or(0);
         let scan = f.create_block();
-        f.append_block_param(scan, types::I64);
-        f.ins().jump(scan, &[BlockArg::from(at)]);
+        for _ in 0..=counters {
+            f.append_block_param(scan, types::I64);
+        }
+        let zero = f.ins().iconst(types::I64, 0);
+        let start: Vec<BlockArg> = std::iter::once(at).chain(std::iter::repeat_n(zero, counters)).map(BlockArg::from).collect();
+        f.ins().jump(scan, &start);
         f.switch_to_block(scan);
         heads.push((scan, Step::Token));
         let from = f.block_params(scan)[0];
+        let depth: Vec<Value> = f.block_params(scan)[1..].to_vec();
         let step = f.create_block();
+        // The rest only where every depth is 0.
+        if counters > 0 {
+            let any = depth[1..].iter().fold(depth[0], |a, &d| f.ins().bor(a, d));
+            let try_rest = f.create_block();
+            f.ins().brif(any, step, &[], try_rest, &[]);
+            f.switch_to_block(try_rest);
+        }
         run_of(f, &rest[run + 1..], from, step, heads);
         f.ins().jump(yes, &[]);
         // The rest fails here: one more record of the run, or none.
         f.switch_to_block(step);
         let (j, c) = after(f, from, no, heads);
         test(f, c, r, no);
-        f.ins().jump(scan, &[BlockArg::from(j)]);
+        // 1 where a side of a depth takes the record, else 0.
+        let hit = |f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenElem| -> Value {
+            let (miss, merged) = (f.create_block(), f.create_block());
+            f.append_block_param(merged, types::I64);
+            test(f, c, el, miss);
+            let one = f.ins().iconst(types::I64, 1);
+            f.ins().jump(merged, &[BlockArg::from(one)]);
+            f.switch_to_block(miss);
+            let zero = f.ins().iconst(types::I64, 0);
+            f.ins().jump(merged, &[BlockArg::from(zero)]);
+            f.switch_to_block(merged);
+            f.block_params(merged)[0]
+        };
+        let mut next: Vec<BlockArg> = vec![BlockArg::from(j)];
+        for (k, &d) in depth.iter().enumerate() {
+            let mut d2 = d;
+            for n in r.nests.iter().filter(|n| usize::from(n.counter) == k) {
+                let h = hit(f, c, &n.test);
+                if n.open {
+                    d2 = f.ins().iadd(d2, h);
+                } else {
+                    // A closer where the depth is 0 ends the run: the rest did not hold.
+                    let at_zero = f.ins().icmp_imm(IntCC::Equal, d2, 0);
+                    let at_zero = f.ins().uextend(types::I64, at_zero);
+                    let bad = f.ins().band(h, at_zero);
+                    let on = f.create_block();
+                    f.ins().brif(bad, no, &[], on, &[]);
+                    f.switch_to_block(on);
+                    d2 = f.ins().isub(d2, h);
+                }
+            }
+            next.push(BlockArg::from(d2));
+        }
+        f.ins().jump(scan, &next);
     } else {
         f.ins().jump(yes, &[]);
     }

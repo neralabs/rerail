@@ -471,10 +471,15 @@ mark acc        = acc_word, unless before "get" | "set" "." | ":", unless before
 # block, not a lambda; after a call's arguments, the call's own lambda (the lean parser's
 # `call`), not another call's. Before the lambda's marks, which hold at the same token.
 mark blk        = tokens after ")" | "else" | "do" | "try" | "finally" | "->" "{"
+# A lambda with no parameters before its `->`.
+mark lam_bare   = tokens "{" "->"
 # A lambda's parameters, before its `->` (the lean parser's `lambda_params_end`): from the `{`,
-# the tokens parameters are made of, at least one, then a `->`. A `{` inside them is another
-# lambda's: it ends the run, so an inner lambda's `->` does not mark the outer `{`.
-mark lam_params = tokens "{" simple_identifier | backtick_name | "in" | "," | ":" | "." | "?" | "*" | "@" | "(" | ")" | "[" | "]" | "<" | ">" (simple_identifier | backtick_name | "in" | "," | ":" | "." | "?" | "*" | "@" | "(" | ")" | "[" | "]" | "<" | ">")* "->"
+# the tokens parameters are made of, then a `->` where the brackets are closed. `(`, `[` and `<`
+# go one deeper and their closers one out, on one depth, as the lean parser counts them; a closer
+# at depth 0 ends the run. A `{` inside them is another lambda's: it ends the run, so an inner
+# lambda's `->` does not mark the outer `{`. It holds at `{ ->` too, as the lean parser's does;
+# `lam_bare`, a mark before it, is tested first and takes that.
+mark lam_params = tokens "{" (simple_identifier | backtick_name | "in" | "," | ":" | "." | "?" | "*" | "@" | "(" | ")" | "[" | "]" | "<" | ">" | "->")* nest ("(" | "[" | "<" to ")" | "]" | ">") "->"
 # A `!` that starts a line before `in` or `is`: a `when` entry's negated test. `named`'s token
 # marks (below) are its other cases.
 mask bang_test  = code & text("!") & prev(fill(lf & code, solid)) & next(text("in") & ~next(w, 2) | text("is") & ~next(w, 2))
@@ -484,7 +489,8 @@ mark named      = bang_test
 # or `::` follows. It touches the name before it, as a comparison's `<` seldom does (the lean
 # parser does not ask: a spaced `f <T>()` is refused, read as a comparison). In a type it opens
 # type arguments or parameters anyway, which take it. Where no rule takes it, the file is refused.
-# The run is the first such `>`, not the one whose depth closes the `<`, as the lean parser counts.
+# The run counts `<` `>` and `(` `)` as the lean parser does: the `>` is the one whose depth closes
+# the `<`, and a `)` with no `(` ends the run.
 # And a parenthesized type's `(`: after a `:`, before another `(`; and a `suspend` there.
 mask colon_ty   = code & text(":") & ~text("::") & ~prev(text(":")) & ~prev(text("?"))
 mask after_ty   = prev(fill(prev(colon_ty), solid))
@@ -494,7 +500,7 @@ mask after_ty   = prev(fill(prev(colon_ty), solid))
 # no `@`, `{` or `;` (the lean parser reads an annotation, then any expression). One mark: each `before` starts with its
 # own token (a receiver's name not `suspend`).
 mask frecv_at   = w & ~prev(w | dot | text("<") | text(">")) & ~text("suspend")
-mark generic    = code & text("<") & ~text("<=") & prev(w) | code & text("(") & after_ty | code & text("suspend") & ~next(w, 7) & after_ty | frecv_at | code & at_sign, before "<" (simple_identifier | backtick_name | "in" | "," | "." | "?" | "*" | "@" | ":" | "->" | "(" | ")" | "[" | "]" | "<" | ">")* ">" "(" | "{" | "." | "?." | "::", before "(" "(", before "suspend" "(", before simple_identifier (simple_identifier | "." | "<" | ">")* "." "(", before "@" (~("@" | "{" | ";"))* ")" "if" | "when"
+mark generic    = code & text("<") & ~text("<=") & prev(w) | code & text("(") & after_ty | code & text("suspend") & ~next(w, 7) & after_ty | frecv_at | code & at_sign, before "<" (simple_identifier | backtick_name | "in" | "," | "." | "?" | "*" | "@" | ":" | "->" | "(" | ")" | "[" | "]" | "<" | ">")* nest ("<" to ">") ("(" to ")") ">" "(" | "{" | "." | "?." | "::", before "(" "(", before "suspend" "(", before simple_identifier (simple_identifier | "." | "<" | ">")* "." "(", before "@" (~("@" | "{" | ";"))* ")" "if" | "when"
 # A decimal number with a fraction, an exponent or an `f`: a real one.
 mark real       = empty, at integer_literal when count(frac_dot | e_at | f_at) at least 1
 # A backtick name before `::`: no rule takes it, so the file is refused where it holds. It
@@ -516,8 +522,6 @@ mark wild       = tokens "." "*"
 mark obj_lit    = tokens after ~"companion" "object" ":" | "{"
 # A function type's receiver's `.`: a `(` after it (no expression has `.(`).
 mark ft_dot_at  = tokens "." "("
-# A lambda with no parameters before its `->`.
-mark lam_bare   = tokens "{" "->"
 # A name before `::`, but `this` (a hard keyword, as every one): a callable reference's receiver.
 mark cref       = tokens simple_identifier "::"
 # A name and `=` (or an assignment's operator): an assignment to it, or a named argument; and a
@@ -699,13 +703,13 @@ tree kotlin {
                         | wrap postfix_expression _ ('++' | '--' | '!!')
   node call_suffix      = value_arguments [blk annotated_lambda] | annotated_lambda
   node annotated_lambda = lambda_literal
-  node lambda_literal   = lam_params '{' lambda_parameters '->' [statements] '}'
-                        | lam_bare lambda_bare_open [statements] '}'
+  node lambda_literal   = lam_bare lambda_bare_open [statements] '}'
+                        | lam_params '{' lambda_parameters '->' [statements] '}'
                         | '{' [statements] '}'
   # `{ ->`: not the tokens the grammar implies, so both are leaves.
   choice lambda_bare_open = '{' '->'
   node lambda_parameters = lambda_parameter (',' lambda_parameter)*
-  choice lambda_parameter = variable_declaration | multi_variable_declaration
+  choice lambda_parameter = variable_declaration | multi_variable_declaration [':' type]
   node navigation_suffix = ('.' | '?.' | '::') ('class' | name)
   node indexing_suffix  = '[' expression (',' expression)* (trail_bracket | ']')
   node value_arguments  = '(' [value_argument (',' value_argument)*] (trail_paren | ')')

@@ -20,14 +20,25 @@ enum Tok {
 /// `(C)*` (`Many`, decision 0406), any number of tokens of `C`'s choices (or of none of them, for
 /// a `C` that is one `~`), then the elements after
 /// it from any of them on (as a forward scan for the first place they hold), the only choice of
-/// its element, one a run and never its last.
+/// its element, one a run and never its last. A run's `nest` counts depths (`Nest`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TokenElem {
     Kind(String),
     Word(Vec<u8>),
     Not(Vec<TokenElem>),
     End,
-    Many(Vec<TokenElem>),
+    Many(Vec<TokenElem>, Vec<Nest>),
+}
+
+/// A depth a run counts (`(C)* nest (O to C) …`, Q222), as the lean parsers' forward scans count
+/// one (`type_args_end`, `lambda_params_end`): a token of the run among `open`'s choices goes one
+/// deeper, one among `close`'s one out. The elements after the run are tried only where every
+/// depth is 0, and a closer where its depth is 0 ends the run: it fails there unless they hold.
+/// Kinds and words only.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Nest {
+    pub open: Vec<TokenElem>,
+    pub close: Vec<TokenElem>,
 }
 
 #[derive(Clone, Debug)]
@@ -1048,7 +1059,27 @@ impl P {
             if !not && inner.iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_))) {
                 return self.err("a run of kinds and words, or of a `~` of them");
             }
-            return Ok(vec![TokenElem::Many(inner)]);
+            // `nest (O to C) …`: the depths it counts (`Nest`).
+            let mut nests = vec![];
+            if self.eat_kw("nest") {
+                while self.eat_p("(") {
+                    let open = self.token_choices()?;
+                    if !self.eat_kw("to") {
+                        return self.err("`to` between a depth's openers and its closers");
+                    }
+                    let close = self.token_choices()?;
+                    self.want_p(")")?;
+                    let plain = |c: &[TokenElem]| c.iter().all(|x| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_)));
+                    if !plain(&open) || !plain(&close) || open.iter().any(|o| close.contains(o)) {
+                        return self.err("a depth's openers and closers: kinds and words, none both");
+                    }
+                    nests.push(Nest { open, close });
+                }
+                if nests.is_empty() || nests.len() > 4 {
+                    return self.err("`nest` and one to four `(O to C)`");
+                }
+            }
+            return Ok(vec![TokenElem::Many(inner, nests)]);
         }
         loop {
             if self.eat_p("~") {
@@ -1097,7 +1128,7 @@ impl P {
         while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_) | Tok::P("~") | Tok::P("("))) {
             seq.push(self.token_choices()?);
         }
-        let run = |c: &[TokenElem]| matches!(c, [TokenElem::Many(_)]);
+        let run = |c: &[TokenElem]| matches!(c, [TokenElem::Many(..)]);
         let runs: Vec<usize> = (0..seq.len()).filter(|&i| run(&seq[i])).collect();
         if seq.is_empty() {
             return self.err("a token");
@@ -1960,7 +1991,7 @@ impl P {
                     // The mark's token is a token of the choices: no `~`, no `end`; an `end` only in
                     // the last element. The one before (`after`) has no `end`; a `~` there holds
                     // where no token comes before too (the file's first).
-                    let special = |c: &[TokenElem]| c.iter().any(|x| matches!(x, TokenElem::Not(_) | TokenElem::End | TokenElem::Many(_)));
+                    let special = |c: &[TokenElem]| c.iter().any(|x| matches!(x, TokenElem::Not(_) | TokenElem::End | TokenElem::Many(..)));
                     let ends = |c: &[TokenElem]| c.contains(&TokenElem::End);
                     if special(&seq[0]) || ends(&before) || seq[..seq.len() - 1].iter().any(|c| ends(c)) {
                         return self.err("a mark's token of kinds and words, and `end` only last");
@@ -2323,7 +2354,7 @@ mod tier2_tests {
         // A run of tokens, then the ones after it; several `before`s, each its own.
         assert_eq!(
             mark("mark k = lf, unless before \"else\" ~\"->\", before \"{\" (name | \",\")* \"->\""),
-            Ok((vec![(true, vec![vec![word("else")], vec![TokenElem::Not(vec![word("->")])]]), (false, vec![vec![word("{")], vec![TokenElem::Many(vec![name.clone(), word(",")])], vec![word("->")]])], false))
+            Ok((vec![(true, vec![vec![word("else")], vec![TokenElem::Not(vec![word("->")])]]), (false, vec![vec![word("{")], vec![TokenElem::Many(vec![name.clone(), word(",")], vec![])], vec![word("->")]])], false))
         );
         assert!(mark("mark k = lf, before ~\"}\"").is_err());
         assert!(mark("mark k = lf, before end").is_err());
@@ -2334,9 +2365,19 @@ mod tier2_tests {
         assert!(mark("mark k = lf, before \"{\" (~name | \",\")* \"->\"").is_err());
         assert_eq!(
             mark("mark k = lf, before \"{\" (~(name | \",\"))* \"->\""),
-            Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![TokenElem::Not(vec![name.clone(), word(",")])])], vec![word("->")]])], false))
+            Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![TokenElem::Not(vec![name.clone(), word(",")])], vec![])], vec![word("->")]])], false))
         );
         assert!(parse("lexer t\nmark k = tokens \"{\" (name | \",\")* \"->\"\n").is_ok());
+        // A run that counts depths (Q222): each `(O to C)` one; none, a token both, a `~`: refused.
+        let angle = Nest { open: vec![word("<")], close: vec![word(">")] };
+        let paren = Nest { open: vec![word("(")], close: vec![word(")")] };
+        assert_eq!(
+            mark("mark k = lf, before \"<\" (name | \"<\" | \">\" | \"(\" | \")\")* nest (\"<\" to \">\") (\"(\" to \")\") \">\" \"(\""),
+            Ok((vec![(false, vec![vec![word("<")], vec![TokenElem::Many(vec![name.clone(), word("<"), word(">"), word("("), word(")")], vec![angle, paren])], vec![word(">")], vec![word("(")]])], false))
+        );
+        assert!(mark("mark k = lf, before \"<\" (name)* nest \">\"").is_err());
+        assert!(mark("mark k = lf, before \"<\" (name)* nest (\"<\" to \"<\") \">\"").is_err());
+        assert!(mark("mark k = lf, before \"<\" (name)* nest (~\"<\" to \">\") \">\"").is_err());
     }
 
     /// A settling mark's `drops W` (decision 0406): parsed with `settles`, refused without.

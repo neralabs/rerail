@@ -1272,11 +1272,24 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
         rest.push_str(&advance(if el.end { "true" } else { "false" }));
         writeln!(rest, "        if !({}) {{ return false; }}", test(el)).unwrap();
     }
+    // The run's depths (Q222): the rest only where each is 0; a closer at 0 ends the run.
+    let run_el = &m.elems[r];
+    let counters = run_el.nests.iter().map(|n| usize::from(n.counter) + 1).max().unwrap_or(0);
+    let (depths, zero) = if counters == 0 { (String::new(), String::new()) } else { (format!("        let mut d = [0u32; {counters}];\n"), format!("d == [0; {counters}] && ")) };
+    let mut nest = String::new();
+    for n in &run_el.nests {
+        let k = n.counter;
+        if n.open {
+            writeln!(nest, "            if {} {{ d[{k}] += 1; }}", test(&n.test)).unwrap();
+        } else {
+            writeln!(nest, "            if {} {{ if d[{k}] == 0 {{ return false; }} d[{k}] -= 1; }}", test(&n.test)).unwrap();
+        }
+    }
     writeln!(
         out,
-        "    /// Token mark {i}'s tokens follow.\n    #[inline(never)]\n    fn pattern_{i}(&self) -> bool {{\n        let here = self.next as usize - 1;\n        let mut at = here;\n{body}        loop {{\n            if self.pattern_{i}_rest(at) {{ return true; }}\n    {}            if !({}) {{ return false; }}\n        }}\n    }}\n\n    /// Token mark {i}'s tokens after its run, from the record after `at`.\n    #[inline(always)]\n    fn pattern_{i}_rest(&self, mut at: usize) -> bool {{\n{rest}        true\n    }}\n",
+        "    /// Token mark {i}'s tokens follow.\n    #[inline(never)]\n    fn pattern_{i}(&self) -> bool {{\n        let here = self.next as usize - 1;\n        let mut at = here;\n{body}{depths}        loop {{\n            if {zero}self.pattern_{i}_rest(at) {{ return true; }}\n    {}            if !({}) {{ return false; }}\n{nest}        }}\n    }}\n\n    /// Token mark {i}'s tokens after its run, from the record after `at`.\n    #[inline(always)]\n    fn pattern_{i}_rest(&self, mut at: usize) -> bool {{\n{rest}        true\n    }}\n",
         advance("false").replace("\n        ", "\n            "),
-        test(&m.elems[r])
+        test(run_el)
     )
     .unwrap();
 }

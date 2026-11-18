@@ -71,3 +71,36 @@ tree kotlin {
     assert_eq!((r.mark_bits(), orders), (2, vec![(0, true), (0, true), (1, false), (2, false), (3, false)]));
     assert_eq!(check_documents("before", &c, b"pa.*\n/ ", &[], &fixed, &|_, _, _, _| None), None);
 }
+
+/// A token mark's run that counts depths (Q222), as the lean parser's `type_args_end` does: a
+/// `<` opens type arguments where its `>` closes the depth and a `(` follows, with `<` `>` and
+/// `(` `)` counted between. The reference's nodes equal the interpreter's and Cranelift's.
+#[test]
+fn a_run_counts_its_depths() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class word      = 'a'..'z' 'A'..'Z'
+class punct     = '<' '>' '(' ')' ','
+mask w          = word
+mask name       = fill(w, ~w)
+error "a byte no token takes" by tokens when ~ws & ~name & ~punct
+token simple_identifier = start name & ~prev(name) run word
+token punct     = start punct
+keywords punct { "<" ">" "(" ")" "," } required
+skip ws
+mark generic    = tokens "<" (simple_identifier | "<" | ">" | "(" | ")" | ",")* nest ("<" to ">") ("(" to ")") ">" "("
+tree t {
+  node source_file whole = (item)*
+  choice item           = type_open | simple_identifier | '<' | '>' | '(' | ')' | ','
+  node type_open        = generic '<'
+}
+"#;
+    let c = compile_step("nest", source);
+    let fixed = ["f<A<B>,C>(x)", "f<A>(x)", "a<b>c>(d)", "a<b)>(c)", "a<(b>c)>(d)", "f<A<(B)>>(x) g<C>(y)", "a<b<c>(d)"];
+    let open = c.ids.of("type_open");
+    // Where the reference opens type arguments: at a `<` whose depth closes before a `(`.
+    let opened: Vec<usize> = fixed.iter().map(|d| reference(&c, d.as_bytes()).expect("parses").iter().filter(|n| n.0 == open).count()).collect();
+    // An inner `<` whose `>` is followed by a `,` or a `>` opens none, as in the lean parser.
+    assert_eq!(opened, [1, 1, 0, 0, 0, 2, 1]);
+    assert_eq!(check_documents("nest", &c, b"ab<>(), ", &[], &fixed, &|_, _, _, _| None), None);
+}

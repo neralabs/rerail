@@ -1848,6 +1848,10 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   the lean parser's does not (no corpus file has one).
 - **Done when**: a run can count a pair of tokens (as tier 1's `count(up, down)` does), Kotlin's
   type arguments and lambda parameters use it, and a test has the nested case.
+- **Done** (2026-11-18): a run's `nest (O to C) …` (0406, "A run's depths"), in Bitlex's reference,
+  the interpreter, Cranelift and the generated Rust; Kotlin's `generic` and `lam_params` count as
+  `type_args_end` and `lambda_params_end` do. Tests: `a_run_counts_its_depths` (eval, ladder),
+  `depths_are_the_lean_parsers`. Corpus unchanged; AOT tapes the JIT's. Reviewer not yet run.
 
 ### Q223. A token run cannot stop at a line break
 

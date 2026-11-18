@@ -312,6 +312,19 @@ fn type_arguments_are_the_lean_parsers() {
     ]);
 }
 
+/// Runs that count their depths (Q222), as `type_args_end` and `lambda_params_end` do: type
+/// arguments to the `>` that closes the `<`, a function type inside them, a lambda's parameters
+/// with brackets and an inner `->`; `a<b>c>(d)`, whose first `>` closes, is no call.
+#[test]
+fn depths_are_the_lean_parsers() {
+    same(&[
+        "val a = f<A<B>, C>(x)\nval b = f<Map<A, List<B>>>(x)\nval c = g<(A) -> B>(y)\n",
+        "val d = { a: Map<K, (V) -> W> -> a }\n",
+        "val e = { (a, b): Pair<A, B> -> a }\n",
+        "val f = a<b>c>(d)\n",
+    ]);
+}
+
 /// Step 20: enum classes, labels, `as?`, reified type parameters, spread arguments.
 #[test]
 fn enums_and_labels_are_the_lean_parsers() {

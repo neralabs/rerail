@@ -959,7 +959,16 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
         // only last after the mark's.
         let after = m.elems.iter().all(|e| (!e.not && !e.end) || e.offset > 0 || (e.offset == 0 && !e.end) || (e.offset == -1 && e.not && e.end)) && m.elems.iter().filter(|e| e.offset >= 0).rev().skip(1).all(|e| !e.end);
         let offsets = offsets && after;
-        let words = m.elems.iter().flat_map(|e| &e.words).all(|&s| usize::from(s) < program.strings.len());
+        // A run's depths only on a run: each side of kinds and words, its counter below
+        // `NESTS`, each counter with an opener and a closer (Q222).
+        let nests = m.elems.iter().all(|e| {
+            let counters = |open: bool| e.nests.iter().filter(|n| n.open == open).fold(0u8, |a, n| a | 1 << n.counter);
+            (e.run || e.nests.is_empty())
+                && e.nests.iter().all(|n| usize::from(n.counter) < crate::program::NESTS && !n.test.not && !n.test.end && !n.test.run && n.test.nests.is_empty())
+                && counters(true) == counters(false)
+        });
+        let words = m.elems.iter().flat_map(|e| e.words.iter().chain(e.nests.iter().flat_map(|n| &n.test.words))).all(|&s| usize::from(s) < program.strings.len());
+        let words = words && nests;
         // A grammar with no extras has nothing to skip between the mark's tokens.
         if !rising || !offsets || !words || usize::from(m.order) >= marks {
             return Err(Error::InvalidOperand(i));
@@ -1005,13 +1014,21 @@ pub fn token_mark_holds(m: &TokenMark, codes: &[u32], next: usize, extra_bit: Op
 fn token_follows(rest: &[&crate::program::TokenElem], at: Option<usize>, codes: &[u32], after: &dyn Fn(usize) -> Option<usize>) -> bool {
     let Some((e, tail)) = rest.split_first() else { return true };
     if e.run {
+        // Its depths (Q222): the rest only where each is 0; a closer at 0 ends the run.
+        let mut depth = [0u32; crate::program::NESTS];
         let mut at = at;
         loop {
-            if token_follows(tail, at, codes, after) {
+            if depth == [0; crate::program::NESTS] && token_follows(tail, at, codes, after) {
                 return true;
             }
             match at {
-                Some(j) if e.holds(Some(codes[j])) => at = after(j),
+                Some(j) if e.holds(Some(codes[j])) => match crate::program::nest_step(&e.nests, depth, codes[j]) {
+                    Some(d) => {
+                        depth = d;
+                        at = after(j);
+                    }
+                    None => return false,
+                },
                 _ => return false,
             }
         }

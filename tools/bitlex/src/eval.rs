@@ -1213,7 +1213,7 @@ impl<'a> Ev<'a> {
         let one = |i: usize, c: &TokenElem| match c {
             TokenElem::Kind(k) => &toks[i].kind == k || &lexed[i] == k,
             TokenElem::Word(w) => toks[i].kind.as_bytes() == w.as_slice() || toks[i].soft.as_deref().is_some_and(|s| s.as_bytes() == w.as_slice()),
-            TokenElem::Not(_) | TokenElem::End | TokenElem::Many(_) => false,
+            TokenElem::Not(_) | TokenElem::End | TokenElem::Many(..) => false,
         };
         let is = |t: Option<usize>, e: &[TokenElem]| match (e, t) {
             ([TokenElem::Not(inner)], Some(t)) => !inner.iter().any(|c| one(t, c)),
@@ -1284,17 +1284,28 @@ impl<'a> Ev<'a> {
 /// them on. `at(g, e)`: element `e` at token `g` (`g == n`: past the last).
 fn seq_holds(g: usize, seq: &[Vec<TokenElem>], n: usize, at: &dyn Fn(usize, &[TokenElem]) -> bool) -> bool {
     let Some((e, rest)) = seq.split_first() else { return true };
-    if let [TokenElem::Many(set)] = e.as_slice() {
+    if let [TokenElem::Many(set, nests)] = e.as_slice() {
+        // The depths it counts (`Nest`): the rest only where each is 0; a closer at 0 ends it.
+        let mut depth = vec![0u32; nests.len()];
         let mut q = g;
         loop {
-            if seq_holds(q, rest, n, at) {
+            if depth.iter().all(|&d| d == 0) && seq_holds(q, rest, n, at) {
                 return true;
             }
-            if q < n && at(q, set) {
-                q += 1;
-            } else {
+            if q >= n || !at(q, set) {
                 return false;
             }
+            for (d, nest) in depth.iter_mut().zip(nests) {
+                if at(q, &nest.close) {
+                    if *d == 0 {
+                        return false;
+                    }
+                    *d -= 1;
+                } else if at(q, &nest.open) {
+                    *d += 1;
+                }
+            }
+            q += 1;
         }
     }
     at(g.min(n), e) && (g >= n || seq_holds(g + 1, rest, n, at))
@@ -1379,6 +1390,46 @@ fn byte_ends(g: &Gram, text: &[u8], at: usize, classes: &HashMap<String, Vec<(u3
         }
         Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Reread { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) | Gram::Flag { .. } | Gram::Unless { .. } => return Err("check: a tree's notation in a byte grammar".into()),
     })
+}
+
+#[cfg(test)]
+mod run_tests {
+    use super::*;
+
+    /// A run that counts depths (Q222), as `type_args_end` does: the rest only where `<` and `(`
+    /// are closed, and a closer at depth 0 ends the run.
+    #[test]
+    fn a_run_counts_its_depths() {
+        use crate::syntax::Nest;
+        let w = |s: &str| TokenElem::Word(s.as_bytes().to_vec());
+        let set = vec![TokenElem::Kind("name".into()), w("<"), w(">"), w("("), w(")"), w(",")];
+        let nests = vec![Nest { open: vec![w("<")], close: vec![w(">")] }, Nest { open: vec![w("(")], close: vec![w(")")] }];
+        let seq = vec![vec![w("<")], vec![TokenElem::Many(set.clone(), nests)], vec![w(">")], vec![w("(")]];
+        let flat = vec![vec![w("<")], vec![TokenElem::Many(set, vec![])], vec![w(">")], vec![w("(")]];
+        let holds = |seq: &[Vec<TokenElem>], text: &str| {
+            let toks: Vec<&str> = text.split(' ').collect();
+            let at = |i: usize, e: &[TokenElem]| {
+                let t = toks.get(i).copied().unwrap_or("");
+                e.iter().any(|c| match c {
+                    TokenElem::Word(x) => x.as_slice() == t.as_bytes(),
+                    TokenElem::Kind(_) => !t.is_empty() && t.chars().all(|c| c.is_ascii_lowercase()),
+                    _ => false,
+                })
+            };
+            seq_holds(0, seq, toks.len(), &at)
+        };
+        for (text, want, flat_want) in [
+            ("< a > (", true, true),
+            ("< a < b > , c > (", true, true),
+            // The first `>` closes: what follows it is no `(`.
+            ("< a > c > (", false, true),
+            ("< a ) > (", false, true),
+            ("< ( a > b ) > (", false, true),
+        ] {
+            assert_eq!(holds(&seq, text), want, "{text}");
+            assert_eq!(holds(&flat, text), flat_want, "{text}, no depths");
+        }
+    }
 }
 
 #[cfg(test)]
