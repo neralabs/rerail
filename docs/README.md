@@ -70,3 +70,5 @@ Internal designs for contributors.
 - [windows.md](windows.md): the rules Rerail keeps on Windows, the defect behind each, and the module or check that
   holds it
 - [blade-parser.md](blade-parser.md): the Blade parser, a Rust port of Forte, what is ported and how it is checked
+- [repository-packs.md](repository-packs.md): the rule packs a repository enables, declared in its
+  `.rerail/packs.json`, so every machine runs the same rules for the same commit (a design)
