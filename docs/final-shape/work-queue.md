@@ -1838,3 +1838,14 @@ Found 2026-11-17 (measuring 0365, `anchored_walks_find_the_unanchored_roots`, 31
 debug build): `labels.wave.labelled` took 93 s process CPU without anchors and 85 s with, while its stages (formulas
 8.9 s, fallback 1.8 s, packed walks 1.8 s) and the sweeps (about 3 s thread CPU) account for a small part. Find
 where the rest goes (a sample of the run), before reading the wave's CPU totals as the walks'.
+
+### Q136. (Q25 on sync-integration-hub-tape) The label pipelines compile cold for 110 s
+
+Found 2026-11-17 (the merge of the hub at 3206e1736, M3 Max, debug): `lowered_clauses_find_the_same_roots_on_metal`
+took 113 s on Metal the first time after the kernel sources changed, and 4.4 s on the next run (5.7 s before the
+merge). Device time was 2.7 s in both. The rest of the first run is the label pipelines' compile: one pipeline per
+kernel and tape format, through function constants, with nothing yet in Metal's shader cache.
+`the_label_kernels_compile_for_every_format` (16 kernels and the pattern kernel, 3 formats) takes 56 s in the same
+way. A user's first run after an engine update pays the same cost. Find what the compile spends: the size of the
+generated MSL, the number of pipelines, and whether each format must be its own pipeline. Then cut it, or
+precompile the libraries (a `.metallib` built with the engine).

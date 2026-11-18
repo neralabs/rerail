@@ -743,8 +743,18 @@ fn pipeline_key(device: &metal::Device, source: &str, name: &str, constant: Opti
     digest.finalize().into()
 }
 
-/// The keys of pipelines a background thread is compiling (`pipeline_ready`).
-static COMPILING: LazyLock<Mutex<std::collections::HashSet<[u8; 32]>>> = LazyLock::new(Default::default);
+/// The keys of pipelines a background thread is compiling (`pipeline_ready`): `None` while it compiles, the message
+/// where it failed, raised in the next caller (fatal there as in the foreground, decision 0382; never a reason to keep
+/// running the other form).
+static COMPILING: LazyLock<Mutex<HashMap<[u8; 32], Option<String>>>> = LazyLock::new(Default::default);
+
+/// A Metal library, function or pipeline that does not compile is fatal (decision 0382): the run stops, naming the
+/// kernel and the compiler's message. It is never an error a caller could answer by running another path (the CPU,
+/// an interpreter, an older form).
+#[track_caller]
+fn compile_failed(name: &str, what: &str, error: impl std::fmt::Display) -> ! {
+    panic!("Metal: the {what} of `{name}` does not compile (decision 0382: fatal): {error}")
+}
 
 /// `source`'s pipeline `name` when it is compiled; otherwise `None` at once, its compile started on a thread of its
 /// own (once per source, however often asked), so a caller with another form of the work (a pipeline compiled
@@ -755,16 +765,34 @@ pub fn pipeline_ready(source: &str, name: &str) -> Option<ComputePipelineState> 
     if let Some(cached) = PIPELINES.lock().ok()?.get(&key).cloned() {
         return Some(cached);
     }
+    if let Some(Some(error)) = COMPILING.lock().ok()?.get(&key) {
+        panic!("{error}");
+    }
     let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
     rerail_accel::forms::interpreted("msl-pipeline", &hex, name, 1);
-    if COMPILING.lock().ok()?.insert(key) {
+    let started_here = {
+        let mut compiling = COMPILING.lock().ok()?;
+        let new = !compiling.contains_key(&key);
+        compiling.entry(key).or_insert(None);
+        new
+    };
+    if started_here {
         let (source, name) = (source.to_owned(), name.to_owned());
         let spawned = rerail_accel::exec::service("rerail-msl-compile", None, move || {
             let started = std::time::Instant::now();
-            let ok = pipeline_named(&source, &name).is_ok();
+            // A compile that fails panics (`compile_failed`); its message waits for the next caller, who stops.
+            let compiled = std::panic::catch_unwind(|| pipeline_named(&source, &name));
+            let ok = matches!(compiled, Ok(Ok(_)));
             rerail_accel::forms::compiled("msl-pipeline", &hex, &name, started.elapsed().as_secs_f64(), ok);
             if let Ok(mut compiling) = COMPILING.lock() {
-                compiling.remove(&key);
+                match compiled {
+                    Err(panic) => {
+                        let message = panic.downcast_ref::<String>().cloned().unwrap_or_else(|| format!("Metal: `{name}` does not compile"));
+                        eprintln!("{message}");
+                        compiling.insert(key, Some(message));
+                    }
+                    Ok(_) => drop(compiling.remove(&key)),
+                }
             }
         });
         if spawned.is_err()
@@ -796,10 +824,7 @@ pub fn pipeline_named_constant(
     } else {
         let library = device
             .new_library_with_source(source, &CompileOptions::new())
-            .map_err(|error| {
-                eprintln!("Metal library compilation failed: {error}");
-                Error::BackendFailure
-            })?;
+            .unwrap_or_else(|error| compile_failed(name, "library", error));
         if let Ok(mut libraries) = LIBRARIES.lock() {
             if libraries.len() >= 16
                 && let Some(oldest) = libraries.keys().next().copied()
@@ -821,13 +846,13 @@ pub fn pipeline_named_constant(
     });
     let function = library
         .get_function(name, constants)
-        .map_err(|_| Error::BackendFailure)?;
+        .unwrap_or_else(|error| compile_failed(name, "function", error));
     let descriptor = metal::ComputePipelineDescriptor::new();
     descriptor.set_label(name);
     descriptor.set_compute_function(Some(&function));
     let pipeline = device
         .new_compute_pipeline_state(&descriptor)
-        .map_err(|_| Error::BackendFailure)?;
+        .unwrap_or_else(|error| compile_failed(name, "pipeline", error));
     if let Ok(mut pipelines) = PIPELINES.lock() {
         if pipelines.len() >= 512
             && let Some(oldest) = pipelines.keys().next().copied()

@@ -95,14 +95,21 @@ pub fn gpu_seconds(command: &CommandBufferRef) -> f64 {
     (end - start).max(0.0)
 }
 
-/// Compiles `name` from `source` on the shared device.
+/// A Metal library, function or pipeline that does not compile is fatal (decision 0382): the run stops, naming the
+/// kernel and the compiler's message, and no caller runs another path (the CPU's) on it.
+#[track_caller]
+pub fn compile_failed(name: &str, what: &str, error: impl std::fmt::Display) -> ! {
+    panic!("Metal: the {what} of `{name}` does not compile (decision 0382: fatal): {error}")
+}
+
+/// Compiles `name` from `source` on the shared device; an error only where there is no device.
 pub fn compile(source: &str, name: &str) -> Result<ComputePipelineState, String> {
     let device = device()?;
-    objc::rc::autoreleasepool(|| {
-        let library = device.new_library_with_source(source, &metal::CompileOptions::new()).map_err(|e| format!("compiling {name}: {e}"))?;
-        let f = library.get_function(name, None).map_err(|e| format!("{name}: {e}"))?;
-        device.new_compute_pipeline_state_with_function(&f).map_err(|e| format!("{name}: {e}"))
-    })
+    Ok(objc::rc::autoreleasepool(|| {
+        let library = device.new_library_with_source(source, &metal::CompileOptions::new()).unwrap_or_else(|e| compile_failed(name, "library", e));
+        let f = library.get_function(name, None).unwrap_or_else(|e| compile_failed(name, "function", e));
+        device.new_compute_pipeline_state_with_function(&f).unwrap_or_else(|e| compile_failed(name, "pipeline", e))
+    }))
 }
 
 thread_local! {
@@ -127,10 +134,10 @@ pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> R
     shared::pipeline(&format!("join {variant} {name}"), || {
         let library = library(variant, source)?;
         let device = device()?;
-        objc::rc::autoreleasepool(|| {
-            let f = library.get_function(name, None).map_err(|e| format!("{name}: {e}"))?;
-            device.new_compute_pipeline_state_with_function(&f).map_err(|e| format!("{name}: {e}"))
-        })
+        Ok(objc::rc::autoreleasepool(|| {
+            let f = library.get_function(name, None).unwrap_or_else(|e| compile_failed(name, "function", e));
+            device.new_compute_pipeline_state_with_function(&f).unwrap_or_else(|e| compile_failed(name, "pipeline", e))
+        }))
     })
     .inspect_err(|e| eprintln!("rerail: the Metal pipeline {variant} {name} is not made: {e}"))
 }
@@ -145,10 +152,8 @@ fn library(variant: &str, source: impl FnOnce() -> String) -> Result<metal::Libr
         return Ok(l.clone());
     }
     let device = device()?;
-    // A shipped kernel that does not compile is a bug: its message is said here, where callers that keep only an
-    // error's kind (`rerail_compiler::Error::BackendFailure`) would lose it.
-    let l = objc::rc::autoreleasepool(|| device.new_library_with_source(&source(), &metal::CompileOptions::new()).map_err(|e| format!("compiling {variant}: {e}")))
-        .inspect_err(|e| eprintln!("rerail: a Metal library does not compile: {e}"))?;
+    // A shipped kernel that does not compile is a bug, and fatal (decision 0382).
+    let l = objc::rc::autoreleasepool(|| device.new_library_with_source(&source(), &metal::CompileOptions::new()).unwrap_or_else(|e| compile_failed(variant, "library", e)));
     *s = Some(l.clone());
     Ok(l)
 }
