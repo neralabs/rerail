@@ -16,6 +16,7 @@ import { auditViolations, checkouts, events, sessions, sessionsOfRepository, wor
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
 import { conflictFooter, type ConflictFooter } from "./merge-assist/notes.js";
+import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
 import { physicalPath, withinCheckout } from "../engine/catalog/checkout-control.js";
 
 /** The events that wait for the session's code-rule evaluator: a tool call, its result and a turn's end. */
@@ -230,9 +231,10 @@ function listDiscoveryGaps(database: RerailDatabase, sessionId: string, limit: n
 /**
  * The HUD's Merge Assist segment for the session, absent when it has none: from the checkout it started in, as its
  * coverage names it (`owners`), else the deepest recorded checkout holding its working folder read through symlinks,
- * as checkouts are recorded.
+ * as checkouts are recorded. Nothing is read while the experiment is off.
  */
 function sessionConflictFooter(database: RerailDatabase, sessionId: string, owners: readonly string[] | null): Pick<SessionHud, "mergeAssist"> {
+  if (!mergeAssistExperimentEnabled()) return {};
   const checkout = owners?.[0] ?? sessionCheckout(database, sessionId);
   const mergeAssist = checkout === undefined ? undefined : conflictFooter(database, checkout);
   return mergeAssist === undefined ? {} : { mergeAssist };

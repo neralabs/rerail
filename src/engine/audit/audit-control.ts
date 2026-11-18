@@ -1,14 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, like, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { checkoutRealpath, physicalPath } from "../catalog/checkout-control.js";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { runGit } from "../git.js";
 import { processState } from "../process-liveness.js";
-import { checkouts, repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions, audits } from "../storage/schema.js";
+import { checkouts, repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions, audits, events } from "../storage/schema.js";
 import { isOmittedFailuresSummary, isSourceGap } from "./audit.js";
+import { ownerLockFreed, ownerLockOf, ownerToken } from "./owner-lock.js";
 import { scrubSecrets } from "../secret-scrub.js";
 
 import {
@@ -108,6 +109,44 @@ function request(row: typeof auditRequests.$inferSelect): AuditRequest {
 }
 function processIsLive(processId: number): boolean {
   return processId === process.pid || processState(processId) !== "gone";
+}
+
+/** An open session with its owner row, as a start finds it, and when it was last heard from. */
+interface OwnedOpenSession {
+  readonly sessionId: string;
+  readonly processId: number;
+  readonly token: string;
+  readonly heardAt: number;
+}
+
+/** `answer`, asked once per distinct key. */
+function askedOnce<K, V>(answer: (key: K) => V): (key: K) => V {
+  const answers = new Map<K, V>();
+  return key => {
+    if (!answers.has(key)) answers.set(key, answer(key));
+    return answers.get(key)!;
+  };
+}
+
+/**
+ * The tokens of the claims this process made under no lock (`registerOwner`) and has not let go (`releaseOwner`): a
+ * row that names this process and none of them is a process's that the system gave the same pid before. The row's
+ * time cannot tell: the wall clock can step back after this process started (NTP, a virtual machine resumed), and a
+ * claim made since then reads as made before the start. Holds one token per session this process holds under no lock.
+ */
+const claimsHereWithoutLock = new Set<string>();
+
+/**
+ * Whether the runtime that wrote `owner` has ended, so the session it holds is no one's: the process the row names is
+ * gone; or the row was written under an engine service's lock that is free now (`ownerLockFreed`), however that service
+ * ended and whatever process holds its pid; or, written under none, it names this process but this process did not
+ * make the claim (`claimsHereWithoutLock`), a process the system gave the same pid did.
+ */
+function writerEnded(owner: OwnedOpenSession, live: (processId: number) => boolean, freed: (lockId: string) => boolean): boolean {
+  if (!live(owner.processId)) return true;
+  const lockId = ownerLockOf(owner.token);
+  if (lockId !== undefined) return freed(lockId);
+  return owner.processId === process.pid && !claimsHereWithoutLock.has(owner.token);
 }
 
 /** Durable controls keyed by canonical workspace, with requests kept session-local. */
@@ -281,8 +320,9 @@ export class SqliteAuditControlStore {
     )).run();
   }
 
-  registerOwner(sessionId: string, delivery: "background" | "next-event"): PolicyOwnerClaim {
-    const token = randomUUID();
+  /** Claims the session for this process, under the lock `lockId` of the engine service it runs in when it has one. */
+  registerOwner(sessionId: string, delivery: "background" | "next-event", lockId?: string | undefined): PolicyOwnerClaim {
+    const token = ownerToken(lockId);
     this.#database.transaction(() => {
       requireSession(this.#database, sessionId);
       const owner = this.#owner(sessionId);
@@ -290,12 +330,69 @@ export class SqliteAuditControlStore {
       if (owner !== undefined) this.#interruptOwned(sessionId, "Owning runtime was replaced before scan could complete");
       this.#database.insert(policySessionOwners).values({ sessionId, delivery, active: true, processId: process.pid, token, updatedAt: Date.now() })
         .onConflictDoUpdate({ target: policySessionOwners.sessionId, set: { delivery, active: true, processId: process.pid, token, updatedAt: Date.now() } }).run();
+      // The runtime opened the record just before this claim; another daemon's sweep may have ended it in between, as
+      // the row this claim replaces was a writer's that ended (`endSessionsOfEndedOwners`). The session is open.
+      this.#database.update(sessions).set({ endedAt: null }).where(eq(sessions.sessionId, sessionId)).run();
     });
+    if (lockId === undefined) claimsHereWithoutLock.add(token);
     return { token };
+  }
+  /**
+   * Whether `claim` still owns the session for this process: the claim a suspended session kept, which its next open
+   * takes back without interrupting the scans queued for it. False once its owner was released or replaced.
+   */
+  holdsOwner(sessionId: string, claim: PolicyOwnerClaim): boolean {
+    const owner = this.#owner(sessionId);
+    return owner?.active === true && owner.token === claim.token && owner.processId === process.pid;
   }
   releaseOwner(sessionId: string, claim: PolicyOwnerClaim): void {
     this.#database.update(policySessionOwners).set({ active: false, updatedAt: Date.now() })
       .where(and(eq(policySessionOwners.sessionId, sessionId), eq(policySessionOwners.token, claim.token))).run();
+    claimsHereWithoutLock.delete(claim.token);
+  }
+  /**
+   * Ends each open session whose owner row's writer has ended (`writerEnded`), as a daemon stopped by a machine
+   * restart, its heap limit or a kill leaves every session it held or had let go of while quiet: its scans still queued
+   * are interrupted and its owner released, as when its owner is found gone, and its record ends `idleMs` after it was
+   * last heard from (its newest recorded event, else its start), as the idle close of a daemon still running would have
+   * ended it, and at the latest at `now`. Each process and each lock is asked once. One query and one transaction;
+   * returns how many sessions it ended.
+   */
+  endSessionsOfEndedOwners(idleMs: number, now: number): number {
+    return this.#database.transaction(() => {
+      const open = this.#database.all<OwnedOpenSession>(sql`
+        SELECT ${sessions.sessionId} AS sessionId, ${policySessionOwners.processId} AS processId,
+          ${policySessionOwners.token} AS token,
+          coalesce((SELECT ${events.observedAt} FROM ${events} WHERE ${events.sessionId} = ${sessions.sessionId}
+            ORDER BY ${events.sequence} DESC LIMIT 1), ${sessions.startedAt}) AS heardAt
+        FROM ${sessions} JOIN ${policySessionOwners} ON ${policySessionOwners.sessionId} = ${sessions.sessionId}
+        WHERE ${sessions.endedAt} IS NULL
+      `);
+      const live = askedOnce(processIsLive);
+      const freed = askedOnce((lockId: string) => ownerLockFreed(this.path, lockId));
+      const ended = open.filter(owner => writerEnded(owner, live, freed));
+      if (ended.length > 0) this.#endAbandoned(ended, idleMs, now);
+      return ended.length;
+    });
+  }
+  /**
+   * Whether an open session's owner row was written under the lock `lockId` (`ownerToken`), so its lock file must stay
+   * until a sweep has ended that session: a row whose lock has no file reads as a writer's that may still run.
+   */
+  namesOwnerLock(lockId: string): boolean {
+    return this.#database.select({ sessionId: policySessionOwners.sessionId }).from(policySessionOwners)
+      .innerJoin(sessions, eq(sessions.sessionId, policySessionOwners.sessionId))
+      .where(and(isNull(sessions.endedAt), like(policySessionOwners.token, `${lockId}.%`))).limit(1).get() !== undefined;
+  }
+  #endAbandoned(ended: readonly OwnedOpenSession[], idleMs: number, now: number): void {
+    const ids = ended.map(owner => owner.sessionId);
+    const at = Date.now();
+    this.#database.update(auditRequests).set({ status: "interrupted", finishedAt: at, error: "Owning runtime exited before scan could complete" })
+      .where(and(inArray(auditRequests.sessionId, ids), inArray(auditRequests.status, ["queued", "running"]))).run();
+    this.#database.update(policySessionOwners).set({ active: false, updatedAt: at }).where(inArray(policySessionOwners.sessionId, ids)).run();
+    for (const { sessionId, heardAt } of ended) {
+      this.#database.update(sessions).set({ endedAt: Math.min(heardAt + idleMs, now) }).where(eq(sessions.sessionId, sessionId)).run();
+    }
   }
   requestAudit(sessionId: string, input: z.input<typeof auditRequestInputSchema>): AuditRequest {
     const parsed = auditRequestInputSchema.parse(input);
@@ -335,6 +432,11 @@ export class SqliteAuditControlStore {
       error,
     }).run();
     return this.listAuditRequests(sessionId).find(request => request.id === id)!;
+  }
+  /** Whether a scan request for the session waits in its queue, not yet claimed. */
+  hasQueuedRequest(sessionId: string): boolean {
+    return this.#database.select({ id: auditRequests.id }).from(auditRequests)
+      .where(and(eq(auditRequests.sessionId, sessionId), eq(auditRequests.status, "queued"))).limit(1).get() !== undefined;
   }
   listAuditRequests(sessionId: string): AuditRequest[] {
     requireSession(this.#database, sessionId);

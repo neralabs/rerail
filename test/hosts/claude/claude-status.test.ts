@@ -13,9 +13,15 @@ vi.mock("../../../src/presentation/session-presentation.js", () => ({
   formatTerminalStatus: (presentation: { text?: string }) => presentation.text ?? "Rerail | 2 rules | steered 1×",
 }));
 import { previousStatusSpawn, runClaudeStatus } from "../../../src/hosts/claude/claude-status.js";
-import { removeFolder } from "../../support/platform/remove-folder.js";
+import { removeFolder, runningIn } from "../../support/platform/remove-folder.js";
 
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+
+/** Waits until `done` holds, asking every 100 ms, for at most `ms`. */
+async function waitUntil(done: () => boolean, ms: number): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!done() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+}
 
 function nodePredecessor(script: string): ClaudeStatusLine {
   return { type: "command", command: `${quote(process.execPath)} -e ${quote(script)}` };
@@ -126,12 +132,19 @@ describe("composed Claude status", () => {
           return false;
         }
       };
-      const deadline = Date.now() + 5_000;
-      while (alive() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+      // The status returns once it has asked for the tree's end, and the tree goes a moment later. On Windows taskkill
+      // ends node, the real bash and Git Bash's launcher one after another, and this process hears of the launcher's
+      // exit only after Windows has ended it, so the launcher, the shell this test started, can outlive node by tens of
+      // milliseconds on a busy machine. Both are awaited, within one bound: the command, and every process this test
+      // started that still runs in the folder.
+      await waitUntil(() => !alive() && runningIn(folder).length === 0, 5_000);
       const survived = alive();
       if (survived) process.kill(pid);
       expect(survived).toBe(false);
+      expect(runningIn(folder)).toEqual([]);
     } finally {
+      // A command the test ended itself, above, takes its shell with it a moment later.
+      await waitUntil(() => runningIn(folder).length === 0, 5_000);
       await removeFolder(folder);
     }
   }, 15_000);

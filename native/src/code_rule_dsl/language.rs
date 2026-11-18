@@ -3072,4 +3072,77 @@ mod tests {
             );
         }
     }
+
+    /// `using` is a name wherever no `using` declaration parses, as ECMAScript and TypeScript read
+    /// it: `f(using)`, `using.push(2)`, `using = [2]`, `using[0] = 1`, a parameter named `using`,
+    /// and `using` before a line break. `using x = f()`, `await using x = f()` and the `for` heads
+    /// stay `using` declarations, and in TypeScript a declaration takes a type (Patch 18 in
+    /// `grammars/tree-sitter-javascript/PATCHES.md`, Patch 30 in
+    /// `grammars/tree-sitter-typescript/PATCHES.md`).
+    #[test]
+    fn using_is_a_name_where_no_using_declaration_parses() {
+        let names = "let using = [1];\nfunction f(x) { return x; }\nf(using);\nconst n = using.length;\n\
+                     using.push(2);\nfunction g() { return using; }\nconst y = using;\nusing = [2];\n\
+                     const z = 1 + using;\n(using);\nfunction h(using) { return 1; }\nusing[0] = 1;\n\
+                     async function q() { await using; }\nfor (using of xs) {}\nusing\nx = 1;\n";
+        let declarations = "using a = f();\nawait using b = f();\nfor (using c = f(); ;) {}\n\
+                            for (using d of ds) {}\nfor (await using e of es) {}\n";
+        for dialect in [
+            GrammarDialect::JavaScript,
+            GrammarDialect::TypeScript,
+            GrammarDialect::Tsx,
+        ] {
+            let root = dialect.ast_grep(names);
+            assert!(!root.root().get_inner_node().has_error(), "{dialect:?}");
+            // Every `using` leaf is a name: a `using` declaration's keyword would be a `using` token.
+            let kinds = root
+                .root()
+                .dfs()
+                .filter(|node| node.text() == "using" && node.is_leaf())
+                .map(|node| node.kind().into_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(kinds, ["identifier"; 14], "{dialect:?}");
+
+            let root = dialect.ast_grep(declarations);
+            assert!(!root.root().get_inner_node().has_error(), "{dialect:?}");
+            let declared = root
+                .root()
+                .dfs()
+                .filter_map(|node| match node.kind().as_ref() {
+                    "using_declaration" => Some(node.text().into_owned()),
+                    "for_in_statement" => {
+                        let left = node.field("left").expect("a for-of head has a left side");
+                        let kind = node
+                            .field_children("kind")
+                            .map(|token| token.text().into_owned())
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        Some(format!("{kind} {}", left.text()))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                declared,
+                [
+                    "using a = f();",
+                    "await using b = f();",
+                    "using c = f();",
+                    "using d",
+                    "await using e",
+                ],
+                "{dialect:?}"
+            );
+        }
+
+        for root in typescript_and_tsx("using t: T = f();\nawait using u: U = f();\n") {
+            let declared = root
+                .root()
+                .dfs()
+                .filter(|node| node.kind() == "using_declaration")
+                .map(|node| node.text().into_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(declared, ["using t: T = f();", "await using u: U = f();"]);
+        }
+    }
 }

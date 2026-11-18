@@ -3,17 +3,16 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { mergeAssistEnabled, pruneCheckouts, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { openRerailDatabase, resetRepositoryHistoryIn, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { mergeAssistState, repositories, sessions } from "../../../src/engine/storage/schema.js";
 import { git } from "../../support/merge-assist/git.js";
+import { withExperiments } from "../../support/environment/experiments.js";
 
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
-beforeEach(() => {
-  vi.stubEnv("RERAIL_EXPERIMENTAL_MERGE_ASSIST", "1");
-});
+withExperiments("MERGE_ASSIST");
 
 const roots: string[] = [];
 const databases: RerailDatabase[] = [];
@@ -52,15 +51,20 @@ describe("Merge Assist storage", () => {
 
   it("forgets what Merge Assist kept for a checkout Rerail forgets", async () => {
     const db = await database();
-    const checkout = join(realpathSync(await folder()), "app");
-    mkdirSync(checkout);
-    git(checkout, "init", "-q", "-b", "main");
+    const root = realpathSync(await folder());
+    const main = join(root, "app");
+    const checkout = join(root, "app-feature");
+    mkdirSync(main);
+    git(main, "init", "-q", "-b", "main");
+    git(main, "commit", "-q", "--allow-empty", "-m", "base");
+    git(main, "worktree", "add", "-q", "-b", "feature", checkout);
+    recordCheckout(db, main);
     recordCheckout(db, checkout);
     db.insert(mergeAssistState).values([`conflicts:${checkout}`, `scan:${checkout}`, `scanning:${checkout}`, `settings:${REPOSITORY}`]
       .map(key => ({ key, valueJson: "[]", updatedAt: 1 }))).run();
-    await removeFolder(checkout);
+    git(main, "worktree", "remove", checkout);
 
-    expect(pruneCheckouts(db)).toEqual([checkout]);
+    expect(await pruneCheckouts(db)).toEqual([checkout]);
     expect(keys(db)).toEqual([`settings:${REPOSITORY}`]);
   });
 

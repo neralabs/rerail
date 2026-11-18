@@ -6,7 +6,7 @@
  * page names (`setNeeds`: the open view's, the sidebar's and an open sheet's, from `views/index.js`). Long lists
  * are paged with a cursor: a poll refreshes their first page and keeps the further pages the person loaded.
  */
-import { get, send } from "./api.js";
+import { ACCESS_KEY, get, send } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
 import { toStoredRules } from "./derive.js";
 import { historyRuleId } from "./history-model.js";
@@ -193,9 +193,11 @@ async function loadPacks() {
   return true;
 }
 
+/** The daemon's health. A daemon that restarted may run Merge Assist now, so one that said it did not is asked again. */
 async function loadHealth() {
   const { body } = await get("/healthz");
   const changed = data.health?.version !== body.version || data.health?.pid !== body.pid;
+  if (changed && data.health !== null && data.mergeAssistExperiment === false) data.mergeAssistExperiment = null;
   data.health = body;
   return changed;
 }
@@ -280,10 +282,28 @@ let mergeAssistRead = { at: 0, loading: null, generation: -1 };
  * answers last cannot put back what a later one changed.
  */
 const mergeAssistWrites = { sent: 0, answered: 0 };
+/**
+ * Merge Assist requests sent, reads and writes alike, numbered in order (`asked`), and the number of the one whose
+ * answer `data.mergeAssist` holds (`held`): a conflict link is looked up only in a status asked for after it.
+ */
+const mergeAssistRequests = { asked: 0, held: 0 };
 
-/** A Merge Assist read answered: `body`, or nothing new on `undefined` (304). Whether anything shown changed. */
-function takeMergeAssist(body) {
+/** The number of the last Merge Assist request sent, for `mergeAssistReadAfter`. */
+export const mergeAssistMark = () => mergeAssistRequests.asked;
+
+/**
+ * Whether `data.mergeAssist` answers a request sent after `mark` (`mergeAssistMark()`): not one read before it, which
+ * the sidebar's count may have read half a minute ago, nor one already out then.
+ */
+export const mergeAssistReadAfter = mark => data.mergeAssist !== null && mergeAssistRequests.held > mark;
+
+/**
+ * Merge Assist read `request` answered: `body`, or nothing new on `undefined` (304), which confirms the status held.
+ * Whether anything shown changed.
+ */
+function takeMergeAssist(body, request) {
   mergeAssistRead.at = Date.now();
+  mergeAssistRequests.held = request;
   const changed = data.mergeAssistError !== null || data.mergeAssistExperiment !== true;
   Object.assign(data, { mergeAssistError: null, mergeAssistExperiment: true });
   if (body === undefined) return changed;
@@ -297,12 +317,14 @@ function takeMergeAssist(body) {
  */
 function takeMergeAssistFailure(error) {
   mergeAssistRead.at = Date.now();
-  const changed = data.mergeAssistError !== error.message;
-  data.mergeAssistError = error.message;
+  // The API's own reason when it answered one ("Rerail does not know the checkout …"), else the status line.
+  const why = error.apiMessage ?? error.message;
+  const changed = data.mergeAssistError !== why;
+  data.mergeAssistError = why;
   return changed;
 }
 
-/** The daemon runs without Merge Assist (`404 experimental-off`): nothing of it is shown or read again. */
+/** The daemon runs without Merge Assist (`404 experimental-off`): nothing of it is shown or read again until it restarts. */
 function experimentOff(error) {
   if (error.status !== 404 || error.code !== "experimental-off") return false;
   Object.assign(data, { mergeAssist: null, mergeAssistError: null, mergeAssistExperiment: false });
@@ -318,9 +340,10 @@ function skipMergeAssist(maxAge) {
 
 /** Read Merge Assist and take the answer while `current()` says it still lands. Whether anything shown changed. */
 async function readMergeAssist(current) {
+  const request = ++mergeAssistRequests.asked;
   try {
     const body = await fetchFresh(`/api/merge-assist?${scopeQuery()}`, "mergeAssist", current);
-    return current() && takeMergeAssist(body);
+    return current() && takeMergeAssist(body, request);
   } catch (error) {
     if (error.name === "AccessRequired") throw error;
     return experimentOff(error) || (current() && takeMergeAssistFailure(error));
@@ -331,7 +354,7 @@ async function readMergeAssist(current) {
  * Merge Assist for the scoped checkout (`data.mergeAssist`), at most once at a time; `maxAge` skips the read while the
  * last answer is younger. A failure is kept in `data.mergeAssistError` for the page and the sidebar, never failing
  * the poll: the rest of the dashboard does not depend on Merge Assist. A `404 experimental-off` is no failure: the
- * daemon runs without Merge Assist (`data.mergeAssistExperiment` false), and nothing reads it again.
+ * daemon runs without Merge Assist (`data.mergeAssistExperiment` false), and nothing reads it again until it restarts.
  */
 function loadMergeAssist(maxAge = 0) {
   if (mergeAssistRead.loading !== null && mergeAssistRead.generation === generation) return mergeAssistRead.loading;
@@ -346,9 +369,13 @@ function loadMergeAssist(maxAge = 0) {
   return loading;
 }
 
-/** A write's answered status replaces `data.mergeAssist`, unless a later write was sent meanwhile (`write` is its count). */
-function keepWriteStatus(write, status) {
+/**
+ * A write's answered status replaces `data.mergeAssist`, unless a later write was sent meanwhile (`write` is its count;
+ * `request` its number among all Merge Assist requests).
+ */
+function keepWriteStatus(write, request, status) {
   if (status === undefined || write !== mergeAssistWrites.sent) return;
+  mergeAssistRequests.held = request;
   data.mergeAssist = status;
   data.mergeAssistError = null;
   mergeAssistRead.at = Date.now();
@@ -361,11 +388,11 @@ function keepWriteStatus(write, status) {
  * write's error only while the page still shows the scope.
  */
 export async function writeMergeAssist(scope, method, path, body) {
-  const write = ++mergeAssistWrites.sent;
+  const write = ++mergeAssistWrites.sent, request = ++mergeAssistRequests.asked;
   try {
     const { body: status } = await send(method, path, { ...scope.target, ...body });
     if (!inScope(scope)) return null;
-    keepWriteStatus(write, status);
+    keepWriteStatus(write, request, status);
     return status ?? null;
   } catch (error) {
     if (inScope(scope)) throw error;
@@ -658,8 +685,10 @@ async function poll() {
   const since = sinceFor();
   const started = generation;
   try {
-    const shared = [loadRepositories(), loadHealth()];
-    const results = await Promise.all(ui.scope === null ? shared : [...shared, ...await scopedJobs(since)]);
+    // Every read is under the one `Promise.all` from the start: a context read that fails while the shared reads are
+    // still out must not leave their failures unhandled.
+    const scoped = ui.scope === null ? [] : scopedJobs(since).then(jobs => Promise.all(jobs));
+    const results = (await Promise.all([loadRepositories(), loadHealth(), scoped])).flat();
     if (started !== generation) return;
     if (since === 0) { data.activityAll = data.activity; data.activityAllSessions = data.activitySessions; }
     data.updatedAt = Date.now();
@@ -678,8 +707,11 @@ async function poll() {
     data.missing = !data.accessRequired && /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
     data.disconnected = !data.missing && !data.accessRequired;
     data.loaded = data.missing;
-    backoff = data.missing ? INTERVAL : Math.min(MAX_BACKOFF, backoff * 2);
-    if (!data.missing) console.warn("poll failed", error);
+    // Only a daemon that did not answer is asked less often. One that refused this browser is asked at the usual pace,
+    // so the page that asks to connect it continues soon after `rerail manage` does.
+    backoff = data.disconnected ? Math.min(MAX_BACKOFF, backoff * 2) : INTERVAL;
+    // A refused browser or an unknown repository is an answer the page shows; only a daemon that did not answer warns.
+    if (data.disconnected) console.warn("poll failed", error);
     onChange(data.missing);
   }
 }
@@ -708,6 +740,8 @@ export function startPolling(listener) {
   onChange = listener;
   refresh().then(schedule);
   document.addEventListener("visibilitychange", () => { if (hidden()) clearTimeout(timer); else refreshNow(); });
+  // Another tab of this origin stored the capability (the link `rerail manage` opens): read with it now.
+  window.addEventListener("storage", event => { if (event.key === ACCESS_KEY && !hidden()) refreshNow(); });
 }
 
 /** A user action that changes what to fetch (view, range, selected session) wants data now. */

@@ -9,6 +9,7 @@ import { failed } from "../format.js";
 import { loadRecommendations } from "../poll.js";
 import { invalidate, toast } from "../shell.js";
 import { CREATE_COMMAND } from "../render/rules.js";
+import { commandBlock } from "../render/command.js";
 
 export const needs = [];
 
@@ -23,15 +24,12 @@ export function createSuggestions(recommendations, attachedPacks, packs) {
   });
 }
 
-function commandBlock(command) {
-  return h("div.cmd", null, h("code", null, command), h("button.btn.sm.solid", { "data-act": "cmdcopy", "data-i": command }, icon("copy"), "Copy"));
-}
-
 function placesToStart(suggestions) {
   if (suggestions.length === 0) return null;
   return h("section.psec.places", null, h("h3", null, "Places to start"),
+    h("p.pintro", null, "Rule packs are ready-made rules, the same in every repo that adds them. These are suggested for what this repo is built with; Rerail has not checked your code against them."),
     suggestions.map(s => h("div.place", null,
-      h("p.pintro", null, `The ${s.name} rule pack ${s.reason}. It is not added here yet.`),
+      h("p.pintro", null, `Suggested: the ${s.name} rule pack (${s.reason}). Not added here yet.`),
       h("div.acts", null,
         h("button.btn.sm", { "data-act": "addpack", "data-i": s.packId }, icon("plus"), `Add ${s.name}`),
         h("button.btn.sm.ghost.link", { "data-act": "nav", "data-i": `pack/${s.packId}` }, "See its rules")))));

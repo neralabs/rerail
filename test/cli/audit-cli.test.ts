@@ -29,6 +29,9 @@ import { setUpTestRepository, testCodeRuleCatalog } from "../support/repository-
 import { startRerail } from "../../src/cli/index.js";
 import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { SETUP_CANCELLED } from "../../src/harness/index.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("REPOSITORY_SCAN", "HEADLESS_SCAN");
 
 const NO_PRINT = codeRuleSchema.parse({
   format: "rerail.policy/v1", id: "test:no-print", revision: 1, mode: "block",
@@ -286,10 +289,23 @@ describe("rerail scan and settings CLI", () => {
     execFileSync("git", ["add", "api"], { cwd: root });
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "generated"], { cwd: root });
     let output = "";
-    expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--wait", "--json"], {
+    expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--json"], {
       home, stdout: { write: text => { output += text; return true; } },
     })).toBe(0);
-    const request = auditRequestSchema.parse(JSON.parse(output));
+    const queued = auditRequestSchema.parse(JSON.parse(output));
+    // The scan spends the clause's whole allowance, a fixed count of work whatever the list's length past it: about
+    // 1.5 s on an Apple-silicon Mac, and past `--wait`'s ten seconds on a Windows CI runner. So the test waits for the
+    // request through the API, not with `--wait`. `vi.waitUntil` retries only while the scan is still queued or
+    // running; a failed request or a scan gone from the list throws, which stops the wait at once.
+    const request = await vi.waitUntil(async () => {
+      const response = await fetch(new URL("/api/sessions/s1/audit-requests", daemon.url));
+      if (!response.ok) throw new Error(`Listing the session's scans answered ${response.status}`);
+      const { auditRequests } = await response.json();
+      const found = auditRequests.find((item: { id: string }) => item.id === queued.id);
+      if (found === undefined) throw new Error(`Scan ${queued.id} disappeared before it could be observed`);
+      const current = auditRequestSchema.parse(found);
+      return current.status === "queued" || current.status === "running" ? false : current;
+    }, { timeout: 60_000, interval: 100 });
     expect(request).toMatchObject({ status: "completed", error: null });
     const { audits } = await (await fetch(new URL(`/api/audits?auditId=${request.auditIds[0]}`, daemon.url))).json();
     expect(audits).toEqual([expect.objectContaining({
@@ -300,7 +316,7 @@ describe("rerail scan and settings CLI", () => {
     })]);
     // The other files are read: the baseline's and the one added beside the generated file.
     expect(new Set(audits[0].violations.map((violation: { path: string }) => violation.path))).toEqual(new Set(["api/clean.py", "api/noisy.py"]));
-  }, 30_000);
+  }, 90_000);
 
   it("fails a repository scan where a rule finds more than it may report on a file, which is no coverage gap", async () => {
     const { root, home, daemon, runtime } = await fixture();

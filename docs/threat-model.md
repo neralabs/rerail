@@ -295,7 +295,8 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
   everything written in it inherits; a home an earlier release made gets it at the next daemon launch
   (`src/engine/storage/windows-acl.ts`). A daemon TLS key whose ACL lets anyone else read it, or that has no DACL
-  (everyone has full control), is refused.
+  (everyone has full control), is never served with: when this account reads it as a private key, the daemon then
+  serves this computer alone, on loopback, on T9's three conditions.
 - The repository identity file is read without following a symlink (`openNoFollowSync`) plus size and format checks,
   and created with `wx` (`src/engine/catalog/repository-identity.ts`).
 - A ledger root in `.rerail/` gets a `.gitignore` of `*`, rewritten whenever it differs, and nothing in it is written
@@ -321,7 +322,7 @@ in code or by running it when this model was written; unmarked items are code re
 | T7 | Malicious update or dependency | npm or registry compromise | Mostly mitigated | Low–Medium |
 | T8 | Repo-planted `.rerail/` redirects or exposes ledgers | Malicious repo | Mitigated | Low |
 | T9 | Capability exposed with `--allow-remote` | Network attacker | Mitigated: TLS required, clients pin the certificate | Low |
-| T10 | Files and directories not kept private | Other OS users | Mitigated on Unix | Low |
+| T10 | Files and directories not kept private | Other OS users | Mitigated | Low |
 | T11 | Repo-controlled environment and config redirect Rerail | Malicious repo | Mostly host-equivalent | Low–Medium |
 | T12 | Native engine crash or hang | Malicious repo | Partly mitigated | Low |
 | T13 | CI and release compromise | Malicious PR, compromised action | Mostly mitigated | Low–Medium (maintainers) |
@@ -464,7 +465,14 @@ Rerail must not be presented as a control the agent cannot switch off.
 <summary>Fail-open paths</summary>
 
 - `serveHook` answers `{}` to any error (`src/harness/hook-adapter.ts`).
-- The launcher turns a non-zero exit into exit 0 and `{}` (`src/harness/hook-launcher.ts`).
+- The launcher turns a hook's non-zero exit, a thrown error or `process.exit` included, into exit 0, with `{}` when
+  the hook wrote nothing (`src/harness/hook-launcher.ts`), whether it runs the hook as a child or in its own process.
+  In its own process, a native crash or an out-of-memory abort ends the process before the launcher can answer, so
+  that exit code stays under the `node` entry; Claude Code shows it as a hook error and does not block on it.
+- The `cmd.exe` entry of Claude Code's hooks on Windows turns a recorded Node that is there but cannot start, and a
+  launcher that ends in a native crash, into exit 0 with no answer, which Claude Code reads as `{}`, while the launcher's
+  file is there (`cmdHookArgs` in `src/setup/harness-registration.ts`). Once the launcher is gone, or `node.exe` is
+  missing from `PATH` after the recorded Node is gone, the hook fails with a hook error, as the `node` entry does.
 - With no daemon running, every hook except `SessionStart` returns at once.
 - A repository that is not started gets `{}`.
 - A Node major below the requirement does nothing.
@@ -549,7 +557,10 @@ audit errors, and Rerail's `daemon.log` lines. Rule matching and steers use the 
 - **Secret-like files.** A tool result for a call naming a secret-like path is stored without its output
   (`callNamesSecretPath` in `persistEvent`, `src/runtime/runtime.ts`). The judgment goes to the session ledger
   (`secret-call`, `secret-result`), so a result arriving after a daemon restart or host reconnect is withheld too.
-  Preimages of a secret-like file, or one whose text holds a secret, keep only a hash and size.
+  Preimages of a secret-like file, or one whose text holds a secret, keep only a hash and size. A finding in a
+  secret-like file that a session still owes its agent when its memory is freed, or when the daemon stops or restarts,
+  is kept in the ledger without its message or fix, as its steer withholds them. Each steer and finding it owes then
+  keeps the SHA-256 of each file it names, as a preimage does, so a file changed meanwhile drops it.
 - **Erasure.** Database writers use `secure_delete`. `rerail reset` checkpoints the WAL, runs `VACUUM`, and checkpoints
   again, so deleted history cannot be read back from the file.
 - **History stored by older versions.** `rerail scrub` redacts the database, its pre-update copy, every recorded
@@ -640,7 +651,26 @@ capability.
 
 **Mitigated** (`src/daemon/daemon.ts:loadDaemonTls`, `src/runtime/daemon-control.ts:daemonFetch`):
 
-- `rerail daemon start --tls-cert <pem> --tls-key <pem>` serves HTTPS, and refuses a key file other users could read.
+- `rerail daemon start --tls-cert <pem> --tls-key <pem>` serves HTTPS, and never serves with a key file other users
+  could read. When that key is a file this account reads, it parses as a private key and `--tls-cert` names its
+  certificate, the daemon serves this computer alone (`serveRerailDaemon`), on three conditions:
+  1. Loopback only. It starts again without `--host`, `--public-host` and the TLS files, so it binds `127.0.0.1` over
+     http, as a daemon started with no options does, and never off loopback; a restart at its heap ceiling relaunches
+     it the same way (`--remote-refused`), even once the key is fixed. Other machines reach nothing.
+  2. The start does not report success. `rerail daemon start` exits 1 when it asked for other machines
+     (`--allow-remote`, `--public-host`), with the refusal on stderr, and so does a later start that asks for them and
+     finds this daemon running; the loopback daemon keeps running. `daemon.json` (`remoteRefused`), `daemon.log` and
+     `rerail status` name the key and the command that makes it private.
+  3. A missing or unreadable key is still an error. Any other `--tls-key` that was refused before stops the start
+     with the exit code and message it had: a missing or misspelled path, a folder, a FIFO, a file this account may
+     not read or another program holds (a lease, or on Windows an oplock not given up within 2 s of the open), one
+     over 1 MiB, one that holds no private key (the certificate, when the two are swapped), or one whose readers
+     cannot be read (`Get-Acl` failing on Windows). A `--tls-cert` that cannot be read, holds no certificate or is
+     not the key's stops it too, with the message it gets beside a private key, a folder's naming the folder; a held
+     one, a FIFO or one over 1 MiB gets the key's refusal. On Windows a Node process opens both files first, so that
+     an oplock keeps it waiting and not the daemon. It says that it began and that it opened them on a pipe of its
+     own, which nothing a NODE_OPTIONS preload prints reaches; when that process cannot start, ends before it opens
+     them, or has not begun within 10 s, the start stops with the key's refusal and a line saying why.
 - A daemon other machines can reach (judged from its bind address or `--public-host`) refuses to start without TLS
   unless `--insecure-http` is passed.
 - `daemon.json` records the certificate's SHA-256. Rerail's clients (probe, MCP bridge, CLI, native session client)
@@ -657,7 +687,9 @@ capability.
 
 ### T10: Files and directories not kept private
 
-On Unix, Rerail creates its files private and tightens existing ones. Windows is unchanged.
+On Unix, Rerail creates its files private and tightens existing ones. On Windows, which ignores modes, a Rerail home or
+`.rerail\sessions` folder made outside the profile folder gets an ACL for the person, SYSTEM and Administrators alone
+([B6](#b6-data-at-rest)).
 
 <details>
 <summary>Mitigations and what remains</summary>
@@ -670,7 +702,13 @@ On Unix, Rerail creates its files private and tightens existing ones. Windows is
   follows a symlink to do so.
 - The rule-pack staging folder is created 0700.
 
-**What remains:** Windows is unchanged, and any new data file in the home must be added to that list.
+**Mitigated on every system** (`src/daemon/daemon.ts:loadDaemonTls`): a daemon TLS key other accounts can read, by its
+mode bits or on Windows its ACL, is never served with. Rerail leaves the key as the person made it and names the
+command that makes it private; meanwhile the daemon serves this computer alone on T9's three conditions: loopback
+only, a start that asked for other machines exits 1, and a key that is missing, unreadable or no private key stops
+the start.
+
+**What remains:** any new data file in the home must be added to that list.
 
 </details>
 
@@ -686,13 +724,25 @@ should not widen it.
 - `RERAIL_ENGINE_PATH` is `require`d as a native addon (`src/engine/native/native.ts`).
 - `RERAIL_ENGINE_SOCKET` names where hooks send full events.
 - `RERAIL_HOME`, `RERAIL_STORAGE_ROOT`, `RERAIL_DATABASE` and `RERAIL_CONTENT_STORE_PATH` move data.
+- `RERAIL_EXPERIMENTAL` and `RERAIL_EXPERIMENTAL_<FEATURE>` turn on [internal-testing](internal-testing.md) features
+  for the process that has them. A daemon started from an environment the repository controls (direnv, say) can so
+  run the remote sink, sending to a remote already added, or conversation rules the repository stores. Off, an
+  experimental feature's API operations are no MCP tools.
 - Git calls inherit `GIT_*`, and an absolute `PATH` entry outside the repository decides which `git` runs. "The
   repository" is only the nearest one above the process's working folder, so entries in an outer checkout around a
   nested worktree or submodule are not skipped, nor is any repository's when the process started outside it. The
   daemon finds Git once, from the folder and `PATH` it started with, and keeps it.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
+  Where set-up found another `node` first on `PATH`, Claude Code's hooks on Windows run `cmd.exe /d /c` by its
+  System32 path, which looks for that fallback `node.exe` on `PATH` alone, never in the hook's working folder
+  (`src/setup/harness-registration.ts`). Set-up writes that path only when `SystemRoot` makes it a full path, from a
+  drive's root folder (`C:\`) or a UNC share, `cmd.exe` is there at set-up and `cmd.exe` reads each path of the entry
+  as one word, and `node` otherwise: Windows completes any other path from a current folder or drive, and a hook's
+  current folder is the repository it runs in. Set-up's look for `node` on `PATH` ends at the first entry that names
+  a server by its UNC path, which it never opens, and writes the `cmd.exe` entry there.
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
-  `.claude/settings*.json`, with `shell: true` (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).
+  `.claude/settings*.json`, through a shell: `shell: true`, or Git Bash's `bash -c` on Windows when Rerail finds one
+  (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).
 - `hooks/cursor.json` uses the relative path `./dist/hosts/cursor/cursor-hook.js`. [INFERENCE: exposed only if Cursor
   runs plugin hooks with the project as working directory. `rerail setup` writes absolute paths.]
 
@@ -836,13 +886,13 @@ first, except in an auto-approve mode.
 <summary>Mitigations</summary>
 
 - **Off by default**, twice: the experimental switch, then the per-repository opt-in. With the switch unset, its
-  operations answer `404 experimental-off`, the CLI refuses, and the daemon runs no hook command, even one saved
-  earlier (`mergeAssistExperimentEnabled` in `src/engine/experimental-features.ts`). The switch keeps people from
-  coming on the feature by accident; it is no barrier to an agent with a shell, which can set the variable for its own
-  `rerail merge-assist` command and may be able to restart the daemon with it set.
+  operations answer `404 experimental-off` and are no MCP tools, the CLI refuses, and the daemon runs no hook command,
+  even one saved earlier (`mergeAssistExperimentEnabled` in `src/engine/experimental-features.ts`). The switch keeps
+  people from coming on the feature by accident; it is no barrier to an agent with a shell, which can set the variable
+  for its own `rerail merge-assist` command and may be able to restart the daemon with it set.
 - **People only on MCP:** `merge_assist_settings_set` (turning it on, setting the command) and
   `merge_assist_conflict_dismiss` answer an `agent` `403 agent-not-permitted`. An agent may read the status and the
-  settings of its own repository and scan only its own checkout.
+  settings of its own repository, and scan only its own checkout and the checkouts inside it.
 - **No shell:** the command is an argv array of 1–64 strings run with `shell: false` from the checkout's root; the
   conflict reaches it on stdin only, never in argv, with `RERAIL_CONFLICT_EVENT` and `RERAIL_CONFLICT_ID` added to the
   person's environment. A 1–60 second timeout ends its process tree (a POSIX process group, `taskkill /T` on Windows),
@@ -865,10 +915,12 @@ first, except in an auto-approve mode.
 - **Other people's text** (branch names, commit subjects, pull request titles, logins, hunks) reaches the agent's
   context as labelled, quoted, capped one-line data in a note that says it is not an instruction (T3), and the dashboard
   only as text nodes, linking a pull request only to its GitHub URL.
-- **Stored data:** each checkout's conflicts (both sides' summaries and contested hunks; a dismissed one keeps none),
-  its last scan, the `gh` sign-in state and login, the notes each session was handed, and the hook command
-  ([privacy](privacy.md)). Turning Merge Assist off clears the conflicts, scans and `gh` sign-in state; `rerail reset`
-  clears the notes of the sessions it removes; the hook command stays until someone removes it.
+- **Stored data:** each checkout's conflicts (both sides' summaries and contested hunks; a dismissed one keeps
+  everything but its hunks and evidence: its files, each side's summary, location, ref, sha and url, and the hook
+  command's last note, status and error), its last scan, the `gh` sign-in state and login, the notes each session was
+  handed, and the hook command ([privacy](privacy.md)). Turning Merge Assist off clears the conflicts, scans and `gh`
+  sign-in state; `rerail reset` clears the notes of the sessions it removes; the hook command stays until someone
+  removes it.
 - **Routes and tools:** `merge_assist_get`, `merge_assist_settings_get`, `merge_assist_scan`,
   `merge_assist_settings_set`, `merge_assist_conflict_dismiss` ([reference](reference.md#merge-assist)).
 

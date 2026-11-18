@@ -99,11 +99,12 @@ function notifyResult(ctx: HostCommandContext, name: string, result: LauncherRes
 
 /**
  * The notice for a page that was just opened; an Orca tab says so, the desktop browser needs no qualifier, and under
- * `BROWSER=none` the notice gives the link to open by hand.
+ * `BROWSER=none` the notice gives the link to open by hand. An opened page's URL is left out: it carries no access
+ * capability, so copied into another browser it would show the page that asks to connect that browser.
  */
 function openingNotice(url: string, opening: PageOpening): string {
   if (opening === "not-opened") return `${BROWSER_OFF_NOTE} Open ${url}`;
-  return opening === "orca-tab" ? `Opening ${url} in the Orca window` : `Opening ${url}`;
+  return opening === "orca-tab" ? "Opening the dashboard in the Orca window" : "Opening the dashboard in your browser";
 }
 
 /**
@@ -235,8 +236,9 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
 
   register("rerail-update", async ctx => {
     const result = await runLauncher(options, ["update"]);
+    // The steps it went through (stderr) come before what it did (stdout), as in a terminal.
     notifyResult(ctx, "rerail-update", result.code === 0
-      ? { ...result, stdout: `${result.stdout.trimEnd()}\nNew sessions use the new version.\n` }
+      ? { ...result, stdout: `${result.stderr}${result.stdout.trimEnd()}\nNew sessions use the new version.\n`, stderr: "" }
       : result);
   });
 
