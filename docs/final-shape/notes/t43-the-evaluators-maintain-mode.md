@@ -148,3 +148,33 @@ A session's relations stay in their blocks between runs; nothing moves to frames
       `spike_delta`. A maintained run (`maintaining`) still keeps its seed joins out of the level batch, as its
       groups did.
   - Red throughout, as before this work: Q80, Q114 and Q115. Q115 also covers two rr tests first run here.
+
+## Review against the design (2026-11-18)
+
+The user asked for a step back: stages 2–6 departed from what 0328 and 0364 agreed. Their required shape is now
+0364's § "Required shape" (R1–R10), with a test each in `plan/corpus/maintain_tests.rs`. Where stage 6 stood:
+
+| | Met? | What departs |
+|---|---|---|
+| R1 | no | The mode's relations hold their versions as `r__minus`/`r__plus`, a changed input's as `r__mm_old`/`r__mm_minus`/`r__mm_plus` (44 a small edit, in the test), and the run path still names the forms' suffixes. |
+| R2 | no | `kept_delta` copies and sorts a stratum derived again and its kept rows; an input's change is copied from its documents' entries (`input_delta::delta`); `version_delta` and `delta_since` copy the rows of a change for the frames and the statistics. |
+| R3 | no | The mode refuses many kinds, each then derived again: aggregates over a changed input (on every small edit of the test), lattices, gates, requests, native operators, `nearest`/`ast`, reads changed without a version. |
+| R4 | no | 0090 §4's threshold went with the forms in 6c. |
+| R5 | yes | The ring's rows all go, maintained by levels. Levels are a `Vec<u32>` beside the rows and a frame part of their own, 4 bytes a row as decided. |
+| R6 | no | The static check is a script (`wf.py`). |
+| R7 | no | The recheck takes one greedy pass, unpriced (6 lines a small edit). |
+| R8 | yes | A session's edit reads no kept frame. |
+| R9 | no | The forms' driver (cut, slots, `Driver`, `maintained.rs`'s slice) still decides; the report's derived-again count and reasons disagree. |
+| R10 | yes | On the tests' edits. |
+
+## The plan (2026-11-18)
+
+Each step lands with its requirement's test un-ignored.
+
+1. Measure the O125 replay: instructions, facts held and kept bytes per edit, each edit's outputs against a fresh
+   run. Which departure costs the most, and the goal's figures against the forms'.
+2. R4: the threshold again, in the mode's terms.
+3. R1, R2: a relation's change read off its version in place, for inputs, mode strata and strata derived again.
+4. R3: count the strata derived again by reason, then bring the most common kinds into the mode.
+5. R9: the driver down to skip, mode, or derive again.
+6. R6 (the static check in the engine), R7 (Q116), R1's leftovers; the data-layer scale run last.

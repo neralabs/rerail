@@ -741,6 +741,7 @@ impl Retained {
             with_level_keys.extend(wanted.iter().map(|r| (frames.names[*r].clone(), kept_stats::PART)));
         }
         let admitted = store.admit_frame_parts(&frames.space, &with_level_keys).map_err(|e| Error::Plan(e.to_string()))?;
+        super::maintain::shape::frames_read(admitted.len());
         if !super::kept_strata::admission_matches(&keys, &admitted, |(r, _)| frames.derived.get(&r.name)) {
             return Ok(false);
         }
@@ -790,6 +791,7 @@ impl Retained {
         let Some(frames) = self.frames.as_ref() else { return HashMap::new() };
         let keys: Vec<_> = rels.iter().filter(|r| frames.derived.contains_key(*r)).map(|r| (frames.names[r].clone(), DOCS_PART)).collect();
         let Ok(got) = store.admit_frame_parts(&frames.space, &keys) else { return HashMap::new() };
+        super::maintain::shape::frames_read(got.len());
         got.into_iter().filter_map(|((r, _), f)| Some((r.name, f.len()?))).collect()
     }
 
@@ -1563,6 +1565,7 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
         })
         .collect();
     let parts = store.admit_frame_parts(&space, &keys).map_err(|e| Error::Plan(e.to_string()))?;
+    super::maintain::shape::frames_read(parts.len());
     let mut out = HashMap::new();
     for (rel, frame) in &names {
         let Some(width) = prog.fields()?.arity(rel) else { return Ok(Err(format!("{rel}: not declared by the cross part"))) };
@@ -2226,6 +2229,7 @@ impl Retained {
         // none.
         keys.extend(wanted.iter().map(|r| (frames.names[r].clone(), LEVELS_PART)));
         let admitted = store.admit_frame_parts(&frames.space, &keys).map_err(|e| Error::Plan(e.to_string()))?;
+        super::maintain::shape::frames_read(admitted.len());
         let levels = &admitted;
         // Prepare all rows before publishing any of them into the retained part. Failed admission is a cache
         // miss, and the caller must recompute its cut before maintenance can run.

@@ -1753,6 +1753,9 @@ pub(crate) mod logic {
             // Decision 0225 §2: partial memo hits hand on what a full evaluation does.
             #[cfg(test)]
             pub mod partial_tests;
+            // Decision 0364's required shape (R1–R10): what a session's edit does, one test per requirement.
+            #[cfg(test)]
+            pub mod maintain_tests;
             #[cfg(test)]
             pub mod cache_tests;
             // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.

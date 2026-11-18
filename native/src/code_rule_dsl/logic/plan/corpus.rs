@@ -9131,8 +9131,8 @@ fn run_observed(
                     // The relations whose rows are as they were (decision 0117 step 4): their frames are not written.
                     let unchanged_rels = std::mem::take(&mut got.unchanged);
                     let run_deltas = std::mem::take(&mut got.deltas);
-                    // Decision 0090 §4: the maintained strata the run chose to derive again, by their deltas' size.
-                    let run_again = got.again;
+                    // The reached strata the maintain mode did not take, by reason (decision 0364, R3).
+                    let run_again = std::mem::take(&mut got.again);
                     let run_quiet = got.quiet;
                     step("ran");
                     collect(&db, &got, derived_widths_in(&fields))?;
@@ -9384,8 +9384,8 @@ fn run_observed(
                         *m.entry(*why).or_insert(0) += 1;
                         m
                     });
-                    if run_again > 0 {
-                        cross_again.insert("input deltas past θ", run_again);
+                    for (why, n) in run_again {
+                        *cross_again.entry(why).or_insert(0) += n;
                     }
                     // Every program's kept part shares the one budget: past it, only this program's is kept.
                     if next.bytes() + cells.values().map(retain::Retained::bytes).sum::<usize>() > retain::budget() {
@@ -10066,6 +10066,7 @@ fn tested_of<'c>(constants: &'c HashMap<String, BTreeSet<(usize, i64)>>, rel: &s
 /// Binds `rel` (a kept relation, adopted when `held`, or a source) for a session's run, with its statistics in
 /// `stats`; `maintains`: this run maintains the relation whose old rows `rel` is.
 fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats: &mut super::Stats, rel: String, source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, held: Option<Arc<crate::code_rule_dsl::logic::native::component::InRel>>, maintains: bool) -> Result<()> {
+    maintain::shape::held(&rel);
         let _bind = crate::code_rule_dsl::logic::profile::span(|| format!("bind {}", if held.is_some() { "kept" } else { "source" }));
         // A kept relation's statistics, measured when it was first bound so, while it is kept as it is.
         let tested = tested_of(&b.constants, &rel).cloned().unwrap_or_default();

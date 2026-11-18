@@ -4851,8 +4851,9 @@ pub struct Outcome {
     pub handed: BTreeSet<String>,
     /// The relations recomputed in their readers (decision 0099): no table and no engine rows hold them.
     pub inlined: BTreeSet<String>,
-    /// The maintained strata derived again by their input deltas' size (decision 0090 §4), chosen during the run.
-    pub again: usize,
+    /// The reached strata derived again, by the class of reason (`maintain::reason_class`): the maintain mode did not
+    /// take them.
+    pub again: BTreeMap<&'static str, usize>,
     /// A maintained run's relations whose rows changed by a delta (decision 0117 step 4): the rows gone and added.
     pub deltas: HashMap<String, (Vec<i64>, Vec<i64>)>,
     /// A maintained run's relations whose rows are as stored and were never read (decision 0117 step 4): no reached
@@ -6493,6 +6494,7 @@ fn kept_delta(db: &Connection, rel: &str, old: &Arc<super::native::component::In
         v
     };
     let (was, now) = (rows(old.source((0..k).map(|c| sql_col(rel, c)).collect()).as_ref()), rows(new.as_ref()));
+    crate::code_rule_dsl::logic::plan::corpus::maintain::shape::rows_copied(was.len() + now.len());
     let (mut minus, mut plus) = (Vec::new(), Vec::new());
     let (mut i, mut j) = (0, 0);
     while i < was.len() || j < now.len() {
@@ -7431,7 +7433,7 @@ impl<'a> Run<'a, '_> {
         }
         // Nothing kept: its part's first run (a cold run keeps nothing, and its part is read from no frame), derived.
         if olds.is_empty() {
-            return Some("nothing kept: its part's first run".into());
+            return Some(crate::code_rule_dsl::logic::plan::corpus::maintain::FIRST_RUN.into());
         }
         if olds.len() != scc.len() {
             return Some("its kept rows are not in memory".into());
@@ -7693,7 +7695,10 @@ impl<'a> Run<'a, '_> {
             // planner's order: correct with the head bound too, its binds then tests.
             let greedy = bound_head_order(b).and_then(|order| self.whole_join_spec(b, &order, None, &ri, scc, &native_rels));
             let spec = match greedy {
-                Some(spec) => spec,
+                Some(spec) => {
+                    crate::code_rule_dsl::logic::plan::corpus::maintain::shape::recheck_unpriced();
+                    spec
+                }
                 None => {
                     plan_site("the maintain mode's recheck");
                     let ((order, _, _), _) = self.model.plan_rule_reused(pf, b, None)?;
@@ -11596,12 +11601,14 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                             slots[j] = Slot::Mode { rules, moved, olds, ins };
                             continue;
                         }
-                        Some(why) => super::profile::decision("not the maintain mode (decision 0364)", || format!("{key}: {why}")),
+                        Some(why) => {
+                            *outcome.again.entry(crate::code_rule_dsl::logic::plan::corpus::maintain::reason_class(&why)).or_insert(0) += 1;
+                            super::profile::decision("not the maintain mode (decision 0364)", || format!("{key}: {why}"))
+                        }
                     }
                     // Derived again from its reads as they are now, as the base program derives it (decision 0364: no
                     // form). Its relations move; a kept one's delta is its diff against its kept rows, made once the
                     // level has run (`again_olds`), so its readers are maintained, not derived again in turn.
-                    outcome.again += 1;
                     for r in scc {
                         moved_rels.insert(r.clone());
                         match m.kept(r) {

@@ -70,6 +70,12 @@ pub(super) fn changed(old: &Docs, new: &Docs, held: &memo::Held, program: &[u8; 
 /// the entry column the input's column `c` holds, `None` for one it does not hold (it reads as 0). `None` when a
 /// row is not its document's alone (no node of that document in it).
 pub(super) fn delta(changes: &[(Option<Entry>, Option<Entry>)], key: &str, cols: &[Option<usize>]) -> Option<(Vec<Vec<i64>>, Vec<Vec<i64>>)> {
+    let out = delta_rows(changes, key, cols)?;
+    super::maintain::shape::rows_copied(out.0.len() + out.1.len());
+    Some(out)
+}
+
+fn delta_rows(changes: &[(Option<Entry>, Option<Entry>)], key: &str, cols: &[Option<usize>]) -> Option<(Vec<Vec<i64>>, Vec<Vec<i64>>)> {
     let rows_of = |e: &Option<Entry>| -> Option<FxHashSet<Vec<i64>>> {
         let mut out = FxHashSet::default();
         let Some(e) = e else { return Some(out) };

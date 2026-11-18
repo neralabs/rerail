@@ -27,10 +27,42 @@ pub(in crate::code_rule_dsl) struct Maintained {
 }
 
 impl Maintained {
-    /// A part whose strata the cut runs are all derived again (no kept part to drive, or gates).
+    /// A part whose strata the cut runs are all derived again (no kept part to drive, or gates): `NOT_WALKED`.
     pub(in crate::code_rule_dsl) fn again(program: lower::Lowered, strata: usize) -> Maintained {
-        Maintained { program, sources: Vec::new(), maintained: 0, derived_again: strata, recursive: 0, again: Vec::new() }
+        Maintained { program, sources: Vec::new(), maintained: 0, derived_again: strata, recursive: 0, again: vec![("*".to_owned(), NOT_WALKED); strata] }
     }
+}
+
+/// The reasons a stratum an edit reaches may be derived again (decision 0364, R3): its part's first run, which has
+/// nothing kept, and 0090 §4's threshold (R4). Every other stratum is maintained by the mode, or skipped.
+pub const FIRST_RUN: &str = "nothing kept: its part's first run";
+pub const THRESHOLD: &str = "the edit reaches too much of it (0090 §4)";
+/// A part the level driver does not walk (no kept part, or gates): every stratum of its cut derived again.
+pub const NOT_WALKED: &str = "its part is not walked: no kept part, or gates";
+/// A read changed with no version (a relation derived again in SQL, or with its kept rows not held).
+pub const NO_VERSION: &str = "a read changed without a version";
+
+/// The class of a reason the maintain mode gave for not taking a stratum (`Run::maintain_mode_blocks`), as the
+/// report counts it: one of its fixed reasons, `NO_VERSION` for a read named in it, or `other`.
+pub fn reason_class(why: &str) -> &'static str {
+    const FIXED: &[&str] = &[
+        FIRST_RUN,
+        THRESHOLD,
+        "a gated aggregate",
+        "a native, lattice, gate, request, produced, input or fact relation",
+        "a nearest or ast literal: no native step",
+        "an aggregate over a changed input",
+        "an aggregate over a changed view of an input",
+        "an aggregate over its own stratum",
+        "its kept rows are not in memory",
+        "no rules",
+        "recursive, its kept rows without levels",
+        "RERAIL_MAINTAIN_MODE=off",
+    ];
+    if why.ends_with("changed without a version") {
+        return NO_VERSION;
+    }
+    FIXED.iter().find(|r| **r == why).copied().unwrap_or("other")
 }
 
 /// Whether recursive relations keep a level per row (decision 0090), so that the next run maintains them by levels.
@@ -52,4 +84,65 @@ pub fn strata_by_levels() -> usize {
 /// A recursive stratum the evaluator's maintain mode maintained by levels (decision 0364 §2).
 pub fn by_levels_ran() {
     BY_LEVELS.with(|c| c.set(c.get() + 1));
+}
+
+/// What a run did that decision 0364's required shape (§ "Required shape") rules out, counted over the process: read
+/// by the requirement tests (`maintain_tests`), never by a run. nextest runs each test as a process of its own.
+pub mod shape {
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+
+    static ROWS_COPIED: AtomicUsize = AtomicUsize::new(0);
+    static MAINTENANCE_HELD: AtomicUsize = AtomicUsize::new(0);
+    static FRAMES_READ: AtomicUsize = AtomicUsize::new(0);
+    static RECHECKS_UNPRICED: AtomicUsize = AtomicUsize::new(0);
+
+    /// The counts so far.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct Shape {
+        /// R2: rows copied out of a relation, a delta or a document's entries to state a change (a delta as rows, a
+        /// diff of a relation derived again against its kept rows).
+        pub rows_copied: usize,
+        /// R1: relations held under a maintenance name (`is_maintenance_name`).
+        pub maintenance_held: usize,
+        /// R8: kept frame parts read back by a run.
+        pub frames_read: usize,
+        /// R7: recheck lines ordered without a price.
+        pub rechecks_unpriced: usize,
+    }
+
+    pub fn now() -> Shape {
+        Shape { rows_copied: ROWS_COPIED.load(Relaxed), maintenance_held: MAINTENANCE_HELD.load(Relaxed), frames_read: FRAMES_READ.load(Relaxed), rechecks_unpriced: RECHECKS_UNPRICED.load(Relaxed) }
+    }
+
+    /// What happened between `before` and now.
+    pub fn since(before: Shape) -> Shape {
+        let n = now();
+        Shape { rows_copied: n.rows_copied - before.rows_copied, maintenance_held: n.maintenance_held - before.maintenance_held, frames_read: n.frames_read - before.frames_read, rechecks_unpriced: n.rechecks_unpriced - before.rechecks_unpriced }
+    }
+
+    pub fn rows_copied(n: usize) {
+        ROWS_COPIED.fetch_add(n, Relaxed);
+    }
+    pub fn frames_read(n: usize) {
+        FRAMES_READ.fetch_add(n, Relaxed);
+    }
+    pub fn recheck_unpriced() {
+        RECHECKS_UNPRICED.fetch_add(1, Relaxed);
+    }
+    /// Notes a relation held under `name`, if it is a maintenance name.
+    pub fn held(name: &str) {
+        if is_maintenance_name(name) {
+            MAINTENANCE_HELD.fetch_add(1, Relaxed);
+        }
+    }
+
+    /// The suffixes of the relations the forms and counting kept (decisions 0117, 0241, 0298, 0090): none is a
+    /// relation of a run under 0364 (R1). A relation's change is its version, read in place.
+    pub const MAINTENANCE_SUFFIXES: &[&str] = &[
+        "__old", "__del", "__ins", "__redo", "__minus", "__plus", "__ready", "__cand", "__chk", "__held", "__gone", "__live", "__sup", "__grp", "__mm_old", "__mm_minus", "__mm_plus",
+    ];
+
+    pub fn is_maintenance_name(name: &str) -> bool {
+        MAINTENANCE_SUFFIXES.iter().any(|s| name.ends_with(s) || name.contains(&format!("{s}__")))
+    }
 }
