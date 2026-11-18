@@ -221,6 +221,7 @@ describe("CheckoutCodeRuleRouter", () => {
           return matcher.ignored(path, directory);
         },
         ignoredBy: (path, directory) => matcher.ignoredBy(path, directory),
+        sourcesUnchanged: () => matcher.sourcesUnchanged(),
       };
     });
     cleanups.push(async () => { opens.mockRestore(); });

@@ -5,20 +5,27 @@
 //! and can name the pattern that ignored a path, with its file and line (`git check-ignore -v`).
 //!
 //! The index is re-read whenever it changes on disk, so `git add` of an ignored file brings it back;
-//! a `.gitignore` is read when the walk first enters its folder.
+//! a `.gitignore` is read when the walk first enters its folder. A matcher says whether one opened
+//! now would read the rules it read (`sources_unchanged`), so hosts can share one per checkout.
 
 use gix::bstr::{BStr, ByteSlice};
 use gix::index::entry::Mode;
 use napi::{Error, Result, Status};
 use napi_derive::napi;
-use std::path::Path;
+use std::fs::Metadata;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::SystemTime;
 
 pub struct GitIgnore {
     repository: gix::Repository,
     stack: gix::worktree::Stack,
     /// Where the opened root sits below the worktree root: empty, or `/`-joined components.
     prefix: Vec<String>,
+    /// The opened root, resolved.
+    root: PathBuf,
+    /// What the rules were read from as the matcher opened; `None` when that could not be read.
+    sources: Option<Sources>,
 }
 
 impl GitIgnore {
@@ -28,17 +35,9 @@ impl GitIgnore {
         let root = root
             .canonicalize()
             .map_err(|error| format!("cannot resolve {}: {error}", root.display()))?;
-        let repository = match gix::discover(&root) {
-            Ok(repository) => repository,
-            Err(error) if crate::git_workspace::is_no_repository(&error) => return Ok(None),
-            Err(error) => return Err(format!("cannot discover Git repository: {error}")),
-        };
-        let Some(worktree) = repository.workdir() else {
+        let Some((repository, worktree)) = discover_worktree(&root)? else {
             return Ok(None);
         };
-        let worktree = worktree
-            .canonicalize()
-            .map_err(|error| format!("cannot resolve Git worktree: {error}"))?;
         let Ok(below) = root.strip_prefix(&worktree) else {
             return Ok(None);
         };
@@ -46,22 +45,45 @@ impl GitIgnore {
             .components()
             .map(|component| component.as_os_str().to_string_lossy().into_owned())
             .collect();
-        let index = repository
-            .index_or_empty()
-            .map_err(|error| format!("cannot read Git index: {error}"))?;
-        let stack = repository
-            .excludes(
-                &index,
-                None,
-                gix::worktree::stack::state::ignore::Source::WorktreeThenIdMappingIfNotSkipped,
-            )
-            .map_err(|error| format!("cannot read Git excludes: {error}"))?
-            .detach();
+        // Read before the stack reads the files, so a change made meanwhile reads as one later.
+        let sources = Sources::read(&repository, &worktree);
+        let stack = exclude_stack(&repository)?;
         Ok(Some(Self {
             repository,
             stack,
             prefix,
+            root,
+            sources,
         }))
+    }
+
+    /// Whether a matcher opened at this root now would read the rules this one read: the
+    /// configuration, read again through gix as an open reads it (every file Git reads, includes
+    /// and their conditions among them), chooses the same excludes file and pattern case, and the
+    /// root `.gitignore`, `info/exclude` and that excludes file are as this matcher read them.
+    /// When it would, the stack leaves every folder it entered, so the next path below a folder
+    /// reads that folder's `.gitignore` again, as a matcher opened now would.
+    pub fn sources_unchanged(&mut self) -> bool {
+        let now = match discover_worktree(&self.root) {
+            Ok(Some((repository, worktree))) => Sources::read(&repository, &worktree),
+            _ => None,
+        };
+        if now.is_none() || now != self.sources {
+            return false;
+        }
+        self.leave_folders();
+        true
+    }
+
+    /// Asked about `.git`, a path at the worktree root that Git never tracks, the stack leaves
+    /// every folder below the root.
+    fn leave_folders(&mut self) {
+        // A file that cannot be read on the way is reported by the question that reads it.
+        let _ = self.stack.at_path(
+            Path::new(".git"),
+            Some(Mode::DIR),
+            &self.repository.objects,
+        );
     }
 
     /// Whether Git ignores `relative` (to the opened root, `/`-separated). The root itself and any
@@ -131,6 +153,142 @@ impl GitIgnore {
     }
 }
 
+/// The repository around `root` and its worktree, resolved; `None` outside a Git worktree.
+fn discover_worktree(
+    root: &Path,
+) -> std::result::Result<Option<(gix::Repository, PathBuf)>, String> {
+    let repository = match gix::discover(root) {
+        Ok(repository) => repository,
+        Err(error) if crate::git_workspace::is_no_repository(&error) => return Ok(None),
+        Err(error) => return Err(format!("cannot discover Git repository: {error}")),
+    };
+    let Some(worktree) = repository.workdir() else {
+        return Ok(None);
+    };
+    let worktree = worktree
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve Git worktree: {error}"))?;
+    Ok(Some((repository, worktree)))
+}
+
+fn exclude_stack(
+    repository: &gix::Repository,
+) -> std::result::Result<gix::worktree::Stack, String> {
+    let index = repository
+        .index_or_empty()
+        .map_err(|error| format!("cannot read Git index: {error}"))?;
+    Ok(repository
+        .excludes(
+            &index,
+            None,
+            gix::worktree::stack::state::ignore::Source::WorktreeThenIdMappingIfNotSkipped,
+        )
+        .map_err(|error| format!("cannot read Git excludes: {error}"))?
+        .detach())
+}
+
+/// What a matcher reads Git's ignore rules from, besides the `.gitignore` of each folder below
+/// the root, which its stack reads as it enters the folder: the configuration's choice of
+/// excludes file, pattern case and precious patterns, read through gix as `Repository::excludes`
+/// reads it, and the stamp of each file read whole: the root `.gitignore` and, as
+/// `gix_ignore::Search::from_git_dir` reads them, the excludes file and `info/exclude` in the
+/// common Git folder.
+#[derive(Debug, PartialEq, Eq)]
+struct Sources {
+    worktree: PathBuf,
+    common: PathBuf,
+    excludes_file: Option<PathBuf>,
+    ignore_case: bool,
+    precious: bool,
+    stamps: Vec<Stamp>,
+}
+
+impl Sources {
+    /// `repository`'s sources as they are now; `None` when its configuration names an excludes
+    /// file that cannot be resolved, which the stack's own read reports.
+    fn read(repository: &gix::Repository, worktree: &Path) -> Option<Self> {
+        let config = repository.config_snapshot();
+        let excludes_file = match config.trusted_path("core.excludesFile").ok()? {
+            Some(path) => Some(path),
+            None => default_excludes_file(),
+        };
+        let common = repository.common_dir().to_path_buf();
+        let files = [worktree.join(".gitignore"), common.join("info").join("exclude")];
+        let stamps = files.iter().chain(&excludes_file).map(|file| Stamp::of(file)).collect();
+        Some(Self {
+            worktree: worktree.to_path_buf(),
+            common,
+            excludes_file,
+            ignore_case: config.boolean("core.ignoreCase").unwrap_or(false),
+            precious: config.boolean("gitoxide.parsePrecious").unwrap_or(false),
+            stamps,
+        })
+    }
+}
+
+/// Git's excludes file where `core.excludesFile` names none: `git/ignore` in `XDG_CONFIG_HOME`,
+/// else in `.config` in the home folder, as gix's `xdg_config_path` finds it.
+fn default_excludes_file() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| home_dir().map(|home| home.join(".config")))?;
+    Some(base.join("git").join("ignore"))
+}
+
+/// `HOME`, else the platform's home folder, as `gix_path::env::home_dir` finds it.
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .or_else(std::env::home_dir)
+}
+
+/// A file as a matcher read it: absent, unreadable, or its size, write time and identity, so a
+/// write to it, a new file in its place, or a change of who may read it changes the stamp.
+#[derive(Debug, PartialEq, Eq)]
+enum Stamp {
+    Absent,
+    Unreadable,
+    Present {
+        len: u64,
+        modified: Option<SystemTime>,
+        identity: (u64, i64, i64),
+    },
+}
+
+impl Stamp {
+    fn of(path: &Path) -> Self {
+        match std::fs::metadata(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::Absent,
+            Ok(metadata) if std::fs::File::open(path).is_ok() => Self::Present {
+                len: metadata.len(),
+                modified: metadata.modified().ok(),
+                identity: identity(&metadata),
+            },
+            _ => Self::Unreadable,
+        }
+    }
+}
+
+/// The inode and status-change time: a new file in the place, or a change of its mode.
+#[cfg(unix)]
+fn identity(metadata: &Metadata) -> (u64, i64, i64) {
+    use std::os::unix::fs::MetadataExt;
+    (metadata.ino(), metadata.ctime(), metadata.ctime_nsec())
+}
+
+/// The attributes and creation time: a new file in the place, or one made read-only.
+#[cfg(windows)]
+fn identity(metadata: &Metadata) -> (u64, i64, i64) {
+    use std::os::windows::fs::MetadataExt;
+    let created = i64::try_from(metadata.creation_time()).unwrap_or(i64::MAX);
+    (u64::from(metadata.file_attributes()), created, 0)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn identity(_metadata: &Metadata) -> (u64, i64, i64) {
+    (0, 0, 0)
+}
+
 /// Git applies ignore rules to untracked paths only: a tracked file, a submodule, and a folder
 /// holding either stay visible whatever the patterns say.
 fn tracked(index: &gix::index::State, path: &BStr, is_directory: bool) -> bool {
@@ -193,6 +351,18 @@ impl GitIgnoreMatcher {
         inner
             .ignored_by(&relative_path, is_directory)
             .map_err(|message| Error::new(Status::GenericFailure, message))
+    }
+
+    /// Whether a matcher opened now would follow the rules this one follows (the configuration
+    /// Git reads, read again, and the files read whole as they were read); when it would, each
+    /// folder's `.gitignore` is read again as the next path enters the folder.
+    #[napi(catch_unwind)]
+    pub fn sources_unchanged(&self) -> Result<bool> {
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| Error::new(Status::GenericFailure, "Git ignore matcher is poisoned"))?;
+        Ok(inner.sources_unchanged())
     }
 }
 
@@ -347,6 +517,54 @@ mod tests {
             Some(matched("e.py", "api/.gitignore", 1))
         );
         assert_eq!(ignore.ignored_by("api", true).unwrap(), None);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A configuration value as Git writes a path in one: forward slashes, which every platform reads.
+    fn config_path(path: &Path) -> String {
+        path.to_string_lossy().replace('\\', "/")
+    }
+
+    #[test]
+    fn says_whether_a_matcher_opened_now_reads_its_rules() {
+        let root = fixture(
+            "sources",
+            &[(".gitignore", "gen/\n"), ("named-a", "a.py\n"), ("pkg/x.py", "")],
+        );
+        git(&root, &["init", "--initial-branch=main"]);
+        let root = root.canonicalize().unwrap();
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert!(ignore.sources_unchanged(), "nothing changed");
+        git(&root, &["config", "branch.main.remote", "origin"]);
+        assert!(
+            ignore.sources_unchanged(),
+            "a configuration write that leaves the rules alone"
+        );
+
+        // An included file names the excludes file, with a comment after the value.
+        let named = config_path(&root.join("named-a"));
+        std::fs::write(
+            root.join(".git/ignore.inc"),
+            format!("[core]\n\texcludesFile = {named} ; a comment\n"),
+        )
+        .unwrap();
+        git(&root, &["config", "include.path", "ignore.inc"]);
+        assert!(
+            !ignore.sources_unchanged(),
+            "an included file that names an excludes file"
+        );
+        let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
+        assert!(ignore.ignored("a.py", false).unwrap());
+        assert!(ignore.sources_unchanged());
+        std::fs::write(root.join("named-a"), "b.py\nc.py\n").unwrap();
+        assert!(!ignore.sources_unchanged(), "the named file changed");
+
+        // Each folder's .gitignore is read again once the sources hold.
+        let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
+        assert!(!ignore.ignored("pkg/x.py", false).unwrap());
+        std::fs::write(root.join("pkg/.gitignore"), "x.py\n").unwrap();
+        assert!(ignore.sources_unchanged());
+        assert!(ignore.ignored("pkg/x.py", false).unwrap());
         std::fs::remove_dir_all(root).unwrap();
     }
 
