@@ -541,7 +541,11 @@ mod tests {
     /// write time back, as a copy that keeps times does, so only the bytes tell the two apart.
     fn rewrite_keeping_size_and_time(path: &Path, contents: &str) {
         let old = std::fs::metadata(path).unwrap();
-        assert_eq!(old.len(), contents.len() as u64, "the new bytes are as long");
+        assert_eq!(
+            old.len(),
+            contents.len() as u64,
+            "the new bytes are as long"
+        );
         std::fs::write(path, contents).unwrap();
         let file = std::fs::File::options().write(true).open(path).unwrap();
         file.set_modified(old.modified().unwrap()).unwrap();
