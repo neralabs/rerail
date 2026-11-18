@@ -41,17 +41,23 @@ describe("rerail merge-assist as its own process", () => {
     child = undefined;
   });
 
-  /** `rerail merge-assist status` in its own process, Merge Assist on a minute ago, beside a stat that never answers. */
-  async function status(closeFails: boolean): Promise<{ code: unknown; stdout: string; stderr: string }> {
+  /**
+   * `rerail merge-assist status` in its own process (`--json` with `json`), Merge Assist on a minute ago with the hook
+   * command `hook` (none by default), beside a stat that never answers.
+   */
+  async function status(options: { closeFails?: boolean; hook?: string[]; json?: boolean }): Promise<{ code: unknown; stdout: string; stderr: string }> {
+    const { closeFails = false, hook, json = false } = options;
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
     const env = { ...process.env, RERAIL_HOME: ws.folder, RERAIL_AUTOSTART: "0", RERAIL_EXPERIMENTAL_MERGE_ASSIST: "1", GH_CONFIG_DIR: join(ws.folder, "gh"), CLOSE_FAILS: closeFails ? "1" : "0" };
     // Turned on under the command's own gh environment, so its status reads no gh.
     const github = new FakeGithub({ signInEnvironment: ghSignInStamps(env)().environment });
-    await ws.service({ github, now: () => Date.now() - 60_000 }).setEnabled(ws.repo, true);
+    const service = ws.service({ github, now: () => Date.now() - 60_000 });
+    await service.setEnabled(ws.repo, true);
+    if (hook !== undefined) await service.updateSettings(ws.repo, { hook: { command: hook, timeoutSeconds: 10 } });
     const preload = join(ws.folder, "stalled-stat.cjs");
     writeFileSync(preload, STALLED_STAT);
     const cli = join(PACKAGE_ROOT, "src", "cli", "cli.ts");
-    const args = ["--require", preload, "--import", "tsx", cli, "--rerail-managed-child", "merge-assist", "status", "--repo", ws.repo];
+    const args = ["--require", preload, "--import", "tsx", cli, "--rerail-managed-child", "merge-assist", "status", "--repo", ws.repo, ...(json ? ["--json"] : [])];
     const started = spawn(process.execPath, args, { cwd: PACKAGE_ROOT, env, stdio: ["ignore", "pipe", "pipe"] });
     child = started;
     let stdout = "";
@@ -64,13 +70,23 @@ describe("rerail merge-assist as its own process", () => {
   }
 
   it("ends once its answer is written, while a stat of gh's hosts file has not answered", async () => {
-    const { code, stdout, stderr } = await status(false);
+    const { code, stdout, stderr } = await status({});
     expect({ code, stderr }).toEqual({ code: 0, stderr: "stat of hosts.yml asked\n" });
     expect(stdout).toContain("  GitHub: gh signed in as tbelanger (acme/app), read ");
   }, 60_000);
 
+  it("ends only once all of a long answer is written", async () => {
+    // A hook command of 40 arguments of 4,000 characters: an answer longer than a pipe holds, so part of it is still
+    // being written when the command returns.
+    const hook = Array.from({ length: 40 }, (_, index) => `${String(index).padStart(4, "0")}${"x".repeat(3_996)}`);
+    const { code, stdout } = await status({ hook, json: true });
+    expect(code).toBe(0);
+    expect(stdout.endsWith("\n")).toBe(true);
+    expect((JSON.parse(stdout) as { settings: { hook: { command: string[] } } }).settings.hook.command).toEqual(hook);
+  }, 60_000);
+
   it("ends once its failure is written, while a stat of gh's hosts file has not answered", async () => {
-    const { code, stdout, stderr } = await status(true);
+    const { code, stdout, stderr } = await status({ closeFails: true });
     expect({ code, stdout, stderr }).toEqual({ code: 1, stdout: "", stderr: "stat of hosts.yml asked\nrerail: the database did not close\n" });
   }, 60_000);
 });
