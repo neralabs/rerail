@@ -221,26 +221,36 @@ describe("the engine service's runtimes", () => {
   // A runtime's 15 minutes were a timer's, on the monotonic clock: a wall clock set forward by an hour meanwhile closed
   // nothing sooner. Read from the wall clock, the age jumped with it, and the runtime of a person back within 15 minutes
   // was gone.
-  it("counts a kept runtime's 15 minutes on a clock the wall clock's jumps do not move", async () => {
-    const root = await mkdtemp(join(tmpdir(), "rerail-runtimes-"));
-    roots.push(root);
-    const databasePath = join(root, "rerail.sqlite");
-    const checkout = join(root, "first");
-    await mkdir(checkout);
-    startTestRepository(checkout, databasePath);
-    const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-clock-${process.pid}-${Date.now()}` : join(root, "engine.sock");
-    const service = await startEngineService({ socketPath, storageRoot: join(root, "state"), databasePath, embedder: testEmbedder, needsRoom: () => true, createAuditor: quietAuditor });
-    services.push(service);
-    const session = { host: "claude-code" as const, sessionId: "a", cwd: checkout };
-    await ingestEngineEvent({ socketPath }, { kind: "session-start", eventId: "a:start", session });
-    await ingestEngineEvent({ socketPath }, { kind: "session-end", eventId: "a:end", sessionId: "a", session });
-    const wall = Date.now();
-    const jumped = vi.spyOn(Date, "now").mockReturnValue(wall + 60 * MINUTE);
+  it("counts a kept runtime's 15 minutes on the monotonic clock, which the wall clock's jumps do not move", async () => {
+    // The wall clock as the service reads it from its start, set forward by `jump` milliseconds.
+    const wallNow = Date.now.bind(Date);
+    const wall = { jump: 0 };
+    const wallClock = vi.spyOn(Date, "now").mockImplementation(() => wallNow() + wall.jump);
+    const monotonicNow = performance.now.bind(performance);
+    const monotonic = vi.spyOn(performance, "now");
     try {
+      const root = await mkdtemp(join(tmpdir(), "rerail-runtimes-"));
+      roots.push(root);
+      const databasePath = join(root, "rerail.sqlite");
+      const checkout = join(root, "first");
+      await mkdir(checkout);
+      startTestRepository(checkout, databasePath);
+      const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-clock-${process.pid}-${wallNow()}` : join(root, "engine.sock");
+      const service = await startEngineService({ socketPath, storageRoot: join(root, "state"), databasePath, embedder: testEmbedder, needsRoom: () => true, createAuditor: quietAuditor });
+      services.push(service);
+      const session = { host: "claude-code" as const, sessionId: "a", cwd: checkout };
+      await ingestEngineEvent({ socketPath }, { kind: "session-start", eventId: "a:start", session });
+      await ingestEngineEvent({ socketPath }, { kind: "session-end", eventId: "a:end", sessionId: "a", session });
+      wall.jump = 60 * MINUTE;
       await service.closeIdleSessions();
       expect(service.openRuntimes()).toBe(1);
+      const at = monotonicNow();
+      monotonic.mockImplementation(() => at + 15 * MINUTE);
+      await service.closeIdleSessions();
+      expect(service.openRuntimes()).toBe(0);
     } finally {
-      jumped.mockRestore();
+      monotonic.mockRestore();
+      wallClock.mockRestore();
     }
   });
 
