@@ -1,7 +1,8 @@
-// A file Git reads to place a folder, rewritten within one tick of the file system's clock at the same size, keeps the
-// lstat it had: only its text tells the change, at any later use. Node's lstat is wrapped here so a test can hand back
-// the lstat a file had before such a rewrite, which a fast enough rewrite gives on a machine with a coarse clock (Linux
-// 6.12 on its second try; NTFS in most of 300 tries), or the lstat of an owner changed with chown.
+// A file Git reads to place a folder, rewritten in place at the same size, can keep the lstat it had: a fast enough
+// rewrite does on a machine whose file times are coarser than the rewrite (Linux 6.12 on its second try; NTFS in most
+// of 300 tries). Rerail reads the text of each such file at every use, so the text tells the change. Node's lstat is
+// wrapped here so a test can hand back the lstat a file had before such a rewrite, or the lstat of an owner changed
+// with chown.
 import { execFileSync, spawnSync } from "node:child_process";
 import { lstatSync, mkdirSync, realpathSync, type Stats } from "node:fs";
 import { mkdtemp, open, readFile } from "node:fs/promises";
@@ -28,9 +29,14 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   vi.mocked(lstatSync).mockReset();
   vi.mocked(lstatSync).mockImplementation(realLstat);
-  vi.useRealTimers();
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
+
+async function temporaryRoot(): Promise<string> {
+  const root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-same-size-")));
+  cleanups.push(() => removeFolder(root));
+  return root;
+}
 
 function git(cwd: string, ...args: string[]): void {
   execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd, stdio: "ignore" });
@@ -76,10 +82,9 @@ function lstatKeeps(path: string, stats: Stats): void {
     resolve(String(target)) === path ? stats : realLstat(target, options)) as typeof lstatSync);
 }
 
-describe("a file Git reads to place a folder, rewritten within one clock tick at the same size", () => {
+describe("a file Git reads to place a folder, rewritten at the same size with its lstat unchanged, is read by its text", () => {
   it("a worktree's .git file rewritten to name another repository's worktree is placed as Git places it", async () => {
-    const root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-same-tick-")));
-    cleanups.push(() => removeFolder(root));
+    const root = await temporaryRoot();
     // Two repositories whose worktree Git folders are spelled at the same length, so the rewrite keeps the size.
     const first = repository(join(root, "aa"));
     const other = repository(join(root, "bb"));
@@ -87,12 +92,9 @@ describe("a file Git reads to place a folder, rewritten within one clock tick at
     git(other, "worktree", "add", "--quiet", "-b", "w", join(root, "o", "w"));
     const dotGit = join(root, "w", ".git");
     const before = realLstat(dotGit);
-    // Every read below happens within the clock tick of the .git file's last write.
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(Math.max(before.mtimeMs, before.ctimeMs));
-
     expect(repositoryIdentityLocation(first)).toEqual(gitsAnswer(first));
     expect(repositoryIdentityLocation(join(root, "w"))).toEqual(gitsAnswer(join(root, "w")));
+
     await rewriteInPlace(dotGit, `gitdir: ${join(other, ".git", "worktrees", "w")}\n`);
     lstatKeeps(dotGit, before);
 
@@ -100,71 +102,42 @@ describe("a file Git reads to place a folder, rewritten within one clock tick at
     expect(gitsAnswer(join(root, "w")).identityPath).toBe(join(other, ".git", "rerail-repository-id"));
   });
 
-  it("the same rewrite, asked again a minute after the tick, is placed as Git places it", async () => {
-    const root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-same-tick-")));
-    cleanups.push(() => removeFolder(root));
-    const first = repository(join(root, "aa"));
-    const other = repository(join(root, "bb"));
-    git(first, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
-    git(other, "worktree", "add", "--quiet", "-b", "w", join(root, "o", "w"));
-    const dotGit = join(root, "w", ".git");
-    const before = realLstat(dotGit);
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(Math.max(before.mtimeMs, before.ctimeMs));
-    expect(repositoryIdentityLocation(first)).toEqual(gitsAnswer(first));
-    expect(repositoryIdentityLocation(join(root, "w"))).toEqual(gitsAnswer(join(root, "w")));
-    await rewriteInPlace(dotGit, `gitdir: ${join(other, ".git", "worktrees", "w")}\n`);
-    lstatKeeps(dotGit, before);
-
-    vi.setSystemTime(Math.max(before.mtimeMs, before.ctimeMs) + 60_000);
-    expect(repositoryIdentityLocation(join(root, "w"))).toEqual(gitsAnswer(join(root, "w")));
-    expect(gitsAnswer(join(root, "w")).identityPath).toBe(join(other, ".git", "rerail-repository-id"));
-  });
-
-  it("a repository's config rewritten at the same size to make it bare is placed as Git places it, a minute after the tick", async () => {
-    const root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-same-tick-")));
-    cleanups.push(() => removeFolder(root));
+  it("a repository's config rewritten to make it bare is placed as Git places it", async () => {
+    const root = await temporaryRoot();
     const main = repository(join(root, "aa"));
     const config = join(main, ".git", "config");
     const text = await readFile(config, "utf8");
     const bare = text.replace(/bare = false/u, "bare =  true");
     expect(bare).not.toBe(text);
     const before = realLstat(config);
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(Math.max(before.mtimeMs, before.ctimeMs));
     expect(repositoryIdentityLocation(main)).toEqual(gitsAnswer(main));
+
     await rewriteInPlace(config, bare);
     lstatKeeps(config, before);
 
-    vi.setSystemTime(Math.max(before.mtimeMs, before.ctimeMs) + 60_000);
     expect(repositoryIdentityLocation(main)).toEqual(gitsAnswer(main));
     expect(gitsAnswer(main).git).toBe(false);
   });
 
-  it("keeps the answer, with no Git process, for a file whose text is the same, and for a file older than the clock's tick", async () => {
-    const root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-same-tick-")));
-    cleanups.push(() => removeFolder(root));
-    const first = repository(join(root, "aa"));
-    git(first, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
-    const dotGit = join(root, "w", ".git");
-    const before = realLstat(dotGit);
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(Math.max(before.mtimeMs, before.ctimeMs));
-    const answer = repositoryIdentityLocation(join(root, "w"));
-    const placed = placements(join(root, "w"));
+  it("keeps a checkout's answer, with no Git process, when its config is rewritten with the same text", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "aa"));
+    const config = join(main, ".git", "config");
+    const before = realLstat(config);
+    const answer = repositoryIdentityLocation(main);
+    const placed = placements(main);
 
-    lstatKeeps(dotGit, before);
-    expect(repositoryIdentityLocation(join(root, "w"))).toEqual(answer);
-    vi.setSystemTime(Math.max(before.mtimeMs, before.ctimeMs) + 60_000);
-    expect(repositoryIdentityLocation(join(root, "w"))).toEqual(answer);
-    expect({ answer, gitAfterTheFirst: placements(join(root, "w")) - placed }).toEqual({ answer: gitsAnswer(join(root, "w")), gitAfterTheFirst: 0 });
+    await rewriteInPlace(config, await readFile(config, "utf8"));
+    lstatKeeps(config, before);
+
+    expect(repositoryIdentityLocation(main)).toEqual(answer);
+    expect({ answer, gitAfterTheFirst: placements(main) - placed }).toEqual({ answer: gitsAnswer(main), gitAfterTheFirst: 0 });
   });
 });
 
 describe.skipIf(process.platform === "win32")("a kept answer on POSIX, where an lstat gives each folder's owner", () => {
   it("asks Git at every ask once the checkout's folder is another account's, as Git reads its owner at every start", async () => {
-    const root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-same-tick-")));
-    cleanups.push(() => removeFolder(root));
+    const root = await temporaryRoot();
     const main = repository(join(root, "aa"));
     const answer = repositoryIdentityLocation(main);
     const placed = placements(main);
