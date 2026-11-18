@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { closeSync, ftruncateSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs";
+import { closeSync, cpSync, ftruncateSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs";
 import { mkdtemp, open, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
@@ -240,6 +240,26 @@ describe("every other folder, and every worktree whose files Git might read othe
     repository(join(root, "later"));
     vi.stubEnv("GIT_DIR", join(root, "later", ".git"));
     expect(worktreeRegistry(main)?.worktrees).toEqual(gitsRegistry(main));
+  });
+
+  it("asks Git again under a lookup variable once Git refused the checkout, when the checkout's files come back as they were", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
+    // An object store outside the files the placement reads: taking it away makes Git refuse every folder.
+    const objects = join(root, "objects");
+    cpSync(join(main, ".git", "objects"), objects, { recursive: true });
+    vi.stubEnv("GIT_OBJECT_DIRECTORY", objects);
+    expect(worktreeRegistry(main)?.worktrees).toEqual(gitsRegistry(main));
+
+    await rename(objects, `${objects}.away`);
+    const config = join(main, ".git", "config");
+    await rename(config, `${config}.away`);
+    expect(worktreeRegistry(main)).toBeUndefined();
+    // Moved back, the config gives the checkout the placement inputs Git accepted it under; Git still refuses it.
+    await rename(`${config}.away`, config);
+    expect(gitsRegistry(main)).toEqual([]);
+    expect(worktreeRegistry(main)).toBeUndefined();
   });
 });
 
