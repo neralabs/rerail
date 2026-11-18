@@ -54,6 +54,13 @@ const CODEX_APPROVAL = [
   "the sandbox, change its configuration, or add bypass flags.",
 ].join("\n");
 
+/**
+ * The dashboard URL a coding agent reads carries no access capability (only the browser `rerail manage` opens gets
+ * it), so it shows the dashboard only in a browser already connected to Rerail. Said wherever an agent relays it, so
+ * nobody copies it into another browser expecting the same page.
+ */
+const OTHER_BROWSER = "The URL shows the dashboard only in a browser already connected to Rerail. For another browser, run `rerail manage` in a terminal.";
+
 function runOne(command: string, lead: string, shell: Shell): string {
   return [lead, "", "Run exactly this and report its output verbatim:", "", commandFence(shell), command, "```", "", REPORT_VERBATIM].join("\n");
 }
@@ -123,7 +130,9 @@ function stopBody(agent: CommandFileAgent, cli: string, shell: Shell): CommandBo
 
 /** `/rerail-manage`: read the URL first, so opening is the only step that launches anything. */
 function dashboardBody(agent: CommandFileAgent, cli: string, shell: Shell): CommandBody {
-  if (agent === "codex") return { text: runOne(`${cli} manage`, "Open the Rerail dashboard for this repo in the browser.", shell), allowed: [] };
+  if (agent === "codex") {
+    return { text: `${runOne(`${cli} manage`, "Open the Rerail dashboard for this repo in the browser.", shell)}\n\nAfter its output, add: ${OTHER_BROWSER}`, allowed: [] };
+  }
   return {
     text: [
       "Open the Rerail dashboard for this repo.",
@@ -144,7 +153,11 @@ function dashboardBody(agent: CommandFileAgent, cli: string, shell: Shell): Comm
       "- In Cursor with a built-in browser tool: navigate that browser to the URL; it opens as a tab in the Cursor window.",
       `- Otherwise let the launcher open the desktop browser: \`${cli} manage\`.`,
       "",
-      "Report the URL and where it was opened. Do not run anything else.",
+      "Say where it opened, without the URL; if no browser opened, show the command's output instead. Then add:",
+      "",
+      OTHER_BROWSER,
+      "",
+      "Do not run anything else.",
     ].join("\n"),
     allowed: [`${cli} manage --print`, `${cli} manage`],
   };
