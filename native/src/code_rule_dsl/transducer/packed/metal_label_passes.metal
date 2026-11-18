@@ -112,7 +112,9 @@ constant uint MICRO_NONE=0xffffffffu,MICRO_FRAMES=64u,MICRO_POOL=4096u,MICRO_DEE
 // one's critical path. An item is `MICRO_ITEM` words of `items` (the frame, its walk's start,
 // pass and document), written and read by atomics (coherent between threadgroups). A queue
 // out of room leaves the frame with its walk. `capacity` 0: no spill (a fused group's walks).
-struct MicroQ { device atomic_uint* slots; device atomic_uint* control; device atomic_uint* items; uint capacity; uint pass; uint doc; };
+struct MicroQ { device atomic_uint* slots; device atomic_uint* control; device atomic_uint* items; uint capacity; uint pass; uint doc; device const uint* roots; };
+// (`roots`: the batch's pass roots, `label_passes::Roots`, where a walk may test another node for its pass's start: a
+// sibling pass's leader, `scan_marks`. Null: none tested.)
 // Only the first `MICRO_STANDBY` threads of a dispatch wait for spilled frames (`MICRO_POLLS`
 // polls between items); the rest exit once the queue is empty. Every thread polling while a long
 // walk ran was 10^8 contended loads a dispatch. A thread that spilled still takes its own frames.
@@ -314,6 +316,62 @@ static bool scan_marks_at(WalkRead r,MicroPass pass,MicroFrame f){
   ScanTail x;
   return scan_tail(r,pass,f.pc,x)&&f.captured+x.capture<=2u;
 }
+// The outputs among a window's candidates (bits of node `b` + k): a named move's named ones that pass the tail's tests.
+static ulong scan_outputs(thread const Tree& t,WalkRead r,ScanTail x,ulong cand,uint b,bool named){
+  if(!named&&x.testsEnd==x.tests)return cand;
+  ulong out=cand;
+  for(ulong c=cand;c!=0ul;c&=c-1ul){
+    uint k=ctz(c),node=b+k;bool keep=!named||(tree_flags(t,node)&1u)!=0u;
+    for(uint pc=x.tests;keep&&pc<x.testsEnd;pc++)keep=micro_test(t,r.head,r.texts,r.textStart,r.labelWords,r.words[pc],node);
+    if(!keep)out&=~(1ul<<k);
+  }
+  return out;
+}
+// Whether the tail's tests of its loaded node pass at `node`.
+static bool scan_fixed(thread const Tree& t,WalkRead r,ScanTail x,uint node){
+  if(x.load==MICRO_NONE)return true;
+  for(uint pc=x.testsEnd+1u;pc<x.fixedEnd;pc++)if(!micro_test(t,r.head,r.texts,r.textStart,r.labelWords,r.words[pc],node))return false;
+  return true;
+}
+// A sibling scan's answer shared by the siblings (work queue Q65), where its shape makes it the same question at
+// each of them: an `after` the walk reaches straight from its start (saves, forks and gotos only: every start's walk
+// reaches it so, its saved nodes the start), whose one mark is the start (an emit of the start, or of the start loaded
+// and captured, its tests then the start's). Its answer at a sibling s is whether a sibling after s passes. The walk
+// at the parent's first child, the siblings' leader, answers for all of them in one pass over the parent's children:
+// it finds the last that passes, and marks each sibling before it that is a start of the pass (`root_admits`) and
+// passes the tests of the loaded node. Every other sibling's walk, where the leader is a start, leaves the scan to it.
+// Each of a block's n starts scanned the siblings after it: n² hops, against the n of one pass. A step is a window.
+static uint sibling_pass(thread const Tree& t,thread MicroFrame& f,WalkRead r,ScanTail x,MicroPass pass,device atomic_uint* row,constant Shape& shape,uint start,uint label,bool pack,uint route,thread uint& fired,thread uint& steps,MicroQ q){
+  uint first=start,bound=f.end,last=MICRO_NONE;bool named=(f.named&1u)!=0u;
+  for(uint hop=first;hop<bound;){
+    if(++steps>shape.steps)return 2u;
+    uint b=hop&~63u,hi=min(bound-b,64u);ulong cand=0ul;
+    while(hop<b+hi){cand|=1ul<<(hop-b);hop=tree_end(t,hop);}
+    ulong out=scan_outputs(t,r,x,cand,b,named);
+    if(out!=0ul)last=b+63u-clz(out);
+  }
+  f.next=f.end;
+  if(last==MICRO_NONE)return 0u;
+  for(uint hop=first;hop<last;){
+    if(++steps>shape.steps)return 2u;
+    uint b=hop&~63u;ulong marks=0ul;
+    while(hop<b+64u&&hop<last){
+      if(root_admits(t.s,t.d,q.roots,pass.itemStart,q.doc,tree_local(t,hop))&&scan_fixed(t,r,x,hop))marks|=1ul<<(hop-b);
+      hop=tree_end(t,hop);
+    }
+    uint w0=uint(marks),w1=uint(marks>>32u);
+    if(w0!=0u)atomic_fetch_or_explicit(&row[b/32u],w0,memory_order_relaxed);
+    if(w1!=0u)atomic_fetch_or_explicit(&row[b/32u+1u],w1,memory_order_relaxed);
+  }
+  // The leader's own output, as its emit's.
+  if(route==0u&&start<last&&scan_fixed(t,r,x,start)){
+    if(!pack)return 1u;
+    uint members=r.words[pass.wordCount];
+    fired|=1u<<label;
+    if(fired==(members>=32u?0xffffffffu:((1u<<members)-1u)))return 1u;
+  }
+  return 0u;
+}
 // The scan, a segmented pass over windows of 64 nodes (work queue Q56, Q65). A window's codes and slots lie in a
 // line or two of the tape, so its reads are taken together, none waiting on a far one:
 // - a range's candidates are its nodes; a closure's, those its skips leave (a node reached but not entered hides
@@ -325,7 +383,7 @@ static bool scan_marks_at(WalkRead r,MicroPass pass,MicroFrame f){
 // budgets of nodes (2,048 at the budget of 512) is halved into the work queue (`scan_cut`) before it starts, until
 // its piece fits, so its pieces run side by side. A step is a window. 0: the scan is done; 1: the walk is (its start marked, as every emit's in the pass);
 // 2: past the step bound, or a load of a node never saved.
-static uint scan_marks(thread const Tree& t,thread MicroFrame& f,WalkRead r,MicroPass pass,device atomic_uint* scratch,device atomic_uint* counts,constant Shape& shape,uint start,thread uint& fired,thread uint& steps,MicroQ q){
+static uint scan_marks(thread const Tree& t,thread MicroFrame& f,WalkRead r,MicroPass pass,device atomic_uint* scratch,device atomic_uint* counts,constant Shape& shape,uint start,thread uint& fired,thread uint& steps,MicroQ q,bool straight=false){
   ScanTail x;scan_tail(r,pass,f.pc,x);
   bool pack=(pass.targets&4u)!=0u,named=(f.named&1u)!=0u;
   uint label=r.words[x.emit]>>16u;
@@ -333,9 +391,17 @@ static uint scan_marks(thread const Tree& t,thread MicroFrame& f,WalkRead r,Micr
   device atomic_uint* tally=counts+pass.target*shape.nodeCount;
   uint route=pack?((pass.targets&3u)==0u?0u:1u):pass.targets;
   // `child` and `after` as a chain up to the parent's end.
+  uint parent=f.resume==3u?f.end:TAPE_NONE;
   if(f.resume==1u||f.resume==3u){
     if(f.next==MICRO_NONE||f.end==TAPE_NONE){f.next=0u;f.end=0u;return 0u;}
     f.end=tree_end(t,f.end);f.resume=5u;f.named&=1u;
+  }
+  // `sibling_pass`: an `after` straight from the start, whose one mark is the start.
+  if(straight&&parent!=TAPE_NONE&&q.roots!=nullptr&&(route==0u||(route==1u&&x.capture!=0u&&f.captured==0u))
+     &&(x.load==MICRO_NONE?route==0u:f.cursors[x.load]==start)){
+    uint first=parent+1u;
+    if(start==first)return sibling_pass(t,f,r,x,pass,row,shape,start,label,pack,route,fired,steps,q);
+    if(root_admits(t.s,t.d,q.roots,pass.itemStart,q.doc,tree_local(t,first))){f.next=f.end;return 0u;}
   }
   bool closure=f.resume==4u,chain=f.resume==5u;
   uint fixed=MICRO_NONE;
@@ -386,13 +452,7 @@ static uint scan_marks(thread const Tree& t,thread MicroFrame& f,WalkRead r,Micr
       }
       cand=reached&given;
     }
-    ulong out=cand;
-    if((named&&!closure)||x.testsEnd>x.tests)
-      for(ulong c=cand;c!=0ul;c&=c-1ul){
-        uint k=ctz(c),node=b+k;bool keep=!named||closure||(tree_flags(t,node)&1u)!=0u;
-        for(uint pc=x.tests;keep&&pc<x.testsEnd;pc++)keep=micro_test(t,r.head,r.texts,r.textStart,r.labelWords,r.words[pc],node);
-        if(!keep)out&=~(1ul<<k);
-      }
+    ulong out=scan_outputs(t,r,x,cand,b,named&&!closure);
     f.next=next;
     if(out==0ul)continue;
     if(!each&&route!=2u&&route!=3u){
@@ -439,7 +499,7 @@ static void micro_from(thread const Tree& t,device const uint* head,MicroPass pa
   MicroFrame path={0u,start,0u,0u,0u,MICRO_NONE,{MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE},MICRO_NONE,MICRO_NONE,0u};
   #define MICRO_FAIL {atomic_fetch_or_explicit(&flags[0],2u,memory_order_relaxed);return;}
   // A spilled frame's walk starts at its frame (`depth0` 1), as a path that ended.
-  bool fresh=depth0==0u,received=!fresh;
+  bool fresh=depth0==0u,received=!fresh,straight=fresh;
   while(true){
     bool alive=fresh;
     fresh=true;
@@ -447,6 +507,9 @@ static void micro_from(thread const Tree& t,device const uint* head,MicroPass pa
       if(++steps>shape.steps)MICRO_FAIL
       uint word=words[pass.wordStart+path.pc],op=word&255u,mode=(word>>8u)&255u,arg=word>>16u;
       bool named=mode==1u;
+      // Whether the walk came here straight from its start: saves, forks and gotos only (`sibling_pass`).
+      bool wasStraight=straight;
+      if(op!=21u&&op!=48u&&op!=49u)straight=false;
       switch(op){
         case 0u:alive=false;break;
         case 1u:alive=tape_kind(t.s,t.d,tree_local(t,path.node))==arg;break;
@@ -461,7 +524,7 @@ static void micro_from(thread const Tree& t,device const uint* head,MicroPass pa
           if(op==16u){frame.resume=1u;frame.next=tree_first(t,path.node);frame.end=path.node;}
           else if(op==19u){frame.resume=2u;frame.next=path.node+1u;frame.end=tree_end(t,path.node);}
           else{frame.resume=3u;frame.end=path.end!=MICRO_NONE?path.end:tree_parent(t,path.node);frame.next=frame.end==TAPE_NONE?MICRO_NONE:tree_next_in(t,path.node,tree_end(t,frame.end),named);}
-          if(scan_marks_at(r,pass,frame)){uint ended=scan_marks(t,frame,r,pass,scratch,counts,shape,start,fired,steps,q);if(ended==2u)MICRO_FAIL if(ended==1u)return;alive=false;break;}
+          if(scan_marks_at(r,pass,frame)){uint ended=scan_marks(t,frame,r,pass,scratch,counts,shape,start,fired,steps,q,op==20u&&wasStraight&&path.node==start);if(ended==2u)MICRO_FAIL if(ended==1u)return;alive=false;break;}
           uint candidate=walk_next(t,frame,r);
           if(candidate==MICRO_NONE){alive=false;break;}
           if(depth==FRAMES)MICRO_FAIL
@@ -520,13 +583,13 @@ static void micro_from(thread const Tree& t,device const uint* head,MicroPass pa
   }
   #undef MICRO_FAIL
 }
-kernel void label_micro_8(device const ChunkTape* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* chunk [[buffer(27)]],device atomic_uint* qslots [[buffer(23)]],device atomic_uint* qcontrol [[buffer(24)]],device atomic_uint* qitems [[buffer(25)]],device atomic_uint* wstats [[buffer(26)]],uint tid [[thread_position_in_grid]],uint grid [[threads_per_grid]],uint lane [[thread_index_in_simdgroup]]){MicroQ q={qslots,qcontrol,qitems,shape.queue,0u,0u};for(uint item=tid;item-lane<shape.itemCount*max(shape.lanes,1u);item+=grid)micro_walk<8u>(docs,chunk,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*8u,item,lane,wstats,q);micro_drain<8u>(docs,chunk,head,passes,words,scratch,flags,texts,counts,shape,stacks+tid*8u,wstats,q,tid);}
-kernel void label_micro_32(device const ChunkTape* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* chunk [[buffer(27)]],device atomic_uint* qslots [[buffer(23)]],device atomic_uint* qcontrol [[buffer(24)]],device atomic_uint* qitems [[buffer(25)]],device atomic_uint* wstats [[buffer(26)]],uint tid [[thread_position_in_grid]],uint grid [[threads_per_grid]],uint lane [[thread_index_in_simdgroup]]){MicroQ q={qslots,qcontrol,qitems,shape.queue,0u,0u};for(uint item=tid;item-lane<shape.itemCount*max(shape.lanes,1u);item+=grid)micro_walk<32u>(docs,chunk,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*32u,item,lane,wstats,q);micro_drain<32u>(docs,chunk,head,passes,words,scratch,flags,texts,counts,shape,stacks+tid*32u,wstats,q,tid);}
+kernel void label_micro_8(device const ChunkTape* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* chunk [[buffer(27)]],device atomic_uint* qslots [[buffer(23)]],device atomic_uint* qcontrol [[buffer(24)]],device atomic_uint* qitems [[buffer(25)]],device atomic_uint* wstats [[buffer(26)]],uint tid [[thread_position_in_grid]],uint grid [[threads_per_grid]],uint lane [[thread_index_in_simdgroup]]){MicroQ q={qslots,qcontrol,qitems,shape.queue,0u,0u,items};for(uint item=tid;item-lane<shape.itemCount*max(shape.lanes,1u);item+=grid)micro_walk<8u>(docs,chunk,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*8u,item,lane,wstats,q);micro_drain<8u>(docs,chunk,head,passes,words,scratch,flags,texts,counts,shape,stacks+tid*8u,wstats,q,tid);}
+kernel void label_micro_32(device const ChunkTape* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* chunk [[buffer(27)]],device atomic_uint* qslots [[buffer(23)]],device atomic_uint* qcontrol [[buffer(24)]],device atomic_uint* qitems [[buffer(25)]],device atomic_uint* wstats [[buffer(26)]],uint tid [[thread_position_in_grid]],uint grid [[threads_per_grid]],uint lane [[thread_index_in_simdgroup]]){MicroQ q={qslots,qcontrol,qitems,shape.queue,0u,0u,items};for(uint item=tid;item-lane<shape.itemCount*max(shape.lanes,1u);item+=grid)micro_walk<32u>(docs,chunk,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*32u,item,lane,wstats,q);micro_drain<32u>(docs,chunk,head,passes,words,scratch,flags,texts,counts,shape,stacks+tid*32u,wstats,q,tid);}
 // Loops whose depth follows the tree: MICRO_POOL threads stride over the items, each with
 // its stack in device memory (`stacks`), so no thread memory is reserved for 128 frames per
 // thread in flight.
-kernel void label_micro(device const ChunkTape* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* chunk [[buffer(27)]],device atomic_uint* qslots [[buffer(23)]],device atomic_uint* qcontrol [[buffer(24)]],device atomic_uint* qitems [[buffer(25)]],device atomic_uint* wstats [[buffer(26)]],uint tid [[thread_position_in_grid]],uint lane [[thread_index_in_simdgroup]]){MicroQ q={qslots,qcontrol,qitems,shape.queue,0u,0u};for(uint item=tid;item-lane<shape.itemCount*max(shape.lanes,1u);item+=MICRO_POOL)micro_walk<MICRO_FRAMES>(docs,chunk,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*MICRO_FRAMES,item,lane,wstats,q);micro_drain<MICRO_FRAMES>(docs,chunk,head,passes,words,scratch,flags,texts,counts,shape,stacks+tid*MICRO_FRAMES,wstats,q,tid);}
-kernel void label_micro_deep(device const ChunkTape* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* chunk [[buffer(27)]],device atomic_uint* qslots [[buffer(23)]],device atomic_uint* qcontrol [[buffer(24)]],device atomic_uint* qitems [[buffer(25)]],device atomic_uint* wstats [[buffer(26)]],uint tid [[thread_position_in_grid]],uint lane [[thread_index_in_simdgroup]]){MicroQ q={qslots,qcontrol,qitems,shape.queue,0u,0u};for(uint item=tid;item-lane<shape.itemCount*max(shape.lanes,1u);item+=MICRO_DEEP_POOL)micro_walk<MICRO_DEEP_FRAMES>(docs,chunk,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*MICRO_DEEP_FRAMES,item,lane,wstats,q);micro_drain<MICRO_DEEP_FRAMES>(docs,chunk,head,passes,words,scratch,flags,texts,counts,shape,stacks+tid*MICRO_DEEP_FRAMES,wstats,q,tid);}
+kernel void label_micro(device const ChunkTape* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* chunk [[buffer(27)]],device atomic_uint* qslots [[buffer(23)]],device atomic_uint* qcontrol [[buffer(24)]],device atomic_uint* qitems [[buffer(25)]],device atomic_uint* wstats [[buffer(26)]],uint tid [[thread_position_in_grid]],uint lane [[thread_index_in_simdgroup]]){MicroQ q={qslots,qcontrol,qitems,shape.queue,0u,0u,items};for(uint item=tid;item-lane<shape.itemCount*max(shape.lanes,1u);item+=MICRO_POOL)micro_walk<MICRO_FRAMES>(docs,chunk,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*MICRO_FRAMES,item,lane,wstats,q);micro_drain<MICRO_FRAMES>(docs,chunk,head,passes,words,scratch,flags,texts,counts,shape,stacks+tid*MICRO_FRAMES,wstats,q,tid);}
+kernel void label_micro_deep(device const ChunkTape* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* chunk [[buffer(27)]],device atomic_uint* qslots [[buffer(23)]],device atomic_uint* qcontrol [[buffer(24)]],device atomic_uint* qitems [[buffer(25)]],device atomic_uint* wstats [[buffer(26)]],uint tid [[thread_position_in_grid]],uint lane [[thread_index_in_simdgroup]]){MicroQ q={qslots,qcontrol,qitems,shape.queue,0u,0u,items};for(uint item=tid;item-lane<shape.itemCount*max(shape.lanes,1u);item+=MICRO_DEEP_POOL)micro_walk<MICRO_DEEP_FRAMES>(docs,chunk,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*MICRO_DEEP_FRAMES,item,lane,wstats,q);micro_drain<MICRO_DEEP_FRAMES>(docs,chunk,head,passes,words,scratch,flags,texts,counts,shape,stacks+tid*MICRO_DEEP_FRAMES,wstats,q,tid);}
 
 // A recursive group's rounds to its fixpoint in one dispatch (decision 0024 §3): a threadgroup
 // per file, whose labels are its own (a walk never leaves its tree). A round runs each level in
@@ -571,7 +634,7 @@ static void label_group_run(Stack stack,device const ChunkTape* docs,device cons
             uint lo=simd_shuffle(uint(mask),owner),hi=simd_shuffle(uint(mask>>32u),owner),from=simd_shuffle(r.prefix,owner),g=simd_shuffle(group,owner);
             if(i>=r.total)continue;
             uint steps=0u;
-            micro_from<FRAMES>(t,head,pass,words,own.node_base+g*ROOT_GROUP+mask_nth(lo,hi,i-from),scratch,flags,texts,counts,shape,stack,steps,MicroQ{flags,flags,(device atomic_uint*)flags,0u,0u,0u},0u);
+            micro_from<FRAMES>(t,head,pass,words,own.node_base+g*ROOT_GROUP+mask_nth(lo,hi,i-from),scratch,flags,texts,counts,shape,stack,steps,MicroQ{flags,flags,(device atomic_uint*)flags,0u,0u,file,items},0u);
           }
         }
       }

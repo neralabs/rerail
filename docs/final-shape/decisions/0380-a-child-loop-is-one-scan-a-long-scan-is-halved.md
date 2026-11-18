@@ -104,7 +104,7 @@ The spill test (`spilled_walks_find_the_cpus_roots`, a budget of one step, 24 fi
 with the cut at the candidate's subtree end. At that budget a scan's piece is 128 nodes, so the test halves every
 long scan before it starts; it took 41–44 s and found the CPU's roots.
 
-## Q65: the `after` scan
+## Q65: the `after` scan by windows
 
 The longest walk left after the range scans was `save0 after kind=238 load0 capture emit0`: 877,007 walks of 12.6
 steps on average, the longest 509. It scans the start's following siblings for one of kind 238. Under item 3 its
@@ -130,9 +130,40 @@ In the short tier a given piece waits for the dispatch's tail, and its SIMD grou
 cuts. The step bound stood in for a dispatch's critical path. Here the dispatch's time and the bound disagree, so
 the time decides.
 
+## Q65: one pass over a parent's children, its answer shared by the siblings
+
+The user asked for this to be built, generic over its shape (2026-11-17). `sibling_pass` matches by shape only:
+- **The move:** an `after` scan that is the walk's first move, reached from its start through saves, forks and
+  jumps only. So every start's walk reaches it with the start as its node and as each saved node.
+- **The tail:** it marks the start alone. That is an emit of the start (a pack's too), or the start loaded from a
+  cursor and captured into a label. The tail may test the candidate and the loaded node.
+
+At a start s, that scan asks whether a sibling after s passes the tail's tests. The question is the same at each
+sibling, so:
+- **The leader** is the walk at the parent's first child (the parent is in the move's frame; the first child is the
+  parent + 1). It answers for every sibling in one pass over the children, by windows of slots: it finds the last
+  child that passes, then marks each sibling before it that is a start of the pass (`root_admits`, one node of the
+  pass's root rule) and passes the tests of the loaded node.
+- **Every other sibling's walk** leaves the scan to the leader when the leader is a start of the pass too, and
+  otherwise scans as before.
+
+Nothing is precomputed: the leader reads the tape in place, and its marks are the label's own. The spill test
+checks that 9 of its fixtures' walks have the shape, and the device's roots there are the CPU's.
+
+At s1000 the shared shape is the `save0 after kind=238 load0 capture emit0` branch of a pack that every node starts.
+Findings were unchanged (load 19–22):
+
+| | `label_micro_8` | `label_micro` | The pack's steps | Longest walk |
+|---|---|---|---|---|
+| Each start scans its siblings | 41.5–56.3 ms | 25.4–42.5 ms | 10,121,384 | 290 |
+| The leader answers for all | 39.4–50.5 ms | 21.1–38.7 ms | 9,574,048 | 288 |
+
+The pack's steps fell by 5.4%, within the timing noise. Its walks average 10.9 steps, and the `after` scans mostly
+stop early, so at s1000 the n² hops were a small part of the work. The pass removes their growth with a block's
+length. The longest walk is now a leader's: two passes over a long block's children, a window a hop where the
+children are large.
+
 ## Open
 
-- The longest walk at s1000 is 290 steps against Q56's bound of 100: the `after` scan of a long block of large
-  siblings, a window a hop. Each of a block's n starts scans the siblings after it, so the work is n² hops spread
-  over n walks. Sharing one answer among the siblings would need a pass over the parent's children, which is not
-  this walk's shape. Work queue Q65.
+- The longest walk at s1000 is a leader's 288 steps, against Q56's bound of 100. Its two passes are serial: the
+  marks need the last passing child, which is known only at the chain's end.

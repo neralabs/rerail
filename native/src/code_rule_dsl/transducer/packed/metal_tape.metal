@@ -85,6 +85,14 @@ inline ulong root_mask_in(device const uchar* s,ChunkTape d,device const uint* r
  }
  return mask&keep;
 }
+// Whether document `d`'s node `local` (file `file` of the batch) is a root of the rule at `at`: one node of
+// `root_mask_in`'s test.
+inline bool root_admits(device const uchar* s,ChunkTape d,device const uint* roots,uint at,uint file,uint local){
+ if(roots[at]!=0u){device const uint* row=roots+at+1u;uint b=d.node_base+local;return ((row[b/32u]>>(b%32u))&1u)!=0u;}
+ uint files=roots[0];
+ if(((roots[at+1u+file/32u]>>(file%32u))&1u)==0u)return false;
+ return code_admits(roots+at+1u+(files+31u)/32u,tape_code(s,d,local));
+}
 // The roots among all the group's nodes.
 inline ulong root_mask(device const uchar* s,ChunkTape d,device const uint* roots,uint at,uint file,uint group){return root_mask_in(s,d,roots,at,file,group,0u,ROOT_GROUP);}
 // The lowest set bit of a mask.

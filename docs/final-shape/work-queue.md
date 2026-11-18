@@ -1359,6 +1359,14 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
   the scan wanted once brought it to 74 steps but cost 40–60 ms in the short tier's queue. That was measured four
   ways, and it is not kept. Left: the n² hops of a block's starts. Sharing them needs a pass over the parent's
   children, which a per-start walk is not.
+- **Done** (2026-11-17, 0380 "one pass over a parent's children"): `sibling_pass` matches the shape generically:
+  - an `after` that is the walk's first move straight from its start;
+  - a tail that marks the start alone.
+
+  The parent's first child answers for every sibling in one pass, and the others leave the scan to it. The spill
+  test checks the shape in 9 fixture walks on Metal. At s1000 the pack's steps fell by 5.4% (10.12 M to 9.57 M),
+  with the same findings: the n² hops were a small part there. The longest walk is a leader's 288 steps, its two
+  passes serial.
 
 ### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
 
