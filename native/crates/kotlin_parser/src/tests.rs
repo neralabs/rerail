@@ -387,6 +387,20 @@ fn strings_in_templates_are_the_lean_parsers() {
 }
 
 #[test]
+fn constructor_lines_are_the_lean_parsers() {
+    same(&[
+        "class A {\n    private constructor(x: Int) : this()\n}\n",
+        "class A {\n    val x = 1\n    private constructor(x: Int) : this()\n}\n",
+        "class A {\n    fun f() {}\n\n    @Inject internal constructor(x: Int)\n}\n",
+        "class A\ninternal constructor(x: Int) {\n}\n",
+        "class A\n@Inject public constructor(x: Int)\n",
+        "class A\n@Inject constructor(x: Int)\n",
+        "class A\n\ninternal class B private constructor(x: Int)\n",
+        "class A\n@Inject\nclass B @Inject constructor(x: Int)\n",
+    ]);
+}
+
+#[test]
 fn soft_words_in_templates_are_the_lean_parsers() {
     same(&[
         "val s = \"a $value b\"\n",
@@ -555,7 +569,6 @@ fn what_step_20_does_not_read_is_refused() {
         "fun f() {\n    loop@ for (i in a) break@loop\n}\n",
         "val a = b as java.util.List<Int>\n",
         "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
-        "class A\n@Inject constructor(x: Int)\n",
         "fun f() {\n    a\n    /* c */ .b()\n}\n",
     ]);
 }

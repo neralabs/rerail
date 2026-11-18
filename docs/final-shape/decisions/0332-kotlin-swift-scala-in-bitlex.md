@@ -770,6 +770,27 @@ named), and the tree retags one to the node (`soft_interp`). A word with more af
 
 Corpus: 417 the same (step 30: 414), 74 refused, 0 differ.
 
+## Kotlin, step 32 (`32-constructor-lines.bitlex`)
+
+```kotlin
+class A {
+    val x = 1
+    private constructor(x: Int) : this()
+}
+class B
+internal constructor(x: Int)
+```
+
+- `constructor` after modifiers at a line's start is escaped only in a class's header now. In a
+  class's body the lean parser reads a secondary constructor, as the grammar did already.
+- In a header, a line of visibility modifiers (`vis_w`) or argument-less annotations before
+  `constructor` goes on the line (`ctor_ann`): the primary constructor's modifiers.
+- A class's header, the run back from `constructor`, and the line's modifiers (`line_mod`) stop
+  at a declaration's keyword (`head_stop`). Before this, a header without a body ran on into the
+  next declaration: `class A` then `internal class B private constructor(…)`.
+
+Corpus: 418 the same (step 31: 417), 73 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
