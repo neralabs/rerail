@@ -73,37 +73,34 @@ interface StopPoint {
   readonly held: boolean;
 }
 
-/** The process `args` start: {@link HELD_READ} in place of the read the test stops at when `held`, else the one asked. */
-function startProcess(args: Parameters<typeof spawn>, stopsHere: boolean, held: boolean): ChildProcess {
-  return stopsHere && held ? actualSpawn(process.execPath, HELD_READ, { stdio: ["pipe", "pipe", "pipe"] }) : actualSpawn(...args);
-}
-
 /**
  * Runs `work` and stops `service` at `point`. Answers, once the stop and the work are over, the Git reads the work
- * started that still ran when the stop resolved, and those started after it resolved.
+ * started that still ran when the stop resolved, and those started once the stop ended the held read or resolved.
  */
 async function stopDuring(service: MergeAssistRuntime, work: () => Promise<unknown>, point: StopPoint): Promise<{ runningAtStop: string[]; startedAfter: string[] }> {
   const reads: Array<{ line: string; child: ChildProcess }> = [];
   const startedAfter: string[] = [];
   const stopping = Promise.withResolvers<{ stopped: Promise<void> }>();
   let state: "before" | "stopping" | "stopped" = "before";
+  const stopped = (): void => {
+    state = "stopped";
+  };
+  /** The read at `point`: {@link HELD_READ} in its place when `held`. The stop starts once the read is set up. */
+  const stopAt = (args: Parameters<typeof spawn>): ChildProcess => {
+    state = "stopping";
+    const child = point.held ? actualSpawn(process.execPath, HELD_READ, { stdio: ["pipe", "pipe", "pipe"] }) : actualSpawn(...args);
+    // Once the held read has ended, which the stop does at once and a read the stop missed only at its time limit, no
+    // Git may start.
+    if (point.held) child.once("exit", stopped);
+    queueMicrotask(() => stopping.resolve({ stopped: service.stop(point.waitMs).then(stopped) }));
+    return child;
+  };
   vi.mocked(spawn).mockImplementation((...args: Parameters<typeof spawn>) => {
     const line = commandLine(args);
-    const here = state === "before" && line.includes(point.at);
-    const child = startProcess(args, here, point.held);
+    const child = state === "before" && line.includes(point.at) ? stopAt(args) : actualSpawn(...args);
     if (isGit(args)) {
       reads.push({ line, child });
       if (state === "stopped") startedAfter.push(line);
-    }
-    // The stop starts once the read is set up, as a stop that comes from outside the read always does.
-    if (here) {
-      state = "stopping";
-      queueMicrotask(() => {
-        const stopped = service.stop(point.waitMs).then(() => {
-          state = "stopped";
-        });
-        stopping.resolve({ stopped });
-      });
     }
     return child;
   });
