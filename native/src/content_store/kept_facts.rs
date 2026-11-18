@@ -3,17 +3,17 @@
 //! process that reads the space. SQLite keeps only which files the chain has (`facts_chain`), replaced in the
 //! transaction that commits a run's writes.
 //!
-//! The store's writer appends the space's next file behind the run (`write_space`): only what the run put, packed
-//! there (0402 K3: freezing is encoding). When the chain grows long, or what its newer files replaced outweighs what it
-//! still reads, the write is a roll-up instead: every live entry copied whole (one `memcpy` each) with the run's puts,
-//! into one file that replaces the chain. Each file is made under a name no reader opens, frozen, renamed into place
+//! The store's writer appends the space's next file behind the run (`write_space`): what the run put, packed there
+//! (0402 K3: freezing is encoding), merged with the chain's newest files where they weigh no more than twice what
+//! joins them, so the files' sizes grow geometrically; or with the whole chain, when what its newer entries replaced
+//! outweighs what it still reads. A merged entry is copied whole (one `memcpy`). Each file is made under a name no reader opens, frozen, renamed into place
 //! and its directory synced before its row names it. The files a committed write replaced are removed by the next
 //! write (`sweep`): the transaction may still roll back when this one returns, and a process that mapped one keeps
 //! reading it.
 
 use super::atoms::stored::{clone_file, new_tag, private_dir, sync_dir};
 use super::{StoreError, StoreResult};
-use rerail_blocks::kept::{FactKey, KeptChain, KeptFacts, KeptRead, KeptW, Meta};
+use rerail_blocks::kept::{FactKey, KeptChain, KeptFacts, KeptRead, KeptW, Meta, Newest};
 use rerail_blocks::relation::{Relation, View};
 use rusqlite::Connection;
 use std::collections::HashSet;
@@ -25,8 +25,6 @@ type MapIds<'a> = &'a dyn Fn(&mut [i64]) -> StoreResult<()>;
 /// A put's rows as columns: the values (`n` rows of `a`, column-major), `n`, `a`, and each row's level.
 type Columns = (Vec<i64>, usize, usize, Option<Vec<u32>>);
 
-/// The files a chain holds before a write rolls it into one (0402 K4).
-const MOST_FILES: usize = 8;
 /// The bytes of replaced rows under which a chain is not rolled up for them: a roll-up then saves less than it costs.
 const ROLL_FLOOR: usize = 1 << 20;
 
@@ -188,8 +186,24 @@ fn room_of(what: &KeptWhat) -> usize {
     }
 }
 
-/// Appends `space`'s next file in transaction `t`, with `puts` (each key once), or rolls the chain and the puts into
-/// one file (0402 K4). `map` maps a forked process's atom ids to the store's.
+/// What a write weighs at least when choosing the files it merges: small files are copied into the next write, so a
+/// chain of small commits stays one small file, not one file a commit (each file costs a header and a lookup).
+const MERGE_FLOOR: usize = 1 << 16;
+
+/// The bytes a put's rows are expected to pack into: about 3 bytes a value (ep2's kept facts, 0402 step 4). Weighs
+/// the new file against the chain's newest ones; never sizes anything.
+fn expected_bytes(what: &KeptWhat) -> usize {
+    match what {
+        KeptWhat::Rows(r) => r.relation().rows.len() as usize * r.relation().arity as usize * 3,
+        KeptWhat::Flat { widths, n, .. } => n * widths.len() * 3,
+        KeptWhat::Reads | KeptWhat::Gone => 0,
+    }
+}
+
+/// Appends `space`'s next file in transaction `t`, with `puts` (each key once), merged with the chain's newest files
+/// where they weigh no more than twice what joins them (0402 K4: sizes grow geometrically, so a chain stays
+/// logarithmic in its bytes and a value is copied a logarithmic number of times), or with the whole chain when what
+/// it holds that newer entries replaced outweighs the rest. `map` maps a forked process's atom ids to the store's.
 pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut>, map: Option<MapIds>) -> StoreResult<()> {
     if puts.is_empty() {
         return Ok(());
@@ -202,13 +216,24 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
     let old = KeptSpace::open(store, space, &rows)?;
     let chain = old.view();
     let put_keys: HashSet<FactKey<'_>> = puts.iter().map(KeptPut::key).collect();
-    // What the chain would hold that newer entries replaced, once these puts are in: a roll-up drops it.
+    // The files merged into this one: the newest ones, each weighing no more than twice the bytes joining it.
+    let mut from = old.files.len();
+    let mut joining: usize = puts.iter().map(|p| expected_bytes(&p.what)).sum::<usize>().max(MERGE_FLOOR);
+    while from > 0 && old.files[from - 1].bytes() <= 2 * joining {
+        joining += old.files[from - 1].bytes();
+        from -= 1;
+    }
+    // Or every file, when what the chain would hold that newer entries replaced outweighs what it reads.
     let replaced: usize = puts.iter().filter(|p| !matches!(p.what, KeptWhat::Reads)).filter_map(|p| chain.get(&p.key())).map(|k| k.bytes()).sum();
     let dropped = chain.superseded_bytes() + replaced;
-    let roll = !old.files.is_empty() && (old.files.len() >= MOST_FILES || (dropped > ROLL_FLOOR && 2 * dropped > chain.bytes()));
-    let carried: Vec<rerail_blocks::kept::Kept<'_>> = if roll { chain.all().filter(|k| !put_keys.contains(&k.key)).collect() } else { Vec::new() };
+    if dropped > ROLL_FLOOR && 2 * dropped > chain.bytes() {
+        from = 0;
+    }
+    let (older, merged) = (KeptChain { files: &old.files[..from] }, KeptChain { files: &old.files[from..] });
+    let carried: Vec<(FactKey<'_>, Newest<'_>)> = merged.newest().into_iter().filter(|(k, _)| !put_keys.contains(k)).collect();
+    let carried_bytes: usize = carried.iter().map(|(_, n)| if let Newest::Kept(k) = n { k.bytes() + 64 } else { 0 }).sum();
     let reads_rows: usize = puts.iter().filter(|p| matches!(p.what, KeptWhat::Reads)).filter_map(|p| chain.get(&p.key())).map(|k| k.bytes()).sum();
-    let reserve = carried.iter().map(|k| k.bytes() + 64).sum::<usize>() + puts.iter().map(|p| room_of(&p.what)).sum::<usize>() + if roll { reads_rows } else { 0 } + (64 << 20);
+    let reserve = carried_bytes + reads_rows + puts.iter().map(|p| room_of(&p.what)).sum::<usize>() + (64 << 20);
     let tag = loop {
         let t = new_tag();
         if t != 0 {
@@ -219,8 +244,22 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
     let name = format!("c{seq}-{tag:016x}.blk");
     let making = dir.join(format!("{name}.new"));
     let mut w = KeptW::create(&making, tag, reserve).map_err(io)?;
-    for k in &carried {
-        w.copy(k, None).map_err(io)?;
+    // What the merged files held: rows copied whole; a gone or reads-only entry kept while an older file holds the key.
+    for (key, n) in &carried {
+        match n {
+            Newest::Kept(k) => w.copy(k, None).map_err(io)?,
+            Newest::Gone => {
+                if older.get(key).is_some() {
+                    w.gone(*key);
+                }
+            }
+            Newest::Same(same) => {
+                if older.get(key).is_some() {
+                    let reads: Vec<(&str, u64)> = same.reads().collect();
+                    w.same(Meta { key: *key, digest: same.digest, reads: &reads, types: same.types });
+                }
+            }
+        }
     }
     for p in &puts {
         let reads: Vec<(&str, u64)> = p.reads.iter().map(|(r, d)| (r.as_str(), *d)).collect();
@@ -233,11 +272,12 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
             KeptWhat::Reads => {
                 if let Some(k) = chain.get(&p.key()) {
                     let meta = Meta { types: k.types, ..meta };
-                    if roll { w.copy(&k, Some(meta)).map_err(io)? } else { w.same(meta) }
+                    // Rows in a merged file are copied with the new reads; rows in an older one stay there.
+                    if merged.files.iter().any(|f| f.holds(k.rows)) { w.copy(&k, Some(meta)).map_err(io)? } else { w.same(meta) }
                 }
             }
             KeptWhat::Gone => {
-                if !roll && chain.get(&p.key()).is_some() {
+                if older.get(&p.key()).is_some() {
                     w.gone(p.key());
                 }
             }
@@ -246,8 +286,8 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
     w.finish().map_err(io)?;
     std::fs::rename(&making, dir.join(&name)).map_err(io)?;
     sync_dir(&dir).map_err(io)?;
-    if roll {
-        t.prepare_cached("DELETE FROM main.facts_chain WHERE space = ?1")?.execute([&space[..]])?;
+    if from < rows.len() {
+        t.prepare_cached("DELETE FROM main.facts_chain WHERE space = ?1 AND seq >= ?2")?.execute(rusqlite::params![&space[..], rows[from].0])?;
     }
     t.prepare_cached("INSERT INTO main.facts_chain(space, seq, name, tag) VALUES (?1, ?2, ?3, ?4)")?.execute(rusqlite::params![&space[..], seq, name, tag as i64])?;
     Ok(())

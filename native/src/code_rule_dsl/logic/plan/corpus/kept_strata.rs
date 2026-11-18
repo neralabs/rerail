@@ -22,6 +22,7 @@
 use crate::code_rule_dsl::logic::native::component::LIVE_BATCH;
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::logic::plan::KeptStrata;
+use crate::content_store::kept_facts::{KeptPut, KeptWhat};
 use crate::content_store::{AdmittedFrame, ContentStore, FramePut, FrameRel, FrameRows, FrameStored};
 use sha2::{Digest as _, Sha256};
 use std::cell::RefCell;
@@ -135,6 +136,9 @@ impl<'s> Kept<'s> {
         // a run: collection keeps them while a kept manifest names the program (`collect_unreachable_frames`).
         if !puts.is_empty() || !gone.is_empty() {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "keep the strata's frames, queued".into());
+            // The same relations as kept entries (decision 0402): every frame written has its entry.
+            let kept: Vec<KeptPut> = puts.iter().map(super::retain::kept_flat).chain(gone.iter().map(|(f, part)| kept_gone(f, *part))).collect();
+            self.store.queue_kept(self.space, kept);
             self.store.queue_frames(self.space, puts, gone, used.map(|u| (u, super::run_token(), self.program)));
         }
     }
@@ -407,6 +411,7 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
     let (inputs, rels) = next.parts();
     let digests: HashMap<&str, u64> = inputs.iter().map(|(r, d, _)| (*r, *d)).collect();
     let mut puts = Vec::new();
+    let mut kept = Vec::new();
     let mut written = 0usize;
     for (rel, digest, source) in inputs {
         let Some((f, was)) = part.frames.get(rel) else { continue };
@@ -418,7 +423,7 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         let Some(types) = part.types.get(rel).filter(|t| t.len() == w).cloned() else { continue };
         let n = source.len();
         // Read from the source a batch of rows at a time, never copied whole.
-        let bytes = FramePut::encode_windows(w, &|f| {
+        let each = |f: &mut dyn FnMut(&[i64])| {
             // A held relation's rows, read where they lie, part by part.
             if crate::code_rule_dsl::logic::native::component::each_held_batch(source.as_ref(), w, &mut *f).is_some() {
                 return;
@@ -434,7 +439,12 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
                 }
                 f(&buf);
             }
-        });
+        };
+        let bytes = FramePut::encode_windows(w, &each);
+        // Its kept entry (decision 0402): the same rows, flat, packed by the writer.
+        let mut flat = Vec::with_capacity(n * w);
+        each(&mut |b| flat.extend_from_slice(b));
+        kept.push(KeptPut { rel: f.name.clone(), ident: f.ident, part: 0, digest, reads: Vec::new(), types: types.clone(), what: KeptWhat::Flat { widths: vec![8; w], rows: flat, n } });
         written += n;
         puts.push(FramePut::encoded_as(f.clone(), 0, digest, Vec::new(), types, n, bytes));
     }
@@ -452,6 +462,7 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         }
         written += n;
         let bytes = super::retain::held_bytes(held);
+        kept.extend(super::retain::kept_rows(f, digest, reads.clone(), types.clone(), held));
         puts.push(FramePut::encoded_as(f.clone(), 0, digest, reads, types, n, bytes));
     }
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || format!("{} frames, {written} rows, written to the store", puts.len()));
@@ -462,5 +473,11 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         store.hold_frames(part.space, used, super::run_token(), part.key);
         return;
     }
+    store.queue_kept(part.space, kept);
     store.queue_encoded_retagged(part.space, puts, Vec::new(), Vec::new(), Vec::new(), Some((used, super::run_token(), part.key)));
+}
+
+/// A kept entry no longer kept: its frame forgotten.
+fn kept_gone(f: &FrameRel, part: i64) -> KeptPut {
+    KeptPut { rel: f.name.clone(), ident: f.ident, part, digest: 0, reads: Vec::new(), types: Vec::new(), what: KeptWhat::Gone }
 }

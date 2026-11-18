@@ -281,7 +281,56 @@ fn resolve<'b>(key: FactKey<'b>, found: Found<'b>, mut older: impl Iterator<Item
     }
 }
 
+/// A key's newest entry in a run of a chain's files, as `KeptChain::newest` gives it.
+pub enum Newest<'b> {
+    /// Its rows lie in these files (a reads-only entry's resolved, with its own reads).
+    Kept(Kept<'b>),
+    Gone,
+    /// A reads-only entry whose rows lie in an older file than these.
+    Same(Same<'b>),
+}
+
+/// What a reads-only entry records.
+#[derive(Clone, Copy)]
+pub struct Same<'b> {
+    pub digest: u64,
+    pub types: &'b [u8],
+    reads: &'b [ReadDigest],
+    strings: &'b [u8],
+}
+
+impl<'b> Same<'b> {
+    pub fn reads(&self) -> impl Iterator<Item = (&'b str, u64)> + 'b {
+        let strings = self.strings;
+        self.reads.iter().map(move |r| (str_at(strings, r.rel_at, r.rel_len), r.digest))
+    }
+}
+
 impl<B: Borrow<Block>> KeptChain<'_, B> {
+    /// Each key's newest entry in these files, in key order, a reads-only entry resolved where its rows lie in them:
+    /// what a merge of these files (the newest of a chain, K4) writes.
+    pub fn newest(&self) -> Vec<(FactKey<'_>, Newest<'_>)> {
+        let mut by: BTreeMap<FactKey<'_>, Vec<Found<'_>>> = BTreeMap::new();
+        for f in self.files.iter().rev() {
+            for (k, found) in f.every() {
+                by.entry(k).or_default().push(found);
+            }
+        }
+        by.into_iter()
+            .map(|(k, fs)| {
+                let n = match fs[0] {
+                    Found::Kept(kept) => Newest::Kept(kept),
+                    Found::Gone => Newest::Gone,
+                    Found::Same { digest, types, reads, strings } => match resolve(k, fs[0], fs.into_iter().skip(1)) {
+                        Some(kept) => Newest::Kept(kept),
+                        None => Newest::Same(Same { digest, types, reads, strings }),
+                    },
+                };
+                (k, n)
+            })
+            .collect()
+    }
+
     /// Every key's entries across the files, `pick`ed per file, each key's newest first, resolved.
     fn merged<'s, I>(&'s self, pick: impl Fn(&'s KeptFacts<B>) -> I) -> Vec<Kept<'s>>
     where

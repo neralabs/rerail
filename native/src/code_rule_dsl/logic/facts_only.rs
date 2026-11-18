@@ -540,3 +540,29 @@ fn every_kept_map_is_state_or_listed() {
     assert!(NOT_YET_MAPS.len() <= NOT_YET_MAPS_PIN, "a cache map added to the list (it may only shrink): {} > {NOT_YET_MAPS_PIN}", NOT_YET_MAPS.len());
     assert_eq!(NOT_YET_MAPS.len(), NOT_YET_MAPS_PIN, "a cache map moved: lower NOT_YET_MAPS_PIN to {}", NOT_YET_MAPS.len());
 }
+
+/// Decision 0402: every place that writes a frame puts its kept entry too, until the frames are retired (step 6). A
+/// frame written alone leaves the kept chain behind it (a later empty frame of `p0_absent`, its old entry kept).
+/// Each call of the engine's (the store's own delegations aside) that queues frames has a `queue_kept` within 40 lines.
+#[test]
+fn every_frame_write_puts_its_kept_entry() {
+    const WRITES: [&str; 6] = [".queue_frames(", ".queue_encoded(", ".queue_frames_retagged(", ".queue_encoded_retagged(", ".queue_placed_retagged(", ".queue_encoded_keyed_by_symbols("];
+    let mut all = Vec::new();
+    files(&src(), &mut all);
+    let mut alone = Vec::new();
+    for p in all.iter().filter(|p| !rel(p).starts_with("content_store")) {
+        let text = std::fs::read_to_string(p).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, l) in lines.iter().enumerate() {
+            let code = l.trim_start();
+            if code.starts_with("//") || !WRITES.iter().any(|w| code.contains(w)) {
+                continue;
+            }
+            let near = &lines[i.saturating_sub(40)..(i + 40).min(lines.len())];
+            if !near.iter().any(|n| n.contains(".queue_kept(")) {
+                alone.push(format!("{}:{}", rel(p), i + 1));
+            }
+        }
+    }
+    assert!(alone.is_empty(), "frames written with no kept entry (decision 0402): {alone:?}");
+}

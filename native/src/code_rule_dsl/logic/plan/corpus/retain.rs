@@ -3203,13 +3203,13 @@ impl KeptRows for LentRel {
 }
 
 /// `rel`'s entry: its rows lent whole. `None` for a relation with no block of its rows (a view, no columns).
-fn kept_rows(name: &FrameRel, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rel: &Arc<InRel>) -> Option<KeptPut> {
+pub(in crate::code_rule_dsl) fn kept_rows(name: &FrameRel, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rel: &Arc<InRel>) -> Option<KeptPut> {
     let block = rel.in_block()?;
     Some(KeptPut { rel: name.name.clone(), ident: name.ident, part: DOCS_PART, digest, reads, types, what: KeptWhat::Rows(Box::new(LentRel { rel: Arc::clone(rel), block })) })
 }
 
 /// A frame's rows as an entry of their own (an input's granule or documents, statistics' words).
-fn kept_flat(put: &FramePut) -> KeptPut {
+pub(in crate::code_rule_dsl) fn kept_flat(put: &FramePut) -> KeptPut {
     let FrameRows { types, rows, n } = &put.rows;
     KeptPut { rel: put.rel.name.clone(), ident: put.rel.ident, part: put.part, digest: put.digest, reads: put.reads.clone(), types: types.clone(), what: KeptWhat::Flat { widths: vec![8; types.len()], rows: rows.clone(), n: *n } }
 }
