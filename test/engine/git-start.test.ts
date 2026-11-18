@@ -263,8 +263,8 @@ describe("Git started through Node, off Linux or without the engine", () => {
 });
 
 /**
- * Has the daemon, started from its built entry as `rerail daemon start` starts it, grow by 640 MB and read HEAD 20
- * times through its own Git module and 20 times through Node's spawn, and say what each cost it.
+ * Has the daemon, started from its built entry as `rerail daemon start` starts it, grow by 640 MB once it listens and
+ * read HEAD 20 times through its own Git module and 20 times through Node's spawn, and say what each cost it.
  */
 async function daemonReads(root: string): Promise<{ head: string | undefined; nodeStarts: number; moduleSystemMs: number; nodeSystemMs: number }> {
   const home = await folder("home");
@@ -277,7 +277,15 @@ let nodeStarts = 0;
 const spawnOf = cp.ChildProcess.prototype.spawn;
 cp.ChildProcess.prototype.spawn = function (options) { if (/git/u.test(String(options.file))) nodeStarts += 1; return spawnOf.call(this, options); };
 const held = [];
-setTimeout(async () => {
+// The daemon's entry turns the engine on before it starts the daemon, which then listens: the reads start once it does.
+const listen = require("node:net").Server.prototype.listen;
+let reading = false;
+require("node:net").Server.prototype.listen = function (...args) {
+  if (!reading) this.once("listening", reads);
+  reading = true;
+  return listen.apply(this, args);
+};
+async function reads() {
   for (let i = 0; i < 10; i += 1) held.push(Buffer.alloc(64 << 20, i + 1));
   const { gitHead, gitExecutable } = await import(${JSON.stringify(gitModule)});
   const system = async read => { const before = process.cpuUsage().system; for (let i = 0; i < 20; i += 1) await read(); return (process.cpuUsage().system - before) / 20000; };
@@ -287,7 +295,7 @@ setTimeout(async () => {
   const starts = nodeStarts;
   const nodeSystemMs = await system(async () => { const c = cp.spawn(gitExecutable(), ["-C", ${JSON.stringify(root)}, "rev-parse", "HEAD"], { stdio: ["pipe", "pipe", "ignore"] }); c.stdout.resume(); c.stdin.end(); await require("node:events").once(c, "close"); });
   fs.writeFileSync(${JSON.stringify(out)}, JSON.stringify({ head, nodeStarts: starts, moduleSystemMs, nodeSystemMs }));
-}, 500);
+}
 `);
   const env = watchedEnvironment(home);
   env.NODE_OPTIONS = `${env.NODE_OPTIONS ?? ""} --require ${JSON.stringify(preload)}`;
