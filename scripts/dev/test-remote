@@ -106,6 +106,9 @@ def choose(named, oses):
         # frees on any host is taken, not only the first host's.
         free = []
         for host in candidates:
+            # Asked again while waiting: a host that started a fleet job meanwhile takes nothing more.
+            if not farm.health(host).get("ok"):
+                continue
             paths = farm.test_slot_paths(host["name"], host)
             got = None
             idle = 0

@@ -214,7 +214,8 @@ hosts, and everything compiles and tests here, as without the farm.
 |---|---|
 | `hosts` | the hosts: `{"name", "cores", "enabled", "tests", "link", "unattended", "os", "nice", "max_target_gb"}` |
 | `os` | `"macos"` (default) or `"linux"`: a Linux host runs test commands only (below, "Linux hosts") |
-| `nice` | the nice value of `test-remote`'s commands there (default 10); 19 on a host that serves other work |
+| `nice` | the nice value of `test-remote`'s commands there (default 10; 0 where the farm is an equal of the host's other work) |
+| `fleet` | `true` on a nera-fleet node: while any fleet job runs there (a container labelled `fleet.job`), the farm starts no command there, and asks again each minute. The two are equals: neither preempts the other, and what runs finishes |
 | `name` | what ssh connects to (a `Host` entry of `~/.ssh/config`) |
 | `enabled` | `false` leaves a host out (default `true`) |
 | `tests` | whether `scripts/dev/test-remote` runs there (default `true`) |

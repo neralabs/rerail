@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 29
+VERSION = 30
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -847,6 +847,11 @@ def probe(host, cfg, fell_back=False, recovered=False):
     script = linux if host_os(host) == "linux" else ('echo "$SSH_CONNECTION"; echo "$(osascript -l JavaScript -e ' + available + ' 2>/dev/null) $(df -k "$HOME" | tail -1 | awk \'{print $4}\')";'
               " ioreg -c IOHIDSystem -d 4 | awk '/HIDIdleTime/ {print $NF; exit}'; echo \"$(" + ARRIVAL + ")\";"
               " sysctl -n vm.loadavg; mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
+    if host.get("fleet"):
+        # A nera-fleet node (`"fleet": true`): the fleet's jobs are containers carrying `fleet.job`.
+        # Counted first; docker may be outside a plain ssh command's PATH on a Mac.
+        script = ('echo "fleet $(PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.orbstack/bin '
+                  'docker ps -q --filter label=fleet.job 2>/dev/null | wc -l)"; ' + script)
     try:
         out = subprocess.run(ssh(name, script, "health"), capture_output=True, text=True, timeout=10)
     except subprocess.TimeoutExpired:
@@ -861,6 +866,9 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["why"] = blocked or "unreachable (off, asleep, or off the network)"
         return h
     lines = out.stdout.splitlines()
+    fleet_jobs = None
+    if lines and lines[0].startswith("fleet "):
+        fleet_jobs = h["fleet_jobs"] = int(lines.pop(0).split()[1] or 0)
     client = h["client"] = (lines[0].split() or [""])[0]
     try:
         words = lines[1].split()
@@ -910,7 +918,10 @@ def probe(host, cfg, fell_back=False, recovered=False):
     if link and arrival != link and not recovered and recover(host, arrival):
         return probe(host, cfg, fell_back=fell_back, recovered=True)
     h["route"] = route(name)
-    if link and arrival != link:
+    if fleet_jobs:
+        h["why"] = (f"running {fleet_jobs} nera-fleet job{'s' * (fleet_jobs > 1)}: the farm and the fleet are equals there, "
+                    "and the farm starts nothing more until they end")
+    elif link and arrival != link:
         h["why"] = f"not on its link: reached over its {arrival or '?'}, not {link}"
     elif h["free_gb"] < cfg["floor_free_gb"]:
         h["why"] = f"{h['free_gb']} GB free, under {cfg['floor_free_gb']}: {short_of_disk(host, h, cfg)}"
@@ -1031,7 +1042,8 @@ def health(host, fresh=False):
         h = probe(host, config())
         if not h["ok"] and h["why"].startswith("not on its link"):
             h["down_until"] = now + OFF_LINK_SECONDS
-        elif not h["ok"] and "Local Network privacy" in h["why"]:
+        elif not h["ok"] and ("Local Network privacy" in h["why"] or h.get("fleet_jobs")):
+            # (or the fleet's jobs: asked again each minute, the moment they may have ended)
             # Not the host: it is back the moment the permission is given, so no growing back-off.
             h["down_until"] = now + DOWN_SECONDS[0]
         elif not h["ok"]:
