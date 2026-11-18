@@ -1253,7 +1253,8 @@ impl<'a> Ev<'a> {
             for g in 0..grammar.len() {
                 let at = |i: usize| grammar.get(g + i).map(|&x| &toks[x]);
                 let run = seq.iter().enumerate().all(|(i, e)| is(at(i), e));
-                let after = pre.is_empty() || (g > 0 && is(Some(&toks[grammar[g - 1]]), pre));
+                // `after ~E`: none of `E`'s before, or no token before (the file's first).
+                let after = pre.is_empty() || (g > 0 && is(Some(&toks[grammar[g - 1]]), pre)) || (g == 0 && matches!(pre.as_slice(), [TokenElem::Not(_)]));
                 if run && after {
                     before[grammar[g]][k] = true;
                 }

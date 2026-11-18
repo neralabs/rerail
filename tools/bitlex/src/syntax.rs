@@ -615,7 +615,8 @@ pub enum Stmt {
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
-    /// `before`'s. The mark is at the first element's token.
+    /// `before`'s, or (`after ~E`) none of them, or no token at all. The mark is at the first
+    /// element's token.
     TokenMark { kind: String, before: Vec<TokenElem>, seq: Vec<Vec<TokenElem>> },
     /// `hidden KIND …` (in a tree): marks taken where the grammar can take them and skipped
     /// elsewhere. A mark not hidden, where the grammar can not take it, refuses the file.
@@ -1709,11 +1710,12 @@ impl P {
                     if seq.is_empty() {
                         return self.err("a token after `tokens`");
                     }
-                    // The mark's token, and the one before, are tokens of the choices: no `~`, no
-                    // `end`; an `end` only in the last element.
+                    // The mark's token is a token of the choices: no `~`, no `end`; an `end` only in
+                    // the last element. The one before (`after`) has no `end`; a `~` there holds
+                    // where no token comes before too (the file's first).
                     let special = |c: &[TokenElem]| c.iter().any(|x| matches!(x, TokenElem::Not(_) | TokenElem::End));
                     let ends = |c: &[TokenElem]| c.contains(&TokenElem::End);
-                    if special(&seq[0]) || special(&before) || seq[..seq.len() - 1].iter().any(|c| ends(c)) {
+                    if special(&seq[0]) || ends(&before) || seq[..seq.len() - 1].iter().any(|c| ends(c)) {
                         return self.err("a mark's token of kinds and words, and `end` only last");
                     }
                     let s = Stmt::TokenMark { kind, before, seq };

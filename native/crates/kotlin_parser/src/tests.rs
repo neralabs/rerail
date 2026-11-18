@@ -387,6 +387,16 @@ fn strings_in_templates_are_the_lean_parsers() {
 }
 
 #[test]
+fn names_after_dots_are_the_lean_parsers() {
+    same(&[
+        "fun f(limit: W) = limit.value\n\ninternal operator fun g() {}\n",
+        "val a = b.data\nprivate fun c() {}\n",
+        "internal fun f() {}\n",
+        "private val x = 1\n",
+    ]);
+}
+
+#[test]
 fn constructor_lines_are_the_lean_parsers() {
     same(&[
         "class A {\n    private constructor(x: Int) : this()\n}\n",

@@ -791,6 +791,25 @@ internal constructor(x: Int)
 
 Corpus: 418 the same (step 31: 417), 73 refused, 0 differ.
 
+## Kotlin, step 33 (`33-names-after-dots.bitlex`)
+
+```kotlin
+fun f(limit: W) = limit.value
+
+internal operator fun g() {}
+```
+
+`decl_mod` is now `tokens after ~("." | "?." | "::") …`. After a `.` a modifier word is a
+navigation's name, even when a declaration starts on a later line.
+
+A token mark's `after` could not take a `~` (item 28 below), so it can now. `after ~E` holds
+where the token before is none of `E`'s, or where no token comes before: a modifier may be
+the file's first token. The compiler gives that element an `end`, meaning no record before
+holds. Five places implement it: Bitlex's syntax check and evaluator, the validator, and the
+interpreter's, Cranelift's and the generated Rust's token-mark tests.
+
+Corpus: 420 the same (step 32: 418), 71 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
@@ -963,6 +982,12 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
     scans do (`bound`, `inside_or_past`), when the opener is not from the bytes. A single
     region's opener is from the bytes, and its code is unchanged. The test
     `raw_strings_are_the_lean_parsers` puts strings at those bytes.
+
+28. **A token mark's `after` takes a `~`** (step 33). `after ~E`: the token before is none of
+    `E`'s, or there is none. The element at offset -1 then has `end`, and every implementation
+    holds it with no record before: Bitlex's evaluator, `stream::token_mark_holds` (as it
+    was), the Cranelift stream's pattern, and `rust_stream`'s. The validator allows `not` with
+    `end` at -1 only. An `end` stays last among the elements after the mark's token.
 
 ## Found on the way
 
