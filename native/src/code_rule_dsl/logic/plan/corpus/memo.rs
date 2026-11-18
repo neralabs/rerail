@@ -936,7 +936,51 @@ pub(super) enum Memo<'a> {
 
 /// A session's memo: each entry under its content's digest, its path and the file-local program's digest. Shared
 /// (an `Arc`): a hit, and an input's change read from the changed documents' entries, read it in place (0364 R2).
-pub(super) type Held = std::sync::Mutex<std::collections::HashMap<([u8; 32], String, [u8; 32]), std::sync::Arc<Entry>>>;
+pub(super) type Held = std::sync::Mutex<HeldEntries>;
+
+/// The session memo's entries. Per file and program it holds two: its current content's, and the one before it,
+/// which an edit's input deltas read as the file's old rows (`input_delta::changed`, after the run remembered the
+/// new one). An entry older than those two goes when a newer one comes. So the memo is bounded by the tree: two
+/// entries a file, whatever the session's length, with no count to pass. (It held at most 4,096 entries and was
+/// emptied past them: the data layer's 2,410 files and two programs passed that within each run, so no edit's run
+/// found a file in it, and an edit cost a first run.)
+#[derive(Default)]
+pub(super) struct HeldEntries {
+    entries: std::collections::HashMap<([u8; 32], String, [u8; 32]), std::sync::Arc<Entry>>,
+    /// Per (path, program): the current content's digest, and the one before.
+    files: std::collections::HashMap<(String, [u8; 32]), ([u8; 32], Option<[u8; 32]>)>,
+}
+
+impl HeldEntries {
+    pub(super) fn get(&self, key: &([u8; 32], String, [u8; 32])) -> Option<&std::sync::Arc<Entry>> {
+        self.entries.get(key)
+    }
+    pub(super) fn len(&self) -> usize {
+        self.entries.len()
+    }
+    /// `entry` as `path`'s under `program` for content `digest`: it becomes the file's current entry, its current
+    /// one the one before, and the one before that goes.
+    fn insert(&mut self, digest: [u8; 32], path: &str, program: [u8; 32], entry: std::sync::Arc<Entry>) {
+        let file = (path.to_owned(), program);
+        let gone = match self.files.get_mut(&file) {
+            None => {
+                self.files.insert(file, (digest, None));
+                None
+            }
+            Some((now, _)) if *now == digest => None,
+            Some((now, before)) => {
+                let gone = before.filter(|b| *b != digest);
+                *before = Some(*now);
+                *now = digest;
+                gone
+            }
+        };
+        if let Some(g) = gone {
+            self.entries.remove(&(g, path.to_owned(), program));
+        }
+        self.entries.insert((digest, path.to_owned(), program), entry);
+    }
+}
 
 /// A file's content as the memo knows it: its stored source; a content the store does not hold yet, by its digest
 /// (its source is written by the store's writer, behind the run, with its tape: decision 0104); or (held) its digest.
@@ -970,9 +1014,6 @@ impl Content {
         }
     }
 }
-
-/// The most entries a session holds: past it, the memo starts again empty (its entries are a cache).
-const HELD_ENTRIES: usize = 4096;
 
 impl Memo<'_> {
     /// `text` as the memo knows it.
@@ -1107,11 +1148,7 @@ impl Memo<'_> {
         match (self, content) {
             (Memo::Stored(store), c @ (Content::Stored(_) | Content::Unstored(_))) => remember_all(store, program, vec![(c, path.to_owned(), key, entry.clone())]),
             (Memo::Held(held), Content::Held(digest)) => {
-                let mut held = held.lock().expect("the session memo");
-                if held.len() >= HELD_ENTRIES {
-                    held.clear();
-                }
-                held.insert((digest, path.to_owned(), program.id), std::sync::Arc::new(Entry { key, ..entry.clone() }));
+                held.lock().expect("the session memo").insert(digest, path, program.id, std::sync::Arc::new(Entry { key, ..entry.clone() }));
                 Ok(())
             }
             _ => Ok(()),
@@ -1128,6 +1165,33 @@ pub(super) fn document_of(value: i64) -> i64 {
 pub mod tests {
     use super::*;
     use crate::code_rule_dsl::logic::plan::output::{Cell, col};
+
+    /// A session's memo holds every file of a tree past any count (the data layer's 2,410 files under two programs:
+    /// 4,820 entries), and per file and program its current entry and the one before, which an edit's input deltas
+    /// read. An older one goes.
+    #[test]
+    fn a_session_memo_holds_the_tree_and_each_file_s_entry_before() {
+        let mut h = HeldEntries::default();
+        let e = |k: i64| std::sync::Arc::new(Entry { key: k, ..Entry::default() });
+        let d = |n: u8| [n; 32];
+        let (main, sources) = ([1; 32], [2; 32]);
+        for f in 0..5000 {
+            for prog in [main, sources] {
+                h.insert(d(0), &format!("f{f}.py"), prog, e(f));
+            }
+        }
+        assert_eq!(h.len(), 10_000, "every file's entry under both programs is held");
+        h.insert(d(1), "f0.py", main, e(0));
+        assert!(h.get(&(d(0), "f0.py".into(), main)).is_some() && h.get(&(d(1), "f0.py".into(), main)).is_some(), "an edit keeps the entry before");
+        h.insert(d(2), "f0.py", main, e(0));
+        assert!(h.get(&(d(0), "f0.py".into(), main)).is_none(), "the entry before the one before goes");
+        assert!(h.get(&(d(1), "f0.py".into(), main)).is_some() && h.get(&(d(2), "f0.py".into(), main)).is_some());
+        // Back to an earlier content: the two kept are that one and the one it replaced.
+        h.insert(d(1), "f0.py", main, e(0));
+        assert!(h.get(&(d(1), "f0.py".into(), main)).is_some() && h.get(&(d(2), "f0.py".into(), main)).is_some());
+        assert_eq!(h.len(), 10_001);
+        assert!(h.get(&(d(0), "f0.py".into(), sources)).is_some(), "another program's entry of the file is its own");
+    }
 
     /// Rows of columns typed `types`, of `rows`.
     pub fn rows_of(types: &[u8], rows: &[&[Cell<'_>]]) -> crate::code_rule_dsl::logic::plan::output::Rows {
