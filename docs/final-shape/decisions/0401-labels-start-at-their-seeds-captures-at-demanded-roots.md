@@ -1,6 +1,6 @@
-# 0396. Labels start at their seeds; a matcher's captures are bound only where its readers join
+# 0401. Labels start at their seeds; a matcher's captures are bound only where its readers join
 
-Status: accepted (2026-11-18)
+Status: accepted (2026-11-18). Numbered 0396 where it was written.
 
 ## Intro
 

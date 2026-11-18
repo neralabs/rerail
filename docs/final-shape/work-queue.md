@@ -1395,7 +1395,7 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
 
 ### Q187. The label kernels' time follows dispatches and group scans, not steps
 
-- **Found** (2026-11-18, 0396): the label passes' walk steps fell from 65.8 M to 19.8 M (internal_dead_code)
+- **Found** (2026-11-18, 0401): the label passes' walk steps fell from 65.8 M to 19.8 M (internal_dead_code)
   and 19.3 M to 7.4 M (public_api_triples). `label_micro_8` + `label_micro` went from 80.9 to 66.7 ms and from
   61.1 to 68.2 ms. Each seeded `all` adds a level its readers wait for (public_api_triples' `label_micro_8`
   dispatches 96 → 144), and a pass still visits every 64-node group to read its root mask.

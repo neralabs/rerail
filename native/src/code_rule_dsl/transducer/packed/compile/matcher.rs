@@ -329,7 +329,7 @@ impl Labels {
             Domain::All | Domain::Kinds(_) => None,
         };
         match self.def(id) {
-            // A pattern's starts are a label where it is made inside a seeded `all` (0396): it waits for the seed.
+            // A pattern's starts are a label where it is made inside a seeded `all` (0401): it waits for the seed.
             Label::Pattern(_, domain) => starts(domain).into_iter().collect(),
             Label::Empty => Vec::new(),
             Label::Constrained(_, domain, constraints) => constraints.iter().map(|(_, label)| *label).chain(starts(domain)).collect(),
@@ -369,7 +369,7 @@ impl LoweredMatcher {
         Ok(Self {
             labels,
             program,
-            // An `all` that tests a neighbor holds only at its seed's members (0396).
+            // An `all` that tests a neighbor holds only at its seed's members (0401).
             domain: seed.map_or_else(|| Domain::of(tree), Domain::Label),
         })
     }
@@ -2201,7 +2201,7 @@ struct Demand {
     kinds: Option<BTreeSet<u16>>,
     /// A label the node is a member of wherever it matters: an `all` with a conjunct that tests a neighbor
     /// (`inside X` or `has X` by `neighbor`) holds only at X's children or parents, a label made by walking once
-    /// from each X (`Builder::seed`, decision 0396). A label made here starts at its members.
+    /// from each X (`Builder::seed`, decision 0401). A label made here starts at its members.
     seed: Option<u16>,
 }
 

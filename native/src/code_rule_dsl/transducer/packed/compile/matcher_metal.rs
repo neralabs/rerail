@@ -9,7 +9,7 @@ use crate::code_rule_dsl::transducer::packed::device::{ClauseRoots, Outcome, Roo
 pub(in crate::code_rule_dsl) fn matcher_roots(this: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error> {
     let no_labels = empty_sets(tapes, this.labels.defs.len());
     // A seeded clause's domain is a label not yet known: its kinds' nodes, which its program's first test, the seed,
-    // narrows (0396).
+    // narrows (0401).
     let listed = match &this.domain {
         Domain::Label(_) => this.labels.bound(&this.domain, &mut Vec::new()).map_or(Domain::All, |kinds| Domain::Kinds(kinds.into_iter().collect())),
         other => other.clone(),
@@ -82,7 +82,7 @@ fn metal<'a>(
     // A pass's roots: its domain's nodes. A label domain's program tests the label first. On Metal
     // the label is not known before the command buffer runs, so the rule names the kinds the label
     // can have (`Labels::bound`) and the label's row, and a micro walk starts only at the label's
-    // members, read from its row as the walk runs (0396). They are a rule over each document's
+    // members, read from its row as the walk runs (0401). They are a rule over each document's
     // codes (`Roots::Codes`, decision 0033), not a list: the device reads each root in place.
     // Shared by (domain, entry, the tapes the clause is active on), so passes of one domain have
     // one rule (06 S7: 605 passes, 70 M roots as lists, of 264 such keys).

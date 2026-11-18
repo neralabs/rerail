@@ -304,7 +304,7 @@ fn a_recursive_utility_inside_another_settles() {
     assert_eq!(program.roots(&tape).unwrap(), expected);
 }
 
-/// The lowerings of t45's plan (decision 0396), each a clause: a bare `$X` is the named-node test, not a pattern
+/// The lowerings of t45's plan (decision 0401), each a clause: a bare `$X` is the named-node test, not a pattern
 /// label; a clause that is one `inside … end` copies its label; an `all` that tests a neighbor (`inside` or `has`, by
 /// a field or not) and a lone neighbor walk start at the seed label of the nodes it holds at. Each finds W's roots.
 fn seeded_clauses() -> (crate::code_rule_dsl::CompiledCodeRuleDsl, TapeDoc) {
@@ -362,7 +362,7 @@ fn seeded_and_copied_labels_find_ws_roots() {
 }
 
 /// The same clauses on Metal: a label-domain pass starts only at the label's members, read from its row on the
-/// device (`root_mask_label`), and a clause that copies a label reads its row (decision 0396).
+/// device (`root_mask_label`), and a clause that copies a label reads its row (decision 0401).
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
 #[test]
 fn seeded_and_copied_labels_match_on_metal() {
