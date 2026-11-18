@@ -1065,9 +1065,9 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(await stopDaemon(home, machine())).toBe("stopped");
     expect(sent).toEqual([[LIVE_PID, "SIGTERM"]]);
     expect(existsSync(stateFile)).toBe(false);
-    // The stop's lookup, its verdict and its ask before the SIGTERM each read within the stop's own 10 s wait, where a
-    // status lookup reads within its 2 s.
-    expect(bounds).toHaveLength(3);
+    // The stop's lookup and its check just before the SIGTERM each read within the stop's own 10 s wait, where a status
+    // lookup reads within its 2 s.
+    expect(bounds).toHaveLength(2);
     for (const bound of bounds) {
       expect(bound).toBeGreaterThan(2_000);
       expect(bound).toBeLessThanOrEqual(10_000);
@@ -1317,13 +1317,13 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(existsSync(stateFile)).toBe(false);
   });
 
-  it.each(["linux", "win32"] as const)("sends nothing to a daemon that lets go of the home between its stop's check and the signal (%s)", async platform => {
+  it.each(["linux", "win32"] as const)("sends nothing to a daemon that ends after its lookup, as it lets go of the home, and says stopped (%s)", async platform => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const signals: Array<string | number | undefined> = [];
     await holdHome(home, LIVE_PID);
     await writeFile(stateFile, JSON.stringify(state(platform)));
-    // The daemon ends as it lets go of the home.
-    const lock = heldFor(2);
+    // The daemon ends as it lets go of the home, and its start can no longer be read.
+    const lock = heldFor(1);
     let held = true;
     const machine: DaemonMachine = {
       ...machineWith(platform, signals, () => (held = lock())),
@@ -1357,6 +1357,71 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(await stopFoundDaemon(home, found, machine)).toBe("stopped");
     expect(signals).toEqual(["SIGTERM"]);
   }, 20_000);
+
+  /**
+   * Has the clock read 5 s later at each look at whether `LIVE_PID` runs, so a stop's 10 s wait for it passes in two
+   * polls, until the returned `undo`: a clock set after it would stay set for the tests that follow.
+   */
+  const clockOnEachLook = (machine: DaemonMachine): { machine: DaemonMachine; undo: () => void } => {
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    let faked = true;
+    return {
+      machine: { ...machine, kill: (pid, signal) => {
+        if (faked && signal === 0) vi.setSystemTime(Date.now() + 5_000);
+        return machine.kill(pid, signal);
+      } },
+      undo: () => {
+        faked = false;
+        vi.useRealTimers();
+      },
+    };
+  };
+
+  // The stop's own read of the busy daemon's start proves it, and every read after that fails, as a Windows PowerShell
+  // past its bound or refused does: the stop ends it then, and never says stopped while it runs.
+  it.each(["linux", "win32"] as const)("ends a busy daemon its stop proves when each read of its start after that fails (%s)", async platform => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    let reads = 0;
+    const { machine, undo } = clockOnEachLook(machineWith(platform, signals, () => undefined, () => ((reads += 1) === 1 ? STARTED_AT - 500 : undefined)));
+    try {
+      expect(await stopFoundDaemon(home, { status: "unresponsive", state: state(platform) }, machine)).toBe("stopped");
+    } finally {
+      undo();
+    }
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(processAlive(LIVE_PID, machine.kill)).toBe(false);
+  });
+
+  // The daemon outlives its SIGTERM, as a busy one on Linux does until its handler runs, and its start cannot be read
+  // after that: the stop sends no SIGKILL, says so, and keeps every record of the daemon.
+  it.each(["linux", "win32"] as const)("sends no SIGKILL, keeps every record and says so when the daemon outlives its SIGTERM and its start cannot be read again (%s)", async platform => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const sent: Array<string | number | undefined> = [];
+    await holdHome(home, LIVE_PID);
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    const forgotten: number[] = [];
+    const base = machineWith(platform, [], () => undefined, () => (sent.includes("SIGTERM") ? undefined : STARTED_AT - 500));
+    const { machine, undo } = clockOnEachLook({
+      ...base,
+      kill: (pid, signal) => {
+        if (signal !== 0) sent.push(signal);
+        return signal === "SIGTERM" || base.kill(pid, signal);
+      },
+      forgetMainInstanceHolder: pid => forgotten.push(pid),
+    });
+    try {
+      await expect(stopFoundDaemon(home, { status: "unresponsive", state: state(platform) }, machine)).rejects.toThrow(new RegExp(`could not prove that pid ${LIVE_PID}`, "u"));
+    } finally {
+      undo();
+    }
+    expect(sent).toEqual(["SIGTERM"]);
+    expect(processAlive(LIVE_PID, machine.kill)).toBe(true);
+    expect(JSON.parse(await readFile(stateFile, "utf8"))).toMatchObject({ pid: LIVE_PID });
+    expect(JSON.parse(await readFile(join(home, LOCKS_DIR, "daemon.json"), "utf8"))).toMatchObject({ pid: LIVE_PID });
+    expect(forgotten).toEqual([]);
+  });
 
   // A PowerShell that never answers stands in for the start's read on Windows, and the proof is silent at once, so the
   // read has every millisecond of each lookup's limit. The hook's wait is given as 8 s, where a hook's own is
