@@ -99,7 +99,7 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 
 1. **Fetch** every listed pack into a staging folder. Nothing in the repository is read until the person allows it.
 2. **Keep newer versions** the computer already has installed.
-3. **Ask** which fitting packs to install.
+3. **Ask** which suggested packs to install.
 4. **Install only what the answer carries:** "Yes", "Change rule packs…" (`--answer choose`), "Not now" (`--answer not-now`) or "Skip, I'll pick packs".
 5. **Verify** the catalog still loads every pack; otherwise put the change back and ask again.
 
