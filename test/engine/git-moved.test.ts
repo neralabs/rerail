@@ -91,19 +91,28 @@ describe("the Git a process keeps, gone under it", () => {
     await removeFolder(root);
   });
 
-  it("fails a blocking Git call whose Git is gone as its start did, and has Git looked for off the thread for the calls after it", async () => {
-    // A look may wait on a folder far longer than Git's time limit, and a blocking call would hold the thread through it.
+  it("runs a blocking Git call once more with the Git a look finds within the call's time limit, and keeps that Git", async () => {
+    // The repository a session works in is such a call (repository-identity.ts): it finds the repository, not a folder
+    // outside Git, and the session's writes are checked.
     const [kept, now] = await moveKeptGit();
     started(spawnSync);
-    const failed = runGit(repository, ["rev-parse", "HEAD"]);
-    expect([failed.status, (failed.error as NodeJS.ErrnoException | undefined)?.code]).toEqual([null, "ENOENT"]);
-    expect(started(spawnSync)).toEqual([kept]);
-    // A call that does not block, failing on the same Git meanwhile, waits for that look rather than making its own.
+    const result = runGit(repository, ["rev-parse", "HEAD"]);
+    expect([result.status, result.stdout.trim(), started(spawnSync)]).toEqual([0, head, [kept, now]]);
+    expect(gitExecutable()).toBe(now);
+    started(spawn);
+    await expect(gitHead(repository)).resolves.toBe(head);
+    expect(started(spawn)).toEqual([now]);
+  });
+
+  it("fails a blocking Git call as its start did when its time limit leaves the look no time, and the next call finds Git", async () => {
+    const [kept, now] = await moveKeptGit();
+    started(spawnSync);
+    const failed = runGit(repository, ["rev-parse", "HEAD"], { timeout: 0 });
+    expect([failed.status, (failed.error as NodeJS.ErrnoException | undefined)?.code, started(spawnSync)]).toEqual([null, "ENOENT", [kept]]);
+    // The look goes on off the thread, and a call that does not block waits for it rather than making its own.
     started(spawn);
     const result = await runGitAsync(repository, ["rev-parse", "HEAD"]);
     expect([result.status, result.stdout.trim(), started(spawn)]).toEqual([0, head, [kept, now]]);
-    expect(runGit(repository, ["rev-parse", "HEAD"]).stdout.trim()).toBe(head);
-    expect(started(spawnSync)).toEqual([now]);
   });
 
   it("runs a Git call that does not block once more with the Git found again", async () => {

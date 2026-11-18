@@ -4,7 +4,7 @@
  * Windows only: each test starts this machine's Git for Windows, in a process environment the test sets, through
  * git.ts loaded afresh.
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -141,10 +141,32 @@ describe.runIf(WINDOWS)("Git for Windows' own git.exe started without its launch
       const [rerail, through] = await Promise.all([read(join(root, `rerail-${index}.json`)), read(join(root, `launcher-${index}.json`))]);
       expect(rerail.HOME, share).toBe(through.HOME);
       expect(through.HOME, share).toBe(index === 0 ? share : profile);
-      // Rerail's PATH is the launcher's with the other home's bin beside the launcher's own, the share's first.
+      // At a process's first start, before any answer about the share, Rerail's PATH is the launcher's with the other
+      // home's bin beside the launcher's own, the share's first.
       const [shareBin, profileBin] = [win32.join(share, "bin"), win32.join(profile, "bin")];
       const launcherHomeBin = index === 0 ? shareBin : profileBin;
       expect(rerail.PATH, share).toBe(through.PATH?.replace(`${launcherHomeBin};`, `${shareBin};${profileBin};`));
     }
+  });
+
+  it("runs a program only in the profile's bin as the launcher does once the home share is known to be a folder: not at all", async () => {
+    const root = await repository();
+    const [share, profile] = [join(root, "share"), join(root, "profile")];
+    await Promise.all([mkdir(join(share, "bin"), { recursive: true }), mkdir(join(profile, "bin"), { recursive: true })]);
+    // An alias Git runs through its shell, which finds the program on Git's PATH.
+    await writeFile(join(profile, "bin", "rerail-only-profile"), "#!/bin/sh\necho only-profile\n");
+    git(root, "config", "alias.only", "!rerail-only-profile");
+    const launcher = machineLauncher();
+    for (const [name, value] of Object.entries({ HOME: undefined, HOMEDRIVE: share.slice(0, 2), HOMEPATH: share.slice(2), USERPROFILE: profile, PATH: personPath(launcher) })) vi.stubEnv(name, value);
+    const started = await freshGit();
+    // The first start has the share looked at off the thread; a call that does not block lets that look answer.
+    expect((await started.runGitAsync(root, ["rev-parse", "--git-dir"])).status).toBe(0);
+    const through = spawnSync(launcher, ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=NUL", "-C", root, "only"], {
+      encoding: "utf8", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" },
+    });
+    const rerail = started.runGit(root, ["only"]);
+    // The launcher's HOME is the share, so its PATH holds the share's bin alone, and the program is not found.
+    expect([rerail.status, rerail.stdout]).toEqual([through.status, through.stdout]);
+    expect(through.status).not.toBe(0);
   });
 });
