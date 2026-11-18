@@ -183,6 +183,23 @@ fn rounds_run_until_every_carry_is_its_next() {
     assert_eq!(v.arrays[1], vec![0, 0, 0, 0, 0]);
     // Jumps of 1 and 2 reach the roots; the third round's next is its carry.
     assert_eq!(v.rounds, 3);
+    // A value after the span reads the settled carry, and runs once: a call there is called
+    // once an element, not once a round.
+    struct Count(usize);
+    impl crate::array::Calls for Count {
+        fn call(&mut self, _: u16, _: &crate::array::Fun, args: &[i64], _: &[&[i64]], out: &mut Vec<i64>) -> Result<(), &'static str> {
+            self.0 += 1;
+            out.push(args[0]);
+            Ok(())
+        }
+    }
+    let after = ["fun f0 words id fields=1", "%0 = input 0", "%1 = carry %0", "%2 = gather %1 %1", "%3 = call f0 %1", "%4 = part %3 0", "rounds %1 %2", "output %4"];
+    let mut count = Count(0);
+    assert_eq!(run("1 0", &after, &[&[0, 0, 0, 2, 3]], &[], &mut count), Ok(vec![vec![0, 0, 0, 0, 0]]));
+    assert_eq!(count.0, 5);
+    // Spans that overlap, and a next before its carry, are refused.
+    assert!(program("  array 0 shape 1 0\n  array 0 %0 = input 0\n  array 0 %1 = carry %0\n  array 0 %2 = carry %0\n  array 0 %3 = gather %1 %1\n  array 0 %4 = gather %2 %2\n  array 0 rounds %1 %3\n  array 0 rounds %2 %4\n  array 0 output %4\n").is_err());
+    assert!(program("  array 0 shape 1 0\n  array 0 %0 = input 0\n  array 0 %1 = iota %0\n  array 0 %2 = carry %0\n  array 0 rounds %2 %1\n  array 0 output %2\n").is_err());
     // A carry that never settles is refused at the bound.
     let flip = ["%0 = input 0", "%1 = const 1", "%2 = carry %0", "%3 = map xor %2 %1", "rounds %2 %3", "output %2"];
     assert_eq!(run("1 0", &flip, &[&[0]], &[], &mut ()), Err("past the rounds' bound"));

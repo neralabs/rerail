@@ -13,9 +13,11 @@
 //! A length-1 array is a scalar: a map, a select or a scatter's fill broadcasts it.
 //!
 //! A program may hold fixed points (`rounds`), as block programs do: each group's carries, each
-//! with its next. The operations run in order; then, while some carry differs from its next, the
-//! values that depend on a carry run again with each carry its next of the round before. Past
-//! `MAX_ROUNDS` the run is refused.
+//! with its next. A group spans its first carry to its last next, and groups do not overlap.
+//! The operations run in order; at the end of a group's span, while some carry of it differs
+//! from its next, the span's values that depend on its carries run again, each carry its next
+//! of the round before. The values after the span read the settled ones. Past `MAX_ROUNDS` the
+//! run is refused.
 
 use crate::Error;
 
@@ -383,6 +385,20 @@ impl ArrayProgram {
                 }
             }
         }
+        // A group's nexts after its carries, and the groups' spans apart.
+        let mut spans: Vec<(u16, u16)> = Vec::new();
+        for group in &self.rounds {
+            let lo = group.iter().map(|p| p.0).min().unwrap();
+            let hi = group.iter().map(|p| p.1).max().unwrap();
+            if group.iter().any(|&(c, x)| x < c) {
+                return Err(Error::InvalidOperand(usize::from(lo)));
+            }
+            spans.push((lo, hi));
+        }
+        spans.sort_unstable();
+        if spans.windows(2).any(|w| w[1].0 <= w[0].1) {
+            return Err(Error::InvalidOperand(0));
+        }
         // Every carry is in exactly one group.
         let carries = self.ops.iter().filter(|op| matches!(op, ArrayOp::Carry(_))).count();
         let mut grouped: Vec<u16> = self.rounds.iter().flatten().map(|&(c, _)| c).collect();
@@ -488,7 +504,7 @@ impl Calls for () {
 pub struct Values {
     pub arrays: Vec<Vec<i64>>,
     pub parts: Vec<Vec<Vec<i64>>>,
-    /// The rounds the fixed points took (1 when there are none).
+    /// The most rounds a fixed point took (1 when there are none).
     pub rounds: usize,
 }
 
@@ -509,30 +525,44 @@ impl ArrayProgram {
         }
         let n = self.ops.len();
         let mut v = Values { arrays: vec![Vec::new(); n], parts: vec![Vec::new(); n], rounds: 1 };
+        // Each group by the end of its span.
+        let mut ends: Vec<(usize, &Vec<(u16, u16)>)> = self.rounds.iter().map(|g| (usize::from(g.iter().map(|p| p.1).max().unwrap()), g)).collect();
+        ends.sort_unstable_by_key(|e| e.0);
+        let mut next_end = 0;
         for i in 0..n {
             self.step(i, &mut v, inputs, params, calls, None)?;
-        }
-        if self.rounds.is_empty() {
-            return Ok(v);
-        }
-        // The values that depend on a carry, run again each round.
-        let mut moved = vec![false; n];
-        for (i, op) in self.ops.iter().enumerate() {
-            moved[i] = matches!(op, ArrayOp::Carry(_)) || op.operands().iter().any(|&o| moved[usize::from(o)]);
-        }
-        let pairs: Vec<(usize, usize)> = self.rounds.iter().flatten().map(|&(c, x)| (usize::from(c), usize::from(x))).collect();
-        loop {
-            if pairs.iter().all(|&(c, x)| v.arrays[c] == v.arrays[x]) {
-                return Ok(v);
+            while next_end < ends.len() && ends[next_end].0 == i {
+                self.settle(ends[next_end].1, &mut v, inputs, params, calls)?;
+                next_end += 1;
             }
-            if v.rounds >= MAX_ROUNDS {
+        }
+        Ok(v)
+    }
+
+    /// Group `group`'s rounds, its span run once: until each carry is its next.
+    fn settle(&self, group: &[(u16, u16)], v: &mut Values, inputs: &[&[i64]], params: &[i64], calls: &mut dyn Calls) -> Result<(), &'static str> {
+        let lo = usize::from(group.iter().map(|p| p.0).min().unwrap());
+        let hi = usize::from(group.iter().map(|p| p.1).max().unwrap());
+        // The span's values that depend on its carries.
+        let mut moved = vec![false; hi + 1];
+        for i in lo..=hi {
+            let op = &self.ops[i];
+            moved[i] = group.iter().any(|p| usize::from(p.0) == i) || op.operands().iter().any(|&o| usize::from(o) >= lo && moved[usize::from(o)]);
+        }
+        let mut rounds = 1;
+        loop {
+            if group.iter().all(|&(c, x)| v.arrays[usize::from(c)] == v.arrays[usize::from(x)]) {
+                v.rounds = v.rounds.max(rounds);
+                return Ok(());
+            }
+            if rounds >= MAX_ROUNDS {
                 return Err("past the rounds' bound");
             }
-            v.rounds += 1;
-            let nexts: Vec<(usize, Vec<i64>)> = pairs.iter().map(|&(c, x)| (c, v.arrays[x].clone())).collect();
-            let carried = |i: usize| nexts.iter().find(|n| n.0 == i).map(|n| n.1.clone());
-            for i in (0..n).filter(|&i| moved[i]) {
-                self.step(i, &mut v, inputs, params, calls, carried(i))?;
+            rounds += 1;
+            let nexts: Vec<(usize, Vec<i64>)> = group.iter().map(|&(c, x)| (usize::from(c), v.arrays[usize::from(x)].clone())).collect();
+            for i in (lo..=hi).filter(|&i| moved[i]) {
+                let carried = nexts.iter().find(|n| n.0 == i).map(|n| n.1.clone());
+                self.step(i, v, inputs, params, calls, carried)?;
             }
         }
     }
