@@ -68,6 +68,23 @@ describe("the start checks hooks gave up on", () => {
       .toEqual({ asks: [true, true], pending: ["asking"], after: ["waiting"], files: 1 });
   });
 
+  it("may end its request before it is sent, and once sent only with its pending mark: a sent check with none would wait at the daemon unknown to the hooks after it", () => {
+    const folder = join(home, "app");
+    daemonWithKeptAnswer(folder);
+    const marked = asked(folder);
+    const beforeSending = marked.ask.mayEnd;
+    marked.ask.sent();
+    const marking = marked.ask.mayEnd;
+    marked.ask.done();
+    // The same ask where the folder of marks is gone, so no pending mark can be made.
+    removeFolderSync(asksFolder());
+    const unmarked = asked(folder);
+    const unmarkedBeforeSending = unmarked.ask.mayEnd;
+    unmarked.ask.sent();
+    expect({ beforeSending, marking, unmarkedBeforeSending, unmarkedSent: unmarked.ask.mayEnd, asks: unmarked.asks })
+      .toEqual({ beforeSending: true, marking: true, unmarkedBeforeSending: true, unmarkedSent: false, asks: true });
+  });
+
   it("leaves no mark where the hook ends a request it never handed to the OS, which the daemon never gets", () => {
     const folder = join(home, "app");
     daemonWithKeptAnswer(folder);

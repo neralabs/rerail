@@ -87,15 +87,16 @@ const DAEMON_ANSWER_GRACE_MS = 75;
 /**
  * The check one-shot hooks make before anything else. A running daemon answers, from its own environment and open
  * database, and an answer of stopped is kept for the hooks after this one in the folder (`keepStartAnswer`). Where the
- * daemon has not answered within `DAEMON_ANSWER_GRACE_MS` and the daemon's last answer in the folder was stopped and
- * still holds (`repeatsStoppedAnswer`), the hook answers stopped again and ends its request: no Git runs, and a busy
- * daemon does not hold it. Where the start check of an earlier hook there that did so still waits at the daemon, the
- * hook repeats that answer without asking at all, where it holds (`HookAsk`), so hooks of a folder that come one after
- * another leave at most one start check nobody waits for in the daemon's queue. Anywhere else it waits for the daemon,
- * as the first hook in a folder does. Without a daemon that answers, the hook reads the database itself, which never
- * starts a daemon: with none recorded the daemon's read comes back empty at once, well inside the grace. An explicit
- * database path (tests, embedded hosts) is always read directly. `graceMs` is the grace; a test that needs the daemon's
- * answer first, however slow its machine, holds it open longer.
+ * daemon has not answered within `DAEMON_ANSWER_GRACE_MS`, the daemon's last answer in the folder was stopped and
+ * still holds (`repeatsStoppedAnswer`), and the hook can end its request with nothing left unknown in the daemon's queue
+ * (`HookAsk.mayEnd`: not sent yet, or sent with the hook's pending mark), the hook answers stopped again and ends its
+ * request: no Git runs, and a busy daemon does not hold it. Where the start check of an earlier hook there that did so
+ * still waits at the daemon, the hook repeats that answer without asking at all, where it holds (`HookAsk`), so hooks of
+ * a folder that come one after another leave at most one start check nobody waits for in the daemon's queue. Anywhere
+ * else it waits for the daemon, as the first hook in a folder does. Without a daemon that answers, the hook reads the
+ * database itself, which never starts a daemon: with none recorded the daemon's read comes back empty at once, well
+ * inside the grace. An explicit database path (tests, embedded hosts) is always read directly. `graceMs` is the grace; a
+ * test that needs the daemon's answer first, however slow its machine, holds it open longer.
  */
 export async function hookRerailStarted(
   host: RerailHost, workspace: string, databasePath?: string, graceMs = DAEMON_ANSWER_GRACE_MS,
@@ -109,10 +110,10 @@ export async function hookRerailStarted(
 
 /**
  * The daemon's answer to the start check (`readStartAnswer`), kept for the hooks after this one (`keptAnswer`), null
- * where none came; or `stopped` where the daemon has not answered within `graceMs` and `knownStopped` holds, or where
- * the hook did not ask since an earlier hook's check waits at the daemon and `knownStopped` holds (`HookAsk`). The start
- * mark is found before the daemon is asked (`markBeforeAsking`), so a change to where Rerail runs that commits after
- * the daemon read its answer renews the mark after it was found.
+ * where none came; or `stopped` where the daemon has not answered within `graceMs`, `knownStopped` holds and the request
+ * may end (`stoppedEndingRequest`), or where the hook did not ask since an earlier hook's check waits at the daemon and
+ * `knownStopped` holds (`HookAsk`). The start mark is found before the daemon is asked (`markBeforeAsking`), so a change
+ * to where Rerail runs that commits after the daemon read its answer renews the mark after it was found.
  */
 async function daemonAnswer(host: RerailHost, workspace: string, graceMs: number): Promise<RepositoryStartState | null> {
   const request = new AbortController();
@@ -139,10 +140,14 @@ async function keptAnswer(pending: Promise<StartAnswer | null>, before: MarkBefo
 /**
  * `knownStopped`, ending `request` where it holds or throws: the hook then answers without the daemon, and a request
  * left open would keep its process alive until the daemon or the read's time limit ended it. The request stays in the
- * daemon's queue where it was sent, so `ask` marks it there (`HookAsk.abandoned`). A request the daemon answered, or one
- * the hook goes on waiting for, is left alone.
+ * daemon's queue where it was sent, so `ask` marks it there (`HookAsk.abandoned`). Where `ask` may not end
+ * (`HookAsk.mayEnd`), sent with no mark of this hook's, false without the check: the hook waits for the daemon, as before
+ * this check existed, since a request it ended there would wait in the daemon's queue with no mark telling the hooks
+ * after it, and each of them would add one more. A request the daemon answered, or one the hook goes on waiting for, is
+ * left alone.
  */
 function stoppedEndingRequest(workspace: string, request: AbortController, ask: HookAsk): boolean {
+  if (!ask.mayEnd) return false;
   // Stays true when the check throws, so the request ends then too.
   let stopped = true;
   try {

@@ -88,6 +88,16 @@ export class HookAsk implements StartAsk {
   }
 
   /**
+   * Whether the hook may end its request without the answer: where it was not sent yet, nothing of it waits at the
+   * daemon; where it was, only with this hook's pending mark, which `abandoned` makes the folder's `.waiting`. A request
+   * sent with no mark, where the folder of marks is not there or refuses the mark, would wait in the daemon's queue with
+   * nothing telling the hooks after it, and each of them would add one more ahead of every other checkout's hooks.
+   */
+  get mayEnd(): boolean {
+    return !this.#sent || this.#mark !== undefined;
+  }
+
+  /**
    * The hook ends its request without the answer: where the request was handed to the OS, its pending mark becomes the
    * folder's `.waiting`, unless the daemon has served a start check there since it was made, which removed it. A request
    * never sent leaves nothing.

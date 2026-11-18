@@ -652,6 +652,49 @@ function heldOpen(path: string): Database.Database | undefined {
 /** A daemon busy with other checkouts the whole test: it answers no start check until it closes. */
 const busyTheWholeTest = (): Promise<never> => new Promise<never>(() => undefined);
 
+/** What each state of `foldersOfMarksTakingNone` leaves at the name of the folder of marks (`folderOfMarks`): no mark. */
+const LEFT_AS_ARRANGED = { "plain file": "file", gone: "none", "writes refused": "empty folder", "older build": "none" } as const;
+
+/**
+ * Where a hook beside a live daemon can make no pending mark of its start check: a plain file at the name of the
+ * daemon's folder of marks, that folder gone while the daemon runs (a person or a clean-up removed it), a folder that
+ * refuses this user's writes, and a daemon that keeps no marks, as one of an older build.
+ */
+const foldersOfMarksTakingNone: ReadonlyArray<{ what: string; arrange: keyof typeof LEFT_AS_ARRANGED; marks: "removed" | "none" }> = [
+  { what: "a plain file is at the name of the daemon's folder of marks", arrange: "plain file", marks: "removed" },
+  { what: "the daemon's folder of marks is gone while it runs", arrange: "gone", marks: "removed" },
+  { what: "the daemon's folder of marks refuses this user's writes", arrange: "writes refused", marks: "removed" },
+  { what: "the daemon keeps no marks, as one of an older build", arrange: "older build", marks: "none" },
+];
+
+/**
+ * A hook's grace that runs out once its start check has reached the daemon, on a machine that sends it within 1.5 s, and
+ * before the daemon's read gives up at 2 s, which starts after the grace does: the hook then decides on a request it sent.
+ */
+const GRACE_AFTER_THE_SEND_MS = 1_500;
+
+/** What is at `path`: `file`, `none`, or a folder, `empty folder` where nothing is in it. */
+function folderOfMarks(path: string): string {
+  if (!existsSync(path)) return "none";
+  if (!lstatSync(path).isDirectory()) return "file";
+  return readdirSync(path).length === 0 ? "empty folder" : "folder";
+}
+
+/**
+ * `node:fs` for the hook host the test loads next (`startCheckHost`), refusing every pending mark (`<name>.<hook>.asking`)
+ * as a folder of marks this user may not write to does, on every system.
+ */
+function pendingMarksRefused(): void {
+  vi.doMock("node:fs", async () => {
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const writeFileSync = (...args: Parameters<typeof actual.writeFileSync>): void => {
+      if (String(args[0]).endsWith(".asking")) throw Object.assign(new Error(`EACCES: permission denied, open '${String(args[0])}'`), { code: "EACCES" });
+      actual.writeFileSync(...args);
+    };
+    return { ...actual, default: { ...actual, writeFileSync }, writeFileSync };
+  });
+}
+
 /**
  * What `pending` gives, once it has: within 1 s, half the 2 s a hook waits on its read of a busy daemon before it gives
  * up and reads the database through Git, so an answer here is one the hook gave without the daemon.
@@ -2515,16 +2558,26 @@ describe("the hook start check", () => {
     }
   });
 
-  it("makes no mark beside a daemon that keeps none, as one of an older build, and each hook there asks", async () => {
+  it.each(foldersOfMarksTakingNone)("waits for a busy daemon as hooks did before kept answers where $what, so its check would wait there with no mark: it ends no request at its grace, and reads the database itself once the daemon's read gives up", { timeout: 30_000 }, async ({ arrange, marks }) => {
     const root = await temporaryDirectory({ started: false });
     const app = stoppedApp(root);
+    if (arrange === "writes refused") pendingMarksRefused();
     const host = await startCheckHost();
-    await keptStopped(host, app, { marks: "none" });
-    const busy = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest, { marks: "none" });
+    await keptStopped(host, app, { marks });
+    const busy = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest, { marks });
+    const asks = join(dirname(keptAnswerFile(app)), "asks");
+    if (arrange === "plain file") {
+      removeFolderSync(asks);
+      writeFileSync(asks, "");
+    } else if (arrange === "gone") {
+      removeFolderSync(asks);
+    }
     try {
-      const answers: boolean[] = [];
-      for (let hook = 0; hook < 2; hook += 1) answers.push(await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", app)));
-      expect({ answers, asked: busy.asked.length, asks: existsSync(join(dirname(keptAnswerFile(app)), "asks")) }).toEqual({ answers: [false, false], asked: 2, asks: false });
+      const [proofs, opened] = [host.proofs.found.length, host.opened.length];
+      const started = await host.hookRerailStarted("claude-code", app, undefined, GRACE_AFTER_THE_SEND_MS);
+      // No check of the kept answer at the grace, and the daemon's read ran to its limit: then the hook read the database.
+      expect({ started, proofs: host.proofs.found.slice(proofs), opened: host.opened.slice(opened), asked: busy.asked.length, asks: folderOfMarks(asks) })
+        .toEqual({ started: false, proofs: [], opened: [defaultRerailDatabasePath()], asked: 1, asks: LEFT_AS_ARRANGED[arrange] });
     } finally {
       await busy.close();
     }
