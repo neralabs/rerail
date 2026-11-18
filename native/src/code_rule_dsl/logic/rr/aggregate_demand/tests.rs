@@ -1,6 +1,7 @@
 use super::*;
+#[allow(unused_imports)]
 use crate::code_rule_dsl::logic::{
-    front::{self, Literal},
+    front::{self, AggOp, Atom, Literal, Program, Rule, Term},
     rr,
 };
 

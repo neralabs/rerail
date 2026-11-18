@@ -74,20 +74,22 @@ pub(super) fn declared(prog: &(impl ProgramFields + ?Sized)) -> Option<BTreeSet<
 pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
     use crate::code_rule_dsl::logic::program_facts::Field;
     let path = crate::code_rule_dsl::logic::rr::library().join("components.rr");
-    let components = crate::code_rule_dsl::logic::rr::parse_file(&path).map_err(|e| Error::Plan(format!("{}: {e:?}", path.display())))?;
-    let rules: Vec<front::Rule> = components.rules.iter().filter(|r| r.head.rel.starts_with("rr_")).cloned().collect();
-    let own = front::Program { rules: rules.clone(), decls: components.decls.clone(), ..Default::default() };
-    let (image, _) = Builder::of_program(&own).and_then(|b| b.finish()).map_err(Error::Plan)?;
+    let image = crate::code_rule_dsl::logic::rr::parse_file_version(&path).map_err(|e| Error::Plan(format!("{}: {e:?}", path.display())))?;
+    let own = |r: &crate::code_rule_dsl::logic::program_image::RuleRef<'_>| image.rel_name(r.head().rel()).starts_with("rr_");
     let mut needed: BTreeSet<String> = BTreeSet::new();
-    for r in &rules {
-        needed.insert(r.head.rel.to_string());
-        needed.extend(r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()));
+    for r in image.rules().filter(own) {
+        needed.insert(image.rel_name(r.head().rel()).to_owned());
+        needed.extend(r.body().filter_map(|l| match l.view() {
+            Lit::Atom(a) => Some(image.rel_name(a.rel()).to_owned()),
+            _ => None,
+        }));
     }
     let mut b = Builder::on(v);
     // The fields first: a copied rule's relations are declared.
     let mut natives = v.native_map().map_err(Error::Plan)?;
     let natives_were = natives.len();
-    let taken: Vec<_> = components.natives.iter().filter(|(rel, _)| needed.contains(*rel)).collect();
+    let theirs = image.native_map().map_err(Error::Plan)?;
+    let taken: Vec<_> = theirs.iter().filter(|(rel, _)| needed.contains(*rel)).collect();
     for (rel, native) in taken {
         needed.extend(native.reads().into_iter().map(str::to_owned));
         natives.entry(rel.clone()).or_insert_with(|| native.clone());
@@ -96,13 +98,14 @@ pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
         b.set_field(Field::Natives(&natives));
     }
     let missing: BTreeSet<String> = needed.iter().filter(|rel| !v.declares(rel)).cloned().collect();
-    for (rel, cols) in components.decls.iter().filter(|(rel, _)| missing.contains(rel.as_str())) {
+    for rel in &missing {
+        let Some(cols) = image.columns_of(rel) else { continue };
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
         b.declare(rel, &pairs);
     }
     let mut qualifiers = v.qualifier_map().map_err(Error::Plan)?;
     let mut qualified = false;
-    for (rel, words) in components.qualifiers.iter().filter(|(rel, _)| missing.contains(*rel)) {
+    for (rel, words) in image.qualifier_map().map_err(Error::Plan)?.iter().filter(|(rel, _)| missing.contains(*rel)) {
         let had = qualifiers.entry(rel.clone()).or_default();
         let n = had.len();
         had.extend(words.iter().cloned());
@@ -111,12 +114,12 @@ pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
     if qualified {
         b.set_field(Field::Qualifiers(&qualifiers));
     }
-    for (rel, rows) in components.facts.iter().filter(|(rel, _)| missing.contains(*rel)) {
+    for rel in ProgramFields::fact_names(&*image).iter().filter(|rel| missing.contains(*rel)) {
         if !ProgramFields::has_fact_rows(&**v, rel) {
-            b.add_facts(rel, rows);
+            b.add_facts(rel, &ProgramFields::fact_rows(&*image, rel));
         }
     }
-    for input in components.inputs.iter().filter(|rel| missing.contains(*rel)) {
+    for input in image.input_names().iter().filter(|rel| missing.contains(*rel)) {
         b.add_input(input);
     }
     b.add_output(COMPONENT);
@@ -126,7 +129,7 @@ pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
         m
     });
     let mut added: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for r in image.rules() {
+    for r in image.rules().filter(own) {
         let text = image.show_rule(r);
         if held.get(&r.hash()).is_some_and(|ts| ts.contains(&text)) || !added.insert(text) {
             continue;

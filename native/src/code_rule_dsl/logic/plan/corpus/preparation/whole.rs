@@ -37,8 +37,13 @@ impl ProgramPass for Projected {
     }
 }
 
-/// The helpers' columns typed by the library's declarations, which each program was lowered without
-/// (`rr::retype_helpers`): a helper's symbol column every rule fills from one typed column takes that type.
+/// The helpers' columns typed again once the library's declarations are known (the combined program).
+///
+/// A program is lowered without the library: a helper column bound only by a library relation (`kind(n, …)`,
+/// `child(p, n, _)`) finds no declaration then, and is a symbol by default. It holds nodes, which the library says;
+/// and a column read through it (a demand's, `rr_demand_agg_…`, copied from the aggregate's) is then a symbol beside
+/// the node the rule's own atoms make it, which no native plan compares. A helper's symbol column every rule fills
+/// from one typed column takes that type; a column a symbol column binds stays one.
 #[derive(Default)]
 pub(in crate::code_rule_dsl::logic::plan::corpus) struct RetypeHelpers;
 

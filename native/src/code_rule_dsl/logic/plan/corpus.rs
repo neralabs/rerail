@@ -2711,12 +2711,6 @@ pub(super) fn run_read_handing(
     run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options)
 }
 
-/// A program edited as a tree, as the run is handed it (`run_read`): encoded, until its readers edit its version
-/// (decision 0276 step 6).
-pub fn handed_version(prog: &front::Program) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
-    crate::code_rule_dsl::logic::program_image::Builder::of_program(prog).and_then(|b| b.finish()).map(|(v, _)| v).map_err(Error::Plan)
-}
-
 /// A handed program's key, in the place of a text: its version's digest (`choices::key`, decision 0173 §7), named so
 /// that it reads as no program. Every key a run makes of its texts is made of this.
 fn read_key(read: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<String> {

@@ -123,7 +123,6 @@ pub use super::front::Error;
 use super::front::Program;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use lower::drop_unread_core;
-pub use aggregate_demand::retype_helpers;
 pub use lower::is_core;
 pub use lower::findings::{is_diagnostic, HEAD as DIAGNOSTIC_HEAD};
 pub use lower::WORLD;

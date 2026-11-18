@@ -1,8 +1,8 @@
 //! Aggregate demand's analyses (restricting private aggregate helpers to the keys their consumers ask): what may
-//! reach what (`Reach`, `depends`), and which helpers a program makes (`helper`, `retype_helpers`). The pass runs on
+//! reach what (`Reach`, `depends`), and which helpers a program makes (`helper`; `whole::RetypeHelpers` types their columns). The pass runs on
 //! the version, after relation and world lowering, so its dependency checks see the complete graph
 //! (`lowering_tail::AggregateDemand`).
-use crate::code_rule_dsl::logic::front::{self, AggOp, Atom, Literal, Program, Rule, Term};
+use crate::code_rule_dsl::logic::front;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The relations that reach each target through `deps`, found once a target (a reverse walk) and dropped when the
@@ -97,62 +97,6 @@ pub fn full_checks() -> bool {
 /// demand `rr_demand_agg_…`), under any program's prefix.
 pub fn helper(rel: &str) -> bool {
     rel.contains("rr_ctx") || rel.contains("rr_cover") || rel.contains("rr_agg")
-}
-
-/// The helpers' columns typed again once the library's declarations are known (the combined program).
-///
-/// A program is lowered without the library: a helper column bound only by a library relation (`kind(n, …)`,
-/// `child(p, n, _)`) finds no declaration then, and is a symbol by default. It holds nodes, which the library says;
-/// and a column read through it (a demand's, `rr_demand_agg_…`, copied from the aggregate's) is then a symbol beside
-/// the node the rule's own atoms make it, which no native plan compares. A column a symbol column binds stays one.
-pub fn retype_helpers(program: &mut Program) {
-    let mut changed = true;
-    while changed {
-        changed = false;
-        let helpers: Vec<String> = program.decls.keys().filter(|r| helper(r)).cloned().map(String::from).collect();
-        for rel in helpers {
-            let width = program.decls[rel.as_str()].len();
-            for i in 0..width {
-                if program.decls[rel.as_str()][i].1 != "sym" {
-                    continue;
-                }
-                let (mut found, mut symbol) = (None::<String>, false);
-                for rule in program.rules.iter().filter(|r| r.head.rel == rel.as_str()) {
-                    let Some(Term::Var(v)) = rule.head.args.get(i) else {
-                        symbol = true;
-                        continue;
-                    };
-                    for literal in &rule.body {
-                        match literal {
-                            Literal::Atom(a) if !a.neg => {
-                                for (j, t) in a.args.iter().enumerate() {
-                                    if !matches!(t, Term::Var(x) if x == v) {
-                                        continue;
-                                    }
-                                    let ty = if front::is_axis(&a.rel) {
-                                        Some("node".to_owned())
-                                    } else {
-                                        program.decls.get(a.rel.as_ref() as &str).and_then(|c| c.get(j)).map(|(_, t)| t.to_string())
-                                    };
-                                    match ty.as_deref() {
-                                        Some("sym") if !helper(&a.rel) => symbol = true,
-                                        Some("sym") | None => {}
-                                        Some(t) => found = Some(t.to_owned()),
-                                    }
-                                }
-                            }
-                            Literal::Nearest { n, a, .. } if n == v || a == v => found = Some("node".to_owned()),
-                            _ => {}
-                        }
-                    }
-                }
-                if let (Some(ty), false) = (found, symbol) {
-                    program.decls.get_mut(rel.as_str()).expect("a helper").make_mut()[i].1 = ty.into();
-                    changed = true;
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
