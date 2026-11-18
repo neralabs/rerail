@@ -445,13 +445,25 @@ fn jsonc_comments_equal_tree_sitter() {
     assert!(problems.is_empty(), "{} differ:\n{}", problems.len(), problems.join("\n"));
 }
 
-/// Each form's shape, printed: tier 1's operations by kind, its carried state, its generated
+/// Each form's shape (`RERAIL_FORMS`: other grammars' files), printed: tier 1's operations by kind, its carried state, its generated
 /// loop body by opcode, and tier 2's words by opcode, with the machine code's sizes.
 #[test]
 #[ignore = "a measurement: run by name with --nocapture"]
 fn json_shapes() {
-    for name in ["14-json", "15-jsonc"] {
-        let c = form(name);
+    // `RERAIL_FORMS`: other Bitlex files to measure, as paths, in place of the two steps.
+    let forms: Vec<(String, Compiled)> = match std::env::var("RERAIL_FORMS") {
+        Ok(list) => list
+            .split(',')
+            .map(|p| {
+                let name = Path::new(p).file_stem().expect("a name").to_string_lossy().into_owned();
+                let c = compile_step(&name, &std::fs::read_to_string(p).expect("reads"));
+                (name, c)
+            })
+            .collect(),
+        Err(_) => ["14-json", "15-jsonc"].iter().map(|&n| (n.to_owned(), form(n))).collect(),
+    };
+    for (name, c) in &forms {
+        let name = name.as_str();
         let p = &c.program.block_programs[0];
         let mut ops: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
         for op in &p.ops {
