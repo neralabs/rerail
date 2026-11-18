@@ -3,9 +3,9 @@
 //! JavaScript does not receive connections, SQL, row identifiers, or hash lanes.
 //! The code-rule runtime will call this module through coarse Rust operations.
 
-pub mod atoms;
 #[cfg(target_os = "macos")]
 mod accel_models;
+pub mod atoms;
 // Publication of the prefilter is wired into the scan in a later slice; until then only tests call it.
 #[allow(dead_code)]
 mod bounded_insert;
@@ -17,23 +17,26 @@ mod connection;
 pub use compression::set_language_tags;
 pub use connection::set_connection_functions;
 mod corpus_runs;
-pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex, live_fact_schema, stat_blob_key};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub use connection::sqlite_on_jemalloc;
+pub use corpus_runs::{
+    CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS,
+    StatIndex, live_fact_schema, stat_blob_key,
+};
 mod cross_rows;
 mod derivation;
-mod frames;
-mod object_segments;
-mod segments;
 mod facts_memo;
-mod objects;
+mod frames;
 pub mod journal;
+mod object_segments;
+mod objects;
 pub mod observe;
+mod segments;
 pub use objects::{ResidentFrames, SourceAndTapeFrames, TapeFrame};
-mod postings;
 /// G's positional search index (value and text streams), for G's literal anchors (O21).
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod positional_search;
+mod postings;
 pub mod vocabulary;
 #[allow(unused_imports)]
 pub use postings::append_delta;
@@ -42,6 +45,7 @@ pub use postings::segment_positions;
 #[allow(dead_code)]
 pub mod prefilter;
 pub use prefilter::TapePrefilter;
+pub mod hazards;
 mod private_files;
 mod publication;
 mod read_cache;
@@ -53,33 +57,42 @@ mod rows;
 mod schema;
 mod search_index;
 mod snapshots;
-mod tree_diff;
-mod tree_pages;
-pub mod upkeep;
-/// G's tree result segments as copied, beside `tree_pages` (O19).
-#[cfg(any(test, feature = "test-hooks"))]
-#[allow(dead_code)]
-mod tree_result_segments;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
-mod workspaces;
+mod tree_diff;
+mod tree_pages;
+/// G's tree result segments as copied, beside `tree_pages` (O19).
+#[cfg(any(test, feature = "test-hooks"))]
+#[allow(dead_code)]
+mod tree_result_segments;
+pub mod upkeep;
 pub mod working_set;
+mod workspaces;
 pub mod write_back;
-pub mod hazards;
 
+pub use atoms::{ProcessIds, StoreIds, Sym};
 pub use compression::compress;
-pub use frames::forget_snapshot as forget_frames_snapshot;
-pub use segments::{SealedSegments, SegmentBytes, SegmentWriter};
-pub use object_segments::{ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape};
-pub use frames::{CrossSpace as FramesCrossSpace, Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, MemoBlob, MemoPut, MemoRow, memo_pack_dir, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
-pub use atoms::{ProcessIds, StoreIds, Sym};
-pub use derivation::{ABSENT, Binding, Derivation, DerivationInput, DerivationRecord, StoredDerivation};
-pub use facts_memo::{FactsCompletion, FactsFrame, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult};
+pub use derivation::{
+    ABSENT, Binding, Derivation, DerivationInput, DerivationRecord, StoredDerivation,
+};
+pub use facts_memo::{
+    FactsCompletion, FactsFrame, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult,
+};
+pub use frames::forget_snapshot as forget_frames_snapshot;
+pub use frames::{
+    Admitted as AdmittedFrame, CrossSpace as FramesCrossSpace, Delta as FrameDelta,
+    Encoded as EncodedFrame, MemoBlob, MemoPut, MemoRow, Put as FramePut, Rel as FrameRel,
+    Retag as FrameRetag, Rows as FrameRows, Stored as FrameStored,
+    Unreachable as UnreachableFrames, confirm_key as frame_confirm_key, local_space, memo_pack_dir,
+    reads_hash as frame_reads_hash,
+};
+pub use object_segments::{ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape};
 pub use schema::STORE_FILE_NAME;
+pub use segments::{SealedSegments, SegmentBytes, SegmentWriter};
 pub use tree_diff::{TreeChange, TreeDiff};
 pub use tree_pages::{TREE_PAGE_FILES, TreePage, TreePageKey, tree_pages_digest};
 
@@ -199,7 +212,9 @@ pub(super) fn take_write_lock_hash_counts() -> (usize, usize) {
     )
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
 pub struct HashKey {
     algorithm: i64,
     lanes: [i64; 4],
@@ -717,9 +732,15 @@ impl ContentStore {
     fn sibling(&self) -> ContentStore {
         ContentStore {
             database_path: self.database_path.clone(),
-            connection: ThreadConnection::new(self.database_path.clone(), self.connection.identity()),
+            connection: ThreadConnection::new(
+                self.database_path.clone(),
+                self.connection.identity(),
+            ),
             compression_level: self.compression_level,
-            decompressed_cache: Mutex::new(DecompressedReadCache::new(DEFAULT_READ_CACHE_BYTES, DEFAULT_DECOMPRESSED_CACHE_TTL)),
+            decompressed_cache: Mutex::new(DecompressedReadCache::new(
+                DEFAULT_READ_CACHE_BYTES,
+                DEFAULT_DECOMPRESSED_CACHE_TTL,
+            )),
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
             atoms: std::sync::Arc::clone(&self.atoms),

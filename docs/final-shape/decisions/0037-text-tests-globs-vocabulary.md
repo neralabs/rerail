@@ -141,7 +141,7 @@ Anything else stays a named gap for a hand rewrite. It never guesses.
 ### Every text column is a vocabulary
 
 - Text values are interned as symbols. The engine already does this ("atoms mode", `sym`).
-- Measured on nera-data-layer (regex.md §2.2):
+- Measured on the data-layer repository (regex.md §2.2):
   - 6.0M identifier occurrences;
   - **231,862 distinct names**, 26 times fewer;
   - interning takes 0.22 s on one thread, at ingest.
@@ -210,7 +210,7 @@ That fits the gate's 1–2 s cold and milliseconds warm.
 3. **Syntax:** sets as patterns, `@glob` and `@iglob` on any text, `@word` and `@iword`. Teach the
    converter the exact regex-to-glob cases.
 4. **Execution:** the vocabulary matchers and result relations. Drop the per-row `str_test`.
-5. **Measure** on nera-data-layer `2b1504ad`: CPU cold and warm, memory, and key sets against the
+5. **Measure** on the data-layer repository at `2b1504ad`: CPU cold and warm, memory, and key sets against the
    recordings.
 
 ## Not chosen
@@ -256,7 +256,7 @@ That fits the gate's 1–2 s cold and milliseconds warm.
     sibling's regex.md).
   - The other miss is a clause that is on only under `oracleAnalyzer`.
 
-### Measured on nera-data-layer `2b1504ad`
+### Measured on the data-layer repository at `2b1504ad`
 
 Full corpus: 9,010 files, 28.2M nodes, 104 chunks. CPU only (user + system), at load 18–90.
 

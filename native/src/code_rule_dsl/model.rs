@@ -2,6 +2,7 @@ use super::calls::{Mode, SeedScope, TermId};
 use super::json::invalid;
 use super::matcher::{GrammarMatcher, Transform};
 use super::module_path::ModulePath;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::language::{GrammarDialect, PackageType};
 use ast_grep_core::replacer::TemplateFix;
 use globset::GlobSet;
@@ -11,7 +12,6 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// The failure code of an output cap: a clause found more witnesses (or regex matches) than
 /// `maxWitnesses` lets it report. Apart from `budget-exceeded`, which is running out of work: the
@@ -143,7 +143,10 @@ pub struct ViolationSpec {
     /// Per dialect, the rule's gap tests on the witness whose token regex has named groups: each
     /// group binds its part of the token the test finds beside or in the witness, an implied
     /// token by its place in the source (`matcher::gap::GapTest::token`).
-    pub gap_tests: Vec<(GrammarDialect, Vec<crate::code_rule_dsl::matcher::gap::GapTest>)>,
+    pub gap_tests: Vec<(
+        GrammarDialect,
+        Vec<crate::code_rule_dsl::matcher::gap::GapTest>,
+    )>,
     /// `each`: an ast query's capture, one violation per distinct binding of it at a root.
     pub each: Option<String>,
     /// `fix.range`: the capture whose range the fix replaces, inside the witness; `None` replaces
@@ -881,8 +884,8 @@ impl FileInput {
                 ))
             })?),
             None => crate::code_rule_dsl::language::dialect_by_label(&language).and_then(|dialect| {
-                
-                { let pack = language_pack::pack(crate::code_rule_dsl::language::Family::of(dialect)); pack.scope_unpackaged_module(&path) }
+                let pack = language_pack::pack(crate::code_rule_dsl::language::Family::of(dialect));
+                pack.scope_unpackaged_module(&path)
             }),
         };
         Ok(Self {
@@ -896,7 +899,9 @@ impl FileInput {
 
     /// The `type` of the file's nearest `package.json`, which decides a `.js` file's module system.
     pub(super) fn package_type(&self) -> Option<PackageType> {
-        self.package.as_deref().map(|package| package.package_type())
+        self.package
+            .as_deref()
+            .map(|package| package.package_type())
     }
 }
 

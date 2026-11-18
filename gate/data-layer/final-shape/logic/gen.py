@@ -2,8 +2,9 @@
 
 The template is the authored program with each long matcher left as `{{NAME}}`; this fills them in as
 JSON. The anchors' matchers come from the relational clauses' inputs in the PIAT port
-(../data-layer-serverplan-quality.json), so they stay those clauses' node sets; the helpers are written
-here, each with a comment on what it matches.
+(packs/data-layer/upstream/lint/authored/final-shape/data-layer-serverplan-quality.json, pack test data that
+`npm run fixtures:pull` fetches), so they stay those clauses' node sets; the helpers are written here, each
+with a comment on what it matches.
 
     python3 gate/data-layer/final-shape/logic/gen.py
 """
@@ -12,7 +13,11 @@ import json
 import pathlib
 
 HERE = pathlib.Path(__file__).resolve().parent
-SOURCE = json.loads((HERE.parent / "data-layer-serverplan-quality.json").read_text())
+ROOT = HERE.parents[3]
+SOURCE_PATH = ROOT / "packs/data-layer/upstream/lint/authored/final-shape/data-layer-serverplan-quality.json"
+if not SOURCE_PATH.exists():
+    raise SystemExit(f"{SOURCE_PATH.relative_to(ROOT)} is missing: pack test data is not in git: run `npm run fixtures:pull`")
+SOURCE = json.loads(SOURCE_PATH.read_text())
 CLAUSES = {clause["id"]: clause for clause in SOURCE["clauses"]}
 DEFINE = next(clause for clause in SOURCE["clauses"] if "define" in clause)
 

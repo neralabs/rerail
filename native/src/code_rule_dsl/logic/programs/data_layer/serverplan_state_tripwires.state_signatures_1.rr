@@ -1,6 +1,6 @@
 // data-layer-serverplan-state-tripwires in Rerail logic, part file: clause `state-signatures-1` (18 stages), options at
 // their defaults (oracleAnalyzer false and entryPoint "all": the syntax_gate matcher reads them, verbatim; the final
-// query is its entryPoint "all" case). Source: gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json.
+// query is its entryPoint "all" case). Source: packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json.
 //
 // One relation per SQL stage, under the stage's name. A SQL row keyed by (__path, __start) is a node here; a nullable
 // column is a side relation that holds where the column is not NULL. The clause is per file (partitionBy file): joins on

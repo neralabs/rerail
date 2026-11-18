@@ -1,0 +1,3596 @@
+{
+  "format": "rerail.pack-provenance/v1",
+  "pack": "data-layer",
+  "tool": "benchmarks",
+  "sources": {
+    "rerail": {
+      "license": "Apache-2.0"
+    }
+  },
+  "files": {
+    "authored/async-family-integration/README.md": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/admission.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/admission.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/aggregate-demand-green.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/aggregate-demand-red.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/aggregate-native-trace-red.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/analysis/current-analysis.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/analysis/current-analysis.txt": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/analysis/current.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/analysis/current.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/analysis/green-tests.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/analysis/integrated-tests.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/analysis/late-analysis.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/analysis/late-analysis.txt": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/analysis/late.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/analysis/late.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/analysis/manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/analysis/positive.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/analysis/positive.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/analysis/red-tests.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/analysis/run.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/analysis/runs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/archive-early-demands.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/async-batch-integration-red.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/async-demand-red.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/README.md": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/adopted-baseline-test.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/baseline-profile.eqp.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/baseline-profile.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/candidate-running-sample.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/candidate-sample.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/compose-tests.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/edges--edges-processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/eligibility-test.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-edges--edges-processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-gates.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-positive.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-positive.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-profiles--baseline-profile.eqp.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-profiles--baseline-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-profiles--baseline-profile.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-profiles--profiles-processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-profiles--stable-baseline-profile.eqp.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-profiles--stable-baseline-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-profiles--stable-baseline-profile.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-profiles--stable-frame_guard-profile.eqp.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-profiles--stable-frame_guard-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-profiles--stable-frame_guard-profile.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-profiles--stable-typed_guard-profile.eqp.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-profiles--stable-typed_guard-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-profiles--stable-typed_guard-profile.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-profiles--stable-typed_ranges-profile.eqp.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-profiles--stable-typed_ranges-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-profiles--stable-typed_ranges-profile.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-setup-test.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/final-summary.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/gates.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/initial-positive.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/lifetime-build.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/lifetime-compose-tests.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/lookup--baseline-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/lookup--lookup-adaptive-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/lookup--lookup-gallop-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/lookup--lookup-merge-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/lookup--lookup-original-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/lookup--lookup-point-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/lookup--processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/lookup-summary.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/matrix--lookup-matrix.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/matrix--matrix-processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/positive.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/profile-summary.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/profiles--baseline-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/profiles--context_first-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/profiles--context_ranges-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/profiles--processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/profiles--screen_first-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/profiles--structural-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/sample-command.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/sample-running-command.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/setup-test.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/stable-baseline-profile.eqp.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/stable-baseline-profile.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/stable-edges--edges-processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/stable-frame_guard-profile.eqp.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/stable-frame_guard-profile.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/stable-positive.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/stable-profiles--baseline-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/stable-profiles--profiles-processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/stable-profiles--stable-baseline-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/stable-profiles--stable-frame_guard-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/stable-profiles--stable-typed_ranges-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/stable-summary.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/stable-timings--timings-processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/stable-timings.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/stable-typed_ranges-profile.eqp.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/stable-typed_ranges-profile.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/timings--timings-processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/typed-edges--edges-processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/typed-positive.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/typed-profiles--baseline-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/typed-profiles--context_ranges-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/typed-profiles--processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/typed-profiles--typed_guard-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/typed-profiles--typed_ranges-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/candidate-spikes/typed-summary.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/check-candidate-spikes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/check-composed.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/check-early-demands.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/check-query-cost.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/check-retained.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/compare-demand.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/README.md": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/attempts.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/budget-red.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/comparison.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/cross.sql": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/dead-export-red.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/edge-1f85485a7075.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/edge-38094aa6ac7e.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/edge-483985bd330e.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/edge-c6d2d16e3195.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/edge-parity.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/edges-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/explain.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/file-local-tests-final.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/frame-unit-final.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/frames-check.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/input-work.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/local.sql": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/parity.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/profile-summary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/rr-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/rr-profile-first.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/rr-profile-frames.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/rr-profile-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/rr-profile-pruned.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/rr-profile-second.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/rr-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/rr-profile.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/rr-tests-final.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/rr-warm-1.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/rr-warm-2.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/rr-warm-3.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/scalar-null-red.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/semantic-final.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/shape-final.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/shape-red.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/test-results.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/timing-summary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/unit-final.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/composed/warm-timings.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/corpus-manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/aggregate-demand.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/async-positive.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/async-shape.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/collision/green.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/collision/green.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/collision/red.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/collision/red.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/collision/rule.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/collision/test.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/comparison.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/demand-tests-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/edge-1f85485a7075.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/edge-38094aa6ac7e.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/edge-483985bd330e.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/edge-c6d2d16e3195.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/edge-parity.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/edges-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/import-screen.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/initial-rr-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/initial-rr.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-build-manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-edge-1f85485a7075.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-edge-38094aa6ac7e.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-edge-483985bd330e.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-edge-c6d2d16e3195.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-edge-parity.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-edges-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-lower.rs.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-rr-positive.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-rr-positive.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-rr-profile-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-rr-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-rr-profile.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-rr_comparison.rs.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/legacy-sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/locality-regression.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/memo-regression.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/outer-binding-plans.txt": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/posting-parity.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/rr-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/rr-profile-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/rr-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/rr-profile.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/rr-regression.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/rr.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/rr.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/semantic-cache.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/semantic-contracts.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/semantic-locality.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/demand-repair/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/authored-tests.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/composition-tests.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/late-plan-0.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/late-plan-1.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/late-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/late-profile.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/late-profile/profile/heads.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/late-profile/profile/kinds.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/late-profile/profile/memory.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/late-profile/profile/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/late-profile/profile/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/late-profile/profile/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/late-profile/profile/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/late-profile/profile/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/merged-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/merged-profile.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/merged-profile/profile/heads.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/merged-profile/profile/kinds.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/merged-profile/profile/memory.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/merged-profile/profile/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/merged-profile/profile/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/merged-profile/profile/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/merged-profile/profile/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/merged-profile/profile/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/profiles-processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/warmup-late.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/warmup-late.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/warmup-merged.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/control/warmup-merged.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/early-build.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early/profile/heads.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early/profile/kinds.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early/profile/memory.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early/profile/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early/profile/phase-0/heads.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early/profile/phase-0/kinds.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early/profile/phase-0/memory.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early/profile/phase-0/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early/profile/phase-0/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early/profile/phase-0/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early/profile/phase-0/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early/profile/phase-0/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early/profile/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early/profile/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early/profile/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-early/profile/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged/profile/heads.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged/profile/kinds.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged/profile/memory.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged/profile/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged/profile/phase-0/heads.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged/profile/phase-0/kinds.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged/profile/phase-0/memory.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged/profile/phase-0/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged/profile/phase-0/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged/profile/phase-0/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged/profile/phase-0/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged/profile/phase-0/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged/profile/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged/profile/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged/profile/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/1f85485a7075-merged/profile/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-early.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-early.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-early/profile/heads.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-early/profile/kinds.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-early/profile/memory.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-early/profile/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-early/profile/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-early/profile/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-early/profile/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-early/profile/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-merged.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-merged.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-merged/profile/heads.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-merged/profile/kinds.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-merged/profile/memory.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-merged/profile/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-merged/profile/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-merged/profile/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-merged/profile/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/38094aa6ac7e-merged/profile/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-early.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-early.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-early/profile/heads.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-early/profile/kinds.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-early/profile/memory.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-early/profile/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-early/profile/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-early/profile/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-early/profile/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-early/profile/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-merged.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-merged.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-merged/profile/heads.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-merged/profile/kinds.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-merged/profile/memory.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-merged/profile/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-merged/profile/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-merged/profile/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-merged/profile/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/483985bd330e-merged/profile/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-early.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-early.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-early/profile/heads.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-early/profile/kinds.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-early/profile/memory.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-early/profile/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-early/profile/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-early/profile/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-early/profile/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-early/profile/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-merged.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-merged.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-merged/profile/heads.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-merged/profile/kinds.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-merged/profile/memory.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-merged/profile/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-merged/profile/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-merged/profile/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-merged/profile/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/c6d2d16e3195-merged/profile/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/edges/edges-processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/eligibility-test.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/gates.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/merge-build-fixed.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/merge-build.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/merged-build-compatibility.patch.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive-profile/heads.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive-profile/kinds.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive-profile/memory.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive-profile/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive-profile/phase-0/heads.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive-profile/phase-0/kinds.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive-profile/phase-0/memory.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive-profile/phase-0/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive-profile/phase-0/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive-profile/phase-0/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive-profile/phase-0/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive-profile/phase-0/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive-profile/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive-profile/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive-profile/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive-profile/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/positive.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/production/early-plan-0.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/production/early-plan-1.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/production/early-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/production/early-profile.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/production/early-profile/profile/heads.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/production/early-profile/profile/kinds.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/production/early-profile/profile/memory.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/production/early-profile/profile/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/production/early-profile/profile/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/production/early-profile/profile/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/production/early-profile/profile/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/production/early-profile/profile/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/production/local.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/production/profiles-processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/production/warmup-early.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/production/warmup-early.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/projection-tests.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/registration-test.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/0-early.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/0-early.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/0-late.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/0-late.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/0-merged.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/0-merged.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/1-early.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/1-early.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/1-late.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/1-late.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/1-merged.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/1-merged.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/2-early.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/2-early.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/2-late.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/2-late.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/2-merged.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/2-merged.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/timings-processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/warmup-early.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/warmup-early.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/warmup-late.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/warmup-late.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/warmup-merged.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/early-demands/timings/warmup-merged.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc0.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc1.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc10.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc11.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc12.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc13.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc14.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc15.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc16.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc17.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc18.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc19.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc2.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc20.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc21.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc22.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc23.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc3.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc4.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc5.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc6.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc7.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc8.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/doc9.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/1f85485a7075/expected.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/38094aa6ac7e/doc0.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/38094aa6ac7e/expected.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/483985bd330e/doc0.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/483985bd330e/doc1.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/483985bd330e/expected.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/c6d2d16e3195/doc0.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-fixtures/c6d2d16e3195/expected.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edge-parity.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/edges-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/baseline/manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/baseline/measurements.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/candidate/manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/candidate/measurements.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/final-validation.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/frame-shape.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/memo-shapes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/profiles.tar.xz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/reference.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/reports.tar.xz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/run.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/source-sha256.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/an_unchanged_run_writes_its_kept_outputs.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/authored_rr_batched_positive_documents_preserve_all_four_labels.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/corpus__cache_architecture.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/corpus__cache_tests.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/corpus__session__tests.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/cross_file_strata_are_kept_across_runs_in_the_tape_cache.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/final-corpus_cache_architecture.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/final-logic_facts_only.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/final-plan_native_demand_tests.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/logic__facts_only.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/native-a_relation_two_programs_share_is_kept_once_and_a_rule_edit_reaches_only_its_readers.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/native-cross_file_strata_are_kept_across_runs_in_the_tape_cache.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/rerail-cache-baseline.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/rerail-fact-baseline-test.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/rerail-facts-cone.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/rerail-facts-cross-baseline.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/rerail-facts-engine-green.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/rerail-facts-final-build.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/rerail-facts-native-reference.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/rerail-facts-session-baseline.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/rerail-frame-green.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/rerail-frame-red.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/rerail-frame-work-green.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/rerail-frame-work-red.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/rerail-memo-green.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/fact-admission/validation/rerail-memo-red.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/historical-manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/historical-reference.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/hotspot-plans.txt": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/hotspots.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/README.md": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/audit.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/axes-files.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/axes-results.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/axes-summary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/axes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/containment-phase.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/containment.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/extra.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/final-source-sha256.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/package.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/profile-costs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/raw-reports.tar.xz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/run.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/runs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/source-sha256.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/summary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/uncached-process.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle-production/validation.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle/baseline-warm-profile22-analysis.txt": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle/binary.sha256": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle/combined-warm-profile21-analysis.txt": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle/content-census.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle/manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle/paired-summary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle/paired.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle/profile-summary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle/raw-reports.tar.xz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle/run.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle/runs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle/summarize.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/input-lifecycle/summary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/measured-tests-sha256.txt": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/measured-tests.rs.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/merge-b4f0aa04b/manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/merge-b4f0aa04b/summary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/merge-b4f0aa04b/validate.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/merge-b4f0aa04b/validation-raw.tar.xz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/merge-b4f0aa04b/validation.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/merge-b4f0aa04b/worktree-survey.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/native-helper-collision-red.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/port-audit.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/producers-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/producers.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/profile-native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/profile-profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/profile-rr-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/profile-spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/profile-sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/reference-before-adapter-fix.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/reference-full.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/reference-full.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/reference-positive.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/reference-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/restore_corpus.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/aggregate-demand.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/async-positive.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/async-shape.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/boundary-first.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/boundary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/comparison.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/demand-tests-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/edge-1f85485a7075.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/edge-1f85485a7075.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/edge-38094aa6ac7e.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/edge-38094aa6ac7e.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/edge-483985bd330e.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/edge-483985bd330e.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/edge-c6d2d16e3195.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/edge-c6d2d16e3195.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/edge-parity.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/edges-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/first-fix-binary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/import-screen.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/initial-cold-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/initial-demand-tests-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/initial-retained-demands.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/initial-rr-regression.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/legacy-native-regression.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/locality-regression.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/paired-1.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/paired-1.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/paired-2.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/paired-2.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/paired-3.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/paired-3.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/paired-samples.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/posting-parity.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/retained-demands.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/retained-first.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/rr-1.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/rr-1.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/rr-2.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/rr-2.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/rr-3.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/rr-3.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/rr-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/rr-profile-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/rr-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/rr-profile.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/rr-regression.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/rr.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/rr.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/ruff-edges.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/samples.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/scalar-regression.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/semantic-cache.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/semantic-contracts.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/semantic-locality.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/warmup.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/after/warmup.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/aggregate-demand.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/async-positive.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/async-shape.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/boundary-red.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/demand-tests-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/import-screen.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/native.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/paired-1.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/paired-1.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/paired-2.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/paired-2.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/paired-3.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/paired-3.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/paired-samples.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/placement.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/posting-parity.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/previous-red.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/rr-1.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/rr-1.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/rr-2.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/rr-2.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/rr-3.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/rr-3.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/rr-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/rr-profile-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/rr-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/rr-profile.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/rr.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/rr.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/ruff-edges.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/samples.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/semantic-cache.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/semantic-contracts.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/semantic-locality.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/spans.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/warmup.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/before/warmup.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/retained-demands/manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/rr-live-sample.txt": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/rr-positive-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/rr-positive.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/rr-positive.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/rr-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/rr-profile-processes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/rr.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/ruff-edge-parity.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/ruff-edges.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/ruff-full.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/run.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/README.md": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/architecture-green.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/baseline-native.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/baseline.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/candidate-composed.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/check.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/compiler-green.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/composed-manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/composed-measurements.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/composed-warm-analysis.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/composed-warm-profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/composed-warm-sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/frame-green.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/frame-red.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/native-manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/native-measurements.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/native-warm-analysis.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/native-warm-profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/native-warm-sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/negation-maintenance-before.sql": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/over-eager-analysis.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/over-eager-profile.txt.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/over-eager-sql.tsv.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/over-eager-staging.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/positive-green.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/qualification.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/session-composed-green.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/session-native-green.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/staged-composed.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/uncut-cold-green.log": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/session-publication/uncut.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-lab.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/README.md": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/batch-receiver-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/batch-receiver-final/batch_receiver_membership.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/batch-receiver-final/batch_receiver_membership.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/batch-receiver-final/fixed_order.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/batch-receiver-final/fixed_order.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/batch-receiver-final/runs.jsonl.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/batch-receiver-positive-summary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/batch-receiver-positive/batch_receiver_membership.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/batch-receiver-positive/batch_receiver_membership.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/batch-receiver-positive/fixed_order.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/batch-receiver-positive/fixed_order.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/batch-receiver-positive/runs.jsonl.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/batch-receiver-ready-rejected-config.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/batch-receiver-rejected-config.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/batch-receiver-summary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/before-cross.sql": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/before-local.sql": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/before-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/boundary-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/boundary-summary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/boundary/baseline.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/boundary/baseline.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/boundary/runs.jsonl.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/boundary/semantic_facts_narrow_driver.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/boundary/semantic_facts_narrow_driver.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/boundary/snapshot_prefix_order.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/boundary/snapshot_prefix_order.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/boundary/snapshot_semantics_order.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/boundary/snapshot_semantics_order.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/compose-final-tests.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/compose-tests.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/cost-final-green.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/cost-red.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/edge-comparison.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/edges/edge-1f85485a7075.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/edges/edge-38094aa6ac7e.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/edges/edge-483985bd330e.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/edges/edge-c6d2d16e3195.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/edges/edge-parity.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/final-build.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/fix-paired/timings-processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/fixed-cross.sql": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/fixed-local.sql": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/fixed-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full-summary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/baseline.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/baseline.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/inline_relations.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/inline_relations.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/inline_site.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/inline_site.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/planner_order.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/planner_order.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/planner_order_without_site_distinct.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/planner_order_without_site_distinct.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/root_arguments.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/root_arguments.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/root_open.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/root_open.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/root_qualified.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/root_qualified.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/root_reference.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/root_reference.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/root_site.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/root_site.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/runs.jsonl.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/site_without_distinct.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/site_without_distinct.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/snapshot_prefix.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/snapshot_prefix.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/snapshot_semantics.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/snapshot_semantics.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/snapshot_semantics_inline.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/snapshot_semantics_inline.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/snapshot_site.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/full/snapshot_site.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/native-demand-tests.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/native-profile.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/paired/timings-processes.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-before.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-before.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail-summary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/baseline.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/baseline.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/bounded_positions.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/bounded_positions.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/inline_relations.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/inline_relations.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/inline_site.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/inline_site.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/planner_order.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/planner_order.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/planner_order_without_site_distinct.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/planner_order_without_site_distinct.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_arguments.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_arguments.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_open.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_open.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_p0_ASYNC210.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_p0_ASYNC210.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_p1_ASYNC221.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_p1_ASYNC221.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_p2_ASYNC222.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_p2_ASYNC222.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_p3_ASYNC230.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_p3_ASYNC230.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_qualified.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_qualified.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_reference.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_reference.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_rr_diagnostic_at.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_rr_diagnostic_at.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_site.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/root_site.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/runs.jsonl.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/site_without_distinct.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/site_without_distinct.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/snapshot_prefix.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/snapshot_prefix.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/snapshot_semantics.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/snapshot_semantics.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/snapshot_semantics_inline.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/snapshot_semantics_inline.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/snapshot_site.eqp.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-detail/snapshot_site.sql.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-final.log.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/positive-fixed.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/profile-comparison.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/shape-final-green.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/timing-summary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/shape-regression/winner-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/summarize-candidate-spikes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/summarize-shape-lab.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/summarize.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/async-family-integration/summary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/layout-invariance/compare.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/layout-invariance/move.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/aggregate-checkpoint-20261023.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/anchor-execution-20261021.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/batch-six-root-cause-20261021.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/batched-producer-evidence.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/batched-sql.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/candidate-ownership-recovery-20261024.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/canonical-frontier-recovery-20261024.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/cpu-memory-attribution-20261021.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/evidence.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/execution-baseline-7da151b8.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/fts-bulk-publication-20261023.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/full-repository-20261021.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/index-comparison-20261021.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/index-root-cause-20261021.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/native-relations-implementation.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/native-relations-metrics.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/positive-two-twelve.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/post-c-spikes-20261024.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/post-c-sql-survey-20261024.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/quality-sql-metrics.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/reachability-spikes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/rejected-selector-family-spike-20261024.patch": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/relational-storage-recovery-20261024.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/selector-materialization-recovery-20261024.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/shared-child-demand-recovery-20261024.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/shared-producer-discovery-20261023.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/shared-producer-foundation-20261024.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/shared-producer-plan-example.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/shared-span-waves-20261024.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/shared-sql-evidence.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/shared-sql-next-profile.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/shared-syntax-metrics.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/shared-three-twelve.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-ast-index-20261021.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-batch-candidates-20261021.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-composition-20261022.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-composition-promotion-20261022.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-composition-ten-two.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-corpus-index-20261021.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-execution-budget-20261023.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-execution-chunk-c-20261024.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-materialization-design-20261023.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-preparation-20261022.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-recovery-checkpoint-20261023.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-recovery-compiler-20261023.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-recovery-local-admission-20261023.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-relation-lifetimes-20261023.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-shape-decisions.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-shape-spikes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-spikes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/sql-stage-schema-recovery-20261023.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/state-domain-admission-recovery-20261024.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/typed-facts-20261022.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/typed-facts-state-one.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/typed-facts-ten-four.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/profiling/value-access-20261021.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/shared-structural-execution/README.md": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/shared-structural-execution/reference-500-manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/shared-structural-execution/reference-500.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/shared-structural-execution/reference-v2-500.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/shared-structural-execution/reference-v2-full.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/shared-structural-execution/reference-v2-manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/shared-structural-execution/reference-v3-500.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/shared-structural-execution/reference-v3-manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/shared-structural-execution/reference-v4-500.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/shared-structural-execution/reference-v4-full.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/shared-structural-execution/reference-v4-manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/shared-structural-execution/reference-v5-full.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/shared-structural-execution/reference-v5-manifest.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/shared-structural-execution/rustc-wrapper.py": {
+      "source": "rerail",
+      "how": "authored"
+    }
+  }
+}

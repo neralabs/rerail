@@ -10,6 +10,7 @@ use super::resolve::{compile_resolves, validate_resolves};
 use super::utils::{UtilIds, UtilScope};
 use super::value::{compile_value_with, validate_value};
 use crate::code_rule_dsl::json::{bounded_text, invalid, non_empty_str, object};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::language::adapter::{SyntaxFeature, gate};
 use crate::code_rule_dsl::language::kind_ids;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
@@ -27,7 +28,6 @@ use napi::Result;
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Keys a rule inside `parse` may use, whatever the grammar.
 const SUB_RULE_KEYS: &[&str] = &[
@@ -49,7 +49,10 @@ fn allowed(grammar: Grammar, key: &str) -> bool {
 
 /// The grammars' names, as `parse.grammar` takes them.
 fn grammar_names() -> Vec<&'static str> {
-    Grammar::all().iter().map(|grammar| grammar.name()).collect()
+    Grammar::all()
+        .iter()
+        .map(|grammar| grammar.name())
+        .collect()
 }
 
 /// Validates a `parse` object: its grammar and the rule of that grammar it holds.
@@ -335,10 +338,10 @@ pub(super) fn compile_parse(
     let grammar = Grammar::named(name)
         .ok_or_else(|| invalid(format!("{path}/grammar: `{name}` is not a grammar")))?;
     let family = Family::of(language);
-    gate(
-        &format!("{path}/grammar"),
-        { let pack = language_pack::pack(family); pack.syntax_feature(SyntaxFeature::Parse(grammar)) },
-    )?;
+    gate(&format!("{path}/grammar"), {
+        let pack = language_pack::pack(family);
+        pack.syntax_feature(SyntaxFeature::Parse(grammar))
+    })?;
     let rule = if grammar.of_host_syntax() {
         // An annotation's nodes are Python's: its rule compiles as the host's does.
         compile_ast_rule(&sub_rule(parse), grammar.host_language(), path, gaps, utils)?

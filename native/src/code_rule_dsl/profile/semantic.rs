@@ -50,8 +50,10 @@ pub(super) fn describe_matcher(semantic: &Semantic, language: GrammarDialect) ->
         Semantic::Gap(test) => json!({ "gap": {
             "place": format!("{:?}", test.place), "regex": test.regex.as_str(), "past": test.past.is_some(),
         } }),
-        Semantic::Term(term) => {
-            serde_json::Value::Object([(term.key().to_owned(), term.profile())].into_iter().collect())
-        }
+        Semantic::Term(term) => serde_json::Value::Object(
+            [(term.key().to_owned(), term.profile())]
+                .into_iter()
+                .collect(),
+        ),
     }
 }

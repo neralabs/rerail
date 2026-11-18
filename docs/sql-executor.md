@@ -53,10 +53,10 @@ The connection reads the supplied content store as `main`.
 Virtual fact tables and derived tables belong to this session.
 The command closes the session after the request.
 
-The package CLI accepts the same request:
+The package CLI accepts the same request, with the engine tools turned on ([internal testing](internal-testing.md)):
 
 ```sh
-rerail engine sql /tmp/rerail-extension.sqlite request.json
+RERAIL_EXPERIMENTAL_ENGINE_TOOLS=1 rerail engine sql /tmp/rerail-extension.sqlite request.json
 ```
 
 For a corpus audit through the existing logic command, select SQL rule execution with `--sql`:

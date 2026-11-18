@@ -16,6 +16,7 @@ pub mod types;
 // cratify: `python_structure` is rerail-lang-python's (it mounts it)
 pub use rerail_lang::code_rule_dsl::value::text_regex;
 
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::tape::TapeDoc;
 use ast_grep_core::tree_sitter::StrDoc;
@@ -24,7 +25,6 @@ pub use num_bigint::BigInt;
 use num_traits::{FromPrimitive, Signed, ToPrimitive, Zero};
 use std::cmp::Ordering;
 use std::ops::Range;
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Nesting a decode follows before it gives up (`Unknown`).
 pub const MAX_DEPTH: usize = 256;
@@ -297,9 +297,7 @@ impl<'a> Context<'a> {
     }
 
     /// The file's scope table, where the decode follows names through it.
-    pub fn table(
-        &mut self,
-    ) -> Option<std::sync::Arc<crate::code_rule_dsl::scope::ScopeTable>> {
+    pub fn table(&mut self) -> Option<std::sync::Arc<crate::code_rule_dsl::scope::ScopeTable>> {
         self.table.as_mut()?()
     }
 
@@ -468,7 +466,10 @@ impl Value {
     /// Truthiness in the value family `lang`'s sense (its `ValueRules::truthy`): Python's
     /// `bool(v)`, JavaScript's ToBoolean, PHP's `(bool)`. `None` when it is not known.
     pub fn truthy(&self, lang: Family) -> Option<bool> {
-        { let pack = language_pack::pack(lang); pack.value_truthy(self) }
+        {
+            let pack = language_pack::pack(lang);
+            pack.value_truthy(self)
+        }
     }
 
     /// Truthiness as Python's `bool(v)` and JavaScript's ToBoolean agree (objects and arrays are
@@ -508,7 +509,10 @@ impl Value {
     /// Python's `type(v).__name__`, for JavaScript `typeof` refined with `null`, `array` and
     /// `regexp`, PHP's `get_debug_type`.
     pub fn type_name(&self, lang: Family) -> Option<&'static str> {
-        { let pack = language_pack::pack(lang); pack.value_type_name(self) }
+        {
+            let pack = language_pack::pack(lang);
+            pack.value_type_name(self)
+        }
     }
 
     /// The type's name, Python's and JavaScript's alike but for the names in `names`.
@@ -556,14 +560,20 @@ impl Value {
     /// Equality in the value family `lang`'s sense (its `ValueRules::equals`): Python `==`,
     /// JavaScript `Object.is`, PHP `===`. `None` when it depends on elements that are not known.
     pub fn equals(&self, other: &Self, lang: Family) -> Option<bool> {
-        { let pack = language_pack::pack(lang); pack.value_equals(self, other) }
+        {
+            let pack = language_pack::pack(lang);
+            pack.value_equals(self, other)
+        }
     }
 
     /// Order in the value family `lang`'s sense (its `ValueRules::order`). `Some(None)` when the
     /// two do not order (different types, NaN, PHP arrays neither of which PHP finds smaller);
     /// `None` when it is not known.
     pub fn order(&self, other: &Self, lang: Family) -> Option<Option<Ordering>> {
-        { let pack = language_pack::pack(lang); pack.value_order(self, other) }
+        {
+            let pack = language_pack::pack(lang);
+            pack.value_order(self, other)
+        }
     }
 
     /// Order as Python and JavaScript agree, under `rules`: numbers numerically, Python strings

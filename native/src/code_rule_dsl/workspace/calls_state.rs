@@ -14,6 +14,7 @@ use crate::code_rule_dsl::calls::{self, CallsView, FileSeeds, TermId};
 use crate::code_rule_dsl::eval::{file_language, grammar_matcher};
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::Family;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, FileInput, Metrics, Query, Terms};
 use crate::code_rule_dsl::tape;
@@ -28,7 +29,6 @@ use std::sync::atomic::AtomicBool;
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, LazyLock};
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// A consumer file whose results must follow the graph: its new stamp, and the terms silent in
 /// it (no call reaches or may reach their seeds).
@@ -570,9 +570,10 @@ pub(super) fn restore_summary(file: &mut FileState, persisted: &[StoredLocalResu
     if !calls::summarizes(language) || file.crossfile.summary.is_some() {
         return;
     }
-    let Some(family) =
-        ({ let pack = language_pack::pack(Family::of(language)); pack.calls_names() })
-    else {
+    let Some(family) = ({
+        let pack = language_pack::pack(Family::of(language));
+        pack.calls_names()
+    }) else {
         return;
     };
     let candidate = summary_candidate();
@@ -723,9 +724,10 @@ pub(super) fn summarize_file(
         open: true,
         bytes: u32::try_from(file.input.source.len()).unwrap_or(u32::MAX),
         // What the file names regardless (`CallRules::unread`).
-        ..{ let pack = language_pack::pack(Family::of(language)); pack.calls_unread(
-            file.input.module.as_deref(),
-        ) }
+        ..{
+            let pack = language_pack::pack(Family::of(language));
+            pack.calls_unread(file.input.module.as_deref())
+        }
     };
     // An opaque summary may be a transient failure's: it is this workspace's alone.
     let (summary, shared) = match file.tape.as_ref().filter(|_| taped) {

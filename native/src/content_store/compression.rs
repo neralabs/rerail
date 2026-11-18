@@ -16,8 +16,8 @@
 //! Every reader of a store frame goes through [`decompress`], [`decompress_into`],
 //! [`decompress_head`] or [`decompress_chunks`].
 
-use std::collections::HashMap;
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::io;
 use zstd::stream::raw::{Decoder, Encoder, InBuffer, Operation, OutBuffer};
 
@@ -73,14 +73,19 @@ static DICTIONARIES: &[Dictionary] = &[
 
 /// The dictionary a writer uses for `content` of the language with tape tag `tag`.
 fn dictionary_for(tag: u8, content: Content) -> Option<&'static Dictionary> {
-    DICTIONARIES.iter().rev().find(|d| d.content == content && d.tags.contains(&tag))
+    DICTIONARIES
+        .iter()
+        .rev()
+        .find(|d| d.content == content && d.tags.contains(&tag))
 }
 
 fn dictionary_by_id(id: u32) -> io::Result<&'static Dictionary> {
-    DICTIONARIES
-        .iter()
-        .find(|d| d.id == id)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("frame names unknown dictionary {id:#x}")))
+    DICTIONARIES.iter().find(|d| d.id == id).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("frame names unknown dictionary {id:#x}"),
+        )
+    })
 }
 
 thread_local! {
@@ -135,12 +140,20 @@ fn plain(bytes: &[u8], level: i32) -> io::Result<Vec<u8>> {
 /// A source's frame. `tag` is its language's tape tag when the writer knows it (from the file's
 /// path, or from its tape: [`tape_tag`]).
 pub(crate) fn compress_source(bytes: &[u8], level: i32, tag: Option<u8>) -> io::Result<Vec<u8>> {
-    compress_as(bytes, level, tag.and_then(|tag| dictionary_for(tag, Content::Source)))
+    compress_as(
+        bytes,
+        level,
+        tag.and_then(|tag| dictionary_for(tag, Content::Source)),
+    )
 }
 
 /// A tape's frame: its language is in its own header.
 pub(crate) fn compress_tape(bytes: &[u8], level: i32) -> io::Result<Vec<u8>> {
-    compress_as(bytes, level, tape_tag(bytes).and_then(|tag| dictionary_for(tag, Content::Tape)))
+    compress_as(
+        bytes,
+        level,
+        tape_tag(bytes).and_then(|tag| dictionary_for(tag, Content::Tape)),
+    )
 }
 
 /// How a writer finds a frame's language: the tape tag of a stored tape image, and of the language a file at a
@@ -172,11 +185,19 @@ pub(crate) fn file_tag(path: &str, tape: Option<&[u8]>) -> Option<u8> {
     tape.and_then(tape_tag).or_else(|| path_tag(path))
 }
 
-fn compress_as(bytes: &[u8], level: i32, dictionary: Option<&'static Dictionary>) -> io::Result<Vec<u8>> {
+fn compress_as(
+    bytes: &[u8],
+    level: i32,
+    dictionary: Option<&'static Dictionary>,
+) -> io::Result<Vec<u8>> {
     counted(chosen(bytes, level, dictionary))
 }
 
-fn chosen(bytes: &[u8], level: i32, dictionary: Option<&'static Dictionary>) -> io::Result<Vec<u8>> {
+fn chosen(
+    bytes: &[u8],
+    level: i32,
+    dictionary: Option<&'static Dictionary>,
+) -> io::Result<Vec<u8>> {
     let plain = plain(bytes, level)?;
     let Some(dictionary) = dictionary.filter(|_| bytes.len() < SMALL) else {
         return Ok(plain);
@@ -188,7 +209,10 @@ fn chosen(bytes: &[u8], level: i32, dictionary: Option<&'static Dictionary>) -> 
                 encoder
             }
             _ => {
-                encoders.insert(dictionary.id, (level, Encoder::with_dictionary(level, dictionary.bytes)?));
+                encoders.insert(
+                    dictionary.id,
+                    (level, Encoder::with_dictionary(level, dictionary.bytes)?),
+                );
                 &mut encoders.get_mut(&dictionary.id).expect("inserted").1
             }
         };
@@ -198,7 +222,11 @@ fn chosen(bytes: &[u8], level: i32, dictionary: Option<&'static Dictionary>) -> 
         }
         frame
     })?;
-    Ok(if framed.len() < plain.len() { framed } else { plain })
+    Ok(if framed.len() < plain.len() {
+        framed
+    } else {
+        plain
+    })
 }
 
 /// A store frame's bytes, plain or with the dictionary its header names. `capacity` is the
@@ -216,7 +244,10 @@ pub fn decompress(frame: &[u8], capacity: usize) -> io::Result<Vec<u8>> {
                 return finished(&input, frame).map(|()| out);
             }
             if input.pos == frame.len() && output.pos() < output.capacity() {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated zstd frame"));
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "truncated zstd frame",
+                ));
             }
         }
     })
@@ -235,11 +266,17 @@ pub fn decompress_into(frame: &[u8], out: &mut [u8]) -> io::Result<()> {
                 return if output.pos() == output.capacity() {
                     Ok(())
                 } else {
-                    Err(io::Error::new(io::ErrorKind::InvalidData, "frame is shorter than its slot"))
+                    Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "frame is shorter than its slot",
+                    ))
                 };
             }
             if full || input.pos == frame.len() && output.pos() < output.capacity() {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, "frame does not fit its slot"));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "frame does not fit its slot",
+                ));
             }
         }
     })
@@ -255,7 +292,10 @@ pub fn decompress_head(frame: &[u8], n: usize) -> io::Result<Vec<u8>> {
             let before = (input.pos, output.pos());
             let hint = decoder.run(&mut input, &mut output)?;
             if output.pos() < n && (hint == 0 || (input.pos, output.pos()) == before) {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "frame is shorter than the head"));
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "frame is shorter than the head",
+                ));
             }
         }
         Ok(out)
@@ -276,7 +316,10 @@ pub fn decompress_chunks(frame: &[u8], mut each: impl FnMut(&[u8])) -> io::Resul
                 return finished(&input, frame);
             }
             if written == 0 && input.pos == frame.len() {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated zstd frame"));
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "truncated zstd frame",
+                ));
             }
         }
     })
@@ -286,12 +329,18 @@ fn finished(input: &InBuffer<'_>, frame: &[u8]) -> io::Result<()> {
     if input.pos == frame.len() {
         Ok(())
     } else {
-        Err(io::Error::new(io::ErrorKind::InvalidData, "bytes after the zstd frame"))
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "bytes after the zstd frame",
+        ))
     }
 }
 
 /// Runs `read` with this thread's decoder for `frame`'s dictionary, reset for a new frame.
-fn with_decoder<T>(frame: &[u8], read: impl FnOnce(&mut Decoder<'static>) -> io::Result<T>) -> io::Result<T> {
+fn with_decoder<T>(
+    frame: &[u8],
+    read: impl FnOnce(&mut Decoder<'static>) -> io::Result<T>,
+) -> io::Result<T> {
     let id = zstd::zstd_safe::get_dict_id_from_frame(frame).map_or(0, |id| id.get());
     DECODERS.with_borrow_mut(|decoders| {
         let decoder = match decoders.entry(id) {
@@ -384,8 +433,14 @@ mod tests {
     fn source_and_tape_frames_read_back_with_and_without_dictionaries() {
         let python = b"from __future__ import annotations\n\nimport os\n\n\ndef main() -> None:\n    print(os.getcwd())\n";
         let small = compress_source(python, 3, Some(1)).unwrap();
-        assert!(small.len() < compress(python, 3).unwrap().len(), "a small Python source gains from its dictionary");
-        assert_eq!(zstd::zstd_safe::get_dict_id_from_frame(&small).map(|id| id.get()), Some(0x8001));
+        assert!(
+            small.len() < compress(python, 3).unwrap().len(),
+            "a small Python source gains from its dictionary"
+        );
+        assert_eq!(
+            zstd::zstd_safe::get_dict_id_from_frame(&small).map(|id| id.get()),
+            Some(0x8001)
+        );
         assert_eq!(decompress(&small, 0).unwrap(), python);
         let mut slot = vec![0; python.len()];
         decompress_into(&small, &mut slot).unwrap();
@@ -393,7 +448,11 @@ mod tests {
         assert!(decompress_into(&small, &mut vec![0; python.len() - 1]).is_err());
         assert!(decompress_into(&small, &mut vec![0; python.len() + 1]).is_err());
         // No language, a language without a dictionary, and a large input: plain frames.
-        for (bytes, tag) in [(python.to_vec(), None), (python.to_vec(), Some(12)), (python.repeat(1000), Some(1))] {
+        for (bytes, tag) in [
+            (python.to_vec(), None),
+            (python.to_vec(), Some(12)),
+            (python.repeat(1000), Some(1)),
+        ] {
             let frame = compress_source(&bytes, 3, tag).unwrap();
             assert_eq!(frame, compress(&bytes, 3).unwrap());
             assert_eq!(decompress(&frame, bytes.len()).unwrap(), bytes);
@@ -401,7 +460,10 @@ mod tests {
         // Every shipped dictionary loads, and has a distinct id.
         let mut ids: Vec<_> = DICTIONARIES.iter().map(|d| d.id).collect();
         for d in DICTIONARIES {
-            assert_eq!(zstd::zstd_safe::get_dict_id(d.bytes).map(|id| id.get()), Some(d.id));
+            assert_eq!(
+                zstd::zstd_safe::get_dict_id(d.bytes).map(|id| id.get()),
+                Some(d.id)
+            );
         }
         ids.dedup();
         assert_eq!(ids.len(), DICTIONARIES.len());
@@ -410,7 +472,10 @@ mod tests {
         assert!(decompress_head(&small, python.len() + 1).is_err());
         let large = python.repeat(3000);
         let mut joined = Vec::new();
-        decompress_chunks(&compress_source(&large, 3, Some(1)).unwrap(), |chunk| joined.extend_from_slice(chunk)).unwrap();
+        decompress_chunks(&compress_source(&large, 3, Some(1)).unwrap(), |chunk| {
+            joined.extend_from_slice(chunk)
+        })
+        .unwrap();
         assert_eq!(joined, large);
     }
 }

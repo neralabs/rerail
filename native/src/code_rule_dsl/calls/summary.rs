@@ -16,11 +16,11 @@
 //! returned: open, though that usually calls it); one a later unconditional binding of its scope
 //! replaces is `SHADOWED` (the name, read once the scope ran, is no longer it).
 
-use crate::code_rule_dsl::tree::Tree;
 use super::names::Name;
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::{Binding, Form, Import, ScopeKind, ScopeTable};
+use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{Doc, Node};
 use foldhash::{HashMap, HashMapExt};
 

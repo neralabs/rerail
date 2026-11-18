@@ -129,7 +129,9 @@ impl CachedBytes {
 
     /// Bytes read where they are in a segment.
     pub(super) fn mapped(bytes: super::SegmentBytes) -> Self {
-        Self { backing: CachedBacking::Mapped(bytes) }
+        Self {
+            backing: CachedBacking::Mapped(bytes),
+        }
     }
 
     fn arena(arena: Arc<MmapArena>, offset: usize, length: usize) -> Self {

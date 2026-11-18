@@ -19,7 +19,7 @@ what changed as a result. The rules that came out of it are in `docs/merging.md`
    group was classed as superseded (with the commit or decision that replaced it), lost, or
    unsure.
 
-`scripts/check/merge-audit.py` now does steps 1 and 2 for any merge, in a few seconds.
+`scripts/check/merge_audit.py` now does steps 1 and 2 for any merge, in a few seconds.
 
 ## What was found
 
@@ -96,4 +96,4 @@ named nodes only, no static memo map is added beside the facts, and one tape-for
   - renumber only the collisions the merge itself creates;
   - run the audit before committing, and name the superseding commit or decision for every drop;
   - build and run both sides' tests.
-- `scripts/check/merge-audit.py`.
+- `scripts/check/merge_audit.py`.

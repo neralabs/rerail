@@ -274,9 +274,21 @@ impl StopBy {
                 .is_some();
         }
         if forward {
-            self.reaches(node, || node.next(), || charged(node, true, node.next_all()), related, env)
+            self.reaches(
+                node,
+                || node.next(),
+                || charged(node, true, node.next_all()),
+                related,
+                env,
+            )
         } else {
-            self.reaches(node, || node.prev(), || charged(node, false, node.prev_all()), related, env)
+            self.reaches(
+                node,
+                || node.prev(),
+                || charged(node, false, node.prev_all()),
+                related,
+                env,
+            )
         }
     }
 }
@@ -285,7 +297,11 @@ impl StopBy {
 /// token it passes (`gap::ImpliedPassed`), as a walk over the full tree tests each of them as a candidate: a work
 /// budget buys a named-only tape's walk what it buys a full tree's, and a clause runs out where it did before RER-131.
 /// The walk ends where the budget does, as a candidate's test then would.
-fn charged<'t, D: Doc>(node: &Node<'t, D>, forward: bool, all: impl Iterator<Item = Node<'t, D>>) -> impl Iterator<Item = Node<'t, D>> {
+fn charged<'t, D: Doc>(
+    node: &Node<'t, D>,
+    forward: bool,
+    all: impl Iterator<Item = Node<'t, D>>,
+) -> impl Iterator<Item = Node<'t, D>> {
     let passed = super::gap::ImpliedPassed::of(node);
     let mut from = Some(node.node_id());
     let mut all = all.fuse();
@@ -798,7 +814,8 @@ fn node_local(matcher: &AstMatcher) -> bool {
     let stop_local = |stop: &StopBy| stop_rule(stop).is_none_or(node_local);
     match matcher {
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
+        | AstMatcher::Kind(_)
+        | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Never
         | AstMatcher::Semantic(Semantic::Value(_)) => true,

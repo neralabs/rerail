@@ -6,7 +6,7 @@ committed file differs, and checks the .scope include lines of the rule against 
 import ast, json, os, re, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = "/Users/jeremy/orca/workspaces/nera-data-layer-ner1131-base-audit"
+REPO = "/Users/jeremy/orca/workspaces/data-layer-base-audit"
 COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
 LINTER = "scripts/lint_schema_introspection_data_paths.py"
 OUT = os.path.join(HERE, "schema-introspection-data-paths.tables.rr")

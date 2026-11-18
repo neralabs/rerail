@@ -49,8 +49,8 @@ Format-specifier nodes can be parsed separately.
 The parser preserves source ranges, raw prefixes, escapes, doubled braces, debug text, and adjacent literals.
 The marker participates in the parse cache key.
 
-The source requirements are the [constant visitor](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_render_raw_strings.py#L196)
-and the [regex extractor](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_regex_sql_parsing.py#L319).
+The source requirements are the constant visitor (`scripts/lint_render_raw_strings.py`, line 196)
+and the regex extractor (`scripts/lint_regex_sql_parsing.py`, line 319).
 
 ## Name sets have different scopes and phases
 
@@ -79,8 +79,8 @@ A row anchor preserves the parameter location when the graph edge occurs on the 
 Existing workspace evidence invalidation reruns the derived result after edits or removals.
 Incomplete evidence and exhausted work fail explicitly.
 
-The source requirements are [global constructor discovery](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_grammar_callable_constructors.py#L423)
-and [staged grammar discovery](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_sql_grammar_escape_hatches.py#L939).
+The source requirements are global constructor discovery (`scripts/lint_grammar_callable_constructors.py`, line 423)
+and staged grammar discovery (`scripts/lint_sql_grammar_escape_hatches.py`, line 939).
 
 ## Recursive matching is not graph reachability
 
@@ -97,7 +97,7 @@ A risky return reports only when its enclosing method belongs to that set.
 The return keeps its own witness and location.
 An unseeded cycle completes without a finding.
 
-The source requirement is the [checked-method worklist](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_grammar_fragment_usage.py#L400).
+The source requirement is the checked-method worklist (`scripts/lint_grammar_fragment_usage.py`, line 400).
 Semantic import resolution and a higher recursion limit would not reproduce this rule shape.
 
 ## Quoted annotations use words, not type syntax
@@ -114,7 +114,7 @@ Every candidate word can join against the imported alias.
 Escaped spellings therefore use their decoded value, and later container arguments remain visible.
 This also corrects forward-string token extraction in the escape-hatch policy.
 
-The source requirement is the [annotation predicate](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_grammar_fragment_usage.py#L178).
+The source requirement is the annotation predicate (`scripts/lint_grammar_fragment_usage.py`, line 178).
 Existing constant decoding was sufficient; the missing operation was matching each decoded word against host declarations.
 
 ## TDD ladder

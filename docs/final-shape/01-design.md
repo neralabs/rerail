@@ -202,7 +202,7 @@ Strata and relations stay resident between operators; nothing is written to SQLi
 
 | Component | From | Retired |
 |---|---|---|
-| Tape, documents, `Origin`, embedded guests, allowances/blind files, adapters, suppressions | main (incl. Timo's NER-1698/1865/1868) | — |
+| Tape, documents, `Origin`, embedded guests, allowances/blind files, adapters, suppressions | main (incl. Timo's embedded guests, allowances and package facts) | — |
 | Anchor index store, 32-file publication, statistics-chosen anchors | PIAT/DLRE `matcher/anchors/sql`, DLRE S1/S4 | anchor selection as SQL stage programs |
 | Statistics at ingestion, fingerprint, `fts5vocab` | Typing `stats.py`, spike, N1562/SSC readers | seeded constant statistics (N1562) |
 | Datalog front end, stratifier, magic sets (with multi-column adornments still to do) | Typing `rdl` | DLRE authored `relational` SQL; Moti's hand-written query bodies |

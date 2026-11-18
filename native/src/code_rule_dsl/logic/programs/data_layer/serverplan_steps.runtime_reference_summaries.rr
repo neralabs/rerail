@@ -1,6 +1,6 @@
 // data-layer-serverplan-steps in Rerail logic: clause `runtime-reference-summaries` (STEP-033, STEP-034, STEP-035), a
 // part of serverplan_steps.rdl; options at their defaults (entryPoint "all"). Source:
-// gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-steps.json.
+// packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rules/data-layer-serverplan-steps.json.
 //
 // One relation per SQL stage, under the stage's name. The clause is per file (partitionBy file): an id
 // `kind:start:end` is that node, a function's `__start` is the function node, and text joins stay in one document

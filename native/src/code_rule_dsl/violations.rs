@@ -28,6 +28,7 @@ pub mod projection;
 pub mod semantic;
 pub mod suppression;
 pub use super::lines::Span;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::origin::InFile;
 use ast_grep_core::matcher::NodeMatch;
@@ -45,7 +46,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::sync::Arc;
 pub use suppression::{names_rerail_ignore, rerail_ignores, suppresses};
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
@@ -108,7 +108,8 @@ pub fn ast_captures<'a>(
     match matcher {
         AstMatcher::Pattern(pattern) => names.extend(pattern.defined_vars()),
         AstMatcher::Semantic(semantic) => semantic::ast_captures(semantic, utils, summaries, names),
-        AstMatcher::Kind(_) | AstMatcher::Supertype(_)
+        AstMatcher::Kind(_)
+        | AstMatcher::Supertype(_)
         | AstMatcher::Regex(_)
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
@@ -328,7 +329,8 @@ fn node_regexes_in<'a>(
         }
         AstMatcher::Constrained(core) => node_regexes_in(&core.rule, utils, summaries, regexes),
         AstMatcher::Pattern(_)
-        | AstMatcher::Kind(_) | AstMatcher::Supertype(_)
+        | AstMatcher::Kind(_)
+        | AstMatcher::Supertype(_)
         | AstMatcher::Not(_)
         | AstMatcher::Compare(_)
         | AstMatcher::Count(_)
@@ -381,14 +383,17 @@ fn node_gap_tests<'a>(
     seen: &mut Vec<usize>,
     tests: &mut Vec<&'a crate::code_rule_dsl::matcher::gap::GapTest>,
 ) {
-    let utility = |index: usize, seen: &mut Vec<usize>, tests: &mut Vec<&'a crate::code_rule_dsl::matcher::gap::GapTest>| {
-        if !seen.contains(&index) {
-            seen.push(index);
-            if let Some(rule) = utils.rule(index) {
-                node_gap_tests(rule, utils, seen, tests);
+    let utility =
+        |index: usize,
+         seen: &mut Vec<usize>,
+         tests: &mut Vec<&'a crate::code_rule_dsl::matcher::gap::GapTest>| {
+            if !seen.contains(&index) {
+                seen.push(index);
+                if let Some(rule) = utils.rule(index) {
+                    node_gap_tests(rule, utils, seen, tests);
+                }
             }
-        }
-    };
+        };
     match matcher {
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             for item in items {
@@ -468,7 +473,12 @@ pub(super) fn bind(
             }
             for grammar in matchers.iter() {
                 let mut tests = Vec::new();
-                node_gap_tests(&grammar.matcher, &grammar.utils, &mut Vec::new(), &mut tests);
+                node_gap_tests(
+                    &grammar.matcher,
+                    &grammar.utils,
+                    &mut Vec::new(),
+                    &mut tests,
+                );
                 for test in &tests {
                     node_groups.extend(
                         test.regex
@@ -519,7 +529,10 @@ pub(super) fn bind(
             Some(via) => via.host_family(),
             None => Family::of(grammar.language),
         });
-        let language = family.map_or("empty", |family| { let pack = language_pack::pack(family); pack.label() });
+        let language = family.map_or("empty", |family| {
+            let pack = language_pack::pack(family);
+            pack.label()
+        });
         for linter in suppress.requested() {
             if !family.is_some_and(|family| family.honours(linter)) {
                 return Err(invalid(format!(

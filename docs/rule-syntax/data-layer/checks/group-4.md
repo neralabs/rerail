@@ -19,7 +19,7 @@ These hold for every plugin-based check in this part, and are cited once here.
   changes nothing, but where it does, it is noted under the check.
 - **Line numbering.** Text scans number lines with Python's `str.splitlines()`, which also breaks on `\v \f \x1c-\x1e
   \x85    `. AST line numbers count only `\n`, `\r\n` and `\r`. The two numberings differ in any file that
-  contains one of the extra terminators. This is the "line terminators" item of the earlier port's ledger (NER-1969).
+  contains one of the extra terminators. This is the "line terminators" item of the earlier port's ledger (the line-query issue).
 
 ---
 

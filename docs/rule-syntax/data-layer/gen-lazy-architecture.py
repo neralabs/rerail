@@ -10,7 +10,7 @@ strings (unions of other such constants and "a" + "b" concatenations included), 
 """
 import ast, os, subprocess, sys
 
-REPO = "/Users/jeremy/orca/workspaces/nera-data-layer-ner1131-base-audit"
+REPO = "/Users/jeremy/orca/workspaces/data-layer-base-audit"
 COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
 SCRIPT = "scripts/lint_lazy_architecture.py"
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lazy-architecture.tables.rr")

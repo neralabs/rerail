@@ -1439,7 +1439,7 @@ include `core.rr` and their tests read T's view by name.
 ## O75. The `.rdl` copies and T's tools
 
 T's 10 programs (`typing/programs`, `plan/golden/programs`), the old parser `front::parse`, and T's
-reference scripts (`front/rdl.py`, `magic/golden/generate.py`, `plan/golden/generate.sh`) are the only
+reference scripts (`front/rdl.py`, `scripts/generate/logic/magic_goldens.py`, `plan/golden/generate.sh`) are the only
 `.rdl` left. **Closure:** step 31 (O19) removes them.
 
 ## O76. Base relations and inputs the engine does not make yet
@@ -1636,7 +1636,7 @@ after P's last native commit):
   `RERAIL_RELATIONAL_TESTS=1`; both scripts still run by hand.
 - Not the merge's: `audit-cli.test.ts` has 1 failure before and after it.
   `checkout-code-rule-router.test.ts` had 17 failures before and has 1 after it (a 5 s timeout
-  under load). The `gate/data-layer/test/conformance` copies fail to load before and after it
+  under load). The `packs/data-layer/upstream/lint/authored/test/conformance` copies fail to load before and after it
   (imports relative to `gate/`).
 
 To close: when O18 is decided, either the relational clause becomes production and these run by
@@ -1844,7 +1844,7 @@ where it is faster (the rows then filled from its answer), or the device path is
 
 ## O93. The data-layer pack's rules do not run on the full corpus
 
-These are the 68 checks in `gate/data-layer/packs/data-layer/candidates/rr` (Data-layer-rule-expressivity), measured
+These are the 68 checks in `packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rr` (Data-layer-rule-expressivity), measured
 with `RERAIL_HAND_DIR=<that dir> RERAIL_MEASURE_HAND=only`. They need the data-layer engine's `core.rr` relations,
 merged at ca930d974. Of the 68 run one at a time on s50:
 
@@ -2700,7 +2700,7 @@ definitions whose digest changed, and base rows changed under `(document, preord
 
 **Closure:** the distributions recorded in 0083, and the symbol key's form decided.
 
-**Measured** (2026-11-08) on `nera-data-layer-gruel-main` (13,088 `.py` files, 218,046 definitions), last 224 non-merge
+**Measured** (2026-11-08) on `data-layer-gruel-main` (13,088 `.py` files, 218,046 definitions), last 224 non-merge
 commits, with Python's `ast` standing in for the tape (`ast` has fewer nodes than tree-sitter; the ratios are what
 count). The tool is a dev script, not engine code.
 - **The commits are bulk.**

@@ -3,7 +3,7 @@
 use super::*;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::model::{ClauseKind, Query};
-use crate::code_rule_dsl::test_support::CAPABILITIES;
+use crate::code_rule_dsl::test_support::{CAPABILITIES, pack_test_data};
 use std::path::{Path, PathBuf};
 
 mod reference_tests;
@@ -11,8 +11,9 @@ mod reference_tests;
 /// The rules converted: the pack as rewritten by Pulling-it-all-together (`rules-ast`, decision 0037 step 1).
 const RULES: &str = "rules-ast";
 
+/// The data-layer pack's candidates, pack test data (`packs/data-layer/upstream/lint/`, not in git).
 fn pack() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/packs/data-layer/candidates")
+    pack_test_data("packs/data-layer/upstream/lint/authored/packs/data-layer/candidates")
 }
 
 /// The authored overlay's files (`convert` module doc): `<rule-id>.rr`.
@@ -414,7 +415,7 @@ fn log_codes(check: &str) -> Vec<String> {
 }
 
 /// Where the hand-written data-layer rules are: `docs/rule-syntax/data-layer` (More-ergonomic's drafts), or
-/// `RERAIL_HAND_DIR`. The data-layer pack's ports (`gate/data-layer/packs/data-layer/candidates/rr`) read
+/// `RERAIL_HAND_DIR`. The data-layer pack's ports (`candidates/rr` under [`pack`]) read
 /// `core.rr` relations the data-layer integration engine adds (`split_line`, `lf_line`), so they wait on that merge.
 fn hand_dir() -> PathBuf {
     std::env::var_os("RERAIL_HAND_DIR").map(PathBuf::from).unwrap_or_else(|| crate::code_rule_dsl::logic::rr::library().join("../data-layer"))
@@ -756,8 +757,9 @@ struct Event {
     setting: String,
 }
 
+/// The recordings of the data-layer port, pack test data (`packs/data-layer/upstream/lint/`, not in git).
 fn port() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/fixtures/host/data-layer-port")
+    pack_test_data("packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port")
 }
 
 /// Every event of the oracle (`fixtures/host/data-layer-port`): the recordings and probes, then the API records of

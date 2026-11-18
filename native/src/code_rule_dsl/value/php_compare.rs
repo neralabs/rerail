@@ -11,9 +11,9 @@
 //! - A reference is a variable, constant or chain of accesses (`$a->b['k']`, `C::$p`, `C::K`), the
 //!   same where PHP reaches the same storage by the same path.
 
-use crate::code_rule_dsl::tree::Tree;
 use super::php::{self, Key};
 use super::{Context, Value};
+use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{Doc, Node};
 
 /// What a `use` clause imports.
@@ -75,8 +75,6 @@ enum Keyed<'r, D: Doc> {
 /// refuses it), and `Some(None)` where the node holds no key.
 pub(crate) type KeyName = Option<Option<Vec<u16>>>;
 
-
-
 /// The name of an access whose `name` field may be computed: `->foo`, `->$x`, `->{e}`, `::{e}`.
 fn member_key<'r, D: Doc>(
     holder: &Node<'r, D>,
@@ -133,18 +131,18 @@ fn keyed<'r, D: Doc>(node: &Node<'r, D>) -> Keyed<'r, D> {
             member_key(node, node.named_code().nth(1), Role::StringOnly)
         }
         // `key => value`: two children (the grammar implies the `=>`, which no tape stores).
-        "array_element_initializer" if node.named_code().count() == 2 => match node.named_code().next() {
-            Some(key) => Keyed::Computed(key, Role::ArrayKey),
-            None => Keyed::Nameless,
-        },
-        // `x[k]`: the grammar's every subscript is `[ … ]` (no `{ … }` form), so the kind implies
-        // the `[`, which a tape does not store (RER-131): the kind is the question, not the token.
-        "subscript_expression" => {
-            match node.named_code().nth(1) {
-                Some(index) => Keyed::Computed(index, Role::ArrayKey),
+        "array_element_initializer" if node.named_code().count() == 2 => {
+            match node.named_code().next() {
+                Some(key) => Keyed::Computed(key, Role::ArrayKey),
                 None => Keyed::Nameless,
             }
         }
+        // `x[k]`: the grammar's every subscript is `[ … ]` (no `{ … }` form), so the kind implies
+        // the `[`, which a tape does not store (RER-131): the kind is the question, not the token.
+        "subscript_expression" => match node.named_code().nth(1) {
+            Some(index) => Keyed::Computed(index, Role::ArrayKey),
+            None => Keyed::Nameless,
+        },
         "argument" | "method_declaration" | "enum_case" => match node.field("name") {
             Some(name) => Keyed::Written(name.text().as_bytes().to_vec()),
             None => Keyed::Nameless,
@@ -187,13 +185,16 @@ fn key_node<'r, D: Doc>(node: &Node<'r, D>) -> Keyed<'r, D> {
             | "property_promotion_parameter" => parent
                 .field("name")
                 .is_some_and(|name| name.range() == node.range()),
-            "class_constant_access_expression" => parent.named_code()
+            "class_constant_access_expression" => parent
+                .named_code()
                 .nth(1)
                 .is_some_and(|name| name.range() == node.range()),
-            "array_element_initializer" if parent.named_code().count() == 2 => parent.named_code()
+            "array_element_initializer" if parent.named_code().count() == 2 => parent
+                .named_code()
                 .next()
                 .is_some_and(|key| key.range() == node.range()),
-            "subscript_expression" => parent.named_code()
+            "subscript_expression" => parent
+                .named_code()
                 .nth(1)
                 .is_some_and(|index| index.range() == node.range()),
             "const_element" => node.kind() == "name",
@@ -324,7 +325,8 @@ fn case_of<D: Doc>(node: &Node<'_, D>) -> Case {
             }
         }
         "class_constant_access_expression" => {
-            if parent.named_code()
+            if parent
+                .named_code()
                 .next()
                 .is_some_and(|scope| scope.range() == node.range())
             {
@@ -560,8 +562,7 @@ pub fn same_reference<D: Doc>(
     match kind {
         Shape::Variable => Some(variable(&left)? == variable(&right)?),
         Shape::DynamicVariable => {
-            let (Some(left), Some(right)) =
-                (left.named_code().next(), right.named_code().next())
+            let (Some(left), Some(right)) = (left.named_code().next(), right.named_code().next())
             else {
                 return Some(false);
             };

@@ -6,8 +6,8 @@ Both earlier batches still pass.
 This batch uses existing engine capabilities; no additional native engine feature was required.
 The pack remains inactive while integration certification remains open.
 
-The source pin is `2b1504adc4291daaf080b2e932962b134da1a69a` in `neralabs/nera-data-layer`.
-The [evidence file](../fixtures/host/data-layer-port/batch-03-evidence.json) records provenance, coverage, policy digests, and the native binary hash.
+The source pin is `2b1504adc4291daaf080b2e932962b134da1a69a` in the data-layer repository.
+The [evidence file](../packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-03-evidence.json) records provenance, coverage, policy digests, and the native binary hash.
 
 ## Policies and original tests
 
@@ -32,7 +32,7 @@ The batch unit remains one source `LinterConfig` check.
 
 All 568 unchanged upstream pytest cases passed with the original root configuration.
 The recorder checked 1,513 loaded Python source files against pinned Git blobs without a mismatch.
-The [recording](../fixtures/host/data-layer-port/batch-03-recording.json) supplies 194 native replay calls.
+The [recording](../packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-03-recording.json) supplies 194 native replay calls.
 Three calls retain original framework extraction-error contracts.
 Another 402 tests have no recorded supported boundary.
 They include detector helpers, constants, formatting, discovery, signatures, and baseline operations; they do not count as native passes.
@@ -44,7 +44,7 @@ Extraction errors remain explicit and cannot enter the corpus as clean detection
 
 ## Supplemental probes and scope
 
-The [supplemental corpus](../fixtures/host/data-layer-port/batch-03-probes.json) contains 88 additional source cases and 176 analyzer/reporter observations.
+The [supplemental corpus](../packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-03-probes.json) contains 88 additional source cases and 176 analyzer/reporter observations.
 Native replay compares 167 calls: 76 positive and 91 clean, with 92 expected findings.
 Nine signed aggregate reporter observations remain separate retained contracts.
 These probes are separate from the original 568 pytest cases.
@@ -161,7 +161,7 @@ node --import tsx conformance/data-layer/replay.ts \
 
 "$DL_PYTHON" scripts/dsl/data_layer_probe_record.py \
   --source "$DL_SOURCE" --repo "$DL_REPO" \
-  --inputs fixtures/host/data-layer-port/batch-03-probes.json \
+  --inputs packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-03-probes.json \
   --output /tmp/data-layer-batch-03-probes.json
 
 "$DL_PYTHON" scripts/dsl/data_layer_generate_batch_three.py \
@@ -181,8 +181,8 @@ The next batch contains SQL grammar checks and retains all current parity gates.
 
 ## Approved Linear amendments
 
-[NER-1969](https://linear.app/nera/issue/NER-1969) now includes same-file content gates and selectable line terminators.
-[NER-1971](https://linear.app/nera/issue/NER-1971) now includes bounded witness-relative source context.
+The line-query issue now includes same-file content gates and selectable line terminators.
+The line-context issue now includes bounded witness-relative source context.
 Both descriptions preserve the earlier requirements and add pinned linter links, implementation requirements, and acceptance evidence.
 Their workflow states remain unchanged.
 The separate proposed stateful-filter ticket remains uncreated pending explicit approval.

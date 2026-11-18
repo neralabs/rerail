@@ -1,10 +1,10 @@
 //! The content store's SQLite schema: one current, idempotent DDL.
 
-#[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
 use super::connection::configure_connection;
 use super::{ContentStore, StoreError, StoreResult};
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -777,11 +777,14 @@ impl ContentStore {
                 scope
                     .spawn(|| -> StoreResult<()> {
                         super::hazards::behind_the_run();
-                        let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
+                        let transaction =
+                            connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
                         // Another open may have created the store since the read above.
                         let version = compatible_version(&transaction)?;
                         for (table, column, declaration) in missing_columns(&transaction)? {
-                            transaction.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {declaration}"))?;
+                            transaction.execute_batch(&format!(
+                                "ALTER TABLE {table} ADD COLUMN {column} {declaration}"
+                            ))?;
                         }
                         transaction.execute_batch(SCHEMA)?;
                         if version != SCHEMA_VERSION {
@@ -798,7 +801,13 @@ impl ContentStore {
                 super::frames::forget_snapshot(path);
             }
         }
-        let id: Option<i64> = connection.query_row_cached("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()?;
+        let id: Option<i64> = connection
+            .query_row_cached(
+                "SELECT id FROM store_identity WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
         if let Some(id) = id {
             return Ok(id);
         }
@@ -808,8 +817,12 @@ impl ContentStore {
             scope
                 .spawn(|| -> StoreResult<()> {
                     super::hazards::behind_the_run();
-                    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-                    transaction.execute_cached("INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random())", [])?;
+                    let transaction =
+                        connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                    transaction.execute_cached(
+                        "INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random())",
+                        [],
+                    )?;
                     transaction.commit()?;
                     Ok(())
                 })
@@ -819,7 +832,11 @@ impl ContentStore {
         if let Some(path) = connection.path() {
             super::atoms::forget_identity(path);
         }
-        Ok(connection.query_row_cached("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0))?)
+        Ok(connection.query_row_cached(
+            "SELECT id FROM store_identity WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )?)
     }
 }
 
@@ -849,7 +866,8 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
     let expected = SCHEMA_OBJECTS
         .as_ref()
         .map_err(|error| StoreError::Corrupt(format!("the schema does not apply: {error}")))?;
-    Ok(expected.iter().all(|object| present.contains(object)) && missing_columns(connection)?.is_empty())
+    Ok(expected.iter().all(|object| present.contains(object))
+        && missing_columns(connection)?.is_empty())
 }
 
 /// Columns SCHEMA's tables gained after stores were made with them, as `(table, column, declaration)`: `CREATE
@@ -857,7 +875,11 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 /// Each has a default, so an older binary's inserts, which do not name it, still apply.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0"),
-    ("corpus_manifests", "policy", "BLOB CHECK(policy IS NULL OR length(policy) = 32)"),
+    (
+        "corpus_manifests",
+        "policy",
+        "BLOB CHECK(policy IS NULL OR length(policy) = 32)",
+    ),
     ("memo_entries", "over_pack", "INTEGER NOT NULL DEFAULT 0"),
     ("memo_entries", "over_at", "INTEGER NOT NULL DEFAULT 0"),
     ("memo_entries", "over_len", "INTEGER NOT NULL DEFAULT 0"),
@@ -872,7 +894,9 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
 ];
 
 /// The `ADDED_COLUMNS` a store's tables lack (of the tables it has).
-fn missing_columns(connection: &Connection) -> StoreResult<Vec<&'static (&'static str, &'static str, &'static str)>> {
+fn missing_columns(
+    connection: &Connection,
+) -> StoreResult<Vec<&'static (&'static str, &'static str, &'static str)>> {
     let mut missing = Vec::new();
     for added in ADDED_COLUMNS {
         let (table, column, _) = added;
@@ -893,11 +917,19 @@ fn missing_columns(connection: &Connection) -> StoreResult<Vec<&'static (&'stati
 /// compares). It was SCHEMA applied to an in-memory database, once a process: 124 statements written on every
 /// open, which a warm run's check refuses (`RERAIL_WARM`). An object SQLite makes along with one of these (a
 /// table's `sqlite_autoindex_*`, a full-text table's shadow tables) comes and goes with it.
-static SCHEMA_OBJECTS: LazyLock<Result<Vec<(String, String)>, String>> = LazyLock::new(|| Ok(schema_objects(SCHEMA)));
+static SCHEMA_OBJECTS: LazyLock<Result<Vec<(String, String)>, String>> =
+    LazyLock::new(|| Ok(schema_objects(SCHEMA)));
 
 fn schema_objects(schema: &str) -> Vec<(String, String)> {
-    let text: String = schema.lines().map(|l| l.split("--").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
-    let words: Vec<&str> = text.split(|c: char| c.is_whitespace() || c == '(' || c == ';').filter(|w| !w.is_empty()).collect();
+    let text: String = schema
+        .lines()
+        .map(|l| l.split("--").next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let words: Vec<&str> = text
+        .split(|c: char| c.is_whitespace() || c == '(' || c == ';')
+        .filter(|w| !w.is_empty())
+        .collect();
     let mut out = Vec::new();
     let mut i = 0;
     while i < words.len() {
@@ -905,8 +937,16 @@ fn schema_objects(schema: &str) -> Vec<(String, String)> {
             let rest = &words[i + 1..];
             let (kind, at) = match rest {
                 [t, ..] if t.eq_ignore_ascii_case("TABLE") => ("table", 1),
-                [v, t, ..] if v.eq_ignore_ascii_case("VIRTUAL") && t.eq_ignore_ascii_case("TABLE") => ("table", 2),
-                [u, t, ..] if u.eq_ignore_ascii_case("UNIQUE") && t.eq_ignore_ascii_case("INDEX") => ("index", 2),
+                [v, t, ..]
+                    if v.eq_ignore_ascii_case("VIRTUAL") && t.eq_ignore_ascii_case("TABLE") =>
+                {
+                    ("table", 2)
+                }
+                [u, t, ..]
+                    if u.eq_ignore_ascii_case("UNIQUE") && t.eq_ignore_ascii_case("INDEX") =>
+                {
+                    ("index", 2)
+                }
                 [t, ..] if t.eq_ignore_ascii_case("INDEX") => ("index", 1),
                 [t, ..] if t.eq_ignore_ascii_case("TRIGGER") => ("trigger", 1),
                 [t, ..] if t.eq_ignore_ascii_case("VIEW") => ("view", 1),
@@ -917,7 +957,13 @@ fn schema_objects(schema: &str) -> Vec<(String, String)> {
             };
             let rest = &rest[at..];
             let name = match rest {
-                [a, b, c, name, ..] if a.eq_ignore_ascii_case("IF") && b.eq_ignore_ascii_case("NOT") && c.eq_ignore_ascii_case("EXISTS") => name,
+                [a, b, c, name, ..]
+                    if a.eq_ignore_ascii_case("IF")
+                        && b.eq_ignore_ascii_case("NOT")
+                        && c.eq_ignore_ascii_case("EXISTS") =>
+                {
+                    name
+                }
                 [name, ..] => name,
                 [] => break,
             };
@@ -963,7 +1009,14 @@ mod schema_object_tests {
         drop(ContentStore::open(&path).unwrap());
         let c = Connection::open(&path).unwrap();
         assert!(missing_columns(&c).unwrap().is_empty());
-        assert_eq!(c.query_row("SELECT run, swept FROM corpus_decided", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).unwrap(), (7, 0));
+        assert_eq!(
+            c.query_row("SELECT run, swept FROM corpus_decided", [], |r| Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?
+            )))
+            .unwrap(),
+            (7, 0)
+        );
         drop(c);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -973,11 +1026,17 @@ mod schema_object_tests {
     fn schema_objects_are_what_schema_creates() {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(SCHEMA).unwrap();
-        let fts: Vec<String> = schema_objects(SCHEMA).into_iter().filter(|(_, n)| n.ends_with("_fts")).map(|(_, n)| n).collect();
+        let fts: Vec<String> = schema_objects(SCHEMA)
+            .into_iter()
+            .filter(|(_, n)| n.ends_with("_fts"))
+            .map(|(_, n)| n)
+            .collect();
         let mut applied: Vec<(String, String)> = schema_object_names(&connection)
             .unwrap()
             .into_iter()
-            .filter(|(_, n)| !n.starts_with("sqlite_") && !fts.iter().any(|f| n.starts_with(&format!("{f}_"))))
+            .filter(|(_, n)| {
+                !n.starts_with("sqlite_") && !fts.iter().any(|f| n.starts_with(&format!("{f}_")))
+            })
             .collect();
         let mut read = schema_objects(SCHEMA);
         applied.sort();

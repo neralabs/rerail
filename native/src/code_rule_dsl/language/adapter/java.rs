@@ -5,7 +5,8 @@
 
 use super::QueryWhen;
 use super::{
-    Adapter, Refusal, Refused, ScopeFeature, ScopeRules, SyntaxFeature, SyntaxRules, ValueFeature, ValueRules,
+    Adapter, Refusal, Refused, ScopeFeature, ScopeRules, SyntaxFeature, SyntaxRules, ValueFeature,
+    ValueRules,
 };
 use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::compile::options;
@@ -111,11 +112,20 @@ impl ScopeRules for Java {
         None
     }
 
-    fn binding<'t>(_: &'t ScopeTable, _: &Reference, _: &str) -> Option<(&'t Binding, Option<NodeRef>)> {
+    fn binding<'t>(
+        _: &'t ScopeTable,
+        _: &Reference,
+        _: &str,
+    ) -> Option<(&'t Binding, Option<NodeRef>)> {
         None
     }
 
-    fn binding_by<'t>(_: &'t ScopeTable, _: &Reference, _: &str, _: Lookup) -> Option<(&'t Binding, Option<NodeRef>)> {
+    fn binding_by<'t>(
+        _: &'t ScopeTable,
+        _: &Reference,
+        _: &str,
+        _: Lookup,
+    ) -> Option<(&'t Binding, Option<NodeRef>)> {
         None
     }
 
@@ -152,7 +162,11 @@ impl ScopeRules for Java {
     }
 
     /// Never reached: scope is not supported yet, so no rule asks for a Java file's usage.
-    fn usage<D: Doc>(_: &ScopeTable, _: &Node<'_, D>, _: &mut Steps<'_>) -> Result<Usage, BuildError> {
+    fn usage<D: Doc>(
+        _: &ScopeTable,
+        _: &Node<'_, D>,
+        _: &mut Steps<'_>,
+    ) -> Result<Usage, BuildError> {
         Err(BuildError::Budget)
     }
 
@@ -232,11 +246,17 @@ impl ValueRules for Java {
         None
     }
 
-    fn key_name<'r, D: Doc>(_: &Node<'r, D>, _: &mut dyn FnMut(&Node<'r, D>) -> Value) -> Option<Vec<u16>> {
+    fn key_name<'r, D: Doc>(
+        _: &Node<'r, D>,
+        _: &mut dyn FnMut(&Node<'r, D>) -> Value,
+    ) -> Option<Vec<u16>> {
         None
     }
 
-    fn member_name<'r, D: Doc>(_: &Node<'r, D>, _: &mut dyn FnMut(&Node<'r, D>) -> Value) -> Option<Vec<u16>> {
+    fn member_name<'r, D: Doc>(
+        _: &Node<'r, D>,
+        _: &mut dyn FnMut(&Node<'r, D>) -> Value,
+    ) -> Option<Vec<u16>> {
         None
     }
 
@@ -255,12 +275,19 @@ impl SyntaxRules for Java {
 
     fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
         match feature {
-            SyntaxFeature::LanguageOptions => refused("`languageOptions` is not available for Java policies"),
-            SyntaxFeature::Parse(grammar) => refused(format!("`{}` parses {}", grammar.name(), grammar.host())),
+            SyntaxFeature::LanguageOptions => {
+                refused("`languageOptions` is not available for Java policies")
+            }
+            SyntaxFeature::Parse(grammar) => {
+                refused(format!("`{}` parses {}", grammar.name(), grammar.host()))
+            }
         }
     }
 
-    fn compile_language_options(_: &JsonValue, _: &str) -> napi::Result<(Option<Arc<LanguageOptions>>, Option<Arc<PythonOptions>>)> {
+    fn compile_language_options(
+        _: &JsonValue,
+        _: &str,
+    ) -> napi::Result<(Option<Arc<LanguageOptions>>, Option<Arc<PythonOptions>>)> {
         Ok((None, None))
     }
 

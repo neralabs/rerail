@@ -21,7 +21,7 @@ It is not a performance measurement of this merge: definition-based IDs are now 
 
 The survey reads branch history, design notes, and current working diffs.
 A dirty worktree shows active implementation, not a tested or accepted result.
-`benchmark/async-family-integration/merge-b4f0aa04b/worktree-survey.json` records the observed tips, status paths, and recent commits.
+`packs/data-layer/upstream/benchmarks/authored/async-family-integration/merge-b4f0aa04b/worktree-survey.json` records the observed tips, status paths, and recent commits.
 Worktrees can change after this snapshot. No sibling working files were modified.
 
 ## Work directly related to this branch
@@ -62,7 +62,7 @@ A relation-based cache design alone does not ensure bulk storage execution.
 | `Tetris` | Browser/WASM demonstration | Clean tip, latest commit November 8 |
 | `skimmer` | Public-repository audit/release work | Clean tip, latest commit November 4 |
 
-The literal `Pulling-it-all-together`, original SQL-capture branch, NER-1562, and `Shared-structural-execution` worktrees are clean.
+The literal `Pulling-it-all-together`, original SQL-capture branch, the scale-test branch, and `Shared-structural-execution` worktrees are clean.
 Their latest commits are from October 26. They provide prior work, not evidence of a current parallel implementation.
 
 ## What remains for this branch

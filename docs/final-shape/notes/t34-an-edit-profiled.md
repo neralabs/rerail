@@ -86,7 +86,7 @@ The cost store gets about 6,000 samples a run: training is due again every 10 mi
   `phase_files` and `texts_digest`. An edit: 118–121 G (was 122–131 G). (59c8204e9)
 - Caches refused by construction (item 2): `facts_only` green, in every targeted test run; a commit adding a
   static map or table it does not list, or a new entry in its lists of state, is refused before it is made
-  (`scripts/check/check-no-new-caches.py`, run by a hook before each of my commits). (07f7ff7f7)
+  (`scripts/check/check_no_new_caches.py`, run by a hook before each of my commits). (07f7ff7f7)
 - My statics by flow (item 3): the frames' four tables are the store's schema (no lookups, no lazy creation);
   the confirmations and the admitted memo spaces live in the frames' snapshot; each run's report carries the plans
   it and its nested runs used (`Report::plans`, phase 0's on its graph), so the outermost run's record names them

@@ -1,0 +1,3371 @@
+{
+ "area": "load",
+ "about": "The daemon under the same load for each version, one machine per system, each run alone on it (the machine record says where it was not). Written by page/load_json.py from the load results.",
+ "machines": [],
+ "runs": [
+  {
+   "id": "load2/win/B/cpu-mean",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "cpu",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": false,
+   "what": "daemon CPU, mean after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU, mean after warm-up",
+   "unit": "% of one core",
+   "n": 1,
+   "median": 69,
+   "worst": 69,
+   "values": [
+    69
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 52% of a core in 2 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:57:47.642Z",
+   "series": [
+    [
+     60,
+     56
+    ],
+    [
+     120,
+     53
+    ],
+    [
+     180,
+     63
+    ],
+    [
+     240,
+     69
+    ],
+    [
+     300,
+     70
+    ],
+    [
+     360,
+     68
+    ],
+    [
+     420,
+     70
+    ],
+    [
+     480,
+     90
+    ],
+    [
+     540,
+     81
+    ],
+    [
+     600,
+     49
+    ],
+    [
+     660,
+     57
+    ]
+   ],
+   "series_unit": "% of one core"
+  },
+  {
+   "id": "load2/win/B/cpu-busiest",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "cpu",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": false,
+   "what": "daemon CPU in the busiest minute after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU in the busiest minute after warm-up",
+   "unit": "% of one core",
+   "n": 1,
+   "median": 90,
+   "worst": 90,
+   "values": [
+    90
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 52% of a core in 2 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:57:47.642Z"
+  },
+  {
+   "id": "load2/win/B/rss-peak",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "memory",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": false,
+   "what": "daemon resident memory at its peak",
+   "state": "under the same load",
+   "metric": "daemon resident memory at its peak",
+   "unit": "MB",
+   "n": 1,
+   "median": 4038,
+   "worst": 4038,
+   "values": [
+    4038
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 52% of a core in 2 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:57:47.642Z",
+   "series": [
+    [
+     60,
+     619
+    ],
+    [
+     120,
+     775
+    ],
+    [
+     180,
+     1033
+    ],
+    [
+     240,
+     1312
+    ],
+    [
+     300,
+     1601
+    ],
+    [
+     360,
+     1852
+    ],
+    [
+     420,
+     2128
+    ],
+    [
+     480,
+     2473
+    ],
+    [
+     540,
+     4038
+    ],
+    [
+     600,
+     3947
+    ],
+    [
+     660,
+     3820
+    ]
+   ],
+   "series_unit": "MB"
+  },
+  {
+   "id": "load2/win/B/heap-growth",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "memory",
+   "part": "load",
+   "pass": 2,
+   "role": "rate",
+   "alone": false,
+   "what": "heap growth after forced collections, after warm-up",
+   "state": "under the same load",
+   "metric": "heap growth after forced collections, after warm-up",
+   "unit": "MB a minute",
+   "n": 1,
+   "median": 34.2,
+   "worst": 34.2,
+   "values": [
+    34.2
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 52% of a core in 2 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:57:47.642Z",
+   "series": [
+    [
+     60,
+     77
+    ],
+    [
+     120,
+     108
+    ],
+    [
+     180,
+     147
+    ],
+    [
+     240,
+     184
+    ],
+    [
+     300,
+     227
+    ],
+    [
+     360,
+     266
+    ],
+    [
+     420,
+     305
+    ],
+    [
+     480,
+     345
+    ],
+    [
+     540,
+     367
+    ],
+    [
+     600,
+     370
+    ]
+   ],
+   "series_unit": "MB after a forced collection"
+  },
+  {
+   "id": "load2/win/B/hook-p95",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": false,
+   "what": "hook p95 after warm-up",
+   "state": "under the same load",
+   "metric": "hook p95 after warm-up",
+   "unit": "ms",
+   "n": 1,
+   "median": 703,
+   "worst": 703,
+   "values": [
+    703
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 52% of a core in 2 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:57:47.642Z",
+   "series": [
+    [
+     60,
+     3338
+    ],
+    [
+     120,
+     525
+    ],
+    [
+     180,
+     679
+    ],
+    [
+     240,
+     724
+    ],
+    [
+     300,
+     612
+    ],
+    [
+     360,
+     705
+    ],
+    [
+     420,
+     667
+    ],
+    [
+     480,
+     610
+    ],
+    [
+     540,
+     1073
+    ],
+    [
+     600,
+     560
+    ],
+    [
+     660,
+     2315
+    ]
+   ],
+   "series_unit": "ms"
+  },
+  {
+   "id": "load2/win/B/hook-slowest",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": false,
+   "what": "slowest hook after warm-up",
+   "state": "under the same load",
+   "metric": "slowest hook after warm-up",
+   "unit": "ms",
+   "n": 1,
+   "median": 12892,
+   "worst": 12892,
+   "values": [
+    12892
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 52% of a core in 2 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:57:47.642Z"
+  },
+  {
+   "id": "load2/win/B/hook-floor",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "ref",
+   "alone": false,
+   "what": "hook floor: a hook's own start, with no daemon in it",
+   "state": "under the same load",
+   "metric": "hook floor: a hook's own start, with no daemon in it",
+   "unit": "ms",
+   "n": 1,
+   "median": 117,
+   "worst": 117,
+   "values": [
+    117
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 52% of a core in 2 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:57:47.642Z"
+  },
+  {
+   "id": "load2/win/B/hook-failed",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "count",
+   "alone": false,
+   "what": "failed, timed-out or lost hooks",
+   "state": "under the same load",
+   "metric": "failed, timed-out or lost hooks",
+   "unit": "hooks",
+   "n": 1,
+   "median": 2,
+   "worst": 2,
+   "values": [
+    2
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 52% of a core in 2 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:57:47.642Z"
+  },
+  {
+   "id": "load2/win/B/hooks-answered",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "count",
+   "alone": false,
+   "what": "hooks answered in the run",
+   "state": "under the same load",
+   "metric": "hooks answered in the run",
+   "unit": "hooks",
+   "n": 1,
+   "median": 2658,
+   "worst": 2658,
+   "values": [
+    2658
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 52% of a core in 2 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:57:47.642Z"
+  },
+  {
+   "id": "load2/win/N/cpu-mean",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "cpu",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": false,
+   "what": "daemon CPU, mean after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU, mean after warm-up",
+   "unit": "% of one core",
+   "n": 2,
+   "median": 92.5,
+   "worst": 94,
+   "values": [
+    91,
+    94
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 2 of 13 one-minute samples; not alone by its machine record: a monitoring process not ours used 68% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T22:41:58.775Z",
+   "series": [
+    [
+     60,
+     13
+    ],
+    [
+     120,
+     31
+    ],
+    [
+     180,
+     77
+    ],
+    [
+     240,
+     84
+    ],
+    [
+     300,
+     95
+    ],
+    [
+     360,
+     94
+    ],
+    [
+     420,
+     93
+    ],
+    [
+     480,
+     96
+    ],
+    [
+     540,
+     98
+    ],
+    [
+     600,
+     93
+    ],
+    [
+     660,
+     82
+    ]
+   ],
+   "series_unit": "% of one core"
+  },
+  {
+   "id": "load2/win/N/cpu-busiest",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "cpu",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": false,
+   "what": "daemon CPU in the busiest minute after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU in the busiest minute after warm-up",
+   "unit": "% of one core",
+   "n": 2,
+   "median": 98.0,
+   "worst": 98,
+   "values": [
+    98,
+    98
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 2 of 13 one-minute samples; not alone by its machine record: a monitoring process not ours used 68% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T22:41:58.775Z"
+  },
+  {
+   "id": "load2/win/N/rss-peak",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "memory",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": false,
+   "what": "daemon resident memory at its peak",
+   "state": "under the same load",
+   "metric": "daemon resident memory at its peak",
+   "unit": "MB",
+   "n": 2,
+   "median": 1235.5,
+   "worst": 1272,
+   "values": [
+    1199,
+    1272
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 2 of 13 one-minute samples; not alone by its machine record: a monitoring process not ours used 68% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T22:41:58.775Z",
+   "series": [
+    [
+     60,
+     285
+    ],
+    [
+     120,
+     464
+    ],
+    [
+     180,
+     680
+    ],
+    [
+     240,
+     730
+    ],
+    [
+     300,
+     828
+    ],
+    [
+     360,
+     892
+    ],
+    [
+     420,
+     990
+    ],
+    [
+     480,
+     1068
+    ],
+    [
+     540,
+     1128
+    ],
+    [
+     600,
+     1189
+    ],
+    [
+     660,
+     1199
+    ]
+   ],
+   "series_unit": "MB"
+  },
+  {
+   "id": "load2/win/N/heap-growth",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "memory",
+   "part": "load",
+   "pass": 2,
+   "role": "rate",
+   "alone": false,
+   "what": "heap growth after forced collections, after warm-up",
+   "state": "under the same load",
+   "metric": "heap growth after forced collections, after warm-up",
+   "unit": "MB a minute",
+   "n": 2,
+   "median": 11.3,
+   "worst": 11.8,
+   "values": [
+    10.8,
+    11.8
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 2 of 13 one-minute samples; not alone by its machine record: a monitoring process not ours used 68% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T22:41:58.775Z",
+   "series": [
+    [
+     60,
+     52
+    ],
+    [
+     120,
+     62
+    ],
+    [
+     180,
+     77
+    ],
+    [
+     240,
+     82
+    ],
+    [
+     300,
+     92
+    ],
+    [
+     360,
+     105
+    ],
+    [
+     420,
+     118
+    ],
+    [
+     480,
+     127
+    ],
+    [
+     540,
+     137
+    ],
+    [
+     600,
+     151
+    ]
+   ],
+   "series_unit": "MB after a forced collection"
+  },
+  {
+   "id": "load2/win/N/hook-p95",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": false,
+   "what": "hook p95 after warm-up",
+   "state": "under the same load",
+   "metric": "hook p95 after warm-up",
+   "unit": "ms",
+   "n": 2,
+   "median": 5506.0,
+   "worst": 6044,
+   "values": [
+    6044,
+    4968
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 2 of 13 one-minute samples; not alone by its machine record: a monitoring process not ours used 68% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T22:41:58.775Z",
+   "series": [
+    [
+     60,
+     47997
+    ],
+    [
+     120,
+     35107
+    ],
+    [
+     180,
+     34460
+    ],
+    [
+     240,
+     2361
+    ],
+    [
+     300,
+     6497
+    ],
+    [
+     360,
+     3742
+    ],
+    [
+     420,
+     4271
+    ],
+    [
+     480,
+     4059
+    ],
+    [
+     540,
+     5237
+    ],
+    [
+     600,
+     5676
+    ],
+    [
+     660,
+     3916
+    ]
+   ],
+   "series_unit": "ms"
+  },
+  {
+   "id": "load2/win/N/hook-slowest",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": false,
+   "what": "slowest hook after warm-up",
+   "state": "under the same load",
+   "metric": "slowest hook after warm-up",
+   "unit": "ms",
+   "n": 2,
+   "median": 25514.5,
+   "worst": 41673,
+   "values": [
+    41673,
+    9356
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 2 of 13 one-minute samples; not alone by its machine record: a monitoring process not ours used 68% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T22:41:58.775Z"
+  },
+  {
+   "id": "load2/win/N/hook-floor",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "ref",
+   "alone": false,
+   "what": "hook floor: a hook's own start, with no daemon in it",
+   "state": "under the same load",
+   "metric": "hook floor: a hook's own start, with no daemon in it",
+   "unit": "ms",
+   "n": 2,
+   "median": 115.0,
+   "worst": 117,
+   "values": [
+    117,
+    113
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 2 of 13 one-minute samples; not alone by its machine record: a monitoring process not ours used 68% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T22:41:58.775Z"
+  },
+  {
+   "id": "load2/win/N/hook-failed",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "count",
+   "alone": false,
+   "what": "failed, timed-out or lost hooks",
+   "state": "under the same load",
+   "metric": "failed, timed-out or lost hooks",
+   "unit": "hooks",
+   "n": 2,
+   "median": 25.0,
+   "worst": 37,
+   "values": [
+    37,
+    13
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 2 of 13 one-minute samples; not alone by its machine record: a monitoring process not ours used 68% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T22:41:58.775Z"
+  },
+  {
+   "id": "load2/win/N/hooks-answered",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "count",
+   "alone": false,
+   "what": "hooks answered in the run",
+   "state": "under the same load",
+   "metric": "hooks answered in the run",
+   "unit": "hooks",
+   "n": 2,
+   "median": 1777.0,
+   "worst": 1750,
+   "values": [
+    1750,
+    1804
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 2 of 13 one-minute samples; not alone by its machine record: a monitoring process not ours used 68% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T22:41:58.775Z"
+  },
+  {
+   "id": "load2/win/P/cpu-mean",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "cpu",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": false,
+   "what": "daemon CPU, mean after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU, mean after warm-up",
+   "unit": "% of one core",
+   "n": 1,
+   "median": 94,
+   "worst": 94,
+   "values": [
+    94
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 53% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:35:53.521Z",
+   "series": [
+    [
+     60,
+     13
+    ],
+    [
+     120,
+     41
+    ],
+    [
+     180,
+     92
+    ],
+    [
+     240,
+     89
+    ],
+    [
+     300,
+     97
+    ],
+    [
+     360,
+     98
+    ],
+    [
+     420,
+     90
+    ],
+    [
+     480,
+     96
+    ],
+    [
+     540,
+     97
+    ],
+    [
+     600,
+     95
+    ],
+    [
+     660,
+     81
+    ]
+   ],
+   "series_unit": "% of one core"
+  },
+  {
+   "id": "load2/win/P/cpu-busiest",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "cpu",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": false,
+   "what": "daemon CPU in the busiest minute after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU in the busiest minute after warm-up",
+   "unit": "% of one core",
+   "n": 1,
+   "median": 98,
+   "worst": 98,
+   "values": [
+    98
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 53% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:35:53.521Z"
+  },
+  {
+   "id": "load2/win/P/rss-peak",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "memory",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": false,
+   "what": "daemon resident memory at its peak",
+   "state": "under the same load",
+   "metric": "daemon resident memory at its peak",
+   "unit": "MB",
+   "n": 1,
+   "median": 1180,
+   "worst": 1180,
+   "values": [
+    1180
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 53% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:35:53.521Z",
+   "series": [
+    [
+     60,
+     253
+    ],
+    [
+     120,
+     469
+    ],
+    [
+     180,
+     633
+    ],
+    [
+     240,
+     730
+    ],
+    [
+     300,
+     831
+    ],
+    [
+     360,
+     878
+    ],
+    [
+     420,
+     985
+    ],
+    [
+     480,
+     1036
+    ],
+    [
+     540,
+     1111
+    ],
+    [
+     600,
+     1180
+    ],
+    [
+     660,
+     1125
+    ]
+   ],
+   "series_unit": "MB"
+  },
+  {
+   "id": "load2/win/P/heap-growth",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "memory",
+   "part": "load",
+   "pass": 2,
+   "role": "rate",
+   "alone": false,
+   "what": "heap growth after forced collections, after warm-up",
+   "state": "under the same load",
+   "metric": "heap growth after forced collections, after warm-up",
+   "unit": "MB a minute",
+   "n": 1,
+   "median": 11.2,
+   "worst": 11.2,
+   "values": [
+    11.2
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 53% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:35:53.521Z",
+   "series": [
+    [
+     60,
+     53
+    ],
+    [
+     120,
+     64
+    ],
+    [
+     180,
+     77
+    ],
+    [
+     240,
+     93
+    ],
+    [
+     300,
+     102
+    ],
+    [
+     360,
+     109
+    ],
+    [
+     420,
+     128
+    ],
+    [
+     480,
+     136
+    ],
+    [
+     540,
+     147
+    ],
+    [
+     600,
+     156
+    ]
+   ],
+   "series_unit": "MB after a forced collection"
+  },
+  {
+   "id": "load2/win/P/hook-p95",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": false,
+   "what": "hook p95 after warm-up",
+   "state": "under the same load",
+   "metric": "hook p95 after warm-up",
+   "unit": "ms",
+   "n": 1,
+   "median": 5793,
+   "worst": 5793,
+   "values": [
+    5793
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 53% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:35:53.521Z",
+   "series": [
+    [
+     60,
+     39869
+    ],
+    [
+     120,
+     40291
+    ],
+    [
+     180,
+     5033
+    ],
+    [
+     240,
+     3636
+    ],
+    [
+     300,
+     8369
+    ],
+    [
+     360,
+     5793
+    ],
+    [
+     420,
+     4139
+    ],
+    [
+     480,
+     5105
+    ],
+    [
+     540,
+     5153
+    ],
+    [
+     600,
+     7510
+    ],
+    [
+     660,
+     3884
+    ]
+   ],
+   "series_unit": "ms"
+  },
+  {
+   "id": "load2/win/P/hook-slowest",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": false,
+   "what": "slowest hook after warm-up",
+   "state": "under the same load",
+   "metric": "slowest hook after warm-up",
+   "unit": "ms",
+   "n": 1,
+   "median": 12209,
+   "worst": 12209,
+   "values": [
+    12209
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 53% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:35:53.521Z"
+  },
+  {
+   "id": "load2/win/P/hook-floor",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "ref",
+   "alone": false,
+   "what": "hook floor: a hook's own start, with no daemon in it",
+   "state": "under the same load",
+   "metric": "hook floor: a hook's own start, with no daemon in it",
+   "unit": "ms",
+   "n": 1,
+   "median": 114,
+   "worst": 114,
+   "values": [
+    114
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 53% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:35:53.521Z"
+  },
+  {
+   "id": "load2/win/P/hook-failed",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "count",
+   "alone": false,
+   "what": "failed, timed-out or lost hooks",
+   "state": "under the same load",
+   "metric": "failed, timed-out or lost hooks",
+   "unit": "hooks",
+   "n": 1,
+   "median": 24,
+   "worst": 24,
+   "values": [
+    24
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 53% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:35:53.521Z"
+  },
+  {
+   "id": "load2/win/P/hooks-answered",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "count",
+   "alone": false,
+   "what": "hooks answered in the run",
+   "state": "under the same load",
+   "metric": "hooks answered in the run",
+   "unit": "hooks",
+   "n": 1,
+   "median": 1766,
+   "worst": 1766,
+   "values": [
+    1766
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 53% of a core in 1 of 13 one-minute samples",
+   "command": "our load harness, 10 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:35:53.521Z"
+  },
+  {
+   "id": "load2/lx/B/cpu-mean",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "cpu",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": true,
+   "what": "daemon CPU, mean after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU, mean after warm-up",
+   "unit": "% of one core",
+   "n": 1,
+   "median": 49,
+   "worst": 49,
+   "values": [
+    49
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:29:23.737Z",
+   "series": [
+    [
+     60,
+     102
+    ],
+    [
+     120,
+     103
+    ],
+    [
+     180,
+     104
+    ],
+    [
+     240,
+     46
+    ],
+    [
+     300,
+     36
+    ],
+    [
+     360,
+     43
+    ],
+    [
+     420,
+     36
+    ],
+    [
+     480,
+     44
+    ],
+    [
+     540,
+     38
+    ],
+    [
+     600,
+     47
+    ],
+    [
+     660,
+     39
+    ]
+   ],
+   "series_unit": "% of one core"
+  },
+  {
+   "id": "load2/lx/B/cpu-busiest",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "cpu",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": true,
+   "what": "daemon CPU in the busiest minute after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU in the busiest minute after warm-up",
+   "unit": "% of one core",
+   "n": 1,
+   "median": 104,
+   "worst": 104,
+   "values": [
+    104
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:29:23.737Z"
+  },
+  {
+   "id": "load2/lx/B/rss-peak",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "memory",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": true,
+   "what": "daemon resident memory at its peak",
+   "state": "under the same load",
+   "metric": "daemon resident memory at its peak",
+   "unit": "MB",
+   "n": 1,
+   "median": 4246,
+   "worst": 4246,
+   "values": [
+    4246
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:29:23.737Z",
+   "series": [
+    [
+     60,
+     1348
+    ],
+    [
+     120,
+     2171
+    ],
+    [
+     180,
+     4065
+    ],
+    [
+     240,
+     4095
+    ],
+    [
+     300,
+     4106
+    ],
+    [
+     360,
+     4124
+    ],
+    [
+     420,
+     4164
+    ],
+    [
+     480,
+     4194
+    ],
+    [
+     540,
+     4214
+    ],
+    [
+     600,
+     4246
+    ],
+    [
+     660,
+     4114
+    ]
+   ],
+   "series_unit": "MB"
+  },
+  {
+   "id": "load2/lx/B/heap-growth",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "memory",
+   "part": "load",
+   "pass": 2,
+   "role": "rate",
+   "alone": true,
+   "what": "heap growth after forced collections, after warm-up",
+   "state": "under the same load",
+   "metric": "heap growth after forced collections, after warm-up",
+   "unit": "MB a minute",
+   "n": 1,
+   "median": 1.8,
+   "worst": 1.8,
+   "values": [
+    1.8
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:29:23.737Z",
+   "series": [
+    [
+     60,
+     159
+    ],
+    [
+     120,
+     279
+    ],
+    [
+     180,
+     351
+    ],
+    [
+     240,
+     356
+    ],
+    [
+     300,
+     357
+    ],
+    [
+     360,
+     359
+    ],
+    [
+     420,
+     360
+    ],
+    [
+     480,
+     362
+    ],
+    [
+     540,
+     363
+    ],
+    [
+     600,
+     365
+    ]
+   ],
+   "series_unit": "MB after a forced collection"
+  },
+  {
+   "id": "load2/lx/B/hook-p95",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": true,
+   "what": "hook p95 after warm-up",
+   "state": "under the same load",
+   "metric": "hook p95 after warm-up",
+   "unit": "ms",
+   "n": 1,
+   "median": 2073,
+   "worst": 2073,
+   "values": [
+    2073
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:29:23.737Z",
+   "series": [
+    [
+     60,
+     837
+    ],
+    [
+     120,
+     752
+    ],
+    [
+     180,
+     5867
+    ],
+    [
+     240,
+     5842
+    ],
+    [
+     300,
+     1029
+    ],
+    [
+     360,
+     1904
+    ],
+    [
+     420,
+     819
+    ],
+    [
+     480,
+     1915
+    ],
+    [
+     540,
+     1399
+    ],
+    [
+     600,
+     1907
+    ],
+    [
+     660,
+     1360
+    ]
+   ],
+   "series_unit": "ms"
+  },
+  {
+   "id": "load2/lx/B/hook-slowest",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": true,
+   "what": "slowest hook after warm-up",
+   "state": "under the same load",
+   "metric": "slowest hook after warm-up",
+   "unit": "ms",
+   "n": 1,
+   "median": 11756,
+   "worst": 11756,
+   "values": [
+    11756
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:29:23.737Z"
+  },
+  {
+   "id": "load2/lx/B/hook-floor",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "ref",
+   "alone": true,
+   "what": "hook floor: a hook's own start, with no daemon in it",
+   "state": "under the same load",
+   "metric": "hook floor: a hook's own start, with no daemon in it",
+   "unit": "ms",
+   "n": 1,
+   "median": 110,
+   "worst": 110,
+   "values": [
+    110
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:29:23.737Z"
+  },
+  {
+   "id": "load2/lx/B/hook-failed",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "count",
+   "alone": true,
+   "what": "failed, timed-out or lost hooks",
+   "state": "under the same load",
+   "metric": "failed, timed-out or lost hooks",
+   "unit": "hooks",
+   "n": 1,
+   "median": 0,
+   "worst": 0,
+   "values": [
+    0
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:29:23.737Z"
+  },
+  {
+   "id": "load2/lx/B/hooks-answered",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "count",
+   "alone": true,
+   "what": "hooks answered in the run",
+   "state": "under the same load",
+   "metric": "hooks answered in the run",
+   "unit": "hooks",
+   "n": 1,
+   "median": 2678,
+   "worst": 2678,
+   "values": [
+    2678
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T20:29:23.737Z"
+  },
+  {
+   "id": "load2/lx/N/cpu-mean",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "cpu",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": true,
+   "what": "daemon CPU, mean after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU, mean after warm-up",
+   "unit": "% of one core",
+   "n": 2,
+   "median": 96.5,
+   "worst": 98,
+   "values": [
+    98,
+    95
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T20:44:44.060Z",
+   "series": [
+    [
+     60,
+     79
+    ],
+    [
+     120,
+     100
+    ],
+    [
+     180,
+     107
+    ],
+    [
+     240,
+     103
+    ],
+    [
+     300,
+     95
+    ],
+    [
+     360,
+     98
+    ],
+    [
+     420,
+     93
+    ],
+    [
+     480,
+     96
+    ],
+    [
+     540,
+     95
+    ],
+    [
+     600,
+     95
+    ],
+    [
+     660,
+     90
+    ]
+   ],
+   "series_unit": "% of one core"
+  },
+  {
+   "id": "load2/lx/N/cpu-busiest",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "cpu",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": true,
+   "what": "daemon CPU in the busiest minute after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU in the busiest minute after warm-up",
+   "unit": "% of one core",
+   "n": 2,
+   "median": 108.0,
+   "worst": 109,
+   "values": [
+    107,
+    109
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T20:44:44.060Z"
+  },
+  {
+   "id": "load2/lx/N/rss-peak",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "memory",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": true,
+   "what": "daemon resident memory at its peak",
+   "state": "under the same load",
+   "metric": "daemon resident memory at its peak",
+   "unit": "MB",
+   "n": 2,
+   "median": 1811.5,
+   "worst": 1841,
+   "values": [
+    1782,
+    1841
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T20:44:44.060Z",
+   "series": [
+    [
+     60,
+     554
+    ],
+    [
+     120,
+     820
+    ],
+    [
+     180,
+     1059
+    ],
+    [
+     240,
+     1272
+    ],
+    [
+     300,
+     1368
+    ],
+    [
+     360,
+     1538
+    ],
+    [
+     420,
+     1630
+    ],
+    [
+     480,
+     1670
+    ],
+    [
+     540,
+     1715
+    ],
+    [
+     600,
+     1782
+    ],
+    [
+     660,
+     1716
+    ]
+   ],
+   "series_unit": "MB"
+  },
+  {
+   "id": "load2/lx/N/heap-growth",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "memory",
+   "part": "load",
+   "pass": 2,
+   "role": "rate",
+   "alone": true,
+   "what": "heap growth after forced collections, after warm-up",
+   "state": "under the same load",
+   "metric": "heap growth after forced collections, after warm-up",
+   "unit": "MB a minute",
+   "n": 2,
+   "median": 12.95,
+   "worst": 13.7,
+   "values": [
+    13.7,
+    12.2
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T20:44:44.060Z",
+   "series": [
+    [
+     60,
+     65
+    ],
+    [
+     120,
+     85
+    ],
+    [
+     180,
+     115
+    ],
+    [
+     240,
+     144
+    ],
+    [
+     300,
+     156
+    ],
+    [
+     360,
+     186
+    ],
+    [
+     420,
+     192
+    ],
+    [
+     480,
+     200
+    ],
+    [
+     540,
+     206
+    ],
+    [
+     600,
+     216
+    ]
+   ],
+   "series_unit": "MB after a forced collection"
+  },
+  {
+   "id": "load2/lx/N/hook-p95",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": true,
+   "what": "hook p95 after warm-up",
+   "state": "under the same load",
+   "metric": "hook p95 after warm-up",
+   "unit": "ms",
+   "n": 2,
+   "median": 9743.5,
+   "worst": 10050,
+   "values": [
+    10050,
+    9437
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T20:44:44.060Z",
+   "series": [
+    [
+     60,
+     15663
+    ],
+    [
+     120,
+     10677
+    ],
+    [
+     180,
+     5264
+    ],
+    [
+     240,
+     6650
+    ],
+    [
+     300,
+     11186
+    ],
+    [
+     360,
+     5930
+    ],
+    [
+     420,
+     7085
+    ],
+    [
+     480,
+     12712
+    ],
+    [
+     540,
+     15952
+    ],
+    [
+     600,
+     15957
+    ],
+    [
+     660,
+     5232
+    ]
+   ],
+   "series_unit": "ms"
+  },
+  {
+   "id": "load2/lx/N/hook-slowest",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": true,
+   "what": "slowest hook after warm-up",
+   "state": "under the same load",
+   "metric": "slowest hook after warm-up",
+   "unit": "ms",
+   "n": 2,
+   "median": 17542.5,
+   "worst": 18984,
+   "values": [
+    18984,
+    16101
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T20:44:44.060Z"
+  },
+  {
+   "id": "load2/lx/N/hook-floor",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "ref",
+   "alone": true,
+   "what": "hook floor: a hook's own start, with no daemon in it",
+   "state": "under the same load",
+   "metric": "hook floor: a hook's own start, with no daemon in it",
+   "unit": "ms",
+   "n": 2,
+   "median": 108.0,
+   "worst": 109,
+   "values": [
+    107,
+    109
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T20:44:44.060Z"
+  },
+  {
+   "id": "load2/lx/N/hook-failed",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "count",
+   "alone": true,
+   "what": "failed, timed-out or lost hooks",
+   "state": "under the same load",
+   "metric": "failed, timed-out or lost hooks",
+   "unit": "hooks",
+   "n": 2,
+   "median": 0.0,
+   "worst": 0,
+   "values": [
+    0,
+    0
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T20:44:44.060Z"
+  },
+  {
+   "id": "load2/lx/N/hooks-answered",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "aad1dd6ef",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "count",
+   "alone": true,
+   "what": "hooks answered in the run",
+   "state": "under the same load",
+   "metric": "hooks answered in the run",
+   "unit": "hooks",
+   "n": 2,
+   "median": 1761.0,
+   "worst": 1710,
+   "values": [
+    1812,
+    1710
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at aad1dd6ef",
+   "at": "2026-11-17T20:44:44.060Z"
+  },
+  {
+   "id": "load2/lx/P/cpu-mean",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "cpu",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": true,
+   "what": "daemon CPU, mean after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU, mean after warm-up",
+   "unit": "% of one core",
+   "n": 1,
+   "median": 96,
+   "worst": 96,
+   "values": [
+    96
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:12:24.449Z",
+   "series": [
+    [
+     60,
+     81
+    ],
+    [
+     120,
+     105
+    ],
+    [
+     180,
+     107
+    ],
+    [
+     240,
+     99
+    ],
+    [
+     300,
+     99
+    ],
+    [
+     360,
+     97
+    ],
+    [
+     420,
+     95
+    ],
+    [
+     480,
+     95
+    ],
+    [
+     540,
+     93
+    ],
+    [
+     600,
+     96
+    ],
+    [
+     660,
+     55
+    ]
+   ],
+   "series_unit": "% of one core"
+  },
+  {
+   "id": "load2/lx/P/cpu-busiest",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "cpu",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": true,
+   "what": "daemon CPU in the busiest minute after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU in the busiest minute after warm-up",
+   "unit": "% of one core",
+   "n": 1,
+   "median": 107,
+   "worst": 107,
+   "values": [
+    107
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:12:24.449Z"
+  },
+  {
+   "id": "load2/lx/P/rss-peak",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "memory",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": true,
+   "what": "daemon resident memory at its peak",
+   "state": "under the same load",
+   "metric": "daemon resident memory at its peak",
+   "unit": "MB",
+   "n": 1,
+   "median": 1807,
+   "worst": 1807,
+   "values": [
+    1807
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:12:24.449Z",
+   "series": [
+    [
+     60,
+     504
+    ],
+    [
+     120,
+     813
+    ],
+    [
+     180,
+     1069
+    ],
+    [
+     240,
+     1227
+    ],
+    [
+     300,
+     1348
+    ],
+    [
+     360,
+     1465
+    ],
+    [
+     420,
+     1604
+    ],
+    [
+     480,
+     1641
+    ],
+    [
+     540,
+     1711
+    ],
+    [
+     600,
+     1807
+    ],
+    [
+     660,
+     927
+    ]
+   ],
+   "series_unit": "MB"
+  },
+  {
+   "id": "load2/lx/P/heap-growth",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "memory",
+   "part": "load",
+   "pass": 2,
+   "role": "rate",
+   "alone": true,
+   "what": "heap growth after forced collections, after warm-up",
+   "state": "under the same load",
+   "metric": "heap growth after forced collections, after warm-up",
+   "unit": "MB a minute",
+   "n": 1,
+   "median": 14.1,
+   "worst": 14.1,
+   "values": [
+    14.1
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:12:24.449Z",
+   "series": [
+    [
+     60,
+     64
+    ],
+    [
+     120,
+     98
+    ],
+    [
+     180,
+     134
+    ],
+    [
+     240,
+     149
+    ],
+    [
+     300,
+     168
+    ],
+    [
+     360,
+     181
+    ],
+    [
+     420,
+     202
+    ],
+    [
+     480,
+     210
+    ],
+    [
+     540,
+     219
+    ],
+    [
+     600,
+     233
+    ]
+   ],
+   "series_unit": "MB after a forced collection"
+  },
+  {
+   "id": "load2/lx/P/hook-p95",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": true,
+   "what": "hook p95 after warm-up",
+   "state": "under the same load",
+   "metric": "hook p95 after warm-up",
+   "unit": "ms",
+   "n": 1,
+   "median": 8437,
+   "worst": 8437,
+   "values": [
+    8437
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:12:24.449Z",
+   "series": [
+    [
+     60,
+     18307
+    ],
+    [
+     120,
+     6355
+    ],
+    [
+     180,
+     3885
+    ],
+    [
+     240,
+     6122
+    ],
+    [
+     300,
+     6556
+    ],
+    [
+     360,
+     7202
+    ],
+    [
+     420,
+     5399
+    ],
+    [
+     480,
+     10824
+    ],
+    [
+     540,
+     10065
+    ],
+    [
+     600,
+     9977
+    ],
+    [
+     660,
+     6116
+    ]
+   ],
+   "series_unit": "ms"
+  },
+  {
+   "id": "load2/lx/P/hook-slowest",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "cost",
+   "alone": true,
+   "what": "slowest hook after warm-up",
+   "state": "under the same load",
+   "metric": "slowest hook after warm-up",
+   "unit": "ms",
+   "n": 1,
+   "median": 15747,
+   "worst": 15747,
+   "values": [
+    15747
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:12:24.449Z"
+  },
+  {
+   "id": "load2/lx/P/hook-floor",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "ref",
+   "alone": true,
+   "what": "hook floor: a hook's own start, with no daemon in it",
+   "state": "under the same load",
+   "metric": "hook floor: a hook's own start, with no daemon in it",
+   "unit": "ms",
+   "n": 1,
+   "median": 108,
+   "worst": 108,
+   "values": [
+    108
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:12:24.449Z"
+  },
+  {
+   "id": "load2/lx/P/hook-failed",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "count",
+   "alone": true,
+   "what": "failed, timed-out or lost hooks",
+   "state": "under the same load",
+   "metric": "failed, timed-out or lost hooks",
+   "unit": "hooks",
+   "n": 1,
+   "median": 0,
+   "worst": 0,
+   "values": [
+    0
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:12:24.449Z"
+  },
+  {
+   "id": "load2/lx/P/hooks-answered",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "hook",
+   "part": "load",
+   "pass": 2,
+   "role": "count",
+   "alone": true,
+   "what": "hooks answered in the run",
+   "state": "under the same load",
+   "metric": "hooks answered in the run",
+   "unit": "hooks",
+   "n": 1,
+   "median": 1818,
+   "worst": 1818,
+   "values": [
+    1818
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T20:12:24.449Z"
+  },
+  {
+   "id": "load3/lx/N/cpu-mean",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "f06640857",
+   "question": "cpu",
+   "part": "load",
+   "pass": 3,
+   "role": "cost",
+   "alone": true,
+   "what": "daemon CPU, mean after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU, mean after warm-up",
+   "unit": "% of one core",
+   "n": 1,
+   "median": 95,
+   "worst": 95,
+   "values": [
+    95
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at f06640857",
+   "at": "2026-11-17T22:43:10.800Z",
+   "series": [
+    [
+     60,
+     72
+    ],
+    [
+     120,
+     97
+    ],
+    [
+     180,
+     107
+    ],
+    [
+     240,
+     101
+    ],
+    [
+     300,
+     98
+    ],
+    [
+     360,
+     98
+    ],
+    [
+     420,
+     92
+    ],
+    [
+     480,
+     93
+    ],
+    [
+     540,
+     91
+    ],
+    [
+     600,
+     93
+    ],
+    [
+     660,
+     64
+    ]
+   ],
+   "series_unit": "% of one core"
+  },
+  {
+   "id": "load3/lx/N/cpu-busiest",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "f06640857",
+   "question": "cpu",
+   "part": "load",
+   "pass": 3,
+   "role": "cost",
+   "alone": true,
+   "what": "daemon CPU in the busiest minute after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU in the busiest minute after warm-up",
+   "unit": "% of one core",
+   "n": 1,
+   "median": 107,
+   "worst": 107,
+   "values": [
+    107
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at f06640857",
+   "at": "2026-11-17T22:43:10.800Z"
+  },
+  {
+   "id": "load3/lx/N/rss-peak",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "f06640857",
+   "question": "memory",
+   "part": "load",
+   "pass": 3,
+   "role": "cost",
+   "alone": true,
+   "what": "daemon resident memory at its peak",
+   "state": "under the same load",
+   "metric": "daemon resident memory at its peak",
+   "unit": "MB",
+   "n": 1,
+   "median": 1888,
+   "worst": 1888,
+   "values": [
+    1888
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at f06640857",
+   "at": "2026-11-17T22:43:10.800Z",
+   "series": [
+    [
+     60,
+     569
+    ],
+    [
+     120,
+     798
+    ],
+    [
+     180,
+     1015
+    ],
+    [
+     240,
+     1206
+    ],
+    [
+     300,
+     1322
+    ],
+    [
+     360,
+     1472
+    ],
+    [
+     420,
+     1577
+    ],
+    [
+     480,
+     1715
+    ],
+    [
+     540,
+     1848
+    ],
+    [
+     600,
+     1888
+    ],
+    [
+     660,
+     1803
+    ]
+   ],
+   "series_unit": "MB"
+  },
+  {
+   "id": "load3/lx/N/heap-growth",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "f06640857",
+   "question": "memory",
+   "part": "load",
+   "pass": 3,
+   "role": "rate",
+   "alone": true,
+   "what": "heap growth after forced collections, after warm-up",
+   "state": "under the same load",
+   "metric": "heap growth after forced collections, after warm-up",
+   "unit": "MB a minute",
+   "n": 1,
+   "median": 15.6,
+   "worst": 15.6,
+   "values": [
+    15.6
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at f06640857",
+   "at": "2026-11-17T22:43:10.800Z",
+   "series": [
+    [
+     60,
+     64
+    ],
+    [
+     120,
+     83
+    ],
+    [
+     180,
+     112
+    ],
+    [
+     240,
+     132
+    ],
+    [
+     300,
+     150
+    ],
+    [
+     360,
+     171
+    ],
+    [
+     420,
+     183
+    ],
+    [
+     480,
+     202
+    ],
+    [
+     540,
+     213
+    ],
+    [
+     600,
+     218
+    ]
+   ],
+   "series_unit": "MB after a forced collection"
+  },
+  {
+   "id": "load3/lx/N/hook-p95",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "f06640857",
+   "question": "hook",
+   "part": "load",
+   "pass": 3,
+   "role": "cost",
+   "alone": true,
+   "what": "hook p95 after warm-up",
+   "state": "under the same load",
+   "metric": "hook p95 after warm-up",
+   "unit": "ms",
+   "n": 1,
+   "median": 7220,
+   "worst": 7220,
+   "values": [
+    7220
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at f06640857",
+   "at": "2026-11-17T22:43:10.800Z",
+   "series": [
+    [
+     60,
+     16510
+    ],
+    [
+     120,
+     13597
+    ],
+    [
+     180,
+     4329
+    ],
+    [
+     240,
+     5046
+    ],
+    [
+     300,
+     6566
+    ],
+    [
+     360,
+     5709
+    ],
+    [
+     420,
+     8873
+    ],
+    [
+     480,
+     7936
+    ],
+    [
+     540,
+     7151
+    ],
+    [
+     600,
+     18993
+    ],
+    [
+     660,
+     6154
+    ]
+   ],
+   "series_unit": "ms"
+  },
+  {
+   "id": "load3/lx/N/hook-slowest",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "f06640857",
+   "question": "hook",
+   "part": "load",
+   "pass": 3,
+   "role": "cost",
+   "alone": true,
+   "what": "slowest hook after warm-up",
+   "state": "under the same load",
+   "metric": "slowest hook after warm-up",
+   "unit": "ms",
+   "n": 1,
+   "median": 22423,
+   "worst": 22423,
+   "values": [
+    22423
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at f06640857",
+   "at": "2026-11-17T22:43:10.800Z"
+  },
+  {
+   "id": "load3/lx/N/hook-floor",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "f06640857",
+   "question": "hook",
+   "part": "load",
+   "pass": 3,
+   "role": "ref",
+   "alone": true,
+   "what": "hook floor: a hook's own start, with no daemon in it",
+   "state": "under the same load",
+   "metric": "hook floor: a hook's own start, with no daemon in it",
+   "unit": "ms",
+   "n": 1,
+   "median": 112,
+   "worst": 112,
+   "values": [
+    112
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at f06640857",
+   "at": "2026-11-17T22:43:10.800Z"
+  },
+  {
+   "id": "load3/lx/N/hook-failed",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "f06640857",
+   "question": "hook",
+   "part": "load",
+   "pass": 3,
+   "role": "count",
+   "alone": true,
+   "what": "failed, timed-out or lost hooks",
+   "state": "under the same load",
+   "metric": "failed, timed-out or lost hooks",
+   "unit": "hooks",
+   "n": 1,
+   "median": 1,
+   "worst": 1,
+   "values": [
+    1
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at f06640857",
+   "at": "2026-11-17T22:43:10.800Z"
+  },
+  {
+   "id": "load3/lx/N/hooks-answered",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "N",
+   "commit": "f06640857",
+   "question": "hook",
+   "part": "load",
+   "pass": 3,
+   "role": "count",
+   "alone": true,
+   "what": "hooks answered in the run",
+   "state": "under the same load",
+   "metric": "hooks answered in the run",
+   "unit": "hooks",
+   "n": 1,
+   "median": 1802,
+   "worst": 1802,
+   "values": [
+    1802
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "alone",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at f06640857",
+   "at": "2026-11-17T22:43:10.800Z"
+  },
+  {
+   "id": "load3/lx/P/cpu-mean",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "cpu",
+   "part": "load",
+   "pass": 3,
+   "role": "cost",
+   "alone": false,
+   "what": "daemon CPU, mean after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU, mean after warm-up",
+   "unit": "% of one core",
+   "n": 1,
+   "median": 96,
+   "worst": 96,
+   "values": [
+    96
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: other runs of ours started on the machine while it ran",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T23:20:16.842Z",
+   "series": [
+    [
+     60,
+     81
+    ],
+    [
+     120,
+     108
+    ],
+    [
+     180,
+     106
+    ],
+    [
+     240,
+     96
+    ],
+    [
+     300,
+     100
+    ],
+    [
+     360,
+     95
+    ],
+    [
+     420,
+     96
+    ],
+    [
+     480,
+     94
+    ],
+    [
+     540,
+     95
+    ],
+    [
+     600,
+     94
+    ],
+    [
+     660,
+     83
+    ]
+   ],
+   "series_unit": "% of one core"
+  },
+  {
+   "id": "load3/lx/P/cpu-busiest",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "cpu",
+   "part": "load",
+   "pass": 3,
+   "role": "cost",
+   "alone": false,
+   "what": "daemon CPU in the busiest minute after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU in the busiest minute after warm-up",
+   "unit": "% of one core",
+   "n": 1,
+   "median": 106,
+   "worst": 106,
+   "values": [
+    106
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: other runs of ours started on the machine while it ran",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T23:20:16.842Z"
+  },
+  {
+   "id": "load3/lx/P/rss-peak",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "memory",
+   "part": "load",
+   "pass": 3,
+   "role": "cost",
+   "alone": false,
+   "what": "daemon resident memory at its peak",
+   "state": "under the same load",
+   "metric": "daemon resident memory at its peak",
+   "unit": "MB",
+   "n": 1,
+   "median": 1832,
+   "worst": 1832,
+   "values": [
+    1832
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: other runs of ours started on the machine while it ran",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T23:20:16.842Z",
+   "series": [
+    [
+     60,
+     506
+    ],
+    [
+     120,
+     902
+    ],
+    [
+     180,
+     1170
+    ],
+    [
+     240,
+     1204
+    ],
+    [
+     300,
+     1329
+    ],
+    [
+     360,
+     1471
+    ],
+    [
+     420,
+     1607
+    ],
+    [
+     480,
+     1685
+    ],
+    [
+     540,
+     1749
+    ],
+    [
+     600,
+     1832
+    ],
+    [
+     660,
+     1816
+    ]
+   ],
+   "series_unit": "MB"
+  },
+  {
+   "id": "load3/lx/P/heap-growth",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "memory",
+   "part": "load",
+   "pass": 3,
+   "role": "rate",
+   "alone": false,
+   "what": "heap growth after forced collections, after warm-up",
+   "state": "under the same load",
+   "metric": "heap growth after forced collections, after warm-up",
+   "unit": "MB a minute",
+   "n": 1,
+   "median": 13.4,
+   "worst": 13.4,
+   "values": [
+    13.4
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: other runs of ours started on the machine while it ran",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T23:20:16.842Z",
+   "series": [
+    [
+     60,
+     65
+    ],
+    [
+     120,
+     101
+    ],
+    [
+     180,
+     142
+    ],
+    [
+     240,
+     157
+    ],
+    [
+     300,
+     168
+    ],
+    [
+     360,
+     188
+    ],
+    [
+     420,
+     201
+    ],
+    [
+     480,
+     216
+    ],
+    [
+     540,
+     222
+    ],
+    [
+     600,
+     234
+    ]
+   ],
+   "series_unit": "MB after a forced collection"
+  },
+  {
+   "id": "load3/lx/P/hook-p95",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "hook",
+   "part": "load",
+   "pass": 3,
+   "role": "cost",
+   "alone": false,
+   "what": "hook p95 after warm-up",
+   "state": "under the same load",
+   "metric": "hook p95 after warm-up",
+   "unit": "ms",
+   "n": 1,
+   "median": 8703,
+   "worst": 8703,
+   "values": [
+    8703
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: other runs of ours started on the machine while it ran",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T23:20:16.842Z",
+   "series": [
+    [
+     60,
+     18826
+    ],
+    [
+     120,
+     5620
+    ],
+    [
+     180,
+     3194
+    ],
+    [
+     240,
+     8100
+    ],
+    [
+     300,
+     8335
+    ],
+    [
+     360,
+     8481
+    ],
+    [
+     420,
+     7914
+    ],
+    [
+     480,
+     8703
+    ],
+    [
+     540,
+     10106
+    ],
+    [
+     600,
+     8486
+    ],
+    [
+     660,
+     16534
+    ]
+   ],
+   "series_unit": "ms"
+  },
+  {
+   "id": "load3/lx/P/hook-slowest",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "hook",
+   "part": "load",
+   "pass": 3,
+   "role": "cost",
+   "alone": false,
+   "what": "slowest hook after warm-up",
+   "state": "under the same load",
+   "metric": "slowest hook after warm-up",
+   "unit": "ms",
+   "n": 1,
+   "median": 17339,
+   "worst": 17339,
+   "values": [
+    17339
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: other runs of ours started on the machine while it ran",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T23:20:16.842Z"
+  },
+  {
+   "id": "load3/lx/P/hook-floor",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "hook",
+   "part": "load",
+   "pass": 3,
+   "role": "ref",
+   "alone": false,
+   "what": "hook floor: a hook's own start, with no daemon in it",
+   "state": "under the same load",
+   "metric": "hook floor: a hook's own start, with no daemon in it",
+   "unit": "ms",
+   "n": 1,
+   "median": 108,
+   "worst": 108,
+   "values": [
+    108
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: other runs of ours started on the machine while it ran",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T23:20:16.842Z"
+  },
+  {
+   "id": "load3/lx/P/hook-failed",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "hook",
+   "part": "load",
+   "pass": 3,
+   "role": "count",
+   "alone": false,
+   "what": "failed, timed-out or lost hooks",
+   "state": "under the same load",
+   "metric": "failed, timed-out or lost hooks",
+   "unit": "hooks",
+   "n": 1,
+   "median": 0,
+   "worst": 0,
+   "values": [
+    0
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: other runs of ours started on the machine while it ran",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T23:20:16.842Z"
+  },
+  {
+   "id": "load3/lx/P/hooks-answered",
+   "system": "Linux x64",
+   "machine": "linux-8c",
+   "subject": "P",
+   "commit": "9cad73564",
+   "question": "hook",
+   "part": "load",
+   "pass": 3,
+   "role": "count",
+   "alone": false,
+   "what": "hooks answered in the run",
+   "state": "under the same load",
+   "metric": "hooks answered in the run",
+   "unit": "hooks",
+   "n": 1,
+   "median": 1776,
+   "worst": 1776,
+   "values": [
+    1776
+   ],
+   "load": "10 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: other runs of ours started on the machine while it ran",
+   "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
+   "at": "2026-11-17T23:20:16.842Z"
+  }
+ ],
+ "findings": [],
+ "not_measured": []
+}
