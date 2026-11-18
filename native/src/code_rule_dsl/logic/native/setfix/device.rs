@@ -1359,6 +1359,8 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     rep.uploads += 1;
                     rep.upload_cpu += thread_cpu() - c0;
                     let by = &mut rep.upload_by[profile::UPLOAD_MADE];
+                    // By view (`device_chunk::VIEW_*`), for the profile: what step 4 removes, view by view.
+                    crate::code_rule_dsl::prof::count(["device.view_made.node", "device.view_made.child", "device.view_made.field", "device.view_made.core", "device.view_made.axis", "device.view_made.line", "device.view_made.end_line", "device.view_made.col", "device.view_made.docof", "device.view_made.tline"].get(d.view as usize).copied().unwrap_or("device.view_made.other"), dev.bytes());
                     by.0 += dev.bytes() as u64;
                     by.1 += thread_cpu() - c0;
                     let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());

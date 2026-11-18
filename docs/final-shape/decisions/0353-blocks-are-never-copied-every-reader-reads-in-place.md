@@ -432,6 +432,15 @@ Each step ends with:
      - A batch's tapes lie in several slabs, which no offset from one block reaches. A document's descriptor names
        its slab and its tape's offset there, and each backend gives the reads the slabs' bases: the host its
        pointers, the device their GPU addresses in an argument buffer (each slab made resident for the stage).
+     - The views made on the device, by view (hogql cold, 2026-11-17, the profile's `device.view_made.*`):
+       `node` 415.5 MB, the axis 362.7 MB (step 5's), `child` 75.9 MB, `col` 20.8 MB, `line` 20.8 MB, `docof`
+       15.0 MB: 911 MB in all (809.1 MB in the upload line, which counts a view once). 4c and 4d go view by view,
+       `node` first.
+     - The view reads' family (4c): its pointers are the chunk block (`t`, the document's entry an offset from it),
+       and the tape's base and view (`tt`, `v`), which the kernel or the host binds from the entry and the slabs'
+       bases. A view read calls the numbering's reads with `t` and the tape's with `tt` and `v`. The entry holds the
+       projection's numbering's offset, the tape's slab and offset, its `TapeView`, and its code table's kind and
+       field per code (a derived table, small, beside the dialect's canonical codes): no per-node column.
      - **4b.** 16z read in place by the reads written once (a block decoded where a read falls), on the CPU, then
        the kernels; `in_place`'s laid-out copy and the slab's `unblock_into` go.
      - **4c.** The views' reads written once (CLIF, for Rust, the JIT and MSL), over a document's `TapeView` and
