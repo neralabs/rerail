@@ -1390,20 +1390,40 @@ describe("a record whose live pid is not the home's daemon", () => {
   };
 
   // The stop's own read of the busy daemon's start proves it, and every read after that fails, as a Windows PowerShell
-  // past its bound or refused does: the stop ends it then, and never says stopped while it runs.
+  // past its bound or refused does: the stop ends it then, and never says stopped while it runs. On Windows the record
+  // holds the token of a shutdown request, which the daemon's silent engine keeps from going.
   it.each(["linux", "win32"] as const)("ends a busy daemon its stop proves when each read of its start after that fails (%s)", async platform => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const signals: Array<string | number | undefined> = [];
-    await writeFile(stateFile, JSON.stringify(state(platform)));
+    const recorded = { ...state(platform), nativeToken: "native" };
+    await writeFile(stateFile, JSON.stringify(recorded));
     let reads = 0;
-    const { machine, undo } = clockOnEachLook(machineWith(platform, signals, () => undefined, () => ((reads += 1) === 1 ? STARTED_AT - 500 : undefined)));
+    const events: string[] = [];
+    const base = machineWith(platform, signals, () => undefined, () => ((reads += 1) === 1 ? STARTED_AT - 500 : undefined));
+    const { machine, undo } = clockOnEachLook({
+      ...base,
+      capabilityProof: async (socketPath, accessToken, timeoutMs) => {
+        events.push("engine proof");
+        return await base.capabilityProof(socketPath, accessToken, timeoutMs);
+      },
+      processStartedAt: (pid, timeoutMs) => {
+        events.push("start read");
+        return base.processStartedAt(pid, timeoutMs);
+      },
+      kill: (pid, signal) => {
+        if (signal !== 0) events.push(String(signal));
+        return base.kill(pid, signal);
+      },
+    });
     try {
-      expect(await stopFoundDaemon(home, { status: "unresponsive", state: state(platform) }, machine)).toBe("stopped");
+      expect(await stopFoundDaemon(home, { status: "unresponsive", state: recorded }, machine)).toBe("stopped");
     } finally {
       undo();
     }
     expect(signals).toEqual(["SIGTERM"]);
     expect(processAlive(LIVE_PID, machine.kill)).toBe(false);
+    // The one read of the start comes after the shutdown request's proof, with nothing between it and the signal.
+    expect(events).toEqual(platform === "win32" ? ["engine proof", "start read", "SIGTERM"] : ["start read", "SIGTERM"]);
   });
 
   // The daemon outlives its SIGTERM, as a busy one on Linux does until its handler runs, and its start cannot be read
