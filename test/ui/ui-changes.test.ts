@@ -393,10 +393,13 @@ describe("the dashboard following the daemon's change stream", () => {
     stream().end();
     await settle();
     expect(readsOf("/api/repositories")).toBe(before);
+    failing.clear();
 
-    // The pace doubled at the failure, from 5 s to 10 s.
+    // The pace doubled at the failure, from 5 s to 10 s: the retry reads, and its answer opens a new stream.
     await after(10_000);
     expect(readsOf("/api/repositories")).toBe(before + 1);
+    expect(data.disconnected).toBe(false);
+    expect(streams).toHaveLength(2);
   });
 
   it("reads every 5 s as before when the daemon serves no stream, as an older Rerail does", async () => {

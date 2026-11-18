@@ -804,20 +804,13 @@ export async function refresh() {
 /**
  * What a read's outcome moves, whatever asked for it: one that failed is tried again at the poll's own pace (`backoff`),
  * as the poll tried it, even while the stream stays open, and so is every read while the page reads at the pace
- * (`atPace`); one that answered holds what the daemon had when it began. A read that answers while no stream is open
- * or due (the daemon came back) follows a new one at once.
+ * (`atPace`); one that answered holds what the daemon had when it began.
  */
 function afterRead(asked) {
   data.readingSince = 0;
   if (!data.disconnected && data.behindSince <= asked) data.behindSince = 0;
   if (data.disconnected || atPace) retryLater();
-  else followIfClosed();
   armGithubRead();
-}
-
-/** Follow a new stream when none is open or due: the daemon answers again after it was unreachable. */
-function followIfClosed() {
-  if (stream === null && retryTimer === null) followChanges();
 }
 
 /** The tab is in the background: nothing is followed or read until it shows again. */
@@ -996,18 +989,23 @@ function changesEnded(controller) {
 
 /**
  * Try again after `backoff`, the poll's own pace (doubling to 30 s while reads fail): read again if the last read
- * failed, as the poll did, since a stream something between holds would not say the daemon is back (the read that
- * answers opens the stream, `afterRead`); else open the stream again if it is closed, or read if the page reads at the
- * pace. The one retry for a stream that ended, a read that failed and a stream that never brought a message.
+ * failed, as the poll did, since a stream something between holds would not say the daemon is back, and follow a new
+ * stream once that read answers; else open the stream again if it is closed, or read if the page reads at the pace. The
+ * one retry for a stream that ended, a read that failed and a stream that never brought a message.
  */
 function retryLater() {
   clearTimeout(retryTimer);
   retryTimer = setTimeout(() => {
     retryTimer = null;
-    if (data.disconnected) void refresh();
+    if (data.disconnected) void refresh().then(followAnswered);
     else if (stream === null) followChanges();
     else if (atPace) void refresh();
   }, backoff);
+}
+
+/** After the retry's read: follow a new stream when it answered and none is open or due (the daemon is back). */
+function followAnswered() {
+  if (!data.disconnected && stream === null && retryTimer === null) followChanges();
 }
 
 /** Stop following and reading until `followChanges` again. */
