@@ -38,6 +38,12 @@ const NOT_CACHES: &[&str] = &[
     "source_objects", "source_aliases", "strings", "atom_blocks", "hashes", "paths", "store_state", "store_identity", "object_pins",
     // The segments sources (and tapes) are in (decision 0295 step 5).
     "object_segments",
+    // Each guest's key, claimed once an identity (decision 0391): a registry of names, as `hashes` and `paths` are.
+    // Its keys follow the order of the claims, so no rule could derive them again.
+    "guest_keys",
+    // The observer's own journal of the paths a root's listings found changed, by check (decision 0400): events seen
+    // in the file system, as the OS's journal is, not facts a rule derives.
+    "observed_changes",
     "push_pending", "snapshots", "snapshot_files", "workspaces", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
     "corpus_decided", "corpus_swept", "corpus_state",
