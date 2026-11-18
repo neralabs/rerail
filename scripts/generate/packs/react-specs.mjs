@@ -1886,7 +1886,7 @@ export const REPETITION_EXEMPTIONS = [
   {
     rule: "react-practice-side-effect-in-render",
     reason:
-      "The call_expression steps are the discarded side-effect call, the useState, useMemo or useReducer call whose initializer holds it, then the memo-style call wrapping the component or the hook call that marks the function as a component, which can be that same useState call.",
+      "The call_expression steps are the discarded side-effect call, the useState, useMemo or useReducer call whose initializer holds it, then the wrapper call around the component (memo, forwardRef or another higher-order component) or the hook call that marks the function as a component, which can be that same useState call.",
   },
   {
     rule: "react-practice-cache-update-in-mutate-call",

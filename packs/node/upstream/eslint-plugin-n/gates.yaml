@@ -54,7 +54,7 @@ rules:
   "n/no-deprecated-api":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
-    repetition_exempt: "Each member_expression step is the object of the step before it in one access chain, such as globalThis.process.getBuiltinModule('events').EventEmitter.listenerCount. Each step checks a different property name, so no step is a copy of another."
+    repetition_exempt: "Each member_expression step is the object, or the callee, of the step before it in one access chain, such as globalThis.process.getBuiltinModule('events').EventEmitter.listenerCount. Each step checks a different property name, so no step is a copy of another."
   "n/no-exports-assign":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
@@ -118,7 +118,7 @@ rules:
   "n/no-unsupported-features/node-builtins":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
-    repetition_exempt: "Each member_expression step is the object of the step before it in one access chain, such as globalThis.process.getBuiltinModule('perf_hooks').performance.nodeTiming.uvMetricsInfo. Each step checks a different property name, so no step is a copy of another."
+    repetition_exempt: "Each member_expression step is the object, or the callee, of the step before it in one access chain, such as globalThis.process.getBuiltinModule('perf_hooks').performance.nodeTiming.uvMetricsInfo. Each step checks a different property name, so no step is a copy of another."
   "n/prefer-global/buffer":
     deprecated: null
     recommended: null
