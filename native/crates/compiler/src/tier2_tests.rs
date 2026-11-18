@@ -13,9 +13,6 @@ use crate::{native_ir, rir_asm, stream};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-/// The ladder's files.
-const DIR: &str = crate::ladder::DIR;
-
 /// A kind or field id per name, in order of first use, as a grammar would number them.
 #[derive(Default)]
 struct Ids(RefCell<HashMap<String, u16>>);
@@ -59,7 +56,7 @@ const DOCUMENTS: &[&str] = &[
 /// refuse at the same word.
 #[test]
 fn every_ladder_step_compiles_here_and_equals_the_interpreters() {
-    let mut steps: Vec<_> = std::fs::read_dir(DIR).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
+    let mut steps: Vec<_> = std::fs::read_dir(crate::ladder::dir()).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
     steps.sort();
     assert!(steps.len() >= 15, "{} steps", steps.len());
     let mut parsed = 0;
@@ -105,7 +102,7 @@ fn the_crate_assembles_only_a_parsers_program() {
 /// wherever such a place holds a word that can refuse).
 #[test]
 fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
-    let mut steps: Vec<_> = std::fs::read_dir(DIR).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
+    let mut steps: Vec<_> = std::fs::read_dir(crate::ladder::dir()).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
     steps.sort();
     let (mut runs, mut bodies, mut inside, mut refusing) = (0, 0, 0, 0);
     for path in steps {

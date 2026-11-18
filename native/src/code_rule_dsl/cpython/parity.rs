@@ -70,7 +70,8 @@ fn directory(root: &Path) -> Corpus {
 /// The Python files of every recorded event, each distinct (path, source) once, written under a temporary directory.
 fn fixtures() -> Corpus {
     let relative = "packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port";
-    let port = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("..").join(relative);
+    // The checkout found as the test runs, not written into the build (decision 0224).
+    let port = rerail_store::source_tree::root().expect("the checkout").join(relative);
     assert!(
         port.exists(),
         "{relative} is missing: pack test data is not in git: run `npm run fixtures:pull` (each tool-pack's archive, \

@@ -41,6 +41,9 @@ fn main() {
         println!("cargo:rerun-if-changed={}", path.to_str().unwrap());
     }
 
+    // Rerail: the library names no checkout (PATCHES.md): `assert`'s file names are relative to the crate.
+    config.flag_if_supported(format!("-ffile-prefix-map={}=.", manifest_path.display()));
+
     config
         .std("c11")
         .flag_if_supported("-fvisibility=hidden")

@@ -13,7 +13,7 @@ use rerail_metal::block_program;
 #[test]
 fn every_step_on_metal_equals_the_interpreter() {
     use block_program::{ClassStrategy, Executor, LaneWidth, run_split};
-    let steps = steps_in(DIR);
+    let steps = steps_in(&dir());
     let compiled: Vec<Compiled> = steps.iter().map(|(n, s)| compile_step(n, s)).collect();
     let docs: Vec<Vec<Vec<u8>>> = compiled.iter().zip(&steps).map(|(c, (n, _))| documents(&Lang::of(&c.stmts), seed(n), &|b| reference(c, b).is_some()).0).collect();
     let forms: Vec<&native_ir::BlockNative> = compiled.iter().map(|c| &c.native.block_programs[0]).collect();
