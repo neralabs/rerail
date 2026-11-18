@@ -101,6 +101,9 @@ pub struct CompiledBlock {
 #[derive(Clone, Debug)]
 pub struct PassShape {
     pub back: bool,
+    /// A forward pass with a block loop: false where its body makes nothing, so the block loop
+    /// is cut and its hot loop is the token loop's (`bodiless_body`).
+    pub block_loop: bool,
     pub clif: String,
     pub ascii_branch: bool,
     pub gate_branches: usize,
@@ -1991,7 +1994,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         context.func.signature = signature.clone();
         context.set_disasm(true);
         let mut hot = Vec::new();
-        let mut shape = PassShape { back: false, clif: String::new(), ascii_branch: false, gate_branches: 0, round_branches: 0, rare_branches: 0, extracts: 0, disassembly: String::new(), pressure: Default::default(), outlined: Vec::new(), region_calls: Vec::new(), inlined_regions: 0, reads_back: 0, arms: 0, known_entries: 0 };
+        let mut shape = PassShape { back: false, block_loop: false, clif: String::new(), ascii_branch: false, gate_branches: 0, round_branches: 0, rare_branches: 0, extracts: 0, disassembly: String::new(), pressure: Default::default(), outlined: Vec::new(), region_calls: Vec::new(), inlined_regions: 0, reads_back: 0, arms: 0, known_entries: 0 };
         match pass {
             Pass::Forward { body, stores } => {
                 // The general body, outlined (`general`): declared, built with the pass, defined
@@ -2004,6 +2007,8 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 let regions;
                 (shape.ascii_branch, shape.gate_branches, shape.round_branches, shape.rare_branches, regions, shape.region_calls, shape.inlined_regions, shape.reads_back, shape.arms, shape.known_entries) = forward(&mut context, &mut general_context, (general_id, signature), &mut module, &name, body, stores, passes.slots, &mut hot, native.records.as_ref().zip(tables.as_ref()).filter(|_| merged && k + 1 == passes.passes.len()).map(|(r, t)| (r, t, native.outputs.len())), made)?;
                 shape.extracts = body.extracts.len();
+                // `forward` gives the block loop's blocks, none where it cut the loop.
+                shape.block_loop = !hot.is_empty();
                 general_context.func.srclocs.clear();
                 let clif = general_context.func.display().to_string();
                 // The general body where the pass still calls it (none without a block loop).
@@ -5795,6 +5800,16 @@ pub fn lazy_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -
     let coded = lazy_coded(r);
     let held = |k: u8| coded >> k & 1 == 1 && r.unless.iter().any(|&(m, _)| m == k);
     loop_marks(r, bytewise).0.into_iter().filter(|&(k, _)| r.tested_only >> k & 1 == 0 && r.unplaced >> k & 1 == 0 && r.extra != Some(k) && !held(k)).collect()
+}
+
+/// The code bits of `block`'s gap marks tier 2 on the CPU tests itself (`lazy_marks`): the
+/// CPU's tier 1 sets none of them, where Metal and the interpreter do. None without records.
+pub fn lazy_code_bits(block: &crate::block_native::BlockNative) -> u32 {
+    let Some(r) = block.records.as_ref() else {
+        return 0;
+    };
+    let bw = crate::native_cpu_bytes::Bytewise::of(block);
+    lazy_marks(r, &|o| bw.can(o)).iter().fold(0, |a, &(k, _)| a | 1 << (crate::records::MARK_SHIFT + u32::from(k)))
 }
 
 /// The marks of `lazy_marks` with token tests too: their tests' hits are in the code (the

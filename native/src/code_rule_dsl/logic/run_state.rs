@@ -47,6 +47,7 @@ use Class::*;
 /// are carried).
 pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/blocks/src/scratch.rs", "THREAD", Thread, "this thread's scratch region for a freeze's sort keys, emptied at each use"),
+    ("crates/c_directives/src/expand.rs", "JIT", Thread, "this thread's Cranelift code of the process's pp words (0348), without a rustc build of them; the same on any thread"),
     ("crates/clif/src/rust.rs", "ADDRESSES", Thread, "this thread's scratch or counters in a backend"),
     ("crates/clif/src/rust.rs", "READS", Thread, "this thread's scratch or counters in a backend"),
     ("crates/compiler/src/native_cpu_stream.rs", "IDS", Thread, "this thread's scratch or counters in a backend"),

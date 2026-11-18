@@ -97,12 +97,14 @@ fn classes_pack_into_shared_products() {
     assert!(compiled.rows.contains("= eq 0x22"), "{}", compiled.rows);
 }
 
-/// What the compiler does not handle yet is refused by name, not guessed.
+/// What the compiler does not handle yet is refused by name, not guessed: `line_has`, which the
+/// evaluator has and the masks do not (`text`, the operation this test named first, is compiled
+/// since 0332's Kotlin step 2).
 #[test]
 fn unsupported_operations_are_refused() {
-    let stmts = ::bitlex::syntax::parse("class a = 'a'\nmask b = text(\"ab\") & a\n").expect("parses");
+    let stmts = ::bitlex::syntax::parse("class a = 'a'\nmask b = line_has(a, a) & a\n").expect("parses");
     let error = bitlex_compile::compile(&stmts, &["b"], None).expect_err("refused");
-    assert!(error.contains("text"), "{error}");
+    assert!(error.contains("line_has"), "{error}");
 }
 
 /// Errors and escapes are the fallback output: on every input and every executor its bits equal
@@ -980,17 +982,20 @@ fn only_the_compiler_reads_tier2s_states() {
                 continue;
             }
             let text = std::fs::read_to_string(&path).expect("reads a source file");
-            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`, `readers[i].arms`, a part's
-            // `parted[0].arms`) are not the table's, nor a shape's or a count's (`shape.arms`, `cols.arms`,
-            // `c.arms`): an `.arms` is the table's only after another name.
-            let table_arms = |line: &str| {
-                line.match_indices(".arms").any(|(at, _)| {
+            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`, `readers[i].arms`,
+            // and `self.arms` in `Reader`'s own methods) and tier 1's counts of arms read in place
+            // (`shape.arms`, `cols.arms`, `c.arms`) are not the table's: a `.arms` is the table's
+            // unless its receiver is one of those. The table's own `self.arms` is in `grammar.rs`.
+            let other_arms = |line: &str| {
+                line.match_indices(".arms").all(|(at, _)| {
                     let before = &line[..at];
-                    let name = &before[before.trim_end_matches(|c: char| c.is_alphanumeric() || c == '_').len()..];
-                    !before.ends_with(']') && !["rd", "reader", "shape", "cols", "c"].contains(&name)
+                    let receiver = before.rsplit(|c: char| !(c.is_alphanumeric() || c == '_')).next().unwrap_or_default();
+                    // `readers[…].arms`: the indexed list before the `.arms` is the readers'.
+                    let indexed = before.ends_with(']') && before.rfind("readers[").is_some_and(|k| !before[k..].contains(".arms"));
+                    ["rd", "reader", "shape", "cols", "c", "self"].contains(&receiver) || indexed
                 })
             };
-            let table_line = |line: &str| table_arms(line) || needles[1..].iter().any(|n| line.contains(n));
+            let table_line = |line: &str| needles[1..].iter().any(|n| line.contains(n)) || (line.contains(".arms") && !other_arms(line));
             if text.lines().any(table_line) {
                 readers.push(path.display().to_string());
             }
@@ -1214,16 +1219,13 @@ fn json_compiled_path_equals_the_interpreters() {
     let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
     // JSON has no wraps and no chained returns: it pays for neither (no wrap columns). Its loop
     // heads are the stream's. The table is written as it goes (each row's parent and extra flag
-    // with the row), and JSON defers no leaf: no call, no pass at its end. A token's end is its
-    // record's (`records`): no search.
+    // with the row), and JSON defers no leaf: no pass over the table, at its end or before. A
+    // token's end is its record's (`records`): no search. Its calls are the tape's rare steps
+    // (decision 0140: a block's base, a commit of codes, the image's end), none a table pass.
     assert!(!tier2.wraps);
     assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
-    // Its calls are the tape's (8a1762be0: tier 2 writes the tape): a block's offsets, a commit,
-    // a code taken back, the image's end, each rare (`TableFns`), the module's ids 1 to 4. A pass
-    // over the table (a wrap's `shift`, a drop's) would be declared before them, and the tape's
-    // ids past 4.
-    let callees: Vec<u32> = tier2.clif.lines().filter_map(|l| l.trim().split_once(" = colocated u0:")).filter(|(k, _)| k.starts_with("fn")).filter_map(|(_, rest)| rest.split_whitespace().next()?.parse().ok()).collect();
-    assert!(callees.iter().all(|&id| (1..=4).contains(&id)), "no pass over the table: {callees:?}");
+    assert_eq!(tier2.table_passes, 0, "no pass over the table");
+    assert!(tier2.own_calls > 0 && rerail_compiler::clif_text::callees(&tier2.clif).len() == tier2.own_calls, "every call an outlined function's: {}", tier2.own_calls);
     let files = json_tier2_files();
     for f in &files {
         let want1 = p.block_programs[0].run_files(&[f]).remove(0);

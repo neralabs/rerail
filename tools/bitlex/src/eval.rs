@@ -1169,6 +1169,9 @@ impl<'a> Ev<'a> {
                 }
             }
         }
+        // Each token's kind as its rule made it, before a keyword names it: a token mark's kind
+        // holds at either, as the compiler's code keeps the rule's kind with the keyword's word.
+        let lexed: Vec<String> = toks.iter().map(|t| t.kind.clone()).collect();
         for (kind, words, soft, required) in &self.keywords {
             for t in toks.iter_mut().filter(|t| &t.kind == kind) {
                 let text = &self.src[t.start..t.end];
@@ -1197,14 +1200,15 @@ impl<'a> Ev<'a> {
         let grammar: Vec<usize> = (0..toks.len()).filter(|&i| !extra.contains(&toks[i].kind)).collect();
         let mut before: Vec<Vec<bool>> = vec![vec![false; self.marks.len()]; toks.len()];
         // A token mark: at each grammar token that begins its run, after its token before.
-        // A choice at a token: its kind, or its text as a word (its kind's spelling, a
-        // keyword's, or its soft word). `~`: none of its choices, and never the file's end.
-        let one = |t: &Token, c: &TokenElem| match c {
-            TokenElem::Kind(k) => &t.kind == k,
-            TokenElem::Word(w) => t.kind.as_bytes() == w.as_slice() || t.soft.as_deref().is_some_and(|s| s.as_bytes() == w.as_slice()),
+        // A choice at a token: its kind (or the rule's, a keyword's token: `lexed`), or its text
+        // as a word (its kind's spelling, a keyword's, or its soft word). `~`: none of its
+        // choices, and never the file's end.
+        let one = |i: usize, c: &TokenElem| match c {
+            TokenElem::Kind(k) => &toks[i].kind == k || &lexed[i] == k,
+            TokenElem::Word(w) => toks[i].kind.as_bytes() == w.as_slice() || toks[i].soft.as_deref().is_some_and(|s| s.as_bytes() == w.as_slice()),
             TokenElem::Not(_) | TokenElem::End => false,
         };
-        let is = |t: Option<&Token>, e: &[TokenElem]| match (e, t) {
+        let is = |t: Option<usize>, e: &[TokenElem]| match (e, t) {
             ([TokenElem::Not(inner)], Some(t)) => !inner.iter().any(|c| one(t, c)),
             ([TokenElem::Not(_)], None) => false,
             (_, None) => e.contains(&TokenElem::End),
@@ -1212,9 +1216,9 @@ impl<'a> Ev<'a> {
         };
         for (&k, (pre, seq)) in &self.token_marks {
             for g in 0..grammar.len() {
-                let at = |i: usize| grammar.get(g + i).map(|&x| &toks[x]);
+                let at = |i: usize| grammar.get(g + i).copied();
                 let run = seq.iter().enumerate().all(|(i, e)| is(at(i), e));
-                let after = pre.is_empty() || (g > 0 && is(Some(&toks[grammar[g - 1]]), pre));
+                let after = pre.is_empty() || (g > 0 && is(Some(grammar[g - 1]), pre));
                 if run && after {
                     before[grammar[g]][k] = true;
                 }
@@ -1227,7 +1231,7 @@ impl<'a> Ev<'a> {
             for i in bits {
                 let g = grammar.partition_point(|&t| toks[t].start < i);
                 // `unless after`: none where the grammar token before is one of its words.
-                if g > 0 && !unless.is_empty() && is(Some(&toks[grammar[g - 1]]), &unless) {
+                if g > 0 && !unless.is_empty() && is(Some(grammar[g - 1]), &unless) {
                     continue;
                 }
                 match grammar.get(g) {
