@@ -29,8 +29,8 @@ export interface DatabaseApiStoresOptions {
    * events, when it tells them, are `conflicts` notices of {@link DatabaseApiStores.changes}.
    */
   readonly mergeAssist?: MergeAssistService & Partial<Pick<MergeAssistRuntime, "onConflictsChanged">>;
-  /** How {@link DatabaseApiStores.changes} watches and beats; tests set the beat. */
-  readonly changeFeed?: ChangeFeedOptions;
+  /** How {@link DatabaseApiStores.changes} watches and beats; tests set the beat and drive the notices. */
+  readonly changeFeed?: ChangeFeedOptions | undefined;
 }
 
 /**

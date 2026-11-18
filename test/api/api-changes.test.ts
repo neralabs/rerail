@@ -1,6 +1,4 @@
 import { execFileSync } from "node:child_process";
-import { EventEmitter } from "node:events";
-import type { FSWatcher, watch as watchFolder } from "node:fs";
 import { appendFileSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,23 +14,12 @@ import { installPack, uninstallPack } from "../support/installed-packs.js";
 import { gitRepository } from "../support/repository-setup.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { startDatabaseWriter } from "../support/processes/database-writer.js";
+import { drivenWatch } from "../support/platform/driven-watch.js";
 
 /** The beat of these streams: none comes within a test unless the test moves the clock to it. */
 const BEAT_MS = 60 * 60_000;
 
 interface Message { readonly event: string; readonly data: string }
-
-/** Folder watches the test drives: `report(folder, name)` is the OS saying `name` in `folder` changed. */
-function drivenWatch(): { watch: typeof watchFolder; report: (folder: string, name: string) => void } {
-  const listeners = new Map<string, (event: string, name: string) => void>();
-  const watch = ((folder: string, _options: unknown, onChange: (event: string, name: string) => void) => {
-    listeners.set(folder, onChange);
-    const watcher = new EventEmitter() as FSWatcher;
-    watcher.close = () => { listeners.delete(folder); };
-    return watcher;
-  }) as unknown as typeof watchFolder;
-  return { watch, report: (folder, name) => listeners.get(folder)?.("change", name) };
-}
 
 /** One server-sent event's lines; `event` is "message" when it names none. */
 function parseMessage(text: string): Message {

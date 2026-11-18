@@ -7,6 +7,7 @@ import { startPolling } from "../../ui/poll.js";
 import { data, setScope } from "../../ui/state.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { startDatabaseWriter } from "../support/processes/database-writer.js";
+import { drivenWatch } from "../support/platform/driven-watch.js";
 
 const ACCESS = "test-access-capability";
 const healthyNative = () => ({ ok: true, kernelVersion: "1" });
@@ -49,26 +50,27 @@ describe("the dashboard against a running daemon", () => {
     await removeFolder(root);
   });
 
-  it("shows a repository another process records within a second, where the 5 s poll showed it up to 5 s later", async () => {
+  it("shows a repository another process records before the daemon's next beat, where the 5 s poll showed it at its next read", async () => {
     root = await realpath(await mkdtemp(join(tmpdir(), "rerail-changes-daemon-")));
     process.env.RERAIL_HOME = join(root, "home");
     const databasePath = join(root, "rerail.sqlite");
+    // The folder's notices come as the test says: the writer's -wal write heard before readers can see its commit, as
+    // Linux tells it, on every system. The beat never comes within the test, and the page reads only what it is told.
+    const folder = drivenWatch();
     daemon = await RerailDaemon.start({
       version: "0.0.0-test", databasePath, workspaceRoot: root, port: 0, nativeHealth: healthyNative, accessToken: ACCESS,
-      remoteSink: false, checkoutPruning: false,
+      remoteSink: false, checkoutPruning: false, changeFeed: { watch: folder.watch, beatMs: 60 * 60_000 },
     });
     const page = openPage(daemon);
     await page.rendered(() => data.loaded);
     // Another process committing through Rerail's own opener, as the CLI's writes do.
     const writer = await startDatabaseWriter(databasePath);
     try {
-      // Right after a render, the next poll or beat is about 5 s away: only the commit itself can show it sooner.
-      await page.nextRender();
-      const wrote = performance.now();
-      await writer.commit("remote:github.com/acme/web");
-      await page.rendered(() => data.repositories.some(repository => repository.repositoryKey === "remote:github.com/acme/web"));
+      const committed = writer.commit("remote:github.com/acme/web");
+      folder.report(root, "rerail.sqlite-wal");
+      await committed;
 
-      expect(performance.now() - wrote).toBeLessThan(1_000);
+      await page.rendered(() => data.repositories.some(repository => repository.repositoryKey === "remote:github.com/acme/web"));
     } finally {
       await writer.close();
     }

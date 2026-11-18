@@ -32,6 +32,7 @@ import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, reques
 import { createRerailMcpHandler } from "../api/mcp.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
+import type { ChangeFeedOptions } from "../api/change-feed.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
 import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
@@ -79,6 +80,8 @@ export interface RerailDaemonOptions {
   remoteSink?: false | { intervalMs: number };
   /** False keeps the hourly forgetting of removed checkouts off ({@link startCheckoutPruning}); tests may shorten its interval. */
   checkoutPruning?: false | { intervalMs: number };
+  /** Internal testing: how the dashboard's change stream watches and beats; tests drive its notices and set its beat. */
+  changeFeed?: ChangeFeedOptions;
   /** Defaults to `$RERAIL_HOME/rerail.sqlite`; embedding and tests pass their own. */
   databasePath?: string;
   /** Checkout native sessions address; defaults to the current directory. The API serves every repository. */
@@ -570,6 +573,7 @@ export class RerailDaemon {
       // reports a failure itself, and its close waits for the open.
       resumeSession: sessionId => void started.engineService?.resumeSession(sessionId),
       ...sharedMergeAssist,
+      changeFeed: options.changeFeed,
     });
     try {
       // One walk of each repository's other worktrees for the sessions of both servers: hook sessions and native OMP and
