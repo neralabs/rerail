@@ -3202,3 +3202,18 @@ native join it falls back to the planner's whole-rule order.
   engine runs (a row a binding at most), so `fzk`'s order wins in every chunk; then the gap to sd1 (2,589 G) is
   measured again. Also timing-dependent still: the inline-or-store and demand choice kept per program (decision
   0090 §5) is the first chunk's to plan at its scale.
+- **Found** (2026-11-18): the search is the fault, not the price. The fixed-order pricer (`step`, plan.rs, after
+  693247ec4) prices a step past the head's last binding as one witness; the subset search prices through its own
+  `priced` and does not. With PostHog's statistics the search took `col` first (903,406 est.) where the same pricer,
+  given `fzk` first, priced it at 1,112: the search never weighed that order as it is priced. Probed per path: the
+  `col`-first plans were each a fresh search (first sight or replanned), never a kept plan.
+- **Tried, reverted**: the same cap in the search (head bound by an earlier join). It is wrong as the engine stands:
+  the walk ends a step at the first witness (`cut_from = tail(j)`, setfix) only in its row-by-row path. A fused
+  step (an atom and its filters, a chunk of candidates at a time, `rowcode`) runs every candidate, and a collecting
+  walk has no cut (`cut_from = usize::MAX`). Priced as one row, `demand_fzk($d), col($v, $c), …` (a cross product)
+  made 1.4 G rows and `doc_tape`'s `loaded` 443 M; PostHog ran past 9 minutes and was stopped. A test of the search
+  alone (`m(v, n), l(n, y), c(n, z), k(v)`: `k` leads) was red before the cap and green with it.
+- **Wanted, in order**: (1) the fused path ends its chunk loop at the first row made past `cut_from`, as the
+  row-by-row path does, and a collecting walk's cut is decided (does it need every row past the tail?); (2) then the
+  search prices past the head's last binding as `step` does, connected steps only, never a cross product; (3) the
+  test above, and PostHog against sd1.
