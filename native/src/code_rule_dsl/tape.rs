@@ -2951,6 +2951,8 @@ impl TapeDoc {
         Ok((image, self.source.as_str(), &self.grammar))
     }
 
+    // A tape lookup's reads (`NodeRef::find_in_tape`), from the matcher's crate (rerail-w).
+    #[inline]
     pub fn transducer_kind(&self, node: u32) -> u16 {
         read!("kind");
         kind_of(self.entry(node))
@@ -2975,11 +2977,21 @@ impl TapeDoc {
             | (u8::from(e.flags & CODE_ERROR != 0) << 3)
     }
 
+    #[inline]
     pub fn transducer_span(&self, node: u32) -> Range<usize> {
         read!("span");
         read_at!("tape span", node);
         let t = self.t();
         t.start(node as usize) as usize..t.end(node as usize) as usize
+    }
+
+    /// The node's start byte alone: for a search by start (`NodeRef::find_in_tape`), as format 15's end is read
+    /// from the start of the subtree's last node.
+    #[inline]
+    pub fn transducer_start(&self, node: u32) -> usize {
+        read!("span");
+        read_at!("tape span", node);
+        self.t().start(node as usize) as usize
     }
 
     /// The grammar's named kinds, ERROR included, ascending: what a rule ranges over.
@@ -2996,14 +3008,16 @@ impl TapeDoc {
         self.node_is_named(node)
     }
 
+    /// The node's parent: the document's kept parents (`DocTape::parents`), which the first read keeps.
     pub fn transducer_parent(&self, node: u32) -> Option<u32> {
         read!("parent");
         read_at!("tape parent", node);
-        self.t().parent(node as usize).map(|p| p as u32)
+        let parent = self.held.parents()[node as usize];
+        (parent != NONE).then_some(parent)
     }
 
-    /// Each node's parent, in preorder, from the subtrees open around it: a pass that reads no parent, where
-    /// `transducer_parent` reads one (format 15 searches for it, decision 0293).
+    /// Each node's parent, in preorder, from the subtrees open around it: a pass that reads no parent and keeps
+    /// none (`transducer_parent` keeps them all, `DocTape::parents`).
     pub fn transducer_parents(&self) -> impl Iterator<Item = Option<u32>> + '_ {
         let t = self.t();
         let mut open: Vec<(u32, usize)> = Vec::new();
@@ -3199,12 +3213,13 @@ impl TapeDoc {
 
 #[derive(Clone, Copy)]
 pub struct TapeNode<'a> {
-    tape: &'a rerail_tape_format::tape::AnyTape<'a>,
+    /// The document's tape: its reader, and the parents it keeps once one is asked that no step knew.
+    held: &'a formats::DocTape,
     grammar: &'a Grammar,
     points: &'a Points,
     index: u32,
-    /// The node's parent, where the step that reached it knew it (a child's, a walk's, a climb's): `NONE` at the
-    /// root, `UNKNOWN` where it was not known, and the tape is asked.
+    /// The node's parent, where the step that reached it knew it (a child's, a sibling's): `NONE` at the root,
+    /// `UNKNOWN` where it was not known, and the document's kept parents are read (`DocTape::parents`).
     up: u32,
 }
 
@@ -3224,40 +3239,47 @@ impl<'a> TapeNode<'a> {
         parent == NONE
             || self
                 .siblings_before(parent)
-                .all(|c| self.tape.table().entry(self.tape.code(c)).field != field)
+                .all(|c| self.tape().table().entry(self.tape().code(c)).field != field)
+    }
+
+    #[inline]
+    fn tape(&self) -> &'a rerail_tape_format::tape::AnyTape<'a> {
+        self.held.reader()
     }
 
     #[inline]
     fn entry(&self) -> &'a Entry {
-        self.tape.table().entry(self.tape.code(self.index as usize))
+        self.tape()
+            .table()
+            .entry(self.tape().code(self.index as usize))
     }
     #[inline]
     fn start(&self) -> u32 {
-        self.tape.start(self.index as usize) as u32
+        self.tape().start(self.index as usize) as u32
     }
     #[inline]
     fn end(&self) -> u32 {
-        self.tape.end(self.index as usize) as u32
+        self.tape().end(self.index as usize) as u32
     }
     /// The node at `index`, its parent `up` (`UNKNOWN` where not known).
     #[inline]
     fn at(&self, index: u32, up: u32) -> Self {
         Self { index, up, ..*self }
     }
-    /// The parent's id (`NONE` at the root): as the step that reached this node knew it, else the tape's.
+    /// The parent's id (`NONE` at the root): as the step that reached this node knew it, else the document's kept
+    /// parents (`DocTape::parents`), which the tape's first such ask keeps.
+    #[inline]
     fn up(&self) -> u32 {
         if self.up != UNKNOWN {
             return self.up;
         }
         read!("parent");
         read_at!("tape parent", self.index);
-        self.tape
-            .parent(self.index as usize)
-            .map_or(NONE, |p| p as u32)
+        self.held.parents()[self.index as usize]
     }
     /// The children of `parent` before this node, in order.
     fn siblings_before(&self, parent: u32) -> impl Iterator<Item = usize> + 'a {
-        let (tape, index) = (self.tape, self.index as usize);
+        let (tape, index) = (self.tape(), self.index as usize);
         rerail_tape_format::tape::children(tape, parent as usize).take_while(move |&c| c < index)
     }
     /// The structurally adjacent sibling, for traversal; `SgNode::next` follows Tree-sitter.
@@ -3267,8 +3289,8 @@ impl<'a> TapeNode<'a> {
         if parent == NONE {
             return None;
         }
-        let end = self.tape.subtree_end(parent as usize);
-        self.tape
+        let end = self.tape().subtree_end(parent as usize);
+        self.tape()
             .next_sibling(self.index as usize, end)
             .map(|n| self.at(n as u32, parent))
     }
@@ -3324,7 +3346,7 @@ impl<'a> Iterator for Children<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let index = self.next?;
         read!("children");
-        self.next = self.node.tape.next_sibling(index, self.end);
+        self.next = self.node.tape().next_sibling(index, self.end);
         self.remaining -= 1;
         Some(self.node.at(index as u32, self.node.index))
     }
@@ -3335,38 +3357,19 @@ impl<'a> Iterator for Children<'a> {
 impl ExactSizeIterator for Children<'_> {}
 
 impl<'a> SgNode<'a> for TapeNode<'a> {
+    // A climb's step and a span read, from the matcher's crate (rerail-w), as `kind_id`.
+    #[inline]
     fn parent(&self) -> Option<Self> {
         let parent = self.up();
         (parent != NONE).then(|| self.at(parent, UNKNOWN))
     }
-    /// The parent, then (where asked further) the rest of the path, from one descent from the root
-    /// (`Tape::path`): each ancestor with its own parent known, so a climb reads no parent.
+    /// The parent, then each ancestor in turn: each a load of the document's kept parents (`DocTape::parents`).
     fn ancestors(&self, _root: Self) -> impl Iterator<Item = Self> {
-        let first = self.parent();
-        let me = *self;
-        let mut path: Option<Vec<usize>> = None;
-        let mut given = 0usize;
-        std::iter::from_fn(move || {
-            if given == 0 {
-                given = 1;
-                return first;
-            }
-            let path = path.get_or_insert_with(|| {
-                read!("parent");
-                let mut path = Vec::new();
-                me.tape.path(me.index as usize, &mut path);
-                path
-            });
-            let at = path.len().checked_sub(1 + given)?;
-            given += 1;
-            Some(me.at(
-                path[at] as u32,
-                if at == 0 { NONE } else { path[at - 1] as u32 },
-            ))
-        })
+        std::iter::successors(self.parent(), Self::parent)
     }
+    #[inline]
     fn children(&self) -> impl ExactSizeIterator<Item = Self> {
-        let (tape, index) = (self.tape, self.index as usize);
+        let (tape, index) = (self.tape(), self.index as usize);
         let end = tape.subtree_end(index);
         Children {
             node: *self,
@@ -3375,25 +3378,21 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
             remaining: rerail_tape_format::tape::children(tape, index).count(),
         }
     }
-    /// The subtree in preorder, each node with its parent: the subtrees open around it.
+    /// The subtree in preorder, a node's parent where asked the document's kept parents (`DocTape::parents`): the
+    /// walk reads no subtree end a node and keeps no stack of the subtrees open around it.
+    #[inline]
     fn dfs(&self) -> impl Iterator<Item = Self> {
         let start = self.index as usize;
         read!("size");
         read_at!("tape size", self.index);
         let me = *self;
-        let end = self.tape.subtree_end(start);
-        let mut open: Vec<(u32, usize)> = Vec::new();
+        let end = self.tape().subtree_end(start);
         (start..end).map(move |index| {
             if index == start {
-                open.push((me.index, end));
-                return me;
+                me
+            } else {
+                me.at(index as u32, UNKNOWN)
             }
-            while open.last().is_some_and(|&(_, until)| until <= index) {
-                open.pop();
-            }
-            let parent = open.last().expect("the subtree's root is open").0;
-            open.push((index as u32, me.tape.subtree_end(index)));
-            me.at(index as u32, parent)
         })
     }
     fn child(&self, nth: usize) -> Option<Self> {
@@ -3462,6 +3461,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     fn node_id(&self) -> usize {
         self.index as usize
     }
+    #[inline]
     fn range(&self) -> Range<usize> {
         read!("span");
         read_at!("tape span", self.index);
@@ -3475,10 +3475,12 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         read!("points");
         self.points.point(self.end())
     }
+    #[inline]
     fn is_named(&self) -> bool {
         read!("named");
         named_of(self.grammar, self.entry())
     }
+    #[inline]
     fn is_named_leaf(&self) -> bool {
         self.children().all(|child| !child.is_named())
     }
@@ -3540,13 +3542,15 @@ impl Doc for TapeDoc {
     }
     fn root_node(&self) -> Self::Node<'_> {
         TapeNode {
-            tape: self.held.reader(),
+            held: &self.held,
             grammar: &self.grammar,
             points: &self.points,
             index: 0,
             up: NONE,
         }
     }
+    // A node's text, from the matcher's crate (rerail-w), as `TapeNode::range`.
+    #[inline]
     fn get_node_text<'a>(&'a self, node: &Self::Node<'a>) -> Cow<'a, str> {
         Cow::Borrowed(&self.source[node.range()])
     }

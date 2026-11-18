@@ -1352,6 +1352,58 @@ fn large_file_roundtrips_parent_and_subtree_overflow() {
     assert!(TapeDoc::restore(Arc::new(source), grammar, &broken, &|| false).is_err());
 }
 
+/// A node reached without its parent (an anchor's, a binary search's: `TapeDoc::node`; a walk's, `dfs`) reads it from
+/// the parents the document keeps once one is asked (`DocTape::parents`), not from a search of the tape a step: every
+/// node's parent and climb are the tree's, and the parents are kept once, 4 bytes a node. Format 15 stores no parent;
+/// its search a step made the shipped Node.js built-in tables 2.4 times main's time.
+#[test]
+fn a_node_reached_without_its_parent_reads_the_kept_parents() {
+    let source = format!(
+        "class C:\n{}",
+        "    def m(self, a):\n        return [a + 1 for b in a if b]\n".repeat(200)
+    );
+    let (_, tape, _, _) = fixture(&source, GrammarDialect::Python);
+    // The tree's parents, from the subtrees open around each node: a pass that keeps none.
+    let parents: Vec<u32> = tape
+        .transducer_parents()
+        .map(|parent| parent.unwrap_or(NONE))
+        .collect();
+    let before = tape.doc_tape().bytes();
+    let id = |node: TapeNode<'_>| node.node_id() as u32;
+    let walked: Vec<TapeNode<'_>> = tape.root_node().dfs().collect();
+    assert_eq!(
+        walked.iter().map(|&node| id(node)).collect::<Vec<_>>(),
+        (0..parents.len() as u32).collect::<Vec<_>>()
+    );
+    for (index, &up) in parents.iter().enumerate() {
+        let index = index as u32;
+        for node in [tape.node(index), walked[index as usize]] {
+            assert_eq!(node.parent().map_or(NONE, id), up, "parent of {index}");
+            let mut climb = Vec::new();
+            let mut at = up;
+            while at != NONE {
+                climb.push(at);
+                at = parents[at as usize];
+            }
+            assert_eq!(
+                node.ancestors(tape.root_node()).map(id).collect::<Vec<_>>(),
+                climb,
+                "ancestors of {index}"
+            );
+        }
+        assert_eq!(
+            tape.transducer_parent(index),
+            (up != NONE).then_some(up),
+            "transducer parent of {index}"
+        );
+    }
+    assert_eq!(
+        tape.doc_tape().bytes(),
+        before + 4 * parents.len(),
+        "the parents are kept once"
+    );
+}
+
 #[test]
 fn sentinel_edges_preserve_native_root_children_and_last_parent() {
     for (extra_count, expected_count) in [(1, 65_534), (2, 65_535), (3, 65_536)] {

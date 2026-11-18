@@ -1067,6 +1067,22 @@ pub(in crate::code_rule_dsl) fn gap_test(
         ("precedes", true, None) => Place::Later,
         _ => return None,
     };
+    // Only a token regex is a gap's question: a `regex` beside the token's own relations, or an `any` or `all` of
+    // them alone. Anything else is no gap test, said before the relation is copied below (the token tests' walk and
+    // the compile ask it of every relation, a large one at every depth).
+    let alternatives_alone = || {
+        object.keys().all(|key| {
+            matches!(
+                key.as_str(),
+                "any" | "all" | "stopBy" | "field" | "follows" | "precedes" | "not"
+            )
+        })
+    };
+    if !(object.contains_key("regex")
+        || ((object.contains_key("any") || object.contains_key("all")) && alternatives_alone()))
+    {
+        return None;
+    }
     // The census answers what compiling asks (the automata are decoded when the test first runs on a tape).
     let grammar = crate::code_rule_dsl::tape::token_census::Lang::of(language)?;
     // A token regex, alone or beside a `not` that holds on every implied token: a `not` of kinds

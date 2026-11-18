@@ -117,7 +117,9 @@ impl NodeRef {
     /// whose siblings never overlap, the nodes covering a nonempty range form one path from the
     /// root, so the descent starts at the topmost node of `near`'s nearest covering ancestor's
     /// range instead of reading every sibling before that path from the root down: a read in a
-    /// class of a thousand methods reads its own method's statements.
+    /// class of a thousand methods reads its own method's statements. A tape's tree is searched
+    /// from its root by start byte (`find_in_tape`), which reads no parent and no child list: the
+    /// climb from `near` would read a parent and a span a step.
     pub fn find_near<'r, D: Doc>(
         &self,
         root: Node<'r, D>,
@@ -131,6 +133,9 @@ impl NodeRef {
         };
         if start >= end || root.parent().is_some() || !file() {
             return self.find(root);
+        }
+        if let Some(found) = self.find_in_tape(&root) {
+            return found;
         }
         let covers = |node: &Node<'r, D>| {
             let range = node.range();
@@ -150,10 +155,7 @@ impl NodeRef {
         {
             from = parent;
         }
-        match self.find_in_tape(&from) {
-            Some(found) => found,
-            None => self.find(from),
-        }
+        self.find(from)
     }
 
     /// `find` from `from` in a tape's tree whose siblings never overlap, by binary search: such a
@@ -175,19 +177,20 @@ impl NodeRef {
         let (start, end) = (self.start as usize, self.end as usize);
         let (mut low, mut high) = (first, tape.transducer_descendants(first).end);
         let subtree_end = high;
+        // A search by start reads no end: format 15's end is read from the start of the subtree's last node.
         while low < high {
             let middle = low + (high - low) / 2;
-            if tape.transducer_span(middle).start < start {
+            if tape.transducer_start(middle) < start {
                 low = middle + 1;
             } else {
                 high = middle;
             }
         }
         let Some(found) = (low..subtree_end)
-            .take_while(|&ordinal| tape.transducer_span(ordinal).start == start)
+            .take_while(|&ordinal| tape.transducer_start(ordinal) == start)
             .find(|&ordinal| {
-                tape.transducer_span(ordinal).end == end
-                    && tape.transducer_kind(ordinal) == self.kind
+                tape.transducer_kind(ordinal) == self.kind
+                    && tape.transducer_span(ordinal).end == end
             })
         else {
             return Some(None);
