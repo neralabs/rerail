@@ -3678,3 +3678,14 @@ native join it falls back to the planner's whole-rule order.
   swaps a request relation's two rules between the two programs: it fails without the restatement (the readers
   swapped) and passes with it. The library test passed 10 runs of 10. `differences` now prints a request relation's
   readers by rule where the rows agree as sets.
+
+### Q176. `rule_syntax_files_pass_check_rr` fails on `c/includes.rr`: a negation in a cycle (Go-C-and-C-support's)
+
+- **Found** (2026-11-18, cost-classifier at f9bfb6e05, with no change of its own; the slow tier's test): `lib/c/includes.rr`
+  line 54, `c_inc_from depends on c_found_by through ! or an aggregate in a cycle`, and line 70, `c_resolved depends on
+  c_inc_before` the same. The cycle is the include search: `c_found_by` ← `c_resolved` ← `c_inc_found` ← `c_inc_try`
+  ← `c_inc_from` ← `!c_found_by` (an `#include_next` starts past the entry its file was found by). The file came with
+  798c03170 (0327 mode (b)).
+- **Next**: Go-C-and-C-support's: whether the search is stratified by its phases (headers in phase 1) in a way
+  `check_rr` does not see, or the rules need a level (each include's depth) that breaks the cycle.
+- **Done when**: the test passes, by the rules or by the check reading what makes the cycle well-founded.

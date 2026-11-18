@@ -125,6 +125,8 @@ pub struct About {
     pub tapes: Vec<(RelId, usize)>,
     /// The join shape directives, in the program's order (`Program::shapes`).
     pub shapes: Vec<ShapeRef>,
+    /// Each relation's layout facts (`Program::layouts`, decision 0361), by relation id, each relation's in order.
+    pub layouts: Vec<(RelId, Vec<crate::code_rule_dsl::logic::front::ast::LayoutFact>)>,
 }
 
 /// A gate (`front::ast::Gate`): its key, its relation, its level, its source, and the relations it quiets and depends on,
@@ -186,6 +188,7 @@ impl About {
         let mut shapes: Vec<(i64, ShapeRef)> = Vec::new();
         let mut shape_after: Vec<(i64, AtomId)> = Vec::new();
         let mut shape_bound: Vec<(i64, i64, AtomId)> = Vec::new();
+        let mut layouts: Vec<(RelId, i64, crate::code_rule_dsl::logic::front::ast::LayoutFact)> = Vec::new();
         for f in v.about_facts() {
             let name = v.text(f.name());
             for row in f.rows() {
@@ -284,6 +287,13 @@ impl About {
                             shapes.push((k, ShapeRef { head, lit, wait: ShapeWaitRef::Bound(Vec::new()), text }));
                         }
                     }
+                    "layout" => {
+                        if let (Some(rel), Some(k), Some(text)) = (r(1), int(row.get(2).copied()), a(3))
+                            && let Ok(fact) = crate::code_rule_dsl::logic::front::ast::LayoutFact::of_placed(v.text(text))
+                        {
+                            layouts.push((rel, k, fact));
+                        }
+                    }
                     "shape_after" => shape_after.extend(int(row.get(1).copied()).zip(row.get(2).copied().and_then(atom))),
                     "shape_bound" => {
                         if let (Some(k), Some(i), Some(x)) = (int(row.get(1).copied()), int(row.get(2).copied()), row.get(3).copied().and_then(atom)) {
@@ -365,6 +375,13 @@ impl About {
             }
         }
         about.shapes = shapes.into_iter().map(|s| s.1).collect();
+        layouts.sort_by_key(|&(rel, k, _)| (rel, k));
+        for (rel, _, fact) in layouts {
+            match about.layouts.last_mut() {
+                Some((r, facts)) if *r == rel => facts.push(fact),
+                _ => about.layouts.push((rel, vec![fact])),
+            }
+        }
         answers.sort_unstable_by_key(|&(req, i, _)| (v.rel_name(req), i));
         about.answers = answers.into_iter().map(|(req, _, p)| (req, p)).collect();
         about.natives.sort_unstable_by_key(|n| n.rel);

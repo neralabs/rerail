@@ -160,6 +160,11 @@ pub(super) fn link_header(all: &mut Program, prog: Program, names: &Names) {
         }
     }
     all.policies.extend(prog.policies);
+    // Its relations' layouts (decision 0361), as renamed.
+    for (rel, mut facts) in prog.layouts {
+        facts.iter_mut().for_each(|f| f.rename(&rename));
+        front::add_layout(all.layouts.entry(rename(&rel)).or_default(), facts);
+    }
     // Its join shape directives, on its relations as renamed (O-join-shape-directives).
     for mut shape in prog.shapes {
         shape.head = rename(&shape.head);

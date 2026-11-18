@@ -346,6 +346,9 @@ pub struct Program {
     /// Join shape directives (`.shape`, O-join-shape-directives), each on the rules of its relation and every form
     /// made from them.
     pub shapes: Vec<Shape>,
+    /// What each relation's rows are known to be (`.layout`, decision 0361), by relation: facts about the rows, so
+    /// they hold for every form made from its rules. Several lines add up; each fact once, in the order first written.
+    pub layouts: BTreeMap<String, Vec<LayoutFact>>,
 }
 
 /// A join shape directive written after a rule (`.shape posarg after pv`, `.shape retparam bound f`): in the rules of
@@ -390,6 +393,263 @@ impl Shape {
             _ => return Err(format!("`.shape {text}`: write `.shape <relation> after <relation>` or `.shape <relation> bound <variable>, …`")),
         };
         Ok(Shape { head: head.to_owned(), lit: words[0].to_owned(), wait, text: text.trim().to_owned() })
+    }
+}
+
+/// How many rows a probe on a fan-out's columns returns (`.layout r fanout(p -> c, few)`, decision 0361): one, few
+/// (16 or fewer), many, or a measured number (`~4`), which is kept for the estimate but plans by its class.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Fan {
+    One,
+    Few,
+    Many,
+    About(u32),
+}
+
+/// The most a few-fan-out probe returns (decision 0361: "few (16 or fewer)").
+pub const FEW: u32 = 16;
+
+impl Fan {
+    /// The class a plan is keyed by: a measured number is the class it falls in.
+    pub fn class(self) -> Fan {
+        match self {
+            Fan::About(n) if n <= 1 => Fan::One,
+            Fan::About(n) if n <= FEW => Fan::Few,
+            Fan::About(_) => Fan::Many,
+            f => f,
+        }
+    }
+}
+
+/// A relation's size (`.layout r size(…)`, decision 0361): at most `n` rows per value of a column (`per n`, `<= 2 per
+/// n`), one per document or per kind, or small (a table of the rules' own).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Size {
+    Per { most: u32, col: usize },
+    PerDocument,
+    PerKind,
+    Small,
+}
+
+/// The native operator that makes a relation, where its rules' form does not show it (`.layout r by …`, decision
+/// 0361 item 4): an override a profiled run reports once the facts find it alone.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Algo {
+    Reach,
+    /// A walk along a tree relation.
+    Walk(String),
+    /// A running aggregate along a column ordered within a group.
+    Running { col: usize, within: Vec<usize> },
+}
+
+/// One fact a relation's rows hold (`.layout`, decision 0361), its columns by place. A fact is about the rows, not
+/// a plan, so it holds for every form made from the relation's rules (their deltas', maintenance's and hiding's).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum LayoutFact {
+    /// The columns are a key: a probe on them returns at most one row.
+    Key(Vec<usize>),
+    /// A probe on `from` returns `fan` rows of `to`.
+    Fanout { from: Vec<usize>, to: Vec<usize>, fan: Fan },
+    Size(Size),
+    /// Every column that holds a node holds one of one document: no row crosses documents.
+    Local,
+    /// `col` is ordered within each group of `within`; dense: numbered 0, 1, 2, … in each.
+    Order { col: usize, within: Vec<usize>, dense: bool },
+    /// `from -> to` is a forest: each `to` has at most one `from`, and no cycle.
+    Tree { from: usize, to: usize },
+    By(Algo),
+}
+
+/// A `.layout` line's facts, read: `text` is the line after the relation's name, `col` names a column's place (a
+/// declared name, or `$k` for the k-th, as `LayoutFact::show` writes them).
+pub fn layout_facts(text: &str, col: &dyn Fn(&str) -> Result<usize, String>) -> Result<Vec<LayoutFact>, String> {
+    // Words, with `(`, `)`, `,` and `->` apart.
+    let mut words: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        let punct = match c {
+            '(' | ')' | ',' => Some(c.to_string()),
+            '-' if chars.peek() == Some(&'>') => {
+                chars.next();
+                Some("->".to_owned())
+            }
+            c if c.is_whitespace() => Some(String::new()),
+            _ => None,
+        };
+        match punct {
+            Some(p) => {
+                if !cur.is_empty() {
+                    words.push(std::mem::take(&mut cur));
+                }
+                if !p.is_empty() {
+                    words.push(p);
+                }
+            }
+            None => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        words.push(cur);
+    }
+    let mut at = 0;
+    let mut facts = Vec::new();
+    // The words inside the parentheses that follow the fact's name.
+    let args = |at: &mut usize, name: &str| -> Result<Vec<String>, String> {
+        if words.get(*at).map(String::as_str) != Some("(") {
+            return Err(format!("`{name}` needs its columns in parentheses"));
+        }
+        let start = *at + 1;
+        let end = words[start..].iter().position(|w| w == ")").map(|k| start + k).ok_or_else(|| format!("`{name}(` is not closed"))?;
+        *at = end + 1;
+        Ok(words[start..end].to_vec())
+    };
+    let cols = |ws: &[String]| -> Result<Vec<usize>, String> {
+        let names: Vec<&String> = ws.iter().filter(|w| *w != ",").collect();
+        if names.is_empty() {
+            return Err("no column named".to_owned());
+        }
+        names.into_iter().map(|w| col(w)).collect()
+    };
+    let one = |ws: &[String]| -> Result<usize, String> {
+        match cols(ws)?.as_slice() {
+            [c] => Ok(*c),
+            _ => Err(format!("one column, not `{}`", ws.join(" "))),
+        }
+    };
+    let number = |w: &str| w.parse::<u32>().map_err(|_| format!("`{w}`: a number"));
+    while at < words.len() {
+        let name = words[at].clone();
+        at += 1;
+        let fact = match name.as_str() {
+            "key" => LayoutFact::Key(cols(&args(&mut at, "key")?)?),
+            "local" => LayoutFact::Local,
+            "fanout" => {
+                let a = args(&mut at, "fanout")?;
+                let arrow = a.iter().position(|w| w == "->").ok_or("`fanout(from -> to, class)`")?;
+                let comma = a.iter().rposition(|w| w == ",").filter(|&k| k > arrow).ok_or("`fanout(from -> to, class)`: no class")?;
+                let fan = match a[comma + 1..].iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+                    ["one"] => Fan::One,
+                    ["few"] => Fan::Few,
+                    ["many"] => Fan::Many,
+                    [n] if n.starts_with('~') => Fan::About(number(&n[1..])?),
+                    other => return Err(format!("`fanout`: a class is one, few, many or ~N, not `{}`", other.join(" "))),
+                };
+                LayoutFact::Fanout { from: cols(&a[..arrow])?, to: cols(&a[arrow + 1..comma])?, fan }
+            }
+            "size" => {
+                let a = args(&mut at, "size")?;
+                let a: Vec<&str> = a.iter().map(String::as_str).collect();
+                LayoutFact::Size(match a.as_slice() {
+                    ["small"] => Size::Small,
+                    ["per", "document"] => Size::PerDocument,
+                    ["per", "kind"] => Size::PerKind,
+                    ["per", c] => Size::Per { most: 1, col: col(c)? },
+                    ["<=", n, "per", c] => Size::Per { most: number(n)?, col: col(c)? },
+                    _ => return Err(format!("`size({})`: write `per <column>`, `<= N per <column>`, `per document`, `per kind` or `small`", a.join(" "))),
+                })
+            }
+            "order" => {
+                let a = args(&mut at, "order")?;
+                let inn = a.iter().position(|w| w == "in").ok_or("`order(column [dense] in group)`")?;
+                let (head, within) = (&a[..inn], &a[inn + 1..]);
+                let dense = head.last().map(String::as_str) == Some("dense");
+                let head = if dense { &head[..head.len() - 1] } else { head };
+                LayoutFact::Order { col: one(head)?, within: cols(within)?, dense }
+            }
+            "tree" => {
+                let a = args(&mut at, "tree")?;
+                let arrow = a.iter().position(|w| w == "->").ok_or("`tree(parent -> child)`")?;
+                LayoutFact::Tree { from: one(&a[..arrow])?, to: one(&a[arrow + 1..])? }
+            }
+            "by" => {
+                let algo = words.get(at).cloned().ok_or("`by` names an algorithm: reach, walk(r) or running(c in g)")?;
+                at += 1;
+                LayoutFact::By(match algo.as_str() {
+                    "reach" => Algo::Reach,
+                    "walk" => match args(&mut at, "walk")?.as_slice() {
+                        [r] => Algo::Walk(r.clone()),
+                        _ => return Err("`by walk(relation)`".to_owned()),
+                    },
+                    "running" => {
+                        let a = args(&mut at, "running")?;
+                        let inn = a.iter().position(|w| w == "in").ok_or("`by running(column in group)`")?;
+                        Algo::Running { col: one(&a[..inn])?, within: cols(&a[inn + 1..])? }
+                    }
+                    other => return Err(format!("`by {other}`: an algorithm is reach, walk(r) or running(c in g)")),
+                })
+            }
+            other => return Err(format!("`{other}`: a layout fact is key, fanout, size, local, order, tree or by")),
+        };
+        facts.push(fact);
+    }
+    if facts.is_empty() {
+        return Err("no fact".to_owned());
+    }
+    Ok(facts)
+}
+
+impl LayoutFact {
+    /// The fact as `layout_facts` reads it back, its columns named by `name` (`$k` keeps their places).
+    pub fn show(&self, name: &dyn Fn(usize) -> String) -> String {
+        let list = |cs: &[usize]| cs.iter().map(|&c| name(c)).collect::<Vec<_>>().join(", ");
+        match self {
+            LayoutFact::Key(cs) => format!("key({})", list(cs)),
+            LayoutFact::Fanout { from, to, fan } => {
+                let fan = match fan {
+                    Fan::One => "one".to_owned(),
+                    Fan::Few => "few".to_owned(),
+                    Fan::Many => "many".to_owned(),
+                    Fan::About(n) => format!("~{n}"),
+                };
+                format!("fanout({} -> {}, {fan})", list(from), list(to))
+            }
+            LayoutFact::Size(Size::Small) => "size(small)".to_owned(),
+            LayoutFact::Size(Size::PerDocument) => "size(per document)".to_owned(),
+            LayoutFact::Size(Size::PerKind) => "size(per kind)".to_owned(),
+            LayoutFact::Size(Size::Per { most: 1, col }) => format!("size(per {})", name(*col)),
+            LayoutFact::Size(Size::Per { most, col }) => format!("size(<= {most} per {})", name(*col)),
+            LayoutFact::Local => "local".to_owned(),
+            LayoutFact::Order { col, within, dense } => format!("order({}{} in {})", name(*col), if *dense { " dense" } else { "" }, list(within)),
+            LayoutFact::Tree { from, to } => format!("tree({} -> {})", name(*from), name(*to)),
+            LayoutFact::By(Algo::Reach) => "by reach".to_owned(),
+            LayoutFact::By(Algo::Walk(r)) => format!("by walk({r})"),
+            LayoutFact::By(Algo::Running { col, within }) => format!("by running({} in {})", name(*col), list(within)),
+        }
+    }
+
+    /// The fact with its columns by place (`$k`), as the program's facts and its image keep it.
+    pub fn placed(&self) -> String {
+        self.show(&|c| format!("${c}"))
+    }
+
+    /// A placed fact (`placed`) read back.
+    pub fn of_placed(text: &str) -> Result<LayoutFact, String> {
+        match layout_facts(text, &placed_col)?.as_slice() {
+            [f] => Ok(f.clone()),
+            _ => Err(format!("`{text}`: one layout fact")),
+        }
+    }
+
+    /// The relations the fact names besides its own (`by walk(r)`), which `combine` renames.
+    pub fn rename(&mut self, to: &dyn Fn(&str) -> String) {
+        if let LayoutFact::By(Algo::Walk(r)) = self {
+            *r = to(r);
+        }
+    }
+}
+
+/// A column named by place, `$k`.
+pub fn placed_col(w: &str) -> Result<usize, String> {
+    w.strip_prefix('$').and_then(|k| k.parse().ok()).ok_or_else(|| format!("`{w}`: a column by place, `$k`"))
+}
+
+/// Adds `facts` to a relation's layout: each fact once, in the order first written.
+pub fn add_layout(to: &mut Vec<LayoutFact>, facts: impl IntoIterator<Item = LayoutFact>) {
+    for f in facts {
+        if !to.contains(&f) {
+            to.push(f);
+        }
     }
 }
 

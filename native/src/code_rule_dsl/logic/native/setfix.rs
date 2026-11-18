@@ -1296,7 +1296,7 @@ impl MaintMode {
         let mut heap: std::collections::BinaryHeap<Reverse<(u32, usize, u32)>> = Default::default();
         let mut seen: rustc_hash::FxHashSet<(usize, u32)> = Default::default();
         let level_of = |store: &Store, r: usize, id: u32| store.rels[r].level.get(id as usize).copied().unwrap_or(0);
-        let mut push = |heap: &mut std::collections::BinaryHeap<Reverse<(u32, usize, u32)>>, store: &Store, r: usize, rows: &[i64], seen: &mut rustc_hash::FxHashSet<(usize, u32)>, counts: &mut [u64; 3]| {
+        let push = |heap: &mut std::collections::BinaryHeap<Reverse<(u32, usize, u32)>>, store: &Store, r: usize, rows: &[i64], seen: &mut rustc_hash::FxHashSet<(usize, u32)>, counts: &mut [u64; 3]| {
             let rel = &store.rels[r];
             for row in rows.chunks_exact(rel.k.max(1)) {
                 if let Some(id) = rel.find(row, |id| is_dead(&rel.dead, id)) && seen.insert((r, id)) {

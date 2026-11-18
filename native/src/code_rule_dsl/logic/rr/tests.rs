@@ -4493,3 +4493,73 @@ fn a_texts_rules_are_written_as_a_version_in_its_walk() {
     assert!(v.rules().count() >= 2, "{}", v.show());
     assert_eq!((v.size(), v.digest()), (tv.size(), tv.digest()), "{}", crate::code_rule_dsl::logic::program_image::differences(&tv, &v));
 }
+
+/// Decision 0361 step 1: a `.layout` line states facts about a declared relation's rows, its columns by name; several
+/// lines add up, each fact once; the facts round-trip through their printed form.
+#[test]
+fn a_layout_line_states_a_relations_facts_by_its_columns() {
+    use crate::code_rule_dsl::logic::front::{Algo, Fan, LayoutFact as F, LayoutSize};
+    let text = ".decl e(p: number, c: number, i: number)\n.input e\n\
+                .layout e key(c) key(p, i) fanout(p -> c, few) local\n\
+                .layout e order(i dense in p) tree(p -> c) size(<= 2 per p) key(c)\n\
+                .layout e fanout(c -> p, ~3) by running(i in p)\n\
+                .decl o(x: number)\n.output o\no(x) :- e(x, _, _).\n";
+    let p = parse(text).unwrap();
+    let want = vec![
+        F::Key(vec![1]),
+        F::Key(vec![0, 2]),
+        F::Fanout { from: vec![0], to: vec![1], fan: Fan::Few },
+        F::Local,
+        F::Order { col: 2, within: vec![0], dense: true },
+        F::Tree { from: 0, to: 1 },
+        F::Size(LayoutSize::Per { most: 2, col: 0 }),
+        F::Fanout { from: vec![1], to: vec![0], fan: Fan::About(3) },
+        F::By(Algo::Running { col: 2, within: vec![0] }),
+    ];
+    assert_eq!(p.layouts.get("e"), Some(&want), "{:?}", p.layouts);
+    assert_eq!(Fan::About(3).class(), Fan::Few);
+    for f in &want {
+        assert_eq!(&F::of_placed(&f.placed()).unwrap(), f, "{}", f.placed());
+    }
+    let names = ["p", "c", "i"];
+    assert_eq!(want[2].show(&|c| names[c].to_owned()), "fanout(p -> c, few)");
+}
+
+/// A `.layout` line naming a relation no declaration has, a column the relation lacks, or no fact, is a syntax error
+/// that names its line (decision 0361, item 1).
+#[test]
+fn a_layout_line_names_a_declared_relations_columns() {
+    let at = |layout: &str| match parse(&format!(".decl e(p: number, c: number)\n.input e\n{layout}\n.decl o(x: number)\n.output o\no(x) :- e(x, _).\n")) {
+        Err(Error::Syntax(m)) => m,
+        other => panic!("{layout}: {other:?}"),
+    };
+    assert!(at(".layout f key(p)").contains("line 3") && at(".layout f key(p)").contains("`f` is not declared"), "{}", at(".layout f key(p)"));
+    assert!(at(".layout e key(q)").contains("`e` has no column `q`"), "{}", at(".layout e key(q)"));
+    assert!(at(".layout e").contains("no fact"), "{}", at(".layout e"));
+    assert!(at(".layout e fanout(p -> c, some)").contains("one, few, many or ~N"), "{}", at(".layout e fanout(p -> c, some)"));
+    assert!(at(".layout e sorted(p)").contains("`sorted`"), "{}", at(".layout e sorted(p)"));
+}
+
+/// The layouts go where the program goes (decision 0361 step 1): into its image's facts and back, into the version's
+/// about rows (`About::layouts`), and through `combine`, which renames relations. `core.rr`'s base relations declare
+/// theirs (step 2).
+#[test]
+fn layouts_are_carried_with_the_program() {
+    use crate::code_rule_dsl::logic::front::LayoutFact as F;
+    use crate::code_rule_dsl::logic::program_image::{Builder, about::About};
+    let policy = |name: &str| format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ast.rr\"\n.violation Fn(at: node) \"a call\"\nFn(c) :- call_name(c, _).\n");
+    let p = parse(&policy("a")).unwrap();
+    let child = p.layouts.get("child").expect("core.rr declares child's layout");
+    assert!(child.contains(&F::Key(vec![1])) && child.contains(&F::Order { col: 2, within: vec![0], dense: true }), "{child:?}");
+    assert!(p.layouts.get("node").is_some_and(|f| f.contains(&F::Key(vec![1]))), "{:?}", p.layouts.get("node"));
+    // The image's facts, read back.
+    let (v, _) = Builder::of_program(&p).unwrap().finish().unwrap();
+    let back = v.program(&Default::default()).unwrap();
+    assert_eq!(back.layouts, p.layouts);
+    let about = About::of(&v);
+    let rel = v.rel("child").unwrap();
+    assert_eq!(about.layouts.iter().find(|(r, _)| *r == rel).map(|(_, f)| f), Some(child));
+    // Combined: each relation keeps its facts under the name it has there.
+    let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&policy("a"), &policy("b")]).unwrap();
+    assert_eq!(combined.layouts.get("child"), Some(child), "{:?}", combined.layouts.keys().collect::<Vec<_>>());
+}

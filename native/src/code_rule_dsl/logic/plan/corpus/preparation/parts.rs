@@ -256,7 +256,7 @@ fn program_of(v: &Version, rules: &[crate::code_rule_dsl::logic::program_image::
 /// nor the link holds a copy of it per part.
 fn stripped(v: &Arc<Version>, common: &front::Program, lists: &front::Lists) -> Result<Arc<Version>> {
     let front::Program {
-        decls, nullary, lattice, facts, rules, inputs, outputs, kindsets, demand, demand_dropped, magic_extras, magic_report, gates, policies, settings, natives, rx_spans, ast_patterns, doc_scopes, answers, text_globs, qualifiers, tapes, again, together, asked_by, shapes,
+        decls, nullary, lattice, facts, rules, inputs, outputs, kindsets, demand, demand_dropped, magic_extras, magic_report, gates, policies, settings, natives, rx_spans, ast_patterns, doc_scopes, answers, text_globs, qualifiers, tapes, again, together, asked_by, shapes, layouts,
     } = v.header(lists)?;
     macro_rules! changed {
         ($field:ident) => {
@@ -291,6 +291,7 @@ fn stripped(v: &Arc<Version>, common: &front::Program, lists: &front::Lists) -> 
         together: changed!(together),
         asked_by: changed!(asked_by),
         shapes: changed!(shapes),
+        layouts: changed!(layouts),
     };
     let mut b = Builder::of_program(&head)?;
     for r in v.rules() {
@@ -638,6 +639,12 @@ fn merge_header(all: &mut front::Program, before: &front::Program, after: &front
     for s in &after.shapes {
         if !before.shapes.contains(s) && !all.shapes.contains(s) {
             all.shapes.push(s.clone());
+        }
+    }
+    for (rel, facts) in &after.layouts {
+        let new: Vec<front::LayoutFact> = facts.iter().filter(|f| !before.layouts.get(rel).is_some_and(|b| b.contains(f))).cloned().collect();
+        if !new.is_empty() {
+            front::add_layout(all.layouts.entry(rename(rel)).or_default(), new);
         }
     }
     for s in &after.settings {
