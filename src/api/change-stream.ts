@@ -1,4 +1,8 @@
+import { createHash } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { OpenAPIHono } from "@hono/zod-openapi";
+import type { CheckoutContext } from "../engine/catalog/repository-model.js";
 import type { ChangeFeed, ChangeNotice } from "./change-feed.js";
 import type { RerailApiStores } from "./operation.js";
 import { checkoutAt, checkoutRuleCatalog } from "./repository-operations.js";
@@ -6,30 +10,51 @@ import { checkoutAt, checkoutRuleCatalog } from "./repository-operations.js";
 const STREAM_HEADERS = { "content-type": "text/event-stream", "cache-control": "no-store" } as const;
 const encoder = new TextEncoder();
 
-/**
- * The digest of the rule catalog a page scoped to `checkout` reads: the installed packs, and that checkout's own rules
- * (`.rerail/rules`). A checkout Rerail has not recorded yet has the installed packs alone; recording it is a commit,
- * which moves the token anyway.
- */
-function catalogDigest(stores: RerailApiStores, checkout: string | undefined): string {
-  if (checkout === undefined) return stores.ruleCatalog().digest;
+/** The checkout Rerail recorded at `path`, or none; recording one is a commit, which moves the token anyway. */
+function recordedCheckout(stores: RerailApiStores, path: string | undefined): CheckoutContext | undefined {
+  if (path === undefined) return undefined;
   try {
-    return checkoutRuleCatalog(stores, checkoutAt(stores, checkout, false).checkout).digest;
+    return checkoutAt(stores, path, false).checkout;
   } catch {
-    return stores.ruleCatalog().digest;
+    return undefined;
   }
 }
 
 /**
+ * The checkout's `HEAD` file as it reads now: the branch Merge Assist's status names. Git writes it with no commit to
+ * the database, so the beat reads it. A worktree's `.git` is a file naming its folder; anything unreadable is empty.
+ */
+function headOf(checkout: CheckoutContext | undefined): string {
+  if (checkout === undefined) return "";
+  try {
+    const dotGit = join(checkout.checkoutPath, ".git");
+    const named = statSync(dotGit).isDirectory() ? dotGit : /^gitdir: (.+)/u.exec(readFileSync(dotGit, "utf8"))?.[1]?.trim();
+    return named === undefined ? "" : readFileSync(join(resolve(checkout.checkoutPath, named), "HEAD"), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * What files say for a page scoped to `path`, as one digest: the rule catalog it reads (the installed packs, and the
+ * checkout's own rules in `.rerail/rules`) and the checkout's branch.
+ */
+function filesStamp(stores: RerailApiStores, path: string | undefined): string {
+  const checkout = recordedCheckout(stores, path);
+  const digest = createHash("sha256").update(checkoutRuleCatalog(stores, checkout).digest).update("\u0000").update(headOf(checkout));
+  return digest.digest("hex").slice(0, 32);
+}
+
+/**
  * The token a page compares, for one stream: it moves when the database commits (`historyVersion`, which creates no
- * database) or the scope's rule catalog changes. `salt` is the daemon's, so a restarted daemon never repeats a token.
- * The catalog is read again only at the stream's start and its beats: it is files, which no notice covers.
+ * database) or what files say for the scope changes (`filesStamp`). `salt` is the daemon's, so a restarted daemon
+ * never repeats a token. The files are read again only at the stream's start and its beats: no notice covers them.
  */
 function streamToken(stores: RerailApiStores, salt: string, checkout: string | undefined): (notice: ChangeNotice | "start") => string {
-  let digest = "";
+  let files = "";
   return notice => {
-    if (notice === "start" || notice === "beat") digest = catalogDigest(stores, checkout);
-    return `${salt}.${stores.historyVersion() ?? "none"}.${digest}`;
+    if (notice === "start" || notice === "beat") files = filesStamp(stores, checkout);
+    return `${salt}.${stores.historyVersion() ?? "none"}.${files}`;
   };
 }
 

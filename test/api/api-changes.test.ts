@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,9 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRerailApi } from "../../src/api/http.js";
 import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
-import { openRerailDatabase, type RerailDatabase } from "../../src/engine/index.js";
+import { openRerailDatabase, recordCheckout, type RerailDatabase } from "../../src/engine/index.js";
 import { SqliteSessionStore } from "../../src/runtime/index.js";
 import { installPack, uninstallPack } from "../support/installed-packs.js";
+import { gitRepository } from "../support/repository-setup.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 /** The beat of these streams: none comes within a test unless the test moves the clock to it. */
@@ -71,8 +74,8 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     await removeFolder(root);
   });
 
-  const open = async (): Promise<ReturnType<typeof messagesOf>> => {
-    const response = await app.request("/api/changes");
+  const open = async (query = ""): Promise<ReturnType<typeof messagesOf>> => {
+    const response = await app.request(`/api/changes${query}`);
     expect([response.status, response.headers.get("content-type")]).toEqual([200, "text/event-stream"]);
     return messagesOf(response);
   };
@@ -142,6 +145,20 @@ describe("the daemon's change stream (GET /api/changes)", () => {
 
     uninstallPack("complexity");
     await vi.advanceTimersByTimeAsync(BEAT_MS);
+    expect((await stream.next()).data).not.toBe(first.data);
+    await stream.stop();
+  });
+
+  it("sends a new token at the beat after the checkout's branch moved, which Merge Assist's status names", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const checkout = gitRepository(join(realpathSync(root), "web"));
+    recordCheckout(database, checkout);
+    const stream = await open(`?${new URLSearchParams({ checkout })}`);
+    const first = await stream.next();
+
+    execFileSync("git", ["switch", "-q", "-c", "feature"], { cwd: checkout });
+    await vi.advanceTimersByTimeAsync(BEAT_MS);
+
     expect((await stream.next()).data).not.toBe(first.data);
     await stream.stop();
   });
