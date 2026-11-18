@@ -10378,30 +10378,6 @@ impl Drop for TempLeft {
     }
 }
 
-/// Each relation of `prog` with rules and stated facts gets its facts apart, in `rel__stated`, and the rule
-/// `rel(x…) :- rel__stated(x…)` (a lattice relation keeps them): the pairs `(rel, rel__stated)`.
-pub fn stated_apart(prog: &mut Program) -> Vec<(String, String)> {
-    let ruled: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
-    let moved: Vec<String> = prog.facts.iter().filter(|(r, f)| !f.is_empty() && ruled.contains(*r) && !prog.lattice.contains_key(*r)).map(|(r, _)| r.clone()).collect();
-    let mut out = Vec::new();
-    for rel in moved {
-        let apart = format!("{rel}__stated");
-        let facts = prog.facts.remove(&rel).expect("stated facts");
-        let cols = prog.decls[rel.as_str()].clone();
-        let args: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("rr_s{i}").into())).collect();
-        prog.decls.insert(apart.clone().into(), cols);
-        prog.facts.insert(apart.clone(), facts);
-        prog.rules.push(Rule {
-            head: Atom { rel: rel.clone().into(), args: args.clone().into(), neg: false, gated: false },
-            body: [Literal::Atom(Atom { rel: apart.clone().into(), args: args.into(), neg: false, gated: false })].into(),
-        });
-        out.push((rel, apart));
-    }
-    out
-}
-
-
-
 /// Runs program `program`, its version (a whole image: decision 0173, t36 item 7 step 8), over `db`: `lowering` the
 /// lowering's domains where the program is lowered (decision 0009).
 pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Option<lower::Lowering<'_>>, mut hooks: Hooks<'_>) -> Result<Outcome> {

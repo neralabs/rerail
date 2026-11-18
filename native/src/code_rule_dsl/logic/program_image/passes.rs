@@ -1,6 +1,5 @@
 //! The planner's passes over a version (decision 0173, stage 2 step 3), each stated as an edit: `normalize` is a
-//! derivation (every rule rewritten, each recording its source, §9), `stated_apart` an overlay of what it moves. Each is
-//! the tree pass it replaces (`plan::sql_kernel::normalize`, `plan::stated_apart`), checked against it (`tests`).
+//! derivation (every rule rewritten, each recording its source, §9), `stated_apart` an overlay of what it moves.
 use super::about::About;
 use super::build::{Builder, PartFields, Rewrite, Site, T};
 use super::manager::{Cx, Pipeline, ProgramPass, ProgramW, RuleOut, RulePass, Select, Step};
@@ -10,9 +9,10 @@ use super::{Cell, RelId, RuleId, Slot};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
-/// `v` normalized for the SQL kernel (`sql_kernel::normalize`): each relation of no columns, or a lattice of no
-/// keys, gets a leading presence column (`program::physical`); and when any lattice is not flat, each `top` becomes its
-/// lattice's value and each ground rule a fact (`program::tops`). A derivation of `v`: every rule came from one of
+/// `v` normalized for the SQL kernel: each relation of no columns, or a lattice of no keys, gets a leading presence
+/// column (SQLite's physical sentinel: a table needs a column, and a lattice a key); and when any lattice is not flat,
+/// each `top` becomes its lattice's value (the `top` keyword belongs to a lattice, not the flat lattice's numeric
+/// sentinel) and each ground rule a fact. A derivation of `v`: every rule came from one of
 /// `v`'s. Also the sentinel relations, those and every declared one of no columns, by id. A rule pass (`Normalize`).
 pub fn normalize(v: &Arc<Version>) -> Result<(Arc<Version>, Vec<RelId>), String> {
     run_normalize(v, Normalize::default())
@@ -240,7 +240,7 @@ impl Rewrite for Normal<'_> {
 }
 
 /// Each relation of `v` with rules and stated facts, its facts moved apart into `rel__stated`, read by the rule
-/// `rel(x…) :- rel__stated(x…)`; a lattice relation keeps its facts (`plan::stated_apart`). An overlay of `v`; and the
+/// `rel(x…) :- rel__stated(x…)`; a lattice relation keeps its facts. An overlay of `v`; and the
 /// pairs `(rel, rel__stated)`, in name order. A program pass (`StatedApart`).
 pub fn stated_apart(v: &Arc<Version>) -> Result<(Arc<Version>, Vec<(RelId, RelId)>), String> {
     let mut pass = StatedApart::default();

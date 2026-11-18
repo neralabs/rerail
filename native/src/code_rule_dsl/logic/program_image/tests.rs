@@ -701,46 +701,47 @@ fn the_analyses_over_a_version_say_what_the_tree_says() {
     assert_eq!(super::analyses::accepts(&base(&plain), &super::About::of(&base(&plain))).ok(), Some(true));
 }
 
-/// The passes over a version make what the tree passes make of `p`: `normalize` (as a program, by digest, and its
-/// sentinels), each derived rule's source, then `stated_apart` over the normalized version. The analyses agree on
-/// what they make.
-fn passes_agree(p: &Program) {
+/// What the planner's passes over a version make of `p` (`passes::normalize`, then `passes::stated_apart` over what it
+/// made): the sentinels are the relations of no columns and the lattices of no keys (and the declared nullary ones),
+/// each declared with its presence column; every derived rule has its source, and each of `p`'s gave one rule, or a
+/// fact (a ground rule); each relation's stated facts beside its rules go apart, to a relation of its own.
+fn passes_hold(p: &Program) {
+    use super::fields::ProgramFields;
     use super::passes;
-    use crate::code_rule_dsl::logic::plan;
-    let lists = Lists::default();
+    use std::collections::BTreeSet;
     let v = base(p);
-    let (tree, sentinels) = match (plan::sql_kernel::normalize(p), passes::normalize(&v)) {
-        (Ok(t), Ok(g)) => (t, g),
-        (Err(_), Err(_)) => return,
-        (a, b) => panic!("normalize: tree {:?}, version {:?}", a.map(|_| ()).map_err(|e| e.to_string()), b.map(|_| ())),
-    };
-    let ((tp, ts), (nv, ns)) = (tree, sentinels);
-    same(&nv.program(&lists).unwrap(), &tp);
-    assert_eq!(nv.digest(), base(&tp).digest(), "normalized digest");
-    let names: std::collections::BTreeSet<String> = ns.iter().map(|&r| nv.rel_name(r).to_owned()).collect();
-    assert_eq!(names, ts, "sentinels");
+    let Ok((nv, ns)) = passes::normalize(&v) else { return };
+    let names: BTreeSet<String> = ns.iter().map(|&r| nv.rel_name(r).to_owned()).collect();
+    let lattice = ProgramFields::lattice(&*v);
+    let nullary = ProgramFields::nullary(&*v);
+    let want: BTreeSet<String> = v
+        .declared_names()
+        .into_iter()
+        .filter(|r| v.columns_of(r).is_some_and(|c| c.is_empty()) || lattice.get(r).is_some_and(|l| l.keys == 0) || nullary.contains(r))
+        .collect();
+    assert_eq!(names, want, "sentinels");
+    for r in &names {
+        let (before, after) = (v.columns_of(r).unwrap().len(), nv.columns_of(r).unwrap().len());
+        assert!(after == before + 1 || (after == before && nullary.contains(r)), "{r}: {before} columns, then {after}");
+    }
     // Every derived rule came from one of `v`'s; each of `v`'s gave one rule, or a fact (a ground rule). A program
     // normalize leaves as it was is its input (the manager keeps no new base of it).
-    if Arc::ptr_eq(&nv, &v) {
-        assert_eq!(nv.digest(), base(&tp).digest());
-    } else {
-    for r in nv.rules() {
-        let s = r.source().expect("a derived rule's source");
-        assert_eq!(v.rel_name(v.rule(s).expect("its source is the input's").head().rel()), nv.rel_name(r.head().rel()));
+    if !Arc::ptr_eq(&nv, &v) {
+        for r in nv.rules() {
+            let s = r.source().expect("a derived rule's source");
+            assert_eq!(v.rel_name(v.rule(s).expect("its source is the input's").head().rel()), nv.rel_name(r.head().rel()));
+        }
+        for r in v.rules() {
+            let made = nv.derived(r.id()).count();
+            assert!(made == 1 || (made == 0 && r.body().next().is_none()), "{} made {made}", v.rel_name(r.head().rel()));
+        }
     }
-    for r in v.rules() {
-        let made = nv.derived(r.id()).count();
-        assert!(made == 1 || (made == 0 && r.body().next().is_none()), "{} made {made}", v.rel_name(r.head().rel()));
+    let (sv, pairs) = passes::stated_apart(&nv).unwrap();
+    for &(a, b) in &pairs {
+        let (a, b) = (sv.rel_name(a), sv.rel_name(b));
+        assert!(sv.declares(b) && !sv.has_fact_rows(a), "{a}'s facts apart as {b}:\n{}", sv.show());
+        assert!(sv.rules().any(|r| sv.rel_name(r.head().rel()) == a && r.body().filter_map(|l| l.atom()).any(|x| sv.rel_name(x.rel()) == b)), "{a} reads {b}:\n{}", sv.show());
     }
-    }
-    let mut tp2 = tp.clone();
-    let pairs = plan::stated_apart(&mut tp2);
-    let (sv, got) = passes::stated_apart(&nv).unwrap();
-    same(&sv.program(&lists).unwrap(), &tp2);
-    assert_eq!(sv.digest(), base(&tp2).digest(), "stated apart digest");
-    let got: Vec<(String, String)> = got.iter().map(|&(a, b)| (sv.rel_name(a).to_owned(), sv.rel_name(b).to_owned())).collect();
-    assert_eq!(got, pairs, "stated apart");
-    analyses_agree(&sv, &tp2);
 }
 
 /// A program the passes change everywhere: relations of no columns (declared, ruled, with facts), a lattice of no
@@ -772,23 +773,22 @@ fn normalizable() -> Program {
     p
 }
 
-/// The passes over a version are the tree's passes, on every sampled pack program and on a program they change
-/// everywhere; and a `top` of two domains is refused by both.
+/// The planner's passes over a version hold (`passes_hold`) on every sampled pack program and on a program they change
+/// everywhere; and a `top` of two domains is refused.
 #[test]
-fn the_passes_over_a_version_are_the_tree_passes() {
+fn the_planners_passes_over_a_version_hold() {
     let mut n = 0;
     for (_, prog) in pack_programs() {
         if encode(&prog).is_err() {
             continue;
         }
-        passes_agree(&prog);
+        passes_hold(&prog);
         n += 1;
     }
     assert!(n > 50, "{n}");
     let p = normalizable();
-    crate::code_rule_dsl::logic::plan::sql_kernel::normalize(&p).expect("the tree normalizes it");
-    passes_agree(&p);
-    let (nv, _) = super::passes::normalize(&base(&p)).unwrap();
+    passes_hold(&p);
+    let (nv, _) = super::passes::normalize(&base(&p)).expect("it normalizes");
     assert!(nv.rules().count() < p.rules.len(), "ground rules became facts");
     // `top` beside variables of two lattices.
     let mut two = p.clone();
@@ -797,7 +797,6 @@ fn the_passes_over_a_version_are_the_tree_passes() {
         Literal::Atom(atom("best", vec![v("x"), v("b")])),
         Literal::Cmp { l: Term::Call("max".into(), [v("a"), v("b")].into()), op: "<", r: Term::Top },
     ].into() });
-    assert!(crate::code_rule_dsl::logic::plan::sql_kernel::normalize(&two).is_err());
     assert!(super::passes::normalize(&base(&two)).is_err());
 }
 
