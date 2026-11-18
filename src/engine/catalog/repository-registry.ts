@@ -84,10 +84,26 @@ function contextOf<C extends string | null>(
  * JS realpath of the folder as the caller spelt it, which keeps a mapped or `subst` drive letter and the letter case
  * typed, where this build keys it by the spelling the disk stores. A git checkout is keyed by git's top level in both.
  */
-function earlierKeyOf(location: RepositoryIdentityLocation, checkoutPath: string): string | undefined {
+function earlierKeyOf(location: Pick<RepositoryIdentityLocation, "git" | "workspaceRoot">, checkoutPath: string): string | undefined {
   if (location.git || process.platform !== "win32" || location.workspaceRoot === checkoutPath) return undefined;
   const earlier = earlierKeyAt(location.workspaceRoot);
   return earlier === checkoutPath ? undefined : earlier;
+}
+
+/**
+ * `checkout` as a caller that spelt its folder `spelling` finds it: with the key Rerail 0.1.4 and earlier recorded the
+ * folder under for that spelling ({@link earlierKeyOf}) where it is another; `checkout` itself without a spelling, or
+ * where the spelling does not resolve.
+ */
+export function spelledCheckout(checkout: CheckoutContext | undefined, spelling: string | undefined): CheckoutContext | undefined {
+  if (checkout === undefined || spelling === undefined) return checkout;
+  let earlierCheckoutPath: string | undefined;
+  try {
+    earlierCheckoutPath = earlierKeyOf({ git: checkout.git, workspaceRoot: spelling }, checkout.checkoutPath);
+  } catch {
+    return checkout;
+  }
+  return earlierCheckoutPath === undefined ? checkout : { ...checkout, earlierCheckoutPath };
 }
 
 /**

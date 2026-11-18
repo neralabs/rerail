@@ -219,7 +219,7 @@ describe("repository start state", () => {
     const database = openRerailDatabase(databasePath);
     try {
       const read = startStateReader(database);
-      expect([main, beside, outer, inner].map(read)).toEqual(["stopped", "started", "stopped", "started"]);
+      expect([main, beside, outer, inner].map(folder => read(folder))).toEqual(["stopped", "started", "stopped", "started"]);
     } finally {
       database.$client.close();
     }

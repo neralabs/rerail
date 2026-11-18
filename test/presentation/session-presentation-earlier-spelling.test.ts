@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { defaultRerailDatabasePath, openRerailDatabase, recordCheckout, repositoryIdentityLocation } from "../../src/engine/index.js";
+import { createRerailApi, DatabaseApiStores, operations } from "../../src/api/index.js";
 import { readPresentation } from "../../src/presentation/session-presentation.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native-daemon.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -66,5 +67,26 @@ describe.runIf(process.platform === "win32")("On Windows, the status line in a f
     await startNativeTestDaemon(root);
     const footer = await readPresentation({ sessionId: "a session the daemon has not recorded", host: "claude-code", cwd: spelled });
     expect(footer).toMatchObject({ status: "not-on-here", text: "", repositoryState: "stopped" });
+  });
+
+  it("reads the stop at the daemon only from the spelling apart from `repository`, and asked without one or with one it cannot use, as before", async () => {
+    const { spelled } = await stoppedBy014();
+    const path = defaultRerailDatabasePath();
+    const stores = new DatabaseApiStores(path, {
+      health: () => ({ pid: process.pid, database: { path, exists: true }, native: { ok: true } }), origin: () => "http://127.0.0.1:4737",
+    });
+    try {
+      const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
+      const state = async (extra: Record<string, string>) => {
+        const response = await app.request(`/api/presentation?${new URLSearchParams({ repository: realpathSync.native(spelled), host: "claude-code", ...extra })}`);
+        return [response.status, ((await response.json()) as { repositoryState?: string }).repositoryState];
+      };
+      expect(await state({ spelling: spelled })).toEqual([200, "stopped"]);
+      expect(await state({})).toEqual([200, "started"]);
+      expect(await state({ spelling: "Stopped" })).toEqual([200, "started"]);
+      expect(await state({ spelling: "Q:\\a drive no letter names\\Stopped" })).toEqual([200, "started"]);
+    } finally {
+      stores.close();
+    }
   });
 });
