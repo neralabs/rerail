@@ -380,8 +380,8 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 11 | The transducer's packed batch: 44 bytes a node, and its child lists | `PackedBatch::nodes` (0293 "Interim") | Each matched batch | Step 7 |
 | 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
 | 13 | The transducer's residency: every tape it reads copied into slabs of its own, and documents copied between slabs | `residency::slabs::admit_docs`, `insert`'s `place`; `rerail_metal::slabs::gather` | Each tape a Metal batch reads | Step 7 |
-| 15 | Found 2026-11-17, unmarked: a 16z tape's blocks laid out as format 16 for the reads written once (`DocTape::in_place`'s `laid`), the whole tape, once per document, for its views and the CPU executor; its views then refused on the device (`views.refused.not_in_room`) and made | `tape/formats.rs`, `DocTape::in_place` | The tape's format 16 size, each 16z document read in place (16z is opt-in: `RERAIL_TAPE=16z`) | Step 4b |
 | 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 4 bytes a line, 8 a span, each batch that makes the views | Step 4 |
+| 15 | Found 2026-11-17, unmarked: a 16z tape's blocks laid out as format 16 for the reads written once (`DocTape::in_place`'s `laid`), the whole tape, once per document, for its views and the CPU executor; its views then refused on the device (`views.refused.not_in_room`) and made | `tape/formats.rs`, `DocTape::in_place` | The tape's format 16 size, each 16z document read in place (16z is opt-in: `RERAIL_TAPE=16z`) | Step 4b |
 
 ## The plan
 
