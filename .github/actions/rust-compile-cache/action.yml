@@ -1,0 +1,47 @@
+name: Rust compile cache
+description: >-
+  Puts every rustc compile of the job, and every C and C++ compile a build script makes through the `cc` crate, through
+  sccache, whose cache is the GitHub Actions cache: one entry per compile, keyed on its inputs (sources, flags,
+  dependencies, compiler), so a crate any earlier job compiled the same way is fetched, not compiled. cc-rs wraps its C
+  and C++ compiler in RUSTC_WRAPPER when that is sccache, so CC and CXX stay as they are. Use it after the Rust
+  toolchain's set-up and before the first cargo or napi command. Its post-job step prints sccache's hit statistics,
+  as a notice and in the job's summary.
+
+  Upstream sccache caches what rustc does not link: libraries (rlib, staticlib) and C objects. A crate rustc links
+  (the engine's cdylib with its thin LTO, proc macros, build scripts, test harnesses, binaries) compiles every time,
+  and a build script runs every time. Incremental compiles are never cached, so CARGO_INCREMENTAL is 0. A job's entries
+  are scoped like any cache entry: its branch (a pull request's merge ref) and the default branch, so main's runs feed
+  every pull request.
+
+inputs:
+  write:
+    description: >-
+      Store what the job compiles. "false" only reads (SCCACHE_GHA_RW_MODE=READ_ONLY): for a job that runs code it does
+      not trust before compiling.
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    # Downloads the release, checks its sha256, puts it on PATH, exports SCCACHE_PATH and the cache service's
+    # ACTIONS_RESULTS_URL and ACTIONS_RUNTIME_TOKEN, and its post-job step shows the statistics.
+    - name: Set up sccache
+      uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      with:
+        version: v0.19.0
+
+    # SCCACHE_GHA_VERSION names the cache: a new value starts an empty one. The server would stop after 10 idle
+    # minutes and lose the job's statistics (a long link or test run is idle for sccache), so it never stops.
+    - name: Route compiles through sccache
+      shell: bash
+      env:
+        WRITE: ${{ inputs.write }}
+      run: |
+        {
+          echo "RUSTC_WRAPPER=sccache"
+          echo "SCCACHE_GHA_ENABLED=on"
+          echo "SCCACHE_GHA_VERSION=rerail-1"
+          echo "SCCACHE_GHA_RW_MODE=$([ "$WRITE" = false ] && echo READ_ONLY || echo READ_WRITE)"
+          echo "SCCACHE_IDLE_TIMEOUT=0"
+          echo "CARGO_INCREMENTAL=0"
+        } >> "$GITHUB_ENV"
