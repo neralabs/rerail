@@ -19,6 +19,15 @@ export interface WriteLockWaitData {
 /** What the thread posts once it took the write lock and gave it back at once. */
 export const WRITE_LOCK_FREE = "write-lock-free";
 
+/** The pauses of SQLite's default busy handler (`sqliteDefaultBusyCallback`), in ms; the last one repeats. */
+const BUSY_PAUSES_MS = [1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100];
+const LAST_BUSY_PAUSE_MS = 100;
+
+/** The pause SQLite's busy handler makes after try `tries + 1` failed on the lock, in ms. */
+export function busyPauseMs(tries: number): number {
+  return BUSY_PAUSES_MS[tries] ?? LAST_BUSY_PAUSE_MS;
+}
+
 /**
  * Resolves to true once the write lock of the database at `path` was free (taken and given back at once on a
  * connection of the worker's own), or to false once `signal` aborted first and the thread ended. The worker never keeps

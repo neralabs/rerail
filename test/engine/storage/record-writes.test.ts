@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import type { AuditInput } from "../../../src/engine/audit/audit.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
+import { BUSY_TIMEOUT_MS, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { SqliteSessionStore } from "../../../src/runtime/index.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
@@ -334,5 +335,74 @@ describe("record writes while another process holds the write lock", () => {
   it("throw at once a failure that is not the lock, as a write made at once did before", async () => {
     const { sessions } = await stores();
     expect(() => sessions.append({ sessionId: "no-such-session", eventId: "orphan", kind: "call", payload: {} })).toThrow(/FOREIGN KEY/u);
+  });
+});
+
+describe("a write that is made now or not at all", () => {
+  /** A write of one event row into the session `stores()` opened. */
+  const eventWrite = (eventId: string) => (database: RerailDatabase): void => {
+    database.$client.prepare("INSERT INTO events (session_id, event_id, kind, observed_at, payload_json, payload_v8) VALUES (?, ?, 'call', 1, '{}', x'')")
+      .run(session.sessionId, eventId);
+  };
+  const eventIds = (path: string) => rows(path, "SELECT event_id AS eventId FROM events WHERE kind = 'call' ORDER BY sequence");
+
+  it("says the lock is held, keeping nothing, where a write would wait for it", async () => {
+    const { path, sessions } = await stores();
+    sessions.openSession(session, 1_000);
+    const writer = (await recordWrites()).openRecordWriter(path);
+    closers.push(() => writer.close());
+    const holder = holderHere(path);
+
+    expect(writer.writeNow(eventWrite("held"))).toBe(false);
+    holder.exec("COMMIT");
+    await writer.settled();
+    expect(writer.writeNow(eventWrite("free"))).toBe(true);
+
+    expect(eventIds(path)).toEqual([{ eventId: "free" }]);
+  });
+
+  it("is made once the holder gives the lock back, trying between the thread's turns, never holding it", async () => {
+    const { path, sessions } = await stores();
+    sessions.openSession(session, 1_000);
+    const writer = (await recordWrites()).openRecordWriter(path);
+    closers.push(() => writer.close());
+    const holder = holderHere(path);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    closers.push(() => { vi.useRealTimers(); });
+
+    const made = writer.writeWhenFree(eventWrite("late"), new AbortController().signal);
+    // SQLite's first pauses (1, 2, 5 ms): each try meets the lock, and this thread runs between them.
+    await vi.advanceTimersByTimeAsync(8);
+    expect(eventIds(path)).toEqual([]);
+    holder.exec("COMMIT");
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(made).resolves.toBe(true);
+    expect(eventIds(path)).toEqual([{ eventId: "late" }]);
+  });
+
+  it("is not made, and keeps nothing, once the tries reach the busy timeout or its caller stops them", async () => {
+    const { path, sessions } = await stores();
+    sessions.openSession(session, 1_000);
+    const writer = (await recordWrites()).openRecordWriter(path);
+    closers.push(() => writer.close());
+    const holder = holderHere(path);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    closers.push(() => { vi.useRealTimers(); });
+
+    const timedOut = writer.writeWhenFree(eventWrite("timed-out"), new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(BUSY_TIMEOUT_MS - 1);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(timedOut).resolves.toBe(false);
+    const stop = new AbortController();
+    const stopped = writer.writeWhenFree(eventWrite("stopped"), stop.signal);
+    stop.abort();
+    await expect(stopped).resolves.toBe(false);
+
+    expect(vi.getTimerCount()).toBe(0);
+    holder.exec("COMMIT");
+    await writer.settled();
+    expect(eventIds(path)).toEqual([]);
   });
 });
