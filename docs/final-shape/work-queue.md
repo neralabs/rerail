@@ -1335,6 +1335,12 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
 - **Done when**: a `desc kind=K` is a scan of the root's subtree range, 64 codes at a time, its groups spread over
   threads (nothing posted, 0293 §6), and a `child` loop a segmented pass, so a walk costs its output, not its
   length; the longest walk at s1000 is under 100 steps.
+- **Progress** (2026-11-17, 0380): a `child` loop is one move (`CLOSURE`), a preorder scan of the start's subtree.
+  A long scan's spill halves its range at a node both halves reach. A `desc` or closure followed by
+  `capture; emit` marks its range in place, 32 nodes a word op. At s1000, the time was one closure pass's single
+  136,902-node scan, whose spills ran one after another. `label_micro_8` + `label_micro` went from 265–340 ms to
+  93–120 ms, with the same findings. Open: the longest walk is 4,106 counted steps in the loop tier and 2,149 in
+  t0, not under 100, and a spilled piece walks a frame at a time.
 
 ### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
 

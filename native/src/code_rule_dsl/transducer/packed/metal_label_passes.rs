@@ -812,8 +812,15 @@ const GROUP_FRAMES: [usize; 5] = [8, 32, 64, 128, 256];
 const GROUP_WIDTH: u64 = 64;
 
 /// A walk's stack tier (`label_micro_8`, `label_micro_32`, `label_micro`): the fewest frames its
-/// static depth (`Micro::depth`) fits, 128 where it loops.
-fn tier(depth: Option<usize>) -> usize {
+/// static depth (`Micro::depth`) fits, 128 where it loops. A walk with a closure (`compile_micro::CLOSURE`) is the
+/// loop tier's too: its length follows its start's subtree as a loop's does. In the short tier a SIMD group walks its
+/// lanes' roots in rounds as long as their longest walk, and the closures' walks of hundreds of steps among walks of a
+/// dozen took `label_micro_8` from 91–101 ms to 281–305 at s1000 (work queue Q56).
+fn tier(walk: &Micro) -> usize {
+    if walk.closes() {
+        return 2;
+    }
+    let depth = walk.depth();
     // Every tier's stacks are in device memory (`Runner::stacks`): thread memory is the driver's
     // scratch, sized for every thread in flight at the kernel's whole stack and kept by the process
     // for its life (O39: 8 root frames, ~100 MB). The shallow walks (97% of S7's starts) take a
@@ -1832,9 +1839,9 @@ impl Runner<'_> {
                             let programs = chunk.iter().map(|&at| passes[at].0).collect::<Vec<_>>();
                             // In its members' deepest tier: the launch plan counts a level's
                             // tiers from its passes' walks (`plan_rounds`).
-                            let deepest = programs.iter().filter_map(|program| Micro::of(program)).map(|walk| tier(walk.depth())).max();
+                            let deepest = programs.iter().filter_map(|program| Micro::of(program)).map(|walk| tier(&walk)).max();
                             if let Some(packed) = super::fusion::Fused::of(&programs)
-                                && Micro::of(&packed.program).map(|walk| tier(walk.depth())) <= deepest
+                                && Micro::of(&packed.program).map(|walk| tier(&walk)) <= deepest
                             {
                                 let rows = packed.emits.iter().map(|&(member, _)| passes[chunk[member]].3).collect::<Vec<_>>();
                                 packs.push((packed.program, chunk.to_vec(), rows));
@@ -1895,7 +1902,7 @@ impl Runner<'_> {
                         texts.extend_from_within(from..from + label_words);
                     }
                     slots += own.len() as u32;
-                    let tier = tier(walk.depth());
+                    let tier = tier(&walk);
                     // A pack's route has bit 2, its emit count and rows after its words.
                     let mode = if table.is_some() { mode | 4 } else { mode };
                     fused.push(([words.len() as u32, walk.words.len() as u32, target, mode, start, count, text_start, 0], walk.depth()));
