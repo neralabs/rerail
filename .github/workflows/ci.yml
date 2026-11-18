@@ -885,15 +885,15 @@ jobs:
           dir: ${{ steps.compile-cache.outputs.dir }}
 
   # Builds the package once: dist/ and the release native engine, handed to every test job as an artifact. The engine
-  # compiles through the compile cache (.github/actions/rust-compile-cache), which starts from the store main's last
-  # run uploaded; pushes to main upload theirs.
+  # builds incrementally from the cargo target main's last run uploaded (.github/actions/cargo-target); pushes to main
+  # upload theirs.
   build:
     name: Build
     needs: changes
     if: needs.changes.outputs.release-pr != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # actions: read finds and downloads main's compile cache.
+    # actions: read finds and downloads main's cargo target.
     permissions:
       actions: read
       contents: read
@@ -915,10 +915,10 @@ jobs:
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      - id: compile-cache
-        uses: ./.github/actions/rust-compile-cache
+      - uses: ./.github/actions/cargo-target
         with:
-          name: release-x86_64-unknown-linux-gnu
+          name: cargo-target-x86_64-unknown-linux-gnu
+          mode: restore
 
       - uses: ./.github/actions/node-deps
 
@@ -929,12 +929,12 @@ jobs:
         run: node scripts/build/release-engine.mjs x86_64-unknown-linux-gnu
 
       # Straight after the build, so a later step's failure keeps it.
-      - name: Save the compile cache
+      - name: Save the cargo target
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: ./.github/actions/rust-compile-cache/save
+        uses: ./.github/actions/cargo-target
         with:
-          artifact: ${{ steps.compile-cache.outputs.artifact }}
-          dir: ${{ steps.compile-cache.outputs.dir }}
+          name: cargo-target-x86_64-unknown-linux-gnu
+          mode: save
 
       - name: Check the native engine loads on glibc 2.28
         run: node scripts/check/check-linux-engine.mjs native/rerail_engine.*.node
@@ -1004,8 +1004,8 @@ jobs:
         run: npm run test:coverage:lint-config
 
   # The Windows engine the Windows unit shards load, built once per run and handed to them as an artifact, as the build
-  # job hands Linux's to the Linux jobs: the release form package.yml builds, through the compile cache started from
-  # main's store (main uploads its own). Gated as the shards are.
+  # job hands Linux's to the Linux jobs: the release form package.yml builds, incrementally from the cargo target main's
+  # last run uploaded (main uploads its own). Gated as the shards are.
   build-windows:
     name: Build (Windows)
     needs: changes
@@ -1020,7 +1020,7 @@ jobs:
     runs-on: windows-2025
     # A cold release build took 27 minutes on windows-2025 (44363497802, with rerail-logic and rerail-engine split).
     timeout-minutes: 45
-    # actions: read finds and downloads main's compile cache.
+    # actions: read finds and downloads main's cargo target.
     permissions:
       actions: read
       contents: read
@@ -1050,10 +1050,10 @@ jobs:
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      - id: compile-cache
-        uses: ./.github/actions/rust-compile-cache
+      - uses: ./.github/actions/cargo-target
         with:
-          name: release-x86_64-pc-windows-msvc
+          name: cargo-target-x86_64-pc-windows-msvc
+          mode: restore
 
       - uses: ./.github/actions/node-deps
 
@@ -1075,12 +1075,12 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Save the compile cache
+      - name: Save the cargo target
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: ./.github/actions/rust-compile-cache/save
+        uses: ./.github/actions/cargo-target
         with:
-          artifact: ${{ steps.compile-cache.outputs.artifact }}
-          dir: ${{ steps.compile-cache.outputs.dir }}
+          name: cargo-target-x86_64-pc-windows-msvc
+          mode: save
 
   # The engine's #[cfg(windows)] tests (process starts, Windows import roots, the tree watch's oplock watch) are
   # compiled out on Linux, where the rust job runs every other test; these filters select them and the Windows-neutral
@@ -1635,7 +1635,7 @@ jobs:
     runs-on: macos-15
     # A cold release build took 20 minutes on macos-15 (44363497802, with rerail-logic and rerail-engine split).
     timeout-minutes: 35
-    # actions: read finds and downloads main's compile cache.
+    # actions: read finds and downloads main's cargo target.
     permissions:
       actions: read
       contents: read
@@ -1657,10 +1657,10 @@ jobs:
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      - id: compile-cache
-        uses: ./.github/actions/rust-compile-cache
+      - uses: ./.github/actions/cargo-target
         with:
-          name: release-aarch64-apple-darwin
+          name: cargo-target-aarch64-apple-darwin
+          mode: restore
 
       - uses: ./.github/actions/node-deps
 
@@ -1682,12 +1682,12 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Save the compile cache
+      - name: Save the cargo target
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: ./.github/actions/rust-compile-cache/save
+        uses: ./.github/actions/cargo-target
         with:
-          artifact: ${{ steps.compile-cache.outputs.artifact }}
-          dir: ${{ steps.compile-cache.outputs.dir }}
+          name: cargo-target-aarch64-apple-darwin
+          mode: save
 
   provider-smoke:
     name: Real Claude Code, Codex, and Cursor sessions
