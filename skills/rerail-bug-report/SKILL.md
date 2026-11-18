@@ -45,7 +45,7 @@ for that kind. The person decides; nothing leaves their computer until they say 
    **Not a bug**, when one of these explains it:
 
    - `repository.state` is not `started`: Rerail is not on here. `/rerail-start` starts it.
-   - Nothing steered, and the rule's `on` is false or its `mode` is `log`: on Log, Rerail keeps a record and the agent is not
+   - Nothing steered, and the rule's `on` is false or its `mode` is `log`: on Log, Rerail only records it and the agent is not
      told. A Log rule that recorded fine code as a violation is still a rule bug.
    - The rule is not in `repository.rules`: it is not on in this repository, or its pack is not installed
      (`rerail packs add <id>`).

@@ -64,7 +64,7 @@ is fine, but the rule itself is harmful" is the usual finding.
    import that makes the name what the rule thinks it is.
 4. **Reword the message so it informs.** Replace a command with a statement plus a condition: "`@` hides errors. If this call can
    fail in normal operation, keep it." instead of "Remove the `@` operator."
-5. **Set it to Log.** Rerail keeps a record and the agent is not told. This is right when the repo's existing code chose
+5. **Set it to Log.** Rerail only records it, for the person to review, and the agent is not told. This is right when the repo's existing code chose
    otherwise, or when the matcher cannot be made safe.
 6. **Remove the rule.**
 
