@@ -1388,6 +1388,13 @@ thread_local! {
     static BEHIND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Runs `f`, which reads the store inside the waves (decision 0104's one exception, decision 0298 §5: a reached
+/// stratum's stored general form, whose key the run knows only once it reaches the stratum), as work behind the run
+/// (`behind`), which the strict mode lets through. `f` reads alone: what it would write goes to the store's writer.
+pub fn read_in_waves<T>(f: impl FnOnce() -> T) -> T {
+    behind(f)
+}
+
 /// Waves are under way until dropped: from a run's first wave (its first chunk) to its last (the cross-file part's
 /// last stratum). SQL before and after is the run's beginning and end, where it may be; inside, it is a hazard.
 /// With the stage this thread's run was at before (`STAGE`).

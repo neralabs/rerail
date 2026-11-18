@@ -476,20 +476,6 @@ pub(in crate::code_rule_dsl) fn columns_of(domains: &Domains) -> HashMap<&str, V
 domains.iter().map(|(r, ds)| (r.as_str(), ds.iter().copied().map(Some).collect())).collect()
 }
 
-/// The domain of column `c` (declared `t`) of a new relation that shares its first `known` columns with a relation
-/// `domains` covers: past those, its declared type's, else its variable's domain in the relation's one rule (`var`),
-/// else a name, as `domains` finds them. A support relation (`supports`, `h__supN`) holds its head's columns, then the
-/// variables its body binds: a kind there (`kind(p, k)`) is a kind id, no atom (decision 0170), and given the head's
-/// domains alone it was taken for one.
-pub(in crate::code_rule_dsl) fn column_domain(c: usize, t: &str, known: &[Domain], var: Option<Domain>) -> Domain {
-    match t {
-        _ if c < known.len() => known[c],
-        "int" | "flat" | "min" | "max" => Domain::Int,
-        "node" => Domain::Node,
-        _ => var.unwrap_or(Domain::Name),
-    }
-}
-
 /// A program lowered for one dialect, before its image: the tree `lower_tree` gives, which the preparation passes edit
 /// (`corpus`) and the SQL emitter reads (`emit::emit`). The run reads none (decision 0281's path, step 4): `image`
 /// makes the run's `Lowered`, a version.

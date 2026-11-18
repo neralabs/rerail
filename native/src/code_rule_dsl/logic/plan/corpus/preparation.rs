@@ -4,7 +4,7 @@
 
 use crate::code_rule_dsl::logic::program_image::manager::{Run, Cx, Pipeline, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::Version;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
 mod merge;

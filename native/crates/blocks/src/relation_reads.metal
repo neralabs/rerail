@@ -2,9 +2,6 @@
 // edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these` writes it again.
 #ifndef CLIF_HELPERS
 #define CLIF_HELPERS 1
-#ifndef clif_view
-#define clif_view(v,a) (v)[(a)/4u]
-#endif
 inline ulong clif_word(device const uchar* t,ulong a){device const ulong* w=(device const ulong*)(t+(a&~7ul));uint s=uint(a&7ul)*8u;return s==0u?w[0]:(w[0]>>s)|(w[1]<<(64u-s));}
 inline uchar clif_u8(device const uchar* t,ulong a){return t[a];}
 inline ushort clif_u16(device const uchar* t,ulong a){return (a&1ul)==0ul?*(device const ushort*)(t+a):ushort(clif_word(t,a));}

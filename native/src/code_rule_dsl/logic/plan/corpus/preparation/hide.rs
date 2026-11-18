@@ -150,7 +150,8 @@ impl ProgramPass for Hide {
             let carried = &delta.carried;
             let mut edits: Vec<(usize, usize, Edit)> = Vec::new();
             let ruled = &delta.heads;
-            let mut copies: Vec<(W, Facts)> = Vec::new();
+            // Each copy with the rule it was made from (the request record follows it, `front::record_copy`).
+            let mut copies: Vec<(W, Facts, usize)> = Vec::new();
             let mut decls: Vec<(front::Name, front::List<(front::Name, front::Name)>)> = Vec::new();
             let mut axes: Vec<String> = Vec::new();
             let mut kindsets: Vec<(String, Vec<String>)> = Vec::new();
@@ -179,7 +180,7 @@ impl ProgramPass for Hide {
                 if !maybe.is_empty() && split.insert(i) {
                     let mut seed = seeds[i].clone();
                     seed.extend(maybe);
-                    copies.push((rule.clone(), seed));
+                    copies.push((rule.clone(), seed, i));
                     changed = true;
                 }
                 let grammar_of = |s: Slot| facts.get(&s).filter(|f| f.scoped && f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty());
@@ -284,7 +285,7 @@ impl ProgramPass for Hide {
                                     seed.insert(*x, Fact { scoped: true, grammar: Some(g.clone()), definite: true });
                                 }
                             }
-                            copies.push((copy, seed));
+                            copies.push((copy, seed, j));
                         }
                         if let Some(d) = prog.decls.get(orig.as_str()) {
                             decls.push((name.clone().into(), d.clone()));
@@ -313,7 +314,11 @@ impl ProgramPass for Hide {
                 }
             }
             let first_copy = rules.len();
-            for (rule, seed) in copies {
+            for (rule, seed, from) in copies {
+                if !prog.asked_by.is_empty() {
+                    let heads: Vec<&str> = rules.iter().map(|r| r.head.as_str()).collect();
+                    crate::code_rule_dsl::logic::front::record_copy(&mut prog.asked_by, &heads, from, rule.head.as_str());
+                }
                 rules.push(rule);
                 seeds.push(seed);
             }
@@ -933,4 +938,29 @@ fn analyse(rule: &W, base: &HashMap<String, Vec<usize>>, carried: &HashMap<Strin
         }
     }
     facts
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::code_rule_dsl::logic::program_image::Builder;
+    use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
+
+    /// A kind set read negated over a guest's node (`kind(r, k), !ok_kind(k)`) reads its qualified copy on the
+    /// version as on the tree (`hiding::hide`): the version's pass left negated reads alone, the bare set holds none of
+    /// the guest's kinds, and the Python pack's combine stopped on the debug check that the two agree.
+    #[test]
+    fn a_negated_kind_set_over_a_guest_reads_its_copy_as_on_the_tree() {
+        let text = ".decl parsed(s: node, g: symbol, r: node)\n.decl kind(n: node, k: symbol)\n.input parsed, kind\n\
+                    .decl ok_kind(k: symbol)\nok_kind(\"select\").\n\
+                    .decl out(r: node)\n.output out\nout(r) :- parsed(_, \"sql\", r), kind(r, k), !ok_kind(k).\n";
+        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        let mut p = Pipeline::new("test", v);
+        p.program(&mut super::Hide { bound: 1 << 30 });
+        let (out, _) = p.finish().unwrap();
+        crate::code_rule_dsl::logic::plan::corpus::hiding::hide(&mut tree, 1 << 30);
+        let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        assert!(want.show().contains("!rr_in_sql_rows_ok_kind("), "the tree reads the copy: {}", want.show());
+        assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
+    }
 }

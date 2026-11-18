@@ -20,6 +20,7 @@
 7	function @pkg_up/2	not on the device: no computed term	engine 3, lib 3, typing 1
 7	function @to_float/1	not on the device: no computed term	lib 3, python 2, javascript 1, typescript 1
 7	shipped functor @length/1	not on the device: no computed term	data-layer (engine) 7
+6	function @flat_bin/3	not on the device: no computed term	engine 6
 6	function @qname/2	not on the device: no computed term	lib 4, node 1, rule-syntax 1
 6	function @semver_subset/2	not on the device: no computed term	node 5, lib 1
 6	shipped functor @printf/2	not native: sqlite: error: no SQL for @printf($a, $b)	data-layer (engine) 6

@@ -1475,19 +1475,32 @@ pass.
 - **Done when**: the move rewrites the image's branded name leaves and cells in place (`kind::BRANDED` with the name
   class, `Cell::Branded`), no tree decoded, and the version's digests stay right; the test above passes unchanged.
 
-### Q35. Store the general forms through 0281 step 5's keyed preparation steps
+### Q35. Store the general forms through 0281 step 5's keyed preparation steps (done, 2026-11-16)
 
-- **Keep**: 0298's general forms (steps 1–3, behind `RERAIL_GENERAL_FORMS`): every reached stratum not recursive
-  selects its rules from them, with the same rows as the forms written per run; 0281's pass manager and its keyed
-  steps (Typing-support), one way of storing every preparation step's output.
-- **Done when**: Typing-support's step 5 has landed and is merged here; the general forms are one keyed step of it
-  (key: the program's digest and `olds_signature`), read by a new process instead of written; the switch is the
-  default and removed; the edit's cross-file part costs about 0.29 s less than today's (0298's table), with the
-  same rows on the five steps.
-- **Record**: the user's call (2026-11-16): watch Typing-support until step 5 is done, then integrate here.
+- **Keep**: 0298's general forms: every reached stratum selects its rules from them, with the same rows as the
+  forms written per run; 0281's pass manager and its keyed steps (Typing-support), one way of storing every
+  preparation step's output; decision 0104 (no SQL inside the waves) and 0290 (a relation naming no document moves
+  to the cross-file part).
+- **Done when**: Typing-support's step 5 storage is merged here; each general form is a keyed step, read by a new
+  process instead of written; the switch is removed; an edit costs less than today's, with the same rows on the
+  five steps.
+- **Record**: merged Typing-support 7a07e4081 (step 5 (a), (b), (c) storage). One semantic conflict, fixed: their
+  version passes (`Locate`, the `FileLocal` split) were ported before 0290, so the 4 relations naming no document
+  were refused, not moved (a debug check against the tree's `locate` stopped every run). Ported: the version split
+  holds a `cross_file` relation cross-file with 0290's cause, and `preparation::run` qualifies what `Locate` leaves
+  (`MoveCrossFile`) and locates again, as the tree's rounds. Then 0298 step 4, two of the user's calls (2026-11-16):
+  one keyed step per stratum, written when first reached (over one image per part); its reads inside the waves
+  (0104's one exception, `profile::read_in_waves`). On the manager: `Pipeline::keyed_by` (an identity given) and
+  `made` (a step whose output another writer makes); `StoredSteps::keep_bytes`, `find_unpinned`,
+  `open_bytes_unpinned`; `Version::layer`. Edit 79.3–79.6 G → 77.4–77.7 G; cold +2.8 G, the first edit after a
+  cold run +5.5 G (0298's results). Rows: each of the five steps against a cold run on a fresh store, 0 files
+  differ. Tests: general_tests, run_state, preparation::, file_local (16), program_image::tests (27),
+  corpus::session::tests (17). Review (reviewer-brief, by the author, no subagents): the forms' identity was read on
+  every driven run, now at the first stratum reached; nothing else found.
   For Typing-support, when it pulls this branch: `program_image/manager.rs`' `Delta::of` no longer compares the
   declarations and facts of an overlay of the input whose own layer states none (0298, "A selection's own cost");
-  the program image's 26 tests, which check carried analyses in a debug build, pass.
+  `Pipeline::keyed_by` and `made` are added beside `keyed`; the version split and `preparation::run` carry 0290's
+  moves (`file_local::MoveCrossFile`).
 
 ### Q46. (Q29 at 64e416c9b) A rule reading `value` sends SQL inside the waves
 
@@ -2955,3 +2968,64 @@ always a refusal.
   new build still reads the old build's keeper, though `memo_whole` is now under `plan_digest`. ffbb65b15 (a stopped
   run marks itself under way of its program) came after the test's commit 5627413cd and changed those marks.
 - **Done when**: a new build's first edit counts every file in, and the test passes.
+
+### Q142. (Q113 on investigate-bend-vs-datalog at 0098f4340) A device relation's block is leased outside the one block policy
+
+Found 2026-11-17 (the roll-up of final-rerail-shape-phased-facts, 58f1627c3): `facts::rows`'s blocks for
+`Life::Device` (a relation alone in a block the device writes) are leased by `lease_block_for_join`, sized to the
+relation and kept within the join's budget. Every other FACTS block goes through `rerail_blocks::alloc::block`
+(decision 0342), whose device block is a slab of at least `SLAB_MIN` (16 MB).
+
+- **Keep**: a device relation's block sized to it (a 4-page minimum), and the join's budget bounding it.
+- **Done when**: the policy takes a need for an exact-size device block within a named budget, `lease_exact` goes
+  through it, and no FACTS block is leased past the policy.
+- **Record**: —
+
+### Q143. (Q114 on investigate-bend-vs-datalog at 0098f4340) (done) A cold run's cross part hands nothing off in `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady`
+
+Found 2026-11-17, rolling up final-rerail-shape-phased-facts (58f1627c3). The test is red at that commit too (same
+message), so it is not the merge's. The test asserts `cold.cross_handed > 0`; the run hands off 0.
+
+- **Seen**: the cross part's strata are `at`, `both`, `flag_col`, `twice` (`Graph::components`: Tarjan over the
+  sorted names). `at`, `flag_col` and `twice` are outputs, which stay; `both` is the one kept relation, and its last
+  reader (`twice`) is the last stratum, so the run ends before any stratum follows that reader. No relation of this
+  program can be handed off in that order.
+- **Keep**: Q74's hand-off (a relation's frame made once no later stratum reads it).
+- **Done when**: either the strata are ordered so that a relation's last reader comes soon after it (shorter live
+  ranges; `twice` before `flag_col` here) and the test passes, or the test's program has a relation read before the
+  last stratum, with the reason recorded.
+- **Record** (2026-11-17, the merge of investigate-bend-vs-datalog into django-bugs): the relations a cold run
+  handed off here were the counting supports (`h__supN`), gone with decision 0364 stage 1, so nothing was left to
+  hand. The test's program now has one: `both` is read by `doubled`, which a later output (`many`) reads, so `both`
+  goes once `doubled` has run. The cold run's assertion passes; the test then stops at Q138's (the new build's
+  first edit), as it did before the merge.
+
+### Q144. (Q115 on investigate-bend-vs-datalog at 0098f4340) (done) Three corpus tests stop on the version's `asked` record differing from the tree's after `simplify`
+
+Found 2026-11-17, during 0364 stage 3. Red with the maintain mode off too (`RERAIL_MAINTAIN_MODE=off`), so not
+stage 3's: `base_tests::value_types_are_ws_value_types` ("the version after `simplify` is the tree's": `asked`
+row `("a", "rr_value_req", 0, "vals")` against `… 1 …`), `tests::a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies`
+(the combine's tail: `asked` rows' reader indices off by one), and `tests::libraries_are_held_once_and_equal_requests_share_one_cone`
+(a panic in `rr.rs:308` on a CPU thread).
+
+- **Seen**: each `asked` row's rule index (the request's `k`-th rule) differs by one between the version's passes and
+  the tree's, after a request rule is dropped or kept on one side only (`subsume_requests`, `prune`'s gate).
+- **Keep**: the debug checks that the version's passes are the tree's (0281).
+- **Done when**: the version's `simplify` keeps the `asked` record as the tree's does, and the three tests pass.
+- **Record** (2026-11-17, the merge into django-bugs): fixed on django-bugs' side before this merge
+  (13f589787): `simplify`'s inlining drops a gone request's stale record entry, and the checks compare programs
+  by `same_program` (equal digest without the record, and the record equal by each rule's content), so a record
+  whose rules are only in another order is the same program. The three tests pass on the merge.
+
+### Q145. (Q116 on investigate-bend-vs-datalog at 0098f4340) The maintain mode's recheck order is not priced
+
+Found 2026-11-17, during 0364 stage 4. A mode stratum's removal, add and probe lines take the program's kept plans
+(`plan_rule_reused`), as a semi-naive probe does. Its recheck (a rule with its head bound, run once per candidate)
+takes `bound_head_order`: one pass over the body, each literal as soon as its variables are bound, the atom that
+shares the most of them first. No search prices it, because the planner takes no bound head. Where that order has no
+native join it falls back to the planner's whole-rule order.
+
+- **Wanted**: the planner prices a body with a set of variables bound before its first step, for the recheck. The
+  order is then kept as the other lines' are.
+- **Also open**: the mode's lines report no work to `Model::ran`, because `MaintMode` counts per kind, not per line.
+  The 0122 budget therefore prices their kept plans again rather than taking them as they are.
