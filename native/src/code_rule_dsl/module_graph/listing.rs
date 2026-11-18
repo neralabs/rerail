@@ -161,9 +161,13 @@ mod windows {
 
     /// Whether a folder's file system refused the listing class, not the folder.
     fn unsupported(error: &io::Error) -> bool {
-        [ERROR_INVALID_PARAMETER, ERROR_INVALID_LEVEL, ERROR_NOT_SUPPORTED]
-            .iter()
-            .any(|&code| error.raw_os_error() == Some(code as i32))
+        [
+            ERROR_INVALID_PARAMETER,
+            ERROR_INVALID_LEVEL,
+            ERROR_NOT_SUPPORTED,
+        ]
+        .iter()
+        .any(|&code| error.raw_os_error() == Some(code as i32))
     }
 
     /// The next page of `folder`'s entries into `page`; `false` once none is left.
