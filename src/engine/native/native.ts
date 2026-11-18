@@ -418,6 +418,7 @@ export interface NativeAnalysisScopeRun {
 
 export interface NativeBinding {
   AnalysisScopeRun: new (store: string, scope: string, directory: boolean, id: string, generation: number, home?: string) => NativeAnalysisScopeRun;
+  prepareAnalysisStoreAsync(store: string): Promise<void>;
   collectAnalysisCacheAsync(store: string): Promise<void>;
   inspectRrPolicy(path: string, source?: NativeGitRevisionSource): string;
   GitRevisionSource: new (root: string, revision: string, analysisScope: string) => NativeGitRevisionSource;

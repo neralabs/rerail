@@ -396,6 +396,26 @@ impl napi::Task for ScanRrPolicies {
 }
 
 #[napi]
+pub fn prepare_analysis_store_async(store_path: String) -> napi::bindgen_prelude::AsyncTask<PrepareAnalysisStore> {
+    napi::bindgen_prelude::AsyncTask::new(PrepareAnalysisStore(store_path))
+}
+
+pub struct PrepareAnalysisStore(String);
+
+impl napi::Task for PrepareAnalysisStore {
+    type Output = ();
+    type JsValue = ();
+
+    fn compute(&mut self) -> Result<()> {
+        content_store::ContentStore::open(Path::new(&self.0))
+            .map(drop)
+            .map_err(|error| Error::from_reason(error.to_string()))
+    }
+
+    fn resolve(&mut self, _env: napi::Env, _: ()) -> Result<()> { Ok(()) }
+}
+
+#[napi]
 pub fn collect_analysis_cache_async(store_path: String) -> napi::bindgen_prelude::AsyncTask<CollectAnalysisCache> {
     napi::bindgen_prelude::AsyncTask::new(CollectAnalysisCache(store_path))
 }

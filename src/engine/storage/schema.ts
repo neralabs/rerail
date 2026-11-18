@@ -196,7 +196,8 @@ export const checkouts = sqliteTable(
 export const analysisScopeReleases = sqliteTable("analysis_scope_releases", {
   id: text("id").primaryKey(),
   directory: text("directory").notNull(),
-});
+  nextAttemptAt: integer("next_attempt_at").notNull().default(0),
+}, table => [index("analysis_scope_releases_due").on(table.nextAttemptAt, table.id)]);
 
 export const analysisScopeGeneration = sqliteTable("analysis_scope_generation", {
   singleton: integer("singleton").primaryKey(),

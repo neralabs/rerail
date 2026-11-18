@@ -592,7 +592,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #revisionSource: NativeGitRevisionSource | undefined;
   readonly #analysisStore: string | undefined;
   readonly #analysisRun: NativeAnalysisScopeRun | undefined;
-  readonly #analysisGeneration: ((store: string) => number) | undefined;
+  readonly #analysisGeneration: ((store: string) => Promise<number>) | undefined;
   readonly #analysisHome: string | undefined;
   /** Git's exclude stack for this checkout, opened on first use; null outside Git or where it cannot be opened. */
   #gitIgnore: NativeGitIgnoreMatcher | null | undefined;
@@ -677,7 +677,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       revisionSource?: NativeGitRevisionSource;
       analysisStore?: string;
       analysisRun?: NativeAnalysisScopeRun;
-      analysisGeneration?: (store: string) => number;
+      analysisGeneration?: (store: string) => Promise<number>;
       analysisHome?: string;
     },
   ) {
@@ -1047,17 +1047,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   #prepareWorkspace(): PreparedWorkspace {
     const snapshot = this.#catalog.snapshot();
     // This build's own store; only the main daemon may open the machine-wide one.
-    let storePath = this.#analysisStore ?? contentStorePath();
-    assertContentStoreOwner(storePath);
-    let generation: number | undefined;
-    if (this.#analysisStore === undefined) {
-      try {
-        generation = this.#analysisGeneration?.(storePath);
-      } catch (error) {
-        process.stderr.write(`rerail: analysis ownership is unavailable: ${errorMessage(error)}\n`);
-        storePath = ":memory:";
-      }
-    }
+    const configuredStore = this.#analysisStore ?? contentStorePath();
+    assertContentStoreOwner(configuredStore);
     const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)();
     let storage: Promise<boolean>;
     try {
@@ -1070,6 +1061,16 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       const secretNames = { files: SENSITIVE_FILE_NAMES, folders: SENSITIVE_FOLDER_NAMES };
       const source = this.#revisionSource;
       const attach = async () => {
+        let storePath = configuredStore;
+        let generation: number | undefined;
+        if (this.#analysisStore === undefined && this.#analysisGeneration !== undefined) {
+          try {
+            generation = await this.#analysisGeneration(storePath);
+          } catch (error) {
+            process.stderr.write(`rerail: analysis ownership is unavailable: ${errorMessage(error)}\n`);
+            storePath = ":memory:";
+          }
+        }
         const result = source === undefined
           ? await workspace.enableStorageAsync(this.#workspaceRoot, storePath, secretNames, this.#analysisRun, generation, this.#analysisHome)
           : await workspace.enableRevisionStorageAsync(source, storePath, secretNames, this.#analysisRun);

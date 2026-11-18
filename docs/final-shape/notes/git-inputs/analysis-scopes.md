@@ -84,9 +84,14 @@ workspace. It protects the latest manifest for each policy set. An edited
 policy keeps its policy set and gets a new cache key.
 
 The home records each directory and its analysis stores in a separate SQLite database.
-The scan registers the store before it reads the generation.
-This order lets a stop find every store that accepted an ended generation.
+A scan or watch opens the store, registers it, and then reads the generation.
+It must register the store before it can publish ownership.
+This order lets a stop find every store that can hold an ended generation.
+If the store fails to open, the run uses memory and adds no registration.
 The stop remains pending until each store for the directory accepts its release.
+The daemon handles due releases in order of their next attempt time.
+If a store is unavailable, the daemon saves a later attempt time for that release.
+Other releases can make progress while the store is unavailable.
 
 The revision is an input to selection and provenance. It is absent from an
 immutable tree record's cache key. That key includes the repository, object

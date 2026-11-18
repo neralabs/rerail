@@ -700,7 +700,7 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   let cacheWarning: string | undefined;
   try {
     mkdirSync(dirname(homeDatabase), { recursive: true, mode: 0o700 });
-    const generation = directory ? acquireDirectoryAnalysisGeneration(homeDatabase, resolve(options.repo), durableStore) : 0;
+    const generation = directory ? await acquireDirectoryAnalysisGeneration(homeDatabase, resolve(options.repo), durableStore) : 0;
     analysisRun = new binding.AnalysisScopeRun(durableStore, options.analysisScope ?? resolve(options.repo), directory, scanId, generation, directory ? analysisScopeHome(homeDatabase) : undefined);
   } catch (error) {
     cacheWarning = error instanceof Error ? error.message : String(error);

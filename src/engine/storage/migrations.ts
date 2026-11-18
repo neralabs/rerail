@@ -125,6 +125,12 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
       for (const statement of LOGGED_BY_AUDIT_MODE_REPAIR) database.run(sql.raw(statement));
     },
   },
+  {
+    id: "analysis-scope-release-retry",
+    up(database) {
+      addColumn(database, "analysis_scope_releases", "next_attempt_at", "integer DEFAULT 0 NOT NULL");
+    },
+  },
 ];
 
 /**

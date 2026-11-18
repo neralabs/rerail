@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
 import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
-import { analysisScopeHome, readAnalysisScopeGeneration, scanContentStore, settleAnalysisScopeReleases } from "../../src/engine/native/analysis-scope.js";
+import { acquireDirectoryAnalysisGeneration, analysisScopeHome, queueAnalysisScopeReleases, readAnalysisScopeGeneration, scanContentStore, settleAnalysisScopeReleases } from "../../src/engine/native/analysis-scope.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
 import { openRerailDatabase } from "../../src/engine/storage/database.js";
 import { recordCheckout } from "../../src/engine/catalog/repository-registry.js";
@@ -547,12 +547,78 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
           expect(owners(current)).toBe(0);
           expect(fail.mock.calls.every(([store]) => store !== unrelated)).toBe(true);
         } finally { fail.mockRestore(); }
-        settleAnalysisScopeReleases(databasePath);
+        settleAnalysisScopeReleases(databasePath, -1);
         expect(pending()).toBe(0);
         expect(owners(earlier)).toBe(0);
         expect(owners(unrelated)).toBe(1);
       } finally { homeDb.$client.close(); }
     } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("does not register a store that could never open", async () => {
+    const root = checkout();
+    const home = `${root}-home`;
+    mkdirSync(home);
+    const file = join(home, "file");
+    writeFileSync(file, "");
+    const databasePath = join(home, "rerail.sqlite");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", join(file, "unusable.sqlite"));
+    try {
+      const report = await scan(root, { databasePath });
+      expect(report.status).toBe("completed");
+      expect(report.violations.map(finding => finding.ruleId)).toEqual(["needle"]);
+      expect(report.cacheWarnings).toHaveLength(1);
+      const database = openRerailDatabase(databasePath);
+      try {
+        setCheckoutStarted(database, recordCheckout(database, root), false);
+        settleAnalysisScopeReleases(databasePath);
+        expect(database.$client.prepare("SELECT count(*) FROM analysis_scope_releases").pluck().get()).toBe(0);
+      } finally { database.$client.close(); }
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("services later stops while a full batch of releases waits for an unavailable store", async () => {
+    const root = checkout();
+    const home = `${root}-home`;
+    const databasePath = join(home, "rerail.sqlite");
+    const unavailable = join(home, "unavailable.sqlite");
+    const available = join(home, "available.sqlite");
+    const blocked = Array.from({ length: 32 }, (_, index) => join(home, "blocked", String(index)));
+    const database = openRerailDatabase(databasePath);
+    try {
+      for (const directory of blocked) await acquireDirectoryAnalysisGeneration(databasePath, directory, unavailable);
+      database.transaction(tx => queueAnalysisScopeReleases(tx, blocked, databasePath));
+      vi.stubEnv("RERAIL_CONTENT_STORE_PATH", available);
+      expect((await scan(root, { databasePath })).status).toBe("completed");
+      setCheckoutStarted(database, recordCheckout(database, root), false);
+
+      const binding = loadNativeBinding();
+      const release = binding.deleteAnalysisScope;
+      const unavailableStore = vi.spyOn(binding, "deleteAnalysisScope").mockImplementation((store, ...args) => {
+        if (store === unavailable) throw new Error("store unavailable");
+        return release(store, ...args);
+      });
+      const pending = () => database.$client.prepare("SELECT directory FROM analysis_scope_releases ORDER BY directory").pluck().all();
+      try {
+        expect(() => settleAnalysisScopeReleases(databasePath)).toThrow("store unavailable");
+        expect(pending()).toContain(root);
+        settleAnalysisScopeReleases(databasePath);
+        expect(pending()).toEqual([...blocked].sort());
+        const store = new Database(available, { readonly: true });
+        try {
+          expect(store.prepare("SELECT count(*) FROM analysis_scope_workspace_snapshot").pluck().get()).toBe(0);
+        } finally { store.close(); }
+      } finally { unavailableStore.mockRestore(); }
+      const next = database.$client.prepare("SELECT max(next_attempt_at) FROM analysis_scope_releases").pluck().get() as number;
+      const clock = vi.spyOn(Date, "now").mockReturnValue(next);
+      try {
+        settleAnalysisScopeReleases(databasePath);
+        expect(pending()).toEqual([]);
+      } finally { clock.mockRestore(); }
+    } finally {
+      vi.unstubAllEnvs();
+      database.$client.close();
+    }
   });
 
   it("rejects duplicate explicit policy IDs and leaves no named ownership", async () => {

@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { eq, sql } from "drizzle-orm";
+import { eq, lte, sql } from "drizzle-orm";
 import { analysisScopeGeneration, analysisScopeReleases } from "../storage/schema.js";
 import { openRerailDatabase, openSqliteDatabase, type RerailDatabase } from "../storage/database.js";
 import { loadNativeBinding } from "./native.js";
@@ -19,6 +19,7 @@ function defaultScanStore(databasePath: string): string {
 
 // Keep generation tokens above the legacy microsecond timestamps already stored on ownership rows.
 const INITIAL_GENERATION = 2 ** 52;
+const RELEASE_RETRY_DELAY_MS = 5_000;
 
 export function analysisScopeHome(databasePath: string): string {
   return createHash("sha256").update(storedPath(databasePath)).digest("hex");
@@ -39,8 +40,9 @@ function storeRegistryPath(databasePath: string): string {
   return `${storedPath(databasePath)}.analysis-stores.sqlite`;
 }
 
-/** Register the store before acquiring a generation. A stop can then find that generation at any store it reaches. */
-export function acquireDirectoryAnalysisGeneration(databasePath: string, directory: string, store: string): number {
+/** Open the store before registering it. Register it before reading the generation. */
+export async function acquireDirectoryAnalysisGeneration(databasePath: string, directory: string, store: string): Promise<number> {
+  await loadNativeBinding().prepareAnalysisStoreAsync(store);
   const index = openSqliteDatabase(storeRegistryPath(databasePath));
   try {
     index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_directory_store (directory TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY(directory,path)) STRICT");
@@ -84,8 +86,9 @@ export function queueAnalysisScopeReleases(tx: Transaction, directories: readonl
     .onConflictDoUpdate({ target: analysisScopeGeneration.singleton, set: { generation: sql`${analysisScopeGeneration.generation} + 1` } })
     .returning({ generation: analysisScopeGeneration.generation }).get();
   const home = analysisScopeHome(databasePath);
+  const nextAttemptAt = Date.now();
   for (const directory of directories) {
-    tx.insert(analysisScopeReleases).values({ id: `${generation - 1}:${randomUUID()}:${home}`, directory }).run();
+    tx.insert(analysisScopeReleases).values({ id: `${generation - 1}:${randomUUID()}:${home}`, directory, nextAttemptAt }).run();
   }
 }
 
@@ -108,14 +111,21 @@ export async function collectAnalysisCaches(databasePath: string): Promise<void>
 export function settleAnalysisScopeReleases(databasePath: string, limit = 32): void {
   if (!existsSync(databasePath)) return;
   const reader = openSqliteDatabase(databasePath, { readonly: true });
-  const pending = (() => {
-    try { return reader.select().from(analysisScopeReleases).limit(limit).all(); }
+  const queued = (() => {
+    try {
+      return reader.$client.prepare("SELECT 1 FROM sqlite_schema WHERE name = 'analysis_scope_releases'").get()
+        && reader.select({ id: analysisScopeReleases.id }).from(analysisScopeReleases).limit(1).get();
+    }
     finally { reader.$client.close(); }
   })();
-  if (pending.length === 0) return;
-  const { fallback, registered } = analysisStores(databasePath);
+  if (!queued) return;
   const database = openRerailDatabase(databasePath);
   try {
+    const pending = database.select().from(analysisScopeReleases)
+      .where(limit < 0 ? undefined : lte(analysisScopeReleases.nextAttemptAt, Date.now()))
+      .orderBy(analysisScopeReleases.nextAttemptAt, analysisScopeReleases.id).limit(limit).all();
+    if (pending.length === 0) return;
+    const { fallback, registered } = analysisStores(databasePath);
     const failed = new Map<string, unknown>();
     for (const { id, directory } of pending) {
       const root = storedPath(directory);
@@ -136,6 +146,8 @@ export function settleAnalysisScopeReleases(databasePath: string, limit = 32): v
         }
       }
       if (acknowledged) database.delete(analysisScopeReleases).where(eq(analysisScopeReleases.id, id)).run();
+      else database.update(analysisScopeReleases).set({ nextAttemptAt: Date.now() + RELEASE_RETRY_DELAY_MS })
+        .where(eq(analysisScopeReleases.id, id)).run();
     }
     if (failed.size > 0) {
       const reasons = [...failed].map(([store, error]) => `${store}: ${error instanceof Error ? error.message : String(error)}`);
