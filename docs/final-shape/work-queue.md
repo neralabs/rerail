@@ -3163,6 +3163,14 @@ inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan
    checked on the device). Done but for the chunk's `low` column, which goes with step 4.
 3. Then steps 3 (CPU views on the tape), 4 (GPU views on the tape: the 660.8 MB a run), 5 (axes written once),
    6 (in-place writes and indexes), 7 (the transducer's packed batch, its owners'), 8 (0325 step 7), 9 (prices).
+4. Step 5 is built for the batch's solve (2026-11-18, 0353 step 5): the axis's ids written once into a relation of
+   its own in a run's block, with room for its two indexes, read in place by the CPU and the device. hogql 16z:
+   copies 125.9 MB a run against 792.4 MB, refusals at run time 2 a run against 5–22, findings 1,629. Left: `has`'s
+   probe on the device (with 4b's parent probes), then step 6.
+
+Q86 after step 5: the refusals that remain on hogql are 2 a run (binding tables, one index of 0.8 M rows). The
+device-budget failures surfaced as a bare `BackendFailure`: a `String` error turned into `Error` loses its text
+(`compiler::Error::from`), so a refusal names no cause; naming it is part of Q86.
 
 Q86 (step 6's prices) waits for step 4: most of what it prices goes.
 
@@ -3323,7 +3331,6 @@ Q86 (step 6's prices) waits for step 4: most of what it prices goes.
 
 
 ### Q90. (Q90 at Native-and-GPU-strata d0224e02d) Parked strata resumed on another thread are refused to the CPU
-
 A stratum whose device joins wait for the wave (`setfix::device::submit`) keeps its encoded runs in its thread's
 `SUSPENDED`. A job run while its thread waited (`Stream::wait` helps the pool) can join a wave that thread had open
 before the job's mark, so `deferred_since(mark)` is false and the job's members park without their wave being
@@ -3338,6 +3345,18 @@ always a refusal.
 - Route a parked member back to the thread that holds its submission, or flush that wave before the job hands its
   members back (the job's mark taken before the thread's open wave, not after).
 - **Done when**: no hogql run has the refusal, findings unchanged over 20 runs.
+- **Done** (2026-11-18, here by decision 0386 §2, at the merge of Native-and-GPU-strata 3f90ab5d6): every pool job
+  enters a wave scope of its own, which puts the outer job's queued launches, deferred submissions and open
+  submission aside and restores them as it leaves, so a job's strata never join a wave its thread had open. The
+  floor and the stack of waves Native-and-GPU-strata built for it (below) are not taken: 0386's scope holds the
+  same invariant, and its test ported (`a_job_flushes_its_own_submissions_and_not_its_threads`, on the scope).
+- **Done on Native-and-GPU-strata** (2026-11-18): a job is a scope of the thread's wave (`lanes::wave::enter`). Its floor is where the
+  thread's launches and deferred submissions stood when it began; inside it `flush` runs only what lies past the
+  floor, and a device submission joins an open wave only if that wave was opened past it (`opened_in_scope`). The
+  device's open waves are a stack (`setfix::device::WAVE`), each flushed by number. So a job's strata always open the
+  job's own wave, `deferred_since(mark)` holds, and they are flushed and resumed on the thread that holds them; the
+  thread's own wave stays for it. Test: `a_job_flushes_its_own_submissions_and_not_its_threads`. hogql: 2, 5 and 8
+  such refusals in three 16z runs before; none in 24 after (21 format 15, three 16z), findings 1,629 in each.
 
 ### Q68. The shared cache returns a crate built against another version of a vendored crate
 
