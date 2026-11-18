@@ -148,13 +148,19 @@ for kernels yet.
 | anonymous `mmap`, read in place | correct | 1.81 ms | 148 GB/s |
 | the same, after `cudaHostRegister` | correct | 1.81 ms | 148 GB/s |
 | the same, with transparent huge pages (`madvise`) | correct | 1.79 ms | 150 GB/s |
+| `cudaHostAlloc` (pinned, mapped), read in place by the GPU, written by the CPU | correct | 1.21 ms | 223 GB/s |
+| copy of pinned memory to `cudaMalloc` memory | — | 5.10 ms | 53 GB/s |
 
 A GPU atomic into `malloc`ed memory was seen by the CPU.
 
 - **So the Spark is a unified-memory GPU, like Apple's.** A kernel can read a block where it lives, including a
   file-backed `mmap`, with no registration. The engine's in-place model carries over unchanged.
-- In place runs at about 0.65× of `cudaMalloc` memory. Registration and huge pages do not close the gap.
-  Allocating the block pool with `cudaMallocManaged` or `cuMemCreate` is the next experiment (E1, §8).
+- Pageable memory (`malloc`, `mmap`) read in place runs at about 0.65× of `cudaMalloc` memory. Registration and
+  huge pages do not close the gap. **Pinned memory from `cudaHostAlloc` does**: the GPU reads it in place at 223
+  GB/s, 0.97× of `cudaMalloc`, and the CPU reads and writes it as ordinary memory. So on a GB10 the block pool
+  (0342's allocator) takes its slabs from `cudaHostAlloc` and loses nothing; file-backed blocks (0295's mapped
+  slabs) are read at the pageable rate, or are filled into pool slabs where the planner finds that pays (E1).
+- A copy into device memory is no help on a unified device: 53 GB/s, slower than reading in place.
 - `cudaHostRegisterReadOnly` on a file mapping is refused ("operation not supported"). Nothing needs it.
 
 **UKL on CUDA, as it stands.** We compiled the vendored random forest kernels against upstream's CUDA shim
@@ -453,7 +459,7 @@ on a Spark.
 
 | Step | Work | Done when |
 |---|---|---|
-| E1 | Spark: block pool from `cudaMallocManaged` / `cuMemCreate` against `malloc`/`mmap`, read by the GPU and the CPU | the in-place gap (0.65×) is explained or closed; the pool's allocator for U-class CUDA is chosen |
+| E1 | Spark: block pool slabs from `cudaHostAlloc` (measured: 0.97× of `cudaMalloc`, §2); still to measure: `cuMemCreate` with CPU access, and the CPU's speed on pinned slabs | the pool's allocator for U-class CUDA is chosen; the price of reading a file-backed block at the pageable rate is known |
 | 1 | `rerail-c-pp` preprocesses UKL | token-equal to `cc -E` on the random forest kernels for Metal and CUDA; `forest/build.rs` uses it; no host `cc` |
 | 2 | Repair the CUDA shim; the forest's kernels on CUDA through NVRTC | the random forest tests (`rf_kernel_test.rs`) give Metal's results on a Spark: the cost model runs on CUDA. This is the smallest real GPU user that is end to end |
 | 3 | The device trait, with Metal behind it | no behaviour change on Metal (named Metal tests); the 48 files moved |

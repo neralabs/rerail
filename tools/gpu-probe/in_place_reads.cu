@@ -36,7 +36,11 @@ static double run(const char* what, const unsigned long long* p, size_t n, unsig
     return best;
 }
 
-int main() {
+int main(int argc, char** argv) {
+    // One case per process when named (a faulting read poisons the CUDA context): attrs, device, malloc, file,
+    // anon, anon-registered, thp, pinned, atomic. No argument runs them all in this process.
+    const char* only = argc > 1 ? argv[1] : nullptr;
+    auto want = [&](const char* c) { return !only || !strcmp(only, c); };
     cudaDeviceProp pr; CK(cudaGetDeviceProperties(&pr, 0));
     printf("%s sm_%d%d SMs %d integrated %d smem/block %zu smem/SM %zu regs/SM %d warp %d L2 %d MB\n", pr.name, pr.major, pr.minor,
            pr.multiProcessorCount, pr.integrated, pr.sharedMemPerBlock, pr.sharedMemPerMultiprocessor, pr.regsPerMultiprocessor,
@@ -53,7 +57,7 @@ int main() {
         {cudaDevAttrCooperativeLaunch, "cooperativeLaunch"},
         {cudaDevAttrMemoryPoolsSupported, "memoryPools"},
     };
-    for (auto& x : attrs) { CK(cudaDeviceGetAttribute(&a, x.at, 0)); printf("  %-28s %d\n", x.n, a); }
+    if (want("attrs")) for (auto& x : attrs) { CK(cudaDeviceGetAttribute(&a, x.at, 0)); printf("  %-28s %d\n", x.n, a); }
     size_t fr, tot; CK(cudaMemGetInfo(&fr, &tot)); printf("  memGetInfo free %zu MB total %zu MB\n", fr >> 20, tot >> 20);
 
     const size_t bytes = 256u << 20, n = bytes / 8;
@@ -62,9 +66,23 @@ int main() {
     for (size_t i = 0; i < n; ++i) { h[i] = i; expect += i; }
 
     unsigned long long* d; CK(cudaMalloc(&d, bytes)); CK(cudaMemcpy(d, h, bytes, cudaMemcpyHostToDevice));
-    run("cudaMalloc", d, n, expect);
-    run("malloc (pageable, in place)", h, n, expect);
+    if (want("device")) run("cudaMalloc", d, n, expect);
+    if (want("malloc")) run("malloc (pageable, in place)", h, n, expect);
+    if (want("pinned")) {
+        unsigned long long* pin; CK(cudaHostAlloc(&pin, bytes, cudaHostAllocMapped));
+        memcpy(pin, h, bytes);
+        run("cudaHostAlloc mapped (bus)", pin, n, expect);
+        double best = 1e9;
+        for (int r = 0; r < 4; ++r) {
+            auto t0 = std::chrono::steady_clock::now();
+            CK(cudaMemcpy(d, pin, bytes, cudaMemcpyHostToDevice));
+            double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            if (t < best) best = t;
+        }
+        printf("%-28s       best %.2f ms  %.1f GB/s\n", "copy pinned -> device", best * 1e3, bytes / best / 1e9);
+    }
 
+    if (want("file")) {
     const char* path = "probe.bin";
     int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644); ftruncate(fd, bytes);
     void* m = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
@@ -74,20 +92,27 @@ int main() {
     run("mmap file, HostRegister", (const unsigned long long*)m, n, expect);
     CK(cudaHostUnregister(m));
     munmap(m, bytes); close(fd); unlink(path);
+    }
+    if (want("anon") || want("anon-registered")) {
 
     void* an = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     memcpy(an, h, bytes);
-    run("anon mmap (in place)", (const unsigned long long*)an, n, expect);
+    if (want("anon")) run("anon mmap (in place)", (const unsigned long long*)an, n, expect);
     CK(cudaHostRegister(an, bytes, 0));
     run("anon mmap, HostRegister", (const unsigned long long*)an, n, expect);
+    }
+    if (want("thp")) {
 
     void* hp = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     printf("  madvise HUGEPAGE: %d\n", madvise(hp, bytes, MADV_HUGEPAGE));
     memcpy(hp, h, bytes);
     run("anon mmap THP (in place)", (const unsigned long long*)hp, n, expect);
+    }
+    if (want("atomic")) {
     // CPU after GPU: does the CPU see a GPU write to pageable memory?
     unsigned long long* w = (unsigned long long*)malloc(64); w[0] = 0;
     sum<<<1, 1>>>(h, 4, w); CK(cudaDeviceSynchronize());
     printf("  GPU atomic into malloc: %llu (expect 6)\n", w[0]);
+    }
     return 0;
 }
