@@ -95,14 +95,10 @@ pub fn gpu_seconds(command: &CommandBufferRef) -> f64 {
     (end - start).max(0.0)
 }
 
-/// Compiles `name` from `source` on the shared device.
+/// `name` of `source` on the shared device: through the store of compiled kernels (decision 0387).
 pub fn compile(source: &str, name: &str) -> Result<ComputePipelineState, String> {
-    let device = device()?;
-    objc::rc::autoreleasepool(|| {
-        let library = device.new_library_with_source(source, &metal::CompileOptions::new()).map_err(|e| format!("compiling {name}: {e}"))?;
-        let f = library.get_function(name, None).map_err(|e| format!("{name}: {e}"))?;
-        device.new_compute_pipeline_state_with_function(&f).map_err(|e| format!("{name}: {e}"))
-    })
+    device()?;
+    Ok(super::kernels::pipeline_fixed(source, name, None))
 }
 
 thread_local! {
@@ -119,38 +115,13 @@ pub fn scratch_set(set: usize) -> usize {
 }
 
 /// The pipeline `name` of the variant `variant`, its source made by `source` the first time: kept by the one
-/// manager (decision 0100 §2), so every thread finds it compiled.
-///
-/// A variant's source is compiled once, into one library, and each of its kernels is made from that library: a
-/// sort's five kernels cost one compile, not five.
+/// manager (decision 0100 §2), so every thread finds it compiled, and in the store of compiled kernels (decision
+/// 0387). A variant's source is compiled once, into one library, and each of its kernels made from that library.
 pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Result<ComputePipelineState, String> {
     shared::pipeline(&format!("join {variant} {name}"), || {
-        let library = library(variant, source)?;
-        let device = device()?;
-        objc::rc::autoreleasepool(|| {
-            let f = library.get_function(name, None).map_err(|e| format!("{name}: {e}"))?;
-            device.new_compute_pipeline_state_with_function(&f).map_err(|e| format!("{name}: {e}"))
-        })
+        device()?;
+        Ok(super::kernels::pipeline_fixed(&source(), name, None))
     })
-    .inspect_err(|e| eprintln!("rerail: the Metal pipeline {variant} {name} is not made: {e}"))
-}
-
-/// The library of a variant's source, compiled the first time (a thread that asks meanwhile waits for it).
-fn library(variant: &str, source: impl FnOnce() -> String) -> Result<metal::Library, String> {
-    type Lib = std::sync::Arc<std::sync::Mutex<Option<metal::Library>>>;
-    static LIBS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Lib>>> = std::sync::OnceLock::new();
-    let slot = std::sync::Arc::clone(LIBS.get_or_init(Default::default).lock().expect("the libraries").entry(variant.to_owned()).or_default());
-    let mut s = slot.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(l) = &*s {
-        return Ok(l.clone());
-    }
-    let device = device()?;
-    // A shipped kernel that does not compile is a bug: its message is said here, where callers that keep only an
-    // error's kind (`rerail_compiler::Error::BackendFailure`) would lose it.
-    let l = objc::rc::autoreleasepool(|| device.new_library_with_source(&source(), &metal::CompileOptions::new()).map_err(|e| format!("compiling {variant}: {e}")))
-        .inspect_err(|e| eprintln!("rerail: a Metal library does not compile: {e}"))?;
-    *s = Some(l.clone());
-    Ok(l)
 }
 
 /// The radix sort's kernels of a lead column of `width`, and the gather of a column of `width`.

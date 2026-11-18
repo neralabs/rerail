@@ -667,6 +667,8 @@ pub struct LoweredWave {
     feeds: Vec<BTreeSet<usize>>,
     /// The level passes fused into one walk, built at their first batch (`Packs`).
     packs: Packs,
+    /// The sources of its pattern kernels on Metal, made at the first ask (`metal_ready`).
+    metal_sources: std::sync::OnceLock<Result<Vec<String>, Error>>,
 }
 
 impl LoweredWave {
@@ -808,7 +810,7 @@ impl LoweredWave {
         crate::code_rule_dsl::prof::count("wave.labels", total);
         crate::code_rule_dsl::prof::count("wave.distinct_labels", distinct);
         crate::code_rule_dsl::prof::count("wave.shared_groups", shared_groups);
-        Ok(Self { clauses: combined, labels: next, feeds, packs: Packs::default() })
+        Ok(Self { clauses: combined, labels: next, feeds, packs: Packs::default(), metal_sources: Default::default() })
     }
 
     /// The wave's plan identity (list step 16; t1 spec-fusion §4.9, the fused plan's cache key):
@@ -1020,6 +1022,17 @@ impl LoweredWave {
     /// `active` (per clause, per tape) is where a clause runs: a tape its gates exclude has no matches. A clause whose
     /// program outruns the work limit on a tape gives every candidate root there, listed in [`WaveRun::limited`], so
     /// one large file does not fail the wave: the caller confirms those roots with W's matcher.
+    /// Whether the wave's generated kernels on Metal (its patterns') are compiled, or at hand in the store
+    /// (decision 0387). A wave whose kernels are not runs on the CPU meanwhile; they are compiled as the mode says.
+    pub fn metal_ready(&self) -> bool {
+        let Some(device) = super::device::matcher() else { return true };
+        match self.metal_sources.get_or_init(|| device.wave_pattern_sources(self)) {
+            Ok(sources) => device.patterns_ready(sources),
+            // No Metal form of its patterns: the Metal run says why (`roots_batch`).
+            Err(_) => true,
+        }
+    }
+
     pub fn roots_batch(&self, backend: Backend, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
         if let Backend::MetalInterpreter = backend
             && super::device::matcher().is_some()

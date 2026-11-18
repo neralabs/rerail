@@ -887,7 +887,7 @@ fn pipelines() -> Result<Vec<ComputePipelineState>, Error> {
     }
     let pipelines = KERNELS
         .iter()
-        .map(|name| pipeline_named(&SOURCE, name))
+        .map(|name| rerail_metal::runtime::pipeline_named_fixed(&SOURCE, name))
         .collect::<Result<Vec<_>, _>>()?;
     *cached = Some(pipelines.clone());
     Ok(pipelines)
@@ -907,6 +907,24 @@ fn pattern_pipelines(patterns: &[&PackedPattern], facts: bool) -> Result<Option<
         names.extend(group_names);
     }
     Ok(Some((pipelines, names)))
+}
+
+/// The sources of the pattern kernels a plan of `patterns` compiles (`pattern_pipelines`), in its order.
+pub(in crate::code_rule_dsl) fn pattern_sources(patterns: &[&PackedPattern], facts: bool) -> Vec<String> {
+    if patterns.is_empty() && !facts {
+        return Vec::new();
+    }
+    let groups = patterns.chunks(patterns::GROUP).collect::<Vec<_>>();
+    let groups = if groups.is_empty() { vec![&[][..]] } else { groups };
+    groups.into_iter().enumerate().map(|(group, members)| patterns::source(members, group * patterns::GROUP).0).collect()
+}
+
+/// Whether the pattern kernels of `sources` (`pattern_sources`) are at hand without a compile (decision 0387):
+/// otherwise the wave runs on the CPU, and the kernels are compiled as the mode says
+/// (`rerail_accel::gpu::kernels::Mode`). The label kernels are the interpreter's, fixed (shipped): never pending.
+pub(in crate::code_rule_dsl) fn patterns_ready(sources: &[String]) -> bool {
+    // Each asked, so every one missing is recorded, not only the first.
+    sources.iter().map(|source| rerail_accel::gpu::kernels::ready(source, patterns::KERNEL, None).is_some()).fold(true, |all, ready| all && ready)
 }
 
 /// One group's pattern kernel, compiled once per distinct source.

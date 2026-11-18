@@ -26,12 +26,13 @@
 use crate::exec::Backend;
 use crate::kernel::{Bits, JoinBy, Kernel, Output};
 use crate::lanes::Lane;
-use metal::{Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, MTLDispatchType, MTLResourceOptions, MTLSize};
+use metal::{Buffer, CommandQueue, ComputePipelineState, Device, MTLDispatchType, MTLResourceOptions, MTLSize};
 use objc::{msg_send, sel, sel_impl};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 pub mod join;
+pub mod kernels;
 pub mod shared;
 pub mod space;
 pub mod tile;
@@ -79,11 +80,10 @@ impl Gpu {
             // The device and queue every relational submission shares (decision 0100 §2).
             let shared = shared::get().ok_or("no Metal device")?;
             let device = shared.device.clone();
-            let library = device.new_library_with_source(SOURCE, &CompileOptions::new()).map_err(|e| format!("gpu lane: compiling the kernels: {e}"))?;
             let mut pipes = Vec::with_capacity(PIPES.len());
             for name in PIPES {
-                let f = library.get_function(name, None).map_err(|e| format!("gpu lane: {name}: {e}"))?;
-                let p = device.new_compute_pipeline_state_with_function(&f).map_err(|e| format!("gpu lane: {name}: {e}"))?;
+                // Through the store of compiled kernels (decision 0387); one that does not compile is fatal.
+                let p = kernels::pipeline_fixed(SOURCE, name, None);
                 if p.max_total_threads_per_threadgroup() < TG {
                     return Err(format!("gpu lane: {name} runs {} threads a threadgroup, not {TG}", p.max_total_threads_per_threadgroup()));
                 }

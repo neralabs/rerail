@@ -191,6 +191,14 @@ pub mod matcher {
             matcher_metal::wave_labelled(wave, tapes, active, roots)
         }
 
+        fn wave_pattern_sources(&self, wave: &LoweredWave) -> Result<Vec<String>, Error> {
+            matcher_metal::wave_pattern_sources(wave)
+        }
+
+        fn patterns_ready(&self, sources: &[String]) -> bool {
+            crate::code_rule_dsl::transducer::packed::metal_program_backend::label_passes::patterns_ready(sources)
+        }
+
         fn warm_labels(&self) {
             matcher_metal::warm();
         }

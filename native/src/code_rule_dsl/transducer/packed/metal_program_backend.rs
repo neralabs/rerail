@@ -596,14 +596,14 @@ pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
         return Ok(engine.clone());
     }
     let source = format!("{}{}", *RESIDENT_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", ""));
-    let engine = Engine::Interpreter { pipeline: pipeline_named(&source, "run_batch")?, buffers: Arc::new(Mutex::new(None)) };
+    let engine = Engine::Interpreter { pipeline: rerail_metal::runtime::pipeline_named_fixed(&source, "run_batch")?, buffers: Arc::new(Mutex::new(None)) };
     *cached = Some(engine.clone());
     Ok(engine)
 }
 
 pub fn compile_interpreter() -> Result<Engine, Error> {
     Ok(Engine::Interpreter {
-        pipeline: pipeline_named(
+        pipeline: rerail_metal::runtime::pipeline_named_fixed(
             &kernel_source(
                 INTERPRETER_FETCH,
                 None,
@@ -642,7 +642,7 @@ pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<ComputePipeline
     let begin = source.find("kernel void run_batch(").expect("the runtime has run_batch") + "kernel void run_batch(".len();
     let end = begin + source[begin..].find("uint tid [[thread_position_in_grid]]){").expect("run_batch's thread position");
     let kernel = include_str!("metal_label_sweep.metal").replace("/*PARAMETERS*/", &source[begin..end]);
-    let pipeline = pipeline_named(&format!("{source}\n{kernel}"), "label_sweep")?;
+    let pipeline = rerail_metal::runtime::pipeline_named_fixed(&format!("{source}\n{kernel}"), "label_sweep")?;
     *cached = Some(pipeline.clone());
     Ok(pipeline)
 }

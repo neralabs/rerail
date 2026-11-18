@@ -361,7 +361,7 @@ pub fn run_batch(
             for (k, block) in interpreter.iter().enumerate() {
                 buffers.push((12 + k as u64, block.buffer(), 0));
             }
-            pipeline_named(&INTERPRETER, &format!("block_batch_{}", width.bytes()))?
+            crate::runtime::pipeline_named_fixed(&INTERPRETER, &format!("block_batch_{}", width.bytes()))?
         }
         Executor::Generated(_) => {
             let refs: Vec<&BlockNative> = forms.iter().collect();

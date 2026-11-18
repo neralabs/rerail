@@ -204,7 +204,9 @@ fn matched(
     let (found, limited) = if docs.is_empty() || active.iter().all(|a| !a.iter().any(|&on| on)) {
         (vec![vec![BTreeSet::new(); docs.len()]; matchers.len()], Vec::new())
     } else {
-        let program = MatcherWave { wave: Arc::clone(wave), tapes: docs, active, gpu: cfg!(target_os = "macos") && metal };
+        // The GPU's form only once its generated kernels are at hand (decision 0387): till then, the cores'.
+        let gpu = cfg!(target_os = "macos") && metal && wave.metal_ready();
+        let program = MatcherWave { wave: Arc::clone(wave), tapes: docs, active, gpu };
         let kernel = rerail_accel::Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(program)));
         let ex = crate::code_rule_dsl::logic::lanes::executor_for(metal);
         let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run_on(ex, "ast matcher wave", rerail_accel::Batch(vec![rerail_accel::Launch::new(kernel)])).map_err(StoreError::Invalid)?;
