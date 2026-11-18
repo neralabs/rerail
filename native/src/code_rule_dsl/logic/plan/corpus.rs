@@ -1405,7 +1405,7 @@ fn tail_version(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tai
 /// the tree (decision 0281's path, step 7b): its answers on request undone (`rr::lower::undone_on_request`), the cone
 /// copied from the library's version (`rr::with_cone_version`), and the attributes on request made again over both
 /// (`on_request::SourcesOnRequest`, decision 0174), its cone's readers asking too. No tree is decoded.
-pub(crate) fn cone_on_version(
+pub fn cone_on_version(
     own: &Arc<crate::code_rule_dsl::logic::program_image::Version>,
     library: &Arc<crate::code_rule_dsl::logic::program_image::Version>,
     asked: &BTreeSet<String>,
