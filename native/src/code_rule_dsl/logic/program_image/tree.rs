@@ -145,6 +145,8 @@ impl<'v> Tree<'v> {
             let rows = self.rows(f);
             about.insert(self.text(f.name()), rows);
         }
+        // A version that states no field has no program row; the field readers read it as empty (`about_values`).
+        about.entry("program".to_owned()).or_insert_with(|| vec![[Value::Str(super::ABOUT.to_owned().into())].into()]);
         let inputs = v.inputs().map(|a| self.text(a)).collect();
         let outputs = v.outputs().map(|a| self.text(a)).collect();
         assemble(rules, decls, facts, about, inputs, outputs)

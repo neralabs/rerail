@@ -23,7 +23,7 @@
 //! The counts (`COUNTS`, one output): for every relation read or derived, its rows and live rows, its keys (first
 //! column) and live keys, and, for a relation whose first column is a node, the rows about loaded documents (a
 //! library's, such as typeshed's stubs: `doc(d, p, _), loaded(p, _, _)`) and the live ones among them. The keys are
-//! what `.demand r` (`magic::magic_sets`) restricts a relation to: live keys against all keys is what demand by key
+//! what `.demand r` (`preparation::magic::KeyDemand`) restricts a relation to: live keys against all keys is what demand by key
 //! would save.
 //!
 //! This is the measurement before deriving less: `Mode::After` runs the backward rules over the finished fixpoint.

@@ -1632,15 +1632,6 @@ pub(crate) mod logic {
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
     }
-    pub mod magic {
-        pub use rerail_rr::code_rule_dsl::logic::magic::*;
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::logic::front::{AggOp, Atom, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
-        #[allow(unused_imports)]
-        use std::collections::{BTreeMap, BTreeSet};
-        #[allow(unused_imports)]
-        pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{Gate, Report};
-    }
     #[cfg_attr(test, path = "native")]
     pub mod native {
         pub use rerail_logic::code_rule_dsl::logic::native::*;

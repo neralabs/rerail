@@ -25,7 +25,6 @@ pub mod code_rule_dsl {
     #[path = "logic"]
     pub mod logic {
         pub mod front;
-        pub mod magic;
         pub mod plan {
             pub use rerail_facts::code_rule_dsl::logic::plan::sketch;
             #[allow(unused_imports)]
@@ -80,7 +79,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::lower::WORLD;
             #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::print::print;
+            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::rr::print::{print, print_version};
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use syntax::quote;
             #[allow(unused_imports)]

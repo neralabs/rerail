@@ -65,11 +65,10 @@ pub mod lanes;
 #[allow(dead_code)]
 pub mod answers;
 pub mod liveness;
-// Its files are its test modules alone.
-#[cfg_attr(any(test, feature = "test-hooks"), path = "logic/magic")]
+// The demand passes' tests (`plan::corpus::preparation::magic`) against T's goldens; its files are those alone.
+#[cfg(any(test, feature = "test-hooks"))]
+#[path = "logic/magic"]
 pub mod magic {
-    pub use rerail_rr::code_rule_dsl::logic::magic::*;
-    #[cfg(any(test, feature = "test-hooks"))]
     pub mod tests;
 }
 #[allow(dead_code)]

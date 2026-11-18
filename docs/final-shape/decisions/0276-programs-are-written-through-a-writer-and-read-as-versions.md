@@ -379,9 +379,13 @@ Progress (2026-11-18):
   (`merge_and_drop_repeats`, `drop_repeated_rules`) and the whole of `simplify.rs` are the version's only. Each tree
   function's explanations moved onto its version pass, and its tests run on the version passes (the corpus-wide
   check of dropped unreached clauses too, its Q3 property read off `congruence`). The memo's dump prints
-  `Version::show`. Still to go in stage 2: `magic.rs` (the version has only `demand_bound_columns`, as
-  `ProgramDemand`: the waves' `magic_sets` and the gated `magic_adorn` are to be ported), `reach_form.rs`, `strings`'
-  and `matchers`' tree passes, `front`'s passes, `lower::sources_on_request`.
+  `Version::show`. Since then: `magic.rs` is gone (T's `magic_sets` is `KeyDemand`, the gated adornment
+  `ProgramDemand { gate }`, their 15 golden combinations checked on the version), and so are `reach_form.rs`'s,
+  `strings`' and `matchers`' tree passes. The waves are versions: a pack's policies are one version
+  (`front::yaml::program`, the round trip read back by `yaml::documents`), the wave's rules and demand program are
+  written through the builder, rules of one shape merge by `shape` over slots, and the wave's source joins them as
+  versions (`matches::joined`, keyed by `Placed::whole`). Still to go in stage 2: `front`'s passes and
+  `lower::sources_on_request`.
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 
