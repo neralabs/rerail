@@ -1316,16 +1316,17 @@ pub mod tests {
         let placed=reused.placed().unwrap();
         // A view of an input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _).`) is never kept: its rule stays, to
         // hold it again. Nothing else runs.
-        let left:BTreeSet<&str>=placed.v.rules().map(|r| placed.v.rel_name(r.head().rel())).collect();
-        assert_eq!(left,BTreeSet::from(["docof","kind"]));
-        assert!(placed.v.rules().all(|r| { let mut b=r.body(); matches!((b.next().and_then(|l| l.atom()), b.next()), (Some(a), None) if p.inputs.iter().any(|i| *i == placed.v.rel_name(a.rel()))) }));
+        let left:BTreeSet<String>=placed.v.rules().map(|r| placed.v.rel_name(r.head().rel()).to_owned()).collect();
+        assert_eq!(left,BTreeSet::from(["docof".to_owned(),"kind".to_owned()]));
+        assert!(placed.v.rules().all(|r| crate::code_rule_dsl::logic::plan::input_view_shape(&placed.v,r,|n| p.inputs.iter().any(|i| i==n)).is_some()));
         assert!(placed.fields().unwrap().gates().is_empty());
         let mut changed=inputs.clone();
         *changed.values_mut().next().unwrap()=8;
         for (candidate,rows) in [(key,changed),([2;32],inputs.clone())] {
             assert_eq!(cut(Some(&kept),candidate,&pl(&p),&st(&p),&rows).unwrap().strata,(strata.len(),strata.len()));
         }
-        let missing=kept.rels.keys().next().unwrap().clone();
+        // A kept relation missing (not a view's: those are not kept, so their absence changes nothing).
+        let missing=kept.rels.keys().find(|r| !left.contains(r.as_str())).unwrap().clone();
         kept.rels.remove(&missing);
         assert_eq!(cut(Some(&kept),key,&pl(&p),&st(&p),&inputs).unwrap().strata,(strata.len(),strata.len()));
     }

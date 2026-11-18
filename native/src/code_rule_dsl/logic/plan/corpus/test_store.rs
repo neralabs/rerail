@@ -169,7 +169,7 @@ impl Drop for Store {
     }
 }
 
-/// This process's open files under `dir` (macOS: `F_GETPATH`).
+/// The files under `dir` this process holds open, each named once with its descriptor (macOS: `F_GETPATH`).
 #[cfg(target_vendor = "apple")]
 pub fn open_under(dir: &Path) -> Vec<String> {
     let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_owned());
@@ -180,7 +180,7 @@ pub fn open_under(dir: &Path) -> Vec<String> {
             // SAFETY: F_GETPATH writes at most PATH_MAX bytes into `buf`.
             let named = unsafe { libc::fcntl(fd, libc::F_GETPATH, buf.as_mut_ptr()) } == 0;
             let path = std::ffi::CStr::from_bytes_until_nul(&buf).ok()?.to_string_lossy().into_owned();
-            (named && path.starts_with(&prefix)).then_some(path)
+            (named && path.starts_with(&prefix)).then(|| format!("{fd}: {path}"))
         })
         .collect()
 }

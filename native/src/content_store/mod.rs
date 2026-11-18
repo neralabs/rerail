@@ -705,9 +705,11 @@ impl Drop for ContentStore {
 
 impl ContentStore {
     /// The process forgets the store at `path`, closed and about to be deleted while the process goes on (a test's
-    /// own): what it read of it to hold in memory (its frames, decision 0104) and its identity. Held past the store's
-    /// life, each is memory no run reads again.
+    /// own): its upkeep jobs, what it read of it to hold in memory (its frames, decision 0104) and its identity. Held
+    /// past the store's life, each is memory no run reads again, and a job's connection held the deleted file open.
     pub fn forget(path: &Path) {
+        // Its upkeep jobs first: one holds a read connection on the file.
+        rerail_accel::upkeep::forget_file(path);
         upkeep::forget(path);
         frames::forget_snapshot(&path.to_string_lossy());
         atoms::forget_identity(&path.to_string_lossy());

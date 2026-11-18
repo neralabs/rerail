@@ -11219,15 +11219,29 @@ pub mod tests {
     }
 
     /// A kind's or a field's name in a rule is a branded atom (decision 0270): its postings are counted as an
-    /// integer constant's are (Q36: unread, `field($l, "left", $t)` was priced at one row, 1,159 read).
+    /// integer constant's are (Q36: unread, `field($l, "left", $t)` was priced at one row, 1,159 read). The names are
+    /// branded as lowering brands them (`plan::lower`, which needs a language's tables): by hand here. A kind is no
+    /// input since 0329 (`kind(n, k)` is a view of `node`, counted by the view's statistics, `node_column_counts`),
+    /// so its constant has no posting of its own.
     #[test]
     fn branded_constants_have_their_postings_counted() {
         use super::*;
-        let p = front::prune(crate::code_rule_dsl::logic::rr::parse(".decl left_name(l: node)\n.output left_name\nleft_name(l) :- field(l, \"left\", t), kind(t, \"identifier\").\n").unwrap());
+        use crate::code_rule_dsl::logic::front::{Branded, Class, Literal, Term};
+        let mut p = crate::code_rule_dsl::logic::rr::parse(".decl left_name(l: node)\n.output left_name\nleft_name(l) :- field(l, \"left\", t), kind(t, \"identifier\").\n").unwrap();
+        for r in &mut p.rules {
+            for l in &mut r.body {
+                if let Literal::Atom(a) = l {
+                    let class = if a.rel.as_str() == "field" { Class::Field } else { Class::Kind };
+                    a.args.iter_mut().filter(|t| matches!(t, Term::Str(_))).for_each(|t| *t = Term::Branded(Branded { class, atom: 7 }));
+                }
+            }
+        }
+        let p = front::prune(p);
         let placed = crate::code_rule_dsl::logic::plan::body::Placed::of_program(&p).unwrap();
         let constants = Own::constants_of(&placed.v);
         let of = |rel: &str| constants.iter().filter(|((r, _), _)| r == rel).map(|(_, v)| v.len()).sum::<usize>();
-        assert_eq!((of("field"), of("kind")), (1, 1), "{constants:?}");
+        assert_eq!(of("field"), 1, "{constants:?}");
+        assert!(!placed.v.inputs().any(|a| placed.v.text(a) == "kind"), "a kind is read as a view of `node` (0329)");
     }
 
     #[test]
