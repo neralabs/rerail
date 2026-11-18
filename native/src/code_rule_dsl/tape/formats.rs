@@ -353,6 +353,8 @@ impl DocTape {
             Held::F15(c) => Ok((c.laid_out().0, c.view())),
             Held::F16(t) => sixteen(t, lang),
             Held::F16Z(z) => {
+                // copy (0353 step 4b): the 16z tape's blocks laid out as format 16 in a vector of its own. It goes:
+                // the reads written once read 16z in place, a block decoded where a read falls.
                 let laid = self.laid.get_or_init(|| {
                     let mut bytes = vec![0; z.unblocked_len()];
                     z.unblock_into(&mut bytes)?;
