@@ -91,6 +91,8 @@ pub mod text_demand;
 pub mod joins;
 pub mod table;
 pub mod output;
+pub mod shapes;
+pub mod prepared;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
 #[derive(Clone, Debug)]
@@ -506,6 +508,12 @@ pub struct Stats {
     /// The tree's fielded edges by kind (`Own::fields`, `stat_edge`'s field): Q44's correlation of a node's kind with
     /// the fields it has or is.
     pub fields: std::sync::Arc<Fielded>,
+    /// The program's relations' layouts (decision 0361 step 4), by name, shared by a component's model: estimates
+    /// where they answer a column, and no statistics for a relation they answer whole.
+    pub shapes: std::sync::Arc<shapes::Shapes>,
+    /// The version's plans made from its layouts (decision 0361 step 5), by line, shared by a component's model: a
+    /// line they hold is taken as kept, not searched or priced.
+    pub prepared: std::sync::Arc<prepared::Prepared>,
     /// Relations whose statistics are made when first planned with (`lazy`, `Model::resolve`).
     lazy: LazyMap,
     /// Quiet strata's relations, whose columns take their `__old`'s statistics when first planned with
@@ -619,6 +627,8 @@ impl Stats {
             kindsets: Arc::new(kindsets),
             lookup: Default::default(),
             fields: Default::default(),
+            shapes: Default::default(),
+            prepared: Default::default(),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
         }
@@ -647,6 +657,12 @@ impl Stats {
     }
 
     /// Whether any column of `rel` has statistics (read or measured).
+    /// The documents and kinds the statistics hold, which a layout's `values` facts are priced by (decision 0361
+    /// item 5).
+    pub fn counts(&self) -> shapes::Counts {
+        shapes::Counts { docs: self.docs.filter(|&d| d > 0).map(|d| d as f64), kinds: (!self.kfreq.is_empty()).then(|| self.kfreq.len() as f64) }
+    }
+
     /// Whether `rel`'s columns are measured now, not lazily.
     fn knows_now(&self, rel: &str) -> bool {
         self.col.has(rel)
@@ -829,6 +845,8 @@ impl Stats {
             kindsets: Arc::new(pf.kindsets().iter().map(|(k, ks)| (pf.text(*k).to_owned(), ks.iter().map(|&a| pf.text(a).to_owned()).collect())).collect()),
             lookup: Default::default(),
             fields: Arc::new(Fielded::of(of("edge").filter(|r| !matches!(r[3], SqlValue::Null)).map(|r| (text(&r[0]), text(&r[1]), text(&r[3]), int(&r[2]) as f64)))),
+            shapes: Default::default(),
+            prepared: Default::default(),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
         })
@@ -922,6 +940,13 @@ thread_local! {
 /// Reads of an input delta (`r__plus`, `r__minus`) priced with no size: each is priced at the default's 1,000 rows. A
 /// delta is bound with the run and measured, so none should be (the guard in `a_session_maintains_a_recursive_cross_file_stratum`).
 static UNSIZED_DELTAS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Relations whose statistics their layouts answered (`Model::resolve`, decision 0361 step 4): none was made.
+static SHAPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub fn shaped_statistics() -> u64 {
+    SHAPED.load(std::sync::atomic::Ordering::Relaxed)
+}
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub fn unsized_deltas() -> u64 {
     UNSIZED_DELTAS.load(std::sync::atomic::Ordering::Relaxed)
@@ -943,6 +968,20 @@ impl Model {
                 prior_now(self, f, rel, true);
             }
             let Some(deferred) = self.stats.lazy.0.remove(rel) else { continue };
+            // Its layout answers it whole: priced from the facts, nothing counted (decision 0361 step 4).
+            if let Some(width) = f.arity(rel)
+                && self.stats.shapes.answers(rel, self.stats.counts())
+            {
+                let rows = self.stats.card.get(rel).copied().unwrap_or(1.0).max(1.0);
+                for c in 0..width {
+                    let n = self.stats.shapes.ndv(rel, c, rows, self.stats.counts()).expect("answered");
+                    self.ndv.insert((rel.to_owned(), c), n);
+                    self.stats.fan.insert((rel.to_owned(), c), (rows / n).max(1.0));
+                }
+                SHAPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                super::profile::decision("statistics answered by a layout (decision 0361)", || rel.to_owned());
+                continue;
+            }
             let _span = super::profile::span(|| format!("statistics of {rel}, made when first planned with"));
             let (cols, vals) = deferred.statistics();
             self.stats.measured(rel, cols, vals);
@@ -992,6 +1031,8 @@ impl Model {
             kindsets: st.kindsets.clone(),
             lookup: st.lookup.clone(),
             fields: st.fields.clone(),
+            shapes: st.shapes.clone(),
+            prepared: st.prepared.clone(),
             lazy: LazyMap(rels.iter().filter_map(|r| Some((r.clone(), st.lazy.0.get(r)?.clone()))).collect()),
             prior_later: rels.iter().filter(|r| st.prior_later.contains(*r)).cloned().collect(),
         };
@@ -1556,6 +1597,10 @@ pub struct RunPlans {
     /// seen first under another key, or a maintenance rule of a rule planned before, starts from it (decision 0258).
     /// A session's, carried between its runs with its plans.
     orders: arc_swap::ArcSwap<rustc_hash::FxHashMap<u128, Arc<[Step]>>>,
+    /// The prepared plans of the versions planned (decision 0361 step 5, Q228): the store's, read with the kept
+    /// plans, and those this run made, by the version's identity; and whether it made any.
+    prepared: arc_swap::ArcSwap<prepared::ByVersion>,
+    prepared_new: std::sync::atomic::AtomicBool,
 }
 
 impl Default for RunPlans {
@@ -1565,7 +1610,8 @@ impl Default for RunPlans {
 }
 
 /// Decision 0258: a line's key apart from what solves it: its body and its delta.
-fn line_key(b: &Body<'_>, first: Option<usize>) -> u128 {
+#[doc(hidden)]
+pub fn line_key(b: &Body<'_>, first: Option<usize>) -> u128 {
     super::derived::digest(|d| {
         d.str("line");
         d.u64(b.key() as u64);
@@ -1636,6 +1682,8 @@ impl RunPlans {
             },
             planned_now: Default::default(),
             orders: arc_swap::ArcSwap::from_pointee(orders),
+            prepared: Default::default(),
+            prepared_new: Default::default(),
         }
     }
 
@@ -1822,6 +1870,52 @@ pub fn take_stored_plans(stored: Arc<StoredPlans>) {
     });
 }
 
+/// Whether this thread runs with kept plans (`PLANS`): only then are prepared plans read from or kept for the store.
+#[doc(hidden)]
+pub fn run_holds_plans() -> bool {
+    PLANS.with(|p| p.borrow().is_some())
+}
+
+/// The prepared plans the store kept of the version whose identity is `id` (Q228).
+#[doc(hidden)]
+pub fn prepared_stored(id: &[u8; 32]) -> Option<Arc<prepared::Prepared>> {
+    PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.prepared.load().get(id).cloned()))
+}
+
+/// Keeps `made`, the prepared plans this run made of the version whose identity is `id`, for the store.
+#[doc(hidden)]
+pub fn prepared_made(id: [u8; 32], made: Arc<prepared::Prepared>) {
+    PLANS.with(|p| {
+        if let Some(p) = p.borrow().as_ref() {
+            p.prepared.rcu(|m| {
+                let mut m = prepared::ByVersion::clone(m);
+                m.insert(id, Arc::clone(&made));
+                m
+            });
+            p.prepared_new.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+}
+
+/// Gives this thread's run the prepared plans the store kept (with `take_stored_plans`).
+pub fn take_stored_prepared(stored: prepared::ByVersion) {
+    PLANS.with(|p| {
+        if let Some(p) = p.borrow().as_ref() {
+            p.prepared.store(Arc::new(stored));
+        }
+    });
+}
+
+/// This thread's run's prepared plans for the store, the stored with the made: `None` where it made none.
+pub fn prepared_to_store() -> Option<Arc<prepared::ByVersion>> {
+    PLANS.with(|p| p.borrow().as_ref().filter(|p| p.prepared_new.load(std::sync::atomic::Ordering::Relaxed)).map(|p| p.prepared.load_full()))
+}
+
+/// The prepared plans held for this thread's run, as read and made.
+pub fn prepared_held() -> Arc<prepared::ByVersion> {
+    PLANS.with(|p| p.borrow().as_ref().map(|p| p.prepared.load_full()).unwrap_or_default())
+}
+
 /// This thread's run's plans for the store: the stored ones with the run's over them, or `None` where the run
 /// changed none.
 pub fn plans_to_store() -> Option<StoredPlans> {
@@ -1981,7 +2075,7 @@ impl Drop for KeepPlans {
             let st: Vec<u64> = STATISTICS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let searches: Vec<u64> = SEARCHES.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let lazy = lazy_probes_counted();
-            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late; orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], searches[0], searches[1], lazy.0, lazy.1);
+            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; {} lines prepared ({} versions' plans read, {} made); orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], SHAPED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::TAKEN.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[0].swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[1].swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1);
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
@@ -2141,7 +2235,10 @@ impl Model {
     /// inlined kept `pre_` relations (`rr_ctx282` read one at 0.8 M units, and inlined did 39 M).
     fn ndv_or_default(&self, rel: &str, c: usize) -> f64 {
         const DEFAULT_NUM_DISTINCT: f64 = 200.0;
-        let unseen = || if self.stats.solving.contains(rel) { DEFAULT_NUM_DISTINCT.min(self.card(rel)) } else { 1.0 };
+        // Unmeasured: its layout's estimate (decision 0361 step 4), else the prior.
+        let unseen = || {
+            self.stats.shapes.ndv(rel, c, self.card(rel), self.stats.counts()).unwrap_or_else(|| if self.stats.solving.contains(rel) { DEFAULT_NUM_DISTINCT.min(self.card(rel)) } else { 1.0 })
+        };
         let ndv = self.ndv.at(&rel, c).copied().unwrap_or_else(unseen);
         (ndv * skew(rel, c, 0)).max(1.0)
     }
@@ -2355,8 +2452,14 @@ impl Model {
 
     /// A relation whose statistics are still to be made: bound lazily (`Stats::lazily`), or quiet and taking its
     /// kept rows' (`prior_stats`).
+    /// A relation its layout answers whole (`shapes::Shapes::answers`) is never one: its statistics are not made.
     fn deferred(&self, rel: &str) -> bool {
-        self.stats.lazy.0.contains_key(rel) || self.stats.prior_later.contains(rel)
+        self.stats.lazy.0.contains_key(rel) && !self.shaped(rel) || self.stats.prior_later.contains(rel)
+    }
+
+    /// Whether `rel`'s layout answers every column's distinct values (decision 0361 step 4).
+    fn shaped(&self, rel: &str) -> bool {
+        self.stats.shapes.answers(rel, self.stats.counts())
     }
 
     /// Decision 0123, step 1: the statistics a planning round requests. Of the lines it will plan (a rule and its
@@ -2899,6 +3002,11 @@ impl Model {
         if PLANS.with(|p| p.borrow().is_none()) {
             return self.plan_inner(pf, b, first, None, true);
         }
+        // A line planned with the program (decision 0361 step 5): no key, no cache, no price.
+        if let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes) {
+            super::profile::decision("prepared plans (decision 0361 step 5)", || "a live plan taken as prepared: not searched or priced".to_owned());
+            return Ok((plan, None));
+        }
         let misses = self.delta_misses(b, first);
         let key = self.plan_key_at("live ", b, first, &misses);
         // The state kept before the last (O-live-replan item 4): sizes that alternate between waves (a distinct
@@ -3244,6 +3352,14 @@ impl Model {
         explain: bool,
         cx: &mut joins::SearchCx,
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
+        // A line planned with the program from its layouts (decision 0361 step 5): taken as kept, not searched.
+        if fixed.is_none()
+            && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes)
+        {
+            super::profile::decision("prepared plans (decision 0361 step 5)", || "a line's plan taken as prepared: not searched".to_owned());
+            let explained = if explain { self.explain_order(pf, b, first, &plan.0) } else { None };
+            return Ok((plan, explained));
+        }
         if self.shapes_for(b.rel(b.head())).is_empty() || NO_SHAPES.with(std::cell::Cell::get) {
             return self.plan_unshaped(pf, b, first, fixed, explain, cx);
         }
@@ -4867,6 +4983,8 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
         .chain(f.fact_rels().into_iter().map(|r| f.text(r.name())).filter(|rel| !f.is_input(rel)).map(str::to_owned))
         .collect();
     let mut stats = Stats::new(db, p, &mut inputs)?;
+    stats.shapes = shapes::Shapes::of_version(&p.v);
+    stats.prepared = prepared::Prepared::of_version(&p.v);
     let mut ndv = ColMap::default();
     for (rel, (_, rows)) in &inputs.batch {
         let rows = rows.max(1.0);
@@ -4876,9 +4994,11 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
         Arc::make_mut(&mut stats.indexes).insert(rel.clone(), vtab_indexes(rel));
         let names = super::sql::select::input_columns(rel);
         for col in 0..f.arity(rel).unwrap_or(0) {
-            // A base relation's distinct values by column: a chunk's documents, kinds, child indexes, fields
-            // and parents are far fewer than its rows. Other columns are taken as keys.
-            let distinct = match names.and_then(|names| names.get(col)).copied() {
+            // A base relation's distinct values by column: from its layout where a fact answers the column
+            // (decision 0361 step 4: `child`'s `c` a key, its `p` a few fan-out, its `i` dense within `p`).
+            // Otherwise, by the column's name (the columns no fact answers: a chunk's documents, kinds, fields
+            // and depths are far fewer than its rows); other columns are taken as keys.
+            let distinct = stats.shapes.ndv(rel, col, rows, stats.counts()).unwrap_or_else(|| match names.and_then(|names| names.get(col)).copied() {
                 Some("d") => rows.min(300.0),
                 Some("kind") => rows.min(200.0),
                 Some("idx") => rows.min(20.0),
@@ -4887,7 +5007,7 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
                 Some("p" | "par") => (rows / 3.0).max(1.0),
                 Some("s") => (rows / 5.0).max(1.0),
                 _ => rows,
-            };
+            });
             ndv.insert((rel.clone(), col), distinct);
             stats.fan.insert((rel.clone(), col), (rows / distinct).max(1.0));
         }

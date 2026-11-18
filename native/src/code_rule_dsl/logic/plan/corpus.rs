@@ -4320,6 +4320,9 @@ fn run_observed(
     // The file-local part's fields, as the split made it: the run reads the part's rules and fields from its version.
     let local_placed = super::body::Placed::whole(Arc::clone(&local_v));
     let local_f = local_placed.fields()?;
+    // The base relations' layouts (core.rr's, decision 0361 item 5): the columns they answer are not counted when a
+    // chunk's base relations are measured (`sampled_statistics_unanswered`).
+    let base_shapes = super::shapes::Shapes::of_version(&local_v);
     let constants_only = {
         // The split's (`Programs::constants`): empty where no document is read, and then so is the file-local part.
         let constant = &split.constants;
@@ -6427,7 +6430,7 @@ fn run_observed(
                                                 Some((first, m)) if first > 0 => (first, m),
                                                 _ => {
                                                     let _m = crate::code_rule_dsl::logic::profile::span(|| "guest statistics".into());
-                                                    let m = sampled_statistics(source.as_ref());
+                                                    let m = sampled_statistics_unanswered(rel, source.as_ref(), &base_shapes, stats.counts());
                                                     if rows > 0 {
                                                         measured_once.lock().insert(key, (rows, m.clone()));
                                                     }
@@ -6543,7 +6546,7 @@ fn run_observed(
                 Some((first, measured)) if first > 0 => scaled_statistics(&measured, first, source.estimated_len()),
                 _ => {
                     let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel} ({mix})"));
-                    let measured = sampled_statistics(source.as_ref());
+                    let measured = sampled_statistics_unanswered(&rel, source.as_ref(), &base_shapes, stats.counts());
                     measured_once.lock().insert(key, (source.estimated_len(), measured.clone()));
                     measured
                 }
@@ -11368,6 +11371,49 @@ pub fn sampled_statistics(source: &dyn crate::code_rule_dsl::facts::vtab::Source
     let measured = syntax::measured(&sample);
     crate::code_rule_dsl::logic::profile::decision("statistics sample", || format!("{count} of {rows} rows (limit {STAT_SAMPLE_ROWS})"));
     if count == rows { measured } else { scaled_statistics(&measured, count, rows) }
+}
+
+/// `sampled_statistics` of `rel`'s columns its layout does not answer (decision 0361 item 5): an answered column's
+/// statistic is its facts' estimate (`Shapes::statistic`), not counted, and a relation they answer whole reads none
+/// of its rows.
+#[doc(hidden)]
+pub fn sampled_statistics_unanswered(rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source, shapes: &super::shapes::Shapes, counts: super::shapes::Counts) -> Vec<(String, i64, i64, i64, i64)> {
+    if let Some(known) = source.statistics() { return known; }
+    if source.made_on_lookup() { return Vec::new(); }
+    let rows = source.len();
+    let names = source.columns();
+    let answered: Vec<Option<(i64, i64, i64, i64)>> = names.iter().map(|n| shapes.statistic(rel, n, rows as i64, counts)).collect();
+    let open: Vec<usize> = (0..names.len()).filter(|&c| answered[c].is_none()).collect();
+    let mut counted: HashMap<usize, (String, i64, i64, i64, i64)> = HashMap::new();
+    if !open.is_empty() {
+        let count = rows.min(STAT_SAMPLE_ROWS);
+        let mut values = vec![Vec::with_capacity(count); open.len()];
+        let mut row = vec![0; open.len()];
+        for i in 0..count {
+            let at = (i as u128 * rows as u128 / count as u128) as usize;
+            source.row_at(at, &open, &mut row);
+            for (column, value) in values.iter_mut().zip(&row) { column.push(*value); }
+        }
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, (count * open.len()) as u64);
+        let sample = Rows { columns: open.iter().map(|&c| names[c].clone()).collect(), values };
+        let measured = syntax::measured(&sample);
+        let measured = if count == rows { measured } else { scaled_statistics(&measured, count, rows) };
+        counted = open.iter().copied().zip(measured).collect();
+    }
+    names
+        .iter()
+        .enumerate()
+        .map(|(c, n)| match answered[c] {
+            Some((r, ndv, sq, sqd)) => (n.clone(), r, ndv, sq, sqd),
+            None => counted.remove(&c).expect("counted"),
+        })
+        .collect()
+}
+
+/// Rows held as columns that keep no statistics of their own (`Rows`), for a test of a measurement.
+#[doc(hidden)]
+pub fn unmeasured_rows(columns: Vec<String>, values: Vec<Vec<i64>>) -> impl crate::code_rule_dsl::facts::vtab::Source {
+    Rows { columns, values }
 }
 
 /// A digest as lowercase hex.

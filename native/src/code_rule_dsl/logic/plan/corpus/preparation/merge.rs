@@ -23,19 +23,41 @@ impl ProgramPass for DropRepeated {
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
         let mut seen: HashMap<u64, Vec<RuleRef<'_>>> = HashMap::new();
-        let mut drop: HashSet<RuleId> = HashSet::new();
+        // Each rule dropped, and the earlier equal rule kept for it.
+        let mut drop: HashMap<RuleId, RuleId> = HashMap::new();
         for r in v.rules() {
             let at = seen.entry(r.hash()).or_default();
             // Equal hashes are compared by text: a collision keeps both.
-            if at.iter().any(|&o| v.show_rule(o) == v.show_rule(r)) {
-                drop.insert(r.id());
-            } else {
-                at.push(r);
+            match at.iter().find(|&&o| v.show_rule(o) == v.show_rule(r)) {
+                Some(o) => {
+                    drop.insert(r.id(), o.id());
+                }
+                None => at.push(r),
             }
         }
         if !drop.is_empty() {
             self.0 += drop.len();
-            w.keep(|r| !drop.contains(&r.id()))?;
+            w.keep(|r| !drop.contains_key(&r.id()))?;
+            // The request record by rule, as the tree's `set_rules_from` states it (decision 0331): a rule kept serves
+            // its repeats' readers too. Left by place over the rules dropped, a later step's edit of it (the merge's
+            // renamed readers) fell on other rules, and the pipeline's record at its end lost it.
+            let was = v.asked();
+            let mut asked = was.clone();
+            for (req, by) in asked.iter_mut() {
+                let Some(rel) = v.rel(req) else { continue };
+                let heads: Vec<RuleId> = v.heads(rel).map(|r| r.id()).collect();
+                if heads.len() != by.len() || !heads.iter().any(|h| drop.contains_key(h)) {
+                    continue;
+                }
+                let mut serves: HashMap<RuleId, std::collections::BTreeSet<String>> = HashMap::new();
+                for (h, readers) in heads.iter().zip(by.iter()) {
+                    serves.entry(drop.get(h).copied().unwrap_or(*h)).or_default().extend(readers.iter().cloned());
+                }
+                *by = heads.iter().filter(|h| !drop.contains_key(h)).map(|h| serves.remove(h).unwrap_or_default()).collect();
+            }
+            if asked != was {
+                w.on()?.set_asked(&asked);
+            }
         }
         Ok(())
     }
@@ -943,6 +965,28 @@ mod tests {
         let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
         assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
         assert!(out.rules().any(|r| out.rel_name(r.head().rel()) == "s_q"), "{}", out.show());
+    }
+
+    /// A request relation's repeated rule dropped: the rule kept serves both copies' readers, stated by rule as the
+    /// tree's `drop_repeated_rules` states it (decision 0331). Left by place over the rules dropped, the merge's
+    /// renamed readers after it fell on other rules (the combine's tail on corpus0 x B-now).
+    #[test]
+    fn a_repeated_request_rule_dropped_keeps_both_readers_by_rule() {
+        use std::collections::BTreeSet;
+        let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl q(x: number)\n.output q\n\
+                    q(x) :- a(x).\nq(x) :- b(x).\nq(x) :- a(x).\n";
+        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        tree.asked_by.insert("q".into(), ["r1", "r2", "r3"].iter().map(|r| BTreeSet::from([(*r).to_owned()])).collect());
+        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        let mut p = Pipeline::new("test", v);
+        let mut repeats = super::DropRepeated::default();
+        p.program(&mut repeats);
+        let out = p.current().unwrap().clone();
+        assert_eq!(repeats.0, 1);
+        crate::code_rule_dsl::logic::plan::corpus::drop_repeated_rules(&mut tree);
+        let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        assert_eq!(out.asked().get("q"), Some(&vec![BTreeSet::from(["r1".to_owned(), "r3".to_owned()]), BTreeSet::from(["r2".to_owned()])]), "the step's own record, by rule");
+        assert!(crate::code_rule_dsl::logic::program_image::same_program(&want, &out), "{}", crate::code_rule_dsl::logic::program_image::differences(&want, &out));
     }
 
     /// A library's facts may go undeclared (`param_slot("datetime.datetime", "tzinfo", 7).`): such relations merge by

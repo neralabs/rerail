@@ -4774,3 +4774,59 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   not taken; a made text read by the next dispatch before its write is visible.
 - **Do**: find which (count the stage's reruns and the arena's fill in a failing run), then fix it at its cause.
 - **Done when**: 60 runs, six at a time, all pass.
+
+### Q225. (Q179 on cost-classifier-metal-rf) (done) The combine's tail lost a merge's renamed reader (`DropRepeated` left the record by place)
+
+- **Found** (2026-11-18, a debug run of corpus0 x B-now, at ece083869): the combine's tail check
+  (`same_program`, corpus.rs) failed. The version's record of `rr_value_req_by_plain_str_0` named
+  `rr_demand_agg_rr_agg389` as a reader, a relation `same_relations`' merge had folded into `rr_ctx390`; the tree's
+  did not.
+- **Cause**: the version's `DropRepeated` dropped three of the request relation's 42 rules and left its 42 entries
+  by place, for the pipeline's carried record (`AskedByRule`) to restate at the end. The merge after it renamed the
+  readers in those rows; the carry takes a step's record at its word only where its entries match the rules (42
+  against 39), so it kept its own readers, the old name, and stated them at `finish`. The tree's
+  `drop_repeated_rules` states the record by rule (`set_rules_from`: a rule kept serves its repeats' readers).
+- **Done**: `DropRepeated` states the record so too. `merge::tests::a_repeated_request_rule_dropped_keeps_both_readers_by_rule`
+  checks it against the tree's; 252 tests of preparation, program_image, the corpus, the merges, simplify and rr
+  pass (M3).
+
+### Q226. (Q180 on cost-classifier-metal-rf) The version after `simplify` keeps a request record by place where the tree's states it by rule
+
+- **Found** (2026-11-18, the same run past Q225): the preparation's check after `simplify` fails. `rr_value_req`'s
+  record on the version has more entries than rules, and its readers sit on other rules; the tree's is by rule.
+  It was not reached before Q225's fix (the run stopped at the combine's tail).
+- **Next**: as Q225, the `simplify` pass that drops or reorders `rr_value_req`'s rules without stating the record
+  (a probe on the manager's steps names it: the step after which the record's entries stop matching the rules).
+  A debug assert at every pipeline step that a request relation's entries match its rules, or the step stated none,
+  would find each such pass at once, not one per run.
+- **Done when**: a debug run of corpus0 x B-now passes every stage check.
+
+### Q227. (Q182 on cost-classifier-metal-rf) Relax cannot load the engine under `RELAX_SHARE` (a patched `native/vendor` crate)
+
+- **Found** (2026-11-18): `relax test rerail-engine --lib` with `RELAX_SHARE=rerail` stops at "load error
+  cranelift_assembler_x64_meta: …/native/vendor/cranelift-assembler-x64-meta-0.125.4/src/lib.rs: No such file or
+  directory", though the file is on disk and tracked. The crate is a registry crate's build-dependency patched to
+  the vendored copy (0341); the registry crate's build script runs with no mount (`unitgraph.rs`, the `else` of
+  `is_virtual(dir)`), and its loader does not read the patched dependency's files. Without `RELAX_SHARE` the run
+  gets past it (each worktree's first run is then cold).
+- **Next**: in the fork (`scripts/dev/relax/rerail.patch`), hand a registry package's build script the mount table
+  when a build-dependency it reaches lies in the shared workspace, or map that dependency's paths to the disk.
+- **Done when**: the engine's tests run under `RELAX_SHARE=rerail`.
+
+### Q228. (Q183 on cost-classifier-metal-rf) Prepared plans are made once a version, but not yet stored with the planned version's image (done)
+
+- **Found** (2026-11-18, 0361 step 5): `plan::prepared::Prepared` is an analysis with `rows`/`of_rows`, so a version
+  reopened from a stored pipeline run reads it back. But a stored run keeps the analyses of its steps' inputs only
+  (`Run::parts`), and the versions a run plans are none of those: preparation's output is folded, then split into
+  the parts. So each process makes a part's prepared plans once, at its first plan (no store is read for them).
+- **Next**: store them where the parts are made (the split's versions, or the kept plans' store entry beside
+  `choices`), keyed by the part's identity, and read them back at the run's first plan.
+- **Done when**: a warm process's profile shows the prepared plans read (`Store::loaded("prepared plans")`), none
+  made.
+- **Done** (2026-11-18): kept in the kept plans' entry under the prepared program (`rr_prepared_plan`, decision 0116's
+  store), each row the planned version's identity (`manager::identity`) then a plan's. A run reads them with the kept
+  plans; `Prepared::of_version` of a version it does not hold looks its identity up there and holds what it finds
+  (`Store::hold`, counted as loaded), else makes them and keeps them for the store, written when the run made any.
+  Tests: `a_later_run_reads_the_prepared_plans_an_earlier_one_made` (loaded 1, computed 0) and
+  `kept_plans_read_back_from_the_store_by_rule_and_scale` (the entry's round trip). The plan-cache counts line says
+  how many versions' plans a run read and made.
