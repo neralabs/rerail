@@ -21,12 +21,23 @@ const SOCKET_ROOT = "/tmp";
 const LATE = "late steer";
 const SESSION = "left-untaken";
 
+/** The steer for an edit of `path` whose lines hold a print the call wrote. */
+const printSteer = (path: string): string => `print in ${path}`;
+
+/** Whether the call wrote a print: its text holds one, and what the file held before it did not, or is unknown. */
+function wrotePrint(edit: EditBatch["edits"][number]): boolean {
+  if (edit.generatedText?.includes("print(") !== true) return false;
+  return edit.previousReadError !== undefined || edit.previousText?.includes("print(") !== true;
+}
+
 /**
  * An engine service over a checkout of its own that checks the events hooks leave in its home (the checkout's folder),
- * with a Claude Code session started: its auditor keeps each edit batch, and steers `LATE` once at the first turn end
- * whose checks it settles. Takes no event until the test asks (`untaken.taken()`) or sends one.
+ * with a Claude Code session started: its auditor keeps each edit batch, steers once for each edit of the session that
+ * wrote a print (`printSteer`), and steers `LATE` once at the first turn end whose checks it settles. Its evaluator
+ * opens once `opening` settles, and `firstView` settles once its first walk records a change as another writer's. Takes
+ * no event until the test asks (`untaken.taken()`) or sends one.
  */
-async function serviceWithUntaken() {
+async function serviceWithUntaken(opening: Promise<void> = Promise.resolve()) {
   const root = await realpath(await mkdtemp(join(process.platform === "win32" ? tmpdir() : SOCKET_ROOT, "rerail-untaken-")));
   onTestFinished(async () => {
     await removeFolder(root);
@@ -36,6 +47,7 @@ async function serviceWithUntaken() {
   startTestRepository(root, databasePath);
   const socketPath = testEngineEndpoint(root);
   const opened = Promise.withResolvers<void>();
+  const firstView = Promise.withResolvers<void>();
   const steered = Promise.withResolvers<void>();
   const batches: EditBatch[] = [];
   const passes: UntakenPass[] = [];
@@ -49,10 +61,14 @@ async function serviceWithUntaken() {
     createAuditor: ({ steerDelivery }) => ({
       openWorkspace: async () => {
         opened.resolve();
+        await opening;
       },
       acceptsPath: () => true,
       auditGeneratedEdits: async (_sessionId, batch) => {
         batches.push(batch);
+        if (batch.mode === "log") firstView.resolve();
+        const steering = batch.mode === "log" ? [] : batch.edits.filter(wrotePrint);
+        for (const { path } of steering) await steerDelivery.requestSteer(SESSION, "steer", printSteer(path), { revision: batch.revision, scope: [path] });
         return { revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] };
       },
       settleGeneratedEdits: async () => {
@@ -73,13 +89,26 @@ async function serviceWithUntaken() {
   const engine = { socketPath };
   const send = async (event: AdapterEvent) => (await ingestEngineEvent(engine, event)).map(delivery => delivery.content);
   const leave = async (event: AdapterEvent, arrivedAt: number) => await leaveUntaken(root, process.pid, engineRequestBody(event), arrivedAt);
-  return { root, databasePath, service, send, leave, steered: steered.promise, batches, passes };
+  return { root, databasePath, service, send, leave, steered: steered.promise, firstView: firstView.promise, batches, passes };
+}
+
+/** The session's ledger, entry by entry. */
+async function ledgerEntries(root: string): Promise<{ type?: string; content?: string; toolCallId?: string; preimages?: unknown }[]> {
+  const ledger = await readFile(join(root, "state", createHash("sha256").update(SESSION).digest("hex"), "events.jsonl"), "utf8");
+  return ledger.split("\n").filter(line => line !== "").map(line => JSON.parse(line) as { type?: string });
 }
 
 /** How many times the session's ledger records `content` as delivered to its agent. */
 async function recordedDeliveries(root: string, content: string): Promise<number> {
-  const ledger = await readFile(join(root, "state", createHash("sha256").update(SESSION).digest("hex"), "events.jsonl"), "utf8");
-  return ledger.split("\n").filter(line => line.includes("\"type\":\"delivery\"") && line.includes(content)).length;
+  return (await ledgerEntries(root)).filter(entry => entry.type === "delivery" && JSON.stringify(entry).includes(content)).length;
+}
+
+/** A Write call the hooks left, the tool's write between its two events: the call a minute before, the result a minute after. */
+async function leftWrite(held: Awaited<ReturnType<typeof serviceWithUntaken>>, toolCallId: string, path: string, content: string, ran: number): Promise<void> {
+  const tool = { sessionId: SESSION, toolCallId, toolName: "Write" } as const;
+  await held.leave({ kind: "call", eventId: `${toolCallId}:call`, ...tool, input: { file_path: path, content } }, ran - 60_000);
+  writeFileSync(join(held.root, path), content);
+  await held.leave({ kind: "result", eventId: `${toolCallId}:result`, ...tool, output: "ok" }, ran + 60_000);
 }
 
 function recordedEvents(databasePath: string): { eventId: string; observedAt: number }[] {
@@ -131,6 +160,25 @@ describe("an engine service beside the events hooks left while its daemon did no
     // of the session's folder may read the edit once more (seen on Windows); each read is of the edit as made.
     expect(edits.length).toBeGreaterThan(0);
     expect(new Set(edits.map(edit => edit.generatedText))).toEqual(new Set(["def a():\n    return 2\n"]));
+  });
+
+  it("steers each Write left before the session first saw its folder with the next answer, not as an edit already seen", async () => {
+    const opening = Promise.withResolvers<void>();
+    const held = await serviceWithUntaken(opening.promise);
+    // The session started, and its evaluator still opens; the hooks left two Write calls, and the tool wrote both files.
+    const ran = Date.now();
+    for (const name of ["w1.py", "w2.py"]) await leftWrite(held, name, name, `def ${name.slice(0, 2)}():\n    print(1)\n`, ran);
+    // The session's first view of its folder holds both files, written by calls it has not taken yet.
+    opening.resolve();
+    await held.firstView;
+    await held.service.untaken.taken();
+    // Read against that view, each edit was no change, and no steer for it ever reached the agent.
+    expect(await held.send(prompt("next"))).toEqual(expect.arrayContaining([printSteer("w1.py"), printSteer("w2.py")]));
+    // Nothing of what the files held is taken as the calls' "before": their tool had already written them.
+    const calls = (await ledgerEntries(held.root)).filter(entry => entry.type === "policy-call");
+    expect(calls.map(({ toolCallId, preimages }) => ({ toolCallId, preimages }))).toEqual([
+      { toolCallId: "w1.py", preimages: {} }, { toolCallId: "w2.py", preimages: {} },
+    ]);
   });
 
   it("takes what a shell command left untaken wrote as the session's own, from when its hooks met it", async () => {

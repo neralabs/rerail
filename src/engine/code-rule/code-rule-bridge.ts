@@ -103,6 +103,14 @@ export function ledgerPreimage(preimage: Preimage): Preimage {
   return preimage.readError === undefined ? preimage : { ...preimage, readError: scrubSecrets(preimage.readError) };
 }
 
+/**
+ * What `begin` takes in place of preimages for a call no one saw start, which may have run already (its hook left it
+ * while the daemon did not read, or gave up waiting): it captures nothing, as what its files hold now may be what it
+ * wrote, and what the session observed of a file is its "before" only where that file was last written before the call
+ * started (`#observedBefore`).
+ */
+export const UNSEEN_START = "unseen-start";
+
 export interface Source {
   readonly path: string;
   readonly language: CodeRuleSourceLanguage;
@@ -172,6 +180,8 @@ function observation(source: Source): ObservedSource {
 interface PendingEdit {
   readonly paths: readonly string[];
   readonly preimages: ReadonlyMap<string, Preimage>;
+  /** For a call begun with `UNSEEN_START`: when it started, on the filesystem's clock. */
+  readonly unseenSince?: number;
 }
 
 /** A tool call the session's ledger holds open as the session opens, with what it captured as it began. */
@@ -389,6 +399,13 @@ function failFolder(walk: SourceWalk, path: string, readError: string): void {
   const failed = new Set([path]);
   for (const [sourcePath, source] of previousSources)
     if (underBaselineRoot(failed, sourcePath)) scan.sources.set(sourcePath, { path: sourcePath, language: source.language, readError });
+}
+/**
+ * Whether `observed` holds a file as last written before `at`, by the stamp a walk saw it with; one a tool call's read
+ * made keeps no such time, so it is not known to.
+ */
+function writtenBefore(observed: ObservedSource | undefined, at: number): boolean {
+  return observed?.modifiedAt !== undefined && observed.modifiedAt < at;
 }
 /** Whether the tool call left the source as its preimage: the same text, or a secret-like file's same digest. */
 function unchangedSince(source: Source, preimage: Preimage | undefined): boolean {
@@ -1398,10 +1415,11 @@ export class CodeRuleBridge {
     toolCallId: string,
     toolName: string,
     input: unknown,
-    restoredPreimages?: Readonly<Record<string, Preimage>>,
+    restoredPreimages?: Readonly<Record<string, Preimage>> | typeof UNSEEN_START,
   ): Promise<Readonly<Record<string, Preimage>>> {
     const discovery = this.#requireDiscovery();
-    discovery.toolCalls.begin(toolCallId, await this.#toolCallClock());
+    const startedAt = await this.#toolCallClock();
+    discovery.toolCalls.begin(toolCallId, startedAt);
     this.refreshCodeRules();
     const paths = generatedEditPaths(toolName, input);
     this.#auditor.refreshOwners?.(paths);
@@ -1413,13 +1431,20 @@ export class CodeRuleBridge {
     }
     return await this.#enqueue(async () => {
       this.#assertDiscovery(discovery);
-      const preimages = restoredPreimages === undefined
-        ? await this.#capturePreimages(paths)
-        : new Map(Object.entries(restoredPreimages));
+      const preimages = await this.#preimagesAtBegin(paths, restoredPreimages);
       for (const path of preimages.keys()) this.#touchSource(discovery, path);
-      this.#pending.set(toolCallId, { paths, preimages });
+      this.#pending.set(toolCallId, { paths, preimages, ...(restoredPreimages === UNSEEN_START ? { unseenSince: startedAt } : {}) });
       return Object.fromEntries(preimages);
     });
+  }
+
+  /** A call's preimages as it begins: read now, the ledger's for a restored call, or none for one no one saw start. */
+  async #preimagesAtBegin(
+    paths: readonly string[],
+    restoredPreimages: Readonly<Record<string, Preimage>> | typeof UNSEEN_START | undefined,
+  ): Promise<ReadonlyMap<string, Preimage>> {
+    if (restoredPreimages === undefined) return await this.#capturePreimages(paths);
+    return new Map(restoredPreimages === UNSEEN_START ? [] : Object.entries(restoredPreimages));
   }
 
   /**
@@ -1463,7 +1488,7 @@ export class CodeRuleBridge {
       this.#auditor.refreshOwners?.(pending.paths);
       this.#reportIgnoredEdits(discovery.root, pending.paths);
       await this.#noteIgnoreRules(pending.paths);
-      const { edits, uncaptured } = await this.#readEdits(discovery, pending.paths, pending.preimages);
+      const { edits, uncaptured } = await this.#readEdits(discovery, pending);
       if (edits.length === 0) return [];
       // Kept before the audit starts, so a steer its evaluation publishes finds it.
       if (options.rewindable === true) {
@@ -1812,16 +1837,12 @@ export class CodeRuleBridge {
   }
 
   /** The tool call's edits, and the digest each source had before it where the call's start captured no preimage. */
-  async #readEdits(
-    discovery: SourceDiscovery,
-    paths: readonly string[],
-    preimages: ReadonlyMap<string, Preimage>,
-  ): Promise<{ edits: CodeRuleEdit[]; uncaptured: Map<string, string> }> {
+  async #readEdits(discovery: SourceDiscovery, pending: PendingEdit): Promise<{ edits: CodeRuleEdit[]; uncaptured: Map<string, string> }> {
     const root = await realpath(this.#cwd);
     const edits: CodeRuleEdit[] = [];
     const uncaptured = new Map<string, string>();
-    for (const configuredPath of [...paths].sort(compareDeterministicStrings)) {
-      const edit = await this.#readToolEdit(discovery, root, configuredPath, preimages, uncaptured);
+    for (const configuredPath of [...pending.paths].sort(compareDeterministicStrings)) {
+      const edit = await this.#readToolEdit(discovery, root, configuredPath, pending, uncaptured);
       if (edit !== undefined) edits.push(edit);
     }
     return { edits, uncaptured };
@@ -1831,14 +1852,14 @@ export class CodeRuleBridge {
     discovery: SourceDiscovery,
     root: string,
     configuredPath: string,
-    preimages: ReadonlyMap<string, Preimage>,
+    pending: PendingEdit,
     uncaptured: Map<string, string>,
   ): Promise<CodeRuleEdit | undefined> {
     const source = await this.#readSource(root, configuredPath);
     if (source === undefined) return undefined;
     this.#touchSource(discovery, source.path);
-    const preimage = preimages.get(source.path);
-    const before = this.#observedSource(source.path)?.digest;
+    const preimage = pending.preimages.get(source.path);
+    const before = this.#observedBefore(source.path, pending.unseenSince)?.digest;
     const edit = this.#readEdit(source, preimage);
     if (edit === undefined) return undefined;
     const prior = uncapturedPrior(edit, preimage, before);
@@ -3021,6 +3042,17 @@ export class CodeRuleBridge {
   /** What the session last observed of `path`: its own observation, else the snapshot of the worktree holding it. */
   #observedSource(path: string): ObservedSource | undefined {
     return this.#observed.get(path) ?? this.#worktreeView.get(path);
+  }
+
+  /**
+   * What the session last observed of `path`, as what the file held before a call. For a call no one saw start
+   * (`unseenSince`), only an observation of the file as last written before the call started: one written since may
+   * hold what the call wrote (the session's first walk can come after the call ran), and the edit read against it would
+   * be no change. Without one, the call's "before" is unknown and the rules read the whole text it left.
+   */
+  #observedBefore(path: string, unseenSince: number | undefined): ObservedSource | undefined {
+    const observed = this.#observedSource(path);
+    return unseenSince === undefined || writtenBefore(observed, unseenSince) ? observed : undefined;
   }
 
   /** Forgets `path`, gone; in another worktree, it is marked gone where the snapshot the session took holds it. */

@@ -21,8 +21,8 @@ import {
   type FileDigests, type OwedEntry, type OwedSteer,
 } from "./owed-ledger.js";
 import {
-  CodeRuleBridge, generatedEditPaths, ledgerPreimage, type HeldCall, type Preimage, type RewoundEdit, type SessionWalkResume,
-  type SourceObservationCache,
+  CodeRuleBridge, generatedEditPaths, ledgerPreimage, UNSEEN_START, type HeldCall, type Preimage, type RewoundEdit,
+  type SessionWalkResume, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
@@ -168,9 +168,6 @@ async function settledWithin(work: Promise<void>, ms: number): Promise<boolean> 
 function happenedAt(state: Pick<RuntimeSessionState, "observedAt">): { observedAt?: number } {
   return state.observedAt === undefined ? {} : { observedAt: state.observedAt };
 }
-
-/** What a call that may have run before it began captures of its files: nothing (`#beginCall`). */
-const NO_PREIMAGES: Readonly<Record<string, Preimage>> = Object.freeze({});
 
 /**
  * Waits for `work` until `signal` aborts (no one waits for the answer any more), and says whether it finished first;
@@ -1487,8 +1484,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * Begins a tool call on the open evaluator. One answered while the evaluator opens is never begun, but what it writes
    * is the session's own, so it opens only its window (`CodeRuleBridge.unwatchedCall`). One no one waited for as it
    * began (`signal` aborted: its hook gave up, or left it while the daemon did not read) may have run already, so what
-   * its files hold now is no "before": it captures none, and its edit is read against what the session last saw of
-   * them, as an edit whose call was not seen.
+   * its files hold now is no "before": it captures none, and its edit is read against what the session saw of them as
+   * written before the call started, else with its "before" unknown (`UNSEEN_START`).
    */
   async #beginCall(
     state: RuntimeSessionState,
@@ -1496,7 +1493,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     event: Extract<AdapterEvent, { kind: "call" }>,
     signal: AbortSignal | undefined,
   ): Promise<Readonly<Record<string, Preimage>> | undefined> {
-    if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input, signal?.aborted === true ? NO_PREIMAGES : undefined);
+    if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input, signal?.aborted === true ? UNSEEN_START : undefined);
     await state.codeRuleBridge?.unwatchedCall(event.toolCallId);
     return undefined;
   }
