@@ -1,6 +1,7 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
-import type { GithubClient, PullRequestSummary } from "../../../src/runtime/index.js";
+import type { MergeAssistStatus } from "../../../src/engine/index.js";
+import type { MergeAssistRuntime, PullRequestSummary } from "../../../src/runtime/index.js";
 import { withExperiments } from "../../support/environment/experiments.js";
 import { git } from "../../support/merge-assist/git.js";
 import { FakeGithub, mergeAssistWorkspaces, type Workspace } from "../../support/merge-assist/workspace.js";
@@ -49,49 +50,88 @@ const commandLine = (args: readonly unknown[]): string => [args[0], ...(Array.is
 /** Whether a process started with these arguments is Git. */
 const isGit = (args: readonly unknown[]): boolean => /(?:^|[\\/])git(?:\.exe)?$/iu.test(String(args[0]));
 
+/** Whether a process has not exited yet. */
+const running = (child: ChildProcess): boolean => child.exitCode === null && child.signalCode === null;
+
 const { spawn: actualSpawn } = await vi.importActual<typeof import("node:child_process")>("node:child_process");
 
+/** setTimeout's longest delay: a wait for the stop that a pass ends long before, by its own work. */
+const UNREACHED_MS = 2 ** 31 - 1;
+
 /**
- * Starts a session's scan of the workspace's checkout and stops the service as the scan starts its first Git read
- * whose arguments hold `at`. Answers, once the stop and the scan are over, the Git processes the scan started that still
- * ran when the stop resolved, and those started from the stop on.
+ * Node waiting on a lock nothing releases: in place of a Git read, a process that ends only when it is ended, so the
+ * pass waiting for that read still runs when the stop's wait is over, however fast the machine.
  */
-async function stopDuringScan(ws: Workspace, github: GithubClient, at: string): Promise<{ runningAtStop: string[]; startedAfter: string[] }> {
-  const service = ws.service({ github });
-  const gits: Array<{ line: string; child: ChildProcess }> = [];
+const HELD_READ = ["-e", "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0)"];
+
+/** Where a test stops the service: as the work starts its first Git read whose arguments hold `at`. */
+interface StopPoint {
+  readonly at: string;
+  /** What the stop is given to wait for the passes running. */
+  readonly waitMs: number;
+  /** Whether {@link HELD_READ} stands in for that read. */
+  readonly held: boolean;
+}
+
+/** The process `args` start: {@link HELD_READ} in place of the read the test stops at when `held`, else the one asked. */
+function startProcess(args: Parameters<typeof spawn>, stopsHere: boolean, held: boolean): ChildProcess {
+  return stopsHere && held ? actualSpawn(process.execPath, HELD_READ, { stdio: ["pipe", "pipe", "pipe"] }) : actualSpawn(...args);
+}
+
+/**
+ * Runs `work` and stops `service` at `point`. Answers, once the stop and the work are over, the Git reads the work
+ * started that still ran when the stop resolved, and those started after it resolved.
+ */
+async function stopDuring(service: MergeAssistRuntime, work: () => Promise<unknown>, point: StopPoint): Promise<{ runningAtStop: string[]; startedAfter: string[] }> {
+  const reads: Array<{ line: string; child: ChildProcess }> = [];
   const startedAfter: string[] = [];
-  const stopping = Promise.withResolvers<Promise<void>>();
-  let stopped = false;
+  const stopping = Promise.withResolvers<{ stopped: Promise<void> }>();
+  let state: "before" | "stopping" | "stopped" = "before";
   vi.mocked(spawn).mockImplementation((...args: Parameters<typeof spawn>) => {
     const line = commandLine(args);
-    const child = actualSpawn(...args);
+    const here = state === "before" && line.includes(point.at);
+    const child = startProcess(args, here, point.held);
     if (isGit(args)) {
-      if (stopped) startedAfter.push(line);
-      gits.push({ line, child });
+      reads.push({ line, child });
+      if (state === "stopped") startedAfter.push(line);
     }
-    if (!stopped && line.includes(at)) {
-      stopped = true;
-      stopping.resolve(service.stop());
+    // The stop starts once the read is set up, as a stop that comes from outside the read always does.
+    if (here) {
+      state = "stopping";
+      queueMicrotask(() => {
+        const stopped = service.stop(point.waitMs).then(() => {
+          state = "stopped";
+        });
+        stopping.resolve({ stopped });
+      });
     }
     return child;
   });
   try {
-    const scan = service.openSession(ws.repo, "claude-code", "session-1");
-    await (await stopping.promise);
-    const runningAtStop = gits.filter(({ child }) => child.exitCode === null && child.signalCode === null).map(({ line }) => line);
-    await scan;
-    return { runningAtStop, startedAfter };
+    const done = work();
+    await (await stopping.promise).stopped;
+    const left = reads.filter(read => running(read.child));
+    // A held read the stop left running would hold the work for ever: it ends here, once counted.
+    for (const { child } of left) child.kill("SIGKILL");
+    await done;
+    return { runningAtStop: left.map(({ line }) => line), startedAfter };
   } finally {
     vi.mocked(spawn).mockImplementation(actualSpawn);
   }
 }
 
-describe("Merge Assist's stop ends a detection pass in flight", { timeout: 60_000 }, () => {
+/** The checkout's last scan, scan mark and conflicts as a new service reads them. */
+async function stored(ws: Workspace): Promise<Pick<MergeAssistStatus, "lastScan" | "scanning" | "conflicts">> {
+  const { lastScan, scanning, conflicts } = await ws.service().status(ws.repo);
+  return { lastScan, scanning, conflicts };
+}
+
+describe("Merge Assist's stop and a detection pass in flight", { timeout: 60_000 }, () => {
   it.each([
     ["reads the checkout's own branch and base", "refs/heads/master", false],
     ["compares the checkout's work with other branches", "--name-only", false],
     ["checks which open pull requests are work of their own", "--is-ancestor", true],
-  ])("ends a scan that %s at its next Git read: no Git starts once stopped or runs when the stop resolves, and what was found stays", async (_, at, pulls) => {
+  ])("ends a scan that %s, still running when the stop's wait is over, at its next Git read: no Git runs once the stop resolves, and what was found stays", async (_, at, pulls) => {
     const ws = await workspace(pulls ? { remote: "https://github.com/acme/app.git" } : {});
     const tips = addPeers(ws);
     const github = new FakeGithub(pulls ? { pullRequests: tips.map(pullOf) } : {});
@@ -100,12 +140,37 @@ describe("Merge Assist's stop ends a detection pass in flight", { timeout: 60_00
     const found = await first.scan(ws.repo);
     expect(found.conflicts).toHaveLength(PEERS);
 
-    const { runningAtStop, startedAfter } = await stopDuringScan(ws, github, at);
+    const service = ws.service({ github });
+    const { runningAtStop, startedAfter } = await stopDuring(service, () => service.openSession(ws.repo, "claude-code", "session-1"), { at, waitMs: 0, held: true });
 
     expect(startedAfter).toEqual([]);
     expect(runningAtStop).toEqual([]);
-    const status = await ws.service({ github }).status(ws.repo);
-    expect({ lastScan: status.lastScan, scanning: status.scanning, conflicts: status.conflicts })
-      .toEqual({ lastScan: found.lastScan, scanning: false, conflicts: found.conflicts });
+    expect(await stored(ws)).toEqual({ lastScan: found.lastScan, scanning: false, conflicts: found.conflicts });
+  });
+
+  it("lets a scan that ends within the stop's wait store what it found, as a scan that ends before the stop does", async () => {
+    const ws = await workspace();
+    addPeers(ws);
+    const service = ws.service();
+    await service.setEnabled(ws.repo, true);
+
+    const { runningAtStop } = await stopDuring(service, () => service.openSession(ws.repo, "claude-code", "session-1"), { at: "--name-only", waitMs: UNREACHED_MS, held: false });
+
+    expect(runningAtStop).toEqual([]);
+    const scan = await stored(ws);
+    expect({ peers: scan.lastScan?.peers, scanning: scan.scanning, conflicts: scan.conflicts.length })
+      .toEqual({ peers: { branches: PEERS, pullRequests: 0 }, scanning: false, conflicts: PEERS });
+  });
+
+  it("lets the detection after an edit that ends within the stop's wait store what it found", async () => {
+    const ws = await workspace();
+    addPeers(ws);
+    const service = ws.service();
+    await service.setEnabled(ws.repo, true);
+
+    const { runningAtStop } = await stopDuring(service, () => service.detectAfterEdit(ws.repo, "session-1", "claude-code"), { at: "--name-only", waitMs: UNREACHED_MS, held: false });
+
+    expect(runningAtStop).toEqual([]);
+    expect((await stored(ws)).conflicts).toHaveLength(PEERS);
   });
 });

@@ -454,10 +454,15 @@ export class GitReads {
     return running;
   }
 
+  /** Settles once every read running now has ended by itself; it stops none, so an owner can let them finish first. */
+  async settled(): Promise<void> {
+    await Promise.allSettled([...this.#running]);
+  }
+
   /** Kills every read still running and settles once the Git each started has exited. */
   async stop(): Promise<void> {
     this.#stopping.abort();
-    await Promise.allSettled([...this.#running]);
+    await this.settled();
   }
 }
 
