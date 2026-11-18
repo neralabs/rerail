@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { closeSync, cpSync, ftruncateSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs";
-import { mkdtemp, open, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, open, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -165,6 +165,33 @@ describe("every other folder, and every worktree whose files Git might read othe
     git(other, "config", "extensions.worktreeConfig", "true");
     git(other, "worktree", "add", "--quiet", "-b", "configured", join(root, "configured"));
     expect(expectGitsAnswers(other, join(root, "configured"))).toBe(2);
+  });
+
+  // chmod takes nothing from root, and Windows reads no mode bits.
+  it.skipIf(process.platform === "win32" || process.geteuid?.() === 0)("a worktree whose repository's config the user cannot read, which Git refuses", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    expect(expectGitsAnswers(main)).toBe(1);
+    const config = join(main, ".git", "config");
+    await chmod(config, 0o000);
+    cleanups.push(() => chmod(config, 0o644));
+
+    expect(gitsAnswer(join(root, "w")).git).toBe(false);
+    expect(expectGitsAnswers(join(root, "w"))).toBe(1);
+  });
+
+  it("a worktree whose .git file is larger than Git reads, which Git refuses", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
+    expect(expectGitsAnswers(main)).toBe(1);
+    const dotGit = join(root, "w", ".git");
+    // The file still names the worktree's Git folder: only its size tells Git's refusal.
+    await rewriteInPlace(dotGit, `${await readFile(dotGit, "utf8")}${"\n".repeat(1 << 20)}`);
+
+    expect(gitsAnswer(join(root, "w")).git).toBe(false);
+    expect(expectGitsAnswers(join(root, "w"))).toBe(1);
   });
 
   it("a worktree whose repository moved, before and after `git worktree repair`, and one `git worktree move` moved", async () => {
@@ -609,10 +636,6 @@ function expectGitsRegistries(...checkouts: string[]): void {
   }
 }
 
-/**
- * Writes `text` over the file at `path` in place, as Git rewrites a `.git` file. Git for Windows hides a worktree's
- * `.git` file, and Windows refuses to make a file anew over a hidden one.
- */
 /** {@link rewriteInPlace} without waiting, for a rewrite made while a Git process Rerail started runs. */
 function rewriteInPlaceNow(path: string, text: string): void {
   const descriptor = openSync(path, "r+");
@@ -624,6 +647,10 @@ function rewriteInPlaceNow(path: string, text: string): void {
   }
 }
 
+/**
+ * Writes `text` over the file at `path` in place, as Git rewrites a `.git` file. Git for Windows hides a worktree's
+ * `.git` file, and Windows refuses to make a file anew over a hidden one.
+ */
 async function rewriteInPlace(path: string, text: string): Promise<void> {
   const file = await open(path, "r+");
   try {
