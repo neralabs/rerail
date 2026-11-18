@@ -104,6 +104,8 @@ Rerail discovers Git from the current folder or `--repo` and reads the selected 
 The scan uses today's rules, packs, and approvals. Use `--rules-ref` to select rules independently.
 The ref supplies its JSON and `.rr` policies. It also supplies local `.rr` includes.
 Rerail reads policy files from Git objects. Names use Git case rules.
+The report gives the requested ref and the resolved commit for those policies.
+The resolved commit stays the same if the ref moves during the scan.
 If the ref has no rules directory, the ref supplies zero policies.
 If Rerail cannot read an object for the policy directory or a policy file, the scan fails.
 Approvals apply to the policy and include bytes that the scan reads.
@@ -173,7 +175,7 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
   "scope": "repository" | "git-diff",
   "base": null | { "ref": "origin/main", "mergeBase": "<sha>" },
   "paths": null | ["src/a.ts"],          // the files scanned, when not the whole checkout
-  "rulesSource": { "kind": "home" } | { "kind": "worktree" } | { "kind": "ref", "ref": "origin/main" } | { "kind": "rr" },
+  "rulesSource": { "kind": "home" } | { "kind": "worktree" } | { "kind": "ref", "ref": "origin/main", "commit": "<sha>" } | { "kind": "rr" },
   "status": "completed" | "failed",
   "rules": [
     { "ruleId": "no-todo", "payloadHash": "sha256:…", "mode": "log" | "steer" | "block",

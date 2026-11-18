@@ -658,7 +658,7 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     expect(after.violations.find(row => row.ruleId === "find-call")).toMatchObject({ start: { line: 2, column: 5 }, end: { line: 2, column: 9 }, mode: "block", fingerprint: finding!.fingerprint });
   });
 
-  it("runs .rr rules at --rules-ref with that ref's includes and content approvals", async () => {
+  it("keeps --rules-ref policies, includes, approvals, and provenance pinned if the ref moves", async () => {
     const root = checkout();
     const databasePath = join(`${root}-home`, "rerail.sqlite");
     const policy = join(root, ".rerail/rules/ref.rr");
@@ -673,13 +673,31 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     writeFileSync(include, '.decl ref_message(text: symbol)\nref_message("new include").\n');
     git(root, "add", ".rerail/rules/lib/ref-data.rr");
     git(root, "commit", "-qm", "changed include");
+    const changed = git(root, "rev-parse", "HEAD");
     const options = { revision: "HEAD", analysisScope: "ref", databasePath };
-    const old = await scan(root, { ...options, rulesRef: approved });
+    git(root, "branch", "review-rules", approved);
+    const prototype = loadNativeBinding().CodeRuleDslWorkspace.prototype;
+    const page = prototype.resultPageAsync;
+    const move = vi.spyOn(prototype, "resultPageAsync").mockImplementationOnce(function (this: typeof prototype, ...args) {
+      git(root, "update-ref", "refs/heads/review-rules", changed);
+      return page.call(this, ...args);
+    });
+    let old: ScanReport;
+    try {
+      old = await scan(root, { ...options, rulesRef: "review-rules" });
+      expect(move).toHaveBeenCalled();
+    } finally { move.mockRestore(); }
     expect(old.status, JSON.stringify(old.failures)).toBe("completed");
-    expect(old.rules).toEqual(expect.arrayContaining([expect.objectContaining({ ruleId: "needle" }), expect.objectContaining({ ruleId: "ref-policy", mode: "block", source: { kind: "ref", id: ".rerail/rules/ref.rr", packId: null, ref: approved } })]));
+    const provenance = { kind: "ref", ref: "review-rules", commit: approved };
+    expect(old.rulesSource).toEqual(provenance);
+    expect(old.rules).toEqual(expect.arrayContaining([
+      expect.objectContaining({ ruleId: "needle", source: { ...provenance, id: "needle", packId: null } }),
+      expect.objectContaining({ ruleId: "ref-policy", mode: "block", source: { ...provenance, id: ".rerail/rules/ref.rr", packId: null } }),
+    ]));
     expect(old.violations).toEqual(expect.arrayContaining([expect.objectContaining({ ruleId: "ref-policy", message: "approved include", mode: "block" })]));
-    const current = await scan(root, { ...options, rulesRef: "HEAD" });
+    const current = await scan(root, { ...options, rulesRef: "review-rules" });
     expect(current.status, JSON.stringify(current.failures)).toBe("completed");
+    expect(current.rulesSource).toEqual({ ...provenance, commit: changed });
     expect(current.violations).toEqual(expect.arrayContaining([expect.objectContaining({ ruleId: "ref-policy", message: "new include", mode: "log" })]));
   });
 
@@ -916,8 +934,9 @@ LanguageKey(@place(path, 1), k) :- source_language_key(path, k, _).
     const quiet = { stdout: { write: () => true } };
 
     const unapproved = await scan(root, { rulesRef: "main", databasePath });
-    expect(unapproved.rulesSource).toEqual({ kind: "ref", ref: "main" });
-    expect(unapproved.rules).toEqual([expect.objectContaining({ ruleId: "needle", mode: "log", source: { kind: "ref", id: "needle", packId: null, ref: "main" } })]);
+    const provenance = { kind: "ref", ref: "main", commit: git(root, "rev-parse", "main") };
+    expect(unapproved.rulesSource).toEqual(provenance);
+    expect(unapproved.rules).toEqual([expect.objectContaining({ ruleId: "needle", mode: "log", source: { ...provenance, id: "needle", packId: null } })]);
     expect(unapproved.violations).toEqual([expect.objectContaining({ ruleId: "needle", mode: "log", path: "a.py" })]);
 
     // Approving the pull request's own content approves nothing the base branch runs.

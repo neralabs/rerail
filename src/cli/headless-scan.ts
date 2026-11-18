@@ -54,7 +54,13 @@ export interface ScanRule {
   ruleId: string;
   payloadHash: string;
   mode: string;
-  source: { kind: string; id: string; packId: string | null; ref?: string };
+  source: { kind: string; id: string; packId: string | null; ref?: string; commit?: string };
+}
+
+interface RefRuleSource {
+  kind: "ref";
+  ref: string;
+  commit: string;
 }
 
 export interface ScanViolation {
@@ -93,7 +99,7 @@ export interface ScanReport {
   scope: "repository" | "git-diff";
   base: { ref: string; mergeBase: string } | null;
   paths: string[] | null;
-  rulesSource: { kind: "home" } | { kind: "worktree" } | { kind: "ref"; ref: string } | { kind: "rr" };
+  rulesSource: { kind: "home" } | { kind: "worktree" } | RefRuleSource | { kind: "rr" };
   status: "completed" | "failed";
   rules: ScanRule[];
   violations: ScanViolation[];
@@ -154,9 +160,10 @@ function diffPaths(root: string, against: string): string[] {
 
 /** A rule read from `--rules-ref`, and what loading the ref's rules left out (each with why), as a session would. */
 interface RefRules {
+  readonly provenance: RefRuleSource;
   readonly documents: RuleDocument[];
   readonly skipped: ScanFailure[];
-  readonly rr?: { catalog: RuleCatalog; source: NativeGitRevisionSource; ref: string };
+  readonly rr?: { catalog: RuleCatalog; source: NativeGitRevisionSource };
 }
 
 /** Load the ref's policies through the same catalog rules used for a checkout. */
@@ -168,7 +175,9 @@ function rulesAtRef(root: string, ref: string): RefRules {
   } catch (error) {
     throw new Error(`--rules-ref ${ref} is not a commit in ${root}`, { cause: error });
   }
-  if (!source.commit) throw new Error(`--rules-ref ${ref} is not a commit in ${root}`);
+  const commit = source.commit;
+  if (!commit) throw new Error(`--rules-ref ${ref} is not a commit in ${root}`);
+  const provenance: RefRuleSource = { kind: "ref", ref, commit };
   const failures: ScanFailure[] = [];
   const unreadable = (path: string, error: unknown) => {
     failures.push({
@@ -181,7 +190,7 @@ function rulesAtRef(root: string, ref: string): RefRules {
     entries = source.readDirectory(WORKTREE_RULES_FOLDER) ?? [];
   } catch (error) {
     unreadable(WORKTREE_RULES_FOLDER, error);
-    return { documents: [], skipped: failures };
+    return { provenance, documents: [], skipped: failures };
   }
   const files = entries.sort((left, right) => compareDeterministicStrings(left.name, right.name))
     .map(({ name, mode }) => ({
@@ -220,7 +229,7 @@ function rulesAtRef(root: string, ref: string): RefRules {
     path: `${ref}:${entry.path}`,
     ruleId: null,
   }));
-  return { documents, skipped: [...failures, ...skipped], ...(rr.length === 0 ? {} : { rr: { catalog, source, ref } }) };
+  return { provenance, documents, skipped: [...failures, ...skipped], ...(rr.length === 0 ? {} : { rr: { catalog, source } }) };
 }
 
 /**
@@ -345,18 +354,18 @@ function findingFingerprint(ruleId: string, path: string, code: string, matched?
   return createHash("sha256").update(`${ruleId}\0${path}\0${text}`).digest("hex").slice(0, 32);
 }
 
-function ruleOf(provenance: AuditRuleProvenance, refRuleIds: ReadonlySet<string>, rulesRef: string | undefined): ScanRule {
+function ruleOf(provenance: AuditRuleProvenance, refRuleIds: ReadonlySet<string>, rulesRef: RefRuleSource | undefined): ScanRule {
   const placement = "placement" in provenance ? provenance.placement : [];
   const mode = (placement.find(entry => entry.folder === "") ?? placement[0])?.mode ?? "log";
   const source = "source" in provenance
     ? { kind: provenance.source.kind as string, id: provenance.source.id, packId: provenance.source.packId }
     : { kind: "unknown", id: provenance.ruleId, packId: null };
-  const fromRef = rulesRef !== undefined && refRuleIds.has(provenance.ruleId) && source.kind === "library_rule";
+  const fromRef = refRuleIds.has(provenance.ruleId) && source.kind === "library_rule" ? rulesRef : undefined;
   return {
     ruleId: provenance.ruleId,
     payloadHash: "payloadHash" in provenance ? provenance.payloadHash : "",
     mode,
-    source: fromRef ? { kind: "ref", id: provenance.ruleId, packId: null, ref: rulesRef! } : source,
+    source: fromRef === undefined ? source : { ...fromRef, id: provenance.ruleId, packId: null },
   };
 }
 
@@ -476,7 +485,7 @@ async function runScanAudits(
   return audits;
 }
 
-function scanRules(audits: readonly ScanAudit[], refRuleIds: ReadonlySet<string>, rulesRef: string | undefined): Map<string, ScanRule> {
+function scanRules(audits: readonly ScanAudit[], refRuleIds: ReadonlySet<string>, rulesRef: RefRuleSource | undefined): Map<string, ScanRule> {
   const rules = new Map<string, ScanRule>();
   for (const audit of audits)
     for (const provenance of audit.ruleProvenance ?? []) if (!rules.has(provenance.ruleId)) rules.set(provenance.ruleId, ruleOf(provenance, refRuleIds, rulesRef));
@@ -521,17 +530,17 @@ async function scanRrRules(
   policies: readonly string[], root: string, store: string, output: string, analysisRun: NativeAnalysisScopeRun | undefined,
   paths: string[] | null, source: NativeGitRevisionSource | undefined,
   configured?: { policies: ReadonlyMap<string, RrPolicySource>; mode: ReturnType<typeof resolveRrModes> },
-  refPolicy?: NonNullable<RefRules["rr"]>,
+  refPolicy?: RefRules,
 ): Promise<{ rules: ScanRule[]; violations: ScanViolation[] }> {
   const inputs = refPolicy === undefined ? policies.map(path => resolve(path)) : [...policies];
-  const reports = JSON.parse(await loadNativeBinding().scanRrPoliciesAsync(inputs, root, store, output, analysisRun, paths ?? undefined, source, refPolicy?.source)) as RrReport[];
+  const reports = JSON.parse(await loadNativeBinding().scanRrPoliciesAsync(inputs, root, store, output, analysisRun, paths ?? undefined, source, refPolicy?.rr?.source)) as RrReport[];
   const rules: ScanRule[] = [];
   const violations: ScanViolation[] = [];
   for (const [index, report] of reports.entries()) {
     const policyPath = inputs[index]!;
     const payloadHash = rrPayloadHash(report.programInputs);
     const provenance = refPolicy === undefined ? { kind: "rr", id: policyPath, packId: null }
-      : { kind: "ref", id: policyPath, packId: null, ref: refPolicy.ref };
+      : { ...refPolicy.provenance, id: policyPath, packId: null };
     const modeFor = (id: string, path: string): string | null => {
       if (configured === undefined) return "log";
       const policy = configured.policies.get(id);
@@ -560,11 +569,6 @@ async function scanRrRules(
     }
   }
   return { rules, violations: distinctFingerprints(violations) };
-}
-
-function scanRulesSource(rulesRef: string | undefined, useHome: boolean): ScanReport["rulesSource"] {
-  if (rulesRef !== undefined) return { kind: "ref", ref: rulesRef };
-  return useHome ? { kind: "home" } : { kind: "worktree" };
 }
 
 /** Runs the scan in its scratch folder and reports it: the scan's own database, always, with the home's only read and closed before the scan runs. */
@@ -613,7 +617,7 @@ async function scanReport(
     analysisRun = undefined;
     audits = await runScanAudits(databasePath, root, `scan-${scanId}-retry`, paths, source, analysisStore, analysisRun, checkoutRules);
   }
-  const rules = scanRules(audits, refRuleIds, options.rulesRef);
+  const rules = scanRules(audits, refRuleIds, refRules?.provenance);
   const violations = scanViolations(audits, rules);
   const failures = [...pathFailures, ...refRules?.skipped ?? [], ...audits.flatMap(audit => audit.result?.failures ?? []).map((failure): ScanFailure => ({
     code: failure.code,
@@ -645,7 +649,7 @@ async function scanReport(
         }
       }
       const selected = configured === undefined ? rr : configuredPolicies.filter(configured.mode.enabled).map(policy => policy.path);
-      const evaluated = await scanRrRules(selected, root, analysisStore, join(scratch, "rr"), analysisRun, paths, source, configured, refRules?.rr);
+      const evaluated = await scanRrRules(selected, root, analysisStore, join(scratch, "rr"), analysisRun, paths, source, configured, refRules);
       for (const rule of evaluated.rules) {
         if (rules.has(rule.ruleId)) throw new Error(`duplicate policy ID ${rule.ruleId} across configured rules`);
         rules.set(rule.ruleId, rule);
@@ -673,7 +677,7 @@ async function scanReport(
     scope: options.scope,
     base,
     paths,
-    rulesSource: explicitRr ? { kind: "rr" } : scanRulesSource(options.rulesRef, useHome),
+    rulesSource: explicitRr ? { kind: "rr" } : refRules?.provenance ?? { kind: useHome ? "home" : "worktree" },
     status: completed ? "completed" : "failed",
     rules: [...rules.values()].sort((left, right) => left.ruleId.localeCompare(right.ruleId)),
     violations,
