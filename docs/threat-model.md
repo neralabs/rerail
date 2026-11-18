@@ -731,8 +731,12 @@ should not widen it.
 - Git calls inherit `GIT_*`, and an absolute `PATH` entry outside the repository decides which `git` runs. "The
   repository" is only the nearest one above the process's working folder, so entries in an outer checkout around a
   nested worktree or submodule are not skipped, nor is any repository's when the process started outside it. The
-  daemon finds Git once, from the folder and `PATH` it started with, and keeps it. It looks again, from the same folder,
-  `PATH` and repository and by the same checks, only when a start of the Git it kept finds no program there.
+  daemon finds Git once, from the folder and `PATH` it started with, and keeps it. The daemon alone looks again, from the
+  same folder, `PATH` and repository and by the same checks, only when a start of the Git it kept finds no program
+  there, and within that call's time limit. A hook or a command never looks again: such a start fails that call, and
+  the next process looks for Git afresh at its first call. The daemon alone also asks whether the home share
+  `HOMEDRIVE` and `HOMEPATH` name is a folder, to put that home's `bin` on `PATH` as Git for Windows' launcher does; a
+  hook's or a command's Git gets both homes' `bin`, the share's first.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
   Where set-up found another `node` first on `PATH`, Claude Code's hooks on Windows run `cmd.exe /d /c` by its
   System32 path, which looks for that fallback `node.exe` on `PATH` alone, never in the hook's working folder
