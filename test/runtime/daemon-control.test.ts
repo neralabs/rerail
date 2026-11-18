@@ -43,6 +43,7 @@ import {
   startDaemon,
   startDaemonForPackage,
   stillRunningMessage,
+  STOP_ANSWERS,
   stopDaemon,
   stopFoundDaemon,
   withStartLock,
@@ -1253,7 +1254,14 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(existsSync(stateFile)).toBe(false);
   });
 
-  it.each(["linux", "win32"] as const)("sends no signal once daemon.json names the pid no longer, as after a start removed it to launch a daemon (%s)", async platform => {
+  // A start removed daemon.json to launch a daemon, which has taken the home's lock and not yet recorded its own pid
+  // beside it; or that daemon has recorded itself already.
+  it.each([
+    ["linux", "is removed", undefined],
+    ["win32", "is removed", undefined],
+    ["linux", "names another daemon", OTHER_PID],
+    ["win32", "names another daemon", OTHER_PID],
+  ] as const)("sends no signal once daemon.json names the pid no longer, and says it left that record as it is (%s, the record %s)", async (platform, _change, now) => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const signals: Array<string | number | undefined> = [];
     await holdHome(home, LIVE_PID);
@@ -1261,10 +1269,14 @@ describe("a record whose live pid is not the home's daemon", () => {
     const machine = machineWith(platform, signals, () => true);
     const found = await lookupDaemon(home, machine);
     if (found.status === "absent") throw new Error("the daemon that holds the home was not found");
-    // The daemon a start launched has taken the home's lock, and not yet recorded its own pid beside it.
     await rm(stateFile);
-    expect(await stopFoundDaemon(home, found, machine)).toBe("not-daemon");
+    const changed = now === undefined ? undefined : JSON.stringify({ ...state(platform), pid: now });
+    if (changed !== undefined) await writeFile(stateFile, changed);
+    const result = await stopFoundDaemon(home, found, machine);
+    expect(STOP_ANSWERS[result]).toBe("daemon.json changed while Rerail was stopping the daemon it named, so Rerail ended nothing and "
+      + "left that record as it is; run rerail daemon stop again to stop the daemon it names now.\n");
     expect(signals).toEqual([]);
+    expect(existsSync(stateFile) ? await readFile(stateFile, "utf8") : undefined).toBe(changed);
   });
 
   it.each(["linux", "win32"] as const)("ends nothing and says so when daemon.json cannot be read just before the signal (%s)", async platform => {
