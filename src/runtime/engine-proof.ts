@@ -109,13 +109,16 @@ async function connected(socket: Socket): Promise<true | { error: unknown }> {
   }
 }
 
+/** How a proof waits `ms` milliseconds before it tries a busy Windows pipe again. */
+type PipeWait = (ms: number) => Promise<void>;
+
 /**
  * A socket connected to the Windows named pipe `path` ({@link pipeConnectPath}), or the verdict when there is none by
- * `deadline` (epoch ms). A pipe whose instances are all taken is tried again every {@link PIPE_RETRY_MS}, since a busy
- * engine frees one as soon as its event loop runs again, and is no answer (`silent`) while it stays busy; a pipe that
- * is gone, or that this user may not open, is `refused`.
+ * `deadline` (epoch ms). A pipe whose instances are all taken is tried again after `wait` of {@link PIPE_RETRY_MS},
+ * since a busy engine frees one as soon as its event loop runs again, and is no answer (`silent`) while it stays busy;
+ * a pipe that is gone, or that this user may not open, is `refused`.
  */
-async function connectPipe(path: string, deadline: number): Promise<Socket | EngineProofAnswer> {
+async function connectPipe(path: string, deadline: number, wait: PipeWait): Promise<Socket | EngineProofAnswer> {
   for (;;) {
     const socket = connect(pipeConnectPath(path));
     const outcome = await connected(socket);
@@ -123,7 +126,7 @@ async function connectPipe(path: string, deadline: number): Promise<Socket | Eng
     socket.destroy();
     if (!pipeBusy(outcome.error, path)) return "refused";
     if (Date.now() >= deadline) return "silent";
-    await sleep(PIPE_RETRY_MS);
+    await wait(PIPE_RETRY_MS);
   }
 }
 
@@ -132,9 +135,9 @@ async function connectPipe(path: string, deadline: number): Promise<Socket | Eng
  * `deadline` (epoch ms) before the request, a Unix socket by its path. Only Windows has named pipes: on macOS and Linux
  * a path spelled like one is a Unix socket's. A pipe with no connection is the verdict.
  */
-async function proofRoute(socketPath: string, deadline: number): Promise<RequestOptions | EngineProofAnswer> {
+async function proofRoute(socketPath: string, deadline: number, wait: PipeWait = sleep): Promise<RequestOptions | EngineProofAnswer> {
   if (process.platform !== "win32" || !isNamedPipe(socketPath)) return { socketPath, agent: false };
-  const socket = await connectPipe(socketPath, deadline);
+  const socket = await connectPipe(socketPath, deadline, wait);
   return typeof socket === "string" ? socket : { createConnection: () => socket };
 }
 
@@ -186,6 +189,14 @@ async function askForProof(route: RequestOptions, accessToken: string, challenge
   }
 }
 
+/** What a caller may give {@link engineCapabilityProof} in place of its own. */
+export interface EngineProofOptions {
+  /** The challenge sent: a fresh one of 32 random bytes by default. */
+  challenge?: string;
+  /** Waits between the tries of a Windows pipe whose instances are all taken; a test counts the tries through it. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
 /**
  * Asks the process listening on `socketPath` (a Unix socket or a Windows named pipe) to prove it holds `accessToken`: it
  * answers a fresh challenge with {@link engineProof}. Only the challenge is sent; the capability never leaves this
@@ -196,10 +207,10 @@ export async function engineCapabilityProof(
   socketPath: string,
   accessToken: string,
   timeoutMs = 2_000,
-  challenge: string = randomBytes(32).toString("hex"),
+  { challenge = randomBytes(32).toString("hex"), sleep: wait = sleep }: EngineProofOptions = {},
 ): Promise<EngineProofAnswer> {
   const deadline = Date.now() + timeoutMs;
-  const route = await proofRoute(socketPath, deadline);
+  const route = await proofRoute(socketPath, deadline, wait);
   return typeof route === "string" ? route : await askForProof(route, accessToken, challenge, deadline);
 }
 
