@@ -40,12 +40,13 @@ Some terms first:
    - On the host, its roots are the label's members in its domain.
    - On Metal, its pass is empty, and the decode reads the label's row, within the domain and the active files.
 4. **A label-domain pass starts only at the label's members on the device.**
-   - A root rule over codes can carry a label (`Roots::Codes::label`), encoded as kind 2 in the root table:
-     `[2][row][file bits][rule]`.
-   - The micro walks' kernels AND each group's root mask with the label's 64 bits from the labels' rows
-     (`root_mask_label`). A row's last words are read only where the row has them.
-   - The other readers (`root_mask_in`, `root_admits`) skip the row and take the codes' rule. Their roots are a
-     superset that the walk's first test, the label, narrows.
+   - A label domain's program tests the label first, so the walk's anchor (decision 0365, `device_anchor`) holds
+     the label: a derived class, which `narrowing` keeps. The anchor's row, the label's members within what else
+     the walk tests at its start, is ANDed into each group's root mask (`root_mask_in`) and checked by a sibling
+     scan's leader (`root_admits`).
+   - Written first as a root kind of its own (`Roots::Codes::label`, `[2][row][file bits][rule]`, read by
+     `root_mask_label`). The merge with the hub's 0365 anchors dropped it: the anchor is the general form, and one
+     kind 2 is the root table's. A pass that is not a micro walk has no anchor, and starts at the label's kinds.
 5. **An `all` that tests a neighbor starts at its seed** (`Builder::seed`, `Demand::seed`).
    - Take an `all` whose conjunct is `inside X` or `has X` by `neighbor`, through a field or not. It holds only
      at X's children, or at X's parents. Those nodes are a Targets label, the seed: a one-step walk from each
@@ -62,15 +63,16 @@ Some terms first:
 
 The probe programs' rows were the same on the first build, but the Metal parity tests were not. Each of these
 is fixed and has a test that hits it:
-- **The root table's kind 2 was misread.** `root_mask_in` and `root_admits` skipped the 2 and then tested the
-  next word for 1, a listed rule. That word is the label's row, so a domain label at row 1 was read as a list.
-  Different clauses failed from run to run, depending on which label came first.
+- **The root table's kind 2 was misread** (in the first form of item 4). `root_mask_in` and `root_admits` skipped
+  the 2 and then tested the next word for 1, a listed rule. That word is the label's row, so a domain label at
+  row 1 was read as a list. Different clauses failed from run to run, depending on which label came first. The
+  anchors' kind 2 carries the offset of the rule past it, so the merged readers do not have this shape.
 - **A pattern label waited for nothing.** `Labels::reads` left out a pattern's and a constrained pattern's
   domain, which had never been a label before item 5. A narrowed pattern label could be ordered beside its seed
   and read the seed's set empty.
 - **A sibling scan left its work to an unlaunched leader.** A walk that is not its siblings' first leaves the
   scan to the first, where that one is a start (`root_admits`). With item 4 a start must also be a member of
-  the domain label, or it is not launched (`root_admits_label`).
+  the domain label, or it is not launched (`root_admits_label` then; the anchor's row in `root_admits` now).
 - **A single clause on Metal listed no roots for a Label domain** (`matcher_roots`): it listed them against empty
   labels. It lists the label's bound kinds now, which the program's first test, the seed, narrows.
 

@@ -276,15 +276,36 @@ fn last_key(space: &[u8; 32]) -> [u8; 32] {
     hash.finalize().into()
 }
 
-/// The whole file-local program whose run last wrote the entries of space `space`, if it ended (decision 0225 §2).
-/// What is kept of every file together (the kept statistics) is of that program's entries, and of no other's.
+/// The whole file-local program whose run last wrote the entries of space `space` (decision 0225 §2), if what is kept
+/// of every file together (the kept statistics) is still of its entries: its run ended, or a run of it under way
+/// started from what an ended run of it kept (`set_under_way`). Of no other program's.
 pub(super) fn last_program(store: &ContentStore, space: &[u8; 32]) -> Option<[u8; 32]> {
-    store.stat_blob(last_key(space)).ok().flatten().and_then(|b| b.try_into().ok()).filter(|w: &[u8; 32]| *w != [0; 32])
+    let b = store.stat_blob(last_key(space)).ok().flatten()?;
+    let whole: [u8; 32] = match b.len() {
+        32 => b.try_into().ok()?,
+        33 if b[32] == UNDER_WAY => b[..32].try_into().ok()?,
+        _ => return None,
+    };
+    (whole != [0; 32]).then_some(whole)
 }
 
-/// Records `whole` as `last_program` of `space`, queued behind the run's writes; `None`: a run is under way.
+/// `last_program`'s mark of a run of `whole` under way that started from what an ended run of it kept.
+const UNDER_WAY: u8 = 1;
+
+/// Records `whole` as `last_program` of `space`, queued behind the run's writes; `None`: a run is under way that
+/// did not start from what is kept (another program's, or one after it): a run that stops leaves none of it valid.
 pub(super) fn set_last_program(store: &ContentStore, space: &[u8; 32], whole: Option<[u8; 32]>) {
     store.queue_stat_blob(last_key(space), whole.unwrap_or([0; 32]).to_vec());
+}
+
+/// Records a run of `whole` under way in `space`, one that started from what an ended run of `whole` kept: if it
+/// stops, what is kept stays valid for the next (Q71). Its entries are of `whole` and of the contents it read, and the
+/// contents the kept statistics count are still in the memo (its newest `MEMO_CONTENTS` of a path); a content whose
+/// entry went gives the keeper up, as an entry dropped otherwise does.
+pub(super) fn set_under_way(store: &ContentStore, space: &[u8; 32], whole: [u8; 32]) {
+    let mut b = whole.to_vec();
+    b.push(UNDER_WAY);
+    store.queue_stat_blob(last_key(space), b);
 }
 
 /// The run's plan: the engine build, the grammar version and `program` (a digest of the file-local part as lowered,
@@ -594,9 +615,19 @@ impl Frame {
     }
 }
 
-/// Holds the atoms an entry's symbols name (`image::hold`), as it is read before a run's waves.
-pub(super) fn hold(store: &ContentStore, blob: &crate::content_store::MemoBlob) -> StoreResult<()> {
-    image::hold(&blob.bytes, &store.atoms_handle())
+/// Holds the atoms an entry's symbols name (`image::hold`), as it is read before a run's waves: none of an entry whose
+/// symbols this process holds already. The profile says how many it read.
+pub(super) fn hold<'a>(store: &ContentStore, blobs: impl IntoIterator<Item = &'a crate::content_store::MemoBlob>) -> StoreResult<()> {
+    let bytes: Vec<_> = blobs.into_iter().map(|b| &b.bytes).collect();
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let read = image::hold(&bytes, &store.atoms_handle())?;
+    crate::code_rule_dsl::prof::count("corpus.memo_entries_held_read", read);
+    crate::code_rule_dsl::logic::profile::decision("the memo's entries' atoms, before the first wave (decision 0397)", || {
+        format!("{read} of {} entries read; the others' symbols held already", bytes.len())
+    });
+    Ok(())
 }
 
 /// The newest corpus run of `root`: the relations its memo plan holds, by name, as recorded (`.decl` columns as
@@ -682,7 +713,10 @@ pub(super) fn found_all(store: &ContentStore, program: &Program, docs: &[(Source
     let atoms = store.atoms_handle();
     let held: Vec<Option<Found>> = docs.iter().map(|(s, p)| pending(store, &queued(*s, p, program), &atoms)).collect();
     let asked: Vec<usize> = (0..docs.len()).filter(|i| held[*i].is_none()).collect();
-    let digests = store.source_digests(&asked.iter().map(|i| docs[*i].0).collect::<Vec<_>>())?;
+    let digests = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "memo lookup: the contents' digests".into());
+        store.source_digests(&asked.iter().map(|i| docs[*i].0).collect::<Vec<_>>())?
+    };
     let wanted: Vec<(usize, [u8; 32])> = asked.iter().zip(&digests).filter_map(|(i, d)| d.map(|d| (*i, d))).collect();
     let paths: Vec<&str> = docs.iter().map(|(_, p)| *p).collect();
     let mut out: Vec<Option<Found>> = held;
@@ -702,11 +736,13 @@ fn by_digest(store: &ContentStore, program: &Program, paths: &[&str], wanted: Ve
     let space = crate::content_store::local_space(&plan_digest(program));
     let wanted: Vec<(usize, [u8; 32], i64)> = wanted.into_iter().map(|(i, d)| (i, d, part_of(&d, paths[i]))).collect();
     let parts: Vec<i64> = wanted.iter().map(|(_, _, p)| *p).collect();
-    let mut blobs = store.memo_entries(&space, &parts, stored)?;
+    let mut blobs = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "memo lookup: the entries read".into());
+        store.memo_entries(&space, &parts, stored)?
+    };
     if stored {
-        for blob in blobs.values() {
-            hold(store, blob)?;
-        }
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "memo lookup: the entries' atoms held".into());
+        hold(store, blobs.values().map(|b| &**b))?;
     }
     let atoms = store.atoms_handle();
     let mut out = Vec::new();
@@ -1104,6 +1140,21 @@ pub(super) fn document_of(value: i64) -> i64 {
 
 #[cfg(test)]
 pub mod tests {
+    /// A relation of facts with no rows (a constant folded empty, `constants::fold`) survives its facts: a stored
+    /// program read back is the program written, so its digests (the memo's key, the relations' identities) are the
+    /// same. Without it, the first run after a rebuild and the second keyed the memo apart.
+    #[test]
+    fn an_empty_relation_of_facts_reads_back_as_present() {
+        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(s: symbol)\n.decl b(s: symbol)\nb(\"x\").\n.output a\n").unwrap();
+        prog.facts.insert("a".to_owned(), Vec::new());
+        let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
+        crate::code_rule_dsl::logic::program_facts::write(&mut facts, "p", &prog);
+        let back = crate::code_rule_dsl::logic::program_facts::program(&facts, "p").unwrap();
+        assert_eq!(back.facts, prog.facts);
+        let key = |p: &crate::code_rule_dsl::logic::front::Program| super::program_digest(&crate::code_rule_dsl::logic::plan::body::Placed::of_program(p).unwrap().v);
+        assert_eq!(key(&back), key(&prog));
+    }
+
     use super::*;
     use crate::code_rule_dsl::logic::plan::output::{Cell, col};
 

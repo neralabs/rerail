@@ -30,7 +30,7 @@ def main(argv):
     else:
         print(f"configuration: {path}" if path else
               f"configuration: none ({os.path.join(farm.CONFIG, 'farm.json')} missing): no hosts, everything runs here")
-        print(f"limits: {cfg['min_free_gb']} GB free, {cfg['max_rtt_ms']} ms round trip, {cfg['min_mbps']} MB/s")
+        print(f"limits: {cfg['min_free_gb']} GB free (the farm frees its data under it; used down to {cfg['floor_free_gb']}), {cfg['max_rtt_ms']} ms round trip, {cfg['min_mbps']} MB/s")
         sock = socket.socket(socket.AF_UNIX)
         try:
             sock.connect(farm.state("mirror.sock"))
@@ -50,6 +50,8 @@ def main(argv):
             print(f"  {host['name']}: {state} ({host.get('cores')} cores; {uses}{'; ' + facts if facts else ''})")
             if h.get("arrival") and not farm.link_of(host):
                 print(f"    no link: it is reached over its {h['arrival']}; a fall back to WiFi is not caught")
+            if h.get("ok") and h.get("short"):
+                print(f"    short of disk: {h['short']}")
             if h.get("route"):
                 print(f"    reached at an address of its {farm.link_of(host)} (its name resolved to another link)")
     sys.exit(0 if any(h.get("ok") for _, h in rows) else 1)

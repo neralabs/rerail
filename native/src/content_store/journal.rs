@@ -305,6 +305,9 @@ mod fsevents {
         /// The cookies seen, with their events' ids.
         cookies: std::collections::HashMap<String, u64>,
         lost: Option<&'static str>,
+        /// When the history replay ended, and when the last cookie came: for `RERAIL_JOURNAL_TRACE` only.
+        history_at: Option<Instant>,
+        cookie_at: Option<Instant>,
     }
 
     struct Shared {
@@ -327,10 +330,12 @@ mod fsevents {
             }
             if flag & HISTORY_DONE != 0 {
                 seen.history_done = true;
+                seen.history_at = Some(Instant::now());
                 continue;
             }
             if path.starts_with(&shared.cookie) {
                 seen.cookies.entry(path).or_insert(id);
+                seen.cookie_at = Some(Instant::now());
                 continue;
             }
             seen.events.push((id, path));
@@ -358,6 +363,8 @@ mod fsevents {
         /// earlier id, and was told before it.
         synced: Option<(u64, u64)>,
         used: u64,
+        /// When it started: for `RERAIL_JOURNAL_TRACE` only.
+        started: Instant,
     }
 
     // SAFETY: the stream and queue are FSEvents' and libdispatch's handles, usable from any thread; they are only
@@ -413,7 +420,7 @@ mod fsevents {
                 dispatch_release(queue);
                 return Err("the journal did not start");
             }
-            Ok(Live { stream, queue, shared, roots: roots.to_vec(), cookie_dir: cookie_dir.to_path_buf(), from, synced: None, used: 0 })
+            Ok(Live { stream, queue, shared, roots: roots.to_vec(), cookie_dir: cookie_dir.to_path_buf(), from, synced: None, used: 0, started: Instant::now() })
         }
     }
 
@@ -551,8 +558,22 @@ mod fsevents {
         let fresh = all[at].synced.is_none_or(|(e, _)| e != epoch);
         let r = sync(&mut all[at], epoch);
         if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
-            let n = all[at].shared.seen.lock().map(|s| s.events.len()).unwrap_or(0);
-            eprintln!("journal stream {at} of {}: {}{}, epoch {epoch}, {:.3} s, {n} events kept, from {} (cursor {cursor})", all.len(), if held.is_some() { "kept" } else { "new" }, if fresh { ", cookie" } else { "" }, t.elapsed().as_secs_f64(), all[at].from);
+            let live = &all[at];
+            let (n, history, cookie) = live.shared.seen.lock().map(|s| (s.events.len(), s.history_at, s.cookie_at)).unwrap_or((0, None, None));
+            // Each as seconds after the stream's start and after this question's start (`t`): which the wait was.
+            let after = |i: Option<Instant>| i.map_or_else(|| "never".to_owned(), |i| format!("{:.3} s from its start, {:+.3} s from the question", i.duration_since(live.started).as_secs_f64(), i.saturating_duration_since(t).as_secs_f64() - t.saturating_duration_since(i).as_secs_f64()));
+            eprintln!(
+                "journal stream {at} of {}: {}{}, epoch {epoch}, {:.3} s, {n} events kept, from {} (cursor {cursor}), roots {:?}, history done {}, last cookie {}, started {:.3} s before the question",
+                all.len(),
+                if held.is_some() { "kept" } else { "new" },
+                if fresh { ", cookie" } else { "" },
+                t.elapsed().as_secs_f64(),
+                live.from,
+                live.roots,
+                after(history),
+                after(cookie),
+                t.saturating_duration_since(live.started).as_secs_f64(),
+            );
         }
         let synced = match r {
             Ok(synced) => synced,

@@ -15,7 +15,7 @@ pub(in crate::code_rule_dsl) fn matcher_roots(this: &LoweredMatcher, tapes: &[Ta
         other => other.clone(),
     };
     let roots = tapes.iter().zip(&no_labels).map(|(tape, sets)| domain(&listed, tape, sets).collect()).collect();
-    let (mut found, outcome) = metal(&[this], this.labels.defs.len(), tapes, Some(ClauseRoots::Listed(&[roots])), None, None)?;
+    let (mut found, outcome) = metal(&[this], this.labels.defs.len(), tapes, Some(ClauseRoots::Listed(&[roots])), None, None, None)?;
     Ok((found.pop().expect("one clause"), outcome))
 }
 
@@ -36,7 +36,7 @@ pub(in crate::code_rule_dsl) fn wave_labelled(
     roots: Option<&RootJobs<'_>>,
 ) -> Result<(Vec<TapeDoc>, Outcome), Error> {
     let active = this.spread(active);
-    let (_, outcome) = metal(&this.clauses.iter().collect::<Vec<_>>(), this.labels, tapes, None, Some(&active), roots)?;
+    let (_, outcome) = metal(&this.clauses.iter().collect::<Vec<_>>(), this.labels, tapes, None, Some(&active), roots, None)?;
     crate::code_rule_dsl::prof::release();
     crate::code_rule_dsl::prof::peak("3e.before_views");
     let _views = crate::code_rule_dsl::prof::Stage::start("labels.views");
@@ -46,10 +46,31 @@ pub(in crate::code_rule_dsl) fn wave_labelled(
     Ok((views, outcome))
 }
 
+/// The sources of the wave's pattern kernels on Metal, in the plan's order (`metal`'s passes: the patterns as
+/// `levels` visits them, and the fact case when a clause has facts).
+pub(in crate::code_rule_dsl) fn wave_pattern_sources(this: &LoweredWave) -> Result<Vec<String>, Error> {
+    let clauses = this.clauses.iter().collect::<Vec<_>>();
+    let mut patterns = Vec::new();
+    let mut facts = false;
+    levels(&clauses, |clause, id| {
+        match clause.labels.def(id) {
+            Label::Fact(..) => facts = true,
+            Label::Pattern(pattern, _) | Label::Constrained(pattern, _, _) => patterns.push(pattern.ast_pattern.as_ref().ok_or(Error::UnsupportedPattern)?),
+            _ => {}
+        }
+        Ok(())
+    })?;
+    Ok(metal_program_backend::label_passes::pattern_sources(&patterns, facts))
+}
+
 /// Each clause's matches of the batch from `roots` (the candidates its root program starts from: listed, or its
 /// domain's nodes where it runs), every clause's passes and roots in one command buffer.
+///
+/// A pass or root walk left unfinished on a file (decision 0334) goes to W's matcher where that is cheaper
+/// (`LoweredWave::label_w_cost`), in `Outcome::unfinished`.
 pub(in crate::code_rule_dsl) fn wave_roots(this: &LoweredWave, tapes: &[TapeDoc], roots: ClauseRoots<'_>) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error> {
-    metal(&this.clauses.iter().collect::<Vec<_>>(), this.labels, tapes, Some(roots), None, None)
+    let w_cost = |label: u32, file: usize| tapes.get(file).map_or(0, |tape| this.label_w_cost(label, tape));
+    metal(&this.clauses.iter().collect::<Vec<_>>(), this.labels, tapes, Some(roots), None, None, Some(&w_cost))
 }
 
 /// `clauses`' matches of the batch on Metal, in one command buffer: their labels (disjoint, `labels`
@@ -67,8 +88,9 @@ fn metal<'a>(
     clause_roots: Option<ClauseRoots<'_>>,
     active: Option<&[Vec<bool>]>,
     records: Option<&metal_program_backend::label_passes::RootJobs<'_>>,
+    w_cost: Option<&(dyn Fn(u32, usize) -> u64 + Sync)>,
 ) -> Result<(Vec<Vec<BTreeSet<u32>>>, metal_program_backend::label_passes::Outcome), Error> {
-    use metal_program_backend::label_passes::{Pass, Plan, Roots, run};
+    use metal_program_backend::label_passes::{DeviceFormula, Pass, Plan, Roots, device_anchor, device_formula, device_targets, run};
     let bases = tapes
         .iter()
         .scan(0_u32, |base, tape| {
@@ -81,12 +103,12 @@ fn metal<'a>(
     let words = nodes.div_ceil(32).max(1);
     // A pass's roots: its domain's nodes. A label domain's program tests the label first. On Metal
     // the label is not known before the command buffer runs, so the rule names the kinds the label
-    // can have (`Labels::bound`) and the label's row, and a micro walk starts only at the label's
-    // members, read from its row as the walk runs (0401). They are a rule over each document's
+    // can have (`Labels::bound`); the walk's anchor, which reads the label (its first test), keeps
+    // the walks to the label's members (decision 0365, 0401). They are a rule over each document's
     // codes (`Roots::Codes`, decision 0033), not a list: the device reads each root in place.
     // Shared by (domain, entry, the tapes the clause is active on), so passes of one domain have
     // one rule (06 S7: 605 passes, 70 M roots as lists, of 264 such keys).
-    let mut shared = HashMap::<(Domain, Option<Vec<(u8, u16)>>, Vec<bool>, Option<u32>), Arc<Roots>>::new();
+    let mut shared = HashMap::<(Domain, Option<Vec<(u8, u16)>>, Vec<bool>), Arc<Roots>>::new();
     let index = |label: u16| u32::from(label - LABEL_BASE);
     let mut roots = |clause: &LoweredMatcher, starts: &Domain, program: Option<&'a Program>| -> Arc<Roots> {
         let entry = program.map(Entry::of);
@@ -98,19 +120,15 @@ fn metal<'a>(
         };
         let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
         let active = (0..tapes.len()).map(|tape| active.is_none_or(|active| active[at][tape])).collect::<Vec<_>>();
-        let label = match starts {
-            Domain::Label(label) => Some(index(*label)),
-            _ => None,
-        };
         let starts = bound.unwrap_or_else(|| starts.clone());
-        let key = (starts.clone(), entry.as_ref().map(|entry| entry.0.clone()), active.clone(), label);
+        let key = (starts.clone(), entry.as_ref().map(|entry| entry.0.clone()), active.clone());
         Arc::clone(shared.entry(key).or_insert_with(|| {
             let kinds = match starts {
                 Domain::All => None,
                 Domain::Kinds(kinds) => Some(kinds),
                 Domain::Label(_) => unreachable!("a label domain is bounded by its kinds"),
             };
-            Arc::new(Roots::Codes { kinds, entry: entry.map(|entry| entry.0).unwrap_or_default(), active, label })
+            Arc::new(Roots::Codes { kinds, entry: entry.map(|entry| entry.0).unwrap_or_default(), active, anchor: None })
         }))
     };
     // The facts' rows, before any pass: made on the host, tested on the device (`Pass::Fact`).
@@ -190,7 +208,7 @@ fn metal<'a>(
     let clauses = if clause_roots.is_some() { clauses } else { &[] };
     if let Some(clause_roots) = clause_roots {
         let root = |at: usize, clause: &LoweredMatcher| match clause_roots {
-            ClauseRoots::Listed(listed) => Roots::Listed(listed[at].clone()),
+            ClauseRoots::Listed(listed) => Roots::Listed(listed[at].clone(), None),
             ClauseRoots::Rule(active) => Roots::Codes {
                 kinds: match &clause.domain {
                     Domain::Kinds(kinds) => Some(kinds.clone()),
@@ -198,10 +216,7 @@ fn metal<'a>(
                 },
                 entry: Vec::new(),
                 active: active[at].clone(),
-                label: match clause.domain {
-                    Domain::Label(label) => Some(index(label)),
-                    _ => None,
-                },
+                anchor: None,
             },
         };
         steps.push((
@@ -220,12 +235,64 @@ fn metal<'a>(
         ));
         chains.push((None, false));
     }
+    // Decision 0365 §9, §10 (0036 on Metal): a roots or targets pass past the recursive groups whose program is a
+    // node-set formula (a targets pass's: the image of its starts) is that formula on the device (`Pass::Formula`), not
+    // a walk; `RERAIL_SETS=walk` walks it, as on the CPU.
+    if formulas_on() {
+        for (_, levels) in steps.iter_mut().filter(|(recursive, _)| !recursive) {
+            for pass in levels.iter_mut().flatten() {
+                let Pass::Program { target, program, roots, captured } = pass else { continue };
+                let formula = if *captured { device_targets(program, roots) } else { device_formula(program) };
+                let Some(formula) = formula else { continue };
+                *pass = Pass::Formula { target: *target, roots: Arc::clone(roots), formula, image: *captured };
+            }
+        }
+    }
+    // Decision 0365: a walk starts within its anchor, evaluated on the device (`label_formula`). A recursive group's
+    // anchors read its own labels as every node (Q133), so they hold in every round: each is evaluated once, before
+    // the group's rounds (`Runner::anchors`).
+    if anchors_on() {
+        let _stage = crate::code_rule_dsl::prof::Stage::start("labels.plan.anchors");
+        let mut anchored = HashMap::<(usize, Arc<DeviceFormula>), Arc<Roots>>::new();
+        for (recursive, levels) in steps.iter_mut() {
+            let own = if *recursive {
+                levels
+                    .iter()
+                    .flatten()
+                    .map(|pass| match pass {
+                        Pass::Program { target, .. }
+                        | Pass::Count { target, .. }
+                        | Pass::Complement { target, .. }
+                        | Pass::Pattern { target, .. }
+                        | Pass::Fact { target, .. }
+                        | Pass::Empty { target }
+                        | Pass::Formula { target, .. } => *target,
+                    })
+                    .collect::<BTreeSet<u32>>()
+            } else {
+                BTreeSet::new()
+            };
+            for pass in levels.iter_mut().flatten() {
+                let (Pass::Program { program, roots, .. } | Pass::Count { program, roots, .. }) = pass else { continue };
+                let Some(formula) = device_anchor(program, &|label| own.contains(&u32::from(label))) else { continue };
+                let key = (Arc::as_ptr(roots) as usize, formula);
+                let with = anchored.entry(key.clone()).or_insert_with(|| {
+                    let anchor = Some(key.1.clone());
+                    Arc::new(match &**roots {
+                        Roots::Codes { kinds, entry, active, .. } => Roots::Codes { kinds: kinds.clone(), entry: entry.clone(), active: active.clone(), anchor },
+                        Roots::Listed(lists, _) => Roots::Listed(lists.clone(), anchor),
+                    })
+                });
+                *roots = Arc::clone(with);
+            }
+        }
+    }
     let outcome = match active {
         // The wave's labels: a recursive group that sweeps runs on the CPU's sweep, each file a
         // walk in node order, between the GPU's wide levels (O26).
-        Some(active) => apart(all, labels, slots as usize, patterns, steps, chains, tapes, active, records)?,
+        Some(active) => apart(all, labels, slots as usize, patterns, steps, chains, tapes, active, records, w_cost)?,
         None => {
-            run(&Plan { labels: labels + clauses.len(), counts: slots as usize, patterns, steps, chains, initial: Default::default(), rows: None, buffers: None, roots: records }, tapes)?
+            run(&Plan { labels: labels + clauses.len(), counts: slots as usize, patterns, steps, chains, initial: Default::default(), rows: None, buffers: None, roots: records, w_cost }, tapes)?
         }
     };
     // Each clause's roots: its label's set bits, a word at a time, as each tape's local nodes.
@@ -303,6 +370,7 @@ fn apart<'a>(
     tapes: &[TapeDoc],
     active: &[Vec<bool>],
     roots: Option<&metal_program_backend::label_passes::RootJobs<'_>>,
+    w_cost: Option<&(dyn Fn(u32, usize) -> u64 + Sync)>,
 ) -> Result<metal_program_backend::label_passes::Outcome, Error> {
     use metal_program_backend::label_passes::{Outcome, Plan, run};
     let (host, _) = levels(clauses, |clause, id| Ok((clause, id)))?;
@@ -368,6 +436,7 @@ fn apart<'a>(
             rows: Some(&rows),
             buffers: Some(&kept),
             roots: if last { roots } else { None },
+            w_cost,
         };
         crate::code_rule_dsl::prof::release();
         let before = crate::code_rule_dsl::prof::footprint_mb();
@@ -397,6 +466,8 @@ fn apart<'a>(
         }
         outcome.command_buffers += ran.command_buffers;
         outcome.dispatches += ran.dispatches;
+        outcome.unfinished.extend(ran.unfinished);
+        outcome.replanned += ran.replanned;
         outcome.rounds = outcome.rounds.max(ran.rounds);
         (0..3).for_each(|at| outcome.waits[at] += ran.waits[at]);
         Ok(())
@@ -433,7 +504,8 @@ fn apart<'a>(
         // A file's sweep reads and marks its own labels only, so the files sweep in parallel.
         use rayon::prelude::*;
         let _sweep = crate::code_rule_dsl::prof::Stage::start("labels.sweep");
-        tapes.par_iter().zip(sets.par_iter_mut()).enumerate().try_for_each(|(at, (tape, sets))| {
+        let budget = crate::code_rule_dsl::transducer::packed::WorkBudget::current();
+        let given = tapes.par_iter().zip(sets.par_iter_mut()).enumerate().map(|(at, (tape, sets))| {
             let levels = levels
                 .iter()
                 .map(|level| {
@@ -454,10 +526,17 @@ fn apart<'a>(
                         .map(|slot| metal_program_backend::label_passes::text_slot(Some((&rows, base)), walk, program, slot, tape))
                         .collect::<Option<Vec<_>>>()
                 };
-                sweep_with(&levels, tape, sets, &texts)?;
+                // Gone to W's matcher (decision 0334): the group's labels on this file, as far as they got.
+                // The group's anchors read the tape's column sets (decision 0365, Q133): this sweep's own.
+                let index = compile_sets::Index::default();
+                if !sweep_with(&levels, tape, sets, &index, &texts, budget, w_cost.is_some())? {
+                    return Ok(levels.iter().flatten().map(|&(_, id)| (u32::from(id - LABEL_BASE), at)).collect());
+                }
             }
-            Ok::<_, Error>(())
-        })?;
+            Ok::<_, Error>(Vec::new())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+        outcome.unfinished.extend(given.into_iter().flatten());
         drop(_sweep);
         crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("3d.sweep");

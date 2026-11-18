@@ -1,6 +1,8 @@
 # 0289: A chunk is a block, and the device reads its views there
 
-Status: draft (2026-11-15), being built. §3's second half was overtaken by 0293 step 4 (2026-11-16): the device's
+Status: draft (2026-11-15), being built. **§1–2 superseded by 0353 (2026-11-17):** the chunk block holds the placed
+tapes and granule tables, never node columns, projection arrays or views made from them; a view is a read of the
+tape. §3's second half was overtaken by 0293 step 4 (2026-11-16): the device's
 reads of the tape wait for 0293 step 5. 0266's path step 2 (`Chunk`), taken here at the user's choice. It is
 done in the order that removes the measured cost first. Builds on 0266 (blocks), 0254 (chunks evaluated at once)
 and 0277 (what the device reads).
@@ -282,12 +284,6 @@ in the batch's document table.
   A label kernel binds the block at one slot (27), not four; the resident interpreter reads it at its `nodes` slot.
 - `DocTable` holds one block (`block`), and refuses documents that are not all in it. `MAX_SLABS` now bounds only a
   batch of sources (block programs, 0067).
-- **Since the merge of 0293's device half and 0310 (2026-11-16):** the entry is `rerail_clif::view::TapeView`, the
-  one view the reads written once in CLIF take (0310), with `at` as its first word (it was `slab`, a binding index).
-  Its MSL is written from it (`view::msl`), every field's offset asserted, so the generated-entry rule above holds
-  with that type in place of `ChunkTape`. Its parts are 0293's: format 15's columns or format 16's arrays, no
-  parent, child-list or by-code arrays. Each part is still an offset from `at`, and the reads take `chunk + at`
-  as their base (`TAPE_READ`).
 
 Checks: the device's tape test (`the_device_reads_resident_tapes_as_the_packed_batch_records_them`, no longer
 ignored: it is hosted in the engine, where the languages are registered), the residency's three slab tests and the

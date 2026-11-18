@@ -5,7 +5,7 @@ Status: accepted (2026-11-17)
 ## Intro
 
 The device's label walks (`label_micro_8`) took 172–217 ms at s1000, against 76–107 ms on the hub engine, for the
-same walks: 97,241,194 steps and 68 launches in both. Work queue Q57 put the gap on the parent: format 16's
+same walks: 97,241,194 steps and 68 launches in both. Work queue Q62 put the gap on the parent: format 16's
 `parent` is a climb back over sibling slots, and the hub engine's walks read a parent column. The fix it named was a
 walk that computes the parents of its 64-node window in one forward pass.
 

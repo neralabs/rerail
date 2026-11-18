@@ -7,6 +7,7 @@
 //! joins read the matches as any base relation.
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Term};
 use std::collections::{BTreeSet, HashMap};
+use crate::code_rule_dsl::logic::program_image::{Lit, TermRef, Version};
 
 pub use crate::code_rule_dsl::facts::grammar_shape::single_field;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -32,8 +33,9 @@ fn atom(rel: &str, args: Vec<Term>) -> Literal {
 /// tested without a kind stays a join. The number of rules rewritten.
 pub fn absorb(prog: &mut Program, capture: bool) -> usize {
     let mut rewritten = 0;
-    let mut fresh = 0;
     for rule in &mut prog.rules {
+        // Fresh names counted per rule: a rule's do not depend on the others'.
+        let mut fresh = 0;
         // A kind or field name as the program holds it (`python:call`), as the matcher names it (`call`).
         let str_of = |t: &Term| match t {
             Term::Str(s) => Some(s.strip_prefix("python:").unwrap_or(s).to_owned()),
@@ -116,7 +118,19 @@ pub fn absorb(prog: &mut Program, capture: bool) -> usize {
 /// Rewrites `prog`'s `ast` atoms over the matchers' relations: each relation, its matcher's text and the names it
 /// captures (an atom naming more than [`MOST_CAPTURES`] is left as written).
 pub fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
-    let mut texts: Vec<(String, Vec<String>)> = Vec::new();
+    // Each distinct matcher (its text and captured names) numbered in its content's order, not the rules': a
+    // program's names do not depend on the order its rules come in.
+    let texts: Vec<(String, Vec<String>)> = prog
+        .rules
+        .iter()
+        .flat_map(|r| &r.body)
+        .filter_map(|l| match l {
+            Literal::Ast { matcher, captures, .. } if captures.len() <= MOST_CAPTURES => Some((matcher.clone(), captures.iter().map(|(name, _)| name.clone()).collect())),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     for rule in &mut prog.rules {
         if !rule.body.iter().any(|l| matches!(l, Literal::Ast { captures, .. } if captures.len() <= MOST_CAPTURES)) {
             continue;
@@ -135,10 +149,7 @@ pub fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
             match l {
                 Literal::Ast { document, node, matcher, captures } if captures.len() <= MOST_CAPTURES => {
                     let names: Vec<String> = captures.iter().map(|(name, _)| name.clone()).collect();
-                    let k = texts.iter().position(|(t, n)| t == matcher && *n == names).unwrap_or_else(|| {
-                        texts.push((matcher.clone(), names.clone()));
-                        texts.len() - 1
-                    });
+                    let k = texts.iter().position(|(t, n)| t == matcher && *n == names).expect("numbered above");
                     let mut args = vec![Term::Var(node.clone().into())];
                     args.extend(captures.iter().map(|(_, var)| Term::Var(var.clone().into())));
                     made.push(atom(&relation(k, names.len()), args));
@@ -202,35 +213,36 @@ pub(in crate::code_rule_dsl) fn compiled(
 /// the atom is widened to the document where its body is the batch's own relations; this is that rule at node grain,
 /// where its body is the same wave's matchers. `None` where any read is not so joined: negated, in an aggregate, an
 /// output, or joined only with what the batch's rows or the inputs fill.
-pub fn demanded_by_roots(prog: &Program, matchers: &[(String, String, Vec<String>)]) -> Vec<Option<Vec<usize>>> {
+pub fn demanded_by_roots(head: &Program, v: &Version, matchers: &[(String, String, Vec<String>)]) -> Vec<Option<Vec<usize>>> {
     let index: HashMap<&str, usize> = matchers.iter().enumerate().map(|(k, (rel, _, _))| (rel.as_str(), k)).collect();
     let mut known = HashMap::new();
     matchers
         .iter()
         .enumerate()
         .map(|(k, (rel, _, _))| {
-            if prog.outputs.iter().any(|out| out == rel) {
+            if head.outputs.iter().any(|out| out == rel) {
                 return None;
             }
             let mut by = BTreeSet::new();
             let mut read = false;
-            for rule in &prog.rules {
-                for (at, literal) in rule.body.iter().enumerate() {
-                    let atom = match literal {
-                        Literal::Atom(atom) if atom.rel == rel.as_str() => atom,
-                        Literal::Agg { atom, .. } if atom.rel == rel.as_str() => return None,
+            for rule in v.rules() {
+                let body: Vec<Lit<'_>> = rule.body().map(|literal| literal.view()).collect();
+                for (at, literal) in body.iter().enumerate() {
+                    let atom = match *literal {
+                        Lit::Atom(atom) if v.rel_name(atom.rel()) == rel.as_str() => atom,
+                        Lit::Agg { atom, .. } if v.rel_name(atom.rel()) == rel.as_str() => return None,
                         _ => continue,
                     };
-                    let Some(Term::Var(node)) = atom.args.first().filter(|_| !atom.neg) else { return None };
+                    let Some(node) = atom.args().next().and_then(TermRef::var).filter(|_| !atom.neg()) else { return None };
                     read = true;
                     // Another positive atom of the body that binds the node where only matchers' roots fill it.
-                    let roots = rule.body.iter().enumerate().filter(|(other, _)| *other != at).find_map(|(_, other)| {
-                        let Literal::Atom(other) = other else { return None };
-                        if other.neg {
+                    let roots = body.iter().enumerate().filter(|(other, _)| *other != at).find_map(|(_, other)| {
+                        let Lit::Atom(other) = *other else { return None };
+                        if other.neg() {
                             return None;
                         }
-                        other.args.iter().enumerate().find_map(|(column, arg)| {
-                            matches!(arg, Term::Var(v) if v == node).then(|| filled_by_roots(prog, &index, other.rel.as_str(), column, &mut known, &mut Vec::new())).flatten()
+                        other.args().enumerate().find_map(|(column, arg)| {
+                            (arg.var() == Some(node)).then(|| filled_by_roots(head, v, &index, v.rel_name(other.rel()), column, &mut known, &mut Vec::new())).flatten()
                         })
                     });
                     match roots {
@@ -247,7 +259,8 @@ pub fn demanded_by_roots(prog: &Program, matchers: &[(String, String, Vec<String
 /// The matchers whose roots hold every value of `rel`'s `column`, where only they fill it: a matcher's own relation's
 /// node, or a derived relation whose every rule binds the column from such a column of a positive atom.
 fn filled_by_roots(
-    prog: &Program,
+    head: &Program,
+    v: &Version,
     index: &HashMap<&str, usize>,
     rel: &str,
     column: usize,
@@ -263,28 +276,28 @@ fn filled_by_roots(
     }
     // A cycle, an input, a native or lattice relation, or a relation with facts: not only matchers' roots.
     if visiting.contains(&key)
-        || prog.inputs.iter().any(|input| input == rel)
-        || prog.natives.contains_key(rel)
-        || prog.lattice.contains_key(rel)
-        || prog.facts.get(rel).is_some_and(|rows| !rows.is_empty())
+        || head.inputs.iter().any(|input| input == rel)
+        || head.natives.contains_key(rel)
+        || head.lattice.contains_key(rel)
+        || head.facts.get(rel).is_some_and(|rows| !rows.is_empty())
     {
         return None;
     }
     visiting.push(key.clone());
     let mut found = Some(BTreeSet::new());
     let mut rules = 0;
-    for rule in prog.rules.iter().filter(|rule| rule.head.rel == rel) {
+    for rule in v.rules().filter(|rule| v.rel_name(rule.head().rel()) == rel) {
         rules += 1;
-        let Some(Term::Var(v)) = rule.head.args.get(column) else {
+        let Some(var) = rule.head().args().nth(column).and_then(TermRef::var) else {
             found = None;
             break;
         };
-        let from = rule.body.iter().find_map(|literal| {
-            let Literal::Atom(atom) = literal else { return None };
-            if atom.neg {
+        let from = rule.body().find_map(|literal| {
+            let Lit::Atom(atom) = literal.view() else { return None };
+            if atom.neg() {
                 return None;
             }
-            atom.args.iter().enumerate().find_map(|(c, arg)| matches!(arg, Term::Var(x) if x == v).then(|| filled_by_roots(prog, index, atom.rel.as_str(), c, known, visiting)).flatten())
+            atom.args().enumerate().find_map(|(c, arg)| (arg.var() == Some(var)).then(|| filled_by_roots(head, v, index, v.rel_name(atom.rel()), c, known, visiting)).flatten())
         });
         match (from, found.as_mut()) {
             (Some(from), Some(found)) => found.extend(from),

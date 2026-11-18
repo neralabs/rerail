@@ -208,9 +208,40 @@ impl<'v> Body<'v> {
     pub fn read_count(&self) -> usize {
         self.lits.iter().filter(|l| l.atom().is_some()).count()
     }
-    /// The demand of a demand-restricted aggregate (`rr_demand_agg_…`, a positive atom), which drives its rule.
+    /// The demand that drives its rule whatever the statistics say: a demand-restricted aggregate's
+    /// (`rr_demand_agg_…`, a positive atom), whose witnesses are enumerated from its requested keys.
     pub fn demand_first(&self) -> Option<usize> {
         (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).contains("rr_demand_agg_")))
+    }
+    /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads.
+    pub fn own_demand(&self) -> Option<usize> {
+        let head = self.rel(self.head());
+        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).strip_prefix("demand_").is_some_and(|r| r == head)))
+    }
+    /// Whether an order led by literal `lead` keeps a demanded relation's rule to what its demand bounds (Q59): led
+    /// by the demand, or by an atom a constant restricts (a column a constant names, or a variable an equality binds
+    /// to one: `kind($i, #k1139)` reads one kind's nodes). An unrestricted atom first (`col(v, c)`) scans the corpus
+    /// per chunk: 29 M rows, not 34 k, on PostHog. Forcing the demand first always cost 66x on a restricted lead
+    /// (`not_name` on 50 files of B-now: a 42 k-row demand against a kind of 498 nodes).
+    pub fn demand_bounds_lead(&self, lead: usize) -> bool {
+        let Some(d) = self.own_demand() else { return true };
+        if lead == d {
+            return true;
+        }
+        let Some(a) = self.plain_atom(lead) else { return false };
+        if a.neg() {
+            return false;
+        }
+        let bound: Vec<_> = (0..self.len())
+            .filter_map(|l| match self.view(l) {
+                Lit::Cmp { l: x, op: CmpOp::Eq, r: y } => match (x, y) {
+                    (TermRef::Var(v), t) | (t, TermRef::Var(v)) if self.constant(t).is_some() => Some(v),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        self.args(lead).iter().any(|&t| self.constant(t).is_some() || t.var().is_some_and(|v| bound.contains(&v)))
     }
     /// The share of rows filter `i` passes on (decision 0297): measured by kind of filter, rows weighted, over the
     /// 300-file bench's 317 rules (`profile`'s `native.tsv`, each step's rows in and out). An equality that binds a

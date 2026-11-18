@@ -105,7 +105,7 @@ The spill test (`spilled_walks_find_the_cpus_roots`, a budget of one step, 24 fi
 with the cut at the candidate's subtree end. At that budget a scan's piece is 128 nodes, so the test halves every
 long scan before it starts; it took 41–44 s and found the CPU's roots.
 
-## Q65: the `after` scan by windows
+## Q182: the `after` scan by windows
 
 The longest walk left after the range scans was `save0 after kind=238 load0 capture emit0`: 877,007 walks of 12.6
 steps on average, the longest 509. It scans the start's following siblings for one of kind 238. Under item 3 its
@@ -131,7 +131,7 @@ In the short tier a given piece waits for the dispatch's tail, and its SIMD grou
 cuts. The step bound stood in for a dispatch's critical path. Here the dispatch's time and the bound disagree, so
 the time decides.
 
-## Q65: one pass over a parent's children, its answer shared by the siblings
+## Q182: one pass over a parent's children, its answer shared by the siblings
 
 The user asked for this to be built, generic over its shape (2026-11-17). `sibling_pass` matches by shape only:
 - **The move:** an `after` scan that is the walk's first move, reached from its start through saves, forks and

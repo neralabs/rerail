@@ -56,6 +56,9 @@ pub enum Act {
     /// A token the grammar implies (`implied`): no node; the extras pending before it stay where
     /// they are, as its leaf's would.
     Settle,
+    /// A settling mark taken (`mark … , settles`), where its leaf would be: the extras pending
+    /// before its bit stay where they are, those after it stay pending (`program::SETTLE`).
+    SettleMark,
     /// An extra's leaf, deferred: the nodes closed before the next node leave it out, so it goes
     /// where the next token puts it (`with_extras`).
     Extra,
@@ -151,6 +154,7 @@ pub fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
                 }
                 Act::Extra => acts.push_str(" extra"),
                 Act::Settle => acts.push_str(" settle"),
+                Act::SettleMark => acts.push_str(" settlemark"),
                 Act::ExtraNow => acts.push_str(" extra now"),
                 Act::Retag { kind } => {
                     let _ = write!(acts, " retag {kind}");
@@ -1265,7 +1269,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
         };
         for (i, a) in arms.iter().enumerate() {
             if arms[..i].iter().any(|b| b.0 == a.0) {
-                let name = ids.tokens.iter().find(|t| (ids.kind)(t).ok() == Some(a.0)).cloned().unwrap_or_else(|| format!("kind {}", a.0));
+                let name = ids.tokens.iter().find(|t| (ids.kind)(t).ok() == Some(a.0)).cloned().unwrap_or_else(|| if ids.marks.contains(&a.0) { format!("a mark (kind {})", a.0) } else { format!("kind {}", a.0) });
                 let rule = &b.rules[level_rules[level]].kind;
                 return Err(format!("the grammar is not LL(1): two ways on {name} at one place in {rule}'s level"));
             }
@@ -1570,11 +1574,14 @@ pub fn with_extras(
 
 /// The arms on marks (tokens of no width) write no leaf: a mark makes no node. A field or a
 /// supertype on one would name a node that is not there.
-pub fn without_mark_leaves(arms: &mut [ArmRow], marks: &[u16]) -> Result<(), String> {
+pub fn without_mark_leaves(arms: &mut [ArmRow], marks: &[u16], settling: &[u16]) -> Result<(), String> {
     for a in arms.iter_mut().filter(|a| marks.contains(&a.token)) {
         let mut acts = Vec::with_capacity(a.acts.len());
         for act in std::mem::take(&mut a.acts) {
             match act {
+                // A settling mark settles where its leaf was: after the closes of the levels that
+                // end before it, before those of the levels it ends.
+                Act::Leaf { field: 0, supers, kind: 0 } if supers.is_empty() && settling.contains(&a.token) => acts.push(Act::SettleMark),
                 Act::Leaf { field: 0, supers, kind: 0 } if supers.is_empty() => {}
                 Act::Leaf { .. } => return Err(format!("mark kind {} with a field or a supertype: a mark makes no node", a.token)),
                 other => acts.push(other),

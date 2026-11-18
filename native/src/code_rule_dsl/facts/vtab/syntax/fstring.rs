@@ -41,6 +41,9 @@ impl super::Producer for Producer {
 }
 
 impl super::ProducerRun for FStrings {
+    fn name(&self) -> &'static str {
+        "f-string trees"
+    }
     fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, own: bool, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         FStrings::document(self, p, d, dialect, own, string)
     }
@@ -87,7 +90,7 @@ impl FStrings {
         let root = ast_grep_core::AstGrep::doc(tape.clone());
         let markers: Vec<i64> = self.markers.iter().map(|m| string(m) as i64).collect();
         for id in 0..f.len() as u32 {
-            let local = p.local[id as usize];
+            let local = p.local_of_node(id as u32);
             if local == NONE || !HOSTS.contains(&dialect.name(f, id)) {
                 continue;
             }

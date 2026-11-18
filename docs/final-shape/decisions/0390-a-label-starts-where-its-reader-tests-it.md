@@ -8,7 +8,7 @@ A matcher's rule is lowered into labels: node sets, each filled by a pass of wal
 used inside an `all` matters only at the nodes the `all` can match. Until now, though, it started from every
 node its own rule allows. internal_dead_code's parameter rule has `not: {precedes: positional_separator,
 stopBy: end}` beside `kind: identifier` and `inside: parameters`. Its sibling scan ran from all 877,007 nodes at
-s1000, a module's statements included. That scan was the 288-step walk 0380 left open (Q65's leader).
+s1000, a module's statements included. That scan was the 288-step walk 0380 left open (Q182's leader).
 
 0380 also left a second question: does a nested `inside: X, stopBy: end` repeat work? Each X marks its whole
 subtree, so a node under k nested X's is marked k times. The user asked for both to be tried, measured on

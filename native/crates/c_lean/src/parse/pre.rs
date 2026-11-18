@@ -55,6 +55,8 @@ impl<'a> P<'a> {
     /// The tokens from `pos` lexed again, the comments lexed from `from` on dropped (a piece over
     /// `from..pos` holds them).
     fn relex_over(&mut self, from: usize, pos: usize) {
+        // Given tokens hold no directive, so they are never lexed again.
+        debug_assert!(self.given.is_none(), "a relex of given tokens");
         self.relexes += 1;
         self.toks.truncate(self.i);
         self.next = pos;

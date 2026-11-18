@@ -32,6 +32,72 @@ pub fn tier1_builder() -> Result<cranelift_jit::JITBuilder, Box<ModuleError>> {
     cranelift_jit::JITBuilder::with_flags(flags, cranelift_module::default_libcall_names()).map_err(Box::new)
 }
 
+/// Each jump table (`br_table`) `switch_trees` leaves made a tree of compares, for Cranelift's code only: its Arm
+/// backend emits every jump table with a speculation barrier (`csel`, then `csdb`, in
+/// `JTSequence`, whatever the settings), and the jump waits for its index. In the C
+/// preprocessing words' return dispatches that barrier was most of their cycles (work queue
+/// Q184, Q186). The IR `clif_rust` is given keeps its tables: LLVM's carry no barrier.
+///
+/// The index is tested against the table's length (the default past it), then a balanced
+/// tree over the table's runs of one target finds the entry: a 256-entry table of few targets
+/// is a few compares deep. The last step of `switch_trees`, which runs before Cranelift compiles a
+/// function (`define_function`, `define_functions`, and the preprocessing words' own).
+fn balanced_trees(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::cursor::{Cursor, FuncCursor};
+    use cranelift_codegen::ir::{BlockArg, InstBuilder, InstructionData, condcodes::IntCC};
+    let branches: Vec<_> = func
+        .layout
+        .blocks()
+        .filter_map(|b| func.layout.last_inst(b).map(|i| (b, i)))
+        .filter(|&(_, i)| matches!(func.dfg.insts[i], InstructionData::BranchTable { .. }))
+        .collect();
+    for (block, inst) in branches {
+        let InstructionData::BranchTable { arg, table, .. } = func.dfg.insts[inst] else { unreachable!() };
+        let pool = &func.dfg.value_lists;
+        let call = |c: &cranelift_codegen::ir::BlockCall| (c.block(pool), c.args(pool).collect::<Vec<BlockArg>>());
+        let jt = &func.stencil.dfg.jump_tables[table];
+        let default = call(&jt.default_block());
+        // Runs of one target: (first index, target).
+        let mut runs: Vec<(u64, (cranelift_codegen::ir::Block, Vec<BlockArg>))> = Vec::new();
+        for (k, c) in jt.as_slice().iter().enumerate() {
+            let c = call(c);
+            if runs.last().is_none_or(|r| r.1 != c) {
+                runs.push((k as u64, c));
+            }
+        }
+        let len = jt.as_slice().len() as i64;
+        let mut pos = FuncCursor::new(func).at_inst(inst);
+        pos.remove_inst();
+        let f = pos.func;
+        let mut pos = FuncCursor::new(f).at_bottom(block);
+        if runs.is_empty() {
+            pos.ins().jump(default.0, &default.1);
+            continue;
+        }
+        let within = pos.func.dfg.make_block();
+        pos.func.layout.insert_block_after(within, block);
+        let past = pos.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, arg, len);
+        pos.ins().brif(past, default.0, &default.1, within, &[]);
+        let mut work = vec![(within, 0usize, runs.len())];
+        while let Some((b, lo, hi)) = work.pop() {
+            let mut pos = FuncCursor::new(pos.func).at_bottom(b);
+            if hi - lo == 1 {
+                let (t, args) = &runs[lo].1;
+                pos.ins().jump(*t, args);
+                continue;
+            }
+            let mid = (lo + hi) / 2;
+            let (left, right) = (pos.func.dfg.make_block(), pos.func.dfg.make_block());
+            pos.func.layout.insert_block_after(right, b);
+            pos.func.layout.insert_block_after(left, b);
+            let below = pos.ins().icmp_imm(IntCC::UnsignedLessThan, arg, runs[mid].0 as i64);
+            pos.ins().brif(below, left, &[], right, &[]);
+            work.push((right, mid, hi));
+            work.push((left, lo, mid));
+        }
+    }
+}
+
 pub fn define_function(
     module: &mut JITModule,
     id: FuncId,
@@ -45,7 +111,15 @@ pub fn define_function(
     for (_, function) in context.func.dfg.ext_funcs.iter_mut() {
         function.colocated = false;
     }
-    // The function may have changed since its flow graph was made (`clif_fold`): made again.
+    // Every table a tree, rustc's where 0322 holds, balanced for the rest: no jump table in
+    // Cranelift's code (Q186).
+    switch_trees(&mut context.func);
+    // Each integer constant made again in the blocks that read it (decision 0351).
+    remat_consts(&mut context.func);
+    // No complement of a complement (0381).
+    fold_nots(&mut context.func);
+    // The function may have changed since its flow graph was made (`clif_fold`, `switch_trees`,
+    // `remat_consts`): made again.
     context.cfg.clear();
     context.domtree.clear();
     if let Err(e) = module.define_function(id, context) {
@@ -78,9 +152,12 @@ pub fn define_functions(module: &mut JITModule, items: Vec<(FuncId, Context)>, n
     use cranelift_module::{Module, ModuleReloc};
     let mut items = items;
     for (_, context) in &mut items {
-        // The tape's hot reads each calls, inlined (decision 0310).
+        // The tape's hot reads each calls, inlined (decision 0310); then the flow graph made again, as the function
+        // changed since it was made (`clif_fold`, and the inlining).
         rerail_clif::inline::reads(module, context)?;
-        // The function changed since its flow graph was made (`clif_fold`, the inlining above): made again.
+        // Each switch a tree of compares, as rustc lowers a match (0322): after the inlining, so
+        // an inlined read's switches are lowered too.
+        switch_trees(&mut context.func);
         context.cfg.clear();
         context.domtree.clear();
         for (_, function) in context.func.dfg.ext_funcs.iter_mut() {
@@ -151,3 +228,142 @@ pub fn parallel_pass_times() -> cranelift_codegen::timing::PassTimes {
 #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos", target_arch = "aarch64"))]
 #[path = "native_cpu_relocation_tests.rs"]
 pub mod relocations;
+
+/// The most runs of one target a `br_table` may have to be lowered as a tree (`switch_trees`):
+/// five levels of compares at most.
+pub const SWITCH_TREE_RUNS: usize = 32;
+
+/// Each `br_table` of at most `SWITCH_TREE_RUNS` runs, lowered as rustc lowers a `match`
+/// (LLVM's switch lowering, `native_cpu_stream::dispatch`): a tree of compares and bit tests
+/// over the runs of one target. Cranelift's `br_table` on aarch64 is a bound check, then `csel`
+/// and `csdb` before the indirect branch, always (a Spectre guard, no flag): the barrier keeps
+/// the core from running ahead into the arm, so each token waits for its entry's load. Tier
+/// 1's numbers took 75 cycles a token by the JIT against 17 by the AOT, most samples at the
+/// table's load. The IR keeps the table, as lean keeps its `match` (`clif_rust` writes it as
+/// one, and rustc lowers it so); only the JIT's copy is rewritten, before Cranelift lowers it.
+/// A table whose targets take arguments, or of more runs, is a balanced tree of compares
+/// (`balanced_trees`, Q186): no `br_table` reaches Cranelift's code.
+/// Each integer constant a block reads but another made, made again in the block, before its
+/// first reader there (decision 0351): the optimizer's `remat` of an `iconst`, which tier 1 runs
+/// without (0069). A constant the token loop's entry makes (a table's address, the word hash's
+/// multiplier, zero, all ones) was one value live through the loop, its calls included: so it was
+/// spilled and reloaded at each token, where the lean lexer has it in an immediate or a `movz`
+/// beside its reader. Only the JIT's copy: the AOT's rustc does the same.
+/// A complement read complemented, folded (0381): `band_not`, `bor_not` and `bxor_not` of a
+/// `bnot y` are `band`, `bor` and `bxor` of `y`. The body keeps a class complemented while its
+/// readers can take it so (`Sym`); where one could not, it made the `bnot`, and a later reader
+/// that wanted the complement complemented it again: without the optimizer (0069) nothing folds
+/// that, and the `bnot` was one more value live. Only the JIT's copy; rustc folds the AOT's.
+pub fn fold_nots(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::ir::{InstructionData, Opcode, ValueDef};
+    let not_of = |func: &cranelift_codegen::ir::Function, v: cranelift_codegen::ir::Value| -> Option<cranelift_codegen::ir::Value> {
+        let v = func.dfg.resolve_aliases(v);
+        let ValueDef::Result(def, 0) = func.dfg.value_def(v) else { return None };
+        match func.dfg.insts[def] {
+            InstructionData::Unary { opcode: Opcode::Bnot, arg } => Some(arg),
+            _ => None,
+        }
+    };
+    let blocks: Vec<cranelift_codegen::ir::Block> = func.layout.blocks().collect();
+    for block in blocks {
+        let insts: Vec<cranelift_codegen::ir::Inst> = func.layout.block_insts(block).collect();
+        for inst in insts {
+            let InstructionData::Binary { opcode, args: [a, b] } = func.dfg.insts[inst] else { continue };
+            let plain = match opcode {
+                Opcode::BandNot => Opcode::Band,
+                Opcode::BorNot => Opcode::Bor,
+                Opcode::BxorNot => Opcode::Bxor,
+                _ => continue,
+            };
+            if let Some(y) = not_of(func, b) {
+                func.dfg.insts[inst] = InstructionData::Binary { opcode: plain, args: [a, y] };
+            }
+        }
+    }
+}
+
+pub fn remat_consts(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::cursor::{Cursor, FuncCursor};
+    use cranelift_codegen::ir::{InstBuilder, InstructionData, Opcode, ValueDef};
+    let blocks: Vec<cranelift_codegen::ir::Block> = func.layout.blocks().collect();
+    for block in blocks {
+        let mut made: std::collections::HashMap<cranelift_codegen::ir::Value, cranelift_codegen::ir::Value> = Default::default();
+        let insts: Vec<cranelift_codegen::ir::Inst> = func.layout.block_insts(block).collect();
+        for inst in insts {
+            let reads: Vec<cranelift_codegen::ir::Value> = func.dfg.inst_values(inst).collect();
+            let mut swap: Vec<(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)> = Vec::new();
+            for v in reads {
+                let v = func.dfg.resolve_aliases(v);
+                let ValueDef::Result(def, 0) = func.dfg.value_def(v) else { continue };
+                if func.layout.inst_block(def) == Some(block) {
+                    continue;
+                }
+                let InstructionData::UnaryImm { opcode: Opcode::Iconst, imm } = func.dfg.insts[def] else { continue };
+                let again = match made.get(&v) {
+                    Some(&x) => x,
+                    None => {
+                        let ty = func.dfg.value_type(v);
+                        let mut pos = FuncCursor::new(func).at_inst(inst);
+                        let x = pos.ins().iconst(ty, imm);
+                        made.insert(v, x);
+                        x
+                    }
+                };
+                swap.push((v, again));
+            }
+            if !swap.is_empty() {
+                let dfg = &mut func.dfg;
+                let resolved: Vec<cranelift_codegen::ir::Value> = dfg.inst_values(inst).map(|x| dfg.resolve_aliases(x)).collect();
+                let mut k = 0;
+                let new: Vec<cranelift_codegen::ir::Value> = resolved.iter().map(|&x| swap.iter().find(|s| s.0 == x).map_or(x, |s| s.1)).collect();
+                dfg.map_inst_values(inst, |_| {
+                    let x = new[k];
+                    k += 1;
+                    x
+                });
+            }
+        }
+    }
+}
+
+pub fn switch_trees(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::ir::{Block, InstructionData};
+    let mut found = Vec::new();
+    for block in func.layout.blocks() {
+        let Some(inst) = func.layout.last_inst(block) else { continue };
+        if let InstructionData::BranchTable { arg, table, .. } = func.dfg.insts[inst] {
+            let (jt, pool) = (&func.dfg.jump_tables[table], &func.dfg.value_lists);
+            if jt.all_branches().iter().any(|c| c.args(pool).len() != 0) {
+                continue;
+            }
+            // The table's targets, then its default on past them.
+            let targets = jt.as_slice().iter().map(|c| c.block(pool)).chain([jt.default_block().block(pool)]);
+            let mut runs: Vec<(u32, Block)> = Vec::new();
+            for (x, b) in targets.enumerate() {
+                if runs.last().is_none_or(|&(_, l)| l != b) {
+                    runs.push((x as u32, b));
+                }
+            }
+            if runs.len() <= SWITCH_TREE_RUNS {
+                found.push((block, inst, arg, runs));
+            }
+        }
+    }
+    if !found.is_empty() {
+        let mut ctx = cranelift_frontend::FunctionBuilderContext::new();
+        let mut f = cranelift_frontend::FunctionBuilder::new(func, &mut ctx);
+        for (block, inst, index, runs) in found {
+            f.func.layout.remove_inst(inst);
+            f.switch_to_block(block);
+            let end = 1u64 << f.func.dfg.value_type(index).bits();
+            crate::native_cpu_stream::dispatch(&mut f, index, &runs, end);
+        }
+    }
+    // Every table left (its targets take arguments, or it has more runs): a balanced tree, so no
+    // jump table reaches Cranelift's code (Q186).
+    balanced_trees(func);
+}
+
+#[cfg(test)]
+#[path = "native_cpu_codegen_tests.rs"]
+mod tests;

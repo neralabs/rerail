@@ -73,6 +73,9 @@ pub mod gpu {
         pub struct Shared {
             pub device: metal::Device,
             pub queue: metal::CommandQueue,
+            /// The queue of work committed ahead that waits on an event (the forest's armed prediction): a command
+            /// buffer waiting on an event holds back the ones its queue commits after it, so it is not `queue`.
+            pub waiting: metal::CommandQueue,
         }
 
         /// The process's device and queue: `None` without a Metal device.
@@ -83,7 +86,8 @@ pub mod gpu {
                     objc::rc::autoreleasepool(|| {
                         let device = metal::Device::system_default()?;
                         let queue = device.new_command_queue();
-                        Some(Shared { device, queue })
+                        let waiting = device.new_command_queue();
+                        Some(Shared { device, queue, waiting })
                     })
                 })
                 .as_ref()

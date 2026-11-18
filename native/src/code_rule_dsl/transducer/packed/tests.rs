@@ -23,7 +23,7 @@
     use std::time::{Duration, Instant};
 
     /// The Metal JIT's result, or None where it refuses the batch: the launch bound (99, list step 13), or a
-    /// shared arena sized short for it (`BackendCapacity`, work queue Q59, the grid's retirement having moved these
+    /// shared arena sized short for it (`BackendCapacity`, work queue Q64, the grid's retirement having moved these
     /// programs to the JIT). The CPU backends' parity is still asserted.
     #[cfg(target_os = "macos")]
     fn metal<T>(result: Result<T, Error>) -> Option<T> {
@@ -33,7 +33,7 @@
                 None
             }
             Err(Error::BackendCapacity) => {
-                eprintln!("Metal's JIT refused the batch's arenas (Q59); its parity is not checked here");
+                eprintln!("Metal's JIT refused the batch's arenas (Q64); its parity is not checked here");
                 None
             }
             result => Some(result.unwrap()),

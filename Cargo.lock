@@ -484,8 +484,6 @@ dependencies = [
 [[package]]
 name = "cranelift-assembler-x64-meta"
 version = "0.125.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c03f887a763abb9c1dc08f722aa82b69067fda623b6f0273050f45f8b1a6776"
 dependencies = [
  "cranelift-srcgen",
 ]
@@ -508,8 +506,6 @@ checksum = "ac0790c83cfdab95709c5d0105fd888221e3af9049a7d7ec376ec901ab4e4dba"
 [[package]]
 name = "cranelift-codegen"
 version = "0.125.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a98aed2d262eda69310e84bae8e053ee4f17dbdd3347b8d9156aa618ba2de0a"
 dependencies = [
  "bumpalo",
  "cranelift-assembler-x64",
@@ -534,8 +530,6 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-meta"
 version = "0.125.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6906852826988563e9b0a9232ad951f53a47aa41ffd02f8ac852d3f41aae836a"
 dependencies = [
  "cranelift-assembler-x64-meta",
  "cranelift-codegen-shared",
@@ -630,8 +624,6 @@ dependencies = [
 [[package]]
 name = "cranelift-native"
 version = "0.125.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56f697bbbe135c655ea1deb7af0bae4a5c4fae2c88fdfc0fa57b34ae58c91040"
 dependencies = [
  "cranelift-codegen",
  "libc",
@@ -3181,12 +3173,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-c-directives"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "rerail-c-directives",
+ "rerail-c-lean",
+ "rerail-c-pp",
+ "rerail-compiler",
+ "rerail-metal",
+ "rerail-pp-aot",
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-c-lean"
 version = "0.1.0"
 dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
+]
+
+[[package]]
+name = "rerail-c-pp"
+version = "0.1.0"
+dependencies = [
+ "rerail-c-lean",
+ "rerail-simd8",
 ]
 
 [[package]]
@@ -3210,6 +3225,7 @@ dependencies = [
  "cranelift-jit",
  "cranelift-jit-wasm",
  "cranelift-module",
+ "cranelift-native",
  "libc",
  "rayon",
  "rerail-clif",
@@ -3360,7 +3376,9 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-c-directives",
  "rerail-c-lean",
+ "rerail-c-pp",
  "rerail-clif",
  "rerail-compiler",
  "rerail-csharp-lean",
@@ -3371,6 +3389,7 @@ dependencies = [
  "rerail-go-lean",
  "rerail-html-lean",
  "rerail-java-lean",
+ "rerail-kotlin-lean",
  "rerail-lang",
  "rerail-lang-ecma",
  "rerail-lang-json",
@@ -3390,10 +3409,12 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-rust-lean",
+ "rerail-scala-lean",
  "rerail-sessions",
  "rerail-simdjson",
  "rerail-sql-lean",
  "rerail-store",
+ "rerail-swift-lean",
  "rerail-tape-format",
  "rerail-transducer",
  "rerail-vue-lean",
@@ -3462,6 +3483,7 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-blocks",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
@@ -3532,10 +3554,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-json-lean"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rerail-simdjson",
+ "rerail-simdjson-native",
+]
+
+[[package]]
 name = "rerail-kotlin-lean"
 version = "0.1.0"
 dependencies = [
  "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-kotlin-parser"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "rerail-compiler",
+ "rerail-kotlin-lean",
+ "rerail-kotlin-parser",
  "rerail-tape-format",
 ]
 
@@ -3589,6 +3631,7 @@ dependencies = [
  "rerail-go-lean",
  "rerail-html-lean",
  "rerail-java-lean",
+ "rerail-kotlin-lean",
  "rerail-lang",
  "rerail-markdown-inline-lean",
  "rerail-markdown-lean",
@@ -3598,8 +3641,10 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-rust-lean",
+ "rerail-scala-lean",
  "rerail-sql-lean",
  "rerail-store",
+ "rerail-swift-lean",
  "rerail-tape-format",
  "rerail-vue-lean",
  "ruff_python_ast",
@@ -4094,6 +4139,7 @@ dependencies = [
  "rerail-lang",
  "rerail-logic",
  "rerail-prof",
+ "rerail-program-image",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
@@ -4176,6 +4222,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-pp-aot"
+version = "0.1.0"
+dependencies = [
+ "rerail-compiler",
+]
+
+[[package]]
 name = "rerail-prof"
 version = "0.1.0"
 dependencies = [
@@ -4238,6 +4291,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-program-image"
+version = "0.1.0"
+dependencies = [
+ "foldhash",
+ "rerail-prof",
+ "rerail-program-image",
+ "rerail-rr-syntax",
+ "rustc-hash",
+ "serde_json",
+ "sha2 0.11.1",
+]
+
+[[package]]
 name = "rerail-python-lean"
 version = "0.1.0"
 dependencies = [
@@ -4289,6 +4355,7 @@ dependencies = [
  "rerail-facts",
  "rerail-lang",
  "rerail-prof",
+ "rerail-program-image",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
@@ -4338,6 +4405,7 @@ dependencies = [
  "rerail-metal",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-simdjson-native",
  "rerail-tape-format",
  "sha2 0.10.9",
 ]
@@ -4559,7 +4627,9 @@ name = "rerail-tape-format"
 version = "0.1.0"
 dependencies = [
  "lz4-sys",
+ "memchr",
  "rerail-clif",
+ "rerail-simd8",
  "sha2 0.10.9",
 ]
 

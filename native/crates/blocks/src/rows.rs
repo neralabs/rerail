@@ -109,8 +109,17 @@ impl Rows {
     /// # Safety
     /// As `init`.
     pub unsafe fn try_init(this: *mut Rows, block: &Block, widths: &[u32], min_log: u32) -> bool {
-        assert!(min_log >= MIN_LOG, "min_log {min_log} under {MIN_LOG}");
         let Some(cols) = block.try_alloc_t::<ColDir>(widths.len()) else { return false };
+        unsafe { Rows::init_in(this, cols, widths, min_log) };
+        true
+    }
+
+    /// `init` with the columns' directories at `cols` (zeroed, `widths.len()` of them, in the same block).
+    ///
+    /// # Safety
+    /// As `init`, and `cols` as said.
+    pub unsafe fn init_in(this: *mut Rows, cols: *mut ColDir, widths: &[u32], min_log: u32) {
+        assert!(min_log >= MIN_LOG, "min_log {min_log} under {MIN_LOG}");
         unsafe {
             for (c, &w) in widths.iter().enumerate() {
                 assert!(w == 4 || w == 8);
@@ -120,7 +129,6 @@ impl Rows {
             (*this).ncols = widths.len() as u32;
             Span::set(&raw mut (*this).cols, cols, widths.len());
         }
-        true
     }
 
     #[inline]
@@ -198,13 +206,25 @@ impl Rows {
             let rows = chunk_rows(k, self.min_log) as usize;
             let align = |bytes: usize| if bytes >= PAGE { PAGE } else { 64 };
             let need: usize = (0..self.ncols as usize).map(|c| rows * self.col(c).width as usize).map(|b| b + align(b)).sum();
-            if block.reserved().saturating_sub(block.used()) < need {
+            // Room at the front, or on the free list (decision 0342), for every column's chunk.
+            if block.reserved().saturating_sub(block.used()) < need && block.free_bytes() < need {
                 return false;
             }
+            let mut taken: [usize; 8] = [0; 8];
             for c in 0..self.ncols as usize {
                 let d = self.col(c);
                 let bytes = rows * d.width as usize;
-                let Some(off) = block.try_alloc(bytes, align(bytes)) else { return false };
+                // Not zeroed: a value is read only below `len`, written before its row is claimed (0325 step 5).
+                let Some(off) = block.try_alloc_chunk_any(bytes, align(bytes)) else {
+                    // The chunks this round took go back (to the free list, when the block keeps one).
+                    for (c2, &at) in taken.iter().enumerate().take(c.min(8)) {
+                        block.free_chunk(at, rows * self.col(c2).width as usize);
+                    }
+                    return false;
+                };
+                if c < 8 {
+                    taken[c] = off;
+                }
                 d.chunk[k].store(block.ptr::<u8>(off) as isize as i64 - d as *const ColDir as isize as i64, Relaxed);
             }
             nchunks += 1;
@@ -212,6 +232,30 @@ impl Rows {
             self.reserved.store(capacity(nchunks, self.min_log).min(u32::MAX as u64) as u32, Release);
         }
         true
+    }
+
+    /// Gives every column's chunks back to `block`'s free list (decision 0342), when it keeps one; the rows are
+    /// then none. Returns the bytes given to the OS with them (`Block::free_chunk`).
+    ///
+    /// # Safety
+    /// These rows lie in `block`, and no one reads or writes them after.
+    pub unsafe fn release(&self, block: &Block) -> usize {
+        if !block.has_free_list() {
+            return 0;
+        }
+        let mut given = 0;
+        let n = self.nchunks.load(Relaxed) as usize;
+        for c in 0..self.ncols as usize {
+            let d = self.col(c);
+            for k in 0..n {
+                let p = unsafe { (d as *const ColDir as *const u8).offset(d.chunk[k].load(Relaxed) as isize) };
+                given += block.free_chunk(block.offset_of(p), chunk_rows(k, self.min_log) as usize * d.width as usize);
+            }
+        }
+        self.nchunks.store(0, Relaxed);
+        self.reserved.store(0, Release);
+        self.len.store(0, Release);
+        given
     }
 
     /// Claims `n` rows: one atomic add, and chunks made under `lock` only when the claim passes what is reserved.
@@ -361,6 +405,49 @@ impl Rows {
 mod tests {
     use super::*;
     use crate::block::{Block, kind};
+
+    /// A relation whose last holder went gives its chunks' pages back to the OS (Q76) as they go to the block's free
+    /// list (0342), and the relation beside it reads every row it wrote: interleaved chunks of the two never share a
+    /// page given back. A relation made after takes the freed chunks again, their pages in use, and reads its rows.
+    #[test]
+    fn a_dead_relations_pages_go_back_and_its_neighbours_rows_stay() {
+        let block = Block::anon(kind::FACTS, 64 << 20).with_free_list();
+        let spec = crate::relation::Spec { widths: vec![8, 8], order: Vec::new(), indexes: Vec::new(), min_log: MIN_LOG };
+        let dead = crate::relation::Relation::create(&block, &spec, None);
+        let kept = crate::relation::Relation::create(&block, &spec, None);
+        let n = 200_000u32;
+        // Grown in turns, so their chunks interleave in the block.
+        for step in 1..=8u64 {
+            dead.rows.reserve(&block, step * n as u64 / 8);
+            kept.rows.reserve(&block, step * n as u64 / 8);
+        }
+        let fill = |r: &crate::relation::Relation, sign: i64| unsafe {
+            r.rows.claim_reserved(n);
+            for i in 0..n {
+                r.rows.put(i, 0, i64::from(i));
+                r.rows.put(i, 1, sign * i64::from(i));
+            }
+        };
+        fill(dead, -1);
+        fill(kept, -1);
+        let used = block.used();
+        let given = unsafe { dead.release(&block) };
+        assert!(given > (n as usize * 16) / 2, "{given} bytes given back of {} written", n as usize * 16);
+        for i in 0..n {
+            assert_eq!((kept.rows.get(i, 0), kept.rows.get(i, 1)), (i64::from(i), -i64::from(i)), "row {i}");
+        }
+        // The next relation of the same size takes the freed chunks: the block grows by its descriptor alone.
+        let next = crate::relation::Relation::create(&block, &spec, None);
+        for step in 1..=8u64 {
+            next.rows.reserve(&block, step * n as u64 / 8);
+        }
+        fill(next, 3);
+        assert!(block.used() < used + 64 << 10, "{} bytes used after, {used} before", block.used());
+        for i in 0..n {
+            assert_eq!((next.rows.get(i, 0), next.rows.get(i, 1)), (i64::from(i), 3 * i64::from(i)), "row {i}");
+            assert_eq!(kept.rows.get(i, 1), -i64::from(i), "row {i}");
+        }
+    }
 
     #[test]
     fn chunks_are_quarter_steps_and_cover_every_row_once() {

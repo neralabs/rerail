@@ -104,6 +104,19 @@ Between its sealing and its archive a segment is **read in place**:
 - a segment is trusted only once its header checks (state and length); one left by a process that ended is
   archived or removed, never read unchecked.
 
+
+**A segment's table past the estimate** (2026-11-17). A writer is told how many entries a write makes, and each
+segment's entry table has room for those still to come. The frames placed as encoded (Q89) are told the
+retained part's relations plus four an input, but an input has a frame per changed granule: about 3,500 frames
+against the estimate. Once the estimate was spent, every new segment's table held one entry, so each frame was
+a segment of its own, leased, mapped, named and written back: 13,677 segment files for a write of 166 MB on 50
+Python files of B-now, against 34 before, and 0.09 → 3.3 s of the store writer's CPU. A segment past the estimate
+now has room for as many entries as were placed so far (`SegmentWriter::slots`): 45 files, the same bytes.
+
+Frames placed as encoded are also encoded outside the writer's lock (`cross_rows::encode_windows`): each column
+into a buffer of the job's in one pass over the rows, then copied into the entry under the lock. Counted in a
+first pass and written in a second under the lock, the rows were read twice and the jobs framing a write's
+inputs took turns: 0.25 s of CPU became 1.8 s, and their waits more.
 ### 4. The archive: bulk inserts of rows, then the segment is free
 
 The store's writer **archives** sealed segments into SQLite as **rows of real tables**, in bulk: as many whole

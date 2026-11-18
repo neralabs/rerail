@@ -86,7 +86,7 @@ pub trait Source: Send + Sync {
         Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_READONLY),None))
     }
     fn text_column(&self, _column: usize) -> bool { false }
-    /// The source as itself, for a caller that carries state between two of one kind (`carry_sorted`).
+    /// The source as itself, for a caller that reads a kind's own parts (a derived relation's rows).
     fn as_any(&self) -> Option<&dyn std::any::Any> { None }
     fn columns(&self) -> Vec<String>;
     fn len(&self) -> usize;
@@ -97,8 +97,59 @@ pub trait Source: Send + Sync {
             *o = self.value(row, c);
         }
     }
+    /// Each row's values of `columns`, row after row, given to `each` with the row's number: `row_at` a row at a time
+    /// by default; a view of a batch's documents walks each document's nodes once, finding no row's place and
+    /// selecting no node.
+    fn for_rows(&self, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) {
+        let mut row = vec![0i64; columns.len()];
+        for r in 0..self.len() {
+            self.row_at(r, columns, &mut row);
+            each(r, &row);
+        }
+    }
+    /// The rows whose `column` is `value`, each with its values of `columns` (at most 8), given to `each`, as
+    /// `lookup` and `row_at` would; `false` (nothing given) where the source has no such read. A view of the tape
+    /// gives each match's values from what the lookup found it by (its tape node, its own or its parent's id), not
+    /// a point read a row (decision 0353 step 2).
+    fn lookup_read(&self, _column: usize, _value: i64, _columns: &[usize], _each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        false
+    }
+    /// `for_rows` over rows `range` alone, until `each` returns false: a join step's scan of a view reads its rows
+    /// so (decision 0353 step 2), a view of a batch's documents walking the documents the range holds once, each row's
+    /// node, id and parent coming from the walk, not a point read a row.
+    fn for_rows_in(&self, range: Range<usize>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) {
+        let mut row = vec![0i64; columns.len()];
+        for r in range {
+            self.row_at(r, columns, &mut row);
+            if !each(r, &row) {
+                return;
+            }
+        }
+    }
+    /// Each row's document: the high 32 bits of the id in `column` (a value below `1 << 32` is its own document), row
+    /// after row with the row's number. A view of a batch's documents gives each document's rows its key, reading no
+    /// row's id.
+    fn documents_of(&self, column: usize, each: &mut dyn FnMut(usize, i64)) {
+        self.for_rows(&[column], &mut |r, row| each(r, if row[0] >= 1 << 32 { row[0] >> 32 } else { row[0] }));
+    }
+    /// Every row's values of `columns`, row after row, appended to `out`: `row_at` a row at a time by default; a
+    /// view of a batch's documents reads each document's rows in turn, finding no row's place.
+    fn rows_of(&self, columns: &[usize], out: &mut Vec<i64>) {
+        let k = columns.len();
+        out.reserve(self.len() * k);
+        for row in 0..self.len() {
+            let at = out.len();
+            out.resize(at + k, 0);
+            self.row_at(row, columns, &mut out[at..]);
+        }
+    }
     fn estimated_len(&self) -> usize {
         self.len()
+    }
+    /// The rows whose column `g` holds a node `owned` names, where the source finds them without reading every row
+    /// (a view over a batch's documents, by its nodes): `None` when it cannot, and the caller reads them all.
+    fn rows_owned(&self, _g: usize, _owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+        None
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize;
     /// A lookup on `column`'s CPU, as a multiple of a derived relation's (placement's `CPU_PER_PROBE` a row in and
@@ -154,6 +205,13 @@ pub trait Source: Send + Sync {
     fn in_block(&self) -> Option<super::rows::InBlock> {
         None
     }
+    /// Its own index on `columns` (decision 0325 step 5), where the source holds its rows to be probed so (`held`):
+    /// found or built in its block, its number with the relation it indexes. A probe reads a bucket's rows, candidates
+    /// whose key it checks. `None` by default: a source answers its lookups, and a whole one in a block is given an
+    /// index there only when nothing else answers (`InRel::index`).
+    fn own_index(&self, _columns: &[usize]) -> Option<(super::rows::InBlock, usize)> {
+        None
+    }
     /// Rows are made per looked-up value, so reading them all (a scan, a hash index of every row)
     /// makes every one: a join probes such a source through `lookup`, whatever its match estimate.
     fn made_on_lookup(&self) -> bool {
@@ -199,6 +257,15 @@ pub trait Source: Send + Sync {
     }
     /// The rows whose `column` is one of `values`; `None` scans.
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>>;
+    /// Whether each value of `column` is at most one row, which `key_row` finds without allocating (a node's own
+    /// column): a reader of the source's rows in its row order probes by it (`setfix::hold_view`).
+    fn keys_rows(&self, _column: usize) -> bool {
+        false
+    }
+    /// The row whose `column` (a `keys_rows` column) is `value`, if there is one: `lookup`'s answer, not allocated.
+    fn key_row(&self, _column: usize, _value: i64) -> Option<usize> {
+        None
+    }
     /// The rows whose `column` is `value` and whose columns hold every `(column, value)` of `eqs`, in `lookup`'s
     /// order, where the source tests `eqs` as it finds them (a view's children by parent and field, off the tape)
     /// rather than each row's values read back; `None`: looked up, then filtered.
@@ -209,6 +276,12 @@ pub trait Source: Send + Sync {
     /// The rows whose `column` is `value`, as a slice of the source's own sorted index (no allocation); `None`
     /// where the source keeps none.
     fn sorted_rows(&self, _column: usize, _value: i64) -> Option<&[u32]> {
+        None
+    }
+    /// The rows whose `column` is `value` as a range of row ids, where the column is in row order (a sorted
+    /// source's leading column): found by a search of the column itself, no index of its rows built. `None`: the
+    /// column is not in order (ask `sorted_rows`). Where it answers, `sorted_rows` gives the same rows.
+    fn sorted_range(&self, _column: usize, _value: i64) -> Option<std::ops::Range<u32>> {
         None
     }
     /// Whether `sorted_rows` serves `column`, asked without building its index: a plan choosing among a source's
@@ -1239,6 +1312,9 @@ pub struct Relation {
     indexes: Box<[OnceLock<ColumnIndex>]>,
     /// Per column, its distinct values while its values have come in nondecreasing order, else `None`.
     ordered: Box<[Option<usize>]>,
+    /// Every row's id in order, made when a column pushed in order is first probed for a slice of its rows
+    /// (`sorted_rows`): such a column's rows of one value are consecutive, and need no index of their own.
+    identity: OnceLock<Vec<u32>>,
 }
 struct ColumnIndex {
     rows: Vec<u32>,
@@ -1259,7 +1335,23 @@ impl Relation {
             cells: OnceLock::new(),
             indexes: columns.iter().map(|_| OnceLock::new()).collect(),
             ordered: columns.iter().map(|_| Some(0)).collect(),
+            identity: OnceLock::new(),
         }
+    }
+    /// A relation of `rows`: written straight into its block, at their number, when the iterator knows it exactly
+    /// (no staging, no growth or move); else staged, as `push` stages them.
+    pub fn from_rows(columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>) -> Self {
+        let mut r = Relation::new(columns);
+        if let (n, Some(m)) = rows.size_hint()
+            && n == m
+            && n > 0
+        {
+            let mut cells = super::rows::Rows::living(r.columns.len(), super::rows::Life::Source);
+            cells.reserve(n * r.columns.len());
+            let _ = r.cells.set(cells);
+        }
+        rows.for_each(|row| r.push(&row));
+        r
     }
     pub fn push(&mut self, row: &[i64]) {
         assert_eq!(row.len(), self.columns.len());
@@ -1284,6 +1376,7 @@ impl Relation {
         }
         self.rows += 1;
         self.indexes.iter_mut().for_each(|i| *i = OnceLock::new());
+        self.identity = OnceLock::new();
     }
     /// The rows in their block: the staged ones written there at the first read, in one relation of their size.
     #[inline]
@@ -1402,6 +1495,36 @@ impl Source for Relation {
         }
         let rows = &self.index(column).rows;
         Some(values.iter().flat_map(|&v| rows[self.between(column, v, v)].iter().map(|&r| r as usize)).collect())
+    }
+    /// A slice of the column's sorted index, or for a column pushed in order of the rows' ids: a probe makes no list.
+    /// Through `lookup`, each probe of a relation built for a chunk (the scopes' `rr_nearest_*`, the texts)
+    /// collected its rows into a list, and the join copied it into another: 6,400 samples of a cold PostHog run.
+    fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
+        if self.ordered[column].is_some() {
+            let ids = self.identity.get_or_init(|| (0..self.len() as u32).collect());
+            return Some(&ids[self.ordered_between(column, value, value)]);
+        }
+        Some(&self.index(column).rows[self.between(column, value, value)])
+    }
+    /// A column pushed in order of the rows' ids: its rows a range, no identity list made.
+    fn sorted_range(&self, column: usize, value: i64) -> Option<Range<u32>> {
+        self.ordered[column].is_some().then(|| {
+            let r = self.ordered_between(column, value, value);
+            r.start as u32..r.end as u32
+        })
+    }
+    fn sorts_rows(&self, _column: usize) -> bool {
+        true
+    }
+    /// A column pushed in order whose values are each one row (`ordered`: as many distinct values as rows) is a key:
+    /// a view of the relation's rows probes it here (`setfix::hold_view`), with no index of its own.
+    fn keys_rows(&self, column: usize) -> bool {
+        self.ordered[column] == Some(self.len())
+    }
+    /// The row of `value` in a key column (`keys_rows`): a search of the cells, as `lookup`'s.
+    fn key_row(&self, column: usize, value: i64) -> Option<usize> {
+        debug_assert!(self.keys_rows(column));
+        self.ordered_between(column, value, value).next()
     }
     fn value(&self, row: usize, column: usize) -> i64 {
         self.cells().get(row as u32, column)

@@ -73,6 +73,9 @@ pub const READS: &[Read] = &[
     Read { family: Family::Tape, name: "tape_length", params: &[I32], ret: I32, hot: true, body: length },
     Read { family: Family::Tape, name: "tape_start_next", params: &[I32, I32], ret: I32, hot: true, body: start_next },
     Read { family: Family::Tape, name: "tape_slot", params: &[I32], ret: I64, hot: true, body: slot },
+    Read { family: Family::Tape, name: "tape_line_select", params: &[I32, I32], ret: I32, hot: false, body: line_select },
+    Read { family: Family::Tape, name: "tape_line", params: &[I32], ret: I32, hot: true, body: line },
+    Read { family: Family::Tape, name: "tape_line_start", params: &[I32], ret: I32, hot: true, body: line_start },
     Read { family: Family::Relation, name: "rows_col", params: &[I32], ret: I64, hot: true, body: crate::relation::rows_col },
     Read { family: Family::Relation, name: "col_at", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::col_at },
     Read { family: Family::Relation, name: "col_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::col_get },
@@ -83,16 +86,27 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "rel_dead", params: &[I32], ret: I32, hot: true, body: crate::relation::rel_dead },
     Read { family: Family::Relation, name: "rel_group", params: &[I32, I64], ret: I64, hot: true, body: crate::relation::rel_group },
     Read { family: Family::Relation, name: "rel_group_row", params: &[I32, I32], ret: I32, hot: true, body: crate::relation::rel_group_row },
+    Read { family: Family::Relation, name: "rel_key_mix", params: &[I64, I64], ret: I64, hot: true, body: crate::relation::rel_key_mix },
+    // A projection's numbering's (decision 0353 step 2): the descriptor is an `ids::Numbering`.
+    Read { family: Family::Relation, name: "num_is", params: &[I32, I32], ret: I32, hot: true, body: crate::id_reads::is },
+    Read { family: Family::Relation, name: "num_rank", params: &[I32, I32], ret: I32, hot: true, body: crate::id_reads::rank },
+    Read { family: Family::Relation, name: "num_select", params: &[I32, I32], ret: I32, hot: true, body: crate::id_reads::select },
+    Read { family: Family::Relation, name: "num_granule", params: &[I32, I32], ret: I64, hot: false, body: crate::id_reads::granule },
+    Read { family: Family::Relation, name: "num_low_of", params: &[I32, I32], ret: I32, hot: true, body: crate::id_reads::low_of },
+    Read { family: Family::Relation, name: "num_number_in", params: &[I32, I32, I32, I32], ret: I32, hot: false, body: crate::id_reads::number_in },
+    Read { family: Family::Relation, name: "num_number_of", params: &[I32], ret: I64, hot: true, body: crate::id_reads::number_of },
+    Read { family: Family::Relation, name: "num_order_of", params: &[I32], ret: I32, hot: true, body: crate::id_reads::order_of },
+    Read { family: Family::Relation, name: "num_number_of_order", params: &[I32], ret: I32, hot: true, body: crate::id_reads::number_of_order },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
 /// block).
-pub const F16_ONLY: &[&str] = &["tape_f16_side", "tape_slot"];
+pub const F16_ONLY: &[&str] = &["tape_f16_side", "tape_slot", "tape_line_select"];
 
 /// The reads a reader of the tape crate calls (the rest are the reads' own: a side list's value takes a list's
 /// number, which is the reads' to give).
 pub fn public(name: &str) -> bool {
-    name != "tape_f16_side"
+    name != "tape_f16_side" && name != "tape_line_select"
 }
 
 /// The read named `name`.
@@ -207,12 +221,22 @@ impl Callee for ByIndex {
     }
 }
 
+/// Whether a read of the relation's family is a projection's numbering's (`id_reads`), which the facts crate holds.
+fn numbering(read: &Read) -> bool {
+    read.name.starts_with("num_")
+}
+
 /// The relation's reads (decision 0325), each built and named by its place in `READS`, with whether it is hot.
 fn relation_funcs() -> Vec<(u32, Function, &'static Read)> {
+    family_funcs(|read| !numbering(read))
+}
+
+/// The reads of the relation's family that `keep` keeps, each built and named by its place in `READS`.
+fn family_funcs(keep: impl Fn(&Read) -> bool) -> Vec<(u32, Function, &'static Read)> {
     READS
         .iter()
         .enumerate()
-        .filter(|(_, read)| read.family == Family::Relation)
+        .filter(|(_, read)| read.family == Family::Relation && keep(read))
         .map(|(k, read)| (k as u32, build(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex), read))
         .collect()
 }
@@ -246,55 +270,38 @@ pub fn relation_msl_source() -> Result<String, String> {
     ))
 }
 
-#[cfg(test)]
-mod tests {
-    /// The blocks crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_blocks_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/generated_reads.rs");
-        let source = super::relation_rust_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_reads_are_these");
-    }
+/// A projection's numbering's reads as Rust (decision 0353 step 2): the facts crate's `id_reads.rs`, which its
+/// `Ranks` and `granules::Table` read through, made again by `the_facts_id_reads_are_these`.
+pub fn ids_rust_source() -> Result<String, String> {
+    let funcs = family_funcs(numbering);
+    let entries: Vec<(u32, &str)> = funcs.iter().map(|(k, _, read)| (*k, read.name)).collect();
+    let funcs: Vec<(u32, Function, bool)> = funcs.into_iter().map(|(k, f, read)| (k, f, read.hot)).collect();
+    let body = crate::rust::translate_reads(&funcs, &entries, Family::Relation)?;
+    let mut out = String::from(
+        "// Generated by rerail_clif::reads::ids_rust_source from a projection's numbering's reads in CLIF (decision 0353
+         // step 2). Do not edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_reads_are_these` writes it
+         // again.
+         #![allow(dead_code, unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_parens, clippy::all)]
 
-    /// The blocks crate's kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_blocks_kernels_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/relation_reads.metal");
-        let source = super::relation_msl_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these");
-    }
+",
+    );
+    out.push_str(&body);
+    let h = crate::rust::fingerprint(&out);
+    out.push_str(&format!("\n/// This source's fingerprint (`rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"));
+    Ok(out)
+}
 
-    /// The kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_kernels_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/transducer/packed/metal_tape_reads.metal");
-        let source = super::msl_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_kernels_reads_are_these");
-    }
-
-    /// The tape crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
-    #[test]
-    fn the_tape_crates_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tape_format/src/generated_reads.rs");
-        let source = super::rust_source().unwrap();
-        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
-            std::fs::write(path, &source).unwrap();
-        }
-        let held = std::fs::read_to_string(path).unwrap_or_default();
-        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_reads_are_these");
-    }
+/// A projection's numbering's reads as MSL, after its descriptor's declaration (`ids::msl`): `id_reads.metal`, which
+/// a kernel that reads node ids in place includes, made again by `the_facts_id_kernels_reads_are_these`.
+pub fn ids_msl_source() -> Result<String, String> {
+    let funcs: Vec<(u32, Function, &str)> = family_funcs(numbering).into_iter().map(|(k, f, read)| (k, f, read.name)).collect();
+    let body = crate::msl::translate_reads(&funcs, "clif_", Family::Relation)?;
+    Ok(format!(
+        "// Generated by rerail_clif::reads::ids_msl_source from a projection's numbering's reads in CLIF (decision 0353\n\
+         // step 2). Do not edit: `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_kernels_reads_are_these`\n\
+         // writes it again.\n{}{body}",
+        crate::ids::msl()
+    ))
 }
 
 /// A body being built: the builder, the tape's base and view, the read's own parameters.
@@ -957,4 +964,316 @@ fn child(b: &mut B<'_, '_>) -> Value {
     b.f.ins().jump(head, &[c.into(), k.into()]);
     b.f.switch_to_block(done);
     b.f.block_params(done)[0]
+}
+
+// ---- lines: format 16's newline index (`rerail_tape_format::newlines`), format 15's line starts ----------------
+
+/// The newline index's u32 field `k` (0 the newlines' count, 1 the low parts' width, 2 and 3 the zero and one
+/// samples' counts, 4 the high bits' words).
+fn lines_field(b: &mut B<'_, '_>, k: i64) -> Value {
+    let lines = b.view(at::LINES);
+    let k = b.c32(4 * k);
+    b.u32(lines, k)
+}
+
+/// Where the newline index's part at `offset` bytes past its first fields lies (tape-relative).
+fn lines_part(b: &mut B<'_, '_>, offset: Value) -> Value {
+    let lines = b.view(at::LINES);
+    let at = b.f.ins().iadd(lines, offset);
+    b.f.ins().iadd_imm(at, HEAD_LINES)
+}
+
+/// The newline index's first fields' bytes (`newlines::HEAD`).
+const HEAD_LINES: i64 = 20;
+/// Every 256th zero and one of the high bits is sampled (`newlines::SAMPLE_SHIFT`).
+const LINES_SAMPLE_SHIFT: i64 = 8;
+
+/// Newline `i`'s low part (`l` bits).
+fn line_low(b: &mut B<'_, '_>, i: Value, l: Value) -> Value {
+    let zs = lines_field(b, 2);
+    let os = lines_field(b, 3);
+    let words = lines_field(b, 4);
+    let samples = b.f.ins().iadd(zs, os);
+    let before = b.f.ins().iadd(samples, words);
+    let before = b.f.ins().imul_imm(before, 8);
+    let lows = lines_part(b, before);
+    let i64v = b.f.ins().uextend(I64, i);
+    let l64 = b.f.ins().uextend(I64, l);
+    let bit = b.f.ins().imul(i64v, l64);
+    let byte = b.f.ins().ushr_imm(bit, 3);
+    let byte = b.f.ins().ireduce(I32, byte);
+    let word = b.word(lows, byte);
+    let shift = b.f.ins().band_imm(bit, 7);
+    let word = b.f.ins().ushr(word, shift);
+    let one = b.c64(1);
+    let mask = b.f.ins().ishl(one, l64);
+    let mask = b.f.ins().iadd_imm(mask, -1);
+    b.f.ins().band(word, mask)
+}
+
+/// The position of the `r`-th set bit of `x` (one is there): six halvings, each a popcount.
+fn select_in_word(b: &mut B<'_, '_>, x: Value, r: Value) -> Value {
+    let (mut x, mut r, mut pos) = (x, r, b.c32(0));
+    for s in [32i64, 16, 8, 4, 2, 1] {
+        let low = b.f.ins().band_imm(x, (1i64 << s) - 1);
+        let c = b.f.ins().popcnt(low);
+        let c = b.f.ins().ireduce(I32, c);
+        let past = b.f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, r, c);
+        let less = b.f.ins().isub(r, c);
+        r = b.f.ins().select(past, less, r);
+        let shifted = b.f.ins().ushr_imm(x, s);
+        x = b.f.ins().select(past, shifted, x);
+        let moved = b.f.ins().iadd_imm(pos, s);
+        pos = b.f.ins().select(past, moved, pos);
+    }
+    pos
+}
+
+/// The position in the newline index's high bits of its `j`-th one (`ones` 1) or zero (0): from the sample before
+/// it, a word at a time.
+fn line_select(b: &mut B<'_, '_>) -> Value {
+    let (ones, j) = (b.arg(0), b.arg(1));
+    let zs = lines_field(b, 2);
+    let os = lines_field(b, 3);
+    let zeros_bytes = b.f.ins().imul_imm(zs, 8);
+    let zero = b.c32(0);
+    let skip = b.f.ins().select(ones, zeros_bytes, zero);
+    let k = b.f.ins().ushr_imm(j, LINES_SAMPLE_SHIFT);
+    let k = b.f.ins().imul_imm(k, 8);
+    let sample = b.f.ins().iadd(skip, k);
+    let sample = lines_part(b, sample);
+    let w0 = b.u32(sample, zero);
+    let four = b.c32(4);
+    let before0 = b.u32(sample, four);
+    let samples = b.f.ins().iadd(zs, os);
+    let samples = b.f.ins().imul_imm(samples, 8);
+    let high = lines_part(b, samples);
+    let (head, done) = (b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(done, I32);
+    b.f.ins().jump(head, &[w0.into(), before0.into()]);
+    b.f.switch_to_block(head);
+    let (w, before) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+    let at = b.f.ins().imul_imm(w, 8);
+    let word = b.word(high, at);
+    let flipped = b.f.ins().bnot(word);
+    let x = b.f.ins().select(ones, word, flipped);
+    let c = b.f.ins().popcnt(x);
+    let c = b.f.ins().ireduce(I32, c);
+    let through = b.f.ins().iadd(before, c);
+    let here = b.f.ins().icmp(IntCC::UnsignedGreaterThan, through, j);
+    let (found, next) = (b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(here, found, &[], next, &[]);
+    b.f.switch_to_block(next);
+    let w1 = b.f.ins().iadd_imm(w, 1);
+    b.f.ins().jump(head, &[w1.into(), through.into()]);
+    b.f.switch_to_block(found);
+    let r = b.f.ins().isub(j, before);
+    let bit = select_in_word(b, x, r);
+    let base = b.f.ins().imul_imm(w, 64);
+    let pos = b.f.ins().iadd(base, bit);
+    b.f.ins().jump(done, &[pos.into()]);
+    b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
+}
+
+/// The line byte `x` lies in (from 0): format 16's newlines before it, by the index (the zeros before and after its
+/// bucket, then a search of the bucket's low parts); format 15's line starts searched.
+fn line(b: &mut B<'_, '_>) -> Value {
+    let x = b.arg(0);
+    b.by_format(
+        I32,
+        |b| {
+            let m = lines_field(b, 0);
+            let none = b.f.ins().icmp_imm(IntCC::Equal, m, 0);
+            b.either(
+                I32,
+                none,
+                |b| b.c32(0),
+                |b| {
+                    let l = lines_field(b, 1);
+                    let h = b.f.ins().ushr(x, l);
+                    let one = b.c32(1);
+                    let lbits = b.f.ins().ishl(one, l);
+                    let lmask = b.f.ins().iadd_imm(lbits, -1);
+                    let xl = b.f.ins().band(x, lmask);
+                    let xl = b.f.ins().uextend(I64, xl);
+                    let zero = b.c32(0);
+                    // The newlines in buckets before `h`, and through it.
+                    let first = b.f.ins().icmp_imm(IntCC::Equal, h, 0);
+                    let lo = b.either(
+                        I32,
+                        first,
+                        |b| b.c32(0),
+                        |b| {
+                            let h1 = b.f.ins().iadd_imm(h, -1);
+                            let p = b.call("tape_line_select", &[zero, h1]);
+                            b.f.ins().isub(p, h1)
+                        },
+                    );
+                    let p = b.call("tape_line_select", &[zero, h]);
+                    let hi = b.f.ins().isub(p, h);
+                    // The bucket's first newline whose low part is at or past `x`'s.
+                    let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+                    b.f.append_block_param(head, I32);
+                    b.f.append_block_param(head, I32);
+                    b.f.append_block_param(done, I32);
+                    b.f.ins().jump(head, &[lo.into(), hi.into()]);
+                    b.f.switch_to_block(head);
+                    let (lo, hi) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+                    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
+                    b.f.ins().brif(more, body, &[], done, &[lo.into()]);
+                    b.f.switch_to_block(body);
+                    let sum = b.f.ins().iadd(lo, hi);
+                    let middle = b.f.ins().ushr_imm(sum, 1);
+                    let low = line_low(b, middle, l);
+                    let below = b.f.ins().icmp(IntCC::UnsignedLessThan, low, xl);
+                    let next = b.f.ins().iadd_imm(middle, 1);
+                    let lo = b.f.ins().select(below, next, lo);
+                    let hi = b.f.ins().select(below, hi, middle);
+                    b.f.ins().jump(head, &[lo.into(), hi.into()]);
+                    b.f.switch_to_block(done);
+                    b.f.block_params(done)[0]
+                },
+            )
+        },
+        |b| {
+            // The last line start at or before `x`.
+            let lines = b.view(at::LINES);
+            let count = b.view(at::LINE_COUNT);
+            let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+            b.f.append_block_param(head, I32);
+            b.f.append_block_param(head, I32);
+            b.f.append_block_param(done, I32);
+            let one = b.c32(1);
+            b.f.ins().jump(head, &[one.into(), count.into()]);
+            b.f.switch_to_block(head);
+            let (lo, hi) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+            let more = b.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
+            b.f.ins().brif(more, body, &[], done, &[lo.into()]);
+            b.f.switch_to_block(body);
+            let sum = b.f.ins().iadd(lo, hi);
+            let middle = b.f.ins().ushr_imm(sum, 1);
+            let at = b.f.ins().imul_imm(middle, 4);
+            let start = b.u32(lines, at);
+            let past = b.f.ins().icmp(IntCC::UnsignedGreaterThan, start, x);
+            let next = b.f.ins().iadd_imm(middle, 1);
+            let lo = b.f.ins().select(past, lo, next);
+            let hi = b.f.ins().select(past, middle, hi);
+            b.f.ins().jump(head, &[lo.into(), hi.into()]);
+            b.f.switch_to_block(done);
+            let found = b.f.block_params(done)[0];
+            b.f.ins().iadd_imm(found, -1)
+        },
+    )
+}
+
+/// Line `k`'s first byte: 0 for the first; else one past newline `k - 1` (format 16: its bucket, from its one's
+/// position, and its low part); format 15's line start.
+fn line_start(b: &mut B<'_, '_>) -> Value {
+    let k = b.arg(0);
+    b.by_format(
+        I32,
+        |b| {
+            let first = b.f.ins().icmp_imm(IntCC::Equal, k, 0);
+            b.either(
+                I32,
+                first,
+                |b| b.c32(0),
+                |b| {
+                    let i = b.f.ins().iadd_imm(k, -1);
+                    let one = b.c32(1);
+                    let p = b.call("tape_line_select", &[one, i]);
+                    let bucket = b.f.ins().isub(p, i);
+                    let l = lines_field(b, 1);
+                    let high = b.f.ins().ishl(bucket, l);
+                    let low = line_low(b, i, l);
+                    let low = b.f.ins().ireduce(I32, low);
+                    let at = b.f.ins().bor(high, low);
+                    b.f.ins().iadd_imm(at, 1)
+                },
+            )
+        },
+        |b| {
+            let lines = b.view(at::LINES);
+            let at = b.f.ins().imul_imm(k, 4);
+            b.u32(lines, at)
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    /// The facts crate's numbering reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_facts_id_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/facts/vtab/syntax/id_reads.rs");
+        let source = super::ids_rust_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_reads_are_these");
+    }
+
+    /// The numbering's kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_facts_id_kernels_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/facts/vtab/syntax/id_reads.metal");
+        let source = super::ids_msl_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_kernels_reads_are_these");
+    }
+
+    /// The blocks crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_blocks_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/generated_reads.rs");
+        let source = super::relation_rust_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_reads_are_these");
+    }
+
+    /// The blocks crate's kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_blocks_kernels_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/relation_reads.metal");
+        let source = super::relation_msl_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these");
+    }
+
+    /// The kernels' reads are these, as MSL: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_kernels_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/transducer/packed/metal_tape_reads.metal");
+        let source = super::msl_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' MSL: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_kernels_reads_are_these");
+    }
+
+    /// The tape crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
+    #[test]
+    fn the_tape_crates_reads_are_these() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tape_format/src/generated_reads.rs");
+        let source = super::rust_source().unwrap();
+        if std::env::var_os("RERAIL_WRITE_READS").is_some() {
+            std::fs::write(path, &source).unwrap();
+        }
+        let held = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(held == source, "{path} is not the reads' Rust: RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_reads_are_these");
+    }
 }

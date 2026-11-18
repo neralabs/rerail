@@ -23,6 +23,7 @@ pub use connection::sqlite_on_jemalloc;
 mod cross_rows;
 mod derivation;
 mod frames;
+pub mod guest_keys;
 mod object_segments;
 mod segments;
 mod facts_memo;
@@ -73,7 +74,7 @@ pub use compression::compress;
 pub use frames::forget_snapshot as forget_frames_snapshot;
 pub use segments::{SealedSegments, SegmentBytes, SegmentWriter};
 pub use object_segments::{ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape};
-pub use frames::{CrossSpace as FramesCrossSpace, Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, MemoBlob, MemoPut, MemoRow, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
+pub use frames::{CrossSpace as FramesCrossSpace, Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, FramePlacer, Placed as PlacedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, MemoBlob, MemoPut, MemoRow, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
 pub use atoms::{ProcessIds, StoreIds, Sym};
@@ -705,9 +706,12 @@ impl Drop for ContentStore {
 
 impl ContentStore {
     /// The process forgets the store at `path`, closed and about to be deleted while the process goes on (a test's
-    /// own): what it read of it to hold in memory (its frames, decision 0104) and its identity. Held past the store's
-    /// life, each is memory no run reads again.
+    /// own): its upkeep jobs, what it read of it to hold in memory (its frames, decision 0104) and its identity. Held
+    /// past the store's life, each is memory no run reads again, and a job's connection held the deleted file open.
     pub fn forget(path: &Path) {
+        // Its upkeep jobs first: one holds a read connection on the file.
+        rerail_accel::upkeep::forget_file(path);
+        upkeep::forget(path);
         frames::forget_snapshot(&path.to_string_lossy());
         atoms::forget_identity(&path.to_string_lossy());
     }

@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 20
+VERSION = 28
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -725,9 +725,15 @@ def cc(argv0, args):
 # The local configuration (README.md, "Configuration"): never in git. Its keys, with their defaults:
 DEFAULTS = {
     "hosts": [],
-    # A host is used only while its disk has this much free, its round trip is this short and the
-    # link carries this much: a host that dropped to WiFi or a busy network is no faster than here.
+    # Under `min_free_gb` free, the farm frees its own data on a host at once (`free_host`), and says
+    # so when that is not enough; the host stays in use down to `floor_free_gb`, which is left to the
+    # host's own work. A host is used only while its round trip is this short and the link carries
+    # this much: a host that dropped to WiFi or a busy network is no faster than here.
     "min_free_gb": 40,
+    "floor_free_gb": 20,
+    # The most a host's test targets hold together (GB): over it, the least recently used that no
+    # command holds go (farm-agent, `keep_to_budget`).
+    "max_target_gb": 150,
     "max_rtt_ms": 150,
     "min_mbps": 8,
 }
@@ -805,6 +811,14 @@ def link_of(host):
     return (host.get("link") or host.get("link_match") or "").lstrip("%") or None
 
 
+# The free disk macOS gives an important write: what is free and what it purges for it (Time
+# Machine's hourly local snapshots, caches). df leaves that out: one host showed 19 GB free with
+# 691 GB available, its snapshots holding a day of every file the farm had deleted, and was left
+# out (2026-11-17). farm-agent's `free_gb` asks the same.
+AVAILABLE_JS = ('ObjC.import("Foundation"); var r = Ref(); $.NSURL.fileURLWithPath($.NSHomeDirectory())'
+                '.getResourceValueForKeyError(r, $.NSURLVolumeAvailableCapacityForImportantUsageKey, null); String(r[0].js)')
+
+
 def probe(host, cfg, fell_back=False, recovered=False):
     """Asks `host` how it is, over ssh: its idle time, free disk, NFS mounts, the address it sees this
     machine connect from, then the round trip and (every PROBE_SECONDS) the link's throughput.
@@ -815,7 +829,9 @@ def probe(host, cfg, fell_back=False, recovered=False):
          "mbps": previous.get("mbps"), "mbps_at": previous.get("mbps_at", 0)}
     if previous.get("route") != route(name):
         h["mbps"], h["mbps_at"] = None, 0  # another path: its throughput is not known
-    script = ('echo "$SSH_CONNECTION"; df -k "$HOME" | tail -1;'
+    # Free disk: what macOS gives an important write (AVAILABLE_JS), then statvfs's, in KB.
+    available = shlex.quote(AVAILABLE_JS)
+    script = ('echo "$SSH_CONNECTION"; echo "$(osascript -l JavaScript -e ' + available + ' 2>/dev/null) $(df -k "$HOME" | tail -1 | awk \'{print $4}\')";'
               " ioreg -c IOHIDSystem -d 4 | awk '/HIDIdleTime/ {print $NF; exit}'; echo \"$(" + ARRIVAL + ")\";"
               " sysctl -n vm.loadavg; mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
     try:
@@ -834,7 +850,9 @@ def probe(host, cfg, fell_back=False, recovered=False):
     lines = out.stdout.splitlines()
     client = h["client"] = (lines[0].split() or [""])[0]
     try:
-        h["free_gb"] = int(lines[1].split()[3]) // (1 << 20)
+        words = lines[1].split()
+        h["df_free_gb"] = int(words[-1]) // (1 << 20)
+        h["free_gb"] = int(float(words[0])) >> 30 if len(words) == 2 and float(words[0]) > 0 else h["df_free_gb"]
         h["idle_s"] = int(lines[2]) / 1e9
     except (ValueError, IndexError):
         h["why"] = "its answer could not be read"
@@ -881,8 +899,8 @@ def probe(host, cfg, fell_back=False, recovered=False):
     h["route"] = route(name)
     if link and arrival != link:
         h["why"] = f"not on its link: reached over its {arrival or '?'}, not {link}"
-    elif h["free_gb"] < cfg["min_free_gb"]:
-        h["why"] = f"{h['free_gb']} GB free, under {cfg['min_free_gb']}"
+    elif h["free_gb"] < cfg["floor_free_gb"]:
+        h["why"] = f"{h['free_gb']} GB free, under {cfg['floor_free_gb']}: {short_of_disk(host, h, cfg)}"
     # The round trip and throughput stand in for the link when none is configured (a host that fell
     # back to WiFi is slow). With `link` confirmed they are only reported: an ssh command's round
     # trip measures how fast both machines schedule ssh, and a loaded build machine (a load of 70
@@ -893,7 +911,90 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["why"] = f"{h['mbps']} MB/s, under {cfg['min_mbps']}"
     else:
         h["ok"], h["why"], h["failures"] = True, "", 0
+        if h["free_gb"] < cfg["min_free_gb"]:
+            h["short"] = f"{h['free_gb']} GB free, under {cfg['min_free_gb']}: {short_of_disk(host, h, cfg)}"
     return h
+
+
+# ---- a host short of disk
+#
+# Never a silent exclusion: the farm frees its own data there at once (farm-agent `free`), at most
+# every FREE_SECONDS, and when the host is still short the user is told, on this machine's screen
+# (at most every NOTIFY_SECONDS a host), how much of it the farm still holds.
+FREE_SECONDS = 600
+NOTIFY_SECONDS = 6 * 3600
+
+
+def short_of_disk(host, h, cfg):
+    """What is being done about `host` being short of disk (its health record `h`): starts freeing
+    the farm's data there when that has not run in the last FREE_SECONDS, and says what the last
+    pass found."""
+    name = host["name"]
+    last = read_json(state("freeing", name + ".json"), {})
+    stamp = state("freeing", name + ".started")
+    try:
+        started = os.stat(stamp).st_mtime
+    except OSError:
+        started = 0
+    if time.time() - started >= FREE_SECONDS:
+        open(stamp, "w").close()
+        try:
+            subprocess.Popen([sys.executable, os.path.realpath(__file__), "free-host", name],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=open(state("freeing", name + ".err"), "a"), start_new_session=True)
+        except OSError as e:
+            return f"the farm's data there could not be freed: {e}"
+        started = time.time()
+    if last.get("at", 0) < started:
+        return "freeing the farm's data there now"
+    return (f"the farm freed {max(0, last['after_gb'] - last['before_gb']):.0f} GB there at "
+            f"{time.strftime('%H:%M', time.localtime(last['at']))} and holds {last['farm_gb']:.0f} GB; "
+            "the rest is the host's own")
+
+
+def free_host(name):
+    """`farm.py free-host NAME` (started by short_of_disk): runs farm-agent's `free` on the host,
+    records what it did, tells the user when the host is still short, and probes it again."""
+    host = next((h for h in hosts() if h["name"] == name), None)
+    if host is None:
+        return
+    cfg = config()
+    job = {"min_free_gb": cfg["min_free_gb"], "max_target_gb": host.get("max_target_gb", cfg["max_target_gb"])}
+    text = cleaner()
+    if text:
+        job["cleaner"] = text
+    try:
+        out = subprocess.run(ssh(name, on_host("farm-agent") + " free " + shlex.quote(json.dumps(job)), "free"),
+                             capture_output=True, text=True, timeout=3600)
+        result = json.loads(out.stdout.strip().splitlines()[-1])
+    except (subprocess.TimeoutExpired, OSError, ValueError, IndexError):
+        return
+    result["at"] = time.time()
+    write_json(state("freeing", name + ".json"), result)
+    if result["after_gb"] < cfg["min_free_gb"]:
+        said = state("freeing", name + ".notified")
+        try:
+            recent = time.time() - os.stat(said).st_mtime < NOTIFY_SECONDS
+        except OSError:
+            recent = False
+        if not recent:
+            open(said, "w").close()
+            usable_too = result["after_gb"] >= cfg["floor_free_gb"]
+            notify(f"{name}: {result['after_gb']:.0f} GB free after the farm freed "
+                   f"{max(0, result['after_gb'] - result['before_gb']):.0f} GB; the farm holds {result['farm_gb']:.0f} GB "
+                   f"there, the rest is the host's own. "
+                   + ("Still in use." if usable_too else f"Not used under {cfg['floor_free_gb']} GB free."))
+    health(host, fresh=True)
+
+
+def notify(message):
+    """Shows `message` on this machine's screen (a notification), and logs it."""
+    log(message)
+    script = f"display notification {json.dumps(message)} with title \"Rerail build farm\""
+    try:
+        subprocess.run(["osascript", "-e", script], capture_output=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def health(host, fresh=False):
@@ -1158,12 +1259,20 @@ def agent_exec(job):
     """The command that runs `job` with farm-agent on a host (test-remote, live-test-remote,
     quiet-run). The cleaner's text goes with it: once the command ends, the agent cleans the job's
     target directory with it (farm-agent, `clean`)."""
+    text = cleaner()
+    if text:
+        job = dict(job, cleaner=text)
+    job.setdefault("max_target_gb", config()["max_target_gb"])
+    return on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
+
+
+def cleaner():
+    """clean-target's text (installed beside this file, or in the checkout), or None."""
     here = os.path.dirname(os.path.realpath(__file__))
     for c in (os.path.join(here, "clean-target"), os.path.join(here, "../../dev/clean-target")):
         if os.path.isfile(c):
-            job = dict(job, cleaner=open(c).read())
-            break
-    return on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
+            return open(c).read()
+    return None
 
 
 def remote_slot():
@@ -1250,6 +1359,11 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up,
     # A crate whose build script generated sources (OUT_DIR) would read them from the farm's root.
     if not any(cwd.startswith(p + "/") for p in IN_PLACE):
         return give_up("its sources are not cargo's registry's (a path of this machine's only)")
+    # The host maps this machine's paths in the arguments by their normalized prefixes: one with a
+    # `..` or `.` component (a CARGO_TARGET_DIR of `../tmp/x`) matched none, and rustc there was
+    # handed this machine's own path, outside the farm's root (2026-11-17).
+    if any(re.search(r"/\.\.?(/|$)", a) for a in args):
+        return give_up("a path in its arguments has a `..` or `.` component")
     out = env.get("OUT_DIR")
     if out and os.path.isdir(out) and os.listdir(out):
         return give_up("its build script wrote OUT_DIR, which a compile there would read from another path")
@@ -1268,7 +1382,12 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up,
            "depinfo": os.path.join(out_dir, f"{crate}{extra}.d") if "dep-info" in kinds else None,
            "env": {k: v for k, v in env.items() if k not in LOCAL_ONLY and not k.startswith(("SCCACHE_", "RERAIL_FARM_"))},
            # What the host keeps under its farm root, and maps there in the arguments and environment.
-           "map": [r for r, _ in roots] + files}
+           "map": [r for r, _ in roots] + files,
+           # The crates it links against, whose copies there are checked as its sources are: the
+           # dep-info lists no `--extern`, and sccache keys the compile by this machine's copy. A
+           # vendored crate keeps its file name across edits, so a host's older copy compiled a
+           # crate against another version under this one's key (Q68: E0463 above it).
+           "externs": files}
     reply = mirror.compile({"host": host["name"], "since": since, "roots": roots, "files": files, "run": run})
     if reply is None:
         return give_up("the mirror daemon did not answer")
@@ -1344,3 +1463,7 @@ def local(rustc, args):
     finally:
         lock.release()
     sys.exit(code)
+
+
+if __name__ == "__main__" and sys.argv[1:2] == ["free-host"]:
+    free_host(sys.argv[2])

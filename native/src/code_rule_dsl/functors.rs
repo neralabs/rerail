@@ -41,6 +41,7 @@ pub(crate) fn register_functors(db: &Connection) -> rusqlite::Result<()> {
         Ok(texts(ctx)?.is_some_and(|[key, message, sig]| crate::code_rule_dsl::logic::crypto::ed25519_ok(&key, &message, &sig)))
     })?;
     db.create_scalar_function(c"rr_nfkc", 1, flags, |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| crate::code_rule_dsl::identifier::nfkc(&s).into_owned())))?;
+    db.create_scalar_function(c"rr_shell_unquote", 1, flags, |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| crate::code_rule_dsl::logic::strings::functions::shell_unquote(&s))))?;
     db.create_scalar_function(c"rr_py_repr", 1, flags, |ctx| {
         Ok(ctx.get::<Option<String>>(0)?.map(|s| crate::code_rule_dsl::cpython::value::str_repr(&crate::code_rule_dsl::cpython::value::PyStr::Text(s))))
     })?;

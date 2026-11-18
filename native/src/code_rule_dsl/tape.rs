@@ -67,6 +67,12 @@ pub mod go_lean;
 pub mod c_lean;
 /// C#'s tape from the lean parser (`rerail_csharp_lean`).
 pub mod csharp_lean;
+/// Kotlin's tape from the lean parser (`rerail_kotlin_lean`).
+pub mod kotlin_lean;
+/// Swift's tape from the lean parser (`rerail_swift_lean`).
+pub mod swift_lean;
+/// Scala's tape from the lean parser (`rerail_scala_lean`).
+pub mod scala_lean;
 /// PHP's tape from the lean parser (`rerail_php_lean`).
 pub mod php_lean;
 /// HTML's tape from the lean parser (`rerail_html_lean`).
@@ -214,7 +220,8 @@ impl Grammar {
         Ok(Arc::new(Self { lang, kinds, named, fields }))
     }
 
-    /// The grammar of an embedded program's dialect, built once per process.
+    /// The grammar of a dialect, built once per process and shared by every document of it: built per document, a
+    /// run over 300 files held 61 MB of grammars at its peak (Q74), and built each one's kind table again.
     pub fn embedded(lang: GrammarDialect) -> Result<Arc<Self>, String> {
         static GRAMMARS: std::sync::LazyLock<
             std::sync::Mutex<std::collections::HashMap<GrammarDialect, Arc<Grammar>>>,
@@ -689,16 +696,16 @@ impl FileImage {
             image.derived.push(DerivedImage::encode(via, program, 0, grammar, source, &budget)?);
         }
         // Each document in the format the run stores (decision 0293 §4), once the embedders have read the host.
-        Ok(image.in_format(formats::Format::of_run()))
+        Ok(image.in_format(formats::Format::of_run(), source))
     }
 
     /// The documents of a file that derives none, in the format the run stores (decision 0293 §4).
-    pub fn single(primary: TapeImage) -> Self {
+    pub fn single(primary: TapeImage, source: &str) -> Self {
         Self {
             primary,
             derived: Vec::new(),
         }
-        .in_format(formats::Format::of_run())
+        .in_format(formats::Format::of_run(), source)
     }
 
     /// The documents the store keeps for a file: its tape `primary` in `grammar`'s dialect and
@@ -847,7 +854,8 @@ impl Documents for FileImage {
 #[cfg(any(test, feature = "test-hooks"))]
 impl Documents for TapeImage {
     fn file_image(&self) -> Cow<'_, FileImage> {
-        Cow::Owned(FileImage::single(self.clone()))
+        // No source: the image is kept in the format it is held in.
+        Cow::Owned(FileImage { primary: self.clone(), derived: Vec::new() })
     }
 }
 
@@ -1373,7 +1381,7 @@ impl TapeImage {
         }
         // A `.rr` file: the rule engine's own parser builds its tree (decision 0061).
         if grammar.lang == GrammarDialect::Rr {
-            return Some(Self::encode_rr(grammar, source, budget).map(FileImage::single));
+            return Some(Self::encode_rr(grammar, source, budget).map(|image| FileImage::single(image, source)));
         }
         let mut parser = tree_sitter::Parser::new();
         if let Err(error) = parser.set_language(&grammar.lang.get_ts_language()) {
@@ -1597,6 +1605,23 @@ impl TapeImage {
             None => source_digest(source, &budget)?,
         };
         Ok(Self::of15([&code, &size, &base, &off, &tail], widths, codes, Vec::new(), grammar.lang, source.len(), Some(digest)))
+    }
+
+    /// A written tape whose codes name contextual aliases (`Code::alias`, an index into
+    /// `kind_aliases`): a kind whose symbol's own name or namedness is not the node's, as
+    /// `encode_node` finds it. The aliases numbered by first use, as `pack` numbers them.
+    pub fn with_kind_aliases(mut self, kind_aliases: Vec<(String, bool)>) -> Result<Self, String> {
+        // A parser writes format 15's columns (`written`); a tape held in another format came from a store.
+        let Held::F15(c) = &mut self.held else { return Err("a written tape is held in format 15".into()) };
+        if kind_aliases.len() >= usize::from(SENTINEL)
+            || c.codes.iter().any(|code| code.alias != SENTINEL && usize::from(code.alias) >= kind_aliases.len())
+        {
+            return Err("a written tape's aliases do not agree with its codes".into());
+        }
+        c.kind_aliases = kind_aliases;
+        // The table as the tape API reads it names the aliases: made again from them.
+        c.table = Default::default();
+        Ok(self)
     }
 
     /// The columns of `nodes`, in preorder with their sizes set: codes folded and numbered by
@@ -2393,7 +2418,9 @@ impl TapeDoc {
         let (digest, _) = validated::visit(&source, &grammar, image, budget, |_, _| {})?;
         checked(budget)?;
         let image = Arc::new(image.clone());
+        let held = Arc::new(formats::DocTape::new(Arc::clone(&image), Arc::clone(&source)));
         Ok(Self {
+            held,
             source_digest: digest,
             points: Arc::new(Points {
                 source: Arc::clone(&source),
@@ -2406,7 +2433,7 @@ impl TapeDoc {
             texts: Arc::default(),
             guests: Guests::Owned(Arc::new(Vec::new())),
             host: None,
-            held: Arc::new(formats::DocTape::new(Arc::clone(&image))),
+
             image,
             digest: Arc::default(),
             path: None,

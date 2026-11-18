@@ -41,17 +41,17 @@ const INDEX_SIZE: i64 = size_of::<Index>() as i64;
 
 impl B<'_, '_> {
     /// The block's word of type `ty` at `p + offset` (aligned).
-    fn word_at(&mut self, ty: cranelift_codegen::ir::Type, p: Value, offset: i32) -> Value {
+    pub(crate) fn word_at(&mut self, ty: cranelift_codegen::ir::Type, p: Value, offset: i32) -> Value {
         self.f.ins().load(ty, fields(), p, offset)
     }
     /// The address a span at `p + at` refers to: its own address plus its offset.
-    fn follow(&mut self, p: Value, at: i32) -> Value {
+    pub(crate) fn follow(&mut self, p: Value, at: i32) -> Value {
         let off = self.word_at(I64, p, at + SPAN_OFF);
         let span = self.f.ins().iadd_imm(p, i64::from(at));
         self.f.ins().iadd(span, off)
     }
     /// `p + index * size` (`index` a u32).
-    fn item(&mut self, p: Value, index: Value, size: i64) -> Value {
+    pub(crate) fn item(&mut self, p: Value, index: Value, size: i64) -> Value {
         let index = self.f.ins().uextend(I64, index);
         let at = self.f.ins().imul_imm(index, size);
         self.f.ins().iadd(p, at)
@@ -230,6 +230,17 @@ pub fn rel_group_row(b: &mut B<'_, '_>) -> Value {
     b.word_at(I32, p, 0)
 }
 
+/// `rel_key_mix(rel, h, v)`: a key's hash `h` with its next value `v` mixed in (`rerail_blocks::mix`; a key's
+/// hash is its values mixed in order into `rerail_blocks::SEED`). The one hash of a key: the host's index builder,
+/// the device's and every probe's (decision 0325 step 5). It reads nothing of the relation.
+pub fn rel_key_mix(b: &mut B<'_, '_>) -> Value {
+    let (h, v) = (b.arg(0), b.arg(1));
+    let h = b.f.ins().bxor(h, v);
+    let h = b.f.ins().imul_imm(h, 0x9E37_79B9_7F4A_7C15_u64 as i64);
+    let s = b.f.ins().ushr_imm(h, 29);
+    b.f.ins().bxor(h, s)
+}
+
 #[cfg(test)]
 mod tests {
     use rerail_blocks::block::{Block, kind};
@@ -248,7 +259,13 @@ mod tests {
         type Group = extern "C" fn(*const u8, u32, u64) -> u64;
         // SAFETY: each read's signature: its descriptor's address, then its parameters.
         let (rows_get, col_get, rel_get): (Two, Two, Two) =
-            unsafe { (std::mem::transmute(reads.function("rows_get")), std::mem::transmute(reads.function("col_get")), std::mem::transmute(reads.function("rel_get"))) };
+            unsafe {
+                (
+                    std::mem::transmute::<*const u8, Two>(reads.function("rows_get")),
+                    std::mem::transmute::<*const u8, Two>(reads.function("col_get")),
+                    std::mem::transmute::<*const u8, Two>(reads.function("rel_get")),
+                )
+            };
         let rel_dead: One = unsafe { std::mem::transmute(reads.function("rel_dead")) };
         let rel_group: Group = unsafe { std::mem::transmute(reads.function("rel_group")) };
 

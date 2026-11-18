@@ -141,6 +141,8 @@ fn a_wrap_goes_before_the_node_it_wraps() {
     let native = crate::native_ir::lower(&p, 0, 0).expect("lowers");
     let compiled = crate::native_cpu_stream::compile(&native).expect("compiles");
     assert!(compiled.wraps, "the tape has the wrap's columns");
+    // The wrap moves the rows after the node it wraps (`shift_rows`): a pass over the table's tail.
+    assert_eq!(compiled.table_passes, 1, "the wrap's shift, a call");
     assert_eq!(compiled.run(b"a(", &t1).expect("parses"), nodes);
     // A wrap with no node made before it at its level: refused.
     let first = WRAPPED.replace("  0004 LEAF #2\n", "  0004 RETAG #1\n");

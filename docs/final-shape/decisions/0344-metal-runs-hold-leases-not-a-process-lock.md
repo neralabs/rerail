@@ -46,7 +46,7 @@ s1000 internal_dead_code, the wave pinned to the GPU:
 - 19 wave batches began, 8 of them while another ran, with the same 0 findings.
 - The machine's load was 54–91 during these runs, too high to time the overlap. The timing is still open.
 
-The overlap's timing (2026-11-17, 0373's engine). `RERAIL_GPU_OVERLAP=off` runs each batch of programs as it
+The overlap's timing (2026-11-17, 0392's engine). `RERAIL_GPU_OVERLAP=off` runs each batch of programs as it
 begins, for this comparison. The runs used an M3 Max with the wave pinned to the GPU, at s1000, with on and off in
 turn, 4 runs each. A quiet machine was not to be had: the M3's load was 67–72 on 16 cores, and this M5 Max's 64–71,
 where run walls swung from 3.5 to 13.4 s.

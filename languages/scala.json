@@ -1,0 +1,27 @@
+{
+  "format": "rerail.language/v1",
+  "id": "scala",
+  "status": "supported",
+  "family": "scala",
+  "dialects": [
+    {
+      "label": "scala",
+      "variant": "Scala",
+      "suffixes": [
+        ".scala",
+        ".sc"
+      ],
+      "parser": "tree-sitter",
+      "grammar": "ast-grep:Scala",
+      "tapeTag": 26
+    }
+  ],
+  "capabilities": {
+    "scope": "not-supported-yet",
+    "value": "not-supported-yet",
+    "arguments": "not-supported-yet",
+    "calls": "not-supported-yet",
+    "formatArgs": "not-supported-yet"
+  },
+  "suppressions": []
+}
