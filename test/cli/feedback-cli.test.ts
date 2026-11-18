@@ -8,7 +8,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runFeedbackCommand } from "../../src/cli/feedback-cli.js";
 import { defaultRerailDatabasePath, openRerailDatabase, steerFeedback } from "../../src/engine/index.js";
 import { SqliteSessionStore } from "../../src/runtime/index.js";
-import { installPackDirectory } from "../support/installed-packs.js";
+import { installPackDirectory, versionOf } from "../support/installed-packs.js";
+import { repositoryPath } from "../support/oracles.js";
 import { startTestRepository } from "../support/started-repository.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
@@ -27,7 +28,7 @@ afterEach(async () => {
  * Linux CI runner, and the file's first case, which pays for the first read, ran past its 5 s limit.
  */
 function pythonPackOfTheTwoRules(root: string): string {
-  const source = join("packs", "python");
+  const source = repositoryPath("packs", "python");
   const copy = join(root, "python-pack");
   mkdirSync(join(copy, "rules"), { recursive: true });
   const pack = JSON.parse(readFileSync(join(source, "pack.json"), "utf8")) as { rules: { id: string; document: string }[] };
@@ -48,7 +49,7 @@ async function steeredRepository() {
   const home = join(root, "home");
   vi.stubEnv("RERAIL_HOME", home);
   const pack = pythonPackOfTheTwoRules(root);
-  installPackDirectory(pack, "python", home, JSON.parse(readFileSync(join(pack, "package.json"), "utf8")).version);
+  installPackDirectory(pack, "python", home, versionOf(pack));
   const workspace = join(root, "repo");
   mkdirSync(workspace);
   execFileSync("git", ["init", "-q", workspace]);
