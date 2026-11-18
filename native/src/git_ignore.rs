@@ -79,11 +79,7 @@ impl GitIgnore {
     /// every folder below the root.
     fn leave_folders(&mut self) {
         // A file that cannot be read on the way is reported by the question that reads it.
-        let _ = self.stack.at_path(
-            Path::new(".git"),
-            Some(Mode::DIR),
-            &self.repository.objects,
-        );
+        let _ = self.stack.at_path(Path::new(".git"), Some(Mode::DIR), &self.repository.objects);
     }
 
     /// Whether Git ignores `relative` (to the opened root, `/`-separated). The root itself and any
@@ -208,13 +204,20 @@ impl Sources {
     /// file that cannot be resolved, which the stack's own read reports.
     fn read(repository: &gix::Repository, worktree: &Path) -> Option<Self> {
         let config = repository.config_snapshot();
-        let excludes_file = match config.trusted_path("core.excludesFile").ok()? {
-            Some(path) => Some(path),
-            None => default_excludes_file(),
-        };
+        let excludes_file = config
+            .trusted_path("core.excludesFile")
+            .ok()?
+            .or_else(default_excludes_file);
         let common = repository.common_dir().to_path_buf();
-        let files = [worktree.join(".gitignore"), common.join("info").join("exclude")];
-        let stamps = files.iter().chain(&excludes_file).map(|file| Stamp::of(file)).collect();
+        let files = [
+            worktree.join(".gitignore"),
+            common.join("info").join("exclude"),
+        ];
+        let stamps = files
+            .iter()
+            .chain(&excludes_file)
+            .map(|file| Stamp::of(file))
+            .collect();
         Some(Self {
             worktree: worktree.to_path_buf(),
             common,
@@ -520,7 +523,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// A configuration value as Git writes a path in one: forward slashes, which every platform reads.
+    /// A path as a configuration value: forward slashes, which Git reads on every platform.
     fn config_path(path: &Path) -> String {
         path.to_string_lossy().replace('\\', "/")
     }
@@ -529,7 +532,11 @@ mod tests {
     fn says_whether_a_matcher_opened_now_reads_its_rules() {
         let root = fixture(
             "sources",
-            &[(".gitignore", "gen/\n"), ("named-a", "a.py\n"), ("pkg/x.py", "")],
+            &[
+                (".gitignore", "gen/\n"),
+                ("named-a", "a.py\n"),
+                ("pkg/x.py", ""),
+            ],
         );
         git(&root, &["init", "--initial-branch=main"]);
         let root = root.canonicalize().unwrap();
