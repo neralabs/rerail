@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync } from "node:fs";
+import { closeSync, fstatSync, lstatSync, openSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { TreeNotice, TreeWatch } from "../../../../../src/engine/code-rule/tree-watch.js";
 
@@ -47,6 +47,8 @@ export class StampTreeWatch implements TreeWatch {
   readonly #lost = new Set<string>();
   readonly #ended = new Set<string>();
   readonly #held = new Set<string>();
+  /** By root, a handle on each folder a Linux watch follows: the watch stands for that folder, not for its path. */
+  readonly #handles = new Map<string, Map<string, number>>();
   closed = false;
 
   constructor(options: { byFolder?: boolean } = {}) {
@@ -60,7 +62,16 @@ export class StampTreeWatch implements TreeWatch {
     if (before === undefined) this.#entries.set(root, entriesOf(root));
     else if (this.#byFolder) this.#takeUp(root, before, folders);
     this.folders.set(root, folders);
+    if (this.#byFolder) this.#hold(root, folders);
     return true;
+  }
+
+  /** Holds a handle on each of `folders` not held yet, and lets go of each held one no longer followed. */
+  #hold(root: string, folders: readonly string[]): void {
+    const handles = this.#handles.get(root) ?? new Map<string, number>();
+    this.#handles.set(root, handles);
+    for (const [folder, handle] of handles) if (!folders.includes(folder)) letGoOf(handles, folder, handle);
+    for (const folder of folders) if (!handles.has(folder)) handles.set(folder, openSync(join(root, folder), "r"));
   }
 
   /** Takes in, with no notice, what the folders `folders` adds to the watch of `root` hold now. */
@@ -73,6 +84,7 @@ export class StampTreeWatch implements TreeWatch {
   unwatch(root: string): void {
     this.#entries.delete(root);
     this.folders.delete(root);
+    this.#hold(root, []);
     this.unwatched.push(root);
   }
 
@@ -92,19 +104,24 @@ export class StampTreeWatch implements TreeWatch {
     this.#entries.set(root, after);
     const notice = this.#watched(root, noticeOf(root, before, after, this.#lost.delete(root), this.#ended.delete(root)));
     if (notice.ended) this.unwatch(root);
-    else if (this.#byFolder) this.#letGo(root, before, after);
-    return tells(notice) ? notice : undefined;
+    const gone = this.#byFolder && !notice.ended ? this.#letGo(root) : [];
+    const told = gone.length === 0 ? notice : { ...notice, changed: notice.changed.filter(path => !gone.includes(path)), renamed: [...new Set([...notice.renamed, ...gone])] };
+    return tells(told) ? told : undefined;
   }
 
   /**
-   * As Linux's watch lets go of a folder deleted or moved away, with the folders under it: one put back at the same path
-   * is another folder, and tells nothing until a `watch` names it again.
+   * As Linux's watch lets go of a folder deleted or moved away, with the folders under it, and tells of it as an entry of
+   * its parent that came or went: one put back at the same path is another folder, and tells nothing until a `watch`
+   * names it again. The folders let go of.
    */
-  #letGo(root: string, before: ReadonlyMap<string, string>, after: ReadonlyMap<string, string>): void {
-    const followed = this.folders.get(root) ?? [];
-    const gone = followed.filter(folder => folder !== "" && inodeOf(after.get(folder)) !== inodeOf(before.get(folder)));
-    if (gone.length === 0) return;
-    this.folders.set(root, followed.filter(folder => !gone.some(path => folder === path || folder.startsWith(`${path}/`))));
+  #letGo(root: string): string[] {
+    const handles = this.#handles.get(root) ?? new Map<string, number>();
+    const gone = [...handles].filter(([folder, handle]) => folder !== "" && !stillAt(handle, join(root, folder))).map(([folder]) => folder);
+    if (gone.length === 0) return gone;
+    const under = (folder: string): boolean => gone.some(path => folder === path || folder.startsWith(`${path}/`));
+    this.folders.set(root, (this.folders.get(root) ?? []).filter(folder => !under(folder)));
+    for (const [folder, handle] of handles) if (under(folder)) letGoOf(handles, folder, handle);
+    return gone;
   }
 
   /** `notice` as the watch of `root` tells it: with `byFolder`, only the entries of the folders it was watched with. */
@@ -119,6 +136,7 @@ export class StampTreeWatch implements TreeWatch {
     this.closed = true;
     this.#entries.clear();
     this.folders.clear();
+    for (const root of this.#handles.keys()) this.#hold(root, []);
   }
 
   /** Takes in, with no notice, every write made in `root` so far, as a write through a hard link or a memory map. */
@@ -162,17 +180,25 @@ function parentOf(path: string): string {
   return slash < 0 ? "" : path.slice(0, slash);
 }
 
-/** The inode of an entry's stamp (`entriesOf`); undefined for no entry. */
-function inodeOf(stamp: string | undefined): string | undefined {
-  return stamp?.slice(0, stamp.indexOf(":"));
+/**
+ * Whether the folder `handle` was opened on is still the one at `path`: a folder deleted has no link left, and one moved
+ * away or put back is another inode there, even where the file system gave the new folder the old one's number.
+ */
+function stillAt(handle: number, path: string): boolean {
+  const held = fstatSync(handle);
+  const now = lstatSync(path, { throwIfNoEntry: false });
+  return held.nlink > 0 && now !== undefined && now.ino === held.ino && now.dev === held.dev;
 }
 
-/** What changed between two takes: an entry that came, went or was put back as another (a new inode) is renamed. */
+function letGoOf(handles: Map<string, number>, folder: string, handle: number): void {
+  closeSync(handle);
+  handles.delete(folder);
+}
+
 function noticeOf(root: string, before: ReadonlyMap<string, string>, after: ReadonlyMap<string, string>, lost: boolean, ended: boolean): TreeNotice {
   if (lost || ended) return { root, changed: [], renamed: [], lost, ended };
-  const replaced = (path: string): boolean => inodeOf(before.get(path)) !== inodeOf(after.get(path));
-  const renamed = [...after.keys()].filter(replaced);
+  const renamed = [...after.keys()].filter(path => !before.has(path));
   renamed.push(...[...before.keys()].filter(path => !after.has(path)));
-  const changed = [...after].filter(([path, stamp]) => before.has(path) && !replaced(path) && before.get(path) !== stamp).map(([path]) => path);
+  const changed = [...after].filter(([path, stamp]) => before.has(path) && before.get(path) !== stamp).map(([path]) => path);
   return { root, changed, renamed, lost: false, ended: false };
 }
