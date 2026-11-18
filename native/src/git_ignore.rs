@@ -565,6 +565,9 @@ mod tests {
         assert!(ignore.sources_unchanged());
         std::fs::write(root.join("named-a"), "b.py\nc.py\n").unwrap();
         assert!(!ignore.sources_unchanged(), "the named file changed");
+        let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
+        git(&root, &["config", "core.ignoreCase", "true"]);
+        assert!(!ignore.sources_unchanged(), "patterns fold case now");
 
         // Each folder's .gitignore is read again once the sources hold.
         let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
