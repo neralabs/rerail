@@ -793,11 +793,15 @@ function onMessage({ event, data: next }, first) {
 /** Whether a message asks for a read: a new token, a conflict event, a failed count to try again. */
 const asksRead = (event, next) => next !== token || event === "conflicts" || mergeAssistCountRetry();
 
-/** A new stream's first message: what it covers is not known, so read now; the pace starts over. */
+/**
+ * A new stream's first message: what changed while none was open is not known, a conflict event included, so read
+ * now, the sidebar's count too; the pace starts over.
+ */
 function startOver(next) {
   clearTimeout(paceTimer);
   paceTimer = null;
   lastChangeRead = -Infinity;
+  mergeAssistCountDue = true;
   token = next;
   void refresh();
 }

@@ -46,8 +46,18 @@ function openStream(signal: AbortSignal): Response {
 }
 
 const stream = (): Stream => streams.at(-1)!;
-/** Lets the page take what the test sent: the stream's bytes, the reads they start and their answers. */
-const settle = async (): Promise<void> => { await vi.advanceTimersByTimeAsync(0); };
+/**
+ * Lets the page take what the test sent: the stream's bytes, the reads they start and their answers. Each is a chain
+ * of promises, and a turn of the event loop runs every promise ready before it; no clock is read or waited on.
+ */
+const settle = async (): Promise<void> => {
+  for (let turn = 0; turn < 20; turn += 1) await new Promise(resolve => setImmediate(resolve));
+};
+/** Moves the page's clock on by `ms`, then lets what that started run. */
+const after = async (ms: number): Promise<void> => {
+  await vi.advanceTimersByTimeAsync(ms);
+  await settle();
+};
 const readsOf = (path: string): number => reads.filter(p => p === path).length;
 
 function setHidden(hidden: boolean): void {
@@ -70,7 +80,7 @@ beforeEach(async () => {
     return answer(url);
   });
   setScope({ repository: "A", checkout: "/work/a" });
-  Object.assign(data, { mergeAssist: null, mergeAssistError: null, mergeAssistExperiment: null, disconnected: false });
+  Object.assign(data, { mergeAssist: null, mergeAssistError: null, mergeAssistExperiment: null, disconnected: false, loaded: false });
   ui.view = "settings";
   ui.panel = null;
   setNeeds(currentNeeds);
@@ -95,9 +105,9 @@ describe("the dashboard following the daemon's change stream", () => {
 
     expect(readsOf("/api/repositories")).toBe(1);
     expect(data.loaded).toBe(true);
-    const after = reads.length;
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(reads.length).toBe(after);
+    const readsBefore = reads.length;
+    await after(60_000);
+    expect(reads.length).toBe(readsBefore);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -113,7 +123,7 @@ describe("the dashboard following the daemon's change stream", () => {
     await settle();
     expect(readsOf("/api/repositories")).toBe(2);
 
-    await vi.advanceTimersByTimeAsync(5_000);
+    await after(5_000);
     expect(readsOf("/api/repositories")).toBe(3);
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -158,6 +168,7 @@ describe("the dashboard following the daemon's change stream", () => {
 
     up = true;
     await vi.advanceTimersToNextTimerAsync();
+    await settle();
     expect(streams).toHaveLength(2);
     const before = readsOf("/api/repositories");
     stream().send("t9");
@@ -188,12 +199,12 @@ describe("the dashboard following the daemon's change stream", () => {
     await settle();
     expect(readsOf("/api/merge-assist")).toBe(1);
 
-    await vi.advanceTimersByTimeAsync(5_000);
+    await after(5_000);
     stream().send("t3");
     await settle();
     expect(readsOf("/api/merge-assist")).toBe(1);
 
-    await vi.advanceTimersByTimeAsync(5_000);
+    await after(5_000);
     stream().send("t3", "conflicts");
     await settle();
     expect(readsOf("/api/merge-assist")).toBe(2);
