@@ -930,6 +930,12 @@ pub(crate) struct Ctx {
     pub collecting: u64,
     pub t: Tok,
     pub line_last: Tok,
+    /// `#pragma`'s first three tokens (the compiled words' own).
+    pub pragma_toks: [Tok; 3],
+    /// `push_macro`'s stack: `(u32, u32)`s (`PAIR`), a slot and its definition.
+    pub pushed: *mut u8,
+    pub npushed: u64,
+    pub room_pushed: u64,
     pub from_file: u8,
     pub in_if: u8,
 }
@@ -1087,6 +1093,10 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         collecting: u64::from(m.collecting),
         t: m.t,
         line_last: m.line_last,
+        pragma_toks: [Tok::default(); 3],
+        room_pushed: room(&mut m.pushed, bounds.macros * 4),
+        pushed: m.pushed.as_mut_ptr().cast(),
+        npushed: m.pushed.len() as u64,
         from_file: u8::from(m.from_file),
         in_if: u8::from(m.in_if),
     };
@@ -1110,6 +1120,7 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         m.levels.set_len(c.nlevels as usize);
         m.exps.set_len(c.nexps as usize);
         m.wanted.set_len(c.nwanted as usize);
+        m.pushed.set_len(c.npushed as usize);
         m.wanted_bytes.set_len(c.nwanted_bytes as usize);
         m.ex.vals.set_len(c.nvals as usize);
         m.ex.ops.set_len(c.nops as usize);
