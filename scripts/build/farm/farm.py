@@ -647,6 +647,12 @@ def wrapper(rustc, args):
         if os.path.exists(plain):
             os.execv(plain, [plain, rustc] + args)
         os.execv(rustc, [rustc] + args)
+    # Linux: a program cargo runs (a build script, a binary) is compiled here, never written by the
+    # farm's sccache. Its server writes a hit's files while its other threads start compilers, each of
+    # which holds the file open until it execs, and running the program then fails with "Text file
+    # busy" (ETXTBSY; twice in an hour on the build boxes, 2026-11-18). macOS has no such error.
+    if sys.platform != "darwin" and "bin" in ",".join(values(args, "--crate-type")).split(","):
+        os.execv(rustc, [rustc] + args)
     # Not cargo's probes (`--print`, crate `___`): cargo keeps their output, a failure included, in
     # `target/.rustc_info.json`, and would replay a refusal after its cause was gone.
     if crate != "___" and not any(a == "--print" or a.startswith("--print=") for a in args):
