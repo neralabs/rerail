@@ -9,9 +9,8 @@
 //! less what the edit removes or replaces, plus what it adds.
 use super::handles::{AtomRef, RuleRef};
 use super::{AtomId, Cell, Image, RelId, RuleId, bad};
-use crate::code_rule_dsl::logic::front::{Lists, Program};
+use crate::code_rule_dsl::logic::front::{ast::Program, name::Lists};
 use std::collections::{BTreeMap, HashSet};
-use super::manager::Store;
 use std::sync::Arc;
 
 /// Fewest ranges a view may have; it may have up to a quarter of its parent's rules (`max_ranges`, decision 0244).
@@ -23,12 +22,24 @@ pub fn max_ranges(rules: usize) -> usize {
     (rules / 4).max(MAX_RANGES)
 }
 
-/// Each form holds its analyses (`analyses`, decision 0281 §2), made as they are asked for and dropped with it.
+/// A version's slot for what a layer above keeps of it, dropped with it: the pass manager's analyses
+/// (`manager::Store`), of a type this crate does not know.
+#[derive(Default)]
+pub struct Held(pub std::sync::OnceLock<Box<dyn std::any::Any + Send + Sync>>);
+
+/// Each form holds its analyses (in its `held` slot, decision 0281 §2), made as they are asked for and dropped with it.
 pub enum Version {
-    Base { image: Arc<Image>, digest: u64, analyses: Store },
+    Base { image: Arc<Image>, digest: u64, analyses: Held },
     /// Ranges of `parent`'s rule ids, ascending; `parent` is never a view (a view of a view is of its parent).
-    View { parent: Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64, analyses: Store },
-    Overlay { parent: Arc<Version>, delta: Arc<Image>, size: usize, depth: usize, digest: u64, analyses: Store },
+    View { parent: Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64, analyses: Held },
+    Overlay { parent: Arc<Version>, delta: Arc<Image>, size: usize, depth: usize, digest: u64, analyses: Held },
+}
+
+/// A version as its size and digest: what tells two apart (`differences` shows them).
+impl std::fmt::Debug for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Version {{ rules: {}, digest: {:#x} }}", self.size(), self.digest())
+    }
 }
 
 /// What a version is made of over its parent (`Version::layer`).
@@ -121,7 +132,7 @@ impl Version {
             return Err(bad("a delta is opened over its parent (`Version::over`)"));
         }
         let digest = image.own_sum();
-        Ok(Arc::new(Version::Base { image: Arc::new(image), digest, analyses: Store::default() }))
+        Ok(Arc::new(Version::Base { image: Arc::new(image), digest, analyses: Held::default() }))
     }
 
     /// The overlay of `parent` and the delta `bytes` hold: the delta's bases must be `parent`'s id spaces, and what
@@ -173,13 +184,13 @@ impl Version {
         }
         d = d.wrapping_add(delta.own_sum());
         let size = parent.size() - removed.len() + delta.rules();
-        Ok(Arc::new(Version::Overlay { parent: parent.clone(), size, depth: parent.depth() + 1, digest: d, delta: Arc::new(delta), analyses: Store::default() }))
+        Ok(Arc::new(Version::Overlay { parent: parent.clone(), size, depth: parent.depth() + 1, digest: d, delta: Arc::new(delta), analyses: Held::default() }))
     }
 
     /// A view of `parent`'s rules in `ranges` (of its rule ids), of `size` rules and digest `digest` (the builder's).
-    pub(crate) fn view(parent: &Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64) -> Arc<Version> {
+    pub fn view(parent: &Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64) -> Arc<Version> {
         debug_assert!(!matches!(**parent, Version::View { .. }), "a view of a view is of its parent");
-        Arc::new(Version::View { parent: parent.clone(), ranges, size, digest, analyses: Store::default() })
+        Arc::new(Version::View { parent: parent.clone(), ranges, size, digest, analyses: Held::default() })
     }
     /// Whether rule id `k` is in `ranges`.
     fn in_ranges(ranges: &[(u32, u32)], k: u32) -> bool {
@@ -195,19 +206,20 @@ impl Version {
         self.down().next().expect("a version has an image")
     }
     /// The base image this version is over, at the bottom of its stack.
-    pub(crate) fn root(&self) -> &Arc<Image> {
+    pub fn root(&self) -> &Arc<Image> {
         match self {
             Version::Base { image, .. } => image,
             Version::View { parent, .. } | Version::Overlay { parent, .. } => parent.root(),
         }
     }
     /// Whether `im` is one of this version's images: its ids are this version's.
-    pub(crate) fn holds_image(&self, im: &Image) -> bool {
+    pub fn holds_image(&self, im: &Image) -> bool {
         self.down().any(|x| std::ptr::eq(x, im))
     }
 
-    /// Its analyses (decision 0281 §2): asked for through a pipeline's `Cx`, or `manager::analysis`.
-    pub fn analyses(&self) -> &Store {
+    /// The slot its analyses are kept in (decision 0281 §2): the pass manager's store, which it puts there on first use
+    /// (`manager::VersionAnalyses`).
+    pub fn held(&self) -> &Held {
         match self {
             Version::Base { analyses, .. } | Version::View { analyses, .. } | Version::Overlay { analyses, .. } => analyses,
         }
@@ -449,10 +461,10 @@ impl Version {
     pub fn outputs(&self) -> impl ExactSizeIterator<Item = AtomId> + '_ {
         self.owner(2).outputs().iter().map(|&a| AtomId(a))
     }
-    pub(crate) fn inputs_hash(&self) -> u64 {
+    pub fn inputs_hash(&self) -> u64 {
         self.owner(1).inputs_hash()
     }
-    pub(crate) fn outputs_hash(&self) -> u64 {
+    pub fn outputs_hash(&self) -> u64 {
         self.owner(2).outputs_hash()
     }
 
@@ -494,6 +506,32 @@ pub fn trees_decoded() -> (usize, Option<String>) {
 /// Forgets this thread's decodes (`trees_decoded`): a check counts a run's alone.
 pub fn forget_trees_decoded() {
     DECODED.with(|d| d.set((0, None)));
+}
+
+/// Whether `a` and `b` are one program, as a debug check compares a version with the tree's image: the same size, the
+/// same digest apart from the request record's `asked` rows, and the record the same by rule. The digest is a sum,
+/// blind to the rules' order, but the record states each request rule's readers by its place among its relation's
+/// rules (decision 0331). So a version whose passes put a rule elsewhere than the tree's (a rule pass run as an edit
+/// writes its rules after the rest) holds the same record in other rows, and one whose readers sit on the wrong rules
+/// can hold the same rows, and the same digest.
+pub fn same_program(a: &Version, b: &Version) -> bool {
+    if a.size() != b.size() {
+        return false;
+    }
+    let asked_hash = |v: &Version| v.about_facts().into_iter().filter(|f| v.text(f.name()) == "asked").fold(0u64, |h, f| h.wrapping_add(f.hash()));
+    // Each request relation's rules by content, each with its readers, in order.
+    let by_rule = |v: &Version| -> BTreeMap<String, Vec<(u64, Vec<String>)>> {
+        v.asked()
+            .into_iter()
+            .map(|(req, by)| {
+                let hashes: Vec<u64> = v.rel(&req).into_iter().flat_map(|rel| v.heads(rel)).map(|r| r.hash()).collect();
+                let mut rules: Vec<(u64, Vec<String>)> = by.into_iter().enumerate().map(|(k, readers)| (hashes.get(k).copied().unwrap_or(0), readers.into_iter().collect())).collect();
+                rules.sort();
+                (req, rules)
+            })
+            .collect()
+    };
+    a.digest().wrapping_sub(asked_hash(a)) == b.digest().wrapping_sub(asked_hash(b)) && by_rule(a) == by_rule(b)
 }
 
 /// What two versions differ in, by text: the rules, declarations, facts and about rows only one has (a debug check's

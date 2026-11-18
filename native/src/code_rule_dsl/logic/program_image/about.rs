@@ -9,7 +9,7 @@ use super::{AtomId, Cell, RelId};
 
 /// The columns of each about relation that name a relation (column 0 is the program's name). The builder gives each
 /// such cell's atom a relation id.
-pub(crate) const RELATION_COLUMNS: &[(&str, &[usize])] = &[
+pub const RELATION_COLUMNS: &[(&str, &[usize])] = &[
     ("answer", &[1, 3]),
     ("asked", &[1, 3]),
     ("native_dfs", &[1, 2, 3]),
@@ -36,11 +36,11 @@ pub(crate) const RELATION_COLUMNS: &[(&str, &[usize])] = &[
 ];
 
 /// The relation columns of about relation `rel`.
-pub(crate) fn relation_columns(rel: &str) -> &'static [usize] {
+pub fn relation_columns(rel: &str) -> &'static [usize] {
     RELATION_COLUMNS.iter().find(|(r, _)| *r == rel).map_or(&[], |(_, c)| c)
 }
 
-/// A native relation's kind (`front::Native`'s variants).
+/// A native relation's kind (`front::ast::Native`'s variants).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeKind {
     DfsFirst,
@@ -53,7 +53,7 @@ pub enum NativeKind {
     ReachThrough,
 }
 
-/// A native relation: its kind, the relations it reads (`front::Native::reads`, in its order) and its every field.
+/// A native relation: its kind, the relations it reads (`front::ast::Native::reads`, in its order) and its every field.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeRef {
     pub rel: RelId,
@@ -62,7 +62,7 @@ pub struct NativeRef {
     pub spec: NativeSpec,
 }
 
-/// A native relation's fields (`front::Native`'s, variant by variant): each relation by its id, each other name by
+/// A native relation's fields (`front::ast::Native`'s, variant by variant): each relation by its id, each other name by
 /// its atom.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NativeSpec {
@@ -123,7 +123,7 @@ pub struct About {
     pub shapes: Vec<ShapeRef>,
 }
 
-/// A gate (`front::Gate`): its key, its relation, its level, its source, and the relations it quiets and depends on,
+/// A gate (`front::ast::Gate`): its key, its relation, its level, its source, and the relations it quiets and depends on,
 /// in order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GateRef {
@@ -135,7 +135,7 @@ pub struct GateRef {
     pub deps: Vec<RelId>,
 }
 
-/// A join shape directive (`front::Shape`), each part by its atom.
+/// A join shape directive (`front::ast::Shape`), each part by its atom.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShapeRef {
     pub head: AtomId,
@@ -144,7 +144,7 @@ pub struct ShapeRef {
     pub text: AtomId,
 }
 
-/// When a shape's literal may join (`front::ShapeWait`).
+/// When a shape's literal may join (`front::ast::ShapeWait`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShapeWaitRef {
     After(AtomId),

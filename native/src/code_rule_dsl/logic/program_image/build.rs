@@ -22,7 +22,7 @@ use super::encoder::{self, CellText, Decl, Encoder, FactRel, Parts};
 use super::handles::{AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
 use super::version::{Made, Version, max_ranges};
 use super::{ABOUT_BIT, AtomId, Cell, RelId, RuleId, Slot, kind};
-use crate::code_rule_dsl::logic::front::{List, Program, Rule, Value};
+use crate::code_rule_dsl::logic::front::{ast::{Program, Rule, Value}, name::List};
 use crate::code_rule_dsl::logic::program_facts::Facts;
 use std::sync::Arc;
 
@@ -36,7 +36,7 @@ pub enum T<'a> {
     Top,
     Int(i64),
     /// A branded atom (decision 0270).
-    Branded(crate::code_rule_dsl::logic::front::Branded),
+    Branded(crate::code_rule_dsl::logic::front::ast::Branded),
     Str(&'a str),
     StrAtom(AtomId),
     Call(&'a str, Vec<T<'a>>),
@@ -74,6 +74,7 @@ impl<'a> From<&'a str> for Rel<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct Builder<'p> {
     parent: Option<&'p Arc<Version>>,
     /// The version whose ids this image's are: the parent, or the version a fold is of.
@@ -107,16 +108,22 @@ impl Builder<'static> {
         for r in &prog.rules {
             b.add(r)?;
         }
+        b.set_program_header(prog);
+        Ok(b)
+    }
+
+    /// `prog`'s header but maintenance's parts on a base whose rules are written: its declarations, facts, inputs,
+    /// outputs and `.about` rows. The lowering writes a text's rules in its walk, then this (decision 0377 step 3).
+    pub fn set_program_header(&mut self, prog: &Program) {
         for (n, c) in &prog.decls {
-            b.declare_names(n, c.as_slice());
+            self.declare_names(n, c.as_slice());
         }
         for (r, rows) in &prog.facts {
-            b.set_facts(r, rows);
+            self.set_facts(r, rows);
         }
-        b.set_inputs(&prog.inputs);
-        b.set_outputs(&prog.outputs);
-        b.set_about(&super::about_of(prog));
-        Ok(b)
+        self.set_inputs(&prog.inputs);
+        self.set_outputs(&prog.outputs);
+        self.set_about(&super::about_of(prog));
     }
 }
 
@@ -150,7 +157,7 @@ impl<'p> Builder<'p> {
         Builder { parent: None, ids: Some(input), enc: Encoder::with_ids_of(input), removed: Vec::new(), parts: Parts::default(), parts_changed: false, rows: 0 }
     }
     /// A base of all of `v`, under `v`'s atom and relation ids: each rule copied as it is, its source kept.
-    pub(crate) fn folding(v: &'p Version) -> Builder<'p> {
+    pub fn folding(v: &'p Version) -> Builder<'p> {
         let mut b = Builder::derive(v);
         for r in v.rules() {
             let id = b.copy(v, r);
@@ -208,7 +215,7 @@ impl<'p> Builder<'p> {
         }
     }
     /// The id the next added rule gets.
-    pub(crate) fn next_id(&self) -> RuleId {
+    pub fn next_id(&self) -> RuleId {
         RuleId(self.enc.rule_base() + self.enc.rules())
     }
     /// Adds `rule`, from the tree.
@@ -240,14 +247,14 @@ impl<'p> Builder<'p> {
     }
     /// Adds a copy of `rule`, one of `from`'s, recording it as the copy's source in an edit too: a rule a pass kept,
     /// when a pipeline runs it again over an edit of its input onto its last output (`manager`, 0281 §3).
-    pub(crate) fn keep_into(&mut self, from: &Version, rule: RuleRef<'_>) -> RuleId {
+    pub fn keep_into(&mut self, from: &Version, rule: RuleRef<'_>) -> RuleId {
         let id = self.copy(from, rule);
         self.enc.set_from(id.0 - self.enc.rule_base(), rule.id());
         id
     }
     /// Adds a copy of `rule`, one of `from`'s, with the source `from` records for it (`RuleRef::source`): a rule
     /// carried into a new base as it was, as a kept link splices the parts it did not link again.
-    pub(crate) fn copy_as_is(&mut self, from: &Version, rule: RuleRef<'_>) -> RuleId {
+    pub fn copy_as_is(&mut self, from: &Version, rule: RuleRef<'_>) -> RuleId {
         let id = self.copy(from, rule);
         if let Some(src) = rule.source() {
             self.enc.set_from(id.0 - self.enc.rule_base(), src);
@@ -281,7 +288,7 @@ impl<'p> Builder<'p> {
 
     // -- parts --
 
-    fn declare_names(&mut self, rel: &str, cols: &[(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)]) {
+    fn declare_names(&mut self, rel: &str, cols: &[(crate::code_rule_dsl::logic::front::name::Name, crate::code_rule_dsl::logic::front::name::Name)]) {
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
         self.declare(rel, &pairs);
     }
@@ -355,13 +362,13 @@ impl<'p> Builder<'p> {
         })))
     }
     /// The rows of about relation `name` this edit states, or its parent's (`about.rs` reads and writes them by type).
-    pub(crate) fn about_rows(&mut self, name: &str) -> Vec<Vec<Cell>> {
+    pub fn about_rows(&mut self, name: &str) -> Vec<Vec<Cell>> {
         self.own_about();
         let a = self.enc.atom(name);
         self.parts.facts.get(&(a | ABOUT_BIT)).map(|f| f.rows.clone()).unwrap_or_default()
     }
     /// States about relation `name`'s rows, every other about relation kept.
-    pub(crate) fn set_about_rows(&mut self, name: &str, rows: Vec<Vec<Cell>>) {
+    pub fn set_about_rows(&mut self, name: &str, rows: Vec<Vec<Cell>>) {
         self.own_about();
         let a = self.enc.atom(name);
         for &c in super::about::relation_columns(name) {
@@ -512,7 +519,7 @@ impl<'p> Builder<'p> {
 
 /// The view of `parent` less rules `removed` (its rules), if it is few enough ranges (`max_ranges`). A view of a view
 /// is of that view's parent, its ranges that view's less `removed`.
-pub(super) fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
+pub fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
     let (over, ranges): (&Arc<Version>, Vec<(u32, u32)>) = match &**parent {
         Version::View { parent: over, ranges, .. } => (over, ranges.clone()),
         _ => (parent, vec![(0, parent.rule_end())]),
@@ -630,8 +637,8 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
     }
     /// An aggregate `var = op over : { rel(args) }`, written as the encoder writes a tree's (`over` `None` for a
     /// count); `var` a variable. A join's separator and keys are not written term by term: refused.
-    pub fn agg(mut self, var: T<'_>, op: &crate::code_rule_dsl::logic::front::AggOp, over: Option<T<'_>>, rel: impl Into<Rel<'b>>, args: &[T<'_>]) -> Self {
-        use crate::code_rule_dsl::logic::front::AggOp;
+    pub fn agg(mut self, var: T<'_>, op: &crate::code_rule_dsl::logic::front::ast::AggOp, over: Option<T<'_>>, rel: impl Into<Rel<'b>>, args: &[T<'_>]) -> Self {
+        use crate::code_rule_dsl::logic::front::ast::AggOp;
         self.body();
         let code: u8 = match op {
             AggOp::Count => 0,
@@ -750,26 +757,6 @@ impl Version {
     /// An edit of this version (`Builder::on`).
     pub fn builder(self: &Arc<Self>) -> Builder<'_> {
         Builder::on(self)
-    }
-
-    /// A part of this version (decision 0244): a view of the rules whose head `rules` takes, and over it an overlay of
-    /// the part's own fields, never folded: `inputs` and `outputs`, and the natives, lattices and gates of the relations
-    /// `fields` takes (`keep_relation_fields`). It costs its range list and its fields, never a copy of the program.
-    pub fn part<S: AsRef<str>>(self: &Arc<Self>, rules: impl Fn(&str) -> bool, inputs: &[S], outputs: &[S], fields: PartFields<'_>) -> Result<Arc<Version>, String> {
-        use super::manager::Pipeline;
-        use super::passes::{PartOf, Retain};
-        let mut p = Pipeline::new("part", self.clone());
-        p.program(&mut Retain(rules)).program(&mut PartOf { inputs, outputs, fields });
-        Ok(p.finish()?.0)
-    }
-
-    /// A part of this version whose rules are those whose id `rules` takes, with its own inputs and outputs (a
-    /// selection from a general form, decision 0298): one overlay, its relations' other fields this version's.
-    pub fn part_rules<S: AsRef<str>, T: AsRef<str>>(self: &Arc<Self>, rules: impl Fn(RuleId) -> bool, inputs: &[S], outputs: &[T]) -> Result<Arc<Version>, String> {
-        use super::manager::Pipeline;
-        let mut p = Pipeline::new("part", self.clone());
-        p.program(&mut super::passes::SelectPart { keep: rules, inputs, outputs });
-        Ok(p.finish()?.0)
     }
 
     /// `to` as an edit of this version: its rules matched by hash, its parts by relation. For a caller that holds
@@ -1026,15 +1013,22 @@ impl Walk<'_, '_> {
                 self.enc.close(at);
             }
             kind::AGG => {
-                // Its variables as they are; its atom rewritten.
-                let at = self.open_mapped(n);
+                // Its atom rewritten; its variables (the result, `over`) renamed as everywhere else in the rule
+                // (`Rewrite::var`), so a variable is one name throughout. The result is the node's own value.
+                let at = match rw.var(Slot(self.im.node(n).2)) {
+                    Some(a) => {
+                        let s = self.enc.slot_of(a.0);
+                        self.enc.open(kd, s)
+                    }
+                    None => self.open_mapped(n),
+                };
                 let mut c = n + 1;
                 while c < n + size {
                     if self.im.node(c).0 & kind::MASK == kind::ATOM {
                         let a = AtomRef::new(self.im, c);
                         self.atom(a, Site::Atom(a), rw);
                     } else {
-                        self.copy(c);
+                        self.copy_renamed(c, rw);
                     }
                     c += self.im.node(c).1;
                 }

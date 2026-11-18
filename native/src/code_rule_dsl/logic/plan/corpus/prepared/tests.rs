@@ -135,7 +135,7 @@
         std::fs::remove_file(&rule).unwrap();
         let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
         crate::code_rule_dsl::logic::program_facts::write(&mut facts, "rule", &program);
-        let document = crate::code_rule_dsl::logic::program_facts::document(&facts, &Default::default()).unwrap();
+        let document = crate::code_rule_dsl::logic::program_text::document(&facts, &Default::default()).unwrap();
         let query = format!(
             "{document}\n.decl negated(rel: symbol)\nnegated(rel) :- body(\"rule\", _, _, l), lit_atom(\"rule\", l, a), atom(\"rule\", a, rel, 1, _).\n.output negated\n"
         );

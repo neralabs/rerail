@@ -1,7 +1,9 @@
+use super::passes::Parts as _;
 use super::version::{Made, Version};
 use super::{AtomId, Builder, CmpOp, Extents, Grouped, Image, Lit, R, RelId, RuleId, Strings, T, TermRef, Tree, decode, encode};
 use crate::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Lists, Native, Program, Rule, Term, Value};
 use std::sync::Arc;
+use crate::code_rule_dsl::logic::program_image::manager::VersionAnalyses as _;
 
 fn same(a: &Program, b: &Program) {
     assert_eq!(format!("{a:?}"), format!("{b:?}"));
@@ -1547,4 +1549,182 @@ fn a_new_process_reruns_only_the_passes_after_a_stored_step() {
     same(&out, &unkeyed(2));
     let (_, _, runs, _) = run(2, Some(&7u64.to_le_bytes()));
     assert_eq!(runs, [0, 0, 0], "found again under the same part");
+}
+
+/// `program_facts`' own tests, which read text through `rr::parse` and the planner: above the image's crate
+/// (decision 0377).
+mod program_facts_tests {
+    /// The encoding names each string by its first use and puts the table first: the bytes the two-pass writer made
+    /// (strings counted, then the rows written), and they decode to the facts.
+    #[test]
+    fn facts_encode_as_two_passes_did_and_decode_back() {
+        use crate::code_rule_dsl::logic::front::Value;
+        use crate::code_rule_dsl::logic::program_facts::Facts;
+        let mut facts = Facts::new();
+        facts.insert("b".into(), vec![vec![Value::Str("x".into()), Value::Int(-3)].into(), vec![Value::Str("b".into()), Value::Str("y".into())].into()]);
+        facts.insert("a".into(), vec![vec![Value::Str("y".into()), Value::Str("z".into()), Value::Int(7)].into()]);
+        let mut want = Vec::new();
+        let u = |out: &mut Vec<u8>, x: u64| out.extend_from_slice(&x.to_le_bytes());
+        // Strings by first use: a, y, z, b, x.
+        let table = ["a", "y", "z", "b", "x"];
+        u(&mut want, 5);
+        for x in table {
+            u(&mut want, x.len() as u64);
+            want.extend_from_slice(x.as_bytes());
+        }
+        u(&mut want, 2);
+        let id = |x: &str| table.iter().position(|t| *t == x).unwrap() as u64;
+        for (rel, rows) in &facts {
+            u(&mut want, id(rel));
+            u(&mut want, rows.len() as u64);
+            for row in rows {
+                u(&mut want, row.len() as u64);
+                for v in row {
+                    match v {
+                        Value::Int(i) => {
+                            want.push(0);
+                            want.extend_from_slice(&i.to_le_bytes());
+                        }
+                        Value::Branded(b) => {
+                            want.push(2 + b.class as u8);
+                            want.extend_from_slice(&u64::from(b.atom).to_le_bytes());
+                        }
+                        Value::Str(x) => {
+                            want.push(1);
+                            u(&mut want, id(x));
+                        }
+                    }
+                }
+            }
+        }
+        let got = crate::code_rule_dsl::logic::program_facts::encode(&facts);
+        assert_eq!(got, want);
+        assert_eq!(crate::code_rule_dsl::logic::program_facts::decode(&got).unwrap(), facts);
+    }
+
+    /// A program reads back the same off its facts decoded: in any order of rows, and with ids that are not dense (a
+    /// map, not a vector, indexes them).
+    #[test]
+    fn a_program_reads_back_the_same_in_any_order() {
+        use crate::code_rule_dsl::logic::front::Value;
+        use crate::code_rule_dsl::logic::program_facts::Facts;
+        let prog = crate::code_rule_dsl::logic::rr::parse(
+            ".decl e(a:number, b:number)\n.input e\n.decl p(a:number, b:number)\n.output p\n\
+             p(x, y) :- e(x, y).\np(x, z) :- p(x, y), e(y, z), !e(z, x), z != @add(x, 1).\n.decl c(n:number)\nc(n) :- n = count : { e(_, _) }.\n",
+        )
+        .unwrap();
+        let mut facts = Facts::new();
+        crate::code_rule_dsl::logic::program_facts::write(&mut facts, "q", &prog);
+        let owned = crate::code_rule_dsl::logic::program_facts::program(&facts, "q").unwrap();
+        let bytes = crate::code_rule_dsl::logic::program_facts::encode(&facts);
+        assert_eq!(format!("{owned:?}"), format!("{:?}", crate::code_rule_dsl::logic::program_facts::program(&crate::code_rule_dsl::logic::program_facts::decode(&bytes).unwrap(), "q").unwrap()));
+        // Ids spread out (each times 1000) and rows reversed: read back the same.
+        let spread = |v: &Value| match v { Value::Int(i) => Value::Int(i * 1000), v => v.clone() };
+        let mut far = Facts::new();
+        for (rel, rows) in &facts {
+            // The columns that are ids (a term's, atom's, literal's or rule's), not values.
+            let ids: &[usize] = match rel.as_str() {
+                "term" | "atom" => &[1],
+                "arg" | "call_arg" | "body" => &[1, 3],
+                "rule" | "lit_atom" => &[1, 2],
+                "lit_cmp" => &[1, 2, 4],
+                "lit_agg" => &[1, 4],
+                _ => &[],
+            };
+            let mut rows: Vec<Vec<Value>> = rows.iter().map(|r| r.iter().enumerate().map(|(c, v)| if ids.contains(&c) { spread(v) } else { v.clone() }).collect()).collect();
+            rows.reverse();
+            far.insert(rel.clone(), rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
+        }
+        let bytes = crate::code_rule_dsl::logic::program_facts::encode(&far);
+        assert_eq!(format!("{:?}", crate::code_rule_dsl::logic::program_facts::program(&crate::code_rule_dsl::logic::program_facts::decode(&bytes).unwrap(), "q").unwrap()), format!("{owned:?}"));
+    }
+
+    /// The documents a program reads (`doc_scopes`) survive its facts: a stored program read back reads the same
+    /// documents, not all of them.
+    #[test]
+    fn document_scopes_read_back_as_written() {
+        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(n: node)\n.output a\n").unwrap();
+        for scopes in [None, Some(vec![(vec!["impl/**".to_owned(), "api/**".to_owned()], vec!["**/tests/**".to_owned()]), (vec![], vec![])])] {
+            prog.doc_scopes = scopes.clone();
+            prog.text_globs = if scopes.is_some() { vec!["**/*.md".to_owned(), "docs/*.rst".to_owned()] } else { Vec::new() };
+            let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
+            crate::code_rule_dsl::logic::program_facts::write(&mut facts, "p", &prog);
+            let back = crate::code_rule_dsl::logic::program_facts::program(&facts, "p").unwrap();
+            assert_eq!(back.doc_scopes, scopes);
+            assert_eq!(back.text_globs, prog.text_globs);
+        }
+    }
+
+    /// A relation the program has facts of but no rows (a constant folded to nothing) reads back as one: a stored
+    /// program is the program prepared, and its file-local part has the same memo key (`memo::program_digest`).
+    #[test]
+    fn a_relation_of_no_facts_reads_back_as_one() {
+        let mut prog = crate::code_rule_dsl::logic::front::Program::default();
+        prog.facts.insert("none".into(), Vec::new());
+        prog.facts.insert("one".into(), vec![vec![crate::code_rule_dsl::logic::front::Value::Int(1)].into()]);
+        let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
+        crate::code_rule_dsl::logic::program_facts::write(&mut facts, "p", &prog);
+        assert_eq!(crate::code_rule_dsl::logic::program_facts::program(&facts, "p").unwrap().facts, prog.facts);
+    }
+
+    /// The AST patterns a program matches survive its facts: a stored program read back (a prepared program,
+    /// O-stored-patterns) still asks the batch for `ast_match` rows. Without them, a run that reuses it finds no
+    /// pattern matches.
+    #[test]
+    fn ast_patterns_read_back_as_written() {
+        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(n: node)\n.output a\n").unwrap();
+        prog.ast_patterns = ["$O[:-$K]".to_owned(), "print($$$A)".to_owned()].into();
+        let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
+        crate::code_rule_dsl::logic::program_facts::write(&mut facts, "p", &prog);
+        assert_eq!(crate::code_rule_dsl::logic::program_facts::program(&facts, "p").unwrap().ast_patterns, prog.ast_patterns);
+    }
+}
+
+
+/// `Builder::rewrite` renames an aggregate's result variable through `Rewrite::var`, as it renames the variable's
+/// other occurrences: before, the result kept its name, so a rule whose variables were renamed (a library module's
+/// helpers renumbered at its link, decision 0377) read `$rr_agg17 = count { … }, 0 = $rr_agg21`.
+#[test]
+fn a_rewrite_renames_an_aggregates_result_too() {
+    use super::{Rewrite, Slot};
+    let p = crate::code_rule_dsl::logic::rr::parse(".decl e(x: number)\n.input e\n.decl out(n: number)\nout(n) :- n = count : { e(_) }, n > 1.\n.output out\n").unwrap();
+    let v = Builder::of_program(&p).unwrap().finish().unwrap().0;
+    let r = v.rules().find(|r| v.rel_name(r.head().rel()) == "out").expect("out's rule");
+    let n = r.vars().position(|a| v.text(a) == "n").expect("its variable n");
+    let mut b = Builder::base();
+    let m = b.atom("m");
+    struct Renamed(Slot, AtomId);
+    impl Rewrite for Renamed {
+        fn var(&mut self, s: Slot) -> Option<AtomId> {
+            (s == self.0).then_some(self.1)
+        }
+    }
+    b.rewrite(&v, r, &mut Renamed(Slot(n as u32), m)).finish().unwrap();
+    let w = b.finish().unwrap().0;
+    let shown = w.show();
+    assert!(shown.contains("$m = count") && !shown.contains("$n"), "{shown}");
+}
+
+/// A debug check compares a version with the tree's image as one program (`same_program`): the digest is blind to the
+/// rules' order, and the request record (decision 0331), stated by a rule's place among its relation's rules, is
+/// compared by rule. The same rules in another order, each with its readers, are one program; a reader on the other
+/// rule is not, though its digest is the same.
+#[test]
+fn a_record_by_place_is_compared_by_rule() {
+    use std::collections::BTreeSet;
+    let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl q(x: number)\n.output q\nq(x) :- a(x).\nq(x) :- b(x).\n";
+    let image = |swap: bool, readers: [&str; 2]| {
+        let mut p = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        if swap {
+            p.rules.swap(0, 1);
+        }
+        p.asked_by.insert("q".into(), readers.iter().map(|r| BTreeSet::from([(*r).to_owned()])).collect());
+        Builder::of_program(&p).unwrap().finish().unwrap().0
+    };
+    let (first, moved, wrong) = (image(false, ["r1", "r2"]), image(true, ["r2", "r1"]), image(true, ["r1", "r2"]));
+    assert_ne!(first.digest(), moved.digest(), "the record by place differs");
+    assert!(super::same_program(&first, &moved), "{}", super::differences(&first, &moved));
+    // The digest alone takes it for the same: a sum over the rules, and the same rows by place.
+    assert_eq!(first.digest(), wrong.digest());
+    assert!(!super::same_program(&first, &wrong), "a reader on the other rule");
 }

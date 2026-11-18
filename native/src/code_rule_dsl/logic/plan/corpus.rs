@@ -234,6 +234,7 @@ pub fn atomized_statistics(t: &Connection, db: &Connection, store: &ContentStore
 }
 
 pub use crate::code_rule_dsl::prof::thread_usage;
+use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
 
 pub fn usage() -> (f64, f64, f64) {
     // wasm32: the one thread's time as user CPU, and no resident-set counter.
@@ -898,7 +899,7 @@ fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
     let tree = {
         let (tree, _) = crate::code_rule_dsl::logic::profile::quiet(|| combine_linked(programs, extra, read, None))?;
         let (of_tree, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
-        assert_eq!((of_tree.size(), of_tree.digest()), (v.size(), v.digest()), "the parts linked as versions are the trees linked: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &v));
+        assert!(crate::code_rule_dsl::logic::program_image::same_program(&of_tree, &v), "the parts linked as versions are the trees linked: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &v));
         tree
     };
     let v = tail_version(v, &tail)?;
@@ -906,7 +907,7 @@ fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
     {
         let tree = crate::code_rule_dsl::logic::profile::quiet(|| tail_tree(tree, &tail))?;
         let (of_tree, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
-        assert_eq!((of_tree.size(), of_tree.digest()), (v.size(), v.digest()), "the combine's tail on the version is the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &v));
+        assert!(crate::code_rule_dsl::logic::program_image::same_program(&of_tree, &v), "the combine's tail on the version is the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &v));
     }
     Ok(v)
 }
@@ -1539,7 +1540,7 @@ fn requests_where_documents_are<'s>(mut p: crate::code_rule_dsl::logic::program_
         let mut tree = before.program(&front::Lists::default()).map_err(Error::Plan)?;
         requests_file_local(&mut tree);
         let (t, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
-        assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "the requests narrowed on the version are the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&t, &v));
+        assert!(crate::code_rule_dsl::logic::program_image::same_program(&t, &v), "the requests narrowed on the version are the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&t, &v));
     }
     let v = answers_where_documents_are_version(v)?;
     Ok(crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("combine", v))
@@ -4004,7 +4005,7 @@ fn run_observed(
             #[cfg(debug_assertions)]
             let mut prog = {
                 let (of_tree, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
-                assert_eq!((of_tree.size(), of_tree.digest()), (version.size(), version.digest()), "the combined program's version is the tree's, edited alike: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &version));
+                assert!(crate::code_rule_dsl::logic::program_image::same_program(&of_tree, &version), "the combined program's version is the tree's, edited alike: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &version));
                 tree
             };
             #[cfg(not(debug_assertions))]
@@ -4079,7 +4080,7 @@ fn run_observed(
                     };
                 });
                 let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish()).expect("the tree's image");
-                assert_eq!((tree_version.size(), tree_version.digest()), (v.size(), v.digest()), "the version after `{stage}` is the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&tree_version, v));
+                assert!(crate::code_rule_dsl::logic::program_image::same_program(&tree_version, &v), "the version after `{stage}` is the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&tree_version, v));
             };
             #[cfg(not(debug_assertions))]
             let mut check = |_: &'static str, _: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>| {};
@@ -4187,7 +4188,7 @@ fn run_observed(
                 assert_eq!(given.domains, lowered.domains, "the version's domains before lowering are the tree's");
                 assert_eq!(given.ops, lowered.ops, "the version's operator atoms are the tree's");
                 let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&given.program).and_then(|b| b.finish()).map_err(Error::Plan)?;
-                assert_eq!((tree_version.size(), tree_version.digest()), (version.size(), version.digest()), "the version is lowered as the tree is: {}", crate::code_rule_dsl::logic::program_image::differences(&tree_version, &version));
+                assert!(crate::code_rule_dsl::logic::program_image::same_program(&tree_version, &version), "the version is lowered as the tree is: {}", crate::code_rule_dsl::logic::program_image::differences(&tree_version, &version));
                 let sets = given.transduce_nearest();
                 (std::mem::take(&mut given.program), sets)
             };
@@ -4266,7 +4267,7 @@ fn run_observed(
                 let outputs = program.outputs.clone();
                 program.inputs.retain(|rel| read.contains(rel) || outputs.contains(rel));
                 let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
-                assert_eq!((tree_version.size(), tree_version.digest()), (version.size(), version.digest()), "the version's program is the tree's after the merges");
+                assert!(crate::code_rule_dsl::logic::program_image::same_program(&tree_version, &version), "the version's program is the tree's after the merges: {}", crate::code_rule_dsl::logic::program_image::differences(&tree_version, &version));
                 assert_eq!(lower::domains(&program)?, lowered.domains, "the version's domains are the tree's");
                 crate::code_rule_dsl::typing::file_local::programs_over(&program, version.clone()).map_err(Error::Plan)?;
             }

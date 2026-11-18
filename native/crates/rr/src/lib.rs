@@ -48,6 +48,8 @@ pub mod code_rule_dsl {
             use std::path::Path;
         }
         pub use rerail_prof::code_rule_dsl::logic::profile;
+        pub use rerail_program_image::code_rule_dsl::logic::program_facts;
+        pub use rerail_program_image::code_rule_dsl::logic::program_image;
         #[path = "rr"]
         pub mod rr {
             pub mod aggregate_demand;

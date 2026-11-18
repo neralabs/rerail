@@ -34,6 +34,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use crate::code_rule_dsl::logic::native::component::InRel;
 use crate::content_store::{ContentStore, EncodedFrame, FramePut, FrameRel, FrameRows, FrameStored};
+use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
 
 /// A relation as the last run derived it: the engine's relation, and its decoded rows when it is an output.
 #[derive(Clone)]

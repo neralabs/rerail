@@ -229,3 +229,10 @@ version has to state the same readers in the same order. What it takes:
 - The memberships expansion is a derivation, so each rule's expansion stays where the rule was, as
   `expand_memberships` keeps it on the tree. As an edit it put them after the rest, and the record moved with them.
 - The version after lowering is checked to hold one entry for each request rule, as the tree was before.
+- A request relation inlined away loses its entry, as `set_rules_from` keeps none for a relation without rules.
+- (At the merge of Typing-support-final-shape, 2026-11-17.) The debug checks compare a version with the tree's image
+  by `program_image::same_program`: the same size, the same digest apart from the `asked` rows, and the record the
+  same by rule content. A rule pass run as an edit writes its rules after the rest (the transducer's nearest sets
+  did), so the version's order is not the tree's, and the record by place differs while the program is one. And the
+  digest alone took a record whose readers sat on the wrong rules for the right one: the rows are the same by place
+  and the digest is a sum (`a_record_by_place_is_compared_by_rule`).

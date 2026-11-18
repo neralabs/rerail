@@ -663,8 +663,25 @@ step 3 replaces what is under the writer.
      `Lowered`) and returns the rules it appends. The tree (`lower::findings`) and the version
      (`lowering_tail::Findings { pending }`) both call it. Test: `findings_are_written_on_the_version` (a
      `.violation` with a message, `.on syntax_error`, an own five-column `violation` rule; fails with the pass left
-     out, and with the version's widening left out); ep2's 317 policies: 0 rows. Next: the three-valued relations,
-     the last of `whole_front` but the clauses.
+     out, and with the version's widening left out); ep2's 317 policies: 0 rows. Then the three-valued relations:
+     `lower::three_valued` is a function of the program, the relations declared `must, may` and the rules' prefixes
+     by index (`Lowered` hands both on), built of `three_closure`, `must_name`, `reads_must` and
+     `three_valued_header`, which `lowering_tail::ThreeValued { three, modal }` builds of too (each side a `Rewrite`'s
+     `atom_as` and `head_as`). Test: `three_valued_relations_are_written_on_the_version` (fails with the pass left
+     out); ep2's 317 policies: 0 rows. `whole_front` is now the clauses alone: every analysis of `whole()` after them
+     runs on the text's version. Then the link of modules: `Lowerer::append` is `link` (what the lowerer knows, and
+     the module's helpers renamed after the modules before it) and `append_parts` (the union of two programs, which
+     may be headers alone). `lower::link_seeded_parts` returns the module's linked program apart from the scope's;
+     the scope's program (its seeds' header: no rules) is a version made once per scope (`Scoped::version`), and
+     `lowering_tail::AppendModule` appends the module's version onto it, then `lowering_tail::Declared` checks it
+     (`front::declared`, now built of `read_declared` and `columns_declared`, which the pass uses too). So a text's
+     own program is the only part encoded per text. Tests: `a_module_is_linked_and_checked_declared_on_the_version`,
+     and `declared_on_a_version_is_the_trees` on its own (a debug build's tree check refuses the same, so only there
+     does the pass left out show); ep2's 317 policies: 0 rows. Next: each clause written through the builder, so
+     the module's program is a version from the tape walk.
+     *Done (2026-11-17, decision 0377):* the image's core is the crate `rerail-program-image`, under `rerail-rr`, and a
+     text's own rules are written as a version in the walk (`Lowerer::write`, `Out::Version`), checked against the
+     tree in a debug build. Next: library modules written so, then `front::Program`'s rules deleted.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.

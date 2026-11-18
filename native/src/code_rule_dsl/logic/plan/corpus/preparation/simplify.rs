@@ -29,6 +29,8 @@ pub struct Report {
     pub singletons: usize,
     pub keyed: usize,
     pub unread: Vec<String>,
+    /// Request rules another of their relation's subsumes, dropped (`SubsumeRequests`).
+    pub subsumed: usize,
     pub existentials: Vec<String>,
     pub within: usize,
     pub climbs: Vec<String>,
@@ -826,6 +828,7 @@ pub struct InlineNodeTests(pub Vec<String>);
 /// `Program::inlined_readers` and `replace_readers` on the version (decision 0331): in the request record, each
 /// relation `gone` that a pass inlines into its readers is replaced by the relations whose rules read it (through
 /// other relations `gone`), as `v` holds them before the pass. A request of an inlined relation serves its readers.
+/// A request relation inlined away has no rules left, so no entry (`Program::set_rules_from` keeps none).
 fn replace_inlined_readers(v: &Version, b: &mut Builder<'_>, gone: &BTreeSet<&str>) {
     if gone.is_empty() || v.asked().is_empty() {
         return;
@@ -857,12 +860,10 @@ fn replace_inlined_readers(v: &Version, b: &mut Builder<'_>, gone: &BTreeSet<&st
         })
         .filter(|(_, out)| !out.is_empty())
         .collect();
-    if inlined.is_empty() {
-        return;
-    }
     // Restated in the record's own order (`Builder::set_asked`), as the tree's image writes it.
     let was = b.asked();
     let mut asked = was.clone();
+    asked.retain(|req, _| !gone.contains(req.as_str()));
     for readers in asked.values_mut().flatten() {
         if readers.iter().any(|x| inlined.contains_key(x.as_str())) {
             *readers = std::mem::take(readers).into_iter().flat_map(|x| inlined.get(x.as_str()).map_or_else(|| vec![x.clone()], |to| to.iter().map(|t| (*t).to_owned()).collect())).collect();
@@ -2397,6 +2398,56 @@ impl ProgramPass for ClimbsAsAxes {
     }
 }
 
+/// `front::subsume_requests`: each request rule (`Program::asked_by`) whose body holds every literal of another rule of
+/// its relation with the same head, dropped; the rule kept takes the dropped one's readers into its gate. How many.
+#[derive(Default)]
+pub struct SubsumeRequests(pub usize);
+
+impl ProgramPass for SubsumeRequests {
+    const NAME: &'static str = "request rules another subsumes";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
+        let v = cx.v();
+        let mut asked = v.asked();
+        if asked.is_empty() {
+            return Ok(());
+        }
+        let rules: Vec<RuleRef<'_>> = v.rules().collect();
+        let head = |i: usize| v.show_atom(rules[i], rules[i].head());
+        let body = |i: usize| -> Vec<String> { rules[i].body().map(|l| v.show_lit(rules[i], l)).collect() };
+        let mut dropped = vec![false; rules.len()];
+        for (req, readers) in asked.iter_mut() {
+            let at: Vec<usize> = (0..rules.len()).filter(|&i| v.rel_name(rules[i].head().rel()) == req.as_str()).collect();
+            let aligned = at.len() == readers.len();
+            let bodies: Vec<Vec<String>> = at.iter().map(|&i| body(i)).collect();
+            for (x, &a) in at.iter().enumerate() {
+                let by = at.iter().enumerate().find(|&(y, &b)| {
+                    y != x && !dropped[b] && head(b) == head(a) && bodies[y].len() < bodies[x].len() && bodies[y].iter().all(|l| bodies[x].contains(l))
+                });
+                if let Some((y, _)) = by {
+                    dropped[a] = true;
+                    if aligned {
+                        let gate = readers[x].clone();
+                        readers[y].extend(gate);
+                    }
+                }
+            }
+            if aligned {
+                let mut it = at.iter();
+                readers.retain(|_| !dropped[*it.next().unwrap()]);
+            }
+        }
+        let n = dropped.iter().filter(|d| **d).count();
+        if n == 0 {
+            return Ok(());
+        }
+        self.0 += n;
+        let gone: HashSet<_> = rules.iter().zip(&dropped).filter(|(_, d)| **d).map(|(r, _)| r.id()).collect();
+        w.keep(|r| !gone.contains(&r.id()))?;
+        w.on()?.set_asked(&asked);
+        Ok(())
+    }
+}
+
 /// `simplify::drop_unread`: the rules of relations no kept relation reads, directly or through others. Those
 /// relations.
 #[derive(Default)]
@@ -2626,6 +2677,11 @@ pub fn passes(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipel
     let mut climbs = ClimbsAsAxes::default();
     p.program(&mut climbs);
     report.climbs = climbs.0;
+    // A request rule another of its relation subsumes (decision 0291's whole request beside its narrowed one), before
+    // relations merge.
+    let mut subsumed = SubsumeRequests::default();
+    p.program(&mut subsumed);
+    report.subsumed = subsumed.0;
     let mut merge = super::merge::MergeIdentical::default();
     p.program(&mut merge);
     if merge.merged > 0 {

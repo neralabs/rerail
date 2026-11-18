@@ -3,7 +3,7 @@
 //! of each request's readers follows the rules kept; a native nothing reads is dropped with them. Facts stay.
 
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
-use crate::code_rule_dsl::logic::program_image::{About, Cell, RuleRef};
+use crate::code_rule_dsl::logic::program_image::{About, RuleRef};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// How many rules it dropped, over its runs.
@@ -19,24 +19,7 @@ impl ProgramPass for Prune {
         let rules: Vec<RuleRef<'_>> = v.rules().collect();
         let head = |i: usize| v.rel_name(rules[i].head().rel());
         // Each request's readers, rule by rule (`Program::asked_by`, the `asked` rows).
-        let b0 = w.input().clone();
-        let asked: BTreeMap<String, Vec<BTreeSet<String>>> = {
-            let mut out: BTreeMap<String, Vec<BTreeSet<String>>> = BTreeMap::new();
-            for f in b0.about_facts().into_iter().filter(|f| b0.text(f.name()) == "asked") {
-                for row in f.rows() {
-                    let row: Vec<Cell> = row.collect();
-                    if let [_, Cell::Str(req), Cell::Int(k), Cell::Str(by)] = row.as_slice() {
-                        let k = *k as usize;
-                        let e = out.entry(b0.text(*req).to_owned()).or_default();
-                        if e.len() <= k {
-                            e.resize_with(k + 1, BTreeSet::new);
-                        }
-                        e[k].insert(b0.text(*by).to_owned());
-                    }
-                }
-            }
-            out
-        };
+        let asked = w.input().asked();
         let mut gate: Vec<Option<&BTreeSet<String>>> = vec![None; rules.len()];
         for (req, readers) in asked.iter().filter(|(req, _)| !roots.contains(req)) {
             let at: Vec<usize> = (0..rules.len()).filter(|&i| head(i) == req.as_str()).collect();
@@ -131,17 +114,7 @@ impl ProgramPass for Prune {
             b.set_inputs(&inputs);
         }
         if asked_after != asked {
-            let p = super::demand::about_p(b);
-            let mut rows = Vec::new();
-            for (req, readers) in &asked_after {
-                for (k, by) in readers.iter().enumerate() {
-                    for x in by {
-                        let (q, y) = (b.atom(req), b.atom(x));
-                        rows.push(vec![p, Cell::Str(q), Cell::Int(k as i64), Cell::Str(y)]);
-                    }
-                }
-            }
-            b.set_about_rows("asked", rows);
+            b.set_asked(&asked_after);
         }
         // The natives' rows (each names its native in column 1).
         if !dropped_natives.is_empty() {

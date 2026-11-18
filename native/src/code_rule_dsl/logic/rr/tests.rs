@@ -3796,7 +3796,11 @@ fn library_modules_link_to_the_lowering_of_them_together() {
         let modules = library_modules(&paths, files).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
         // Each module read back from its image (decision 0246 §6) links to the same program.
         let images: Vec<lower::Module> = modules.iter().map(|m| module_image::decode(&module_image::encode(m).unwrap()).unwrap_or_else(|e| panic!("{}: a module image: {e}", dir.display()))).collect();
+        // And linked on versions from the images (decision 0377): the program the tree's link makes.
+        let on_versions = super::link_library_versions(images.clone()).unwrap_or_else(|e| panic!("{}: linked on versions: {e}", dir.display()));
         let linked = lower::link(modules).unwrap();
+        let tree = crate::code_rule_dsl::logic::program_image::Builder::of_program_less_maintenance(&linked).unwrap().finish().unwrap().0;
+        assert_eq!((tree.size(), tree.digest()), (on_versions.size(), on_versions.digest()), "{}: the library linked on versions from its images: {}", dir.display(), crate::code_rule_dsl::logic::program_image::differences(&tree, &on_versions));
         let from_images = print(&lower::link(images).unwrap()).unwrap();
         let (a, b) = (print(&together).unwrap(), print(&linked).unwrap());
         let differ = |what: &str, a: &str, b: &str| {
@@ -4255,4 +4259,65 @@ fn findings_are_written_on_the_version() {
     assert!(rules.iter().any(|r| r.starts_with("violation(\"p\", \"own\", \"X\", $p, 1, 0)")), "{rules:#?}");
     let head = v.header(&Default::default()).unwrap();
     assert!(head.outputs.iter().any(|o| o == "violation") && head.decls.get("violation").is_some_and(|c| c.len() == 6), "{:?}", head.outputs);
+}
+
+/// The three-valued relations are written on a modular text's version (decision 0281's path, step 7b): `p` declared
+/// `must, may` has a must side of its rules but the `may` one, what reads `p` is three-valued too, and a negated atom
+/// reads the other side, as the tree's `lower::three_valued` writes them; a debug build checks the image against the
+/// tree's.
+#[test]
+fn three_valued_relations_are_written_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl base(x: symbol)\nbase(\"a\"). base(\"b\").\n.decl known(x: symbol)\nknown(\"a\").\n",
+        ".decl p(x: symbol) must, may\nmust p(x) :- known(x).\nmay p(x) :- base(x), !known(x).\n",
+        ".decl q(x: symbol)\nq(x) :- base(x), !p(x).\n.output q, rr_must_q\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    let has = |r: &str| rules.iter().any(|x| x == r);
+    assert!(has("rr_must_p($x) :- known($x)") && has("p($x) :- known($x)") && has("p($x) :- base($x), !known($x)"), "{rules:#?}");
+    assert!(!rules.iter().any(|x| x.starts_with("rr_must_p($x) :- base(")), "{rules:#?}");
+    assert!(has("rr_must_q($x) :- base($x), !p($x)") && has("q($x) :- base($x), !rr_must_p($x)"), "{rules:#?}");
+    let head = v.header(&Default::default()).unwrap();
+    assert!(head.decls.contains_key("rr_must_p") && head.decls.contains_key("rr_must_q"), "{:?}", head.decls.keys().collect::<Vec<_>>());
+}
+
+/// A modular text's module is linked onto its scope's version and checked declared there (decision 0281's path, step
+/// 7b): a rule reading a relation no one declares is refused, and so is one reading a library relation with other
+/// columns than it declares, as the tree's `front::declared` refuses them; a rule reading the library's is linked.
+#[test]
+fn a_module_is_linked_and_checked_declared_on_the_version() {
+    let lower = |body: &str| {
+        let src = format!("#include \"python/compare.rr\"\n.decl hit(n: node)\n.output hit\n{body}\n");
+        let files = super::read_text(&src).unwrap().files().expect("a modular text");
+        let library = super::lower_library(&files, None).unwrap();
+        let scoped = library.scoped(&files);
+        super::read_text(&src).unwrap().lower_in_version(&src, &library, &scoped, None, None).map(|v| v.expect("a modular text")).map_err(|e| e.to_string())
+    };
+    let e = lower("hit(n) :- kind(n, \"call\"), nowhere(n).").map(|_| ()).unwrap_err();
+    assert!(e.contains("relation nowhere is read by the rule for hit and not declared"), "{e}");
+    let e = lower("hit(n) :- kind(n, \"call\"), child(n).").map(|_| ()).unwrap_err();
+    assert!(e.contains("relation child is declared with 3 columns and read with 1"), "{e}");
+    let v = lower("hit(n) :- kind(n, \"call\"), child(_, n, _).").unwrap();
+    assert!(v.rules().any(|r| v.rel_name(r.head().rel()) == "hit"), "{}", v.show());
+}
+
+/// A text's rules are written as a version in its walk (decision 0377 step 3): the module linked holds its header
+/// alone, its rules in the version the walk wrote, and that version is the one the tree's rules encode to.
+#[test]
+fn a_texts_rules_are_written_as_a_version_in_its_walk() {
+    // Two aggregates of two literals under one head make two helpers of one stem and column types (`helper_once`):
+    // the link keyed them by their rules, which the walk wrote into the version, and merged them.
+    let src = "#include \"python/compare.rr\"\n.decl hit(n: node)\n.output hit\n.decl near(n: node, m: node)\nnear(n, m) :- child(_, n, _), child(_, m, _), kind(n, \"call\").\nhit(n) :- kind(n, \"call\"), child(_, n, _), !near(n, n).\n.decl sizes(n: node, a: number, b: number)\n.output sizes\nsizes(n, a, b) :- kind(n, \"call\"), a = count : { child(n, c, _), kind(c, \"name\") }, b = count : { child(n, c, _), kind(c, \"call\") }.\n";
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let (header_alone, v, tv) = super::read_text(src).unwrap().own_written_and_tree(&scoped).unwrap();
+    assert!(header_alone, "the walk wrote the rules");
+    assert!(v.rules().count() >= 2, "{}", v.show());
+    assert_eq!((v.size(), v.digest()), (tv.size(), tv.digest()), "{}", crate::code_rule_dsl::logic::program_image::differences(&tv, &v));
 }

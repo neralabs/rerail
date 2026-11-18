@@ -1727,6 +1727,8 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
   The hub's record of the test passing (b40d89145) is before the merges of d5cc33981 (a stat-known file's digest from
   its text, not SQL in the waves), 05e2bbf6a and 17417fb8f (Q45: racy answers settled at a run's end), the
   candidates for what stopped reading the root first.
+- **Seen again** (2026-11-17, Typing-support-final-shape's Q101, folded in here at its merge): the same exit 3
+  while linking library modules on versions (decision 0377), and the same at `caa1bfdb2`, before that change.
 - **Done when**: the warm child run exits 0. Either the root's part is read before the waves wherever the requests'
   world will watch it, or the world watches it before they start.
 ### Q51. (Q47 at 8bfa12af6) W's reference graph parses every file a second time (39% of internal_dead_code's CPU)
@@ -2905,6 +2907,10 @@ always a refusal.
   the lowering. The checks are 0281 step 7b's.
 - **Next**: find what the digest covers that `differences` does not show (relation order, atom ids, settings, kind
   sets, the header's lists) on one program, then fix whichever side makes it differ.
+- **A cause found** (2026-11-17, merging f7c563513 into Typing-support): 9be5e5356 changed the tree's
+  `sources_on_request` (asks named from the reading rule, gated by their readers, the request kept whole beside the
+  narrowed one) and `simplify` (`subsume_requests`), and neither version pass followed, so the version and the tree
+  made different requests and gates. Both ported in that merge; this item's run to be repeated on it.
 - **Done when**: the debug build lowers ep2's rules with both checks passing. A debug run of the combine's splice
   (0373) waits on it; meanwhile `RERAIL_COMBINE_LINK=check` checks the splice in the profiling build.
 
@@ -2927,3 +2933,25 @@ always a refusal.
 - **Done** (2026-11-17, decision 0378): the documents frame records its granules; layouts and documents are made
   where first asked. ep2's edit: `kept_inputs` 0.077 s → 0.021 s, no documents frame decoded, rows as h1.
 
+
+### Q137. (Q100 on Typing-support-final-shape at 6ce382887, Q91 before it) A cut of a gated program keeps `node`'s projections: retain's test expects an empty part
+
+- **Found** (2026-11-17, while making 0377's cuts): `retain::tests::unchanged_gated_programs_reuse_only_complete_retained_results`
+  fails: the cut of an unchanged gated program (`Cut::program`) holds two rules, `kind($n, $k) :- node(_, $n, $k, _, _)`
+  and `docof($n, $d) :- node($d, $n, _, _, _)`, where the test asserts none. Since `6fe55cb12` (Q37, 2026-11-16) a copy
+  of an input's columns is a view of it, not a stratum, so `cut` never counts the projections clean, and the part
+  keeps every rule whose head is not clean. Not 0377's: the part is made by the same passes (`Retain`, `PartOf`), now
+  through `passes::Parts`, and the rules kept are those `clean` leaves.
+- **Done when**: either the cut counts a view of an input's columns clean with the input (the part then has no rules,
+  as the test says), or the test asserts the part holds only such views; the planner's owner of Q37 decides which.
+
+### Q138. (Q102 on Typing-support-final-shape at 6ce382887) `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` fails at final-rerail-shape-rr-align's f7c563513
+
+- **Found** (2026-11-17, merging f7c563513 into Typing-support): the new build's first edit gives its keeper up
+  (`c.py: the memo no longer holds the rows counted`), the message Q71's fix removed. It fails the same on
+  f7c563513 alone (a farm host, that commit's tree), so not the merge's.
+- **Reading so far**: the keeper is read from the space's last program, "whichever it was"
+  (`last.and_then(|w| store.stat_blob(w))`, `run_observed`), and the space (`memo_space`) is not of the build, so a
+  new build still reads the old build's keeper, though `memo_whole` is now under `plan_digest`. ffbb65b15 (a stopped
+  run marks itself under way of its program) came after the test's commit 5627413cd and changed those marks.
+- **Done when**: a new build's first edit counts every file in, and the test passes.
