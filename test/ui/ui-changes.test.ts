@@ -408,11 +408,12 @@ describe("the dashboard following the daemon's change stream", () => {
   it("counts the page behind from a read the person asks for until it answers, whatever the beats say", async () => {
     stream().send("t1");
     await settle();
+    const unanswered: (() => void)[] = [];
     vi.stubGlobal("fetch", async (input: URL, init: { signal?: AbortSignal } = {}) => {
       const url = new URL(input);
       if (url.pathname === "/api/changes") return openStream(init.signal!);
       reads.push(url.pathname);
-      return new Promise<Response>(() => {});
+      return new Promise<Response>(resolve => unanswered.push(() => resolve(answer(url))));
     });
     await after(1_000);
     const asked = Date.now();
@@ -424,8 +425,12 @@ describe("the dashboard following the daemon's change stream", () => {
       stream().send("t1");
       await settle();
     }
-
     expect(data.readingSince).toBe(asked);
+
+    // Answered, it no longer holds the page behind, and the next case's reads join no read of this one.
+    for (const reply of unanswered) reply();
+    await settle();
+    expect(data.readingSince).toBe(0);
   });
 
   it("reads at the first beat past the activity window's own boundary, as Today's at local midnight", async () => {
