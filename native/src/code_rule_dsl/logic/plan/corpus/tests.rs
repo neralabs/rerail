@@ -1280,7 +1280,24 @@ fn the_run_after_a_cold_one_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.
     let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
-    let base = kept.as_deref().unwrap_or(temp.path());
+    cold_then_warm(kept.as_deref().unwrap_or(temp.path()));
+}
+
+/// The same, over sources reached through a symlink, as every run under macOS's `$TMPDIR` is (`/var` is
+/// `/private/var`): the run reads its files by their canonical paths too, so the corpus walk reads the real part of
+/// the root before the waves as well. It read only the part named, and the warm run, asking for the real one inside
+/// the waves, faulted "the observer's store not asked inside the waves".
+#[cfg(unix)]
+#[test]
+fn the_run_after_a_cold_one_through_a_symlink_writes_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(temp.path().join("real")).unwrap();
+    std::os::unix::fs::symlink(temp.path().join("real"), temp.path().join("link")).unwrap();
+    cold_then_warm(&temp.path().join("link"));
+}
+
+/// A cold run over a small Python package under `base`, then a warm one under `RERAIL_WARM=list`, which writes nothing.
+fn cold_then_warm(base: &std::path::Path) {
     let src = base.join("src");
     std::fs::create_dir_all(src.join("pkg")).unwrap();
     std::fs::write(src.join("pkg/__init__.py"), "").unwrap();
