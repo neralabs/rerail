@@ -36,7 +36,7 @@ pub struct Tiers {
 }
 
 /// The grammar compiled as `rerail_kotlin_parser::compile_timed` does, `known` its proofs' answers
-/// (decision 0402), the tiers of `tiers` running
+/// (decision 0404), the tiers of `tiers` running
 /// the ahead-of-time build; or why not: the JIT's program does not translate to the source the
 /// build script wrote.
 #[cfg(feature = "generated")]

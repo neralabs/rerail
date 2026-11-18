@@ -115,11 +115,21 @@ fn a_word_made_value_reads_made_operands() {
     if let Some(r) = p.records.as_mut() {
         r.prefix.clear();
     }
-    let compiled = native_cpu_block::compile(&crate::block_native::BlockNative::lower(&p)).expect("compiles");
+    let native = crate::block_native::BlockNative::lower(&p);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    // The outputs the record pass makes instead (the lasts, decision 0400) are not tier 1's.
+    let made = native.records_made();
     let unit = br#"{"a": [1, -2.5e3, "x\u00e9y", true, null], "b": {"c": "\\\"d"}} "#;
     for len in [64usize, 65, 128, 181, 200, 300] {
         let file: Vec<u8> = unit.iter().copied().cycle().take(len).collect();
         let (got, want) = (compiled.extract(&file), p.run_files(&[&file]).remove(0));
-        assert_eq!(got.outputs, want.outputs, "length {len}");
+        let tier1 = |o: &Vec<Vec<u64>>| {
+            o.iter()
+                .enumerate()
+                .filter(|(k, _)| !made.contains(k))
+                .map(|(_, w)| w.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(tier1(&got.outputs), tier1(&want.outputs), "length {len}");
     }
 }

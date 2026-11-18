@@ -28,7 +28,7 @@ pub struct Compiled {
     pub proofs: Vec<(Vec<u8>, rerail_compiler::bitlex_prove::Answer)>,
 }
 
-/// The provers' answers by question (decision 0402).
+/// The provers' answers by question (decision 0404).
 pub type Proofs = rerail_compiler::bitlex_prove::Known;
 
 // SAFETY: nothing changes a compiled parser once it is made (as `rerail_rr_parser::Compiled`):
@@ -69,7 +69,7 @@ pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
 /// `compile_text`, each phase's time given to `lap` as it ends: Bitlex's syntax, the Bitlex
 /// compiler (tier 1's masks and tier 2's words), the words assembled, lowered to the native IR,
 /// tier 2's functions cut into clusters, and Cranelift's code for each tier. `known`: the provers'
-/// answers a compile made before (`Compiled::proofs`, decision 0402).
+/// answers a compile made before (`Compiled::proofs`, decision 0404).
 pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static str, std::time::Duration)) -> Result<Compiled, String> {
     let mut at = std::time::Instant::now();
     let mut lap = |name: &'static str| {

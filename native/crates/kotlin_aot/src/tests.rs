@@ -22,7 +22,7 @@ fn thread_cpu() -> std::time::Duration {
 
 const BOTH: crate::Tiers = crate::Tiers { one: true, two: true };
 
-/// The ahead-of-time build, its proofs answered by the JIT's compile (decision 0402).
+/// The ahead-of-time build, its proofs answered by the JIT's compile (decision 0404).
 fn both() -> (&'static rerail_kotlin_parser::Compiled, rerail_kotlin_parser::Compiled) {
     let jit = rerail_kotlin_parser::compiled().expect("compiles");
     let aot = crate::aot(BOTH, jit.proofs.iter().cloned().collect()).expect("the ahead-of-time build");

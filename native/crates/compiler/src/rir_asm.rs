@@ -646,10 +646,16 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let kinds = line.word()?;
                 let hex = kinds.strip_prefix("kinds=").ok_or("`records S L kinds=…`")?;
                 let kinds: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad kind")?;
-                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, check_masks: Vec::new(), prefix: Vec::new() });
+                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, check_masks: Vec::new(), prefix: Vec::new(), gap: None });
             } else if first == "word" {
                 let r = program.records.as_mut().ok_or(format!("block {at} word before its records"))?;
                 r.words.push(line.quoted()?);
+            } else if first == "recgap" {
+                let r = program
+                    .records
+                    .as_mut()
+                    .ok_or(format!("block {at} recgap before its records"))?;
+                r.gap = Some(line.number("")?);
             } else if first == "recends" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recends before its records"))?;
                 let hex = line.word()?;
@@ -1008,6 +1014,10 @@ pub fn disassemble(program: &Words) -> String {
 /// A local check's words (`localcheck`, `reclocal`): `mM dD` and its ops.
 fn local_check(line: &mut Line<'_>) -> Result<crate::program::LocalCheck, String> {
     use crate::program::LocalOp;
+    let token = line.peek_word().as_deref() == Some("t");
+    if token {
+        line.word()?;
+    }
     let mask: u16 = line.number("m")?;
     let delay: u8 = line.number("d")?;
     let mut ops = Vec::new();
@@ -1015,6 +1025,10 @@ fn local_check(line: &mut Line<'_>) -> Result<crate::program::LocalCheck, String
                 line.word()?;
                 let bad = || format!("a bad local op `{w}`");
                 let (tag, rest) = w.split_at(1);
+                if rest.is_empty() && (tag == "s" || tag == "l") {
+                    ops.push(if tag == "s" { LocalOp::Start } else { LocalOp::Last });
+                    continue;
+                }
                 let nums = |r: &str| -> Result<Vec<u64>, String> { r.split('.').map(|x| u64::from_str_radix(x, if tag == "b" || tag == "c" { 16 } else { 10 }).map_err(|_| bad())).collect() };
                 let v = nums(rest)?;
                 let two = |v: &[u64]| -> Result<(u16, u16), String> { if v.len() == 2 { Ok((v[0] as u16, v[1] as u16)) } else { Err(bad()) } };
@@ -1028,8 +1042,9 @@ fn local_check(line: &mut Line<'_>) -> Result<crate::program::LocalCheck, String
                     "x" => { let (a, b) = two(&v)?; LocalOp::Xor(a, b) }
                     "m" => { let (a, b) = two(&v)?; LocalOp::AndNot(a, b) }
                     "p" => { let (a, k) = two(&v)?; LocalOp::Prev(a, k as u8) }
+                    "f" => { let (a, b) = two(&v)?; LocalOp::Fill(a, b) }
                     _ => return Err(bad()),
                 });
             }
-            Ok(crate::program::LocalCheck { mask, delay, ops })
+            Ok(crate::program::LocalCheck { mask, delay, ops, token })
 }

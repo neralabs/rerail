@@ -1803,7 +1803,7 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   Parser-generators' 975117c82 33 steps differ (without dd6dcc161's `tier1_equal`).
 - **Done when**: both pass; Parser-generators' area (the edge body), taken at the next merge.
 
-### Q213. The engine keeps the grammars' proof answers as it keeps images (0402)
+### Q213. The engine keeps the grammars' proof answers as it keeps images (0404)
 
 - **What**: a compile takes the provers' known answers and returns the ones it made
   (`bitlex_masks::compile_proved`, `Compiled::proofs`; `bitlex_prove::encode`/`decode` as bytes).

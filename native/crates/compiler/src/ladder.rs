@@ -587,11 +587,13 @@ pub fn check_shape(name: &str, c: &Compiled) {
 }
 
 /// Tier 1 on the CPU against its interpreter, on what the CPU makes: every output but those its
-/// record pass makes instead (`BlockNative::records_made`, all of them where the pass has no
-/// block loop: `PassShape::block_loop`), the positions and totals, and the codes but for the
-/// gap marks tier 2 on the CPU tests itself (`native_cpu_block::lazy_code_bits`). A file both
-/// send to the fallback (a total set) goes no further: its outputs and codes are not read.
-fn tier1_equal(c: &Compiled, cpu: &crate::block::BlockRun, interpreted: &crate::block::BlockRun) -> bool {
+/// record pass makes instead (`BlockNative::records_made`: their positions, as a token's last by
+/// its gap, decision 0400; all of them where the pass has no block loop: `PassShape::block_loop`),
+/// the positions and totals, and the codes but for the gap marks tier 2 on the CPU tests itself
+/// (`native_cpu_block::lazy_code_bits`). The outputs are made before the loop, so a file both
+/// refuse has the same; its codes are not read (the compiled loop leaves at the refusal, decision
+/// 0177, "A refusal leaves the loop", while the interpreter goes on).
+pub(crate) fn tier1_equal(c: &Compiled, cpu: &crate::block::BlockRun, interpreted: &crate::block::BlockRun) -> bool {
     let block = &c.native.block_programs[0];
     let unmade = block.records_made();
     let looped = c.parser.tier1.passes.iter().all(|p| p.back || p.block_loop);
@@ -599,7 +601,7 @@ fn tier1_equal(c: &Compiled, cpu: &crate::block::BlockRun, interpreted: &crate::
     let outputs = !looped || (cpu.outputs.len() == interpreted.outputs.len() && (0..cpu.outputs.len()).all(|o| unmade.contains(&o) || cpu.outputs[o] == interpreted.outputs[o]));
     let codes = cpu.codes.len() == interpreted.codes.len() && cpu.codes.iter().zip(&interpreted.codes).all(|(a, b)| a & !lazy == b & !lazy);
     let fell = interpreted.totals.iter().any(|&t| t != 0);
-    cpu.positions == interpreted.positions && cpu.totals == interpreted.totals && (fell || (outputs && codes))
+    cpu.positions == interpreted.positions && cpu.totals == interpreted.totals && outputs && (fell || codes)
 }
 
 /// A ladder's checks (`every_step_parses_as_the_reference`) over `steps`, mutations drawn from

@@ -823,7 +823,7 @@ fn compile_time() {
         Ok(p) => std::fs::read_to_string(p).expect("the grammar file"),
         Err(_) => crate::GRAMMAR.to_owned(),
     };
-    // Cold, then with the answers the cold compile made (decision 0402). With
+    // Cold, then with the answers the cold compile made (decision 0404). With
     // `RERAIL_KOTLIN_EDIT` (a grammar file): that grammar with the first's answers, then cold.
     let edit = std::env::var("RERAIL_KOTLIN_EDIT").ok().map(|p| std::fs::read_to_string(p).expect("the edited grammar"));
     let mut passes = vec![("cold", &text), ("warm", &text)];
@@ -860,7 +860,7 @@ fn fingerprint(c: &crate::Compiled) -> u64 {
     h.finish()
 }
 
-/// The answers a compile made, given to another compile of the grammar (decision 0402): it asks
+/// The answers a compile made, given to another compile of the grammar (decision 0404): it asks
 /// none of its questions again, and makes the same program.
 #[test]
 fn known_answers_make_the_same_program() {

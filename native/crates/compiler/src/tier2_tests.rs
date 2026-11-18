@@ -187,3 +187,235 @@ fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
     // its state's switch.
     assert!(inside > 0 || refusing == 0, "{refusing} words that can refuse in shared places, and no document refuses inside one");
 }
+
+/// JSON's number check is a token's check (decision 0398): tier 2 runs it over each number's
+/// own bytes, as simdjson's stage 2 parses a number, and tier 1 makes none of it. On the CPU and
+/// in the interpreter it refuses exactly what RFC 8259's grammar refuses, at every length: a
+/// number of one window, one ending at a window's edge, and ones of two and three windows, whose
+/// `fill`s and `prev`s carry from window to window.
+#[test]
+fn a_numbers_check_runs_over_its_tokens_bytes() {
+    // RFC 8259: `-? (0 | [1-9][0-9]*) (. [0-9]+)? ([eE] [+-]? [0-9]+)?`.
+    fn rfc(s: &[u8]) -> bool {
+        let digits = |s: &[u8], i: usize| s[i..].iter().take_while(|b| b.is_ascii_digit()).count();
+        let mut i = usize::from(s.first() == Some(&b'-'));
+        match s.get(i) {
+            Some(b'0') => i += 1,
+            Some(b'1'..=b'9') => i += digits(s, i),
+            _ => return false,
+        }
+        if s.get(i) == Some(&b'.') {
+            let d = digits(s, i + 1);
+            if d == 0 {
+                return false;
+            }
+            i += 1 + d;
+        }
+        if matches!(s.get(i), Some(b'e' | b'E')) {
+            i += 1;
+            if matches!(s.get(i), Some(b'+' | b'-')) {
+                i += 1;
+            }
+            let d = digits(s, i);
+            if d == 0 {
+                return false;
+            }
+            i += d;
+        }
+        i == s.len()
+    }
+    let source = std::fs::read_to_string(format!("{DIR}/14-json.bitlex")).expect("the ladder's JSON");
+    let c = crate::ladder::compile_step("14-json", &source);
+    assert!(c.program.local_checks.iter().any(|k| k.token), "no token's check:\n{:?}", c.program.local_checks);
+    let block = &c.program.block_programs[0];
+    let ones = |n: usize| "1".repeat(n);
+    let mut numbers: Vec<String> = ["0", "-0", "7", "-12", "1.5", "0.0001", "1e5", "1E+5", "1e-05", "-1.25e+300", "01", "1.", "-", "1e", "1e+", "--1", "1.2.3", "1.e5", "-01", "0x1", "1x", "2-", "1e5.0", "1ee5"]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+    for n in [62, 63, 64, 65, 66, 127, 128, 129, 130, 200] {
+        numbers.push(ones(n));
+        numbers.push(format!("-{}", ones(n - 1)));
+        numbers.push(format!("{}x", ones(n - 1)));
+        numbers.push(format!("{}.", ones(n - 1)));
+        numbers.push(format!("{}-", ones(n - 1)));
+        numbers.push(format!("0{}", ones(n - 1)));
+        numbers.push(format!("1.{}", "2".repeat(n - 2)));
+        numbers.push(format!("1.{}e", "2".repeat(n - 3)));
+        numbers.push(format!("{}e+{}", ones(n / 2), "9".repeat(n - n / 2 - 2)));
+        numbers.push(format!("{}e+{}.", ones(n / 2), "9".repeat(n - n / 2 - 3)));
+    }
+    let (mut accepted, mut refused) = (0, 0);
+    for number in &numbers {
+        for doc in [format!("[{number}]"), format!("{{\"k\": [1, {number}, 2]}}"), format!("{}{number}", " ".repeat(60))] {
+            let bytes = doc.as_bytes();
+            let pc = |r: Result<Vec<stream::Node>, stream::Refused>| r.map_err(|e| e.pc);
+            let want = pc(stream::run(&c.program, bytes, &block.run(bytes)));
+            assert_eq!(want.is_ok(), rfc(number.as_bytes()), "the interpreter: {doc:?}");
+            assert_eq!(pc(c.parser.parse(bytes)), want, "the CPU: {doc:?}");
+            if want.is_ok() { accepted += 1 } else { refused += 1 }
+        }
+    }
+    assert!(accepted > 50 && refused > 50, "{accepted} accepted, {refused} refused");
+}
+
+/// JSON's `\u` checks are token's checks at each escape (decision 0399): tier 2 tests the
+/// escape's `u` and the bytes after it, tier 1 makes none of it. The interpreter and the
+/// CPU refuse exactly the strings a `\u` without four hex digits or a lone surrogate is in,
+/// with the escape at every place of a block's last bytes, so its bytes cross into the next
+/// word, and after escaped backslashes, where a `u` is no escape's.
+#[test]
+fn a_unicode_escapes_checks_run_at_its_u() {
+    // Whether a string's text (between its quotes, no control bytes) is valid JSON.
+    fn valid(s: &[u8]) -> bool {
+        let hex4 = |i: usize| s.len() >= i + 4 && s[i..i + 4].iter().all(u8::is_ascii_hexdigit);
+        let unit = |i: usize| u16::from_str_radix(std::str::from_utf8(&s[i..i + 4]).expect("hex"), 16).expect("hex");
+        let mut i = 0;
+        let mut want_low = false;
+        while i < s.len() {
+            if s[i] != b'\\' {
+                if want_low {
+                    return false;
+                }
+                i += 1;
+                continue;
+            }
+            match s.get(i + 1) {
+                Some(b'u') => {
+                    if !hex4(i + 2) {
+                        return false;
+                    }
+                    let u = unit(i + 2);
+                    let (high, low) = ((0xd800..0xdc00).contains(&u), (0xdc00..0xe000).contains(&u));
+                    if want_low != low || (want_low && high) {
+                        return false;
+                    }
+                    want_low = high;
+                    i += 6;
+                }
+                Some(b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't') if !want_low => i += 2,
+                _ => return false,
+            }
+        }
+        !want_low
+    }
+    let source = std::fs::read_to_string(format!("{DIR}/14-json.bitlex")).expect("the ladder's JSON");
+    let c = crate::ladder::compile_step("14-json", &source);
+    // One token's check past its token (the hex digits and the lone high, merged), and no mask's.
+    assert_eq!(c.program.local_checks.iter().filter(|k| k.token && k.delay == 8).count(), 1, "{:?}", c.program.local_checks);
+    assert!(c.program.local_checks.iter().all(|k| k.token), "{:?}", c.program.local_checks);
+    let block = &c.program.block_programs[0];
+    let texts = [
+        r"A", r"éx", r"😀", r"😀", r"\u12", r"\u12G4", r"\uZZZZ", r"\u", r"\uD800", r"\uD800x", r"\uD800A", r"\uDC00",
+        r"a\uDE00", r"\uD800\uD800", r"\\u12", r"\\A", r"\\\u12", r"\\\\uD800", r"\uD83D\n\uDE00", r"􏿿", r"\uD800\\uDC00",
+    ];
+    let (mut accepted, mut refused) = (0, 0);
+    for text in texts {
+        for pad in 50..70 {
+            // The last: the file ends in the escape's bytes, an unclosed string (a `within`'s
+            // test of the file's end).
+            for (doc, closed) in [(format!("[\"{}{text}\"]", "a".repeat(pad)), true), (format!("{{\"{text}\": {}}}", "1".repeat(pad % 7 + 1)), true), (format!("\"{}{text}\"", " ".repeat(pad)), true), (format!("\"{}{text}", "b".repeat(pad)), false)] {
+                let bytes = doc.as_bytes();
+                let pc = |r: Result<Vec<stream::Node>, stream::Refused>| r.map_err(|e| e.pc);
+                let want = pc(stream::run(&c.program, bytes, &block.run(bytes)));
+                assert_eq!(want.is_ok(), closed && valid(text.as_bytes()), "the interpreter: {doc:?}");
+                assert_eq!(pc(c.parser.parse(bytes)), want, "the CPU: {doc:?}");
+                if want.is_ok() { accepted += 1 } else { refused += 1 }
+            }
+        }
+    }
+    assert!(accepted > 100 && refused > 100, "{accepted} accepted, {refused} refused");
+}
+
+/// Decision 0400, R1 to R3: JSON's and JSONC's tokens end at their gaps, with no extract of
+/// their last bytes, and on every ladder step whose tokens do, the lasts and codes are the old
+/// extract's. JSONC's comments among them: those ending in spaces, at a token, at the file's
+/// end, and those the fallback takes (a comment opened inside another, a quote inside one).
+#[test]
+fn a_tokens_end_is_its_gaps_as_the_lasts_extract() {
+    let mut docs: Vec<String> = DOCUMENTS.iter().map(|d| d.to_string()).collect();
+    for pad in 0..70 {
+        let a = "a".repeat(pad);
+        let sp = " ".repeat(pad % 9);
+        docs.extend([
+            format!("[\"{a}\\n\\u00e9x  \", 12.5e{pad}, -0, true,null ,false]"),
+            format!("{{ \"{a}\" :\t[ {} ] }}  ", "1".repeat(pad + 1)),
+            format!("\"{a}\\\"\\\\ "),
+            format!("[1{sp}"),
+            format!("// c {sp}\n[1, /* {a} */ 2]\n"),
+            format!("[1/*{a}*/,2//{sp}\n]//{a}"),
+            format!("{{\"k\"/* {sp} */:/**/true}}/* {a} {sp}*/"),
+            format!("[1, // {a} /* x\n2]"),
+            format!("[1 /* {a} // */, 2]"),
+            format!("[1 // \"{a}\n]"),
+            format!("[1 /* {a} \" */]"),
+            format!("[1]/* {a}"),
+        ]);
+    }
+    let mut with = Vec::new();
+    for (name, source) in crate::ladder::steps() {
+        let c = crate::ladder::compile_step(&name, &source);
+        let block = &c.program.block_programs[0];
+        let Some(r) = block.records.as_ref().filter(|r| r.gap.is_some()) else { continue };
+        with.push(name.clone());
+        let native = crate::block_native::BlockNative::lower(block);
+        assert!(native.ruled_lasts().is_some(), "{name}: the CPU makes no lasts");
+        // The program with the lasts extracted, as before.
+        bitlex_masks::NO_GAP_ENDS.set(true);
+        let was = crate::ladder::compile_step(&name, &source);
+        bitlex_masks::NO_GAP_ENDS.set(false);
+        let old = &was.program.block_programs[0];
+        assert!(old.records.as_ref().is_some_and(|r| r.gap.is_none()), "{name}: the oracle extracts the lasts");
+        let (mut tokens, mut refused) = (0, 0);
+        for doc in &docs {
+            let bytes = doc.as_bytes();
+            let (new, was) = (block.run(bytes), old.run(bytes));
+            // A file the fallback takes has no records tier 2 reads.
+            assert_eq!(new.totals, was.totals, "{name}: {doc:?}");
+            if was.totals.iter().any(|&t| t != 0) {
+                refused += 1;
+                continue;
+            }
+            assert_eq!(new.positions[usize::from(r.lasts)], was.positions[usize::from(r.lasts)], "{name}: {doc:?}");
+            assert_eq!(new.codes, was.codes, "{name}: {doc:?}");
+            tokens += new.positions[0].len();
+        }
+        let json = name.starts_with("14-") || name.starts_with("15-");
+        assert!(tokens > if json { 1000 } else { 0 } && (refused > 0 || !json), "{name}: {tokens} tokens, {refused} files refused");
+    }
+    for want in ["14-json", "15-jsonc"] {
+        assert!(with.iter().any(|n| n.starts_with(want)), "{want}'s tokens do not end at their gaps: {with:?}");
+    }
+}
+
+/// Page 39's item 2: JSON's UTF-8 rules of two bytes (after `0xe0`, `0xed`, `0xf0`, `0xf4`) are
+/// one byte-pair lookup on the CPU, as simdjson's (`native_cpu_pairs`), and the CPU's tier 1
+/// still agrees with the interpreter's: every lead byte near them before every continuation
+/// byte, complete or cut short, across the chunks' and the blocks' edges.
+#[test]
+fn utf8s_two_byte_rules_are_one_pair_lookup() {
+    let (name, source) = crate::ladder::steps().into_iter().find(|(n, _)| n.starts_with("14-json")).expect("14-json");
+    let c = crate::ladder::compile_step(&name, &source);
+    let native = crate::block_native::BlockNative::lower(&c.program.block_programs[0]);
+    let (_, stripped) = crate::native_cpu_block::host_stripped(&native).expect("the host strips the mark");
+    let fused = crate::native_cpu_pairs::fused(&stripped).expect("the rules are pairs");
+    let pairs: Vec<u8> = fused.insts.iter().filter_map(|i| if let crate::block_native::BlockInst::Pair { bits, .. } = *i { Some(bits) } else { None }).collect();
+    assert_eq!(pairs.iter().map(|b| b.count_ones()).collect::<Vec<_>>(), [4], "{name}: one pair of the four rules: {pairs:?}");
+    let (mut docs, mut refused) = (0, 0);
+    for lead in [0xc2u8, 0xdf, 0xe0, 0xe1, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf3, 0xf4, 0xf5] {
+        let len = if lead < 0xe0 { 2 } else if lead < 0xf0 { 3 } else { 4 };
+        for next in (0x70u8..=0xc1).step_by(3).chain([0x8f, 0x90, 0x9f, 0xa0]) {
+            for pad in [0usize, 1, 13, 14, 15, 29, 45, 60, 61, 62, 63, 69] {
+                let mut doc = format!("[\"{}", "a".repeat(pad)).into_bytes();
+                doc.extend([lead, next]);
+                doc.extend(std::iter::repeat_n(0x80u8, len - 2));
+                doc.extend(b"\", 1]");
+                let (compiled, interpreted) = (c.parser.tier1.extract(&doc), c.program.block_programs[0].run_files(&[&doc]).remove(0));
+                assert!(crate::ladder::tier1_equal(&c, &compiled, &interpreted), "{name}: {doc:02x?}");
+                refused += usize::from(interpreted.totals.iter().any(|&t| t != 0));
+                docs += 1;
+            }
+        }
+    }
+    assert!(refused > 0 && refused < docs, "{refused} of {docs} refused");
+}

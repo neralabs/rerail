@@ -330,10 +330,13 @@ impl BlockNative {
         }
     }
 
-    /// The output of the records' lasts extract, where their end rules give the lasts instead
-    /// (decision 0177): the CPU makes no last-byte mask for it.
+    /// The output of the records' lasts extract, where their end rules (decision 0177) or
+    /// their gaps (0400) give the lasts instead: the CPU makes no last-byte mask for it.
     pub fn ruled_lasts(&self) -> Option<usize> {
-        let r = self.records.as_ref().filter(|r| !r.rules.is_empty())?;
+        let r = self
+            .records
+            .as_ref()
+            .filter(|r| !r.rules.is_empty() || r.gap.is_some())?;
         self.extracts.get(usize::from(r.lasts)).copied()
     }
 

@@ -1,8 +1,9 @@
-# 0402: A grammar's proofs are answers by content
+# 0404: A grammar's proofs are answers by content
 
 Status: decided (the user, 2026-11-18: "please figure out how we can also implement a proof
 cache so that we don't do the heavy work over and over"). Follows 0264 (images by content), 0092
 and 0103 (a cache is a key and a result, nothing more).
+Numbered 0402 where it was written.
 
 ## Intro
 
@@ -45,6 +46,19 @@ made as an output. It keeps nothing itself.
   the next.
 - **The same program.** A compile with every answer known makes the same program as one with
   none (`compile_time`'s fingerprint, and a test).
+
+**Given lemmas (with 0401).** `gap_ends` proves lemmas of two regions and gives them to its
+prover for the claims after (`Induction::add_lemma`, `never_inductive`). Those are kept apart
+from a question's own (`given`): `ask` clears only the question's. Its single questions are
+not keyed, since their answers depend on the lemmas given before. The whole of `gap_ends` is one
+question instead: whether all its claims never hold, keyed by their union (`all`) and the
+prover's settings. The lemmas are made only of the regions that union reads, which makes the
+procedure a function of its key: a lemma over values outside a claim's window is never applied.
+The claims are asked first. A claim a real stream refutes (`Witnesses`) ends the question: no
+lemma proves it. Pair lemmas are made only for a claim neither proved nor refuted.
+
+Kotlin, at the merge with 0401: the pairs of all 64 regions, proved at every compile, had taken
+the cold compile past 10 minutes. With the above, cold 16.2 s, warm 0.86 s.
 
 ## Why not
 

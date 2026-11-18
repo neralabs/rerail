@@ -391,6 +391,7 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
     let prepared = Executors::new(&p);
     let label = |name: &str| usize::from(compiled.labels.iter().find(|l| l.0 == name).unwrap_or_else(|| panic!("no {name}")).1);
     let (starts, lasts) = (label(bitlex_compile::STREAM_START), label(bitlex_compile::STREAM_LAST));
+    let lasts_made = p.block_programs.first().is_some_and(|b| rerail_compiler::block_native::BlockNative::lower(b).records_made().contains(&lasts));
     let mut cases = inputs();
     cases.extend(JSON_CASES.iter().map(|c| c.to_vec()));
     let (mut compared, mut rejected, mut conservative) = (0, 0, 0);
@@ -416,7 +417,10 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
             }
             let at = format!("{executor}, {n} bytes: {:?}", String::from_utf8_lossy(&bytes));
             assert_eq!(cut(got[starts].clone(), n), want_starts, "starts, {at}");
-            assert_eq!(cut(got[lasts].clone(), n), want_lasts, "lasts, {at}");
+            // The CPU makes no lasts mask where its record pass makes the lasts (decision 0400).
+            if !(executor == "cranelift" && lasts_made) {
+                assert_eq!(cut(got[lasts].clone(), n), want_lasts, "lasts, {at}");
+            }
             compared += 1;
         }
     }
@@ -447,9 +451,14 @@ fn json_msl_is_one_kernel() {
             let msl = generate_with(&native, width, strategy);
             assert_eq!(msl.matches("kernel void ").count(), 1);
             let lines = msl.lines().count();
+            // Counted on the form generated: `Planes` writes each class out as the planes' logic.
+            let insts = match strategy {
+                ClassStrategy::Lookup => native.insts.len(),
+                ClassStrategy::Planes => native.planes_form().insts.len(),
+            };
             // A fixed preamble (the kernel's arguments, tables and stores), then a few lines per
             // instruction in each of three bodies (general, full group, ASCII full group).
-            assert!(lines < 200 + 15 * native.insts.len(), "{}-byte {strategy:?}: {lines} lines for {} instructions", width.bytes(), native.insts.len());
+            assert!(lines < 200 + 15 * insts, "{}-byte {strategy:?}: {lines} lines for {insts} instructions", width.bytes());
         }
     }
 }
@@ -1022,33 +1031,36 @@ fn json_with_check(with: Option<&str>) -> Result<(Program, bitlex_compile::Compi
     json_compiled_text(&text)
 }
 
-/// JSON's number check (doc 18 §4) is tier 1's: masks computed with the rest of the block
-/// program, a state's mask per state of its byte machine, joining the fallback. One `fill` per
-/// run (the integer, the fraction, the exponent) and one for the tokens it leaves to tier 2's
-/// keywords; `prev`s by one byte, and logic; no other carry. Tier 2 has no word for it. Its
-/// size is a ratchet: lower it as the compiler improves.
+/// JSON's number check (doc 18 §4) is a token's check (decision 0398), as simdjson's stage 2
+/// parses a number: tier 2 runs it over each number's bytes, and tier 1 makes none of it (its
+/// program is the one with no check). One `fill` per run (the integer, the fraction, the
+/// exponent) and one for the span it checks; `prev`s by one byte, and logic. Its size is a
+/// ratchet: lower it as the compiler improves.
 #[test]
-fn json_number_check_is_tier1_masks() {
-    use rerail_compiler::block::BlockOp::*;
+fn json_number_check_is_a_tokens_check() {
+    use rerail_compiler::program::LocalOp;
     let (with, _) = json_compiled();
     let (without, _) = json_with_check(None).expect("compiles without the check");
-    let (a, b) = (&with.block_programs[0], &without.block_programs[0]);
-    let fills = |p: &block::BlockProgram| p.ops.iter().filter(|op| matches!(op, Fill(..))).count();
-    let added: Vec<&block::BlockOp> = a.ops.iter().filter(|op| !b.ops.contains(op)).collect();
-    let other: Vec<&&block::BlockOp> = added.iter().filter(|op| !matches!(op, Eq(_) | Class { .. } | Const(_) | Within(_) | Not(_) | And(..) | Or(..) | AndNot(..) | Prev(_, 1) | Fill(..))).collect();
-    eprintln!("json number check: {} operations, {} fills", a.ops.len() - b.ops.len(), fills(a) - fills(b));
-    assert_eq!((fills(a) - fills(b), other.len()), (4, 0), "{other:?}");
-    assert!(a.ops.len() - b.ops.len() <= JSON_NUMBER_CHECK_OPS, "{} operations (budget {JSON_NUMBER_CHECK_OPS})", a.ops.len() - b.ops.len());
+    assert_eq!(with.block_programs[0].ops, without.block_programs[0].ops, "tier 1 makes the check");
+    let checks: Vec<&rerail_compiler::program::LocalCheck> = with.local_checks.iter().filter(|c| c.token).collect();
+    assert_eq!(checks.len(), 1, "{:?}", with.local_checks);
+    let ops = &checks[0].ops;
+    let fills = ops.iter().filter(|op| matches!(op, LocalOp::Fill(..))).count();
+    let other: Vec<&LocalOp> = ops.iter().filter(|op| !matches!(op, LocalOp::Bytes(_) | LocalOp::Not(_) | LocalOp::And(..) | LocalOp::Or(..) | LocalOp::AndNot(..) | LocalOp::Prev(_, 1) | LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last)).collect();
+    eprintln!("json number check: {} operations, {fills} fills", ops.len());
+    assert_eq!((fills, other.len()), (4, 0), "{other:?}");
+    assert!(ops.len() <= JSON_NUMBER_CHECK_OPS, "{} operations (budget {JSON_NUMBER_CHECK_OPS})", ops.len());
     let text = rir::disassemble(&with);
-    assert!(!text.lines().any(|l| l.split_whitespace().nth(1) == Some("CHECK")), "tier 2 checks a token");
+    assert!(text.lines().any(|l| l.split_whitespace().nth(1) == Some("CHECK")), "tier 2 checks no token");
 }
 
 /// The check's operations (a ratchet). 100 as a program of its own run per number in tier 2;
 /// 43 as masks in tier 1, its arms into a state on the same bytes sharing one `prev`; 44 when its
-/// span fills from the starts it takes.
-const JSON_NUMBER_CHECK_OPS: usize = 44;
+/// span fills from the starts it takes; 48 as a token's check (0398): its own `start`, `last`
+/// and byte sets, which tier 1's shared.
+const JSON_NUMBER_CHECK_OPS: usize = 48;
 
-/// JSON's number check, as tier 1's masks, equals the reference's grammar on every word of up
+/// JSON's number check, a token's check, equals the reference's grammar on every word of up
 /// to five bytes over `-01.eEx`, and on longer ones: a file of the word alone is parsed, both
 /// tiers on their interpreters, exactly when the reference parses it, to the same nodes.
 #[test]
@@ -1195,9 +1207,11 @@ fn json_tier2_is_transducer_words() {
     }
     // The keywords (`true`, `false`, `null`) are a switch's targets, a row each.
     assert!(text.lines().any(|l| l.trim_start().starts_with("switch ") && l.contains(" word s")), "no switch names a keyword");
-    for banned in ["FORK", "CHILD", "NEXT", "DESCEND", "CAPTURE", "EMIT", "CHECK"] {
+    for banned in ["FORK", "CHILD", "NEXT", "DESCEND", "CAPTURE", "EMIT"] {
         assert!(!words.iter().any(|l| l.split_whitespace().nth(1) == Some(banned)), "{banned}:\n{}", words.join("\n"));
     }
+    // A `CHECK` is a number's: a token's check over its bytes (decision 0398).
+    assert!(p.local_checks.iter().all(|c| c.token), "a check of tier 1's mask: {:?}", p.local_checks);
 }
 
 /// JSON's tier 2, on the words' interpreter, writes the reference parser's nodes, and goes to
@@ -1232,13 +1246,23 @@ fn json_compiled_path_equals_the_interpreters() {
     // (decision 0140: a block's base, a commit of codes, the image's end), none a table pass.
     assert!(!tier2.wraps);
     assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
+    // A pass over the table is a call of a wrap's `shift` or a drop's (`table_passes`, by callee).
+    // The number's check (decision 0398) is an outlined function too, as every check is: rare
+    // code, out of the arm's.
     assert_eq!(tier2.table_passes, 0, "no pass over the table");
     assert!(tier2.own_calls > 0 && rerail_compiler::clif_text::callees(&tier2.clif).len() == tier2.own_calls, "every call an outlined function's: {}", tier2.own_calls);
     let files = json_tier2_files();
+    let made =
+        rerail_compiler::block_native::BlockNative::lower(&p.block_programs[0]).records_made();
     for f in &files {
         let want1 = p.block_programs[0].run_files(&[f]).remove(0);
         let got1 = tier1.extract(f);
-        assert_eq!(got1, want1, "tier 1: {}", String::from_utf8_lossy(f));
+        assert_eq!(
+            got1.without(&made),
+            want1.without(&made),
+            "tier 1: {}",
+            String::from_utf8_lossy(f)
+        );
         let want = stream::run(&p, f, &want1).map_err(|r| r.pc);
         let got = tier2.run(f, &got1).map_err(|r| r.pc);
         assert_eq!(got, want, "tier 2: {}", String::from_utf8_lossy(f));

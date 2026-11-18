@@ -1,10 +1,11 @@
-# 0403: Kotlin's generated parser, in the lean parser's shape
+# 0405: Kotlin's generated parser, in the lean parser's shape
 
 Status: decided (the user, 2026-11-18: "since we already have a fast Kotlin parser in Rust, and
 the bitlex program can generate Rust, I want you to work on getting the generated Rust code
 structurally close to the lean parser. Start with the broad structure"). Follows 0177 (tier 1 on
 the CPU is a token loop), which brought `.rr` to that shape; this record does the same for
 Kotlin, whose grammar uses what `.rr`'s does not.
+Numbered 0403 where it was written.
 
 ## Intro
 

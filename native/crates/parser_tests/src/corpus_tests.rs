@@ -855,14 +855,16 @@ fn corpus_trees_compiled_equal_the_interpreters() {
         let program = rir::assemble(&compiled.text()).unwrap_or_else(|e| panic!("{name}: assembles: {e}"));
         let native = native_ir::lower(&program, 0, 0).expect("lowers");
         let tier1 = native_cpu_block::compile(&native.block_programs[0]).unwrap_or_else(|e| panic!("{name}: tier 1: {e:?}"));
+        let made = native.block_programs[0].records_made();
         let tier2 = native_cpu_stream::compile(&native).unwrap_or_else(|e| panic!("{name}: tier 2: {e:?}"));
         for bytes in tree_inputs(p, k as u64) {
             let want1 = program.block_programs[0].run_files(&[&bytes]).remove(0);
             let got1 = tier1.extract(&bytes);
             let want = stream::run(&program, &bytes, &want1).map_err(|r| r.pc);
             let got = tier2.run(&bytes, &got1).map_err(|r| r.pc);
-            if got1 != want1 || got != want {
-                differ.push(format!("{name}: {:?}: tier 1 same {}, tier 2 {got:?}, the interpreter {want:?}", String::from_utf8_lossy(&bytes), got1 == want1));
+            let same1 = got1.without(&made) == want1.without(&made);
+            if !same1 || got != want {
+                differ.push(format!("{name}: {:?}: tier 1 same {same1}, tier 2 {got:?}, the interpreter {want:?}", String::from_utf8_lossy(&bytes)));
                 break;
             }
             docs += 1;
