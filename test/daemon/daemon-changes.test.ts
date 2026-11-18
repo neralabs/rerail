@@ -61,18 +61,20 @@ describe("the dashboard against a running daemon", () => {
       version: "0.0.0-test", databasePath, workspaceRoot: root, port: 0, nativeHealth: healthyNative, accessToken: ACCESS,
       remoteSink: false, checkoutPruning: false, changeFeed: { watch: folder.watch, beatMs: 60 * 60_000 },
     });
-    // The page's streams: a stall reopens one after two missed beats (12 s), and its first message reads.
-    const realFetch = globalThis.fetch;
-    let streams = 0;
-    vi.stubGlobal("fetch", (input: string | URL, init?: RequestInit) => {
-      if (new URL(input).pathname === "/api/changes") streams += 1;
-      return realFetch(input, init);
-    });
-    const page = openPage(daemon);
-    await page.rendered(() => data.loaded);
-    // Another process committing through Rerail's own opener, as the CLI's writes do.
+    // Another process committing through Rerail's own opener, as the CLI's writes do. It opens first: opening creates
+    // the database, a commit of its own that the page's stream must already hold.
     const writer = await startDatabaseWriter(databasePath);
     try {
+      // The page's streams: a stall reopens one after two missed beats (12 s), and its first message reads.
+      const realFetch = globalThis.fetch;
+      let streams = 0;
+      vi.stubGlobal("fetch", (input: string | URL, init?: RequestInit) => {
+        if (new URL(input).pathname === "/api/changes") streams += 1;
+        return realFetch(input, init);
+      });
+      const page = openPage(daemon);
+      await page.rendered(() => data.loaded);
+
       const committed = writer.commit("remote:github.com/acme/web");
       folder.report(root, "rerail.sqlite-wal");
       await committed;
