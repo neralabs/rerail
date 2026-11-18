@@ -1562,3 +1562,15 @@ span's bytes), with the spans' eager rows as `rr_text_span`. It ran the core cas
   it is cheaper than eager there and on the data-layer pack; else record why `text` stays eager in 0353.
 - **Done when**: `text` is answered on request at or under eager's cost, or 0353 records with the measurement that
   it stays eager.
+
+### Q122. An edited include keeps its old hash in `read_file`'s file list
+
+`rr::tests::programs_are_kept_by_the_hashes_of_what_they_read` fails (2026-11-17, with `str` eager too, so not
+0353 step 3): after the helper is rewritten (`h(1).` to `h(2).`, same length) and the observer flushed, `read_file`
+gives a program that differs from the first, yet its files list the helper under its old sha256. So the program and
+the files it records come from different reads: a kept entry (`kept_program`, decision 0275, checked by `stat` then
+sha) or `program_shared`'s order may hand back the files recorded before the edit.
+- Find which of `read_file`'s three sources gives the stale list, and make the files the ones the program was read
+  from.
+- **Done when**: the test passes, and an edit of a same-length include gives its new hash.
+

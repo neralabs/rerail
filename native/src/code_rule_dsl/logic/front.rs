@@ -1121,13 +1121,22 @@ pub fn needed(prog: &Program, roots: Vec<String>) -> BTreeSet<String> {
 /// unreached clauses (`dropping_unreached_clauses_prunes_to_the_same_program`).
 fn reach(prog: &Program, roots: Vec<String>, gated: bool) -> (BTreeSet<String>, Vec<bool>) {
     // Each request rule's readers, by its place among its relation's rules; a relation whose rules no longer match
-    // the record (rules added or dropped since lowering) keeps them ungated.
+    // the record (rules added or dropped since lowering) keeps them ungated. So does a rule one of whose readers the
+    // program no longer has: inlined into its own readers or merged into another relation since (`simplify`), it is
+    // read under their names, which the record does not hold. Gated by it, `tables :- q(s, x0), …` with `q` inlined
+    // lost `q`'s request for `str`, and read no string.
+    let present: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str())
+        .chain(prog.inputs.iter().chain(&prog.outputs).map(String::as_str))
+        .chain(prog.facts.keys().map(|r| r.as_ref()))
+        .collect();
     let mut gate: Vec<Option<&BTreeSet<String>>> = vec![None; prog.rules.len()];
     for (req, readers) in prog.asked_by.iter().filter(|(req, _)| gated && !roots.contains(req)) {
         let at: Vec<usize> = prog.rules.iter().enumerate().filter(|(_, r)| r.head.rel == req.as_str()).map(|(i, _)| i).collect();
         if at.len() == readers.len() {
             for (i, by) in at.into_iter().zip(readers) {
-                gate[i] = Some(by);
+                if by.iter().all(|b| present.contains(b.as_str())) {
+                    gate[i] = Some(by);
+                }
             }
         }
     }

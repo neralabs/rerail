@@ -4,16 +4,17 @@
 //! `granules::Table` fill it, the reads (`id_reads`) read it in every backend, and its MSL is written from it.
 //!
 //! The rank index is groups of 64 tape nodes, `WORDS` u64s each: one word of bits per item (a numbered node, a token,
-//! a node under a field), then the nodes before the group (low 32 bits) and the tokens (high 32 bits), then the
-//! fielded nodes before it. A select sample gives the group of every `SAMPLE`-th item.
+//! a node under a field, a node after a sibling), then the nodes before the group (low 32 bits) and the tokens (high
+//! 32 bits), then the fielded nodes (low) and the nodes after a sibling (high) before it. A select sample gives the group of every `SAMPLE`-th item.
 //!
 //! The granule table is per granule (in preorder of their starts): its start and its subtree's end as ranks of each
 //! item (`rank_starts`, `rank_ends`; nodes, then tokens), its parent, its own nodes and tokens as prefix sums, its
 //! slots, its child granules (`kids`: the granule, and its parent's own nodes and tokens before it) and the run rank
 //! of each stretch between them (`runs`), and the slots and runs by key (`by_slot`, `run_at`).
 
-/// The items a rank index marks: numbered nodes, tokens, nodes under a field (`Item`'s numbers).
-pub const ITEMS: u32 = 3;
+/// The items a rank index marks: numbered nodes, tokens, nodes under a field, nodes after a numbered sibling
+/// (`Item`'s numbers).
+pub const ITEMS: u32 = 4;
 /// A group's words: one of bits an item, then the counts before it.
 pub const WORDS: u32 = ITEMS + 2;
 /// Items a select sample stands for.
@@ -65,12 +66,12 @@ pub struct Numbering {
     /// The granules (0: no table; ids are in preorder).
     pub granules: u32,
     /// Each item's count.
-    pub count: [u32; 3],
+    pub count: [u32; ITEMS as usize],
     /// The order keys are preorder indexes: the runs or a granule's nodes outgrow the key's bits.
     pub preorder_keys: u32,
     /// The rank index: `[u64; WORDS]` a group, and each item's samples (u32 groups).
     pub groups: Run,
-    pub samples: [Run; 3],
+    pub samples: [Run; ITEMS as usize],
     /// Per granule (u32s): its start and end on the tape, its parent (`u32::MAX` for the root's).
     pub starts: Run,
     pub ends: Run,
@@ -94,7 +95,7 @@ pub struct Numbering {
     pub rank_starts: [Run; 2],
     pub rank_ends: [Run; 2],
 }
-const _: () = assert!(std::mem::size_of::<Numbering>() == 24 + 16 * 20);
+const _: () = assert!(std::mem::size_of::<Numbering>() == 32 + 16 * 21);
 
 /// A field's byte offset in the descriptor.
 pub mod at {
@@ -130,13 +131,14 @@ pub mod at {
 /// definition's, so the kernels cannot read a layout of their own.
 pub fn msl() -> String {
     use std::mem::offset_of;
+    let (count, samples) = (format!("count[{ITEMS}]"), format!("samples[{ITEMS}]"));
     let fields: [(&str, &str, usize); 20] = [
         ("uint", "first", offset_of!(Numbering, first)),
         ("uint", "granules", offset_of!(Numbering, granules)),
-        ("uint", "count[3]", offset_of!(Numbering, count)),
+        ("uint", &count, offset_of!(Numbering, count)),
         ("uint", "preorder_keys", offset_of!(Numbering, preorder_keys)),
         ("Run", "groups", offset_of!(Numbering, groups)),
-        ("Run", "samples[3]", offset_of!(Numbering, samples)),
+        ("Run", &samples, offset_of!(Numbering, samples)),
         ("Run", "starts", offset_of!(Numbering, starts)),
         ("Run", "ends", offset_of!(Numbering, ends)),
         ("Run", "parents", offset_of!(Numbering, parents)),

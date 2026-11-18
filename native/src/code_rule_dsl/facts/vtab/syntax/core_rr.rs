@@ -593,7 +593,6 @@ pub(super) struct CoreRows {
     value: Vec<[i64; 3]>,
     comment: Vec<[i64; 2]>,
     spread: Vec<i64>,
-    next_sibling: Vec<[i64; 2]>,
     syntax_error: Vec<[i64; 3]>,
     source: Vec<[i64; 2]>,
     src_line: Vec<[i64; 3]>,
@@ -633,7 +632,6 @@ pub(super) enum Visits {
 pub(super) struct Skip {
     /// `op`, `op_at`.
     pub(super) ops: bool,
-    pub(super) next_sibling: bool,
     pub(super) comment: bool,
     pub(super) spread: bool,
     pub(super) name: bool,
@@ -685,7 +683,7 @@ impl CoreRows {
     /// its rows without a second walk of every node of every document (the main phase's).
     pub(super) fn visits(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) -> Visits {
         let s = &self.skip;
-        let only_text = s.ops && s.structural && s.next_sibling && s.comment && s.spread && s.name && s.literal_rows
+        let only_text = s.ops && s.structural && s.comment && s.spread && s.name && s.literal_rows
             && !(wants_parts || wants_part_starts || wants_words);
         match (only_text, wants_text, self.text_nodes.is_some()) {
             (false, _, _) | (true, true, false) => Visits::All,
@@ -753,13 +751,6 @@ impl CoreRows {
                 self.structural_before.push([c_global, string(between(a, f.start(c))) as i64]);
                 self.structural_after.push([c_global, string(between(f.end(c), b)) as i64]);
             }
-        }
-        let mut prev = None;
-        for c in p.children_of_node(id).filter(|_| !self.skip.next_sibling) {
-            if let Some(a) = prev {
-                self.next_sibling.push([p.global(a), p.global(c)]);
-            }
-            prev = Some(c);
         }
         let mut token_like = children.is_empty();
         if is_comment(kind) {
@@ -1117,7 +1108,6 @@ impl CoreRows {
             ("value_type", make(&["v", "t"], &value_type, [true, true], atom)),
             ("comment", node_sym(&self.comment)),
             ("spread", make(&["n"], &spread, [false], atom)),
-            ("next_sibling", pair(&["a", "b"], &self.next_sibling)),
             ("syntax_error", make(&["d", "l", "msg"], &self.syntax_error, [false, false, true], atom)),
             ("source", pair(&["d", "sp"], &self.source)),
             ("src_line", make(&["d", "l", "sp"], &self.src_line, [false, false, false], atom)),

@@ -887,11 +887,10 @@ fn candidate_demands_preserve_document_scope_and_receiver_independence() {
 }
 
 #[test]
-fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
+fn projection_axes_and_token_spans_are_read_without_renumbering() {
     let f = facts("a.py", "f(a + 1)\ng(b)\n");
     let dialect = Dialect::new(tape_tag(GrammarDialect::Python).unwrap()).unwrap();
     let p = Projected::new(7, Arc::clone(&f), Some(&dialect), Shape::Core, false, None);
-    assert!(p.extra.as_ref().unwrap().token_spans.get().is_none());
     // Independent eager reference: the named nodes' tokens in preorder (by start: they do not overlap), then source
     // and lines.
     let mut expected = Vec::new();
@@ -907,9 +906,7 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
     expected.extend((1..=lines.count()).map(|l|lines.span(l)));
     assert_eq!(p.extra.as_ref().unwrap().tokens as usize,tokens);
     assert_eq!(p.locs(),p.len()+expected.len() as u32);
-    // Counting and source/line access never allocate token spans.
     for i in tokens..expected.len() { assert_eq!(p.span(p.len()+i as u32),expected[i]); }
-    assert!(p.extra.as_ref().unwrap().token_spans.get().is_none());
     for (i,&span) in expected.iter().enumerate() { assert_eq!(p.span(p.len()+i as u32),span); }
     for l in 0..(p.len() as usize) {
         let parent=p.parent(l);
@@ -1606,6 +1603,27 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                     depth[l as usize] = depth[q as usize] + 1;
                     assert_eq!(p.depth(l as usize), depth[l as usize], "{label} {format:?} {shape:?}: the depth of local {l}");
                 }
+                // `next_sibling` (a view, decision 0353 step 3): its pairs are each numbered node's numbered direct
+                // children, consecutive, as core.rr's rows were made; each read both ways off the tape.
+                let mut pairs = Vec::new();
+                for (_, x) in p.nodes() {
+                    let mut prev = None;
+                    for c in p.children_of_node(x) {
+                        pairs.extend(prev.map(|a| (a, c)));
+                        prev = Some(c);
+                    }
+                }
+                pairs.sort_unstable();
+                let mut read: Vec<(u32, u32)> = p.ranks().iter(Item::Sibling).map(|(_, x)| {
+                    let b = p.ranks().rank(Item::Node, x);
+                    (p.prev_sibling(b).expect("a sibling before"), b)
+                }).collect();
+                read.sort_unstable();
+                assert_eq!(read, pairs, "{label} {format:?} {shape:?} {narrowed}: next_sibling's pairs");
+                let after: HashMap<u32, u32> = pairs.iter().copied().collect();
+                for l in 0..p.len() {
+                    assert_eq!(p.next_sibling(l), after.get(&l).copied(), "{label} {format:?} {shape:?} {narrowed}: the sibling after local {l}");
+                }
                 let reference = p.reference(&dialect);
                 let low = &reference.low[..];
                 let table = p.table().expect("ids by definition");
@@ -1647,7 +1665,7 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                 }
                 // The rank index's point reads (written once, `id_reads`) agree with its walk over the set bits.
                 let r = p.ranks();
-                for item in [Item::Node, Item::Token, Item::Field] {
+                for item in [Item::Node, Item::Token, Item::Field, Item::Sibling] {
                     let walked: Vec<(u32, u32)> = r.iter(item).collect();
                     assert_eq!(walked.len() as u32, r.count(item), "{at}: {item:?}'s count");
                     let set: HashMap<u32, u32> = walked.iter().map(|&(k, x)| (x, k)).collect();

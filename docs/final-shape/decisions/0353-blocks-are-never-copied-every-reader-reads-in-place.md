@@ -259,6 +259,30 @@ Found on the way and fixed: the image's merge (`preparation::merge`) merged two 
 (`rr_str_req`, `rr_node_text_req`), which the tree's keeps by name (`simplify::request`, the debug check "the
 version's merges are the tree's"); `node_column_counts` indexed a text document's dialect, which it has none of.
 
+**Step 3's tape answers: `next_sibling` is a view** (2026-11-17). Its rows were core.rr's `CoreRows::node` pairs,
+each numbered node's numbered direct children, consecutive. Now:
+- the rank index marks a fourth item, `Item::Sibling`: a node after a numbered direct sibling (the projection's walk
+  keeps the open numbered nodes and whether each has had a direct child; an anchor that hangs from the root is no
+  child of it). A group is six words, 48 bytes for 64 tape nodes (40 before); `Numbering` holds four counts and
+  samples, its Rust and MSL reads written again from the CLIF;
+- `View::Sibling` has a row per marked node, as `field`'s are its marked ones. Column `b` is the row's node; `a`
+  comes with the scan's walk (the open subtree's last child), and a point read climbs from the tape node before `b`
+  (`Projected::prev_sibling`); a lookup by `a` hops the tape's siblings after its subtree (`next_sibling`);
+- check: `node_ids_in_place_equal_the_numbered_ones` holds both reads to the old pairs in every format, whole and
+  narrowed, and the rank reads of the new item to its walk. The device has no view of it yet (step 4).
+
+`line`, `end_line`, `col` and `docof` were views already (`View::Loc`) except where `Extra` makes spans' rows; those
+and `visit_index` (CPython's visit order, a derived fact computed once for the documents a program reads it of),
+`doc_root` and `host_node` (a guest's) are left for this step.
+
+Found on the way and fixed:
+- `Locs::token_spans` copied every token's start and end into a `Vec` on a span's first read: unmarked, and missed by
+  the check. A token's span is now its tape node's, by a select on the rank index.
+- `front::prune` gated a request rule by the readers lowering recorded (`asked_by`). A reader inlined since
+  (`simplify`) is read under its readers' names, so the gate dropped the request: `tables :- q(s, x0), …` with `q`
+  inlined read no `str` (`value_documents_are_memoised_with_the_files_that_asked`). A record naming a relation the
+  program no longer has now leaves its rule ungated.
+
 `DefIds`' `low`, `order` and `back` are gone. Every projection, narrowed ones too, keeps its granule table, and it
 answers ids, order keys and their inverses:
 - `order`, an order key (its run's rank, then its index in its granule): the table keeps each granule stretch's run
