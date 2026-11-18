@@ -293,75 +293,63 @@ fn a_unicode_escapes_checks_run_at_its_u() {
     assert!(accepted > 100 && refused > 100, "{accepted} accepted, {refused} refused");
 }
 
-/// Decision 0400, R1 to R3: JSON's tokens end at their gaps, with no extract of their last
-/// bytes, and on every ladder step whose tokens do, the lasts and codes are the old extract's.
+/// Decision 0400, R1 to R3: JSON's and JSONC's tokens end at their gaps, with no extract of
+/// their last bytes, and on every ladder step whose tokens do, the lasts and codes are the old
+/// extract's. JSONC's comments among them: those ending in spaces, at a token, at the file's
+/// end, and those the fallback takes (a comment opened inside another, a quote inside one).
 #[test]
 fn a_tokens_end_is_its_gaps_as_the_lasts_extract() {
     let mut docs: Vec<String> = DOCUMENTS.iter().map(|d| d.to_string()).collect();
     for pad in 0..70 {
         let a = "a".repeat(pad);
+        let sp = " ".repeat(pad % 9);
         docs.extend([
             format!("[\"{a}\\n\\u00e9x  \", 12.5e{pad}, -0, true,null ,false]"),
             format!("{{ \"{a}\" :\t[ {} ] }}  ", "1".repeat(pad + 1)),
             format!("\"{a}\\\"\\\\ "),
-            format!("[1{}", " ".repeat(pad)),
-            format!("// c \n[1, /* {a} */ 2]\n"),
+            format!("[1{sp}"),
+            format!("// c {sp}\n[1, /* {a} */ 2]\n"),
+            format!("[1/*{a}*/,2//{sp}\n]//{a}"),
+            format!("{{\"k\"/* {sp} */:/**/true}}/* {a} {sp}*/"),
+            format!("[1, // {a} /* x\n2]"),
+            format!("[1 /* {a} // */, 2]"),
+            format!("[1 // \"{a}\n]"),
+            format!("[1 /* {a} \" */]"),
+            format!("[1]/* {a}"),
         ]);
     }
     let mut with = Vec::new();
     for (name, source) in crate::ladder::steps() {
         let c = crate::ladder::compile_step(&name, &source);
         let block = &c.program.block_programs[0];
-        let Some(r) = block.records.as_ref().filter(|r| r.gap.is_some()) else {
-            continue;
-        };
+        let Some(r) = block.records.as_ref().filter(|r| r.gap.is_some()) else { continue };
         with.push(name.clone());
         let native = crate::block_native::BlockNative::lower(block);
-        assert!(
-            native.ruled_lasts().is_some(),
-            "{name}: the CPU makes no lasts"
-        );
+        assert!(native.ruled_lasts().is_some(), "{name}: the CPU makes no lasts");
         // The program with the lasts extracted, as before.
         bitlex_masks::NO_GAP_ENDS.set(true);
         let was = crate::ladder::compile_step(&name, &source);
         bitlex_masks::NO_GAP_ENDS.set(false);
         let old = &was.program.block_programs[0];
-        assert!(
-            old.records.as_ref().is_some_and(|r| r.gap.is_none()),
-            "{name}: the oracle extracts the lasts"
-        );
-        let mut tokens = 0;
+        assert!(old.records.as_ref().is_some_and(|r| r.gap.is_none()), "{name}: the oracle extracts the lasts");
+        let (mut tokens, mut refused) = (0, 0);
         for doc in &docs {
             let bytes = doc.as_bytes();
             let (new, was) = (block.run(bytes), old.run(bytes));
             // A file the fallback takes has no records tier 2 reads.
             assert_eq!(new.totals, was.totals, "{name}: {doc:?}");
             if was.totals.iter().any(|&t| t != 0) {
+                refused += 1;
                 continue;
             }
-            assert_eq!(
-                new.positions[usize::from(r.lasts)],
-                was.positions[usize::from(r.lasts)],
-                "{name}: {doc:?}"
-            );
+            assert_eq!(new.positions[usize::from(r.lasts)], was.positions[usize::from(r.lasts)], "{name}: {doc:?}");
             assert_eq!(new.codes, was.codes, "{name}: {doc:?}");
             tokens += new.positions[0].len();
         }
-        assert!(
-            tokens
-                > if name.starts_with("14-") || name.starts_with("15-") {
-                    1000
-                } else {
-                    0
-                },
-            "{name}: {tokens} tokens"
-        );
+        let json = name.starts_with("14-") || name.starts_with("15-");
+        assert!(tokens > if json { 1000 } else { 0 } && (refused > 0 || !json), "{name}: {tokens} tokens, {refused} files refused");
     }
-    // JSONC's comments keep the extract: that a comment's last is followed by a gap holds
-    // only past the escape of a comment opened inside another, which the proof does not reach.
-    assert!(
-        with.iter().any(|n| n.starts_with("14-json")),
-        "JSON's tokens do not end at their gaps: {with:?}"
-    );
-    assert!(!with.iter().any(|n| n.starts_with("15-jsonc")), "{with:?}");
+    for want in ["14-json", "15-jsonc"] {
+        assert!(with.iter().any(|n| n.starts_with(want)), "{want}'s tokens do not end at their gaps: {with:?}");
+    }
 }

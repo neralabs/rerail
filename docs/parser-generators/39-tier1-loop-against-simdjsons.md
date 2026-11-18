@@ -163,7 +163,14 @@ mask: one word and a count of leading zeros.
 |---|---:|---:|---:|
 | Token ends from the gaps (0400) | **616** | **5** | 123 |
 
-JSONC keeps its extract: the proof does not reach its comments (0400).
+JSONC kept its extract at first: the proof did not reach its comments (0400). With the claim
+as its own induction hypothesis, and lemmas that two regions are never open at one byte in a
+file not refused, it does (0401):
+
+| `15-jsonc` | Hot loop | Stack accesses |
+|---|---:|---:|
+| After 0400 | 988 | 33 |
+| Token ends from the gaps (0401) | **814** | **27** |
 
 ## Reproducing
 

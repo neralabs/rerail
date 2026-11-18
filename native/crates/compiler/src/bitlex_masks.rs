@@ -2492,22 +2492,16 @@ thread_local! {
 /// the skip, `S` every row's starts, it holds when no last of a row is in `K`, and after a last
 /// of a row, and after a byte of `K`, comes a byte of `K`, a start, or the file's end.
 fn gap_ends(low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Option<Val>, String> {
-    let (Some(skip), Some(first)) = (low.skip, token_rows.first()) else {
-        return Ok(None);
-    };
+    let (Some(skip), Some(first)) = (low.skip, token_rows.first()) else { return Ok(None) };
     if NO_GAP_ENDS.get() {
         return Ok(None);
     }
-    let settled = RefCell::new(bitlex_prove::Induction::new(
-        &low.program.rounds,
-        8,
-        100_000,
-    ));
+    // One prover for every claim, so the lemmas of one serve the next; each claim by its lemmas,
+    // then by induction on itself (`never_inductive`).
+    let settled = RefCell::new(bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000));
     let never = |low: &Lowering, x: Val| {
-        bitlex_prove::never(&low.proof_ops(), &low.program.tables, x.v, x.d)
-            || settled
-                .borrow_mut()
-                .never(&low.proof_ops(), &low.program.tables, x.v, x.d)
+        let ops = low.proof_ops();
+        bitlex_prove::never(&ops, &low.program.tables, x.v, x.d) || settled.borrow_mut().never(&ops, &low.program.tables, x.v, x.d) || settled.borrow_mut().never_inductive(&ops, &low.program.tables, x.v, x.d)
     };
     let mut starts = first.1;
     for t in &token_rows[1..] {
@@ -2519,17 +2513,39 @@ fn gap_ends(low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Opt
     let bad = low.andnot(w0, ok)?;
     let after_bad = low.next(bad, 1)?;
     // A place the fallback refuses (an error, an escape, a byte no token holds) refuses the
-    // file, so the ends there are not read: the claims need hold only where neither the byte
-    // nor the one after it is refused.
+    // file, so the ends there are not read: the claims need hold only before the first byte
+    // refused, up to the one after the claim's (a `fill` from a refusal on, to no end).
     let mut refused = low.leaf(BlockOp::Const(0), false);
     for f in low.fallbacks.clone() {
         refused = low.or(refused, f)?;
     }
-    // Refused at or after any byte up to the one after: `fill` from a refusal on, to no end.
     let refused_next = low.next(refused, 1)?;
     let none = low.leaf(BlockOp::Const(0), false);
     let refused = low.fill(refused_next, none)?;
     let after_bad = low.andnot(after_bad, refused)?;
+    // Lemmas first: two regions (`fill`s, `toggle`s) at one byte only where the file is refused
+    // before, as a comment opened inside another, or a quote inside a comment, escapes there. A
+    // token's last inside both is then excused at any distance from that refusal. Proved or
+    // not, the claims below decide.
+    let mut fills: Vec<Val> = low.names.values().copied().filter(|x| matches!(low.program.ops[usize::from(x.v)], BlockOp::Fill(..) | BlockOp::Toggle(..))).collect();
+    fills.sort_by_key(|x| x.v);
+    fills.dedup_by_key(|x| x.v);
+    for (i, &a) in fills.iter().enumerate() {
+        for &b in &fills[i + 1..] {
+            let both = low.and(a, b)?;
+            let both = low.andnot(both, refused)?;
+            let both = low.and(both, w0)?;
+            let proved = settled.borrow_mut().never_inductive(&low.proof_ops(), &low.program.tables, both.v, both.d);
+            // Kept over the carries themselves, each at its lag in `both` (a value `k` bytes less
+            // late is read `k` lags on), where the window's edge leaves them free: the claim as
+            // proved, inside the stream (`within 0`) included.
+            let carried = |x: Val| matches!(low.program.ops[usize::from(x.v)], BlockOp::Fill(..) | BlockOp::Toggle(..));
+            if proved && carried(refused) {
+                let lag = |x: Val| u32::from(both.d - x.d);
+                settled.borrow_mut().add_lemma(vec![(a.v, lag(a), true), (b.v, lag(b), true), (refused.v, lag(refused), false), (w0.v, lag(w0), true)]);
+            }
+        }
+    }
     let from_skip = low.and(skip, after_bad)?;
     let skip_starts = low.and(skip, starts)?;
     let skip_starts = low.andnot(skip_starts, refused)?;

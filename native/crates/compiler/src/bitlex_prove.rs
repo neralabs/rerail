@@ -388,6 +388,9 @@ pub struct Induction {
     lemmas: Vec<Lemma>,
     /// The solves left to the question being asked (`SOLVES`).
     solves: u32,
+    /// The root's hypothesis is made at every lag of the window (`never_inductive`): a value
+    /// the window reads at the position only is then assumed at the lags before it too.
+    whole_hypothesis: bool,
 }
 
 /// The solves a question may take, lemmas included: past them, not proved.
@@ -407,7 +410,7 @@ enum Outcome {
 
 impl Induction {
     pub fn new(rounds: &[Vec<(u16, u16)>], horizon: u32, conflicts: u32) -> Self {
-        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0 }
+        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, whole_hypothesis: false }
     }
 
     /// Whether `v` is zero at every byte of every stream, at delay `d`.
@@ -415,6 +418,34 @@ impl Induction {
         let mut ops = ops.to_vec();
         self.solves = SOLVES;
         self.prove(&mut ops, tables, v, d, LEVELS, None, &[0; 4])
+    }
+
+    /// `never`, by induction on the stream's positions with `v` itself as the hypothesis: the
+    /// first position where `v` holds has none before it, so the step may assume `v` at every
+    /// lag past the position's (sound: the base, a stream that begins within the window, is
+    /// `prove`'s first solve). A value whose own past rules it out (a sticky flag, a region
+    /// that cannot begin inside another) is proved so where `never` finds no lemma.
+    pub fn never_inductive(&mut self, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> bool {
+        let mut ops = ops.to_vec();
+        self.solves = SOLVES;
+        let hypothesis: Lemma = vec![(v, 0, true)];
+        self.whole_hypothesis = true;
+        let proved = self.prove(&mut ops, tables, v, d, LEVELS, Some(&hypothesis), &[0; 4]);
+        self.whole_hypothesis = false;
+        // Proved, it is a lemma of the proofs after (their operations are these and more): `v`
+        // holds at no position.
+        if proved {
+            self.lemmas.push(hypothesis);
+        }
+        proved
+    }
+
+    /// A lemma proved by the caller: these values (each an operation, a lag from the position
+    /// as a `prev` reads it, and its value) never hold together at a position in the stream.
+    /// Over carried values, it constrains a window's edge, where they are free. The caller
+    /// proves it first (`never_inductive` of their conjunction).
+    pub fn add_lemma(&mut self, lemma: Vec<(u16, u32, bool)>) {
+        self.lemmas.push(lemma);
     }
 
     /// `hypothesis`: `v` is this lemma's values all holding, assumed not to hold at every lag
@@ -565,6 +596,15 @@ impl Induction {
             for &(b, l) in &position {
                 if has(exclude, b) {
                     u.clauses.push(vec![-l]);
+                }
+            }
+        }
+        // The root's hypothesis at every lag of the window (`whole_hypothesis`), its values made
+        // there: each is the operations' own equations, so this adds no assumption.
+        if let Some(h) = hypothesis.filter(|h| self.whole_hypothesis && h.iter().any(|&(at, _, _)| at == v)) {
+            for lag in 1..=reach {
+                for &(at, l, _) in h.iter().filter(|&&(at, _, _)| at != STREAM) {
+                    u.op(at, lag + l);
                 }
             }
         }

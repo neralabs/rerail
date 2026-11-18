@@ -41,7 +41,7 @@ Metal (which makes every mask) is unchanged. `Records::gap` names the skip's out
   (`native_cpu_block::gap_last`);
 - the interpreter makes them the same way (`records::gap_lasts`), so it is the CPU's oracle.
 
-**JSONC keeps the extract.** A comment's last is followed by a gap only past the escape of a
+**JSONC keeps the extract** (until 0401, which proves its comments too). A comment's last is followed by a gap only past the escape of a
 comment opened inside another. That escape is earlier in the file than the comment's last
 byte, by any distance. The induction prover finds no lemma for it within its budget, and a
 larger budget made the compile too slow. Tried on documents, the property holds. A row the
@@ -51,8 +51,8 @@ proof does not reach keeps the program on the extract (R2).
 
 - R1. `14-json`'s rows all end at their gaps, and the CPU makes no lasts
   (`tier2_tests::a_tokens_end_is_its_gaps_as_the_lasts_extract`).
-- R2. A grammar the proof does not reach keeps the extract (the same test: `15-jsonc` has no gap
-  ends).
+- R2. A grammar the proof does not reach keeps the extract (`NO_GAP_ENDS`, the same test's
+  oracle; `15-jsonc` was such a grammar until 0401).
 - R3. The interpreter's lasts and codes equal the old extract's on every ladder step with gap
   ends, on every document tier 1 accepts (the same test, against the program compiled with
   `NO_GAP_ENDS`).
