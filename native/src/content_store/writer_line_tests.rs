@@ -220,6 +220,35 @@ fn a_waiter_that_gives_up_marks_the_holder_stalled_until_it_lets_go() {
     batch(&store, 1).unwrap();
 }
 
+/// A statement batch run outside a transaction (collection's checkpoint and vacuum) takes its turn
+/// in the line like every write: behind a holder it waits for the turn, where it would otherwise
+/// run at once beside the holder.
+#[test]
+fn a_statement_batch_outside_a_transaction_waits_its_turn() {
+    let (_path, store) = store("batch-outside");
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let holder = Holder::hold(&store, &order);
+    let (waiting, waits) = mpsc::channel();
+    let batcher = {
+        let (store, order) = (Arc::clone(&store), Arc::clone(&order));
+        thread::spawn(move || {
+            LINE_WAIT_HOOK.set(Some(Box::new(move || waiting.send(()).unwrap())));
+            let ran = store
+                .connection
+                .lock()
+                .unwrap()
+                .execute_batch("PRAGMA wal_checkpoint(PASSIVE)");
+            order.lock().unwrap().push("batch");
+            LINE_WAIT_HOOK.set(None);
+            ran
+        })
+    };
+    waits.recv().unwrap();
+    holder.let_go();
+    batcher.join().unwrap().unwrap();
+    assert_eq!(*order.lock().unwrap(), ["holder", "batch"]);
+}
+
 /// A writer that panics while it holds the store hands the line on as it unwinds: the next write
 /// is handed the store without waiting.
 #[test]
