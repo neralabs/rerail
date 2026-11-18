@@ -2882,6 +2882,22 @@ describe("CodeRuleBridge and Git's own writes", () => {
     ]));
   });
 
+  // A command that restores one file from another branch and commits another as the walk reads Git: the second reading,
+  // made once `HEAD` holds, still finds the restored file Git's, and stands, since `HEAD` names what it read.
+  it("keeps auditing a file its command committed beside one it restored from another branch", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await shell(bridge, async () => {
+      git(root, "restore", "--source", "other", "--worktree", "src/a.py");
+      await writeFile(join(root, "src", "mine.py"), "mine\n");
+      git(root, "add", "src/mine.py");
+      whileVerdictsRead(listsBranches, () => git(root, "commit", "--quiet", "-m", "mine"));
+    });
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/mine.py", language: "python", generatedText: "mine\n" }],
+    ]);
+  });
+
   // Reading Git again costs one more process only where a reading takes a change for Git's: a walk whose changes Git did
   // not write reads `HEAD` once more than a walk that finds no change, for its verdicts, as before.
   it("reads HEAD once for the Git verdicts of a shell edit Git did not write", async () => {
