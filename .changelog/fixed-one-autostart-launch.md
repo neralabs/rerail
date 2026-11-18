@@ -1,0 +1,1 @@
+When several hooks find the daemon down at the same moment, one `rerail daemon start` runs. Before, a hook that looked just as the first one handed the start to its launcher and exited could launch a second start beside it; only one of them ever started a daemon.

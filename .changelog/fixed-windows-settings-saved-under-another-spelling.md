@@ -1,0 +1,1 @@
+On Windows, Log mode and stops saved by Rerail 0.1.4 or earlier apply again in folders opened under another spelling. Set again by hand: a status line hidden through the daemon's API in a folder opened in other letter case, and a rule turned off in a folder outside Git opened through a mapped or subst drive or 8.3 name.
