@@ -52,8 +52,9 @@ pub struct GitRun {
 }
 
 /// Runs `program` as `start_git` starts it, with no input, and blocks until it has exited and both outputs have
-/// ended, as Node's `spawnSync` does: `SIGTERM` once `timeout_ms` has passed, or once stdout and stderr hold more than
-/// `max_buffer` bytes together.
+/// ended, as Node's `spawnSync` does. Once `timeout_ms` has passed, or once stdout and stderr hold more than
+/// `max_buffer` bytes together, it sends `SIGTERM`, closes both outputs, whatever process still holds them, and waits
+/// for the exit alone.
 #[napi]
 pub fn run_git(
     program: String,
