@@ -174,7 +174,7 @@ String, number and negated number literal keys are allowed.
 
 ### `typescript-eslint-no-extraneous-class`
 
-Only classes without `extends`; a constructor with parameter properties does not count as constructor-only.
+Only classes without `extends`; a constructor with parameter properties does not count as constructor-only. Divergence: typescript-eslint's `allowWithDecorator` defaults to `false`; the port's defaults to `true`, so a class with a class decorator (`@Component`, `@NgModule`, `@Injectable`, `@Entity`), written before `export` or after it, is not reported: its framework needs the class to exist, even empty or with only a constructor. Set the rule's `allowWithDecorator` option to `false`, or set it in the repository's ESLint config, to report decorated classes as typescript-eslint does by default; the upstream findings this leaves out are declared in `divergences.json`.
 
 ### `typescript-eslint-no-inferrable-types`
 
