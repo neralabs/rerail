@@ -640,14 +640,21 @@ export function mainInstanceHolderRuns(directory: string, pid: number, machine: 
 export type RecordedDaemon = "alive" | "gone" | "silent";
 
 /**
- * {@link RecordedDaemon}, with `older` for a daemon that may be sent the capability and runs a release before the
- * engine's proof, Rerail 0.1.4 or earlier ({@link olderDaemon}). A hook's start replaces such a daemon whatever package
- * it ran from (`startDaemonForPackage`); every other reader takes it as `alive`.
+ * {@link RecordedDaemon} as the engine's proof leaves it, with `no-proof` for a live pid this user may signal whose
+ * engine has no proof to give: Rerail 0.1.4 or earlier, or a listener without the proof's path on a gone daemon's pipe
+ * name. A lookup reads on ({@link lookedUpEngine}); every other reader takes it as `gone` ({@link recordedDaemon}).
+ */
+type ProofVerdict = RecordedDaemon | "no-proof";
+
+/**
+ * {@link RecordedDaemon} as a lookup makes it, with `older` for a daemon that may be sent the capability and runs a
+ * release before the engine's proof, Rerail 0.1.4 or earlier ({@link olderDaemon}). A hook's start replaces such a
+ * daemon whatever package it ran from (`startDaemonForPackage`).
  */
 type RecordedEngine = RecordedDaemon | "older";
 
 /** What an engine's answer to the proof makes of the daemon a Windows state records ({@link windowsRecordedDaemon}). */
-const PROOF_VERDICT: Readonly<Record<Exclude<EngineProofAnswer, "no-proof">, RecordedDaemon>> = { proved: "alive", refused: "gone", silent: "silent" };
+const PROOF_VERDICT: Readonly<Record<EngineProofAnswer, ProofVerdict>> = { proved: "alive", "no-proof": "no-proof", refused: "gone", silent: "silent" };
 
 /**
  * Whether the daemon `state` records may still run, as this user's: the one check every reader of a state file makes
@@ -656,17 +663,32 @@ const PROOF_VERDICT: Readonly<Record<Exclude<EngineProofAnswer, "no-proof">, Rec
  * be live, and on macOS and Linux this user's to signal: another user's process cannot be this user's daemon. Windows
  * asks more ({@link windowsRecordedDaemon}).
  */
-async function recordedEngine(state: DaemonState, machine: DaemonMachine, timeoutMs: number): Promise<RecordedEngine> {
+async function proofVerdict(state: DaemonState, machine: DaemonMachine, timeoutMs: number): Promise<ProofVerdict> {
   const daemon = processState(state.pid, machine.kill);
   if (daemon === "gone") return "gone";
   if (machine.platform === "win32") return await windowsRecordedDaemon(state, daemon === "running", machine, timeoutMs);
   return daemon === "running" ? "alive" : "gone";
 }
 
-/** {@link recordedEngine}, with a daemon of a release before the engine's proof taken as `alive`. */
+/**
+ * {@link proofVerdict} for a reader that only reads the daemon or sends it the capability: each hook's check whether
+ * Rerail runs in its repository, the status line, the MCP bridge and a stop's shutdown request. An engine with no proof
+ * is sent nothing, as one that refuses the proof, and its process's start is not read: a hook asks this before every
+ * tool call, and a start read there loads the engine into the hook's process. Only a lookup tells such a daemon from a
+ * stale record, and only a lookup's caller stops or replaces it ({@link lookedUpEngine}).
+ */
 async function recordedDaemon(state: DaemonState, machine: DaemonMachine, timeoutMs: number): Promise<RecordedDaemon> {
-  const recorded = await recordedEngine(state, machine, timeoutMs);
-  return recorded === "older" ? "alive" : recorded;
+  const recorded = await proofVerdict(state, machine, timeoutMs);
+  return recorded === "no-proof" ? "gone" : recorded;
+}
+
+/**
+ * {@link proofVerdict} for a lookup, by `deadline` (epoch ms): the start of the process an engine with no proof runs in
+ * decides whether it is the daemon that wrote the record ({@link olderDaemon}).
+ */
+async function lookedUpEngine(state: DaemonState, machine: DaemonMachine, deadline: number): Promise<RecordedEngine> {
+  const recorded = await proofVerdict(state, machine, deadline - Date.now());
+  return recorded === "no-proof" ? olderDaemon(state, machine, deadline) : recorded;
 }
 
 /**
@@ -680,27 +702,27 @@ async function recordedDaemon(state: DaemonState, machine: DaemonMachine, timeou
  * capability is sent none, and the pid and pipe decide.
  *
  * An engine of Rerail 0.1.4 or earlier has no proof to give (`no-proof`), nor has a listener without the proof's path
- * on a gone daemon's pipe name: then the start of the process holding the pid decides ({@link olderDaemon}).
+ * on a gone daemon's pipe name. A lookup reads on for one only where this user may signal its pid, and so stop or
+ * replace its daemon ({@link olderDaemon}); one it may not is `gone`, as before the proof's 404 was told apart.
  */
-async function windowsRecordedDaemon(state: DaemonState, signalable: boolean, machine: DaemonMachine, timeoutMs: number): Promise<RecordedEngine> {
+async function windowsRecordedDaemon(state: DaemonState, signalable: boolean, machine: DaemonMachine, timeoutMs: number): Promise<ProofVerdict> {
   if (!enginePipeExists(state, machine)) return "gone";
   if (state.accessToken === undefined) return signalable ? "alive" : "gone";
-  const deadline = Date.now() + timeoutMs;
   const answer = await machine.capabilityProof(state.kernelSocketPath, state.accessToken, timeoutMs);
-  return answer === "no-proof" ? olderDaemon(state, signalable, machine, deadline) : PROOF_VERDICT[answer];
+  return answer === "no-proof" && !signalable ? "gone" : PROOF_VERDICT[answer];
 }
 
 /**
- * What a Windows state whose engine has no proof to give makes of the daemon it records ({@link windowsRecordedDaemon}),
- * from the start of the process holding its pid, read by `deadline` ({@link startVerdict}). A process keeps its pid for
- * life, so one that started no later than the record's `startedAt` is the daemon that wrote it, and holds the recorded
- * pipe and URL while it runs: `older`, when this user may also signal it, and so stop or replace it. Anything else is
- * `gone`, and the record is dropped: a process that took a gone daemon's pid, a start that cannot be read or falls within
- * {@link START_CLOCK_SLACK_MS}, and a process this user may not stop. A record kept with nothing proved would have every
- * hook wait for a daemon it may neither use nor replace, and fail.
+ * What a lookup makes of the daemon a Windows state records whose engine has no proof to give and whose pid this user
+ * may signal ({@link lookedUpEngine}), from the start of the process holding that pid, read by `deadline`
+ * ({@link startVerdict}). A process keeps its pid for life, so one that started no later than the record's `startedAt`
+ * is the daemon that wrote it, and holds the recorded pipe and URL while it runs: `older`. Anything else is `gone`, and
+ * the record is dropped: a process that took a gone daemon's pid, and a start that cannot be read or falls within
+ * {@link START_CLOCK_SLACK_MS}. A record kept with nothing proved would have every hook wait for a daemon it may
+ * neither use nor replace, and fail.
  */
-function olderDaemon(state: DaemonState, signalable: boolean, machine: DaemonMachine, deadline: number): RecordedEngine {
-  return signalable && startVerdict(state, machine, deadline) === "ours" ? "older" : "gone";
+function olderDaemon(state: DaemonState, machine: DaemonMachine, deadline: number): RecordedEngine {
+  return startVerdict(state, machine, deadline) === "ours" ? "older" : "gone";
 }
 
 /**
@@ -813,7 +835,7 @@ export async function lookupDaemon(
 /** What the pid, the engine's proof and the health probe make of the daemon `state` records, within `probeTimeoutMs`. */
 async function checkedLookup(stateFile: string, state: DaemonState, machine: DaemonMachine, probeTimeoutMs: number): Promise<DaemonLookup> {
   const deadline = Date.now() + probeTimeoutMs;
-  const recorded = await recordedEngine(state, machine, probeTimeoutMs);
+  const recorded = await lookedUpEngine(state, machine, deadline);
   // Another user's process cannot be this user's daemon, and on Windows no daemon lives without its engine pipe or
   // fails its engine's proof: the state is stale, and its URL is never probed.
   if (recorded === "gone") {

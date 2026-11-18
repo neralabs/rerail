@@ -508,12 +508,15 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   exists and the engine there proves it holds the capability `daemon.json` records, the challenge the engine start
   uses: Windows soon reuses a pid, often for another of this user's processes, and anyone can create the pipe's name.
   Nothing goes to the recorded URL before that. An engine of Rerail 0.1.4 or earlier has no proof and answers the
-  challenge 404, as any listener without the proof's path does; then the process's creation time decides, read as
-  below: a pid this user may signal that started no later than the `startedAt` that `daemon.json` records is the
-  daemon that wrote it, and gets the capability, and a hook replaces it whatever package it ran from, since it
-  predates the fields hooks send. Any other pid behind such an engine (one that started later, one whose
-  start is not read, one this user may not signal) is not shown to be that daemon, and the record is removed, as for an
-  engine that does not prove itself. An engine that does not answer the proof in time is taken for a busy daemon: its
+  challenge 404, as any listener without the proof's path does. A lookup (`rerail status`, `rerail daemon stop`, a
+  hook's start of the daemon) then lets the process's creation time decide, read as below: a pid this user may signal
+  that started no later than the `startedAt` that `daemon.json` records is the daemon that wrote it, and gets the
+  capability, and a hook replaces it whatever package it ran from, since it predates the fields hooks send. Any other
+  pid behind such an engine (one that started later, one whose start is not read, one this user may not signal) is not
+  shown to be that daemon, and the record is removed, as for an engine that does not prove itself. Every other reader
+  (each hook's check whether Rerail runs in its repository, the status line, the MCP bridge) sends such an engine
+  nothing and reads no start, as for an engine that does not prove itself, and removes nothing: a hook makes that check
+  before every tool call. An engine that does not answer the proof in time is taken for a busy daemon: its
   state file is kept and the lookup reports it unresponsive, unless a fact proves the pid is another
   process (`recordedProcess`): it started more than 10 s after the `startedAt` that `daemon.json` records, or another
   process holds `locks/daemon.lock` as its recorded holder and started no later than that record was written. A start

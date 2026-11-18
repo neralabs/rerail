@@ -42,6 +42,7 @@ import {
   processAlive,
   readDaemonState,
   recordedDaemonAlive,
+  recordedDaemonStatus,
   relaunchDaemon,
   runningDaemonEngineEndpoint,
   startDaemon,
@@ -853,7 +854,6 @@ describe("a state file Windows left behind", () => {
     expect(limits).toHaveLength(1);
     expect(limits[0]).toBeGreaterThan(0);
     expect(limits[0]).toBeLessThanOrEqual(500);
-    expect(await recordedDaemonAlive(state, olderEngine(OLDER_STARTED_AT - 600))).toBe(true);
 
     // A process that took the pid once the daemon was gone started later: the record is stale, and nothing is sent.
     sent.length = 0;
@@ -887,10 +887,22 @@ describe("a state file Windows left behind", () => {
     expect(existsSync(stateFile)).toBe(false);
   });
 
+  // A hook asks whether Rerail runs in its repository before every tool call; the status line and the MCP bridge ask
+  // before each read. A lookup alone tells a daemon whose engine has no proof from a stale record, and its caller alone
+  // stops or replaces it: every other reader sends it nothing, as an engine that refuses the proof, and reads no start
+  // for it, which on Windows loads the engine into the reader's process.
+  it("sends a daemon whose engine has no proof nothing outside a lookup, and reads no start for it", async () => {
+    const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", startedAt: OLDER_STARTED_AT });
+    const limits: number[] = [];
+    expect(await recordedDaemonStatus(state, olderEngine(OLDER_STARTED_AT - 600, limits))).toBe("gone");
+    expect(await recordedDaemonAlive(state, olderEngine(OLDER_STARTED_AT - 600, limits))).toBe(false);
+    expect(limits).toEqual([]);
+  });
+
   it("stops a daemon whose engine has no proof once its start shows it wrote the record", async () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", nativeToken: "native", startedAt: OLDER_STARTED_AT });
-    // A daemon of Rerail 0.1.4 or earlier answers its health probe and has no shutdown route.
+    // A daemon of Rerail 0.1.4 or earlier answers its health probe and has no shutdown route, so it is asked none.
     const asked: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: URL) => {
       const path = new URL(url).pathname;
@@ -910,7 +922,7 @@ describe("a state file Windows left behind", () => {
     };
     await writeFile(stateFile, JSON.stringify(state));
     expect(await stopDaemon(home, machine)).toBe("stopped");
-    expect(asked).toEqual(["/healthz", "/native/shutdown"]);
+    expect(asked).toEqual(["/healthz"]);
     expect(signals.filter(signal => signal !== 0)).toEqual(["SIGTERM"]);
     expect(existsSync(stateFile)).toBe(false);
   });
@@ -970,7 +982,7 @@ describe("a state file Windows left behind", () => {
     const events: string[] = [];
     const machine = await besideOlderDaemon(OLDER_STARTED_AT - 600, packageRoot, events);
     await expect(hookStart(machine)).rejects.toThrow(/exited/u);
-    expect(events).toEqual(["/healthz", "/native/shutdown", "SIGTERM", "launch"]);
+    expect(events).toEqual(["/healthz", "SIGTERM", "launch"]);
   });
 
   // Every event of a session after its start asks the same: a daemon whose engine has no proof does not take it, even
@@ -986,7 +998,7 @@ describe("a state file Windows left behind", () => {
       },
     };
     await expect(runningDaemonEngineEndpoint(undefined, machine)).rejects.toThrow(/reached its SIGTERM/u);
-    expect(events.filter(event => event !== "/healthz")).toEqual(["/native/shutdown"]);
+    expect(events.filter(event => event !== "/healthz")).toEqual([]);
   });
 
   // Nothing proves that daemon this home's, so the hook's start launches its own as beside a gone one: one that waited

@@ -414,10 +414,11 @@ this user may signal as for one it may not (this user's elevated daemon), so on 
 own, with the pipe name and the port held by another user, gets nothing: the state is dropped unprobed. An engine that
 says nothing within the wait is taken for a busy daemon: its state is kept, and it is sent no capability, the shutdown
 request of `rerail daemon stop` included. An engine of Rerail 0.1.4 or earlier has no proof and answers the challenge
-404, as anyone holding the pipe's name can. Then the pid's own start, read from Windows, must come no later than the
-`startedAt` the state records: a process keeps its pid for life, so that one is the daemon that wrote the state, and
-holds its pipe and port while it runs. A later start, a start not read and a pid this user may not signal each drop
-the state unprobed.
+404, as anyone holding the pipe's name can. Then, for a lookup of the daemon (`rerail status`, `rerail daemon stop`, a
+hook's start of the daemon), the pid's own start, read from Windows, must come no later than the `startedAt` the state
+records: a process keeps its pid for life, so that one is the daemon that wrote the state, and holds its pipe and port
+while it runs. A later start, a start not read and a pid this user may not signal each drop the state unprobed. Every
+other reader sends such an engine nothing, the shutdown request of `rerail daemon stop` included.
 
 **What remains:**
 
