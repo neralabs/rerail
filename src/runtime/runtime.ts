@@ -102,17 +102,6 @@ function noteCallsAwaitingResult(calls: Set<string>, event: AdapterEvent): void 
   else if (event.kind === "turn-end") calls.clear();
 }
 
-/** What `opening` settled to within `ms`: the bridge, or undefined once the evaluator failed; `settled: false` when it was still opening. */
-async function openedWithin(opening: Promise<CodeRuleBridge | undefined>, ms: number): Promise<{ settled: true; bridge: CodeRuleBridge | undefined } | { settled: false }> {
-  const late = Promise.withResolvers<{ settled: false }>();
-  const timer = setTimeout(() => late.resolve({ settled: false }), ms);
-  try {
-    return await Promise.race([opening.then(bridge => ({ settled: true as const, bridge })), late.promise]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /** Whether a session `recorded` before, opening again in `host`, waits at its code-rule boundaries for its rules (`waitsForRules`). */
 function waitsForRulesOnReopen(recorded: boolean, host: RerailHost): boolean {
   return recorded && ADAPTER_CAPABILITIES[host].toolSurface !== "native";
@@ -152,7 +141,7 @@ const REOPENED_RULES_WAIT_MS = 20_000;
  * evaluator checks, and its result, go on at once, as every boundary does while a session's first index runs.
  */
 function needsRules(event: AdapterEvent, pending: readonly PendingCodeRuleCall[]): boolean {
-  if (event.kind === "call") return checkedAtResult(event.toolName, event.input);
+  if (event.kind === "call") return checkedAtResult(event.toolName, generatedEditPaths(event.toolName, event.input));
   if (event.kind === "result") return pending.some(call => call.id === event.toolCallId && call.checked);
   return event.kind === "turn-end";
 }
@@ -166,10 +155,10 @@ const CLOSED_SESSIONS_KEPT = 16;
 
 /**
  * Waits for `work` up to `ms`, and says whether it finished; past the cap the work carries on in the background. The
- * wait only decides when the hook answers, so a failure of the check is not raised here: the check records its own
- * failures in its audit.
+ * wait only decides when the hook answers, so a failure of the work is not raised here: an edit check records its own
+ * failures in its audit, and an evaluator that cannot open in the session's history.
  */
-async function settledWithin(work: Promise<void>, ms: number): Promise<boolean> {
+async function settledWithin(work: Promise<unknown>, ms: number): Promise<boolean> {
   const capped = Promise.withResolvers<false>();
   const timer = setTimeout(() => capped.resolve(false), ms);
   try {
@@ -1449,7 +1438,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       type: "policy-call", toolCallId: id, toolName: event.toolName, paths,
       ...(preimages === undefined ? {} : { preimages }), ...agent,
     });
-    const checked = checkedAtResult(event.toolName, event.input);
+    const checked = checkedAtResult(event.toolName, paths);
     state.pendingCodeRuleCalls.push({ id, toolName: event.toolName, checked, ...agent });
     if (paths.length > 0) state.mergeAssistEdits.add(id);
   }
@@ -1521,8 +1510,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async #codeRuleWorkspaceNow(state: RuntimeSessionState, event: AdapterEvent): Promise<CodeRuleBridge | undefined> {
     if (!state.codeRuleOpening) return await state.codeRuleWorkspace;
     if (state.waitsForRules && needsRules(event, state.pendingCodeRuleCalls)) {
-      const opened = await openedWithin(state.codeRuleWorkspace, REOPENED_RULES_WAIT_MS);
-      if (opened.settled) return opened.bridge;
+      if (await settledWithin(state.codeRuleWorkspace, REOPENED_RULES_WAIT_MS)) return await state.codeRuleWorkspace;
       state.waitsForRules = false;
     }
     this.#recordRulesPending(state, event);
@@ -2187,7 +2175,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       repositoryAudit: undefined,
       // Restored whether or not the evaluator opens, so their results still close them in the ledger.
       pendingCodeRuleCalls: openCalls.map(call => ({
-        id: call.toolCallId, toolName: call.toolName, checked: checkedAtResult(call.toolName, { paths: call.paths }),
+        id: call.toolCallId, toolName: call.toolName, checked: checkedAtResult(call.toolName, call.paths),
         ...(call.agentId === undefined ? {} : { agentId: call.agentId }),
       })),
       callsAwaitingResult: new Set(),

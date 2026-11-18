@@ -1083,19 +1083,19 @@ export function isCommandTool(toolName: string): boolean {
 }
 
 /**
- * Whether `begin` and `finish` check what a call writes at the call's own result: an edit tool's call names the paths
- * it writes, whose text `begin` captures, and a command tool's result reconciles the workspace. Any other call only
- * opens a window (`unwatchedCall` opens the same one), and what it wrote is the next walk's.
+ * Whether `begin` and `finish` check what a call writes at the call's own result, given the paths its input names
+ * (`generatedEditPaths`): an edit tool's call names the paths it writes, whose text `begin` captures, and a command
+ * tool's result reconciles the workspace. Any other call only opens a window (`unwatchedCall` opens the same one), and
+ * what it wrote is the next walk's.
  */
-export function checkedAtResult(toolName: string, input: unknown): boolean {
-  return isCommandTool(toolName) || generatedEditPaths(toolName, input).length > 0;
+export function checkedAtResult(toolName: string, paths: readonly string[]): boolean {
+  return paths.length > 0 || isCommandTool(toolName);
 }
 
 /**
- * How long a turn checkpoint or a command result waits for a checkout-wide source walk, and a code-rule boundary
- * waits for the session's evaluator to open, before answering with what it has. The work goes on, and what it finds
- * is audited and delivered at a later boundary; waiting longer would hold the session's event lane past the host's
- * per-event timeout.
+ * How long a turn checkpoint or a command result waits for a checkout-wide source walk before answering with what it
+ * has. The work goes on, and what it finds is audited and delivered at a later boundary; waiting longer would hold the
+ * session's event lane past the host's per-event timeout.
  */
 export const BOUNDARY_DISCOVERY_WAIT_MS = 10_000;
 
