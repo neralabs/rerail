@@ -1,7 +1,7 @@
 # T6 notes: Tempo transducer IR, CPU/JIT/Metal execution, batch model, SQL-driven execution
 
 Research track T6. Read-only extraction from Tempo docs at
-`/Users/jeremy/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/tempo/docs/` (abbreviated `TD/` below)
+`/Users/jeremy/orca/workspaces/scale-test-the-re-railer/tempo/docs/` (abbreviated `TD/` below)
 and PIAT research at `/Users/jeremy/orca/workspaces/rerail/Pulling-it-all-together/docs/rule-engine-direction/` (abbreviated `PIAT/`).
 Citations are `file:line`. Number marks: **M** = measured (the doc reports a run), **D** = design target / limit / estimate,
 **A** = asserted or claimed without a run shown in that doc. "not found" means I searched the named sources and the
@@ -299,7 +299,7 @@ Later contrast: metal-production-grid-cutover-design.md:217-225 restricts SQL to
 - Target: millions of independent threads per dispatch; 256 threads/threadgroup unless measured otherwise; thousands of threadgroups; no fixed pool of 64 persistent threads; a thread performs one small bounded unit of work and does not own a maximum-size query arena (:37-44).
 - Shape spike (synthetic, no query semantics) [M] (:48-57): flat arithmetic + 1 global counter, 82,908,643 threads, 2.34 ms; nine Program probes per root, 9,632,501 threads, 0.35 ms; one count per root 1.31 ms; node+Program loads with one navigation load 6.43 ms; mixed four-step work with 64-step work on 1/64 roots 11.14 ms.
 - "The production interpreter takes approximately 98 seconds with 64 persistent lanes. The measured difference is not query count or corpus size. The difference is execution shape." (:59-60) [M, approximate]
-- Full-shape spike [M] (:64-80): classification, bounded navigation, 16 frontier waves, vector scans, page boundaries, bounded scatter; 9,632,501 roots, 37,436,359 results, 45,037,455 captures, 1,932,340 properties, 9 bounded output pages, 34 Metal invocations; median command time 40.04 ms; 154,120,016 input bytes, 323,859,045 scratch bytes, 234,881,024 output bytes. Does not implement Program semantics. Artifact `tempo/benchmark/history/ner-1562-metal-full-shape-spike-2026-10-16.json`.
+- Full-shape spike [M] (:64-80): classification, bounded navigation, 16 frontier waves, vector scans, page boundaries, bounded scatter; 9,632,501 roots, 37,436,359 results, 45,037,455 captures, 1,932,340 properties, 9 bounded output pages, 34 Metal invocations; median command time 40.04 ms; 154,120,016 input bytes, 323,859,045 scratch bytes, 234,881,024 output bytes. Does not implement Program semantics. Artifact `tempo/benchmark/history/metal-full-shape-spike-2026-10-16.json`.
 - Integrated coverage kernel over the complete production CPython workload [M] (:85-89): 82,908,643 tuples in 323,894 blocks and 759,585 spans across 68 existing command partitions; kernels 106.91 ms total, slowest partition 5.88 ms; packed representation 358,085,256 bytes vs 1,989,807,432 bytes of `MetalTask` records = 82.00% reduction.
 - Shape classification of production tuples [M] (:91-100): 25,618,909 direct; 27,659,506 direct with predicates/output work; 19,122,092 bounded structural; 4,766,624 bounded with predicates/output; 5,741,512 dynamic-frontier. Direct 64.26%, bounded 28.81%, dynamic 6.93%.
 - "This result isolates semantic lowering and execution as the remaining Metal problem. The broad dispatch, frontier, scan, continuation, and page-scatter shape is viable." (:102-103)
@@ -736,7 +736,7 @@ Lessons: allocation sizes include page alignment, "do not establish an exact sta
 - Digest includes format version, grammar identity, original pattern digest, words, strings, predicate dialects, capture predicates, labels, longs, repeat-control words, directives (:329-341).
 - Limits: max instructions, paths, steps per path, captures per output, outputs per file; limit failure = incomplete result, never negative (:349-359).
 - Checkpoint: all 331 historical patterns parse, 330 lower; capture-local host predicates `#contains?`, `#not-kind-eq?`, `#not-same-line?`, parent/ancestor lowered; provider-specific missing-capture behaviors preserved (Helix kind exclusion vacuously true; Helix line comparison false; Neovim text/relation true before `not-`) (:363-386).
-- **Catalog-level predicates**: "`#is-not? local` depends on local scopes, definitions, and references produced by other patterns. It cannot be evaluated exactly inside an independent top-level `Program`. It must use immutable catalog-level relations and normal SQL rule composition." Until NER-1690, Tempo ignores `#is?`/`#is-not?` after shape validation, following ast-index-spike's structural oracle (:388-395).
+- **Catalog-level predicates**: "`#is-not? local` depends on local scopes, definitions, and references produced by other patterns. It cannot be evaluated exactly inside an independent top-level `Program`. It must use immutable catalog-level relations and normal SQL rule composition." Until host semantics are implemented, Tempo ignores `#is?`/`#is-not?` after shape validation, following ast-index-spike's structural oracle (:388-395).
 - Rules: "Do not change a native expected result to fit Tempo output. Do not add query-specific execution code. Do not use sharding to hide production result-retention costs." (:418-420)
 
 ---
@@ -872,7 +872,7 @@ Branch targets valid; every opcode/mode/operand/table/grammar-id valid; unused f
 | Exact negatives vs incomplete | transducer-design.md:238-239; sql-driven :118-120 | `complete`/status rows; failed task/evaluation publishes nothing; `Unknown`-like incomplete never negative |
 | Directive order observable; directives after reduction | value-program-design :322-332 | OutputProgram in source order, after reduction and delayed predicates |
 | Regex leftmost-first; Lua greed/backrefs/frontier/balanced | value-program-design :21-26 | Ordered NFA (not DFA), LIFO alternative order, shared work accounting |
-| `#is?`/`#is-not? local` depends on other patterns | scm-extension :388-395 | Not expressible inside one Program; must be catalog-level relations + SQL composition (ignored until NER-1690) |
+| `#is?`/`#is-not? local` depends on other patterns | scm-extension :388-395 | Not expressible inside one Program; must be catalog-level relations + SQL composition (ignored until host semantics are implemented) |
 
 ## S2. Execution classes and why each Metal design rose or fell
 

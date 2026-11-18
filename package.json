@@ -102,7 +102,7 @@
     "check:ci-paths": "node scripts/check/check-ci-paths.mjs",
     "check:folder-removal": "node scripts/check/check-folder-removal.mjs",
     "check:install-scripts": "node scripts/check/check-install-scripts.mjs",
-    "check:native": "cargo fmt --manifest-path Cargo.toml --all -- --check && cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings && cargo clippy --manifest-path native/Cargo.toml --features code-rule-profile --all-targets -- -D warnings",
+    "check:native": "node scripts/check/check-rustfmt.mjs && cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings && cargo clippy --manifest-path native/Cargo.toml --features code-rule-profile --all-targets -- -D warnings",
     "check:all": "npm run check && npm run check:native && npm run check:ui-tokens && npm run check:reference && npm run check:licenses",
     "check:internal-refs": "node scripts/check/check-internal-refs.mjs",
     "check:node-structures": "node scripts/check/check-node-structures.mjs",

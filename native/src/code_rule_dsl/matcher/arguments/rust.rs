@@ -1,5 +1,5 @@
-use crate::code_rule_dsl::tree::Tree;
 use super::{Arguments, Passed, every, unparenthesized};
+use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{Doc, Node};
 
 /// Rust's passed arguments of a call (`ArgumentRules`).

@@ -149,7 +149,7 @@ Generate the policy through the normal sixth-batch generator:
 
 ```sh
 PYTHONDONTWRITEBYTECODE=1 python3 scripts/dsl/data_layer_generate_batch_six.py \
-  --source /path/to/pinned/nera-data-layer --repo /path/to/nera-data-layer-repo
+  --source /path/to/pinned/data-layer --repo /path/to/data-layer-repo
 ```
 
 Select the profiling addon through `RERAIL_ENGINE_PATH`.

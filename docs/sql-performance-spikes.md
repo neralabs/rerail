@@ -212,7 +212,7 @@ Run each measurement separately:
 
 ```sh
 python3 scripts/profiling/run.py --trace off --cold-only --deadline 115 \
-  --source /path/to/pinned/nera-data-layer \
+  --source /path/to/pinned/data-layer \
   --selection fixtures/host/data-layer-port/profiling/quality-five.json \
   --policies .rerail/profiles/example-policy \
   --output .rerail/profiles/example-run

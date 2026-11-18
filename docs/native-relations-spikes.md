@@ -175,7 +175,7 @@ The native inference solver does not become the dominant sampled cost.
 7. Keep the current IR-name inference in SQL.
    Require a demonstrated expensive fixed point before selecting a native solver.
 
-[PR 2539](https://github.com/neralabs/nera-data-layer/pull/2539) supports the demand and storage direction.
+PR 2539 supports the demand and storage direction.
 Its transferable ideas are typed fact catalogs, field demand, shared producers, narrow rows, and explicit invalidation.
 The bytecode experiment shows why demand added after broad extraction has limited value here.
 

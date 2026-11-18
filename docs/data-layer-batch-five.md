@@ -5,7 +5,7 @@ This brings the authored candidates to 50 of 142 checks.
 The private pack remains inactive; `packs/data-layer/pack.json` has an empty `rules` list.
 No Linear issues were created or amended.
 
-The source pin remains `2b1504adc4291daaf080b2e932962b134da1a69a` in `neralabs/nera-data-layer`.
+The source pin remains `2b1504adc4291daaf080b2e932962b134da1a69a` in the data-layer repository.
 The [evidence file](../packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-05-evidence.json) records policy hashes, coverage, measurements, and remaining integration contracts.
 
 ## Rules and parity
@@ -47,12 +47,12 @@ The harness now checks their complete paged results, as well as measuring their 
 
 ### Declared references
 
-The [imperative analyzer](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_imperative_private_functions.py#L174) propagates through the source graph's callers.
+The imperative analyzer (`scripts/lint_imperative_private_functions.py`, line 174) propagates through the source graph's callers.
 The source graph includes callbacks and returned functions, beyond direct calls.
 Python `calls` queries now support `graph: "references"` with `at: "definition"`.
 This mode preserves ordinary call-query behavior and uses declaration semantics for its own graph.
 
-The [source resolver](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L1970) motivates the implemented relation shapes:
+The source resolver (`scripts/lint_lib/symbol_graph.py`, line 1970) motivates the implemented relation shapes:
 
 - Declared imports, reexports, final function definitions, and module method inventories.
 - Callbacks, returned functions, nested function bodies, and declared parameter receivers.
@@ -73,11 +73,11 @@ Changes to callees, import inventories, and class-name uniqueness invalidate unc
 
 ### Project relations and recursive queries
 
-The [public-triple analyzer](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_public_api_triples.py#L499) groups exported functions and inherited public methods.
+The public-triple analyzer (`scripts/lint_public_api_triples.py`, line 499) groups exported functions and inherited public methods.
 It compares family slots, parameter lists, decorator requirements, and inherited implementation identities.
 A local AST predicate cannot represent those project-wide joins and groups.
 
-The [dead-code walk](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py#L2569) adds recursive relations.
+The dead-code walk (`scripts/lint_lib/symbol_graph.py`, line 2569) adds recursive relations.
 Its roots include public exports, imported module initialization, and production dynamic imports.
 It follows references, annotation classes, public methods, dunders, subclasses, mixins, protocols, and convention-named siblings.
 A second annotation expansion has different propagation rules.

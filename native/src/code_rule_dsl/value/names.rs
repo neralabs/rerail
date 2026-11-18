@@ -141,7 +141,9 @@ fn ideograph(table: &Table, hex: &str) -> Option<char> {
     let code = u32::from_str_radix(hex, 16).ok()?;
     let within = table
         .ranges
-        .as_chunks::<8>().0.iter()
+        .as_chunks::<8>()
+        .0
+        .iter()
         .any(|range| (u32_at(range, 0)..=u32_at(range, 4)).contains(&code));
     within.then(|| char::from_u32(code)).flatten()
 }

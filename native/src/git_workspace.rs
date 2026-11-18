@@ -579,13 +579,25 @@ impl GitWorkspace {
     /// A clean base file's blob, unread: the path has no overlay and its worktree stat is exactly its index entry's
     /// (`BaseFile::checkout`), so its bytes are the blob's (phase 0, t23). `None` where only a hash could tell.
     pub fn clean_blob_unread(&self, relative_path: &str) -> Option<HashKey> {
-        if self.overlays.binary_search_by(|o| o.path.as_str().cmp(relative_path)).is_ok() {
+        if self
+            .overlays
+            .binary_search_by(|o| o.path.as_str().cmp(relative_path))
+            .is_ok()
+        {
             return None;
         }
-        let file = &self.base_files[self.base_files.binary_search_by(|f| f.path.as_str().cmp(relative_path)).ok()?];
+        let file = &self.base_files[self
+            .base_files
+            .binary_search_by(|f| f.path.as_str().cmp(relative_path))
+            .ok()?];
         let recorded = file.checkout?;
-        let metadata = gix::index::fs::Metadata::from_path_no_follow(&self.worktree_root.join(relative_path)).ok()?;
-        (metadata.is_file() && gix::index::entry::Stat::from_fs(&metadata).is_ok_and(|now| recorded.matches(&now, RESTORE_STAT))).then_some(file.blob)
+        let metadata =
+            gix::index::fs::Metadata::from_path_no_follow(&self.worktree_root.join(relative_path))
+                .ok()?;
+        (metadata.is_file()
+            && gix::index::entry::Stat::from_fs(&metadata)
+                .is_ok_and(|now| recorded.matches(&now, RESTORE_STAT)))
+        .then_some(file.blob)
     }
 
     /// Every file of the worktree as Git sees it, relative and sorted: HEAD's (less those deleted), the staged new
@@ -596,8 +608,16 @@ impl GitWorkspace {
         const COMMIT: u16 = 0o160000;
         let mut files: BTreeSet<String> = BTreeSet::new();
         for tree in &self.trees {
-            for entry in tree.entries.iter().filter(|e| e.mode & 0o170000 != TREE && e.mode & 0o170000 != COMMIT) {
-                files.insert(if tree.prefix.is_empty() { entry.name.clone() } else { format!("{}/{}", tree.prefix, entry.name) });
+            for entry in tree
+                .entries
+                .iter()
+                .filter(|e| e.mode & 0o170000 != TREE && e.mode & 0o170000 != COMMIT)
+            {
+                files.insert(if tree.prefix.is_empty() {
+                    entry.name.clone()
+                } else {
+                    format!("{}/{}", tree.prefix, entry.name)
+                });
             }
         }
         for overlay in &self.overlays {
@@ -699,7 +719,11 @@ pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
 pub fn locations(root: &Path) -> Option<(PathBuf, PathBuf, PathBuf)> {
     let repository = gix::discover(root).ok()?;
     let canonical = |p: &Path| dunce::canonicalize(p).ok();
-    Some((canonical(repository.workdir()?)?, canonical(repository.git_dir())?, canonical(repository.common_dir())?))
+    Some((
+        canonical(repository.workdir()?)?,
+        canonical(repository.git_dir())?,
+        canonical(repository.common_dir())?,
+    ))
 }
 
 pub fn discover_under(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
@@ -715,12 +739,10 @@ fn discover_in(root: &Path, scoped: bool) -> Result<GitWorkspace, DiscoveryError
             DiscoveryError::Failed(message)
         }
     })?;
-    let worktree = dunce::canonicalize(repository
-        .workdir()
-        .ok_or_else(|| {
-            DiscoveryError::Failed("bare Git repositories have no workspace".to_owned())
-        })?)
-        .map_err(|error| discovery_error("cannot resolve Git worktree", error))?;
+    let worktree = dunce::canonicalize(repository.workdir().ok_or_else(|| {
+        DiscoveryError::Failed("bare Git repositories have no workspace".to_owned())
+    })?)
+    .map_err(|error| discovery_error("cannot resolve Git worktree", error))?;
     let case = if repository
         .filesystem_options()
         .map_err(|error| discovery_error("cannot read core.ignoreCase", error))?
@@ -1363,7 +1385,10 @@ mod tests {
 
         std::fs::copy(parent.join("nested/.git"), linked.join("nested/.git")).unwrap();
         let workspace = discover(&linked).unwrap();
-        assert_eq!(workspace.worktree_root, dunce::canonicalize(&linked).unwrap());
+        assert_eq!(
+            workspace.worktree_root,
+            dunce::canonicalize(&linked).unwrap()
+        );
         assert!(
             !workspace
                 .base_files

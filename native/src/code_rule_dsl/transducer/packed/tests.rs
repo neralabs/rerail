@@ -2254,7 +2254,7 @@
     fn benchmark_three_ast_grep_paths() {
         let root = PathBuf::from(
             std::env::var("TEMPO_TRANSDUCER_CORPUS")
-                .unwrap_or_else(|_| "../../nera-data-layer".into()),
+                .unwrap_or_else(|_| "../../data-layer".into()),
         );
         let limit = std::env::var("TEMPO_TRANSDUCER_FILES")
             .ok()
@@ -2971,7 +2971,7 @@
     fn benchmark_fts_search_index() {
         let root = PathBuf::from(
             std::env::var("TEMPO_TRANSDUCER_CORPUS")
-                .unwrap_or_else(|_| "../../nera-data-layer".into()),
+                .unwrap_or_else(|_| "../../data-layer".into()),
         );
         let limit = std::env::var("TEMPO_TRANSDUCER_FILES")
             .ok()
@@ -3116,7 +3116,7 @@
     fn benchmark_anchored_cpu_and_gpu_anchor_scan() {
         let root = PathBuf::from(
             std::env::var("TEMPO_TRANSDUCER_CORPUS")
-                .unwrap_or_else(|_| "../../nera-data-layer".into()),
+                .unwrap_or_else(|_| "../../data-layer".into()),
         );
         let limit = std::env::var("TEMPO_TRANSDUCER_FILES")
             .ok()

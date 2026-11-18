@@ -2,8 +2,8 @@
 
 Sources read:
 
-- **Tempo (Landing):** `~/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/tempo`, branch `jbarnes/ner-1562-scale-test-the-re-railer`, tip `e95613625`. Docs read: `transducer-design.md`, `transducer-value-program-design.md`, `sql-driven-transducer-execution.md`, `metal-batch-executor-design.md`, `metal-optimal-execution-shape.md`, `metal-execution-cutover-{plan,handover,phase5}.md`, `cpython-335-seconds-workplan.md`, `ner-1562-full-corpus-production-index.md`, `rerail-observable-requirements.md`, `transducer-native-jit-design.md`. Code read: `native/src/policy_dsl/{tape.rs, transducer.rs, transducer/packed_batch.rs, transducer/metal_batch_abi.rs, transducer/metal_output_pages.rs, transducer/metal_typed_output.rs}`.
-- **Rerail N1562:** `~/orca/workspaces/rerail/ner-1562-scale-test-the-re-railer`, worktree HEAD `c674f4b6`, one commit past `8b6576f0`. Docs read: `transducer-design.md`, `packed-executor-architecture.md`, `ner-1562-landing-pad.md`, `rerail-pattern-lowering-design.md`. Code read: `native/src/code_rule_dsl/{packed.rs, packed/**, transducer.rs, transducer/sql_backend.rs, transducer/semantic_facts.rs, query/relational.rs}`.
+- **Tempo (Landing):** `~/orca/workspaces/scale-test-the-re-railer/tempo`, branch `jbarnes/scale-test-the-re-railer`, tip `e95613625`. Docs read: `transducer-design.md`, `transducer-value-program-design.md`, `sql-driven-transducer-execution.md`, `metal-batch-executor-design.md`, `metal-optimal-execution-shape.md`, `metal-execution-cutover-{plan,handover,phase5}.md`, `cpython-335-seconds-workplan.md`, `full-corpus-production-index.md`, `rerail-observable-requirements.md`, `transducer-native-jit-design.md`. Code read: `native/src/policy_dsl/{tape.rs, transducer.rs, transducer/packed_batch.rs, transducer/metal_batch_abi.rs, transducer/metal_output_pages.rs, transducer/metal_typed_output.rs}`.
+- **Rerail N1562:** `~/orca/workspaces/rerail/scale-test-the-re-railer`, worktree HEAD `c674f4b6`, one commit past `8b6576f0`. Docs read: `transducer-design.md`, `packed-executor-architecture.md`, its landing-pad notes, `rerail-pattern-lowering-design.md`. Code read: `native/src/code_rule_dsl/{packed.rs, packed/**, transducer.rs, transducer/sql_backend.rs, transducer/semantic_facts.rs, query/relational.rs}`.
 
 ## 0. Bottom line
 
@@ -113,7 +113,7 @@ Output order is fixed by (task, local) ordinals. Errors are written per task. A 
 
 ### Versions compared
 - Rerail N1562's `docs/transducer-design.md` is an older copy. It lacks `SUPERTYPE`, `FOLLOWING`, cursor slots, repeat counters and fork policies, and its `FORK` takes no policy.
-- N1562's `packed/**` (packed ABI, CPU, regex, Lua, output, scheduler, Metal, `native_ir`) was ported from Landing's v3/v4 eras (`ner-1562-landing-pad.md`, "Source eras").
+- N1562's `packed/**` (packed ABI, CPU, regex, Lua, output, scheduler, Metal, `native_ir`) was ported from Landing's v3/v4 eras (its landing-pad notes, "Source eras").
 - **Tempo is the canonical, newer IR.** Its newer parts are value, capture and output programs on Metal, the grid and frontier execution shape, and typed output pages.
 
 ## 2. Expressivity
@@ -230,7 +230,7 @@ These belong above the IR, in SQL:
 - **Inherent to the IR:** a path-enumeration semantics with no aggregation or existence barrier. Every intermediate path materializes and every successful path is an output, so `has`-style filters and counts multiply work. The existence and count primitives in section 2 fix this.
 
 ## 4. Relationship to the tape
-- **Tempo's tape is v4 (`TMPTAPE4`, 6-byte records, `policy_dsl/tape.rs:16-24`).** It reuses the final header table for supertypes. Rerail's v4 used the same slot for Blade error ranges, so the two formats are incompatible under one magic number. N1562 forbids reading Landing tape bytes (`ner-1562-landing-pad.md`, "Tape boundary").
+- **Tempo's tape is v4 (`TMPTAPE4`, 6-byte records, `policy_dsl/tape.rs:16-24`).** It reuses the final header table for supertypes. Rerail's v4 used the same slot for Blade error ranges, so the two formats are incompatible under one magic number. N1562 forbids reading Landing tape bytes (its landing-pad notes, "Tape boundary").
 - **The executors do not read the persisted tape.** The packed batch decodes each file through `TapeDoc` accessors into a **fully regular** node table (`packed_batch.rs:199-283`):
   - per node: `parent, next_any, next_named, child_start, child_count, descendant_end, source_start, source_end, kind, field, flags`, which is 11 × u32 = 44 B;
   - a child array;

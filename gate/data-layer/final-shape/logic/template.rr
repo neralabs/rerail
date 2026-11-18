@@ -7,7 +7,7 @@
 // into the syntax node `n` that `node`, `text`, `child` and `field` key on.
 //
 // Source: the relational clauses of packs/data-layer/upstream/lint/authored/final-shape/data-layer-serverplan-quality.json
-// (the PIAT port of nera-data-layer serverplan_quality).
+// (the PIAT port of the data-layer repository's serverplan_quality).
 
 .policy {{POLICY}}
 

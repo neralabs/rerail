@@ -2700,7 +2700,7 @@ definitions whose digest changed, and base rows changed under `(document, preord
 
 **Closure:** the distributions recorded in 0083, and the symbol key's form decided.
 
-**Measured** (2026-11-08) on `nera-data-layer-gruel-main` (13,088 `.py` files, 218,046 definitions), last 224 non-merge
+**Measured** (2026-11-08) on `data-layer-gruel-main` (13,088 `.py` files, 218,046 definitions), last 224 non-merge
 commits, with Python's `ast` standing in for the tape (`ast` has fewer nodes than tree-sitter; the ratios are what
 count). The tool is a dev script, not engine code.
 - **The commits are bulk.**

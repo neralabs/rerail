@@ -1,15 +1,13 @@
 use super::resolve::is_identifier;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
-use crate::code_rule_dsl::language::adapter::{
-    ArgumentFeature, gate,
-};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
+use crate::code_rule_dsl::language::adapter::{ArgumentFeature, gate};
 use crate::code_rule_dsl::language::{Family, GrammarDialect, kind_ids};
 use crate::code_rule_dsl::matcher::Semantic;
 use crate::code_rule_dsl::matcher::{Arguments, AstMatcher, SlotKind};
 use napi::Result;
 use serde_json::Value;
 use std::collections::BTreeSet;
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Slots one signature may name.
 const MAX_SLOTS: usize = 256;
@@ -179,8 +177,10 @@ pub(super) fn compile_arguments(
         Some("estree") => Some(ArgumentFeature::Estree),
         Some(_) | None => None,
     };
-    let call_kinds =
-        { let pack = language_pack::pack(Family::of(language)); call_kinds(pack, language, path, markers, mode) }?;
+    let call_kinds = {
+        let pack = language_pack::pack(Family::of(language));
+        call_kinds(pack, language, path, markers, mode)
+    }?;
     Ok(AstMatcher::Semantic(Semantic::Arguments(Box::new(
         Arguments {
             language,
@@ -197,7 +197,8 @@ pub(super) fn compile_arguments(
 /// The kinds of `A`'s calls in `language`, once `A` reads the slot markers `/` and `*` (where
 /// `markers`) and the `mode`.
 fn call_kinds(
-    pack: &dyn language_pack::LanguagePack, language: GrammarDialect,
+    pack: &dyn language_pack::LanguagePack,
+    language: GrammarDialect,
     path: &str,
     markers: bool,
     mode: Option<ArgumentFeature>,
@@ -209,15 +210,9 @@ fn call_kinds(
         )?;
     }
     if let Some(mode) = mode {
-        gate(
-            &format!("{path}/mode"),
-            pack.arguments_feature(mode),
-        )?;
+        gate(&format!("{path}/mode"), pack.arguments_feature(mode))?;
     }
-    Ok(kind_ids(
-        language,
-        pack.arguments_call_kinds(),
-    ))
+    Ok(kind_ids(language, pack.arguments_call_kinds()))
 }
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

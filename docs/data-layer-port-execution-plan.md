@@ -13,10 +13,10 @@ Batch two is now implemented in the [second-batch report](data-layer-batch-two.m
 The [third batch](data-layer-batch-three.md) now extends the gate to thirty checks.
 The measurements below remain the original first-batch observations.
 
-Source: `2b1504adc4291daaf080b2e932962b134da1a69a` in `neralabs/nera-data-layer`.
+Source: `2b1504adc4291daaf080b2e932962b134da1a69a` in the data-layer repository.
 The [evidence file](../packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-01-evidence.json) records counts, provenance, and the measured native binary hash.
 The [batch manifest](../fixtures/host/data-layer-port/batches.json) retains all 142 checks in batches of ten, then two.
-The [engine feature ledger](data-layer-engine-gaps.md) tracks three proven branch features under Linear umbrella NER-1967.
+The [engine feature ledger](data-layer-engine-gaps.md) tracks three proven branch features under one umbrella issue.
 Jeremy must approve every new Linear issue before creation.
 
 ## Implemented checks
@@ -85,7 +85,7 @@ Two later probes confirm decoded-string false negatives outside that corpus.
 An import split across adjacent literals produces no native finding, while the oracle produces one.
 Two imports separated by an escaped newline produce one native finding, while the oracle produces two.
 Existing decoded-value queries can detect the adjacent-literal constant without an engine change.
-These candidate defects do not establish a missing decoder or the broad extension proposed in the withdrawn NER-1968.
+These candidate defects do not establish a missing decoder or the broad extension proposed in the withdrawn string-value issue.
 The [engine feature ledger](data-layer-engine-gaps.md) retains the evidence without asserting a new engine requirement.
 
 ## Engine capabilities added during porting

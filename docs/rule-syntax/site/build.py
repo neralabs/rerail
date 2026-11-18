@@ -1,6 +1,6 @@
 """Build the Rerail logic syntax page: out/index.html and out/data/*.json.
 
-    ENGINE=<rerail-engine> python3 docs/rule-syntax/site/build.py [--dlre <Data-layer-rule-expressivity worktree>] [--ndl <nera-data-layer checkout>]
+    ENGINE=<rerail-engine> python3 docs/rule-syntax/site/build.py [--dlre <Data-layer-rule-expressivity worktree>] [--ndl <data-layer checkout>]
 
 The generated view of each JSON rule is the engine's translator (decision 0175, `rerail-engine translate-json
 --display`); ENGINE defaults to the worktree's target/profiling/rerail-engine.
@@ -102,7 +102,7 @@ def git_show(repo, rev, path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dlre", default=os.path.join(os.path.dirname(ROOT), "Data-layer-rule-expressivity"))
-    ap.add_argument("--ndl", default=os.path.join(os.path.dirname(os.path.dirname(ROOT)), "nera-data-layer-ner1131-base-audit"))
+    ap.add_argument("--ndl", default=os.path.join(os.path.dirname(os.path.dirname(ROOT)), "data-layer-base-audit"))
     ap.add_argument("--out", default=os.path.join(HERE, "out"))
     a = ap.parse_args()
     runpy.run_path(os.path.join(HERE, "pages.py"))   # writes intro.html and syntax.html

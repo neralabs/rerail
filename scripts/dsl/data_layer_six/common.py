@@ -77,6 +77,6 @@ def write(out,name,clauses,pin,roots,exclude,utils=None,options=None,mode='block
  definition={'options':{'oracleAnalyzer':{'type':'boolean','default':False},'entryPoint':{'type':'string','default':'all'},**(options or {})}}
  if utils:definition.update(language='python',utils=utils)
  doc={'format':'rerail.policy/v1','id':'data-layer-'+name.replace('_','-'),'revision':1,'mode':mode,
-  'description':f'Candidate port of nera-data-layer {name} at {pin}.',
+  'description':f'Candidate port of the data-layer repository's {name} at {pin}.',
   'scope':{'include':roots,'exclude':exclude},'clauses':[{'id':'shared','define':definition},*clauses]}
  (out/(doc['id']+'.json')).write_text(json.dumps(doc,indent=2)+'\n')

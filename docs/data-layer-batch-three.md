@@ -6,7 +6,7 @@ Both earlier batches still pass.
 This batch uses existing engine capabilities; no additional native engine feature was required.
 The pack remains inactive while integration certification remains open.
 
-The source pin is `2b1504adc4291daaf080b2e932962b134da1a69a` in `neralabs/nera-data-layer`.
+The source pin is `2b1504adc4291daaf080b2e932962b134da1a69a` in the data-layer repository.
 The [evidence file](../packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-03-evidence.json) records provenance, coverage, policy digests, and the native binary hash.
 
 ## Policies and original tests
@@ -181,8 +181,8 @@ The next batch contains SQL grammar checks and retains all current parity gates.
 
 ## Approved Linear amendments
 
-[NER-1969](https://linear.app/nera/issue/NER-1969) now includes same-file content gates and selectable line terminators.
-[NER-1971](https://linear.app/nera/issue/NER-1971) now includes bounded witness-relative source context.
+The line-query issue now includes same-file content gates and selectable line terminators.
+The line-context issue now includes bounded witness-relative source context.
 Both descriptions preserve the earlier requirements and add pinned linter links, implementation requirements, and acceptance evidence.
 Their workflow states remain unchanged.
 The separate proposed stateful-filter ticket remains uncreated pending explicit approval.

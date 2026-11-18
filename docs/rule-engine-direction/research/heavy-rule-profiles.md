@@ -58,7 +58,7 @@ Two more rules are covered only as risk notes in §3:
 
 ### Corpus (M)
 
-The corpus is the 9,010 `.py` files of nera-data-layer at the pinned commit, 137.9 MB. The 11 Rust inputs are excluded.
+The corpus is the 9,010 `.py` files of the data-layer repository at the pinned commit, 137.9 MB. The 11 Rust inputs are excluded.
 
 | Measure | Value |
 |---|---|

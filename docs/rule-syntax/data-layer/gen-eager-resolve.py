@@ -6,7 +6,7 @@ differs."""
 import ast, json, os, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = "/Users/jeremy/orca/workspaces/nera-data-layer-ner1131-base-audit"
+REPO = "/Users/jeremy/orca/workspaces/data-layer-base-audit"
 COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
 LINTER = "scripts/lint_eager_resolve.py"
 OUT = os.path.join(HERE, "eager-resolve.tables.rr")

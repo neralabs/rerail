@@ -49,7 +49,10 @@ use std::ops::Range;
 
 /// How a program's text was read: tree-sitter's tree, or a lean parser's tape of it, which is the
 /// tape that tree encodes to (decision 0198). Either spans the program's text.
-#[allow(clippy::large_enum_variant, reason = "one a program read, moved once into its document: a box would be an allocation more for each")]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one a program read, moved once into its document: a box would be an allocation more for each"
+)]
 pub enum Parse {
     Tree(tree_sitter::Tree),
     /// The whole text's tape: the placeholders the program's segments omit are still in it
@@ -63,12 +66,18 @@ impl Parse {
     /// refusal). `None` where tree-sitter has no grammar for the dialect.
     pub fn read(dialect: GrammarDialect, text: &str, budget: &dyn Fn() -> bool) -> Option<Self> {
         use crate::code_rule_dsl::tape::{Grammar, ecma_lean, php_lean};
-        let ecma = |lean| Grammar::embedded(dialect).ok().and_then(|grammar| ecma_lean::encode(lean, &grammar, text, budget).ok());
+        let ecma = |lean| {
+            Grammar::embedded(dialect)
+                .ok()
+                .and_then(|grammar| ecma_lean::encode(lean, &grammar, text, budget).ok())
+        };
         let lean = match dialect {
             GrammarDialect::JavaScript => ecma(rerail_ecma_lean::Dialect::JavaScript),
             GrammarDialect::TypeScript => ecma(rerail_ecma_lean::Dialect::TypeScript),
             GrammarDialect::Tsx => ecma(rerail_ecma_lean::Dialect::Tsx),
-            GrammarDialect::Php => Grammar::embedded(dialect).ok().and_then(|grammar| php_lean::encode_program(&grammar, text, budget).ok()),
+            GrammarDialect::Php => Grammar::embedded(dialect)
+                .ok()
+                .and_then(|grammar| php_lean::encode_program(&grammar, text, budget).ok()),
             _ => None,
         };
         if let Some(tape) = lean.and_then(Result::ok) {
@@ -114,14 +123,18 @@ pub struct Program {
 pub trait Embedder: Send + Sync {
     /// The program the host whose tape's root is `root`, over `source`, embeds; `None` where it
     /// embeds none. The tape is read in place (`host`), whichever parser wrote it.
-    fn build(&self, root: HostNode<'_>, source: &str, budget: &dyn Fn() -> bool) -> Option<Program>;
+    fn build(&self, root: HostNode<'_>, source: &str, budget: &dyn Fn() -> bool)
+    -> Option<Program>;
 }
 
-static EMBEDDERS: std::sync::OnceLock<Vec<(crate::code_rule_dsl::language::Via, &'static dyn Embedder)>> =
-    std::sync::OnceLock::new();
+static EMBEDDERS: std::sync::OnceLock<
+    Vec<(crate::code_rule_dsl::language::Via, &'static dyn Embedder)>,
+> = std::sync::OnceLock::new();
 
 /// The engine's embedders, by `Via`; the first call holds.
-pub fn install_embedders(embedders: Vec<(crate::code_rule_dsl::language::Via, &'static dyn Embedder)>) {
+pub fn install_embedders(
+    embedders: Vec<(crate::code_rule_dsl::language::Via, &'static dyn Embedder)>,
+) {
     let _ = EMBEDDERS.set(embedders);
 }
 
@@ -134,4 +147,3 @@ pub fn embedder(via: crate::code_rule_dsl::language::Via) -> &'static dyn Embedd
         .map(|(_, embedder)| *embedder)
         .unwrap_or_else(|| panic!("no embedder registered for {via:?}"))
 }
-

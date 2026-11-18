@@ -5,7 +5,7 @@ This brings the candidate inventory to forty; it does not certify forty complete
 
 Implementation update: the first thirty checks now have candidate policies and a native parity gate.
 See the [first-batch report](data-layer-port-execution-plan.md) and [second-batch report](data-layer-batch-two.md) for the first two batches. The [third-batch report](data-layer-batch-three.md) covers the current implementation results and measurements.
-The [engine feature ledger](data-layer-engine-gaps.md) links three demonstrated branch features under umbrella NER-1967.
+The [engine feature ledger](data-layer-engine-gaps.md) links three demonstrated branch features under one umbrella issue.
 Jeremy must approve every new Linear issue before creation.
 The survey below describes the starting point before those ports.
 
@@ -18,8 +18,8 @@ The historical SQL implementation supplies useful lessons, but its timings do no
 
 | Source | Revision | Role |
 |---|---|---|
-| [Data-layer main](https://github.com/neralabs/nera-data-layer/commit/2b1504adc4291daaf080b2e932962b134da1a69a) | `2b1504adc4291daaf080b2e932962b134da1a69a` | Migration oracle, main as retrieved on October 19, 2026 |
-| [PR 2539](https://github.com/neralabs/nera-data-layer/pull/2539) | `281f500d7c8d413f17c6a27de2f3c518bb45258a` | Historical declarative implementation |
+| Data-layer main (commit `2b1504adc4`) | `2b1504adc4291daaf080b2e932962b134da1a69a` | Migration oracle, main as retrieved on October 19, 2026 |
+| PR 2539 | `281f500d7c8d413f17c6a27de2f3c518bb45258a` | Historical declarative implementation |
 | Rerail | `0ab3cedc` | Engine source in this checkout |
 
 The PR remains open.
@@ -61,9 +61,9 @@ Thus, a retained fact-storage provider does not imply retention of SQL-only rule
 Recent main also converts required-fact extraction errors into `FACT-EXTRACTION-FAILED` findings, with a syntax-error exception.
 The migration must preserve failure visibility as well as findings.
 
-Relevant current sources are [suite.py](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/suite.py),
-[fact_engine.py](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/fact_engine.py),
-and [symbol_graph.py](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/symbol_graph.py).
+Relevant current sources are suite.py (`scripts/lint_lib/suite.py`),
+fact_engine.py (`scripts/lint_lib/fact_engine.py`),
+and symbol_graph.py (`scripts/lint_lib/symbol_graph.py`).
 
 ## Capability assessment
 
@@ -121,7 +121,7 @@ A broad dataflow system is not necessarily required for this particular check.
 
 Relevant sources are [calls/summary.rs](../native/src/code_rule_dsl/calls/summary.rs),
 [calls_state.rs](../native/src/code_rule_dsl/workspace/calls_state.rs),
-and the current [public API check](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_public_api_triples.py).
+and the current public API check (`scripts/lint_public_api_triples.py`).
 
 ## Existing examples are partial projections
 
@@ -153,13 +153,13 @@ It does not prove native parser or matching parity.
 Full parity also needs branching, nesting, async scopes, suppressions, paths, and failure cases.
 
 The inputs are in [data-layer-port-probes.json](../fixtures/host/code-rule-dsl/data-layer-port-probes.json).
-The current oracle is [lint_plan_scope_side_effects.py](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_plan_scope_side_effects.py).
+The current oracle is lint_plan_scope_side_effects.py (`scripts/lint_plan_scope_side_effects.py`).
 
 ## Performance findings
 
 ### Historical SQL costs
 
-PR 2539's [200-file performance plan](https://github.com/neralabs/nera-data-layer/blob/281f500d7c8d413f17c6a27de2f3c518bb45258a/docs/design/DECLARATIVE_LINTER_200_FILE_PERFORMANCE_PLAN.md)
+PR 2539's 200-file performance plan (`docs/design/DECLARATIVE_LINTER_200_FILE_PERFORMANCE_PLAN.md` at `281f500d7c`)
 records these development measurements:
 
 | Phase | Query-fixes run | Eight-worker run |
@@ -273,7 +273,7 @@ It imports no source-repository modules and writes JSON to standard output.
 
 ```sh
 python3 scripts/dsl/data_layer_rule_audit.py \
-  --repo /path/to/nera-data-layer > /tmp/data-layer-rule-audit.json
+  --repo /path/to/data-layer > /tmp/data-layer-rule-audit.json
 ```
 
 For the oracle probes, the Python environment needs data-layer dependencies.
@@ -283,7 +283,7 @@ It also rejects a checkout at another commit or with modified tracked scripts.
 
 ```sh
 /path/to/data-layer/.venv/bin/python scripts/dsl/data_layer_rule_audit.py \
-  --repo /path/to/nera-data-layer \
+  --repo /path/to/data-layer \
   --oracle-root /path/to/pinned-data-layer-source \
   > /tmp/data-layer-rule-audit-probes.json
 ```

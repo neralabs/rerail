@@ -64,7 +64,7 @@ Generate the shared SQL policies from the pinned data-layer source:
 
 ```sh
 /path/to/data-layer/.venv/bin/python scripts/dsl/data_layer_generate_batch_six.py \
-  --source /path/to/pinned/nera-data-layer --repo /path/to/data-layer/repo \
+  --source /path/to/pinned/data-layer --repo /path/to/data-layer/repo \
   --output /tmp/shared-sql-policies
 ```
 
@@ -76,7 +76,7 @@ Use the bounded profiling controller with either policy directory:
 
 ```sh
 npm run profile:code-rule-dsl -- \
-  --source /path/to/pinned/nera-data-layer \
+  --source /path/to/pinned/data-layer \
   --selection fixtures/host/data-layer-port/profiling/quality-five.json \
   --policies /tmp/shared-sql-policies --query-plans \
   --output .rerail/profiles/shared-sql

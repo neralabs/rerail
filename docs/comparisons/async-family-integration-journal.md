@@ -7,7 +7,7 @@ The integration worktree has uncommitted changes. They are outside this comparis
 The historical reference is `jeremy/shared-structural-execution` at `e1ffeaf25`.
 Its measured source is `a55956e33`.
 
-The corpus is `neralabs/nera-data-layer` at `fce4dc7208c0b892c11a549c8be43fc285580d6b`.
+The corpus is the data-layer repository at `fce4dc7208c0b892c11a549c8be43fc285580d6b`.
 Python blobs were recovered from Git without changing a source worktree.
 The recovered corpus contains exactly 5,725 files and 95,697,853 bytes.
 The manifest records each path, Git blob, byte count, and SHA-256 digest.
