@@ -96,11 +96,11 @@ function answered(run: GitRunResult): unknown {
 
 /**
  * A blocking run of `script` under `limits`, after the script has started `sleep 10` in the background, which holds
- * stdout and stderr for as long as it runs: what the run answered, and whether that sleep still ran when the run
- * returned. The sleep is ended either way.
+ * stdout and stderr for as long as it runs and writes its pid to `pidFile`: what the run answered, and whether that
+ * sleep still ran when the run returned. The sleep is ended either way. A run through Node and one through the engine
+ * get the same `pidFile`, so their arguments are the same.
  */
-async function heldRun(script: string, limits: GitRunLimits): Promise<{ answer: unknown; held: boolean }> {
-  const pidFile = join(await folder("held"), "holder.pid");
+function heldRun(pidFile: string, script: string, limits: GitRunLimits): { answer: unknown; held: boolean } {
   const run = runGitSync("/bin/sh", ["-c", `sleep 10 & echo $! > "$1"; ${script}`, "sh", pidFile], process.env, limits);
   const holder = Number(readFileSync(pidFile, "utf8"));
   let held = true;
@@ -114,11 +114,10 @@ async function heldRun(script: string, limits: GitRunLimits): Promise<{ answer: 
 
 /**
  * A blocking run, past its 300 ms time limit, of a script that takes the SIGTERM and then writes 1 MB to its stdout:
- * what the run answered, and how that write ended: 141 when it met a closed output (EPIPE), 124 when it filled the
- * buffers and waited until `timeout` ended it.
+ * what the run answered, and how that write ended, as the script writes it to `statusFile`: 141 when it met a closed
+ * output (EPIPE), 124 when it filled the buffers and waited until `timeout` ended it.
  */
-async function writtenAfterTerm(): Promise<{ answer: unknown; write: string }> {
-  const statusFile = join(await folder("write"), "status");
+function writtenAfterTerm(statusFile: string): { answer: unknown; write: string } {
   const script = `sleep 10 & s=$!; trap 'timeout 5 head -c 1000000 /dev/zero; echo $? > "$1"; kill $s; exit 0' TERM; echo started; wait`;
   const run = runGitSync("/bin/sh", ["-c", script, "sh", statusFile], process.env, { timeout: 300 });
   return { answer: answered(run), write: readFileSync(statusFile, "utf8") };
@@ -210,16 +209,17 @@ describe.runIf(LINUX)("Git started through the engine, on Linux", () => {
   }, 30_000);
 
   it("ends a blocking Git at its time limit as spawnSync does while a process Git started still holds its output", async () => {
-    const runs = async (): Promise<unknown> => ({
-      running: await heldRun("echo started; exec sleep 10", { timeout: 300 }),
-      exited: await heldRun("echo started; exit 0", { timeout: 300 }),
+    const files = await folder("held");
+    const runs = (): unknown => ({
+      running: heldRun(join(files, "running.pid"), "echo started; exec sleep 10", { timeout: 300 }),
+      exited: heldRun(join(files, "exited.pid"), "echo started; exit 0", { timeout: 300 }),
       closed: answered(runGitSync("/bin/sh", ["-c", "echo started; exec > /dev/null 2>&1; exec sleep 10"], process.env, { timeout: 300 })),
       printing: ending(runGitSync("/bin/sh", ["-c", "while :; do printf x; done"], process.env, { timeout: 300, maxBuffer: 8 << 20 })),
-      writing: await writtenAfterTerm(),
+      writing: writtenAfterTerm(join(files, "writing.status")),
     });
-    const throughNode = await runs();
+    const throughNode = runs();
     expect(startGitWithoutCopying(loadNativeBinding)).toBe(true);
-    const throughEngine = await runs();
+    const throughEngine = runs();
     expect(throughEngine).toEqual(throughNode);
     const timedOut = { stdout: "started\n", error: { code: "ETIMEDOUT" } };
     expect(throughEngine).toMatchObject({
@@ -232,10 +232,11 @@ describe.runIf(LINUX)("Git started through the engine, on Linux", () => {
   }, 120_000);
 
   it("ends a blocking Git past its output limit as spawnSync does while a process Git started still holds its output", async () => {
-    const run = async (): Promise<unknown> => await heldRun("head -c 1001 /dev/zero; exec sleep 10", { maxBuffer: 1000 });
-    const throughNode = await run();
+    const pidFile = join(await folder("held"), "holder.pid");
+    const run = (): unknown => heldRun(pidFile, "head -c 1001 /dev/zero; exec sleep 10", { maxBuffer: 1000 });
+    const throughNode = run();
     expect(startGitWithoutCopying(loadNativeBinding)).toBe(true);
-    const throughEngine = await run();
+    const throughEngine = run();
     expect(throughEngine).toEqual(throughNode);
     expect(throughEngine).toMatchObject({ held: true, answer: { stdout: "\0".repeat(1001), status: null, signal: "SIGTERM", error: { code: "ENOBUFS" } } });
   }, 60_000);
