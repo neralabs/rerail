@@ -3994,6 +3994,10 @@ fn a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_before_discovery() {
         &[("api/a.py", b"pront(1)\n"), ("lib/b.py", b"x = 2\n")],
     );
     let root = directory.0.join("repo");
+    // On unix Git's own status sees the edit whenever its change time reaches the next second,
+    // and then no restore is asked. Without the change time, Git calls the file clean on every
+    // system, as Git for Windows always does, so only the restore's check can tell.
+    git(&root, &["config", "core.trustctime", "false"]);
     let code_rule = print_code_rule();
     let mut first = storage_workspace(&root, directory.store());
     first.add_code_rule(&code_rule, None).unwrap();
