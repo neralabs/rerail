@@ -109,6 +109,47 @@ pub mod wave {
         /// What else the wave runs when it is flushed, after its launches: a form's own submission (the device
         /// joins' open command buffer, `setfix::device`), once.
         static DEFERRED: RefCell<Vec<Box<dyn FnOnce() -> Result<(), String>>>> = RefCell::new(Vec::new());
+        /// Where the job running on this thread began (`enter`): its launches and deferred submissions are those past
+        /// it. A thread waiting on a job runs others meanwhile (`Stream::wait` helps the pool), so what lies below it
+        /// is another's, which this job's `flush` leaves and its submissions do not join (Q90).
+        static FLOOR: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
+    }
+
+    /// A job's scope on this thread (`enter`): its mark, and the floor it put back when it ends.
+    pub struct Entered {
+        mark: Mark,
+        before: (usize, usize),
+    }
+
+    impl Entered {
+        pub fn mark(&self) -> Mark {
+            self.mark
+        }
+    }
+
+    impl Drop for Entered {
+        fn drop(&mut self) {
+            FLOOR.set(self.before);
+        }
+    }
+
+    /// A job begins on this thread: where its wave stands (`mark`), and its floor until it ends. Inside it `flush`
+    /// runs only what the job queued and deferred, and a form's open submission below the floor is not the job's
+    /// (`opened_in_scope`): the job opens its own, flushed and resumed on this thread (Q90).
+    pub fn enter() -> Entered {
+        let mark = mark();
+        Entered { mark, before: FLOOR.replace((mark.0, mark.1)) }
+    }
+
+    /// The submissions deferred on this thread so far: where the next `defer` goes.
+    pub fn deferred_len() -> usize {
+        DEFERRED.with_borrow(Vec::len)
+    }
+
+    /// Whether a submission deferred at `at` (`deferred_len` before its `defer`) is the running job's own: at or past
+    /// its floor.
+    pub fn opened_in_scope(at: usize) -> bool {
+        at >= FLOOR.get().1
     }
 
     /// Runs `f` when the wave is flushed (a form that encoded its work into a submission of its own, shared by the
@@ -216,8 +257,10 @@ pub mod wave {
     /// Runs every queued launch as one batch (`strata`: how many strata wait on it, for the profile). Returns how
     /// many launches it ran.
     pub fn flush(strata: usize) -> Result<usize, String> {
-        let q = QUEUED.with_borrow_mut(std::mem::take);
-        let deferred = DEFERRED.with_borrow_mut(std::mem::take);
+        // The running job's own (its floor; the run's thread's is 0): another's below it stay for that one.
+        let (fq, fd) = FLOOR.get();
+        let q = QUEUED.with_borrow_mut(|q| q.split_off(fq.min(q.len())));
+        let deferred = DEFERRED.with_borrow_mut(|d| d.split_off(fd.min(d.len())));
         let ran = deferred.len();
         if q.is_empty() {
             if ran > 0 {
@@ -325,6 +368,42 @@ mod wave_tests {
         .join()
         .unwrap();
         assert_eq!(wave::flushed().0 - before.0, 1, "another thread's wave is not the run's");
+    }
+
+    /// Q90: a thread waiting on a job runs another meanwhile, with a submission of its own deferred to its wave. The
+    /// job's submission is past its floor (its own, `opened_in_scope`), the open one below it is not; the job's
+    /// `flush` runs only its own, and the thread's runs once the job has ended. Before, the job joined the open
+    /// submission (`deferred_since` stayed false), and its members went back parked on a wave of this thread's, to be
+    /// resumed on another, which refused them to the CPU.
+    #[test]
+    fn a_job_flushes_its_own_submissions_and_not_its_threads() {
+        std::thread::spawn(|| {
+            use std::sync::atomic::{AtomicU32, Ordering};
+            static RAN: AtomicU32 = AtomicU32::new(0);
+            let outer_at = wave::deferred_len();
+            wave::defer(Box::new(|| {
+                RAN.fetch_or(1, Ordering::Relaxed);
+                Ok(())
+            }));
+            {
+                let job = wave::enter();
+                assert!(!wave::opened_in_scope(outer_at), "the thread's open submission is not the job's");
+                let inner_at = wave::deferred_len();
+                assert!(wave::opened_in_scope(inner_at), "what the job defers is its own");
+                wave::defer(Box::new(|| {
+                    RAN.fetch_or(2, Ordering::Relaxed);
+                    Ok(())
+                }));
+                assert!(wave::deferred_since(job.mark()));
+                assert_eq!(wave::flush(1).unwrap(), 1, "the job's flush runs its own submission alone");
+                assert_eq!(RAN.load(Ordering::Relaxed), 2);
+            }
+            assert!(wave::opened_in_scope(outer_at), "the job ended: the thread's own again");
+            assert_eq!(wave::flush(1).unwrap(), 1);
+            assert_eq!(RAN.load(Ordering::Relaxed), 3, "the thread's submission ran when its thread flushed");
+        })
+        .join()
+        .unwrap();
     }
 }
 

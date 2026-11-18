@@ -1527,7 +1527,7 @@ inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan
 
 Q68 (step 6's prices) waits for step 4: most of what it prices goes.
 
-### Q90. Parked strata resumed on another thread are refused to the CPU
+### Q90. Parked strata resumed on another thread are refused to the CPU — done 2026-11-18
 
 A stratum whose device joins wait for the wave (`setfix::device::submit`) keeps its encoded runs in its thread's
 `SUSPENDED`. A job run while its thread waited (`Stream::wait` helps the pool) can join a wave that thread had open
@@ -1543,6 +1543,13 @@ always a refusal.
 - Route a parked member back to the thread that holds its submission, or flush that wave before the job hands its
   members back (the job's mark taken before the thread's open wave, not after).
 - **Done when**: no hogql run has the refusal, findings unchanged over 20 runs.
+- **Done** (2026-11-18): a job is a scope of the thread's wave (`lanes::wave::enter`). Its floor is where the
+  thread's launches and deferred submissions stood when it began; inside it `flush` runs only what lies past the
+  floor, and a device submission joins an open wave only if that wave was opened past it (`opened_in_scope`). The
+  device's open waves are a stack (`setfix::device::WAVE`), each flushed by number. So a job's strata always open the
+  job's own wave, `deferred_since(mark)` holds, and they are flushed and resumed on the thread that holds them; the
+  thread's own wave stays for it. Test: `a_job_flushes_its_own_submissions_and_not_its_threads`. hogql: 2, 5 and 8
+  such refusals in three 16z runs before; none in 24 after (21 format 15, three 16z), findings 1,629 in each.
 
 ### Q121. `text` on request (0353 step 3's derived values): measure, then decide
 

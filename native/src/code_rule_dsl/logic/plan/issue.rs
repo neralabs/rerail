@@ -465,7 +465,8 @@ impl<'a> Board<'a> {
                 let mut times = Vec::new();
                 let mut reserved = Default::default();
                 let before = super::super::lanes::wave::flushed_now();
-                let mark = super::super::lanes::wave::mark();
+                let scope = super::super::lanes::wave::enter();
+                let mark = scope.mark();
                 let mut waiting = Vec::new();
                 let (mut n, mut stop) = strand.run_members(&data, &mut times, &mut reserved, level_wave().then_some(&mut waiting));
                 // A device joins' submission opened here is this thread's: its members' wave is flushed here.
@@ -626,7 +627,8 @@ impl<'a> Board<'a> {
                     let mut w = w;
                     super::super::lanes::wave::put_outputs(outs);
                     let before = super::super::lanes::wave::flushed_now();
-                    let mark = super::super::lanes::wave::mark();
+                    let scope = super::super::lanes::wave::enter();
+                    let mark = scope.mark();
                     let Waiting { strand, waiting, data, times, reserved, .. } = &mut *w;
                     let mut r = strand.reserving(reserved, |s| s.resume_parked(data, waiting, times));
                     // A device joins' submission opened here is this thread's: its members' wave is flushed here.
