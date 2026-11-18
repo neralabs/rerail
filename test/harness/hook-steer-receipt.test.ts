@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery } from "../../src/engine/index.js";
 import { emitHookOutput } from "../../src/harness/hook-adapter.js";
 import { runClaudeHook } from "../../src/hosts/claude/index.js";
-import { encodeRerailEventResult } from "../../src/runtime/index.js";
+import { encodeRerailEventResult, RECEIPT_TAKEN_WITHIN_MS } from "../../src/runtime/index.js";
 import { hookOptions, sessionDatabaseQuery, temporaryDirectories } from "../support/hook-events.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-hook-receipt-");
@@ -94,6 +94,8 @@ describe("a steered hook's receipt", () => {
     // A writer holds the database: a hook that recorded the receipt itself waited out SQLite's 5 s busy timeout, then lost it.
     const writer = new Database(join(root, "rerail.sqlite"));
     writer.exec("BEGIN IMMEDIATE");
+    // The engine socket here answers in this process; held still, its bound cannot run out on a slow machine first.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       await emitHookOutput(output, sink());
     } finally {
@@ -119,7 +121,7 @@ describe("a steered hook's receipt", () => {
     expect(JSON.parse(row!.payloadJson)).toEqual({ ruleIds: ["rule:a"] });
   });
 
-  it("is recorded by the hook itself when the daemon reads nothing within the probe's bound", { timeout: 20_000 }, async () => {
+  it("is recorded by the hook itself when the daemon reads nothing within the bound a receipt has", { timeout: 20_000 }, async () => {
     const root = await temporaryDirectory();
     const daemon = await fakeDaemon(root, "hold");
     const output = await steeredAnswer(root, daemon);
@@ -128,9 +130,12 @@ describe("a steered hook's receipt", () => {
     // Whichever comes first: the daemon reads the receipt, or the hook ends without handing it over.
     await Promise.race([daemon.receiptRead, emitted]);
     expect(daemon.receipts).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(RECEIPT_TAKEN_WITHIN_MS - 1);
     expect(receiptRows(root)).toEqual([]);
-    // The bound a running daemon has to read the receipt runs out.
-    await vi.runOnlyPendingTimersAsync();
+    // The bound a daemon has to take the receipt runs out, no longer than the hook's own record takes, and the hook
+    // gives up on the hand-over: no timer of it is left.
+    await vi.advanceTimersByTimeAsync(1);
+    expect(vi.getTimerCount()).toBe(0);
     await emitted;
     expect(receiptRows(root)).toHaveLength(1);
   });

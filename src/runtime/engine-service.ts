@@ -19,7 +19,7 @@ import {
 } from "./event-protocol.js";
 import { defaultRerailDatabasePath, failWhileWriteLocked, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { isBusy } from "../engine/storage/sqlite-wal.js";
-import { DAEMON_ACCESS_HEADER, PROBE_TIMEOUT_MS, sameSecret, type EngineEndpoint } from "./daemon-control.js";
+import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
 import { isNamedPipe } from "./engine-pipe.js";
 import { checkoutStatus } from "./repository-start.js";
@@ -1287,10 +1287,19 @@ export async function ingestEngineEvent(
 }
 
 /**
+ * How long a hook waits for the daemon to take a steer's receipt before it records the receipt itself. A daemon whose
+ * event loop runs reads a request on a connection already open within a few milliseconds. Past this bound it is busy
+ * with other work or stopped, and the hook's own record, which takes about as long as this bound (two SQLite opens:
+ * 61 ms at the median and 96 ms at the 90th percentile on a busy Windows 11 machine, 25 ms on Linux), ends the hook
+ * sooner than more waiting would. So a daemon too busy to read the receipt costs a steered hook at most this bound
+ * more than its own record did before receipts were handed over.
+ */
+export const RECEIPT_TAKEN_WITHIN_MS = 100;
+
+/**
  * Hands `receipt` to the engine service, which records it; false when it did not take it, so the caller records it
  * itself: a daemon from before receipts were handed over answers it not found, one that is gone refuses or drops the
- * connection, and one whose event loop does not run reads nothing within `PROBE_TIMEOUT_MS`, the bound a running
- * daemon has to answer a request that needs no work first.
+ * connection, and one busy with other work or stopped reads nothing within `RECEIPT_TAKEN_WITHIN_MS`.
  */
 async function handEngineReceipt(
   endpoint: EngineEndpoint,
@@ -1299,7 +1308,7 @@ async function handEngineReceipt(
   configuration: EngineRuntimeConfiguration | undefined,
 ): Promise<boolean> {
   const { sent, answer } = postEngine(endpoint, agent, RECEIPTS_PATH, JSON.stringify(ReceiptRequestSchema.parse({ receipt, configuration })));
-  const bound = setTimeout(() => sent.destroy(new Error("The Rerail daemon took no receipt")), PROBE_TIMEOUT_MS);
+  const bound = setTimeout(() => sent.destroy(new Error("The Rerail daemon took no receipt")), RECEIPT_TAKEN_WITHIN_MS);
   try {
     return (await answer).status === 200;
   } catch {

@@ -305,8 +305,7 @@ const AUTOSTART_CLAIM_RENEW_MS = 1_000;
 const STOP_TIMEOUT_MS = 10_000;
 const KILL_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
-/** How long a running daemon has to answer a request that needs no work before its answer: a probe, a handed receipt. */
-export const PROBE_TIMEOUT_MS = 2_000;
+const PROBE_TIMEOUT_MS = 2_000;
 const MAX_MACOS_UNIX_SOCKET_PATH_BYTES = 103;
 
 export interface RunningDaemon {
