@@ -3,7 +3,7 @@
 Status: decided by the user (2026-11-18: "everything should be in blocks all the time"; "these should be blocks …
 I would prefer memory-mappable files than blobs"). Builds 0266's `Atoms` and `Facts` as what the store keeps.
 Replaces the atoms' segment rows and key (0049, 0111) and the cross part's frames (0104, 0295 §4) as storage.
-Steps 1–3 (atoms) built and 4 measured; 5 (the kept block) built; 6–10 next.
+Steps 1–3 (atoms) built and 4 measured; 5 (the kept block) and 6 (the keep, beside the frames) built; 7–10 next.
 
 ## Intro
 
@@ -307,7 +307,7 @@ Facts:
 4. (measured, below) ep2: a new process's atoms (0.046 s, 215 MB before), its cold and warm runs.
 5. (built) `rerail_blocks::kept`: the directory, `KeptW`, `KeptRead` over a base and its delta; F-R1 at the block
    (`a_kept_relation_is_read_where_it_lies`), `a_delta_reads_over_its_base`, `a_key_put_twice_is_refused`.
-6. The keep (`retain::write_frames`, `write_input_frames`) writes a space's delta.
+6. (built) The keep (`retain::write_frames`, `write_input_frames`) writes a space's delta, beside the frames.
 7. The read (`preload_frames_live`, `kept_inputs`, the clean relations) binds views; F-R1–F-R3.
 8. Collection as a roll-up; F-R4.
 9. The virtual table; F-R5. The cross part's `frames` rows retired.
@@ -343,3 +343,22 @@ Open: the peak footprint rose 65 MB while the heap fell 83 MB and RSS fell 149 M
 it counts pages that are not resident. The different store states may be the cause. So may the atoms writer's
 writable shared mapping of `d4` (50 MB): the writer is opened only to append, and this warm run appended one atom.
 Neither `footprint` nor `vmmap` can attach to a process over the farm's ssh session, so it is not yet known (Q214).
+
+### The keep beside the frames (step 6, 2026-11-18)
+
+ep2 on m3 with the profiling build, at load 40–60. A fresh store `k0` (cold), then `k1` and `k2` (warm). The old v6
+store after its rules were restored: `a6` (cold again: new programs), then `a7` and `a8`.
+
+| | rows vs h1 | instructions | CPU | wall | peak |
+|---|---|---|---|---|---|
+| k0 cold | 1334, 0 differ | 1,436 G | 139 s | 115 s | 2,051 MB |
+| k1, k2 warm | 1334, 0 differ | 22.5 G, 21.7 G | 1.78 s, 1.71 s | 1.55 s, 1.47 s | 577 MB, 572 MB |
+| a7, a8 warm | 1334, 0 differ | 25.2 G, 20.9 G | 2.02 s, 1.58 s | 2.07 s, 1.44 s | 415 MB, 413 MB |
+
+The space's blocks on the disk are 641 MB, against 147 MB of frames. The cross space's base alone is 388 MB, and it
+has two deltas of 136 MB, one of them left for the next write to sweep. A frame is zigzag varints of each column's
+differences; a kept relation is 8-byte columns with their last chunk's room and their indexes. The cold run's
+instructions rose 11% against `a0`, from writing both. Before the frames are retired (step 9), the copies must be no
+larger than the frames: a kept relation's columns packed to their widths (0266 §14) when they are copied, and the
+chunk room unwritten left out. A run handed off 0–5 relations before the keep, with their rows dropped; step 7 keeps
+those at the hand-off.
