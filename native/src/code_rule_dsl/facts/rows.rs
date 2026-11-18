@@ -144,7 +144,7 @@ pub fn in_chunk<R>(f: impl FnOnce() -> R) -> R {
 fn lease(bytes: usize, life: Life) -> Result<Block, String> {
     use rerail_blocks::alloc::{Need, Writes};
     let device = BLOCK_DEVICE.get().map_or(rerail_blocks::alloc::Device::May, |f| f());
-    rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes: bytes.max(life.block_bytes()), writes: Writes::Churn, device })
+    rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes: bytes.max(life.block_bytes()), writes: Writes::Churn, device, ..Need::SLAB })
 }
 
 /// What a block of relations asks of the policy about the device: the run's binding's (`placement::block_device`,
@@ -171,16 +171,13 @@ fn room_for(k: usize, rows: usize) -> usize {
     bytes + (k + 1) * size_of::<rerail_blocks::rows::ColDir>() + 4096
 }
 
-/// A block of the device's own of at least `bytes`: a relation alone in it. Without Metal, anonymous memory. Leased
-/// as a device join's buffers are (bounded inside the join's budget, a refusal running it on the CPU), which the
-/// block policy (decision 0342) has no need for yet: the one block made outside it (work queue Q205).
+/// A block of the device's own of at least `bytes`: a relation alone in it, from the block policy (decision 0342) as
+/// every block is (Q205). Exact, and counted as a device join's buffers are (bounded inside the join's budget, a
+/// refusal running it on the CPU). Without Metal, anonymous memory.
 fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
-    #[cfg(target_os = "macos")]
-    if life == Life::Device {
-        return rerail_accel::gpu::shared::lease_block_for_join(kind::FACTS, bytes);
-    }
-    let _ = life;
-    Ok(Block::anon(kind::FACTS, bytes.max(4 * rerail_blocks::block::PAGE)))
+    use rerail_blocks::alloc::{Budget, Device, Need, Size, Writes};
+    let device = if cfg!(target_os = "macos") && life == Life::Device { Device::Must } else { Device::No };
+    rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes, writes: Writes::Once, device, size: Size::Exact, budget: Budget::Join })
 }
 
 /// A relation of `k` columns holding `vals` (row by row), alone in a block of anonymous memory, as a run's block is

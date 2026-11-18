@@ -2182,6 +2182,12 @@ side of the merge has (neither history holds them).
 - **Keep**: the mirror's incremental sends.
 - **Done when**: a file the checkout deleted (tracked at the host's copy's last sync, now gone) is removed from the
   host's copy before the command runs, and a test of the mirror covers it.
+- **Hand-off** (2026-11-18): the farm is installed at version 27, from final-rerail-shape-phased-facts; this
+  branch's farm is version 20 and is not where the farm is worked on. Handed to the farm's session through the user,
+  with the design: a `prune` op in farm-agent, sent by `mirror.work` for a test command (`verify`) after the sync,
+  with the paths just synced under each checkout root; the agent removes each file under that root's copy that
+  carries its `sent` attribute (a file the mirror wrote) and is not listed, and replies with what it removed, which
+  the daemon forgets from `Host.sent`. Files the host made itself (no attribute) are never touched.
 
 ### Q64. (Q22 at f15aac19d) Metal's semantic fixtures on the packed JIT: refusals, failures and different results
 
@@ -3790,7 +3796,7 @@ where the tree names `num_text`, `num_source`, `rr_agg75` and the annotation cop
     (`combined::image_sources`), so collection also keeps that run while it keeps the entry.
   The test passes on the m3.
 
-### Q102. `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` fails at final-rerail-shape-rr-align's f7c563513
+### Q102. (done) `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` fails at final-rerail-shape-rr-align's f7c563513
 
 - **Found** (2026-11-17, merging f7c563513 into Typing-support): the new build's first edit gives its keeper up
   (`c.py: the memo no longer holds the rows counted`), the message Q71's fix removed. It fails the same on
@@ -3806,6 +3812,18 @@ where the tree names `num_text`, `num_source`, `rr_agg75` and the annotation cop
   engine build that counted them, and another build's blob decodes as none. A new build's memo entries are its own
   (0077 §4), so its first run counts every file in. The test passes (m3, with 57 partial, keeper, session and edit
   tests); the ignore is removed.
+- **Record** (django-bugs' Q138): done (2026-11-18). The cause was as read: the space's last program was marked under the space alone
+  (`memo::last_key`), and the space names no build, while its entries lie under `plan_digest` of it
+  (`local_space`). So a new build found the old build's last program, read the statistics kept under it, and
+  `Keeper::begin` trusted them (the relations' identities do not name the build either), though none of the old
+  build's entries is a hit. `last_key` now hashes `plan_digest(space)`, as the entries are kept: a new build finds
+  no last program and counts every file in. The test passes on the farm, with partial_tests (10 of 10) and the
+  kept-run tests in corpus::tests (`cross_file_strata_are_kept_across_runs_in_the_tape_cache`,
+  `a_new_process_maintains_the_cross_file_part_from_the_kept_rows`,
+  `a_relation_two_programs_share_is_kept_once_and_a_rule_edit_reaches_only_its_readers`). Reviewer: the three
+  callers (`last_program`, `set_last_program`, `set_under_way`) all pass the run's `memo_program`, so every mark
+  moves together; a mark of the old key (v1) is read by no build and goes with the store's blobs.
+
 
 ### Q159. (Q84 on Two-pass at 5f615621d) Base rows for the cross part: no flattened copy, rows moved into entries
 
@@ -4274,7 +4292,7 @@ The test leaves the file out of its sample, with this item as the reason.
 - **Done when**: either the cut counts a view of an input's columns clean with the input (the part then has no rules,
   as the test says), or the test asserts the part holds only such views; the planner's owner of Q37 decides which.
 
-### Q205. (Q171 on cost-classifier-metal-rf; Q142 at django-bugs 42b33a424; Q113 on investigate-bend-vs-datalog at 0098f4340) A device relation's block is leased outside the one block policy
+### Q205. (Q171 on cost-classifier-metal-rf; Q142 at django-bugs 42b33a424; Q113 on investigate-bend-vs-datalog at 0098f4340) (done) A device relation's block is leased outside the one block policy
 
 Found 2026-11-17 (the roll-up of final-rerail-shape-phased-facts, 58f1627c3): `facts::rows`'s blocks for
 `Life::Device` (a relation alone in a block the device writes) are leased by `lease_block_for_join`, sized to the
@@ -4284,7 +4302,19 @@ relation and kept within the join's budget. Every other FACTS block goes through
 - **Keep**: a device relation's block sized to it (a 4-page minimum), and the join's budget bounding it.
 - **Done when**: the policy takes a need for an exact-size device block within a named budget, `lease_exact` goes
   through it, and no FACTS block is leased past the policy.
-- **Record**: —
+- **Record**: done (2026-11-18). `rerail_blocks::alloc::Need` names a size (`Size::Slab`, a slab's least or more;
+  `Size::Exact`, the need, at least `EXACT_MIN`, four pages) and the budget a device block is counted in
+  (`Budget::Metal`; `Budget::Join`, a device join's: bounded inside `within_budget`, a refusal running the join on
+  the CPU). The policy (`rerail_accel::blocks::policy`) leases `Device::Must` + exact + join as the join's buffers
+  are (`lease_block_for_join`, now `pub(crate)`: the policy's alone) and refuses a combination it has no lease for;
+  a host block of an exact need is its size. `facts::rows::lease_exact` asks the policy like every other FACTS
+  block. Tests: `an_exact_device_block_in_a_joins_budget_is_its_size` (accel) and the exact case of
+  `with_no_policy_a_block_is_anonymous_and_shaped_by_its_writes` (blocks); on the farm (M3) with rerail-facts'
+  rows tests (10), the device's relations in rerail-device-metal (`metal_join` 4, `setfix::device` 5) and the
+  metal slabs' recycling. Reviewer: every `Need` literal names the new fields (`..Need::SLAB` keeps each one's
+  meaning); a device relation keeps its 4-page minimum and the join's bound; no FACTS block is leased past
+  `alloc::block`. Found on the way: `preparation`'s two request-record tests called `run` with its pre-merge
+  arguments, which only rerail-logic's own test target builds; fixed, 9 of 9 preparation tests pass.
 
 ### Q206. (Q172 on cost-classifier-metal-rf; Q143 at django-bugs 42b33a424; Q114 on investigate-bend-vs-datalog at 0098f4340) (done) A cold run's cross part hands nothing off in `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady`
 
@@ -4322,7 +4352,7 @@ row `("a", "rr_value_req", 0, "vals")` against `… 1 …`), `tests::a_pair_of_p
   by `same_program` (equal digest without the record, and the record equal by each rule's content), so a record
   whose rules are only in another order is the same program. The three tests pass on the merge.
 
-### Q208. (Q174 on cost-classifier-metal-rf; Q145 at django-bugs 42b33a424; Q116 on investigate-bend-vs-datalog at 0098f4340) The maintain mode's recheck order is not priced
+### Q208. (Q174 on cost-classifier-metal-rf; Q145 at django-bugs 42b33a424; Q116 on investigate-bend-vs-datalog at 0098f4340) (done) The maintain mode's recheck order is not priced
 
 Found 2026-11-17, during 0364 stage 4. A mode stratum's removal, add and probe lines take the program's kept plans
 (`plan_rule_reused`), as a semi-naive probe does. Its recheck (a rule with its head bound, run once per candidate)
@@ -4334,6 +4364,23 @@ native join it falls back to the planner's whole-rule order.
   order is then kept as the other lines' are.
 - **Also open**: the mode's lines report no work to `Model::ran`, because `MaintMode` counts per kind, not per line.
   The 0122 budget therefore prices their kept plans again rather than taking them as they are.
+- **Record**: done (2026-11-18). The planner prices a body with variables bound before its first step:
+  `Body::with_head_bound` marks a recheck (its head's plain variables; a computed term's are not), and its digest
+  names it, so the recheck's kept plan has a key of its own. The search (`plan_search`) starts every order from
+  that binding and one row: the empty order's bound set and the filters it makes ready (`best_of[0]`, the subsets'
+  `closure`, cell 0's rows and work), a kept order's pricing (`price`), the rebuilt order and a body of filters alone.
+  The recheck is planned through `plan_rule_reused` like every other line (searched at first sight, then taken or
+  priced again as its sizes move); where its order has no native join, the rule's own order, as before.
+  `bound_head_order` is gone. The mode's lines report their work: `setfix::maint_step_counts` gives the removals',
+  checked adds' and rechecks' step counts by plan step (the probes' are `step_counts`'), and `maintain_mode` gives
+  each line's work to `Model::ran` under its key (a removal and its add, planned alike, summed under one). A
+  recursive component's drivers (a probe's join less its delta atom) report none: their order is the probe's, run
+  another way. Tests: `a_recheck_is_priced_with_its_head_bound_and_kept_apart` (plan: alone `c(y)` leads, with the
+  head bound `a(x, y)` does, its kept plan taken as it is and the rule's own order untouched) and the counts in
+  `a_maintained_component_kills_the_candidates_no_rule_derives_and_adds_the_new_rows` (setfix). On the farm (M3):
+  those, setfix's three maintain-mode tests, the two corpus maintain-mode tests, the session tests (19) and the plan
+  budget tests. Reviewer: an ordinary body's search is unchanged (`pre` empty: every new branch is skipped, and
+  its key's digest is as before).
 
 
 ### Q209. (Q175 on cost-classifier-metal-rf) (done) A rebased version's request record sat on other rules (`a_library_held_once_is_read_by_each_policy_in_its_own_scope`, half its runs)
