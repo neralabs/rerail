@@ -267,6 +267,61 @@ session opened from it never matched the one Git names `C:\…`: the session rea
 The same mismatch let `c:\users\me` past set-up's refusal of the home folder, and lost audit settings and presentation
 preferences saved under the other spelling.
 
+Rerail 0.1.4 and earlier saved a folder's audit settings under the JavaScript realpath of the folder as the session
+spelt it. Where the stored spelling has no audit settings, Rerail reads the row under that key (`earlierRealpath`) and
+leaves it in place, so an earlier version sharing the database keeps reading and writing its own. A change saved here
+goes under the stored spelling, starting from the settings it read.
+
+A mapped or `subst` drive letter, or an 8.3 name, can lead to another folder than when 0.1.4 saved through it: a
+mapped letter pointed at another share, a `subst` letter moved, an 8.3 name reused. Outside Git, 0.1.4 recorded the
+folder under the same key as its audit settings, so the row counts only where the checkout recorded under that key
+belongs to this folder's repository: the session's, else the one recorded for the folder under its stored spelling.
+Where it belongs to another repository, or nothing is recorded there, the folder starts from the defaults. A Git
+checkout was recorded under Git's top level, so nothing recorded under the spelling says whose row it is, and it is
+read as 0.1.4 read it: through a letter that now leads to another Git checkout, that checkout takes the audit mode
+saved through the letter until one is saved there. Reading the row only outside Git would close that case, and lose the
+Log mode of every Git checkout opened under another spelling.
+
+They also recorded a folder outside Git under the JavaScript realpath of the folder as spelt, so `rerail stop` run
+through a mapped or `subst` drive letter, or by an 8.3 name, saved the stop under that spelling. Each start check made
+with the folder's own spelling (a hook's, with a daemon or without, the daemon's check on each event, `rerail status`,
+`rerail start` and `stop`, and the status line's) reads the checkout's row under the stored spelling and under that key
+in one statement (`earlierCheckoutPath`), the stored one first, and the earlier one only where it names the folder's
+repository. A hook and the status line ask a daemon about the folder's real path, as before, and hand it the folder as
+spelt apart (`spelling`) where the two differ, only to a daemon whose state file says it reads it: an older daemon
+refuses a query value it does not know. Each process resolves the key once per spelling it can resolve, so the daemon's
+check makes no more file calls per event than before. A spelling the daemon cannot resolve, such as a mapped or `subst`
+letter of another logon session (a daemon started from an elevated terminal does not see the letters mapped in a
+terminal that is not elevated), is looked up again on each event, 4 to 7 file calls more in folders two to five levels
+deep, and its check reads only the row under the stored spelling. A start or stop saved here through a mapped or
+`subst` letter decides from then on. In a folder reached in another letter case, 0.1.4's next start or stop there
+decides, as it did before: 0.1.4 compares Windows paths without letter case, so it counts the row under the stored
+spelling as a checkout inside its own and clears that row's on/off. For a session the daemon has recorded, the status
+line reads the start state under the session's stored spelling, so where 0.1.4 stops such a folder while a session is
+open there, that session's status line still shows Rerail on.
+
+Two settings an earlier version saved under the folder's spelling stay unread after the update, and a person who set
+one sets it again:
+
+- **A status line hidden for one folder opened in another letter case.** A presentation preference is keyed through
+  `physicalPath` of the folder its caller named, and nothing reads it under the earlier key. Through a mapped or `subst`
+  letter or by an 8.3 name, 0.1.4 drew the status line too: it asked with the folder's real path, which matches no
+  preference saved under the spelling. Earlier versions saved one only through the daemon's API,
+  and it is set again the same way: `PUT /api/presentation-preferences` with the folder ([Hiding the
+  footer](in-session-surfaces.md#hiding-the-footer)). The dashboard's Settings switch hides the status line in every
+  folder; it is saved under no folder and is kept.
+- **A rule turned off for one folder outside Git reached through a mapped or `subst` drive letter, or by an 8.3 name.**
+  That rule setting belongs to the checkout row 0.1.4 recorded under the spelling, and the rule loader reads the
+  settings of the checkout and of the recorded checkouts containing it. In a Git checkout, the rule loader finds the
+  setting 0.1.4 saved (read through this build's checkout lookup, not through a daemon), and a stop is read: 0.1.4
+  saved both under Git's top level, which Git for Windows gives as the disk spells it, and as the share for a mapped
+  letter.
+
+Measured on Windows 11 with 0.1.4 from npm saving Log mode, stops and a hidden status line in folders reached in
+another letter case, through a mapped and a `subst` drive letter and by an 8.3 name, inside and outside Git, and Log
+mode through a `subst` letter later pointed at another folder, then read by this build's daemon, hooks and status line.
+This fix leaves how rule settings are read as it was.
+
 <details>
 <summary>Other places that compare Windows paths</summary>
 

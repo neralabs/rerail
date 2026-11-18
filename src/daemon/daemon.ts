@@ -719,6 +719,7 @@ export class RerailDaemon {
       workspaceRoot: this.#workspaceRoot,
       nativeToken: this.#nativeToken,
       accessToken: this.#accessToken,
+      readsSpelling: true,
       ...(this.#tlsFingerprint256 === undefined ? {} : { tlsFingerprint256: this.#tlsFingerprint256 }),
       ...(this.#options.remoteRefused === undefined ? {} : { remoteRefused: this.#options.remoteRefused }),
     };
