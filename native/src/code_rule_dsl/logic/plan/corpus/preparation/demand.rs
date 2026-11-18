@@ -2,8 +2,7 @@
 //!
 //! - `ReachForm`: the closures held as each start's bitmap, and the relations through them (decision 0119,
 //!   `reach_form`);
-//! - `NegatedDemand` (`magic::demand_negated_tests`): a relation some rule negates computed for the keys its readers
-//!   test (decision 0038);
+//! - `NegatedDemand`: a relation some rule negates computed for the keys its readers test (decision 0038);
 //! - `UndoInCycles`: a closure a later rewrite put in a cycle of other relations made rows again.
 //!
 //! The first and the last edit the program one relation at a time, each edit read by the next relation's shape: they
@@ -433,9 +432,17 @@ impl Rewrite for Unseed<'_> {
     }
 }
 
-// ---- magic::demand_negated_tests ----
+// ---- demand for negated tests ----
 
-/// The relations demanded for their negated tests (`Prepared::demanded`).
+/// Demand for the tests a rule negates (decision 0038's corpus path): a relation whose rules each start from every
+/// node (`nearest($n, $a, set)`, `inside_<set>($n, $a)` on its key) and that some rule negates is computed for every
+/// node of a chunk, though its readers ask about the nodes they have bound (`!m($n)`). Demanded, it is computed for
+/// the keys `demand_<r>` holds only: each reader's tests of the key alone (its kind, say). Not `KeyDemand` (T's
+/// `magic_sets`), whose demand is a reader's whole positive prefix: without the reader's negations that can be far
+/// more than the test. A relation qualifies when it is derived and not kept (an output, input, lattice, relation with
+/// facts, gate or already demanded), not recursive, negated somewhere, read only by atoms with a variable key, and
+/// every rule reads its key from such an atom. A relation some reader gives no test of the key alone stays whole.
+/// `demanded`: the relations demanded (`Prepared::demanded`).
 #[derive(Default)]
 pub struct NegatedDemand {
     pub demanded: Vec<String>,
@@ -459,7 +466,9 @@ impl ProgramPass for NegatedDemand {
                 || facts_nonempty(v, rel)
                 || demand_list.contains(rel)
                 || gates.contains(rel)
+                // A scope's documents (decision 0091's guards): a row per document, never worth a demand.
                 || rel.contains("rr_scope_")
+                // `.decl r(…) no_magic` (decision 0099): the program keeps it whole.
                 || qualified(v, &about, rel, "no_magic")
         };
         let mut by_rel: BTreeMap<&str, Vec<RuleRef<'_>>> = BTreeMap::new();
@@ -496,7 +505,9 @@ impl ProgramPass for NegatedDemand {
             })
         };
         let mut demand: Vec<String> = by_rel.iter().filter(|(rel, rules)| negated.contains(*rel) && !refused.contains(*rel) && !kept(rel) && rules.iter().all(per_node)).map(|(rel, _)| (*rel).to_owned()).collect();
-        // Each reader's demand: its positive atoms of input relations over the key alone, the key renamed `k`.
+        // Each reader's demand: its positive atoms of input relations over the key alone (`node(_, $n, "call", _, _)`),
+        // a superset of the keys it asks about, cheap to read, the key renamed `k`. A relation one reader gives no such
+        // atom stays whole.
         let mut wanted: BTreeMap<String, Vec<Vec<(String, Vec<TermRef<'_>>, RuleRef<'_>, crate::code_rule_dsl::logic::program_image::Slot)>>> = BTreeMap::new();
         let mut unbounded: BTreeSet<String> = BTreeSet::new();
         for r in v.rules() {

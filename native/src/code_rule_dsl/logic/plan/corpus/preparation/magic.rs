@@ -106,7 +106,7 @@ impl<'v> M<'v> {
         }
         out
     }
-    /// A positive atom (`magic::positive`): its relation.
+    /// A positive atom: its relation.
     fn positive(&self, v: &'v Version) -> Option<&str> {
         match self {
             M::Own(l) => match l.view() {
@@ -205,7 +205,7 @@ fn cmp_binds(v: &Version, r: RuleRef<'_>, l: Tm<'_>, op: CmpOp, rt: TermRef<'_>,
     None
 }
 
-/// The variables literal `l` binds once it runs, or `None` if it cannot run yet (`magic::binds`).
+/// The variables literal `l` binds once it runs, or `None` if it cannot run yet (the planner's `ready`).
 fn binds(v: &Version, r: RuleRef<'_>, l: &M<'_>, bound: &VarSet) -> Option<VarSet> {
     match l {
         M::Own(x) => match x.view() {
@@ -213,6 +213,7 @@ fn binds(v: &Version, r: RuleRef<'_>, l: &M<'_>, bound: &VarSet) -> Option<VarSe
             Lit::Atom(a) => atom_vars(a).is_subset(bound).then(VarSet::new),
             Lit::Cmp { l, op, r: rt } => cmp_binds(v, r, Tm::Own(l), op, rt, bound),
             Lit::Agg { var, op, over, atom } => {
+                // The aggregate's own variables, as in the planner's `ready`: the aggregated one and join's order.
                 let mut need = atom_vars(atom);
                 need.remove(var);
                 if let Some(o) = over {
@@ -252,8 +253,8 @@ fn guard<'v>(r: RuleRef<'v>, rel: &str, ad: &str) -> (M<'v>, Vec<M<'v>>) {
 
 type Magic<'v> = Vec<((String, Vec<Tm<'v>>), RuleRef<'v>, Vec<(M<'v>, bool)>)>;
 
-/// A failure of one attempt: a negative cycle demand closed (the relations negated or aggregated inside it), or any
-/// other error.
+/// A failure of one attempt: a negative cycle that demand closed (with the relations negated or aggregated inside
+/// it), or any other error.
 enum Attempt {
     Cycle { error: Error, negs: BTreeSet<String> },
     Failed(Error),
@@ -286,6 +287,9 @@ impl<'v> Ctx<'v, '_> {
     fn var_bound(a: AtomRef<'_>, ad: &str) -> bool {
         a.args().zip(ad.bytes()).any(|(t, x)| x == b'b' && matches!(t, TermRef::Var(_)))
     }
+    /// `b` for each bound argument; all free unless the key is bound (demand on later columns alone restricts little
+    /// and reverses the rules' direction), or a non-key column is bound by a variable and the rules answer that
+    /// adornment.
     fn adorn(&mut self, a: AtomRef<'_>, bound: &VarSet, full: &BTreeSet<String>) -> String {
         let ad = self.pattern(a, bound);
         if !ad.starts_with('b') {
@@ -295,7 +299,7 @@ impl<'v> Ctx<'v, '_> {
         ad
     }
     /// Whether R's rules answer the non-key adornment `ad` without asking any derived relation in full, or through a
-    /// cycle of non-key adornments (`magic::Adorn::answers`).
+    /// cycle of non-key adornments.
     fn answers(&mut self, rel: &str, ad: &str, stack: &[(String, String)], full: &BTreeSet<String>) -> bool {
         let key = (rel.to_owned(), ad.to_owned());
         if let Some(&ok) = self.answered.get(&key) {
@@ -356,7 +360,9 @@ impl<'v> Ctx<'v, '_> {
         }
         ok
     }
-    /// The body in sideways order (`magic::Adorn::sips`).
+    /// The body in sideways order: filters as soon as they can run; then the left-most positive atom whose key is
+    /// bound, an input before a derived one; else one sharing a bound variable (an input or view first); else the
+    /// lowest one in the strata (inputs first). `None` if no order binds the rest.
     fn sips(&self, r: RuleRef<'v>, body: &[M<'v>], bound: &VarSet) -> Option<Vec<M<'v>>> {
         let v = self.v;
         let (mut rest, mut order, mut bound) = (body.to_vec(), Vec::new(), bound.clone());
@@ -417,6 +423,8 @@ impl<'v> Ctx<'v, '_> {
                 let (mut bound, mut pre, mut gd) = (VarSet::new(), Vec::<(M<'_>, bool)>::new(), None);
                 let mut body: Vec<M<'_>> = rule.body().map(M::Own).collect();
                 if ad.contains('b') {
+                    // A computed head term at a bound position is matched through a fresh variable: the guard binds
+                    // it, and `$m = @cat($q, $x)` tests it once the body binds the call's arguments.
                     let (g, calls) = guard(rule, &rel, &ad);
                     body.extend(calls);
                     bound.extend(&g.vars(rule));
@@ -429,6 +437,8 @@ impl<'v> Ctx<'v, '_> {
                         && self.idb.contains(v.rel_name(a.rel()))
                     {
                         let arel = v.rel_name(a.rel());
+                        // An aggregated relation is computed in full: its demand would pull the count into its
+                        // consumers' recursive component.
                         let ad2 = if full.contains(arel) || l.is_agg() { "f".repeat(self.arity(arel)) } else { self.adorn(a, &bound, full) };
                         let ad2 = coarse.get(&(arel.to_owned(), ad2.clone())).cloned().unwrap_or(ad2);
                         if ad2.contains('b') {
@@ -437,6 +447,8 @@ impl<'v> Ctx<'v, '_> {
                         }
                         todo.push((arel.to_owned(), ad2));
                     }
+                    // Sideways: input atoms and filters always; derived atoms and negations as extras, kept if the
+                    // program stays stratifiable. Leaving one out only widens the demand.
                     match &l {
                         M::Own(x) if matches!(x.view(), Lit::Atom(a) if !a.neg()) => {
                             let extra = l.positive(v).is_some_and(|rel| self.idb.contains(rel));
@@ -522,8 +534,15 @@ fn strata(v: &Version, about: &About, rules: &[Made<'_>]) -> Result<(Vec<BTreeSe
     Ok((sccs, edges))
 }
 
-/// The program's own demand: the relations listed (`.pragma "magic-transform"`), adorned over every column their
-/// readers bind. Its report, and the rules it wrote; `None` where the program lists none.
+/// The program's own demand, a corpus run's `.pragma "magic-transform" "r, …"` (decision 0145, "Building on it"):
+/// each listed relation computed only for what its readers ask, by adornments over every column they bind
+/// (`found(c, a, at)` read with `c` and `a` bound is `found_bbf`), not its first column alone as `KeyDemand` (T's
+/// `.demand`) restricts it. It is T's `magic_adorn` with every relation not listed computed in full; `"*"` (or
+/// `every`, T's `.demand *`) is `magic_adorn` itself: Soufflé's magic-set transformation on every derived relation. A
+/// use of a demanded relation with nothing bound computes it in full, and a negative cycle demand would close makes
+/// each relation negated inside it, with what it depends on, computed in full, and the transformation is tried again:
+/// leaving demand out only widens it, so the rows are the program's. Its report, and the rules it wrote; `None`
+/// where the program lists none.
 #[derive(Default)]
 pub struct ProgramDemand {
     /// Every derived relation demanded, whatever the program lists (`"*"`, `.demand *`: T's `magic_adorn` itself).
@@ -580,7 +599,7 @@ impl ProgramDemand {
             .map(|(r, _)| *r)
             .collect();
         let idb: BTreeSet<&str> = derived.difference(&view).copied().collect();
-        // A relation that aggregates is computed in full.
+        // A relation that aggregates is computed in full: guarded, its count would join its demand's recursive component.
         full.extend(v.rules().filter(|r| r.body().any(|l| matches!(l.view(), Lit::Agg { .. }))).map(|r| v.rel_name(r.head().rel()).to_owned()));
         let originals: Vec<Made<'_>> = v.rules().map(|rule| Made { rule, head: None, body: rule.body().map(M::Own).collect() }).collect();
         let (sccs, _) = strata(v, &about, &originals).map_err(|e| e.to_string())?;
@@ -592,6 +611,8 @@ impl ProgramDemand {
                 Ok(made) => break made,
                 Err(Attempt::Failed(e)) => return Err(e.to_string()),
                 Err(Attempt::Cycle { error, negs }) => {
+                    // Each relation negated inside the component is computed in full, with every relation it depends
+                    // on, so that its demand no longer comes from its consumers.
                     let mut new = BTreeSet::new();
                     let mut todo: Vec<String> = negs.iter().filter(|r| idb.contains(r.as_str()) && !full.contains(*r)).cloned().collect();
                     while let Some(r) = todo.pop() {
@@ -625,7 +646,7 @@ impl ProgramDemand {
         let mut rows: Vec<Vec<Cell>> = input.find("magic_true").and_then(|a| input.facts(a)).map(|f| f.rows().map(|r| r.collect()).collect()).unwrap_or_default();
         rows.push(vec![Cell::Int(0)]);
         b.set_fact_cells("magic_true", rows);
-        // No demand left, and only the gates this demand made (`magic::Adorn::run`'s `settle`).
+        // No demand left, and only the gates this demand made.
         for name in ["demand", "gate", "gate_src", "gate_quiet", "gate_dep"] {
             if !b.about_rows(name).is_empty() {
                 b.set_about_rows(name, Vec::new());
@@ -875,11 +896,13 @@ struct Trial<'v> {
     done: Vec<(String, Vec<(String, String)>)>,
 }
 
-/// One attempt with `full` computed in full (`magic::Adorn::run`): the program, the guards' declarations and the
+/// One attempt with `full` computed in full (T's `magic_adorn_once`): the program, the guards' declarations and the
 /// report. With `gate`, a negation demand puts inside its own component is gated (`gate_negations`), not a cycle.
 #[allow(clippy::type_complexity)]
 fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> Result<(Trial<'v>, Vec<(String, Vec<(String, String)>)>, Report), Attempt> {
     let v = cx.v;
+    // A relation demanded with every argument free anywhere is computed in full; an adornment binding a superset of
+    // another's columns is answered through the other (`pv_bbb` through `pv_bbf`).
     let (mut full, mut coarse) = (full_in.clone(), BTreeMap::<(String, String), String>::new());
     let (rules, magic, seen) = loop {
         let (rules, magic, seen) = cx.closure(&full, &coarse)?;
@@ -917,6 +940,7 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
     let one = |mh: &(String, Vec<Tm<'v>>), r: RuleRef<'v>, pre: &[(M<'v>, bool)], ks: &[bool]| -> Result<Vec<M<'v>>, Error> {
         let mut key = VarSet::new();
         mh.1.iter().for_each(|t| tm_vars(r, *t, &mut key));
+        // A left-out literal that binds a key variable, or what such a literal needs, stays.
         let (mut ks, mut need) = (ks.to_vec(), key.clone());
         for i in (0..pre.len()).rev() {
             let l = &pre[i].0;
@@ -998,7 +1022,7 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
         Ok(body)
     };
     let build = |keep: &[Vec<bool>]| -> Result<Vec<Made<'v>>, Error> {
-        // The first of equal magic rules stays.
+        // Keyed by T's repr of (head, body): the first of equal magic rules stays.
         let (mut out, mut keys) = (Vec::new(), BTreeSet::new());
         for ((mh, r, pre), ks) in magic.iter().zip(keep) {
             let mut body = one(mh, *r, pre, ks)?;
@@ -1045,6 +1069,12 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
             return Err(Attempt::Cycle { error, negs });
         }
     };
+    // Each trial keeps one more literal of one magic rule, which adds edges from that rule's head. The last whole
+    // check's components, dependencies first, tell which edges leave them as they were: one into an earlier component
+    // (nothing there reaches the head), or a positive one inside a component no negation closes. A literal whose new
+    // edges are all such keeps the program stratified, as that check found it, and is kept without building and
+    // stratifying the program again. Any other literal is checked whole, as before (and every one is with gates,
+    // which a positive edge can unsettle). `RERAIL_MAGIC_CHECK=1` checks every one whole too.
     let places = |settled: &(Vec<BTreeSet<String>>, Edges)| -> (BTreeMap<String, usize>, BTreeSet<usize>) {
         let (sccs, edges) = settled;
         let comp: BTreeMap<String, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.clone(), i))).collect();
@@ -1110,8 +1140,7 @@ fn head_of<'a>(v: &'a Version, m: &'a Made<'_>) -> &'a str {
     m.head.as_ref().map_or_else(|| v.rel_name(m.rule.head().rel()), |(rel, _)| rel.as_str())
 }
 
-/// Gates the negations that demand puts in their own component (`magic::Adorn::gate_negations`, T's
-/// `gate_negations`): `!N(t)` becomes `done_N(t), !N(t)`, and the native engine copies `magic_N` into `done_N` only in
+/// Gates the negations that demand puts in their own component (T's `gate_negations`): `!N(t)` becomes `done_N(t), !N(t)`, and the native engine copies `magic_N` into `done_N` only in
 /// a wave after which nothing N reads changed. Within each such component the edges into guards are dropped: what is
 /// left must be stratified, and its strata are the gates' levels. `decls`: the guards' declarations, which a gate
 /// copies.

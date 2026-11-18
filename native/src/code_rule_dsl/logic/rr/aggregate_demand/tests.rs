@@ -114,14 +114,19 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
             source.push_str(&format!("binding({w},1,{x},10).\n"));
         }
     }
-    let mut p = rr::parse(&source).unwrap();
-    let helpers: BTreeSet<_> = p
-        .rules
-        .iter()
-        .filter(|r| r.head.rel.starts_with("rr_agg"))
-        .map(|r| r.head.rel.to_string())
+    let p = rr::parse_version(&source).unwrap();
+    let helpers: BTreeSet<String> = p
+        .rules()
+        .map(|r| p.rel_name(r.head().rel()))
+        .filter(|rel| rel.starts_with("rr_agg"))
+        .map(str::to_owned)
         .collect();
-    p.outputs.extend(helpers.iter().cloned());
+    let p = {
+        let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&p);
+        let outputs: Vec<String> = p.output_names().into_iter().chain(helpers.iter().cloned()).collect();
+        b.set_outputs(&outputs);
+        b.finish().unwrap().0
+    };
     let file = crate::code_rule_dsl::fixtures::temp();
     let dump = zstd::decode_all(
         std::fs::File::open(
@@ -135,7 +140,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
         .unwrap()
         .execute_batch(std::str::from_utf8(&dump).unwrap())
         .unwrap();
-    let result = plan::run_sql(&p, &file).unwrap();
+    let result = plan::run_sql(p.clone(), &file).unwrap();
     assert_eq!(
         result.shown()["counts"],
         [["1", "1", "1", "2"], ["2", "1", "1", "1"], ["3", "1", "1", "0"]]
@@ -157,7 +162,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     let was_on = crate::code_rule_dsl::logic::profile::on();
     crate::code_rule_dsl::logic::profile::reset();
     crate::code_rule_dsl::logic::profile::set(true);
-    let native = plan::run_sql_native(&p, &file, "program", |db| {
+    let native = plan::run_sql_native(p.clone(), &file, "program", |db| {
         let rc = unsafe {
             crate::code_rule_dsl::logic::native::extension::sqlite3_extension_init(
                 db.handle(),
@@ -176,7 +181,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     let store = crate::content_store::ContentStore::open(&path).unwrap();
     let db = rusqlite::Connection::open(&path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
-    let lowered = plan::lower::lower(&p, crate::code_rule_dsl::language::GrammarDialect::Python,
+    let lowered = plan::lower::lowered(p, crate::code_rule_dsl::language::GrammarDialect::Python,
         &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
     let native = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty_of_lowered(&lowered).unwrap(),
         BTreeSet::new(), "program").unwrap();

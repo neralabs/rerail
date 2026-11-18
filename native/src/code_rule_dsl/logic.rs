@@ -71,10 +71,6 @@ pub mod magic {
     pub use rerail_rr::code_rule_dsl::logic::magic::*;
     #[cfg(any(test, feature = "test-hooks"))]
     pub mod tests;
-    #[allow(unused_imports)]
-    use crate::code_rule_dsl::logic::front::{AggOp, Atom, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
-    #[allow(unused_imports)]
-    use std::collections::{BTreeMap, BTreeSet};
 }
 #[allow(dead_code)]
 pub mod native;

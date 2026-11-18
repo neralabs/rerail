@@ -785,7 +785,7 @@ fn demand_program(mut prog: Program, wave: &Program, atoms: usize) -> StoreResul
         prog.inputs.push(format!("ast_{i}"));
         prog.demand.push(format!("ast_{i}"));
     }
-    let magic = magic::magic_sets(prog, &magic::Options::default()).map_err(|e| invalid(format!("the policies' demand: {e}")))?;
+    let magic = magic::magic_sets(prog).map_err(|e| invalid(format!("the policies' demand: {e}")))?;
     // What the batch has not derived yet: the atoms, every input but the chunk's documents and the
     // `py.*` families (bound with the chunk's base relations, before the batch), and every relation
     // that reads one.

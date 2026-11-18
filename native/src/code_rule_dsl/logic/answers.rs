@@ -16,7 +16,7 @@
 //! fields, never a tree.
 
 use super::front::{Edges, Program, tarjan};
-use super::magic::Gate;
+use super::front::ast::Gate;
 use super::plan::body::Placed;
 use super::plan::fields::{Fields, FieldsData};
 use super::program_image::manager::{Cx, Pipeline, ProgramPass, ProgramW, RuleOut, RulePass, Select, Step};

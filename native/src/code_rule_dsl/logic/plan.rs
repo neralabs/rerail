@@ -9499,22 +9499,22 @@ impl<'a> Run<'a, '_> {
 
 }
 
-/// Evaluates `prog` over the facts database at `facts` (T's `run_sql`, pure SQL mode): views for projections of
+/// Evaluates program `v` over the facts database at `facts` (T's `run_sql`, pure SQL mode): views for projections of
 /// one input, typed tables for the rest, then each stratum planned from the statistics and the counts of the strata
 /// before it, non-recursive ones once and recursive ones semi-naively.
-pub fn run_sql(prog: &Program, facts: &Path) -> Result<Outcome> {
+pub fn run_sql(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, facts: &Path) -> Result<Outcome> {
     let db = Connection::open_in_memory()?;
     db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())])?;
     // Map the facts file, so probes of the input relations' indexes are memory reads, and keep ephemeral b-trees
     // (DISTINCT, sorts, materialized subqueries) in memory.
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
-    run(&body::Placed::of_program(prog)?, &db, Inputs::file(), None, Hooks::default())
+    run(&body::Placed::whole(v), &db, Inputs::file(), None, Hooks::default())
 }
 
 /// `run_sql` with T's `RDL_NATIVE` modes (`native_modes`). `load` registers T's extension functions on the run's
 /// connection before anything runs, as T's `run_sql` loads `RDL_EXT`.
 pub fn run_sql_native(
-    prog: &Program,
+    v: Arc<crate::code_rule_dsl::logic::program_image::Version>,
     facts: &Path,
     modes: &str,
     load: impl FnOnce(&Connection) -> rusqlite::Result<()>,
@@ -9523,7 +9523,7 @@ pub fn run_sql_native(
     db.execute("ATTACH ?1 AS f", [format!("file:{}?mode=ro", facts.display())])?;
     db.execute_batch("PRAGMA f.mmap_size = 4294967296; PRAGMA temp_store = MEMORY;")?;
     load(&db)?;
-    run(&body::Placed::of_program(prog)?, &db, Inputs { native: native_modes(modes), ..Inputs::file() }, None, Hooks::default())
+    run(&body::Placed::whole(v), &db, Inputs { native: native_modes(modes), ..Inputs::file() }, None, Hooks::default())
 }
 
 /// Evaluates a lowered program (decision 0009) over the base relations bound on `db` (`facts::vtab::syntax::bind`),

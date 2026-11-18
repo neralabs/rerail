@@ -1352,6 +1352,11 @@ pub mod tests {
     fn st(p: &front::Program) -> Vec<BTreeSet<String>> { front::strata(p).unwrap().0 }
     /// A program's version, as a run reads it (t36 item 7).
     fn pl(p: &front::Program) -> Placed { Placed::of_program(p).unwrap() }
+    /// A version's strata, each by its relations' names (the `Strata` analysis).
+    fn strata_of(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Vec<BTreeSet<String>> {
+        let s = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::Strata>(v).unwrap();
+        s.sccs.iter().map(|scc| scc.iter().map(|&r| v.rel_name(r).to_owned()).collect()).collect()
+    }
     use super::*;
 
     /// A kept input with its delta reads as its rows now: the changed owners' kept rows gone, their new rows after
@@ -1411,38 +1416,42 @@ pub mod tests {
 
     #[test]
     fn unchanged_gated_programs_reuse_only_complete_retained_results() {
-        use crate::code_rule_dsl::logic::magic;
-        let p = front::prune(crate::code_rule_dsl::logic::rr::parse(include_str!("../golden/programs/workload.rr")).unwrap());
-        let p = magic::magic_adorn(p, &magic::Options { gate:true, ..Default::default() }).unwrap();
-        assert!(!p.gates.is_empty());
-        let (strata,_) = front::strata(&p).unwrap();
+        use crate::code_rule_dsl::logic::plan::corpus::preparation::{magic::ProgramDemand, prune::Prune};
+        use crate::code_rule_dsl::logic::program_image::{fields::ProgramFields, manager::Pipeline};
+        let p = crate::code_rule_dsl::logic::rr::parse_version(include_str!("../golden/programs/workload.rr")).unwrap();
+        let mut pipeline = Pipeline::new("gated demand", p);
+        pipeline.program(&mut Prune::default());
+        let mut demand = ProgramDemand { every: true, gate: true, ..ProgramDemand::default() };
+        pipeline.program(&mut demand);
+        let p = pipeline.finish().unwrap().0;
+        assert!(matches!(demand.outcome, Some(Ok(_))) && !ProgramFields::gates(&*p).is_empty());
+        let strata = strata_of(&p);
         let key=[1;32];
-        let inputs:HashMap<_,_>=p.inputs.iter().map(|r|(r.clone(),7)).collect();
+        let inputs:HashMap<_,_>=p.input_names().into_iter().map(|r|(r,7)).collect();
         let rels=strata.iter().flatten().map(|name| {
-            let width=p.decls[name.as_str()].len();
+            let width=p.columns_of(name).unwrap().len();
             (name.clone(),Kept { rel:InRel::flat(&[],vec![b'i';width]),width,output:None })
         }).collect();
         let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default(),patched:Default::default(),frames:None,admitted:Default::default(),late:Default::default(),late_stats:Default::default(),past:Default::default(),views:Default::default()};
-        let result=cut(Some(&kept),key,&pl(&p),&st(&p),&inputs).unwrap();
+        let result=cut(Some(&kept),key,&Placed::whole(p.clone()),&strata,&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
-        let v=crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0;
-        let lowered=lower::Lowered {version:v,maint:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
+        let lowered=lower::Lowered {version:p.clone(),maint:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
         let reused=result.program(&lowered).unwrap();
         let placed=reused.placed().unwrap();
         // A view of an input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _).`) is never kept: its rule stays, to
         // hold it again. Nothing else runs.
         let left:BTreeSet<&str>=placed.v.rules().map(|r| placed.v.rel_name(r.head().rel())).collect();
         assert_eq!(left,BTreeSet::from(["docof","kind"]));
-        assert!(placed.v.rules().all(|r| { let mut b=r.body(); matches!((b.next().and_then(|l| l.atom()), b.next()), (Some(a), None) if p.inputs.iter().any(|i| *i == placed.v.rel_name(a.rel()))) }));
+        assert!(placed.v.rules().all(|r| { let mut b=r.body(); matches!((b.next().and_then(|l| l.atom()), b.next()), (Some(a), None) if p.input_names().iter().any(|i| *i == placed.v.rel_name(a.rel()))) }));
         assert!(placed.fields().unwrap().gates().is_empty());
         let mut changed=inputs.clone();
         *changed.values_mut().next().unwrap()=8;
         for (candidate,rows) in [(key,changed),([2;32],inputs.clone())] {
-            assert_eq!(cut(Some(&kept),candidate,&pl(&p),&st(&p),&rows).unwrap().strata,(strata.len(),strata.len()));
+            assert_eq!(cut(Some(&kept),candidate,&Placed::whole(p.clone()),&strata,&rows).unwrap().strata,(strata.len(),strata.len()));
         }
         let missing=kept.rels.keys().next().unwrap().clone();
         kept.rels.remove(&missing);
-        assert_eq!(cut(Some(&kept),key,&pl(&p),&st(&p),&inputs).unwrap().strata,(strata.len(),strata.len()));
+        assert_eq!(cut(Some(&kept),key,&Placed::whole(p.clone()),&strata,&inputs).unwrap().strata,(strata.len(),strata.len()));
     }
 }
 

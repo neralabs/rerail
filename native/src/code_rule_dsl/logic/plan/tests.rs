@@ -1,7 +1,10 @@
 use super::*;
-use crate::code_rule_dsl::logic::front::prune;
 use crate::code_rule_dsl::logic::rr::{parse, parse_version};
-use crate::code_rule_dsl::logic::magic::{Options, magic_adorn, magic_sets};
+use crate::code_rule_dsl::logic::plan::corpus::preparation::magic::{KeyDemand, ProgramDemand};
+use crate::code_rule_dsl::logic::plan::corpus::preparation::prune::Prune;
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+use crate::code_rule_dsl::logic::program_image::Version;
+use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
 use crate::content_store::ContentStore;
 
 /// Stable order keys have gaps at nested granules. A SQL descent follows the tree,
@@ -315,12 +318,44 @@ fn facts() -> std::path::PathBuf {
     path
 }
 
-/// T's `rdl.py sql` front: prune, demand (adornment for `.demand *`), prune.
-fn program(name: &str) -> Program {
+/// T's program `name` through T's `rdl.py sql` front (`front_of`).
+fn program(name: &str) -> Arc<Version> {
     let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rr"))).unwrap();
-    let p = prune(parse(&src).unwrap());
-    let options = Options::default();
-    prune(if p.demand.iter().any(|d| d == "*") { magic_adorn(p, &options) } else { magic_sets(p, &options) }.unwrap())
+    front_of(parse_version(&src).unwrap())
+}
+
+/// T's `rdl.py sql` front over `v`: prune, demand (`.demand`'s magic sets, or the adornment of every derived relation
+/// for `.demand *`), prune.
+fn front_of(v: Arc<Version>) -> Arc<Version> {
+    let every = ProgramFields::demand(&*v).iter().any(|d| d == "*");
+    let mut p = Pipeline::new("T's front", v);
+    p.program(&mut Prune::default());
+    let (mut keys, mut adorned) = (KeyDemand::default(), ProgramDemand { every: true, ..ProgramDemand::default() });
+    if every {
+        p.program(&mut adorned);
+    } else {
+        p.program(&mut keys);
+    }
+    p.program(&mut Prune::default());
+    let v = p.finish().unwrap().0;
+    if let Some(Err(e)) = adorned.outcome {
+        panic!("{e}");
+    }
+    v
+}
+
+/// `p` lowered for `dialect` with `nearest` read from the transducer (`preparation::Nearest`), as the corpus run
+/// reads it: the program, and the relations the run makes, each with its set's kind atoms.
+fn lowered_with_nearest(p: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>) -> (lower::Lowered, Vec<(String, Vec<i64>)>) {
+    let (v, mut domains, ops) = lower::lower_version(p, dialect, intern).unwrap();
+    let mut pipeline = Pipeline::new("nearest", v);
+    let mut nearest = crate::code_rule_dsl::logic::plan::corpus::preparation::Nearest::default();
+    pipeline.rules(&mut nearest);
+    let v = pipeline.finish().unwrap().0;
+    for (rel, _) in &nearest.sets {
+        domains.insert(rel.clone(), vec![lower::Domain::Node, lower::Domain::Node]);
+    }
+    (lower::Lowered::of_placed(body::Placed::whole(v), domains, ops, dialect), nearest.sets)
 }
 
 fn chosen_line(c: &Chosen) -> String {
@@ -339,7 +374,7 @@ fn t_programs_plan_and_run_like_t() {
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
         let golden = root().join(format!("plan/golden/{name}"));
-        let got = run_sql(&program(name), &facts).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let got = run_sql(program(name), &facts).unwrap_or_else(|e| panic!("{name}: {e}"));
         let lines: Vec<String> = got.chosen.iter().map(chosen_line).collect();
         let expected = std::fs::read_to_string(golden.join("rules.txt")).unwrap();
         let expected: Vec<&str> = expected.lines().collect();
@@ -383,7 +418,7 @@ fn t_programs_run_natively_like_t() {
             assert_eq!(rc, rusqlite::ffi::SQLITE_OK);
             Ok(())
         };
-        let got = run_sql_native(&program(name), &facts(), modes, load).unwrap_or_else(|e| panic!("{case}: {e}"));
+        let got = run_sql_native(program(name), &facts(), modes, load).unwrap_or_else(|e| panic!("{case}: {e}"));
         let golden = root().join(format!("plan/golden/{name}"));
         for (rel, rows) in &got.shown() {
             let expected = golden_rows(&golden, rel);
@@ -502,18 +537,19 @@ fn t_programs_over_atoms_plan_and_run_like_t() {
     for name in ["workload", "workload_demand", "calls"] {
         let golden = root().join(format!("plan/golden/{name}"));
         let p = program(name);
-        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
         let got = run_atoms(&lowered, &db, "s").unwrap_or_else(|e| panic!("{name}: {e}"));
         // The plans in the unlowered program's terms, as T printed them.
         let lines: Vec<String> = got
             .chosen
             .iter()
             .map(|c| {
-                let rule = &p.rules[c.rule];
+                let rule = p.rules().nth(c.rule).unwrap();
+                let body: Vec<_> = rule.body().collect();
                 chosen_line(&Chosen {
-                    head: rule.head.to_string(),
-                    anchor: rule.body[c.steps[0].0].to_string(),
-                    walks: c.steps.iter().filter_map(|&(at, m)| m.map(|m| (rule.body[at].to_string(), m.name()))).collect(),
+                    head: p.show_atom(rule, rule.head()),
+                    anchor: p.show_lit(rule, body[c.steps[0].0]),
+                    walks: c.steps.iter().filter_map(|&(at, m)| m.map(|m| (p.show_lit(rule, body[at]), m.name()))).collect(),
                     ..c.clone()
                 })
             })
@@ -557,15 +593,13 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
     let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
-        let p = program(name);
-        let given = lower::lower_tree(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
-        let lowered = given.image().unwrap();
+        let lowered = lower::lowered(program(name), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
         let expected = run_atoms(&lowered, &db, "s").unwrap_or_else(|e| panic!("{name}: {e}"));
         // Planned from the estimates, then from the counts the first run's boundary recorded.
         let mut counts = None;
         let mut first: Option<Vec<String>> = None;
         for pass in ["estimates", "counts"] {
-            let emitted = emit::emit(&given.image().unwrap(), &db, "s", name, counts.as_ref(), &HashMap::new()).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let emitted = emit::emit(&lowered, &db, "s", name, counts.as_ref(), &HashMap::new()).unwrap_or_else(|e| panic!("{name}: {e}"));
             let backing = Backing::default();
             let scope = backing.enter(&store);
             let lease = scope.pool().take().unwrap();
@@ -632,10 +666,7 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
         let modules = Modules::default();
         atomized_statistics(&t, &db, &store, &first);
         for name in ["workload", "workload_demand", "calls"] {
-            let p = program(name);
-            let mut given = lower::lower_tree(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
-            let sets = given.transduce_nearest();
-            let lowered = given.image().unwrap();
+            let (lowered, sets) = lowered_with_nearest(program(name), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())));
             assert!(!sets.is_empty(), "{name} reads nearest");
             let placed = lowered.placed().unwrap();
             assert!(!placed.v.rules().flat_map(|r| r.body()).any(|l| matches!(l.view(), crate::code_rule_dsl::logic::program_image::Lit::Nearest { .. })));
@@ -682,10 +713,7 @@ fn t_programs_run_natively_over_atoms_like_t() {
     let mut failures = Vec::new();
     let mut ran = BTreeSet::new();
     for name in ["workload", "workload_demand", "calls"] {
-        let p = program(name);
-        let mut given = lower::lower_tree(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
-        let sets = given.transduce_nearest();
-        let lowered = given.image().unwrap();
+        let (lowered, sets) = lowered_with_nearest(program(name), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())));
         for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), Binding::Cpu, &Default::default()).unwrap() {
             if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                 db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
@@ -746,18 +774,21 @@ fn product_programs_derive_t_outputs() {
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
         let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
-        let mut p = prune(parse(&src).unwrap());
+        let p = parse_version(&src).unwrap();
         // T has no library stage (decision 0059): with no `stage` fact, the rules it opens are dead, and their
         // unbound reads of demanded relations (`need_attr(c, a) :- stage("library"), found(c, a, _)`) are not asked.
-        p.rules.retain(|r| !r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel == "stage" && !a.neg)));
-        let options = Options::default();
-        let p = prune(if p.demand.iter().any(|d| d == "*") { magic_adorn(p, &options) } else { magic_sets(p, &options) }.unwrap());
+        let p = {
+            let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&p);
+            b.retain(|r| !r.body().any(|l| matches!(l.view(), crate::code_rule_dsl::logic::program_image::Lit::Atom(a) if !a.neg() && p.rel_name(a.rel()) == "stage")));
+            b.finish().unwrap().0
+        };
+        let p = front_of(p);
         // `found`'s demand is the magic-set relation, not a hand-written one.
         if name == "calls" {
-            assert!(p.decls.keys().any(|rel| rel.starts_with("magic_found")), "calls: no magic relation for `found`");
+            assert!(p.declared_names().iter().any(|rel| rel.starts_with("magic_found")), "calls: no magic relation for `found`");
         }
         let golden = root().join(format!("plan/golden/{name}"));
-        let got = run_sql(&p, &facts).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let got = run_sql(p, &facts).unwrap_or_else(|e| panic!("{name}: {e}"));
         // The product's own outputs (calls.rr's type relations, decision 0047) are not T's: they have no golden.
         for (rel, rows) in got.shown().iter().filter(|(rel, _)| golden.join(format!("{rel}.csv")).exists()) {
             let expected = golden_rows(&golden, rel);
@@ -1782,7 +1813,7 @@ fn w_value(rows: &[&str], sql: &str, params: &[&str]) -> String {
 /// `rels` of `src` by plain SQL over text symbols (`run_sql`) and by the corpus runner over atoms (`plan::lower`, its
 /// `sym_text`/`sym_atom`), each relation's rows of values as shown.
 fn on_both_paths(name: &str, src: &str, rels: &[&str]) -> [Vec<Vec<Vec<String>>>; 2] {
-    let text = run_sql(&parse(src).unwrap_or_else(|e| panic!("{e}")), &facts()).unwrap_or_else(|e| panic!("{e}"));
+    let text = run_sql(parse_version(src).unwrap_or_else(|e| panic!("{e}")), &facts()).unwrap_or_else(|e| panic!("{e}"));
     let text = rels.iter().map(|r| text.outputs.get(*r).map(|rows| rows.shown()).unwrap_or_default()).collect();
     [text, corpus_outputs(name, &[("a.py", "x = 1\n")], src, rels)]
 }
@@ -2684,7 +2715,7 @@ fn o148_plans_and_their_work() {
         // SAFETY: the connection outlives the run; the callback reads only its arguments.
         unsafe { ffi::sqlite3_trace_v2(db.handle(), ffi::SQLITE_TRACE_PROFILE as u32, Some(trace), std::ptr::null_mut()) };
         COSTS.lock().unwrap().clear();
-        let got = super::run(&body::Placed::of_program(&program(name)).unwrap(), &db, Inputs::file(), None, Hooks::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let got = super::run(&body::Placed::whole(program(name)), &db, Inputs::file(), None, Hooks::default()).unwrap_or_else(|e| panic!("{name}: {e}"));
         for c in &got.chosen {
             lines.push(format!("PLAN\t{name}\t{}", chosen_line(c)));
         }
