@@ -103,6 +103,8 @@ Rerail discovers Git from the current folder or `--repo` and reads the selected 
 The scan uses today's rules, packs, and approvals. Use `--rules-ref` to select rules independently.
 The ref supplies its JSON and `.rr` policies. It also supplies local `.rr` includes.
 Approvals apply to the policy and include bytes that the scan reads.
+A `.rr` policy load error fails the scan, including with `--rules-ref`.
+Explicit `--rr` scans use the registered repository identity when it exists.
 Paths, package configuration, and `.rerailignore` come from the selected tree.
 With `--path` or `--paths-from`, a directory selects its descendants.
 A bare repository can supply source. Select its policy with `--rules-ref` or an installed `--pack`.

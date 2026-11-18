@@ -212,7 +212,7 @@ async function rulesAtRef(root: string, ref: string, scratch: string): Promise<R
       return document?.kind === "code" ? [document] : [];
     });
   const skipped = catalog.skipped.filter(entry => !installed.skipped.includes(entry)).map((entry): ScanFailure => ({
-    code: "rule-left-out",
+    code: entry.path.endsWith(".rr") ? "adapter-error" : "rule-left-out",
     message: `${entry.reason}; it does not run`,
     path: `${ref}:${relative(copy, entry.path).split(sep).join("/")}`,
     ruleId: null,
@@ -330,17 +330,13 @@ function prepareScratchDatabase(
   return refRuleIds;
 }
 
-function repositoryOf(databasePath: string, root: string): { key: string; displayName: string } {
-  const database = openRerailDatabase(databasePath, { readonly: true });
-  try {
-    const checkout = lookupCheckout(database, root);
-    if (checkout === undefined) throw new Error(`${root} is not recorded`);
-    const row = database.select({ displayName: repositories.displayName }).from(repositories)
-      .where(eq(repositories.repositoryKey, checkout.repositoryKey)).get();
-    return { key: checkout.repositoryKey, displayName: row?.displayName ?? checkout.repositoryKey };
-  } finally {
-    database.$client.close();
-  }
+function repositoryOf(database: RerailDatabase | undefined, root: string): { key: string; displayName: string } {
+  if (database === undefined) return standaloneRepository(root);
+  const checkout = lookupCheckout(database, root);
+  if (checkout === undefined) return standaloneRepository(root);
+  const row = database.select({ displayName: repositories.displayName }).from(repositories)
+    .where(eq(repositories.repositoryKey, checkout.repositoryKey)).get();
+  return { key: checkout.repositoryKey, displayName: row?.displayName ?? checkout.repositoryKey };
 }
 
 /**
@@ -598,12 +594,15 @@ async function scanReport(
   const configuredPolicies = catalog?.rrPolicies ?? [];
   const rr = explicitRr ? options.rr! : configuredPolicies.map(policy => policy.path);
   let refRuleIds: Set<string>;
+  let repository: ScanReport["repository"];
   try {
     refRuleIds = explicitRr ? new Set() : prepareScratchDatabase(databasePath, root, home, useHome, packs, refRules, options.ruleDocuments);
+    const scanDatabase = explicitRr ? undefined : openRerailDatabase(databasePath, { readonly: true });
+    try { repository = repositoryOf(scanDatabase ?? home, root); }
+    finally { scanDatabase?.$client.close(); }
   } finally {
     home?.$client.close();
   }
-  const repository = explicitRr ? standaloneRepository(root) : repositoryOf(databasePath, root);
   const { base, paths } = scanTarget(options, root, source);
   if (source !== undefined && paths !== null) source.restrictPaths(paths);
   const audits = explicitRr ? [] : await runScanAudits(databasePath, root, `scan-${scanId}`, paths, source, analysisStore, analysisRun);
@@ -616,7 +615,8 @@ async function scanReport(
     ruleId: failure.ruleId ?? null,
   }))];
   let completed = audits.every(audit => audit.result?.status === "completed")
-    && (audits.length > 0 || paths?.length === 0 || source !== undefined);
+    && (audits.length > 0 || paths?.length === 0 || source !== undefined)
+    && !refRules?.skipped.some(failure => failure.code === "adapter-error");
   for (const skipped of (refRules === undefined ? catalog?.skipped.filter(policy => policy.path?.endsWith(".rr")) : undefined) ?? []) {
     failures.push({ code: "adapter-error", message: skipped.reason, path: skipped.path, ruleId: null });
     completed = false;
@@ -694,7 +694,7 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
     const source = options.revision === undefined ? undefined : new binding.GitRevisionSource(root, options.revision, options.analysisScope!);
     if (source !== undefined)
       source.setSourceLanguages(JSON.stringify({ suffixes: Object.fromEntries(SOURCE_LANGUAGES), names: Object.fromEntries(SOURCE_NAMES) }));
-    const home = options.rr?.length ? undefined : openHomeDatabase(homeDatabase);
+    const home = openHomeDatabase(homeDatabase);
     const useHome = homeIsScanConfiguration(options, home, root, packs);
     const report = await withScanScratch(home, scratch => scanReport(scratch, options, { root, home, useHome, packs, scanId, startedAt, source, analysisStore, analysisRun }));
     try {

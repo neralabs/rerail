@@ -406,6 +406,43 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     expect(current.violations).toEqual(expect.arrayContaining([expect.objectContaining({ ruleId: "ref-policy", message: "new include", mode: "log" })]));
   });
 
+  it("fails the CLI when a selected .rr policy cannot load", async () => {
+    const root = checkout();
+    rmSync(join(root, ".rerail/rules/needle.json"));
+    writeFileSync(join(root, ".rerail/rules/broken.rr"), '.policy "broken" revision 1\n');
+    git(root, "add", ".rerail/rules/needle.json", ".rerail/rules/broken.rr");
+    git(root, "commit", "-qm", "broken policy");
+    const home = `${root}-home`;
+    vi.stubEnv("RERAIL_HOME", home);
+    try {
+      for (const rulesRef of [[], ["--rules-ref", "HEAD"]]) {
+        let output = "";
+        const exit = await runAuditCommand("scan", ["--repo", root, "--revision", "HEAD", "--analysis-scope", "ci", "--json", "--no-send", "--fail-on-violations", ...rulesRef], {
+          home, stdout: { write: text => { output += text; return true; } },
+        });
+        expect(exit).toBe(1);
+        expect(JSON.parse(output)).toMatchObject({ status: "failed", rules: [], failures: [expect.objectContaining({ code: "adapter-error", path: expect.stringMatching(/broken\.rr$/u) })] });
+      }
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("reports the registered repository for an explicit .rr policy after the remote changes", async () => {
+    const root = checkout();
+    const databasePath = join(`${root}-home`, "rerail.sqlite");
+    git(root, "remote", "add", "origin", "https://example.com/example/original.git");
+    const db = openRerailDatabase(databasePath);
+    const registered = recordCheckout(db, root);
+    db.$client.close();
+    git(root, "remote", "set-url", "origin", "https://example.com/example/renamed.git");
+    const policy = join(root, "commit.rr");
+    writeFileSync(policy, `#include "git.rr"\n.policy "metadata" revision 1\n.violation Seen(at: span) "tree"\nSeen(@place("commit", 1)) :- git_source_tree(_, _).\n`);
+    const before = readFileSync(databasePath);
+    const report = await scan(root, { rr: [policy], revision: "HEAD", analysisScope: "identity", databasePath });
+    expect(report.status).toBe("completed");
+    expect(report.repository.key).toBe(registered.repositoryKey);
+    expect(readFileSync(databasePath)).toEqual(before);
+  });
+
   it("retains the evaluated span and fingerprint when the working file changes after evaluation", async () => {
     const root = checkout();
     const policy = join(root, "call.rr");
