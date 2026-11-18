@@ -213,7 +213,7 @@ async function slowDaemon(home: string, delayMs: number | undefined, onProbe?: (
   // port, so a second daemon can replace the first in one home; as short as `engine.sock`, for macOS's 103 bytes.
   const kernelSocketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-bundle-test-${process.pid}-${port}` : join(home, `e${port}.sock`);
   // On Windows a lookup sends a recorded daemon's engine a challenge, and only an engine that holds the daemon's
-  // capability answers it (src/runtime/engine-proof.ts, which tests outside the runtime cannot import): this one does,
+  // capability answers it (src/runtime/daemon/engine-proof.ts, which tests outside the runtime cannot import): this one does,
   // as a daemon busy in HTTP still does from its engine.
   const accessToken = "fake-daemon-capability-0123456789";
   const engine = createHttpServer((request, response) => {
