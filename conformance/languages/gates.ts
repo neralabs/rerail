@@ -157,11 +157,20 @@ function toolDocuments(root: string, loaded: LoadedPack, tool: string) {
   return { entries, documents, own, mine: documents.filter((document) => entries.get(document.path)?.upstream.tool === tool) };
 }
 
-/** One document's `loads` and `compact` gates; `linted` and `outOfScope` as `loadsGate` takes them. */
-function judgeDocument(engine: Engine, document: RuleDocument, pack: string, scratch: string, linted: readonly string[], outOfScope?: string): Record<OwnGateId, Check[]> {
+/**
+ * One document's `loads` and `compact` gates; `linted` and `outOfScope` as `loadsGate` takes them, `repetitionExempt`
+ * as `compactGate` does: the reason gates.yaml (a port) or conformance.json (an own rule) declares.
+ */
+function judgeDocument(
+  engine: Engine,
+  document: RuleDocument,
+  pack: string,
+  scratch: string,
+  { linted, outOfScope, repetitionExempt }: { linted: readonly string[]; outOfScope?: string; repetitionExempt?: string | undefined },
+): Record<OwnGateId, Check[]> {
   const loads = loadsGate(engine, document, pack, scratch, linted, outOfScope);
   const parsed = loads.resolved ?? loads.document;
-  return { loads: loads.checks, compact: parsed === undefined ? [{ id: "not-run", ok: false, detail: "the document is not JSON" }] : compactGate(document.bytes, parsed).checks };
+  return { loads: loads.checks, compact: parsed === undefined ? [{ id: "not-run", ok: false, detail: "the document is not JSON" }] : compactGate(document.bytes, parsed, repetitionExempt).checks };
 }
 
 export function judgeDocuments(root: string, engine: Engine, loaded: LoadedPack, tool: string): DocumentGates {
@@ -182,7 +191,10 @@ export function judgeDocuments(root: string, engine: Engine, loaded: LoadedPack,
       bundledLoad = { id: "bundled-load", ok: false, detail: `the pack's shipped rules do not load together through rerail's bundled-rule loader: ${error instanceof Error ? error.message : String(error)}` };
     }
     const rules: DocumentGates["rules"] = {};
-    for (const { path } of mine) rules[path] = judgeDocument(engine, readDocument(root, path), pack, scratch, lintedPaths(manifest, entries.get(path)!.lints));
+    for (const { path } of mine) {
+      const entry = entries.get(path)!;
+      rules[path] = judgeDocument(engine, readDocument(root, path), pack, scratch, { linted: lintedPaths(manifest, entry.lints), repetitionExempt: manifest.rules[entry.upstream.rule]?.repetition_exempt });
+    }
     return { bundledLoad, rules };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -274,12 +286,17 @@ export function judgeToolPack(
 export function judgeOwnRules(root: string, engine: Engine, loaded: LoadedPack): ToolPackVerdict {
   const pack = loaded.pack.pack;
   const own = ownRules(root, loaded);
+  const repetitionExempt = new Map(loaded.pack.repetitionExemptions.map((exemption) => [exemption.rule, exemption.reason]));
   const scratch = mkdtempSync(join(tmpdir(), "rerail-gates-"));
   try {
     const rules = packDocuments(root, pack).filter((document) => own.has(document.path)).map(({ path, location }): OwnVerdict => {
       const { id, on, examples } = own.get(path)!;
       const paths = [...new Set([examples?.caught?.path, examples?.passes?.path].filter((example) => example !== undefined))];
-      const gates = judgeDocument(engine, readDocument(root, path), pack, scratch, paths, "pack.json gives the rule an example there: widen the rule's scope, or move the example into it");
+      const gates = judgeDocument(engine, readDocument(root, path), pack, scratch, {
+        linted: paths,
+        outOfScope: "pack.json gives the rule an example there: widen the rule's scope, or move the example into it",
+        repetitionExempt: repetitionExempt.get(id),
+      });
       const stopped = OWN_GATES.find((gate) => failing(gates[gate.id]) !== undefined);
       const first = stopped === undefined ? undefined : failing(gates[stopped.id]);
       return {

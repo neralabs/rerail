@@ -116,6 +116,19 @@ test("compact follows a query into its language's shared define utilities", () =
   assert.equal(cyclic.metrics.nestingRun, 2);
 });
 
+test("compact passes a run a rule declares is not a copy, and fails the declaration once the run is gone", () => {
+  const chain = (depth: number): Record<string, unknown> => (depth === 1 ? { kind: "parenthesized_expression" } : { kind: "parenthesized_expression", has: chain(depth - 1) });
+  const repetition = (bytes: number, depth: number, exempt?: string) => compactGate(bytes, rule(chain(depth)), exempt).checks.find((check) => check.id === "no-written-out-repetition");
+  const reason = "each step is the next enclosing expression";
+  assert.deepEqual(repetition(FLAGGED, 3, reason), { id: "no-written-out-repetition", ok: true, detail: `exempt (${reason}); the most times one node kind occurs along a single nesting path: 3 (limit ${NESTING_RUN_LIMIT})` });
+  // Without the declaration the same run still fails.
+  assert.equal(repetition(FLAGGED, 3)!.ok, false);
+  // Once the run is under the limit, or the document under the flag, the declaration is stale.
+  assert.deepEqual(repetition(FLAGGED, 2, reason), { id: "no-written-out-repetition", ok: false, detail: `stale exemption (${reason}): the most times one node kind occurs along a single nesting path: 2 (limit ${NESTING_RUN_LIMIT}); remove the exemption` });
+  assert.deepEqual(repetition(100, 3, reason), { id: "no-written-out-repetition", ok: false, detail: `stale exemption (${reason}): 100 bytes, under the ${SIZE_FLAG_BYTES}-byte flag; remove the exemption` });
+  assert.equal(repetition(100, 3), undefined);
+});
+
 test("compact reports recursive utilities called by id or with parameters, per query", () => {
   const callForm = rule({ matches: "walk" }, { utils: { walk: { params: ["N"], rule: { any: [{ kind: "call_expression" }, { has: { matches: { walk: { N: "$N" } } } }] } } } });
   assert.deepEqual(compactGate(FLAGGED, callForm).metrics.recursiveUtils, ["walk"]);

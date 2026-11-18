@@ -85,6 +85,9 @@ export type CapabilityExemption = z.infer<typeof exemptionSchema>;
 const suppressionExemptionSchema = z.strictObject({ rule: nonEmpty, reason: z.string().trim().min(20) });
 export type SuppressionExemption = z.infer<typeof suppressionExemptionSchema>;
 
+/** An own rule whose run of one node kind along a nesting path is not a copy, as gates.yaml's `repetition_exempt` is a port's. */
+const repetitionExemptionSchema = z.strictObject({ rule: nonEmpty, reason: nonEmpty });
+
 const familySchema = z.enum(CODE_RULE_LANGUAGE_FAMILIES);
 
 export const packSchema = z
@@ -109,6 +112,11 @@ export const packSchema = z
      * `violation.suppress` (pack validation, check 2).
      */
     own: z.array(z.string().regex(RULE_PACK_RULE_ID, "rule ids are lowercase kebab-case")).default([]),
+    /**
+     * Own rules, by `rule`, whose `reason` says why their run of one node kind along a nesting path is not a copy
+     * written out: compact's no-written-out-repetition passes the run, and fails the exemption once it is stale.
+     */
+    repetitionExemptions: z.array(repetitionExemptionSchema).default([]),
     /** Expected-findings directory, relative to the pack directory; default `upstream/` beside conformance.json. */
     oracles: nonEmpty.optional(),
   })
@@ -135,6 +143,12 @@ export const packSchema = z
     for (const { rule } of pack.suppressionExemptions) if (!rules.has(rule)) issue(`suppression exemption for ${rule}, which is not a rule of the pack`);
     for (const id of duplicates(pack.own)) issue(`duplicate own rule ${id}`);
     for (const id of pack.own) if (rules.has(id)) issue(`${id} is listed as an own rule and also has a port entry`);
+  })
+  .superRefine((pack, context) => {
+    const own = new Set(pack.own);
+    const rules = pack.repetitionExemptions.map(exemption => exemption.rule);
+    for (const rule of rules.filter((rule, index) => rules.indexOf(rule) !== index)) context.addIssue({ code: "custom", message: `duplicate repetition exemption for ${rule}` });
+    for (const rule of rules) if (!own.has(rule)) context.addIssue({ code: "custom", message: `repetition exemption for ${rule}, which is not an own rule (a port's goes in its gates.yaml)` });
   });
 export type Pack = z.infer<typeof packSchema>;
 

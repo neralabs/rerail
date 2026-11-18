@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { COMMENT_MARKER, renderComment } from "../../conformance/languages/comment.js";
 import { loadEngine } from "../../conformance/languages/checks/engine.js";
-import { judgeOwnRules, judgeToolPack } from "../../conformance/languages/gates.js";
+import { judgeDocuments, judgeOwnRules, judgeToolPack } from "../../conformance/languages/gates.js";
 import { fixturesDirectory, fixturesExpectedPath, loadPack } from "../../conformance/languages/pack.js";
 import { reportFailures, runPack } from "../../conformance/languages/runner.js";
 import { summarize, ungatedRow } from "../../conformance/languages/summary.js";
@@ -201,6 +201,57 @@ describe("a pack's own rules (conformance.json own)", () => {
     const { verdict, summary } = judgeOwn();
     expect(verdict.rules[0]).toMatchObject({ pass: false, stoppedAt: "compact", failure: { check: "no-combinatorial-expansion" } });
     expect(summary.blocking).toEqual([expect.objectContaining({ pack: "valid/own", rule: "pass-statement", check: "no-combinatorial-expansion" })]);
+  });
+});
+
+/**
+ * A document over the 15 KiB flag whose one query walks up three blocks: a run of `block` along one nesting path, each
+ * step a different block. Trailing whitespace takes it over the flag without adding structure.
+ */
+function nestedBlocks(path: string): void {
+  const document = JSON.parse(readFileSync(path, "utf8")) as { clauses: { forbid: { ast: { rule: Record<string, unknown> } } }[] };
+  const query = document.clauses[0]!.forbid.ast;
+  query.rule = { ...query.rule, inside: { kind: "block", stopBy: "end", inside: { kind: "block", stopBy: "end", inside: { kind: "block", stopBy: "end" } } } };
+  writeFileSync(path, `${JSON.stringify(document, null, 2)}${" ".repeat(16 * 1024)}\n`);
+}
+
+const repetitionCheck = (checks: { id: string }[]) => checks.find(check => check.id === "no-written-out-repetition");
+const REASON = "each step is the next enclosing block";
+
+describe("a declared repetition exemption", () => {
+  const editJson = (path: string, edit: (value: Record<string, unknown>) => Record<string, unknown>): void =>
+    writeFileSync(path, JSON.stringify(edit(JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>)));
+  const portCompact = () => judgeDocuments(root, loadEngine(), loadPack(pack), "examplelint").rules["packs/valid/rules/assert-used.json"]!.compact;
+
+  it("passes a port's run with gates.yaml's repetition_exempt reason, and fails it once the run is gone", () => {
+    nestedBlocks(join(pack, "rules", "assert-used.json"));
+    expect(repetitionCheck(portCompact())).toMatchObject({ ok: false });
+    writeFileSync(join(pack, "upstream", "examplelint", "gates.yaml"), `${GATES("{ config: default, options: [] }")}    repetition_exempt: ${REASON}\n`);
+    expect(repetitionCheck(portCompact())).toEqual({ id: "no-written-out-repetition", ok: true, detail: `exempt (${REASON}); the most times one node kind occurs along a single nesting path: 3 (limit 3)` });
+    cpSync(fixturesPath("packs", "valid", "rules", "assert-used.json"), join(pack, "rules", "assert-used.json"));
+    expect(repetitionCheck(portCompact())).toMatchObject({ ok: false, detail: expect.stringMatching(/^stale exemption \(each step is the next enclosing block\): \d+ bytes, under the 15360-byte flag/u) });
+  });
+
+  it("passes an own rule's run with conformance.json's repetitionExemptions reason, and fails the rule once the run is gone", () => {
+    const conformance = join(pack, "conformance.json");
+    editJson(conformance, value => ({ ...value, own: ["pass-statement"], repetitionExemptions: [{ rule: "pass-statement", reason: REASON }] }));
+    nestedBlocks(join(pack, "rules", "pass-statement.json"));
+    const exempt = judgeOwnRules(root, loadEngine(), loadPack(pack)).rules[0]!;
+    expect(exempt).toMatchObject({ pass: true });
+    expect(repetitionCheck(exempt.gates.compact)).toMatchObject({ ok: true, detail: expect.stringContaining(`exempt (${REASON})`) });
+    cpSync(fixturesPath("packs", "valid", "rules", "pass-statement.json"), join(pack, "rules", "pass-statement.json"));
+    expect(judgeOwnRules(root, loadEngine(), loadPack(pack)).rules[0]).toMatchObject({ pass: false, stoppedAt: "compact", failure: { check: "no-written-out-repetition", why: expect.stringContaining("stale exemption") } });
+  });
+
+  it("is refused without a reason, for a rule that is not an own rule, and twice for one rule", () => {
+    const conformance = join(pack, "conformance.json");
+    const exempting = (exemptions: unknown[]) => editJson(conformance, value => ({ ...value, own: ["pass-statement"], repetitionExemptions: exemptions }));
+    exempting([{ rule: "pass-statement", reason: "" }]);
+    expect(() => loadPack(pack)).toThrow(/repetitionExemptions/u);
+    exempting([{ rule: "assert-used", reason: REASON }]);
+    expect(() => loadPack(pack)).toThrow(/repetition exemption for assert-used, which is not an own rule/u);
+    exempting([{ rule: "pass-statement", reason: REASON }, { rule: "pass-statement", reason: REASON }]);
+    expect(() => loadPack(pack)).toThrow(/duplicate repetition exemption for pass-statement/u);
   });
 });
 

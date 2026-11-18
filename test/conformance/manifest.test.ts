@@ -42,3 +42,13 @@ test("upstream.lints and rules are required, and a rule's facts take only deprec
   assert.throws(() => parseGatesManifest(gates("", '[".py"]', ""), "gates.yaml"), /\/rules: /u);
   assert.throws(() => parseGatesManifest(gates("", '[".py"]', "rules:\n  B101:\n    deprecated: null\n    recommended: null\n    tests: []\n"), "gates.yaml"), /\/rules\/B101: /u);
 });
+
+test("a rule's repetition_exempt carries a reason", () => {
+  const facts = (extra: string) => `rules:\n  B101:\n    deprecated: null\n    recommended: null\n${extra}`;
+  assert.deepEqual(parseGatesManifest(gates("", '[".py"]', facts("    repetition_exempt: each step is the next enclosing block\n")), "gates.yaml").rules.B101, {
+    deprecated: null,
+    recommended: null,
+    repetition_exempt: "each step is the next enclosing block",
+  });
+  assert.throws(() => parseGatesManifest(gates("", '[".py"]', facts('    repetition_exempt: ""\n')), "gates.yaml"), /\/rules\/B101\/repetition_exempt: /u);
+});

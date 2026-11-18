@@ -289,13 +289,32 @@ function recursiveUtilities(clauses: unknown): string[] {
   return [...recursive].sort();
 }
 
+/** The run the walk measured, against its limit: what a no-written-out-repetition detail reports. */
+function measuredRun(metrics: SizeMetrics): string {
+  return `the most times one node kind occurs along a single nesting path: ${metrics.nestingRun} (limit ${NESTING_RUN_LIMIT})`;
+}
+
+/**
+ * no-written-out-repetition, or nothing for an unflagged document with no exemption. A declared exemption (`exempt`,
+ * its reason) passes a flagged document whose run reaches the limit, and fails as stale where the check would pass
+ * without it: under the flag, or under the limit, the run it excused is gone.
+ */
+function repetitionCheck(metrics: SizeMetrics, exempt: string | undefined): Check[] {
+  const needed = metrics.flagged && metrics.nestingRun >= NESTING_RUN_LIMIT;
+  if (exempt === undefined) return metrics.flagged ? [{ id: "no-written-out-repetition", ok: !needed, detail: measuredRun(metrics) }] : [];
+  if (needed) return [{ id: "no-written-out-repetition", ok: true, detail: `exempt (${exempt}); ${measuredRun(metrics)}` }];
+  const now = metrics.flagged ? measuredRun(metrics) : `${metrics.rawBytes} bytes, under the ${SIZE_FLAG_BYTES}-byte flag`;
+  return [{ id: "no-written-out-repetition", ok: false, detail: `stale exemption (${exempt}): ${now}; remove the exemption` }];
+}
+
 /**
  * compact: a document over 15 KiB is flagged and inspected. It goes back for a rewrite when a third or more of its
  * clauses is structure written out over and over (three or more same-shaped siblings, or verbatim copies), or when one
  * node kind occurs three or more times along a single nesting path (repetition `count` or a regex quantifier would express).
- * Otherwise the size is justified.
+ * Otherwise the size is justified. `repetitionExempt`, the reason a rule declares that its run is not a copy (each
+ * step lands on a different node), excuses the run (`repetitionCheck`).
  */
-export function compactGate(rawBytes: number, document: { clauses?: unknown }): CompactResult {
+export function compactGate(rawBytes: number, document: { clauses?: unknown }, repetitionExempt?: string): CompactResult {
   const clausesText = canonicalJson(document.clauses ?? null);
   const repeatedBytes = repeatedStructureBytes(document.clauses);
   const metrics: SizeMetrics = {
@@ -308,7 +327,7 @@ export function compactGate(rawBytes: number, document: { clauses?: unknown }): 
     recursiveUtils: recursiveUtilities(document.clauses),
   };
   if (!metrics.flagged) {
-    return { checks: [{ id: "size", ok: true, detail: `${rawBytes} bytes, under the ${SIZE_FLAG_BYTES}-byte flag` }], metrics };
+    return { checks: [{ id: "size", ok: true, detail: `${rawBytes} bytes, under the ${SIZE_FLAG_BYTES}-byte flag` }, ...repetitionCheck(metrics, repetitionExempt)], metrics };
   }
   const percent = (metrics.repeatedShare * 100).toFixed(1);
   return {
@@ -319,11 +338,7 @@ export function compactGate(rawBytes: number, document: { clauses?: unknown }): 
         ok: metrics.repeatedShare < REPEATED_SHARE_LIMIT,
         detail: `${percent}% of the clauses is structure written out over and over (limit ${(REPEATED_SHARE_LIMIT * 100).toFixed(1)}%)`,
       },
-      {
-        id: "no-written-out-repetition",
-        ok: metrics.nestingRun < NESTING_RUN_LIMIT,
-        detail: `the most times one node kind occurs along a single nesting path: ${metrics.nestingRun} (limit ${NESTING_RUN_LIMIT})`,
-      },
+      ...repetitionCheck(metrics, repetitionExempt),
     ],
     metrics,
   };

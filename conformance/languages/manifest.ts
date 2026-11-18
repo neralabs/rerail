@@ -45,11 +45,15 @@ const fileType = z.string().regex(/^(?:\.[a-z0-9]+)+$/u, "a file type such as .p
  * with its options, or null. `rename_exempt`, when given, says why the rule's meaning is the very names the rename
  * variants change (a typo check against fixed export names, say): holds-under-rename then does not fail the rule when
  * the renaming takes every finding, though an FP, FN or engine failure on its variants still fails it.
+ * `repetition_exempt`, when given, says why the port's run of one node kind along a nesting path is not a copy written
+ * out (each step lands on a different node, such as successive ancestors): compact's no-written-out-repetition then
+ * passes the run, and fails the exemption as stale once the port no longer needs it.
  */
 const upstreamRuleFactsSchema = z.strictObject({
   deprecated: z.string().min(1).nullable(),
   recommended: z.strictObject({ config: nonEmpty, options: z.array(z.json()) }).nullable(),
   rename_exempt: nonEmpty.optional(),
+  repetition_exempt: nonEmpty.optional(),
 });
 export type UpstreamRuleFacts = z.infer<typeof upstreamRuleFactsSchema>;
 

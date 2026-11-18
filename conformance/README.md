@@ -80,7 +80,7 @@ imported needs adding to the filter by hand (`scripts/check/check-ci-paths.mjs`)
 | Gate | Checks | Data |
 | --- | --- | --- |
 | `loads` (blocks) | `json` (no repeated keys), `schema`, `deterministic`, `engine-compile`, `identity`, `bundled-load` (the document alone), `current-contract` (`rerail.policy/v1`, one `mode`, no severity, no `llm` clause), `in-scope` (the scope covers every file type in `gates.yaml`'s `upstream.lints`, or in `rerail.in_scope` when the pack narrows it, or in the port's own `lints` in `conformance.json`; an own rule's covers its `pack.json` examples' paths) | the document, the engine, `gates.yaml` (an own rule: `pack.json`) |
-| `compact` (blocks) | `size`; a document over 15 KiB fails `no-combinatorial-expansion` or `no-written-out-repetition` when it lists cases instead of expressing the logic | the document |
+| `compact` (blocks) | `size`; a document over 15 KiB fails `no-combinatorial-expansion` or `no-written-out-repetition` when it lists cases instead of expressing the logic. `no-written-out-repetition` fails when one node kind occurs three or more times along a single nesting path, unless the rule declares why that run is not a copy (each step lands on a different node, such as successive ancestors): `repetition_exempt` in `gates.yaml` for a port, `repetitionExemptions` in `conformance.json` for an own rule. An exempt rule's detail quotes the reason and the run; an exemption the rule no longer needs (under the flag, or a run under three) fails the check as stale | the document; a declared exemption |
 | `conformance` (blocks) | `scored`; `no-unexplained-false-positives`, `no-unexplained-misses`, `catches-something` (a true positive, or examples in `pack.json`), `engine-reads-fixtures` | the fixtures: upstream's cases and Rerail's probes, after `divergences.json` |
 | | `holds-under-rename`: no unexplained FP or FN, and no engine failure (a parse-induced `source-incomplete` is only reported), on the rename variants (units with `source.units[key].renamedFrom`, under `fixtures/renamed/`), scored apart from the originals. It reports, without failing, the variants the renaming took every finding of the rule from (`renamedAway`); when the renaming took every finding and none survives, the check fails: nothing shows the rule matches the construct rather than the cases' names (the renamer keeps literals and every two names' order, so a rule that reads a literal or an order keeps its findings), unless `gates.yaml` gives the rule a `rename_exempt` reason. "n/a" when no variant covers the rule, and for a tool-pack without variants, whose detail names the held-out evidence left: its judged samples, or none | the rename variants in the test data |
 | | `samples-catch-labelled`, `samples-silent-on-clean`, `engine-reads-samples` ([How samples are judged](#how-samples-are-judged)) | the samples labelled for the rule |
@@ -140,7 +140,9 @@ without errors). When one fails, every rule of the tool-pack fails with it.
 - `rules`, keyed by upstream rule name: `{ deprecated: <upstream's message> | null, recommended: { config, options } |
   null }`, and optionally `rename_exempt: <why>` for a rule whose findings are the very names the rename variants change
   (next's `no-typos`): `holds-under-rename` then does not fail it when the renaming takes every finding, though an FP,
-  FN or engine failure on its variants still does. A rule not listed is not a rule of the pinned upstream. The facts are declared by hand and reviewed at each
+  FN or engine failure on its variants still does. Optionally also `repetition_exempt: <why>` for a rule whose run of
+  one node kind along a nesting path is not a copy written out: `no-written-out-repetition` then passes it, and fails
+  the exemption as stale once the rule no longer needs it. A rule not listed is not a rule of the pinned upstream. The facts are declared by hand and reviewed at each
   bump, whose pull request shows them.
 
 ### Own upstream units and rename variants
@@ -243,7 +245,9 @@ gates that read a document alone: `loads` and `compact`. `upstream-status` and `
 upstream tool, which an own rule has none of. With no tool-pack to name the file types it must apply to, `loads`'s
 `in-scope` check asks the rule to apply to its `pack.json` examples' paths, the files its proof says it catches and
 passes: the pack's file types would ask more than an own rule claims (one written for JSX alone), and the rule's
-scope checked against itself would ask nothing. A shipped own rule that fails either gate fails the job.
+scope checked against itself would ask nothing. A shipped own rule that fails either gate fails the job. With no
+`gates.yaml` entry, an own rule declares why its run of one node kind is not a copy in `conformance.json`'s
+`repetitionExemptions`, as a port does with `repetition_exempt`.
 
 Their `pack.json` examples and their cases prove them otherwise. The pack validation's check 2 fails an `own` id the
 pack does not ship, and one whose document sets `violation.suppress`: every port carries it, so it marks a port moved
