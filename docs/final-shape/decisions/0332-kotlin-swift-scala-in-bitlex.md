@@ -810,6 +810,30 @@ interpreter's, Cranelift's and the generated Rust's token-mark tests.
 
 Corpus: 420 the same (step 32: 418), 71 refused, 0 differ.
 
+## Kotlin, step 34 (`34-soft-names.bitlex`)
+
+```kotlin
+fun f(constructor: C) = g(by = "foo")
+val x = when (c) {
+    !in A..B -> 1
+    !is C -> 2
+    else -> 3
+}
+```
+
+- `constructor` and `by` are soft words, as in tree-sitter-kotlin. As a name, `constructor` is
+  a `simple_identifier` holding its own leaf, as the other soft words are, and `by` is a plain
+  one. In the places where the keyword is read, no name can come.
+- A `!` that starts a line before `in` or `is` takes `named` (`bang_test`): a `when` entry's
+  negated test. Both tests start with the `!`, so they are one node (`neg_test`): it opens as
+  a `range_test` and is retagged a `type_test` at an `is`.
+
+Still refused: `fun interface`. The lean parser keeps a `fun` leaf in its `class_declaration`,
+but here a function's `fun` is implied. The `interface` after it comes too late to keep it, and a
+`relabel` after an implied leaf refuses (an implied leaf is no node it acts on).
+
+Corpus: 423 the same (step 33: 420), 68 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment

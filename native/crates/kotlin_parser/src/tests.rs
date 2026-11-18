@@ -387,6 +387,17 @@ fn strings_in_templates_are_the_lean_parsers() {
 }
 
 #[test]
+fn soft_names_are_the_lean_parsers() {
+    same(&[
+        "fun f(constructor: C) {\n    val constructor = g()\n}\n",
+        "val x = f(by = \"foo\")\n",
+        "val x = when (c) {\n    !in A..B -> 1\n    !is C -> 2\n    else -> 3\n}\n",
+        "val y = a !in b && c !is D\n",
+        "class A private constructor(x: Int) : B by x {\n    constructor() : this(1)\n    val m by lazy { 1 }\n}\n",
+    ]);
+}
+
+#[test]
 fn names_after_dots_are_the_lean_parsers() {
     same(&[
         "fun f(limit: W) = limit.value\n\ninternal operator fun g() {}\n",
@@ -463,6 +474,15 @@ fn delegates_and_names_are_the_lean_parsers() {
     same(&[
         "fun f() {\n    val state by viewModel.uiState.collectAsState()\n}\n",
         "fun g(\n    set: AttributeSet,\n    get: Int,\n) {}\n",
+    ]);
+}
+
+#[test]
+fn what_step_34_does_not_read_is_refused() {
+    refused(&[
+        // The lean parser's `fun` leaf: a function's `fun` is implied, and the `interface`
+        // after it comes too late to keep it.
+        "fun interface A {\n    fun f()\n}\n",
     ]);
 }
 
