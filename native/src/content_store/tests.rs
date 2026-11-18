@@ -1142,10 +1142,13 @@ fn cancelled_overlay_publication_rolls_back_before_commit() {
     assert_eq!(stored_source_count, 1);
 }
 
-/// A writer held for 3 s, longer than many SQLite busy timeouts, before the object pass and again
-/// before the relationship pass delays an overlay publication at each; it does not fail it.
+/// A writer of another process that holds the store before the object pass, and again before the
+/// relationship pass, delays an overlay publication at each, which reports what it waited; it does
+/// not fail it. Each holder lets go at the publication's first busy attempt on it.
 #[test]
 fn overlay_publication_reports_busy_retries() {
+    let _state = BusyTestState;
+    BUSY_TIMEOUT_OVERRIDE.set(Some(Duration::from_millis(10)));
     let (path, store) = store("overlay-retries");
     let snapshot = store
         .put_snapshot(
@@ -1158,21 +1161,19 @@ fn overlay_publication_reports_busy_retries() {
     let workspace = store
         .open_workspace("/retry", "repo", "owner", snapshot, 1, 100)
         .unwrap();
-    // Each hold lasts 3 s from when it is taken: before the object pass, and again before the
-    // relationship pass.
-    let hold = |path: &std::path::Path| {
-        let blocker = Connection::open(path).unwrap();
-        blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
-        thread::spawn(move || {
-            thread::sleep(Duration::from_secs(3));
-            blocker.execute_batch("COMMIT").unwrap();
-        })
-    };
-    let (holders, held) = std::sync::mpsc::channel();
-    holders.send(hold(&path)).unwrap();
-    let copy = path.to_path_buf();
+    // A holder before the object pass, and another before the relationship pass; each lets go
+    // at the first busy attempt on it.
+    let held = std::rc::Rc::new(std::cell::RefCell::new(Some(hold_writer(&path))));
+    let holds = std::rc::Rc::new(std::cell::Cell::new(1));
+    let released = std::rc::Rc::clone(&held);
+    BUSY_ATTEMPT_HOOK.set(Some(Box::new(move |_| {
+        drop(released.borrow_mut().take());
+        Duration::ZERO
+    })));
+    let (taken, counted, copy) = (std::rc::Rc::clone(&held), std::rc::Rc::clone(&holds), path.to_path_buf());
     BEFORE_RELATIONSHIP_WRITE_HOOK.set(Some(Box::new(move || {
-        holders.send(hold(&copy)).unwrap();
+        *taken.borrow_mut() = Some(hold_writer(&copy));
+        counted.set(counted.get() + 1);
     })));
     let result = store
         .publish_overlay_files(
@@ -1190,11 +1191,8 @@ fn overlay_publication_reports_busy_retries() {
             }],
         )
         .unwrap();
-    let holders = held.try_iter().collect::<Vec<_>>();
-    assert_eq!(holders.len(), 2, "both passes found the store held");
-    for holder in holders {
-        holder.join().unwrap();
-    }
+    assert_eq!(holds.get(), 2, "both passes found the store held");
+    assert!(held.borrow().is_none(), "each pass waited for its holder to let go");
     assert!(
         result.retries >= 2,
         "each held pass retries: {}",
@@ -1706,6 +1704,8 @@ fn multiple_processes_converge_while_publishing() {
     assert_eq!(source_count, 1);
 }
 
+/// Two stores on one file write the same bytes at once and get one source. They share the file's
+/// writer line, so neither meets the other's write lock and neither retries.
 #[test]
 fn concurrent_connections_converge_on_one_source() {
     let path = temporary_database("concurrent");
@@ -1714,14 +1714,7 @@ fn concurrent_connections_converge_on_one_source() {
     let mut handles = Vec::new();
     for store in [first, second] {
         handles.push(thread::spawn(move || {
-            for _ in 0..25 {
-                match store.put_source(b"same bytes", &[]) {
-                    Ok(id) => return id,
-                    Err(StoreError::Busy) => thread::sleep(Duration::from_millis(2)),
-                    Err(error) => panic!("unexpected store error: {error}"),
-                }
-            }
-            panic!("writer stayed busy")
+            store.put_source(b"same bytes", &[]).unwrap()
         }));
     }
     assert_eq!(
@@ -2159,18 +2152,25 @@ fn tree_publication_work_follows_its_entries_not_the_stores_path_names() {
     );
 }
 
-/// A writer that holds the store longer than SQLite's per-attempt busy timeout delays a snapshot
-/// publication; it does not fail it.
+/// A writer of another process that holds the store longer than SQLite's per-attempt busy
+/// timeout delays a snapshot publication; it does not fail it. It lets go at the publication's
+/// second busy attempt.
 #[test]
 fn snapshot_publication_waits_out_a_writer_held_longer_than_one_busy_timeout() {
+    let _state = BusyTestState;
+    BUSY_TIMEOUT_OVERRIDE.set(Some(Duration::from_millis(10)));
     let (path, store) = store("held-writer");
     let tree = three_hundred_entry_tree(60);
-    let blocker = Connection::open(&path).unwrap();
-    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
-    let holder = thread::spawn(move || {
-        thread::sleep(Duration::from_secs(3));
-        blocker.execute_batch("COMMIT").unwrap();
-    });
+    let mut blocker = Some(hold_writer(&path));
+    let attempts = std::rc::Rc::new(std::cell::Cell::new(0));
+    let counted = std::rc::Rc::clone(&attempts);
+    BUSY_ATTEMPT_HOOK.set(Some(Box::new(move |_| {
+        counted.set(counted.get() + 1);
+        if counted.get() == 2 {
+            drop(blocker.take());
+        }
+        Duration::ZERO
+    })));
     let published = store.publish_snapshot(
         std::slice::from_ref(&tree),
         tree.id,
@@ -2185,11 +2185,11 @@ fn snapshot_publication_waits_out_a_writer_held_longer_than_one_busy_timeout() {
             lease_seconds: 120,
         },
     );
-    holder.join().unwrap();
     assert!(
         published.is_ok(),
-        "a writer held for 3 s failed the publication: {published:?}"
+        "a writer held past one busy timeout failed the publication: {published:?}"
     );
+    assert_eq!(attempts.get(), 2, "the publication waited past one busy timeout");
 }
 
 #[test]
