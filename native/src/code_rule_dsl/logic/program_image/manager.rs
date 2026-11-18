@@ -872,10 +872,12 @@ impl AskedByRule {
                 next.extend(out.heads(rel).map(|r| r.id()).zip(by.iter().cloned()));
                 continue;
             }
-            // The input's rules of this relation the step removed, by content.
+            // The input's rules of this relation the step removed (in a derivation, those no output rule came from),
+            // by content: a rule equal to one (a repeat dropped) serves its readers too.
+            let sourced: std::collections::HashSet<RuleId> = if delta.rebuilt { out.heads(rel).filter_map(|r| r.source()).collect() } else { Default::default() };
             let mut gone: HashMap<u64, BTreeSet<String>> = HashMap::new();
             if let Some(old) = from.rel(req) {
-                for r in from.heads(old).filter(|r| delta.rebuilt || delta.removed.has(r.id())) {
+                for r in from.heads(old).filter(|r| if delta.rebuilt { !sourced.contains(&r.id()) } else { delta.removed.has(r.id()) }) {
                     if let Some(b) = self.by.get(&r.id()) {
                         gone.entry(r.hash()).or_default().extend(b.iter().cloned());
                     }
@@ -883,11 +885,11 @@ impl AskedByRule {
             }
             for r in out.heads(rel) {
                 let mut readers = BTreeSet::new();
-                let kept = !delta.rebuilt && !delta.added.contains(&r.id());
-                if kept && let Some(b) = self.by.get(&r.id()) {
-                    readers.extend(b.iter().cloned());
-                }
-                if let Some(b) = r.source().and_then(|s| self.by.get(&s)) {
+                // A rule the step kept keeps its readers; one it made, its source's (an id of this step's input: a
+                // kept rule's own `source` names an earlier derivation's).
+                let added = delta.rebuilt || delta.added.contains(&r.id());
+                let at = if added { r.source() } else { Some(r.id()) };
+                if let Some(b) = at.and_then(|id| self.by.get(&id)) {
                     readers.extend(b.iter().cloned());
                 }
                 if let Some(b) = gone.get(&r.hash()) {

@@ -352,6 +352,22 @@ into notes once the queue is done).
   a_sample_of_the_replay_gives_the_recorded_findings; typing pep_561 and phase_tests; session quiet_stratum.
 - **Record**: in progress. dropping_unreached (8) and rdl_programs_translate pass (Q3). The replay sample: 14 of
   268 events fail after Q2/Q3's fixes, against 57 on the 09:46 run (tmp/remote4.txt); all 14 are among those 57.
+  - *2026-11-17, all pass on the M3*: dropping_unreached (8) and rdl_programs_translate (Q50); pep_561, the three
+    phase_tests and quiet_stratum pass as they are; the replay sample, 268 of 268 events. The replay's failures had
+    two causes, each fixed:
+    1. The debug build's check that the version's program is the tree's after the merges failed on 7 of its 8
+       threads: the version's request record named more readers than the tree's. The pass manager's carry
+       (`AskedByRule::step`, 0331) read a kept rule's `source`, which names a rule of an earlier derivation's input
+       (another id space), and in a derivation took every input rule for removed, so equal rules shared readers.
+       A rule the step kept keeps its own readers; one it made, its source's; the removed are, in a derivation,
+       the input rules no output rule came from. 14 failing events left 4.
+    2. The 4: "`value` is answered on request in the cross-file part". A file scope ruled out by the run's options
+       (`spq_vector_filter_literals_file36`: every rule tests `option_value("entryPoint", …)` against a value the
+       run does not have) lost every rule to `simplify::decided_fact_tests`, and stayed declared, empty and read by
+       a guest's copies (`rr_wide_node_text_…_module_strings`), whose rules the split then took for cross-file, and
+       with them the value request that reads them. `decided_fact_tests` now decides reads of a relation it emptied
+       (one that had rules, so nothing outside fills it): a positive read's rule goes, a negated read is dropped, to
+       a fixpoint. Test `a_relation_its_fact_tests_empty_takes_its_readers`.
 
 ### Q10. The merge audit checks hunks
 

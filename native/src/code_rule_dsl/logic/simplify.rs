@@ -445,6 +445,7 @@ fn decided_fact_tests(prog: &mut Program) -> usize {
         decided.push(holds.then_some(drop));
     }
     let mut n = 0;
+    let derived: BTreeSet<String> = derived.into_iter().map(str::to_owned).collect();
     let carry = prog.carry();
     let rules = std::mem::take(&mut prog.rules);
     let mut kept = Vec::with_capacity(rules.len());
@@ -461,6 +462,30 @@ fn decided_fact_tests(prog: &mut Program) -> usize {
         }
     }
     prog.set_rules_carried(&carry, kept);
+    // A relation whose every rule went is empty (it had rules, so nothing outside fills it): a positive read of it
+    // cannot hold, and its rule goes; a negated one holds, and is dropped. To a fixpoint, as each emptied relation may
+    // empty its readers (a file scope decided by the run's options, `spq_…_file36`, read by a guest's copies: left,
+    // they read an empty relation, which the split takes for cross-file).
+    let mut emptied: BTreeSet<String> = derived.into_iter().filter(|r| !prog.rules.iter().any(|x| x.head.rel == r.as_str()) && !prog.facts.get(r.as_str()).is_some_and(|f| !f.is_empty()) && !fixed(prog, r) && !kept_by_engine(prog, r)).collect();
+    while !emptied.is_empty() {
+        let carry = prog.carry();
+        let rules = std::mem::take(&mut prog.rules);
+        let mut kept = Vec::with_capacity(rules.len());
+        let before: BTreeSet<String> = rules.iter().map(|r| r.head.rel.to_string()).collect();
+        for (i, mut rule) in rules.into_iter().enumerate() {
+            let reads = |l: &Literal, neg: bool| matches!(l, Literal::Atom(a) if a.neg == neg && emptied.contains(a.rel.as_str()));
+            if rule.body.iter().any(|l| reads(l, false)) {
+                n += 1;
+                continue;
+            }
+            let k = rule.body.len();
+            rule.body.retain(|l| !reads(l, true));
+            n += k - rule.body.len();
+            kept.push((rule, vec![i]));
+        }
+        prog.set_rules_carried(&carry, kept);
+        emptied = before.into_iter().filter(|r| !prog.rules.iter().any(|x| x.head.rel == r.as_str()) && !prog.facts.get(r.as_str()).is_some_and(|f| !f.is_empty()) && !fixed(prog, r) && !kept_by_engine(prog, r)).collect();
+    }
     n
 }
 
@@ -2356,6 +2381,37 @@ pub mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].contains("!m1($n), doc($d, $p, _)") && !out[0].contains("m2") && out[0].matches("doc(").count() == 1, "{}", out[0]);
         assert!(!prog.decls.contains_key("b2") && !prog.decls.contains_key("m2"));
+    }
+
+    /// A relation whose every rule a fact test decides away is empty: a rule reading it goes, a negated read of it is
+    /// dropped, to a fixpoint (a file scope the run's options rule out, read by a guest's copies).
+    #[test]
+    fn a_relation_its_fact_tests_empty_takes_its_readers() {
+        let mut prog = crate::code_rule_dsl::logic::rr::parse(
+            r#"
+            .decl opt(k: symbol)
+            opt("a").
+            .decl base(n: number)
+            .input base
+            .decl scope(n: number)
+            scope(n) :- base(n), opt("b").
+            .decl reads(n: number)
+            reads(n) :- base(n), scope(n).
+            .decl again(n: number)
+            again(n) :- reads(n).
+            .decl apart(n: number)
+            apart(n) :- base(n), !scope(n).
+            .decl out(n: number)
+            .output out
+            out(n) :- again(n).
+            out(n) :- apart(n).
+            "#,
+        )
+        .unwrap();
+        simplify(&mut prog);
+        let heads: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
+        assert!(!heads.contains("scope") && !heads.contains("reads") && !heads.contains("again"), "{heads:?}");
+        assert!(prog.rules.iter().any(|r| r.to_string().contains("base(") && !r.to_string().contains("scope")), "{:?}", prog.rules.iter().map(ToString::to_string).collect::<Vec<_>>());
     }
 
     /// A relation nothing reads keeps its name, though it equals a read one: the engine may read it by name (`env`'s
