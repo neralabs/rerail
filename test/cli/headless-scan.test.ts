@@ -1048,11 +1048,20 @@ Unreadable(@place("tree", 1), why) :- git_tree_walk_error(_, _, _, why).
       });
       console.log(JSON.stringify(report.violations.map(({ code, message }) => [code, message])));
     `;
-    const evaluate = () => JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, home, policy], {
-      input: script, encoding: "utf8", env: { ...process.env, RERAIL_CONTENT_STORE_PATH: join(home, "readability.sqlite") },
+    const evaluate = (profile?: string) => JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, home, policy], {
+      input: script, encoding: "utf8",
+      env: { ...process.env, RERAIL_CONTENT_STORE_PATH: join(home, "readability.sqlite"), ...(profile === undefined ? {} : { RERAIL_PROFILE: profile }) },
     }));
     const original = readFileSync(target);
     expect(evaluate()).toEqual([["Complete", "complete"]]);
+    if (representation === "loose") {
+      const unrelated = git(root, "rev-parse", "HEAD:a.py");
+      execFileSync("git", ["pack-objects", join(objects, "pack/unrelated")], { cwd: root, input: `${unrelated}\n` });
+      const profile = join(home, "after-unrelated-pack");
+      expect(evaluate(profile)).toEqual([["Complete", "complete"]]);
+      const decodes = readFileSync(join(profile, "profile.txt"), "utf8").match(/^\s*count\s+(\d+)\s+git\.tree_decodes$/mu)?.[1];
+      expect(Number(decodes ?? 0)).toBe(0);
+    }
     const corrupted = Buffer.from(original);
     corrupted[offset] = corrupted[offset]! ^ 0xff;
     chmodSync(target, 0o644);

@@ -5,7 +5,23 @@ use std::path::{Path, PathBuf};
 
 pub(super) struct Storage {
     roots: Vec<PathBuf>,
+    loose: Sha256,
     packs: Sha256,
+    indices: Option<Vec<PackIndex>>,
+}
+
+enum PackIndex {
+    Single(gix::odb::pack::index::File),
+    Multi(gix::odb::pack::multi_index::File),
+}
+
+impl PackIndex {
+    fn contains(&self, id: &gix::hash::oid) -> bool {
+        match self {
+            Self::Single(index) => index.lookup(id).is_some(),
+            Self::Multi(index) => index.lookup(id).is_some(),
+        }
+    }
 }
 
 impl Storage {
@@ -13,11 +29,14 @@ impl Storage {
         let store = repo.objects.store_ref();
         let mut roots = vec![store.path().to_owned()];
         roots.extend(store.alternate_db_paths().ok()?);
+        let mut loose = Sha256::new();
         let mut packs = Sha256::new();
-        packs.update(b"git-storage-v1");
+        loose.update(b"git-loose-storage-v1");
+        packs.update(b"git-pack-storage-v1");
+        let mut indices = Some(Vec::new());
         for root in &roots {
-            hash_path(&mut packs, root);
-            stat(&mut packs, &root.join("info/alternates"))?;
+            hash_path(&mut loose, root);
+            stat(&mut loose, &root.join("info/alternates"))?;
             let directory = root.join("pack");
             let mut files = match std::fs::read_dir(&directory) {
                 Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect::<std::io::Result<Vec<_>>>().ok()?,
@@ -26,16 +45,37 @@ impl Storage {
             };
             files.sort_unstable();
             for file in files {
+                let extension = file.extension().and_then(|ext| ext.to_str());
+                let multi = file.file_name().is_some_and(|name| name == "multi-pack-index");
+                if !multi && !matches!(extension, Some("idx" | "pack")) {
+                    continue;
+                }
+                if let Some(known) = &mut indices && (multi || extension == Some("idx")) {
+                    let index = if multi {
+                        gix::odb::pack::multi_index::File::at(&file, None).ok().map(PackIndex::Multi)
+                    } else {
+                        gix::odb::pack::index::File::at(&file, repo.object_hash()).ok().map(PackIndex::Single)
+                    };
+                    match index {
+                        Some(index) => known.push(index),
+                        None => indices = None,
+                    }
+                }
                 hash_path(&mut packs, &file);
                 stat(&mut packs, &file)?;
             }
         }
-        Some(Self { roots, packs })
+        Some(Self { roots, loose, packs, indices })
     }
 
     pub(super) fn object(&self, id: gix::ObjectId) -> Option<String> {
         let oid = id.to_string();
-        let mut stamp = self.packs.clone();
+        let mut stamp = self.loose.clone();
+        // Git can prefer a pack over a loose copy. Only omit pack state when
+        // every readable index proves that this object is loose-only.
+        if self.indices.as_ref().is_none_or(|indices| indices.iter().any(|index| index.contains(id.as_ref()))) {
+            stamp.update(self.packs.clone().finalize());
+        }
         for root in &self.roots {
             stat(&mut stamp, &root.join(&oid[..2]).join(&oid[2..]))?;
         }
