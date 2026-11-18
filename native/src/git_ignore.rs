@@ -12,10 +12,8 @@ use gix::bstr::{BStr, ByteSlice};
 use gix::index::entry::Mode;
 use napi::{Error, Result, Status};
 use napi_derive::napi;
-use std::fs::Metadata;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::SystemTime;
 
 pub struct GitIgnore {
     repository: gix::Repository,
@@ -247,51 +245,35 @@ fn home_dir() -> Option<PathBuf> {
         .or_else(std::env::home_dir)
 }
 
-/// A file as a matcher read it: absent, unreadable, or its size, write time and identity, so a
-/// write to it, a new file in its place, or a change of who may read it changes the stamp.
+/// A file as a matcher read it: absent, unreadable, or its bytes by length and digest. The bytes
+/// are what the rules come from, so a rewrite at the same size within one tick of the file
+/// system's clock, or with its write time put back, changes the stamp, and a touch does not.
 #[derive(Debug, PartialEq, Eq)]
 enum Stamp {
     Absent,
     Unreadable,
-    Present {
-        len: u64,
-        modified: Option<SystemTime>,
-        identity: (u64, i64, i64),
-    },
+    Read { len: usize, digest: u64 },
 }
 
 impl Stamp {
     fn of(path: &Path) -> Self {
-        match std::fs::metadata(path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::Absent,
-            Ok(metadata) if std::fs::File::open(path).is_ok() => Self::Present {
-                len: metadata.len(),
-                modified: metadata.modified().ok(),
-                identity: identity(&metadata),
+        match std::fs::read(path) {
+            Ok(bytes) => Self::Read {
+                len: bytes.len(),
+                digest: digest(&bytes),
             },
-            _ => Self::Unreadable,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Self::Absent,
+            Err(_) => Self::Unreadable,
         }
     }
 }
 
-/// The inode and status-change time: a new file in the place, or a change of its mode.
-#[cfg(unix)]
-fn identity(metadata: &Metadata) -> (u64, i64, i64) {
-    use std::os::unix::fs::MetadataExt;
-    (metadata.ino(), metadata.ctime(), metadata.ctime_nsec())
-}
-
-/// The attributes and creation time: a new file in the place, or one made read-only.
-#[cfg(windows)]
-fn identity(metadata: &Metadata) -> (u64, i64, i64) {
-    use std::os::windows::fs::MetadataExt;
-    let created = i64::try_from(metadata.creation_time()).unwrap_or(i64::MAX);
-    (u64::from(metadata.file_attributes()), created, 0)
-}
-
-#[cfg(not(any(unix, windows)))]
-fn identity(_metadata: &Metadata) -> (u64, i64, i64) {
-    (0, 0, 0)
+/// A digest of `bytes`, compared only within one process.
+fn digest(bytes: &[u8]) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::hash::DefaultHasher::new();
+    hasher.write(bytes);
+    hasher.finish()
 }
 
 /// Git applies ignore rules to untracked paths only: a tracked file, a submodule, and a folder
