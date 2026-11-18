@@ -1594,7 +1594,7 @@ place of the views: copies of tape answers. The views already cover the whole so
 - **Done when**: no place row is made for a node or token in core.rr's shape.
 
 
-### Q124. The device's `str_cmp` of made texts loses rows under load
+### Q124. The device's `str_cmp` of made texts loses rows under load — done 2026-11-18
 
 `device::parity::parity_random_texts` (seeded, deterministic cases) differed in 2 of 16 full runs (2026-11-17), each
 time a different case, each a `str_cmp` over a made text (`cat`, `sql_replace` into the arena): #216 (device 6
@@ -1605,6 +1605,14 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   not taken; a made text read by the next dispatch before its write is visible.
 - **Do**: find which (count the stage's reruns and the arena's fill in a failing run), then fix it at its cause.
 - **Done when**: 60 runs, six at a time, all pass.
+- **Done** (2026-11-18, at `3200d8871`): 300 runs of `parity_random_texts` (120 six at a time, 180 twelve at a
+  time; `tmp/gpu/q124/six.sh`), each running all 1,200 cases on the device with no refusal (`--nocapture`), all
+  equal to the CPU's. What ended it is not proven: no build of the old commit was made to tell. The likeliest is
+  `683d9f62e` (Q125): before it, a device row's stores went through `rows_at`, 8 bytes whatever its column's width
+  and unbounded by its chunks, so stores made in parallel could overwrite their neighbours in whatever order the
+  threads ran. The two suspects above were read and hold: a full arena's text sets `TEXTFN_FULL` and `complete`
+  runs the stage again from its first text function in a new batch's arena; and the join's passes are one serial
+  encoder, each dispatch seeing the last's writes.
 
 ### Q125. A relation read with a garbage header: "an index of a full relation" (16z, 1 run in 95)
 
