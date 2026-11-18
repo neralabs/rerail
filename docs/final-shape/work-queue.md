@@ -3750,3 +3750,14 @@ native join it falls back to the planner's whole-rule order.
 - **Next**: in the fork (`scripts/dev/relax/rerail.patch`), hand a registry package's build script the mount table
   when a build-dependency it reaches lies in the shared workspace, or map that dependency's paths to the disk.
 - **Done when**: the engine's tests run under `RELAX_SHARE=rerail`.
+
+### Q183. Prepared plans are made once a version, but not yet stored with the planned version's image
+
+- **Found** (2026-11-18, 0361 step 5): `plan::prepared::Prepared` is an analysis with `rows`/`of_rows`, so a version
+  reopened from a stored pipeline run reads it back. But a stored run keeps the analyses of its steps' inputs only
+  (`Run::parts`), and the versions a run plans are none of those: preparation's output is folded, then split into
+  the parts. So each process makes a part's prepared plans once, at its first plan (no store is read for them).
+- **Next**: store them where the parts are made (the split's versions, or the kept plans' store entry beside
+  `choices`), keyed by the part's identity, and read them back at the run's first plan.
+- **Done when**: a warm process's profile shows the prepared plans read (`Store::loaded("prepared plans")`), none
+  made.

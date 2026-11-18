@@ -92,6 +92,7 @@ pub mod joins;
 pub mod table;
 pub mod output;
 pub mod shapes;
+pub mod prepared;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
 #[derive(Clone, Debug)]
@@ -510,6 +511,9 @@ pub struct Stats {
     /// The program's relations' layouts (decision 0361 step 4), by name, shared by a component's model: estimates
     /// where they answer a column, and no statistics for a relation they answer whole.
     pub shapes: std::sync::Arc<shapes::Shapes>,
+    /// The version's plans made from its layouts (decision 0361 step 5), by line, shared by a component's model: a
+    /// line they hold is taken as kept, not searched or priced.
+    pub prepared: std::sync::Arc<prepared::Prepared>,
     /// Relations whose statistics are made when first planned with (`lazy`, `Model::resolve`).
     lazy: LazyMap,
     /// Quiet strata's relations, whose columns take their `__old`'s statistics when first planned with
@@ -624,6 +628,7 @@ impl Stats {
             lookup: Default::default(),
             fields: Default::default(),
             shapes: Default::default(),
+            prepared: Default::default(),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
         }
@@ -841,6 +846,7 @@ impl Stats {
             lookup: Default::default(),
             fields: Arc::new(Fielded::of(of("edge").filter(|r| !matches!(r[3], SqlValue::Null)).map(|r| (text(&r[0]), text(&r[1]), text(&r[3]), int(&r[2]) as f64)))),
             shapes: Default::default(),
+            prepared: Default::default(),
             lazy: LazyMap::default(),
             prior_later: BTreeSet::new(),
         })
@@ -1026,6 +1032,7 @@ impl Model {
             lookup: st.lookup.clone(),
             fields: st.fields.clone(),
             shapes: st.shapes.clone(),
+            prepared: st.prepared.clone(),
             lazy: LazyMap(rels.iter().filter_map(|r| Some((r.clone(), st.lazy.0.get(r)?.clone()))).collect()),
             prior_later: rels.iter().filter(|r| st.prior_later.contains(*r)).cloned().collect(),
         };
@@ -1599,7 +1606,8 @@ impl Default for RunPlans {
 }
 
 /// Decision 0258: a line's key apart from what solves it: its body and its delta.
-fn line_key(b: &Body<'_>, first: Option<usize>) -> u128 {
+#[doc(hidden)]
+pub fn line_key(b: &Body<'_>, first: Option<usize>) -> u128 {
     super::derived::digest(|d| {
         d.str("line");
         d.u64(b.key() as u64);
@@ -2015,7 +2023,7 @@ impl Drop for KeepPlans {
             let st: Vec<u64> = STATISTICS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let searches: Vec<u64> = SEARCHES.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let lazy = lazy_probes_counted();
-            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], SHAPED.swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1);
+            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; {} lines prepared; orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], SHAPED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::TAKEN.swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1);
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
@@ -2942,6 +2950,11 @@ impl Model {
         if PLANS.with(|p| p.borrow().is_none()) {
             return self.plan_inner(pf, b, first, None, true);
         }
+        // A line planned with the program (decision 0361 step 5): no key, no cache, no price.
+        if let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes) {
+            super::profile::decision("prepared plans (decision 0361 step 5)", || "a live plan taken as prepared: not searched or priced".to_owned());
+            return Ok((plan, None));
+        }
         let misses = self.delta_misses(b, first);
         let key = self.plan_key_at("live ", b, first, &misses);
         // The state kept before the last (O-live-replan item 4): sizes that alternate between waves (a distinct
@@ -3287,6 +3300,14 @@ impl Model {
         explain: bool,
         cx: &mut joins::SearchCx,
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
+        // A line planned with the program from its layouts (decision 0361 step 5): taken as kept, not searched.
+        if fixed.is_none()
+            && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes)
+        {
+            super::profile::decision("prepared plans (decision 0361 step 5)", || "a line's plan taken as prepared: not searched".to_owned());
+            let explained = if explain { self.explain_order(pf, b, first, &plan.0) } else { None };
+            return Ok((plan, explained));
+        }
         if self.shapes_for(b.rel(b.head())).is_empty() || NO_SHAPES.with(std::cell::Cell::get) {
             return self.plan_unshaped(pf, b, first, fixed, explain, cx);
         }
@@ -4888,6 +4909,7 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
         .collect();
     let mut stats = Stats::new(db, p, &mut inputs)?;
     stats.shapes = shapes::Shapes::of_version(&p.v);
+    stats.prepared = prepared::Prepared::of_version(&p.v);
     let mut ndv = ColMap::default();
     for (rel, (_, rows)) in &inputs.batch {
         let rows = rows.max(1.0);

@@ -3091,3 +3091,125 @@ fn a_base_relations_answered_columns_are_not_counted() {
     // A key's postings are one row each.
     assert_eq!((got[1].3, got[1].4), (6, 6));
 }
+
+/// The program of the prepared-plan tests (decision 0361 step 5): `child2` and `kind2` shaped as core.rr's `child` and
+/// `kind`; `part` with no size; `up` declared, recursive.
+fn prepared_program() -> crate::code_rule_dsl::logic::front::Program {
+    parse(".decl child2(p: node, c: node, i: number)\n.input child2\n.layout child2 key(c) fanout(p -> c, few) order(i dense in p)\n\
+           .decl kind2(n: node, k: symbol)\n.input kind2\n.layout kind2 key(n) size(per n) values(k, kinds)\n\
+           .decl part(x: number, y: number)\n.input part\n\
+           .decl o(c: node, k: symbol)\n.output o\no(c, k) :- child2(p, c, _), kind2(c, k), kind2(p, \"x\").\n\
+           .decl q(c: node)\n.output q\nq(c) :- child2(_, c, _), part(c, _).\n\
+           .decl up(a: node, b: node)\n.layout up fanout(a -> b, ~8) values(b, many)\n.output up\n\
+           up(p, c) :- child2(p, c, _).\nup(a, c) :- up(a, b), child2(b, c, _).\n").unwrap()
+}
+
+/// The program's rules by head, each with its body's place.
+fn bodies_by_head(placed: &body::Placed) -> Vec<(String, usize)> {
+    (0..placed.len()).map(|k| { let b = placed.body(k); (b.rel(b.head()).to_owned(), k) }).collect()
+}
+
+/// Decision 0361 step 5: a rule over relations whose facts size them and price every column it reads is planned with
+/// the program, from the facts alone; its order covers its literals. A rule reading a relation with no size (`part`)
+/// is not: it is planned at run time. A recursive rule over a declared relation is planned for its delta too.
+#[test]
+fn a_rule_over_shaped_relations_is_planned_with_the_program() {
+    let p = prepared_program();
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+    let placed = body::Placed::whole(std::sync::Arc::clone(&v));
+    let prep = prepared::Prepared::of_version(&v);
+    let line = |head: &str, nth: usize, first: Option<usize>| {
+        let k = bodies_by_head(&placed).into_iter().filter(|(h, _)| h == head).nth(nth).unwrap().1;
+        crate::code_rule_dsl::logic::plan::line_key(&placed.body(k), first)
+    };
+    let o = prep.0.get(&line("o", 0, None)).expect("`o`'s rule is prepared");
+    assert_eq!(o.order.len(), 3, "{o:?}");
+    assert!(o.work_per_node > 0.0);
+    assert!(!prep.0.contains_key(&line("q", 0, None)), "`part` has no size: `q`'s rule is an exception");
+    assert!(prep.0.contains_key(&line("up", 0, None)));
+    assert!(prep.0.contains_key(&line("up", 1, None)) && prep.0.contains_key(&line("up", 1, Some(0))), "the recursive rule and its delta at `up`");
+    assert_eq!(prep.0.len(), 4, "{:?}", prep.0.keys().collect::<Vec<_>>());
+    // Made once a version.
+    assert!(std::sync::Arc::ptr_eq(&prep, &prepared::Prepared::of_version(&v)));
+}
+
+/// A run takes a prepared line's order as kept: the search is not run (an order it would never choose, set here, is
+/// what it gets), and its work is scaled to the run's nodes. A line with none is searched as before.
+#[test]
+fn a_run_takes_a_prepared_plan_without_searching() {
+    let p = prepared_program();
+    let placed = body::Placed::of_program(&p).unwrap();
+    let f = placed.fields().unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    // The inputs' statistics, as a run measures them (a run's inputs have them; the facts are not what is tested).
+    let mut given = Stats::empty(&p);
+    for (rel, width) in [("child2", 3), ("kind2", 2), ("part", 2)] {
+        given.measured(rel, (0..width).map(|c| (format!("c{c}"), [1_000, 300, 4_000, 4_000])), []);
+        given.card.insert(rel.to_owned(), 1_000.0);
+    }
+    inputs.given = Some(given);
+    // Atomized inputs, as a corpus run's: their indexes are the vtabs' (no SQL schema read).
+    inputs.atoms = Some([0; 3]);
+    let mut model = make_plan(&placed, &db, inputs).unwrap();
+    let k = bodies_by_head(&placed).into_iter().find(|(h, _)| h == "o").unwrap().1;
+    let b = placed.body(k);
+    // The model's own plan (here the version's prepared one), reversed: an order no search of it chooses.
+    let planned = model.plan_rule(f, &b, None).unwrap();
+    let odd: Vec<Step> = planned.0.iter().rev().copied().collect();
+    assert_ne!(odd, planned.0);
+    model.stats.nodes = 2_000.0;
+    model.stats.prepared = std::sync::Arc::new(prepared::Prepared(
+        [(crate::code_rule_dsl::logic::plan::line_key(&b, None), prepared::PreparedPlan { order: odd.clone(), work_per_node: 3.0, rows_per_node: 0.5 })].into_iter().collect(),
+    ));
+    let got = model.plan_rule(f, &b, None).unwrap();
+    assert_eq!(got, (odd, 6_000.0, 1_000.0));
+    // Another line (its delta) is not held: searched.
+    assert!(model.plan_rule(f, &b, Some(0)).is_ok());
+}
+
+/// The prepared plans as an image stores them (decision 0333 §4): read back the same.
+#[test]
+fn prepared_plans_are_stored_with_the_image_and_read_back() {
+    use crate::code_rule_dsl::logic::program_image::manager::Analysis;
+    let p = prepared_program();
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+    let prep = prepared::Prepared::of_version(&v);
+    let rows = prep.rows(&v).expect("stored");
+    assert_eq!(rows.len(), prep.0.len());
+    assert_eq!(prepared::Prepared::of_rows(&v, &rows).as_ref(), Some(&*prep));
+}
+
+/// Decision 0361 step 5, end to end: a policy whose rule reads only shaped relations (`kind`, `child`) runs over
+/// three files through `run_policies`, its strata planned from the prepared plans (the lines taken counted), and its
+/// findings are what the rule says: a statement at a module's top.
+#[test]
+fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("prepared-plans");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "f()\n").unwrap();
+    std::fs::write(root.join("b.py"), "def g():\n    f()\n").unwrap();
+    std::fs::write(root.join("c.py"), "x = 1\ng()\n").unwrap();
+    let policy = root.with_extension("policy.rr");
+    std::fs::write(
+        &policy,
+        ".language python\n.violation hit(at: node) code \"X1\" \"a statement at a module's top\"\n\
+         hit(n) :- kind(n, \"expression_statement\"), child(p, n, _), kind(p, \"module\").\n",
+    )
+    .unwrap();
+    let before = prepared::TAKEN.load(std::sync::atomic::Ordering::Relaxed);
+    let report = crate::code_rule_dsl::tools::run_policies(&[policy.clone()], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let taken = prepared::TAKEN.load(std::sync::atomic::Ordering::Relaxed) - before;
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_file(&policy);
+    let mut hits: Vec<(String, i64)> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| (d["file"].as_str().or(d["path"].as_str()).unwrap_or("").rsplit('/').next().unwrap_or("").to_owned(), d["line"].as_i64().or(d["start_line"].as_i64()).unwrap_or(-1)))
+        .collect();
+    hits.sort();
+    assert_eq!(hits, [("a.py".to_owned(), 1), ("c.py".to_owned(), 1), ("c.py".to_owned(), 2)], "{report:#}");
+    assert!(taken > 0, "no line was taken from the prepared plans");
+}

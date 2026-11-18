@@ -1,6 +1,6 @@
 # 0361. Relations declare their shapes, and plans come from them
 
-Status: decided (2026-11-17), being built: steps 1, 2, 3, 4 and 7 built (2026-11-18). The user: "a directive which allows us to add enough data to the
+Status: decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built (2026-11-18; step 5's plans not yet stored across processes, Q183). The user: "a directive which allows us to add enough data to the
 relations in the .rr files that we can provide good default shapes for them (or at least name an algorithm or
 something) so that we don't need to pay for planning, or only in exceptional circumstances."
 
@@ -368,4 +368,42 @@ cold runs with the values facts in (off, on, off, on) gave the same 463 findings
 unknown counts, the carry, the line read back), `a_base_relations_answered_columns_are_not_counted` (an answered
 column estimated, the others counted as `sampled_statistics` counts them), `a_layout_prices_the_columns_its_facts_answer`
 (now also: the shapes are made once a version), and the layout analysis' five.
+
+
+## Step 5: plans made with the program, kept in its image (2026-11-18)
+
+**What is planned.** A rule is planned from the facts when every literal is an atom (positive or negated) or a
+comparison, and every relation it reads has, from its facts alone, a size and the distinct values of each column the
+rule reads. Its forms are the rule itself and, for a recursive rule, its delta at each atom of its own component.
+Aggregates, `nearest`, AST matches and relations with no such facts stay the exceptions, planned at run time as
+before.
+
+**How.** `plan::prepared::Prepared` is an analysis of the program's version (`manager::analysis`): made once a
+version, with the version, and stored with its image's analyses (`rows`, read back by a later process, decision 0333
+§4). It plans each such form with the planner's own search, over a model of the facts alone at a nominal scale (one
+node in `NOMINAL_NODES`, 300 documents, 200 kinds): a relation's size from `size(per n)` (a node column), `per
+document`, `per kind`, `small`, a key on a node column or a fan-out from one; its columns from `Shapes::ndv`; the
+base relations' indexes as the run's (`vtab_indexes`); 0137's `.shape` directives as the run's. Nothing is measured
+and no store is read. A plan is kept by its line (the rule's text and delta, decision 0258's `line_key`), so every
+version that holds the rule finds it, with its work and rows per node.
+
+**At run time.** A search (`plan_inner_in`) and a live plan (`plan_rule_live_in`) of a line the version's prepared
+plans hold take the kept order, its work and rows scaled to the run's nodes, and search nothing, price nothing and
+keep nothing. `RERAIL_PREPARED_PLANS=off` plans as before; `RERAIL_PLAN_CACHE_COUNTS` counts the lines taken
+("prepared"). Step 6's checks are what replan a line whose facts the rows break.
+
+**Not yet: stored across processes** (Q183). An analysis with rows is read back with a version reopened from a stored
+pipeline run, but a stored run keeps its steps' inputs' analyses alone, and the versions a run plans are made after
+it (preparation's output is folded, then split into the parts). So each process makes a part's prepared plans once,
+at its first plan, from the facts alone.
+
+**Tests** (Relax, live, here):
+- `a_rule_over_shaped_relations_is_planned_with_the_program`: a rule over `child`- and `kind`-shaped relations is
+  prepared, its order covering its literals; one reading a relation with no size is not; a declared recursive
+  relation's rule is prepared with its delta; made once a version.
+- `a_run_takes_a_prepared_plan_without_searching`: a run's plan of a prepared line is the kept order (one no search
+  chooses, set for the test), its work scaled to the run's nodes; another line is searched.
+- `prepared_plans_are_stored_with_the_image_and_read_back`: the rows read back the same.
+- `a_policy_run_takes_its_prepared_plans_and_finds_the_same`: end to end, `run_policies` over three files with a rule
+  over `kind` and `child`: its findings exact, and lines taken from the prepared plans.
 
