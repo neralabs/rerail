@@ -1,0 +1,1 @@
+The dashboard shows a change as soon as it is written instead of at its next 5 s refresh, a Merge Assist conflict in the sidebar at once instead of up to 35 s later, and that it is reconnecting as soon as the daemon stops. An open tab with nothing new sends no requests.
