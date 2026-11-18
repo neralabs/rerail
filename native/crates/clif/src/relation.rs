@@ -57,7 +57,7 @@ impl B<'_, '_> {
         self.f.ins().iadd(p, at)
     }
     /// The read `name` of the descriptor at `desc` (in the same block) with `args`.
-    fn call_at(&mut self, name: &str, desc: Value, args: &[Value]) -> Value {
+    pub(crate) fn call_at(&mut self, name: &str, desc: Value, args: &[Value]) -> Value {
         let tape = std::mem::replace(&mut self.tape, desc);
         let value = self.call(name, args);
         self.tape = tape;

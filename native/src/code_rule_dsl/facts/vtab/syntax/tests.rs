@@ -1795,3 +1795,103 @@ kernel void ids_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[b
     }
     assert_eq!(tried, 3 * 3 * 3, "every case, format and shape");
 }
+
+/// Decision 0353 step 4c: the `node` view's rows read through the views' reads (written once in CLIF), by the JIT on
+/// the host and as MSL on the device, over the document's entry, its numbering where it lies in its block and its
+/// tape where it is read in place, are the host's rows (`Viewed::value_of`): every numbered node's document, id, kind,
+/// start and end. In all three formats, whole and narrowed.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_view_reads_are_the_hosts_rows() {
+    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
+    use metal::{CompileOptions, Device, MTLResourceOptions, MTLSize};
+    use ranks::Item;
+    use rerail_clif::view::TapeView;
+    use rerail_clif::view_reads::NODE_COLUMNS;
+    const KERNEL: &str = r#"
+kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[buffer(1)]], constant uint& n [[buffer(2)]],
+                       device const uchar* tt [[buffer(3)]], constant uint* tv [[buffer(4)]], device long* out [[buffer(5)]],
+                       uint l [[thread_position_in_grid]]) {
+    if (l >= n) return;
+    uint v[29];
+    for (uint k = 0u; k < 29u; k++) v[k] = tv[k];
+    for (uint c = 0u; c < 5u; c++) out[l * 5u + c] = long(clif_view_node(b, d, tt, v, l, c));
+}
+"#;
+    const _: () = assert!(std::mem::size_of::<TapeView>() == 29 * 4);
+    let jit = rerail_clif::jit::Reads::new();
+    // SAFETY: `view_node`'s signature: the entry, the tape's base, its view, a local, a column.
+    let node: extern "C" fn(*const u8, *const u8, *const TapeView, u32, u32) -> i64 = unsafe { std::mem::transmute(jit.function("view_node")) };
+    let device = Device::system_default();
+    let pipe = device.as_ref().map(|device| {
+        let source = format!(
+            "#include <metal_stdlib>\nusing namespace metal;\n{}{}{}{KERNEL}",
+            include_str!("../../../transducer/packed/metal_tape_reads.metal"),
+            include_str!("id_reads.metal"),
+            include_str!("view_reads.metal")
+        );
+        let lib = device.new_library_with_source(&source, &CompileOptions::new()).expect("the view reads compile");
+        (device.new_compute_pipeline_state_with_function(&lib.get_function("view_probe", None).unwrap()).unwrap(), device.new_command_queue())
+    });
+    let cases: &[(&str, &str)] = &[
+        ("python", "import os\nX = 1\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]\n\nclass C(B):\n    def m(self):\n        def inner():\n            pass\n        return inner\n"),
+        ("typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\nfunction g(n: number) { if (n) { return n; } }\n"),
+    ];
+    let anchors: BTreeSet<String> = ["call", "call_expression", "function_definition", "method_definition", "class_declaration"].iter().map(|s| (*s).to_owned()).collect();
+    let mut tried = 0;
+    for &(label, source) in cases {
+        let lang = dialect_by_label(label).unwrap();
+        let grammar = Grammar::new(lang).unwrap();
+        let source = Arc::new(source.to_owned());
+        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+        for format in Format::ALL {
+            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format), lines).unwrap());
+            let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
+            let (tape, view) = facts.tape.as_ref().unwrap().in_place().unwrap();
+            for (shape, narrowed) in [(Shape::Core, false), (Shape::T, false), (Shape::Core, true)] {
+                let p = if narrowed { Projected::anchored(7, Arc::clone(&facts), Some(&dialect), shape, &anchors) } else { Projected::new(7, Arc::clone(&facts), Some(&dialect), shape, false, None) };
+                let at = format!("{label} {} {shape:?}{}", format.name(), if narrowed { " narrowed" } else { "" });
+                let block = p.ranks().block();
+                let entry = view_docs::ViewEntry::new(block, &p, &dialect);
+                let n = p.len();
+                let want: Vec<i64> = (0..n)
+                    .flat_map(|l| {
+                        let x = p.ranks().select(Item::Node, l).unwrap();
+                        [i64::from(p.key), p.global(l), i64::from(dialect.kind_of_atom(facts.kind(x))), i64::from(facts.start(x)), i64::from(facts.end(x))]
+                    })
+                    .collect();
+                let e = entry.desc();
+                let jitted: Vec<i64> = (0..n).flat_map(|l| (0..NODE_COLUMNS).map(move |c| node(e, tape.as_ptr(), &view, l, c))).collect();
+                assert_eq!(jitted, want, "{at}: the JIT's rows");
+                if let (Some(device), Some((pipe, queue))) = (&device, &pipe) {
+                    let d = block.offset_of(entry.desc()) as u64;
+                    // The tape where the device reads it: a test's buffer of its bytes, a word of room past them.
+                    let mut bytes = tape.to_vec();
+                    bytes.resize(tape.len() + 16, 0);
+                    let tt = device.new_buffer_with_data(bytes.as_ptr().cast(), bytes.len() as u64, MTLResourceOptions::StorageModeShared);
+                    let out = device.new_buffer(u64::from(n.max(1)) * u64::from(NODE_COLUMNS) * 8, MTLResourceOptions::StorageModeShared);
+                    let cmd = queue.new_command_buffer();
+                    let enc = cmd.new_compute_command_encoder();
+                    enc.set_compute_pipeline_state(pipe);
+                    enc.set_buffer(0, Some(&block.gpu_buffer(device)), 0);
+                    enc.set_bytes(1, 8, (&raw const d).cast());
+                    enc.set_bytes(2, 4, (&raw const n).cast());
+                    enc.set_buffer(3, Some(&tt), 0);
+                    enc.set_bytes(4, std::mem::size_of::<TapeView>() as u64, (&raw const view).cast());
+                    enc.set_buffer(5, Some(&out), 0);
+                    enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(64, 1, 1));
+                    enc.end_encoding();
+                    cmd.commit();
+                    cmd.wait_until_completed();
+                    // SAFETY: the kernel wrote NODE_COLUMNS longs a row, and its command completed.
+                    let got = unsafe { std::slice::from_raw_parts(out.contents().cast::<i64>(), want.len()) };
+                    assert_eq!(got, &want[..], "{at}: the device's rows");
+                }
+                tried += 1;
+            }
+        }
+    }
+    assert_eq!(tried, 2 * 3 * 3, "every case, format and shape");
+}

@@ -482,6 +482,21 @@ impl Facts {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// The tape's codes (its table's numbers, what `kind` and `field` read a node's of): none without a tape.
+    pub fn code_count(&self) -> usize {
+        if self.tape.is_none() {
+            return 0;
+        }
+        on_tape!(self, |t| t.table().len())
+    }
+    /// Code `code`'s kind atom and field: what `kind` and `field` answer for a node of that code (the views' derived
+    /// table of the tape's codes, decision 0353 step 4c).
+    pub fn code_entry(&self, code: u32) -> (u32, u16) {
+        on_tape!(self, |t| {
+            let e = t.table().entry(code);
+            (self.atom(e), e.field)
+        })
+    }
     /// The node's kind atom.
     pub fn kind(&self, id: u32) -> u32 {
         on_tape!(self, |t| self.atom(t.table().entry(t.code(id as usize))))

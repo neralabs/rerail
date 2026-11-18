@@ -60,6 +60,7 @@ mod cells;
 pub mod id_reads;
 #[cfg(target_os = "macos")]
 pub mod device_chunk;
+pub mod view_docs;
 use guests::GuestRows;
 
 /// Which projection of the tree a batch serves.
@@ -1635,8 +1636,12 @@ impl Dialect {
     }
     /// Node `id`'s kind atom as the `kind` column holds it: its name's canonical code's.
     fn kind(&self, f: &Facts, id: u32) -> i64 {
-        let code = self.code(f, id);
-        i64::from(kind_atom(self.tag, self.canonical.get(usize::from(code)).copied().unwrap_or(code)))
+        i64::from(self.kind_of_atom(f.kind(id)))
+    }
+    /// A node's kind atom (`Facts::kind`) as the `kind` column holds it: its name's canonical code's.
+    pub fn kind_of_atom(&self, atom: u32) -> u32 {
+        let code = kind_code(atom);
+        kind_atom(self.tag, self.canonical.get(usize::from(code)).copied().unwrap_or(code))
     }
     /// A kind atom's name (a token's, `Facts::tokens`).
     pub fn atom_name(&self, atom: u32) -> &'static str {
@@ -1795,7 +1800,8 @@ impl Projected {
     /// What a projection's arrays can take in a block: `core`, `local`, `up`, `low`, the ordinals and the fielded
     /// nodes, none longer than the tape, with room for alignment.
     pub fn bytes(facts: &Facts) -> usize {
-        6 * 4 * facts.len() + 6 * 16
+        // The views' entry and its codes' table too (`view_docs::ViewEntry`).
+        6 * 4 * facts.len() + 6 * 16 + 8 * facts.code_count() + 256
     }
 
     /// As `new`, but with `anchors` (`Projection::node_anchors`) a file's nodes are its root and the subtrees of the

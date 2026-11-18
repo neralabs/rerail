@@ -63,7 +63,11 @@ inline ulong clif_u64(device const uchar* t,uint a){return clif_word(t,a);}
 /// The reads `funcs` of `family` (by their user name's index, each with its name) as MSL functions, `prefix` before
 /// each name: declarations first, so a read may call one defined after it.
 pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family: Family) -> Result<String, String> {
-    let named = |id: u32| funcs.iter().find(|(f, ..)| *f == id).map(|(.., n)| format!("{prefix}{n}")).ok_or(format!("a call of u0:{id}, no read"));
+    // A read of another family (a view read's calls of the tape's and the numbering's) is named by its place in
+    // `READS`, defined in its own family's source.
+    let named = |id: u32| {
+        funcs.iter().find(|(f, ..)| *f == id).map(|(.., n)| format!("{prefix}{n}")).or_else(|| crate::reads::READS.get(id as usize).filter(|read| read.family != family).map(|read| format!("{prefix}{}", read.name))).ok_or(format!("a call of u0:{id}, no read"))
+    };
     let mut out = String::from(HELPERS);
     let mut bodies = String::new();
     for (id, f, n) in funcs {
@@ -82,6 +86,7 @@ fn pointers(family: Family) -> (&'static str, &'static str) {
     match family {
         Family::Tape => ("device const uchar* t,thread const uint* v", "t,v"),
         Family::Relation => ("device const uchar* t,ulong a0", "t"),
+        Family::View => ("device const uchar* t,ulong a0,device const uchar* tt,thread const uint* v", "t"),
     }
 }
 
@@ -205,7 +210,7 @@ fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String
     }
     // The family's pointers are offsets from `t` (and `v`); the read's own parameters are its arguments.
     for (k, &p) in dfg.block_params(entry).iter().enumerate() {
-        if family == Family::Relation && k == 0 {
+        if family != Family::Tape && k == 0 {
             // The descriptor: its offset from `t`.
             writeln!(out, " {}=a0;", name(p)).unwrap();
         } else if k < family.pointers() {
@@ -404,7 +409,10 @@ fn instruction(
                 Opcode::Uload32 => 32,
                 _ => bits,
             };
-            if aligned && family == Family::Relation {
+            if family == Family::View && !aligned {
+                return Err("a view read's load of the tape: the tape's reads make them".into());
+            }
+            if aligned && family != Family::Tape {
                 // The block's own words, at their alignment.
                 let t = match size {
                     8 => "uchar",
@@ -434,10 +442,15 @@ fn instruction(
             };
             // A read's call passes its pointers on: the callee's offsets count from the same ones. (A relation's read
             // passes `t` and the callee's descriptor, an offset from it.)
-            let more: Vec<&String> = args.iter().skip(family.pointers()).collect();
-            let pointers = match family {
-                Family::Relation => format!("t,{}", args[0]),
-                Family::Tape => pointers(family).1.to_owned(),
+            // A view read's: the tape's reads take its tape (`tt`, `v`), the numbering's the descriptor it computed.
+            let to = crate::reads::READS.get(callee as usize).map_or(family, |read| read.family);
+            let more: Vec<&String> = args.iter().skip(to.pointers()).collect();
+            let pointers = match (family, to) {
+                (Family::View, Family::Tape) => "tt,v".to_owned(),
+                (Family::View, Family::View) => format!("t,{},tt,v", args[0]),
+                (_, Family::Relation) => format!("t,{}", args[0]),
+                (Family::Tape, _) => pointers(family).1.to_owned(),
+                (from, to) => return Err(format!("a {from:?} read's call of a {to:?} read")),
             };
             let call = format!("{}({pointers}{}{})", named(callee)?, if more.is_empty() { "" } else { "," }, more.iter().map(|a| a.as_str()).collect::<Vec<_>>().join(","));
             match results.len() {
