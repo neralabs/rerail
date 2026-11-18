@@ -519,8 +519,9 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   process holds `locks/daemon.lock` as its recorded holder and started no later than that record was written. A start
   no later than `startedAt` makes the pid this home's daemon whatever the holder record says. Where the lock does not
   decide, as for a daemon of Rerail 0.1.4 or earlier, which holds none, the process's creation time is read through the
-  engine (`GetProcessTimes`), which starts no process; a process this user may not query reads nothing, and the record
-  is kept. `rerail install --remove` reads it through Windows PowerShell instead, since it deletes the folder the engine
+  engine (`GetProcessTimes`), which starts no process, while the lookup's limit is not used up: an engine silent to
+  the proof for the whole limit leaves it unread, as does a process this user may not query, and the record is kept.
+  `rerail install --remove` reads it through Windows PowerShell instead, since it deletes the folder the engine
   loads from next and Windows keeps a loaded DLL from being deleted; PowerShell is ended at what is left of the
   lookup's limit (the stop's 10 s wait for a stop), and one ended there, or one that cannot run, reads nothing. So on a
   machine whose policy blocks `powershell.exe` itself, a busy daemon of 0.1.4 or earlier is not shown to be this
