@@ -12,6 +12,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
+#[path = "closure/reference_bindings.rs"]
+mod reference_bindings;
+pub use reference_bindings::ReferenceBindings;
+
 /// Terms of one dense closure: bit `i` is the `i`th term.
 #[cfg(any(test, feature = "test-hooks"))]
 pub type Bits = u64;
@@ -675,11 +679,40 @@ impl Graph {
         graph
     }
 
+    /// Install the reference bindings before asking for links. The resolver may supply a saved
+    /// answer for a name if its current bindings give that same answer.
+    pub fn link_references_with<E>(
+        contracts: super::contracts::Key,
+        files: Vec<(Arc<str>, Arc<Summary>)>,
+        resolve: impl FnOnce(&Self, &[Name]) -> Result<Vec<(Link, Vec<Name>)>, E>,
+    ) -> Result<Self, E> {
+        let mut graph = Self {
+            references: true,
+            reference_contracts: contracts,
+            ..Self::default()
+        };
+        graph.update_with_links(
+            files.into_iter().map(|(path, summary)| (path, Some(summary))),
+            resolve,
+        )?;
+        Ok(graph)
+    }
+
     /// Replaces, adds (`Some`) or removes (`None`) files, and numbers the result as `link` would.
     pub fn update(
         &mut self,
         changes: impl IntoIterator<Item = (Arc<str>, Option<Arc<Summary>>)>,
     ) -> GraphUpdate {
+        self.update_with_links(changes, |graph, names| {
+            Ok(parallel(names, |name| graph.link_followed(name)))
+        }).unwrap_or_else(|never: std::convert::Infallible| match never {})
+    }
+
+    fn update_with_links<E>(
+        &mut self,
+        changes: impl IntoIterator<Item = (Arc<str>, Option<Arc<Summary>>)>,
+        resolve: impl FnOnce(&Self, &[Name]) -> Result<Vec<(Link, Vec<Name>)>, E>,
+    ) -> Result<GraphUpdate, E> {
         let mut orphans = Vec::new();
         // Each change's slot, and its file's old and new summary.
         let mut staged = Vec::new();
@@ -932,7 +965,7 @@ impl Graph {
             memo.set(link, followed);
             self.links.insert(name, memo);
         }
-        self.link_calls(&replaced);
+        self.link_calls(&replaced, resolve)?;
         // Files whose callee links changed resolve their edges again; they call what they did.
         relinked.extend(replaced);
         let mut relinked = relinked.into_iter().collect::<Vec<_>>();
@@ -1004,12 +1037,12 @@ impl Graph {
         relinked.extend(removed);
         relinked.sort_unstable();
         relinked.dedup();
-        GraphUpdate {
+        Ok(GraphUpdate {
             slots: relinked,
             reshaped,
             touched,
             dropped,
-        }
+        })
     }
 
     /// Lays out again the callers of the files `changes` names, keeping each list in number
@@ -1043,7 +1076,11 @@ impl Graph {
     }
 
     /// Links what the files in `slots` call, and records them as its users.
-    fn link_calls(&mut self, slots: &[u32]) {
+    fn link_calls<E>(
+        &mut self,
+        slots: &[u32],
+        resolve: impl FnOnce(&Self, &[Name]) -> Result<Vec<(Link, Vec<Name>)>, E>,
+    ) -> Result<(), E> {
         let summaries = slots
             .iter()
             .filter_map(|slot| {
@@ -1066,7 +1103,8 @@ impl Graph {
             .into_iter()
             .cloned()
             .collect::<Vec<_>>();
-        let linked = parallel(&unlinked, |name| self.link_followed(name));
+        let linked = resolve(self, &unlinked)?;
+        assert_eq!(linked.len(), unlinked.len(), "one link per requested name");
         self.links.reserve(unlinked.len());
         for (name, (link, followed)) in unlinked.into_iter().zip(linked) {
             let mut memo = Memo {
@@ -1088,6 +1126,7 @@ impl Graph {
                 memo.users.push(*slot);
             }
         }
+        Ok(())
     }
 
     /// Indexes `name`, which follows `followed`, under the roots a change must share to relink it.

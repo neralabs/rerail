@@ -681,7 +681,7 @@ pub struct Texts<'a> {
     /// The source texts of the run inside which this one runs (phase 1's: the outer run's, decision 0300), which its
     /// builder borrows.
     pub sources: Option<&'a texts::Sources>,
-    reference_sources: &'a [reference_facts::Source],
+    reference_inputs: reference_facts::Input<'a>,
     reads: std::cell::RefCell<Vec<crate::code_rule_dsl::logic::rr::TextRead>>,
     names: std::cell::OnceCell<Vec<crate::code_rule_dsl::logic::rr::TextNames>>,
 }
@@ -692,7 +692,7 @@ impl<'a> Texts<'a> {
     pub fn of_read(key: &'a [&'a str], read: &'a front::Program) -> Self {
         let names = std::cell::OnceCell::new();
         let _ = names.set(vec![crate::code_rule_dsl::logic::rr::TextNames::of_program(read)]);
-        Texts { programs: key, graphs: vec![None], derived: Vec::new(), read: Some(read), sources: None, reference_sources: &[], reads: std::cell::RefCell::new(Vec::new()), names }
+        Texts { programs: key, graphs: vec![None], derived: Vec::new(), read: Some(read), sources: None, reference_inputs: Default::default(), reads: std::cell::RefCell::new(Vec::new()), names }
     }
 
     /// `programs`, each parsed once, and phase 0's graphs derived for those that include something.
@@ -702,7 +702,7 @@ impl<'a> Texts<'a> {
         let derived = if phase0::active() { Vec::new() } else { phase0::graphs(&seeds)? };
         let mut at = derived.iter();
         let graphs = reads.iter().map(|r| r.seed.as_ref().and_then(|_| at.next()).map(|g| g.digest())).collect();
-        Ok(Texts { programs, graphs, derived, read: None, sources: None, reference_sources: &[], reads: std::cell::RefCell::new(reads), names: std::cell::OnceCell::new() })
+        Ok(Texts { programs, graphs, derived, read: None, sources: None, reference_inputs: Default::default(), reads: std::cell::RefCell::new(reads), names: std::cell::OnceCell::new() })
     }
 
     /// Each text's library files, declared relations and phase (`rr::TextRead::resolved`).
@@ -2513,7 +2513,7 @@ pub fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
-    run_handed(programs, None, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options, None, &[])
+    run_handed(programs, None, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options, None, Default::default())
 }
 
 /// `run_with_options` of a program already read (`tools::run_program`, which read the file): the run holds that
@@ -2546,19 +2546,19 @@ pub(super) fn run_read_handing(
     options: &serde_json::Value,
 ) -> Result<Report> {
     let key = read_key(read)?;
-    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options, None, &[])
+    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options, None, Default::default())
 }
 
 /// Evaluate a fact-only phase against the retained store and return its output image.
 fn run_fact_image(read: &front::Program, root: &Path, options: &serde_json::Value) -> Result<Vec<u8>> {
-    run_fact_image_with_references(read, root, options, &[])
+    run_fact_image_with_references(read, root, options, Default::default())
 }
 
-fn run_fact_image_with_references(read: &front::Program, root: &Path, options: &serde_json::Value, reference_sources: &[reference_facts::Source]) -> Result<Vec<u8>> {
+fn run_fact_image_with_references(read: &front::Program, root: &Path, options: &serde_json::Value, reference_inputs: reference_facts::Input<'_>) -> Result<Vec<u8>> {
     let key = read_key(read)?;
     let mut image = Vec::new();
     run_handed(&[key.as_str()], Some(read), None, root, None, Path::new(""), "program",
-        Binding::Cpu, 1 << 18, &Typing::default(), options, Some(&mut image), reference_sources)?;
+        Binding::Cpu, 1 << 18, &Typing::default(), options, Some(&mut image), reference_inputs)?;
     Ok(image)
 }
 
@@ -2583,7 +2583,7 @@ fn run_handed(
     typing: &Typing,
     options: &serde_json::Value,
     image: Option<&mut Vec<u8>>,
-    reference_sources: &[reference_facts::Source],
+    reference_inputs: reference_facts::Input<'_>,
 ) -> Result<Report> {
     // The `RERAIL_*` switches stay as they are until the run ends: a test sets them only while no run reads them.
     let _switches = switches::reading();
@@ -2637,7 +2637,7 @@ fn run_handed(
     };
     let texts = Texts {
         sources,
-        reference_sources,
+        reference_inputs,
         ..texts
     };
     let mut component_seeded = false;
@@ -3102,7 +3102,18 @@ fn run_observed(
         phases::facts(&prog, root, out, modes, binding, chunk_nodes, typing, options)?
     };
     phased.extend(git::inputs(&prog, root, options));
-    let reference_sources = given.reference_sources;
+    let reference_sources = match given.reference_inputs {
+        reference_facts::Input::Sources(sources) => sources,
+        reference_facts::Input::Bindings(links) => {
+            phased.extend(links.facts());
+            &[]
+        }
+        reference_facts::Input::Links(keys, _) => {
+            phased.insert(reference_facts::LINK_INPUT.to_owned(), keys.to_vec());
+            &[]
+        }
+        reference_facts::Input::None => &[],
+    };
     if prog.inputs.iter().any(|name| name == reference_facts::INPUT) {
         phased.insert(reference_facts::INPUT.to_owned(), reference_facts::inputs(reference_sources));
     }
@@ -6987,7 +6998,9 @@ fn run_observed(
                         == git_selection.get_or_init(|| crate::git_workspace::snapshot::inventory_selection(&git_root)).as_ref();
                 }
                 if req == git::INVENTORY_TRAIL { return true; }
-                if req == reference_facts::REQUEST { return !rows.is_empty(); }
+                if matches!(req, reference_facts::REQUEST | reference_facts::LINK_REQUEST) {
+                    return !rows.is_empty();
+                }
                 let Some((roots, named, _)) = journal else { return false };
                 let Some(text) = key.first().and_then(|&atom| sym_text(atom)) else { return false };
                 let path = std::path::Path::new(&text);
@@ -7175,6 +7188,20 @@ fn run_observed(
                     out.push(result);
                 }
                 return Ok(vec![(reference_facts::ANSWER.to_owned(), out)]);
+            }
+            if rel == reference_facts::LINK_REQUEST {
+                let reference_facts::Input::Links(_, resolve) = given.reference_inputs else {
+                    return Err(Error::Plan("reference link inputs are unavailable".into()));
+                };
+                let mut out = Vec::with_capacity(rows.len());
+                for row in rows {
+                    let [name, _, _, _] = row.as_slice() else { return Err(Error::Plan("invalid reference link key".into())) };
+                    let result = resolve(&text(*name)?);
+                    let mut answer = row.clone();
+                    answer.extend(atoms(&[&result])?);
+                    out.push(answer);
+                }
+                return Ok(vec![(reference_facts::LINK_ANSWER.to_owned(), out)]);
             }
             if let Some((produced, _)) = WORLD.iter().find(|(_, req)| *req == rel) {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}"));
@@ -11369,7 +11396,7 @@ fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], pro
     let mut parts = crate::code_rule_dsl::logic::answers::split(&whole).expect("the program has answers");
     // Git answers start empty and are produced by the fixpoint. Unlike a
     // document load's exports, they have no caller-supplied seed rows.
-    parts.load_inputs.retain(|rel| !matches!(rel.as_str(), "git_revision_of" | "git_object_of" | "git_inventory_child_of" | "git_inventory_trail_of" | reference_facts::ANSWER));
+    parts.load_inputs.retain(|rel| !matches!(rel.as_str(), "git_revision_of" | "git_object_of" | "git_inventory_child_of" | "git_inventory_trail_of" | reference_facts::ANSWER | reference_facts::LINK_ANSWER));
     // The rest reads the answers as inputs: the runner binds what it gave.
     for rel in answers.values().flatten().filter(|r| !exports.contains(r)) {
         if !parts.rest_inputs.contains(rel) {

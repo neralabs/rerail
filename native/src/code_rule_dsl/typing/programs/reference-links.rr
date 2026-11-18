@@ -1,0 +1,17 @@
+// These keys come from the finished binding phase.
+.decl reference_link_input(name: symbol, bindings: symbol, constructors: symbol)
+.input reference_link_input
+
+.decl reference_link_key(name: symbol, bindings: symbol, constructors: symbol, version: symbol)
+reference_link_key(n, k, c, "link-v1") :- reference_link_input(n, k, c).
+
+.decl reference_link_request(name: symbol, bindings: symbol, constructors: symbol, version: symbol)
+reference_link_request(n, k, c, v) :- reference_link_key(n, k, c, v).
+.decl reference_link_of(name: symbol, bindings: symbol, constructors: symbol, version: symbol, result: symbol)
+.decl reference_link(name: symbol, bindings: symbol, constructors: symbol, version: symbol, result: symbol)
+reference_link(n, k, c, v, r) :- reference_link_key(n, k, c, v), reference_link_of(n, k, c, v, r).
+.cache reference_link by reference_link_key
+
+.decl reference_name_result(name: symbol, result: symbol)
+reference_name_result(n, r) :- reference_link(n, _, _, _, r).
+.output reference_name_result

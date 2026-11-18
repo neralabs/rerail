@@ -1062,16 +1062,20 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
     expect(measure("distinct")).toBe(shared + 1);
   }, 30_000);
 
-  it("shares verified trees in either policy order and reuses reference summaries across revisions", () => {
+  it("shares verified trees in either policy order and reuses independent reference links across revisions", () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-tree-order-")));
     roots.push(root);
     git(root, "init", "-q");
-    mkdirSync(join(root, "src"));
-    writeFileSync(join(root, "src/__init__.py"), "# package\n");
-    writeFileSync(join(root, "src/a.py"), "from .b import helper\n\ndef caller():\n    helper()\n");
-    writeFileSync(join(root, "src/b.py"), "def helper():\n    pass\n");
+    for (const name of ["other", "src"]) {
+      mkdirSync(join(root, name));
+      writeFileSync(join(root, name, "__init__.py"), "# package\n");
+      writeFileSync(join(root, name, "a.py"), "from .b import helper\n\ndef caller():\n    helper()\n");
+      writeFileSync(join(root, name, "b.py"), "def helper():\n    pass\n");
+    }
+    writeFileSync(join(root, "src/independent.py"), "from .local import another\n\ndef separate():\n    another()\n");
+    writeFileSync(join(root, "src/local.py"), "def another():\n    pass\n");
     writeFileSync(join(root, ".rerailignore"), "ignored/\n");
-    git(root, "add", "src/__init__.py", "src/a.py", "src/b.py", ".rerailignore");
+    git(root, "add", "other", "src", ".rerailignore");
     git(root, "commit", "-qm", "source");
     const walk = join(root, "walk.rr");
     writeFileSync(walk, `
@@ -1079,7 +1083,7 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
 .policy "walk" revision 1
 .violation Seen(at: span) "tree file"
 git_tree_walk_request(r, t) :- git_source_tree(r, t).
-Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), p != ".rerailignore", p != "src/__init__.py".
+Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), p != ".rerailignore", p != "src/__init__.py", p != "other/__init__.py".
 `);
     const references = join(root, "references.rr");
     writeFileSync(references, `
@@ -1105,13 +1109,17 @@ Referenced(src) :- reference_edge(src, _, _).
         env: { ...process.env, RERAIL_PROFILE: profile, RERAIL_CONTENT_STORE_PATH: join(home, "content.sqlite") },
       })) as ScanReport;
       expect(report.status, JSON.stringify(report.failures)).toBe("completed");
-      expect(report.violations.map(finding => finding.code).sort()).toEqual(state === "removed" ? ["Seen", "Seen"] : ["Referenced", "Seen", "Seen"]);
+      expect(report.violations.filter(finding => finding.code === "Seen").map(finding => finding.path).sort())
+        .toEqual(["other/a.py", "other/b.py", "src/a.py", "src/b.py", "src/independent.py", "src/local.py"]);
+      expect(report.violations.filter(finding => finding.code === "Referenced").map(finding => finding.path).sort())
+        .toEqual(state === "removed" || state === "independent" ? ["other/a.py", "src/independent.py"]
+          : ["other/a.py", "src/a.py", "src/independent.py"]);
       const counters = new Map([...readFileSync(join(profile, "profile.txt"), "utf8").matchAll(/^\s*count\s+(\d+)\s+([a-z._]+)$/gmu)]
         .map(([, count, name]) => [name, Number(count)]));
-      expect(counters.get("git.tree_decodes") ?? 0).toBe(state === "warm" ? 0 : 2);
-      expect(counters.get("reference.tape_summaries") ?? 0).toBe(state === "warm" ? 0 : state === "cold" ? 3 : 1);
+      expect(counters.get("git.tree_decodes") ?? 0).toBe(state === "warm" ? 0 : state === "cold" ? 3 : 2);
+      expect(counters.get("reference.tape_summaries") ?? 0).toBe(state === "warm" ? 0 : state === "cold" ? 8 : 1);
       expect(counters.get("source_ast.parses") ?? 0).toBe(0);
-      if (state === "cold") expect(counters.get("reference.name_links") ?? 0).toBeGreaterThan(0);
+      expect(counters.get("reference.name_links") ?? 0).toBe(state === "warm" ? 0 : state === "cold" ? 3 : 1);
     };
     evaluate("walk-first", [walk, references], "cold");
     evaluate("references-first", [references, walk], "cold");
@@ -1120,6 +1128,10 @@ Referenced(src) :- reference_edge(src, _, _).
     git(root, "add", "src/b.py");
     git(root, "commit", "-qm", "change the target file");
     evaluate("references-first", [references, walk], "removed");
+    writeFileSync(join(root, "src/local.py"), "def another():\n    return 1\n");
+    git(root, "add", "src/local.py");
+    git(root, "commit", "-qm", "change an independent definition in the same package");
+    evaluate("references-first", [references, walk], "independent");
     writeFileSync(join(root, "src/b.py"), "def helper():\n    return 42\n");
     git(root, "add", "src/b.py");
     git(root, "commit", "-qm", "bind the name again");

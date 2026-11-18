@@ -277,6 +277,34 @@ The unchanged run restored all six summaries and linked both names again.
 Removing and then restoring the target in one package rebuilt one summary and linked both names on each run.
 Only the affected caller's finding changed.
 
+### Reference binding inputs
+
+Build the linker's current binding index from the placed summaries.
+Publish its definition, alias, module, opaque binding, base class, and subclass inputs.
+Use the first component of a qualified name as a namespace.
+Alias and star import lookup can replace that component and keep the remaining suffix.
+Each replacement supplies a dependency on its target namespace.
+Class aliases and subclass lookups also supply dependencies on the namespaces they can follow.
+An unqualified base can use the global class index. Include that index when the lookup can read it.
+An encoded fallback name is a dependency even when its namespace currently has no bindings.
+
+For an ordinary name or a bare import, use exact binding observations when the lookup ends at a direct definition or a known absence.
+Include each missing binding that could take precedence.
+For other lookups, start with the possible namespaces and follow their dependencies in the `.rr` phase.
+The key includes these ordered observations and the constructor fields setting.
+The phase records an empty observation for a missing binding or namespace.
+Derive the complete keys first. The next phase only requests links for those keys.
+On a miss, call the existing linker for that name and retain its targets by path and definition range.
+Restore the target slots from the current file placements.
+Use the same link rule for positive results, unresolved names, and open answers.
+Names that need namespace observations can share a key input.
+An edit in that namespace can relink names that share it.
+
+The integration test uses three callers in two packages.
+Both cold policy orders link three names. Reopening the unchanged revision links zero.
+Removing an export, editing an independent definition in the same package, and restoring the export each link one name.
+The cached graph also matches the eager resolver for a package with inheritance and constructor field references.
+
 ## 7. Mutable observations and failure retry
 
 Ref and revision resolution are observed inputs.

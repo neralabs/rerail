@@ -42,6 +42,7 @@ const VIAS: [&str; 9] = ["param_type", "field", "bare", "unqualified", "self", "
 /// over (W's code rule scope; `None`: none).
 struct Config {
     key: contracts::Key,
+    constructors: String,
     scope: Option<CodeRuleScope>,
 }
 
@@ -50,7 +51,7 @@ impl Config {
     fn of(prog: &Program) -> Result<Self> {
         let mut settings = prog.settings.iter().filter(|(key, _)| key == "references");
         let Some((_, text)) = settings.next() else {
-            return Ok(Config { key: 0, scope: Some(scope(None)?) });
+            return Ok(Config { key: 0, constructors: "null".to_owned(), scope: Some(scope(None)?) });
         };
         if settings.next().is_some() {
             return Err(Error::Plan("more than one .references setting".into()));
@@ -64,7 +65,8 @@ impl Config {
         let key = contracts::compile(object.get("siblingLinks"), object.get("constructorFields"), "/references", usize::MAX).map_err(|e| bad(e.reason.clone()))?;
         // A scope including nothing (an event's empty scope) holds no file; W refuses to compile one.
         let empty = object.get("scope").and_then(|s| s.get("include")).and_then(Value::as_array).is_some_and(Vec::is_empty);
-        Ok(Config { key, scope: if empty { None } else { Some(scope(object.get("scope"))?) } })
+        let constructors = object.get("constructorFields").unwrap_or(&Value::Null).to_string();
+        Ok(Config { key, constructors, scope: if empty { None } else { Some(scope(object.get("scope"))?) } })
     }
 }
 
@@ -171,7 +173,26 @@ impl Files {
             };
             Ok((Arc::clone(path), Arc::new(summary)))
         }).collect::<Result<_>>()?;
-        let graph = Graph::link_references(key, summaries);
+        let graph = if self.retained {
+            Graph::link_references_with(key, summaries, |graph, names| {
+                let bindings = graph.reference_bindings(names);
+                let links = reference_facts::link(root, &reference_facts::Links {
+                    observations: &bindings.observations,
+                    dependencies: &bindings.dependencies,
+                    requests: &bindings.requests,
+                    constructors: &self.config.constructors,
+                    resolve: &|name| graph.resolve_reference_link(name),
+                })?;
+                names.iter().map(|name| {
+                    links.get(name.text()).and_then(|answer| graph.restore_reference_link(answer))
+                        .ok_or_else(|| Error::Cache(crate::content_store::StoreError::Invalid(
+                            format!("invalid reference link result for {}", name.text()),
+                        )))
+                }).collect()
+            })?
+        } else {
+            Graph::link_references(key, summaries)
+        };
         let nodes: HashMap<&str, &HashMap<(u32, u32), i64>> = files.iter().map(|(path, _, nodes)| (path.as_ref(), nodes)).collect();
         let node = |path: &str, def: calls::summary::Def| {
             nodes.get(path).and_then(|n| n.get(&(def.start, def.end))).copied().ok_or_else(|| Error::Plan(format!("{path}: no definition node at {}..{}", def.start, def.end)))

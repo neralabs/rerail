@@ -1,0 +1,22 @@
+// The binding index supplies observations for individual names and namespaces.
+.decl reference_link_name(name: symbol, binding: symbol)
+.decl reference_binding_stamp(binding: symbol, signature: symbol)
+.decl reference_link_dependency(binding: symbol, reads: symbol)
+.decl reference_link_contracts(constructors: symbol)
+.input reference_link_name, reference_binding_stamp, reference_link_dependency, reference_link_contracts
+
+.decl reference_link_reads(name: symbol, binding: symbol)
+reference_link_reads(n, b) :- reference_link_name(n, b).
+reference_link_reads(n, d) :- reference_link_reads(n, b), reference_link_dependency(b, d).
+
+.decl reference_link_observation(name: symbol, binding: symbol, stamp: symbol)
+reference_link_observation(n, b, cat(@json_str(b), ":", s)) :-
+    reference_link_reads(n, b), reference_binding_stamp(b, s).
+reference_link_observation(n, b, cat(@json_str(b), ":absent")) :-
+    reference_link_reads(n, b), !reference_binding_stamp(b, _).
+
+.decl reference_link_input(name: symbol, bindings: symbol, constructors: symbol)
+reference_link_input(n, k, c) :-
+    reference_link_name(n, _), reference_link_contracts(c),
+    k = join s by b sep "\n" : { reference_link_observation(n, b, s) }.
+.output reference_link_input
