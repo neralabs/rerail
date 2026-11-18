@@ -208,6 +208,7 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
   The report keeps the findings and scan status.
   If the durable cache fails, the scan can retry in memory.
   The retry uses the same Git source and policy. Git read failures still fail the scan.
+  If cache cleanup also fails, the scan still reports the original error.
 - **`fingerprint`**: 32 hex characters, `sha256(ruleId \0 path \0 matched text)`, whitespace runs collapsed to one
   space. It is stable while the rule, path and text are, even if the text moves in the file. When one rule matches the
   same text more than once in a file, the second and later matches also hash their ordinal, so fingerprints are unique

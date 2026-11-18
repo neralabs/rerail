@@ -727,7 +727,11 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
     }
     return report;
   } catch (error) {
-    analysisRun?.finish(false);
+    try {
+      analysisRun?.finish(false);
+    } catch (cacheError) {
+      process.stderr.write(`rerail: analysis cache cleanup failed: ${String(cacheError)}\n`);
+    }
     throw error;
   } finally {
     if (analysisRun !== undefined) await binding.collectAnalysisCacheAsync(durableStore).catch(error => {

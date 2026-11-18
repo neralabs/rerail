@@ -439,6 +439,19 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     } finally { failure.mockRestore(); }
   });
 
+  it("reports a source resolution error even if cache cleanup also fails", async () => {
+    const root = checkout();
+    const prototype = loadNativeBinding().AnalysisScopeRun.prototype;
+    const finish = vi.spyOn(prototype, "finish").mockImplementationOnce(() => {
+      throw new Error("cache cleanup failed");
+    });
+    try {
+      await expect(scan(root, { revision: "missing-source-revision", analysisScope: "error" }))
+        .rejects.toThrow("missing-source-revision");
+      expect(finish).toHaveBeenCalledWith(false);
+    } finally { finish.mockRestore(); }
+  });
+
   it("retries relational evaluation in memory when its selected cache fails", async () => {
     const root = checkout();
     const home = `${root}-home`;
