@@ -409,15 +409,13 @@ fn place(
             if p.n != plan.nodes || p.n == 0 || source_len != source.len() as u64 || tape[9] != lang.revision() || p.widths != w {
                 return Err(invalid("a tape and its source or language disagree"));
             }
+            // The tape's own view (`Placement::view`), its offsets from the document's start: where its blocks,
+            // side lists and newline index lie (which answers lines: nothing is counted here).
+            let placed = p.view(lang, tape_at - offset).map_err(invalid)?;
+            debug_assert_eq!((placed.cut, placed.per), (cut, per));
             view.format = 16;
-            view.widths = (w[0] | w[1] << 4 | w[2] << 8 | p.cw << 12 | p.vw[0] << 16 | p.vw[1] << 20 | p.vw[2] << 24 | p.vw[3] << 28) as u32;
-            view.columns = [at(tape_at + p.at[0])?, at(tape_at + p.at[1])?, at(tape_at + p.at[2])?, at(tape_at + p.at[3])?, at(tape_at + p.at[4])?];
-            view.side = [at(tape_at + p.at[5])?, at(tape_at + p.at[6])?, at(tape_at + p.at[7])?, at(tape_at + p.at[8])?];
-            view.parts = [at(tape_at + p.parts[0])?, at(tape_at + p.parts[1])?, at(tape_at + p.parts[2])?, at(tape_at + p.parts[3])?];
-            (view.cut, view.per) = (cut, per);
-            // The tape's newline index answers lines (`tape_line`, `tape_line_start`): nothing is counted here.
-            view.lines = at(tape_at + p.at[9])?;
-            view.line_count = p.newlines.checked_add(1).ok_or_else(|| invalid("a source past 4 G lines"))?;
+            (view.widths, view.columns, view.stride, view.side, view.parts) = (placed.widths, placed.columns, placed.stride, placed.side, placed.parts);
+            (view.cut, view.per, view.lines, view.line_count) = (placed.cut, placed.per, placed.lines, placed.line_count);
             // The language's table: the slab's, made here where the slab does not hold it yet.
             let table = table.ok_or_else(|| invalid("a format 16 document without its language's table"))?;
             if !table.held {

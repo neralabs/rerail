@@ -66,7 +66,7 @@ pub fn aligned(length: usize) -> usize {
 /// document's first node in a batch's numbering, set by the batch's document table (`DocTable`). The tape is read
 /// where it lies, format 15's columns or format 16's arrays (decision 0293): nothing per node is derived beside it.
 pub use rerail_clif::view::TapeView as DocView;
-const _: () = assert!(std::mem::size_of::<DocView>() == 116);
+const _: () = assert!(std::mem::size_of::<DocView>() == 120);
 
 /// The MSL of `DocView`, for the kernels that read documents in place (`metal_tape.metal`).
 pub fn msl() -> String {

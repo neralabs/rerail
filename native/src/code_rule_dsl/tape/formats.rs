@@ -29,7 +29,7 @@ pub enum Format {
 /// Format 16's and 16z's stored layout: 3 since decision 0336 §6 (a newline index after the side lists, its count
 /// in the header; 16z holds it raw after the checkpoints). Layout 2 (0336: region starts in the header; 16z's blocks
 /// one piece an array, raw, LZ4 or a repeat) had keys 216 and 1216; layout 1, 16 and 1016.
-const F16_LAYOUT: u32 = 3;
+const F16_LAYOUT: u32 = 4;
 
 impl Format {
     pub const ALL: [Format; 3] = [Format::F15, Format::F16, Format::F16Z];

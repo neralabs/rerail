@@ -433,11 +433,40 @@ impl B<'_, '_> {
         let call = self.f.ins().call(callee, &all);
         self.f.inst_results(call)[0]
     }
-    /// Format 16's checkpoint `c`: the start of node `c * K`.
+    /// Format 16's column `r` (0 codes, 1 slots, 2 gaps, 3 lengths, 4 checkpoints) in block `b`: where it
+    /// starts. Blocks are `F16_PART` nodes at the view's stride from block 0's start, each its columns end to
+    /// end at its rows (the last block's are fewer: `nodes - b * F16_PART`), column `r` at `rows *
+    /// columns[r]` (decision 0399).
+    fn block_column(&mut self, r: i32, b: Value) -> Value {
+        let blocks = self.column(0);
+        let stride = self.view(at::STRIDE);
+        let base = self.f.ins().imul(b, stride);
+        let base = self.f.ins().iadd(base, blocks);
+        if r == 0 {
+            return base;
+        }
+        let nodes = self.view(at::NODES);
+        let first = self.f.ins().ishl_imm(b, i64::from(F16_PART.trailing_zeros()));
+        let left = self.f.ins().isub(nodes, first);
+        let part = self.c32(i64::from(F16_PART));
+        let rows = self.f.ins().umin(left, part);
+        let before = self.column(r);
+        let at = self.f.ins().imul(rows, before);
+        self.f.ins().iadd(base, at)
+    }
+    /// Node `i`'s block and its row there.
+    fn block_of(&mut self, i: Value) -> (Value, Value) {
+        let b = self.f.ins().ushr_imm(i, i64::from(F16_PART.trailing_zeros()));
+        let j = self.f.ins().band_imm(i, i64::from(F16_PART - 1));
+        (b, j)
+    }
+    /// Format 16's checkpoint `c`: the start of node `c * K`, in the checkpoints of its node's block.
     fn checkpoint(&mut self, c: Value) -> Value {
         let cw = self.width(3);
-        let checkpoints = self.column(4);
-        let at = self.f.ins().imul(c, cw);
+        let b = self.f.ins().ushr_imm(c, i64::from((F16_PART / F16_K).trailing_zeros()));
+        let checkpoints = self.block_column(4, b);
+        let row = self.f.ins().band_imm(c, i64::from(F16_PART / F16_K - 1));
+        let at = self.f.ins().imul(row, cw);
         let word = self.word(checkpoints, at);
         let mask = self.mask(cw);
         self.f.ins().band(word, mask)
@@ -462,8 +491,9 @@ impl B<'_, '_> {
     /// ones) its side list's.
     fn get(&mut self, a: u32, i: Value) -> Value {
         let w = self.width(a);
-        let array = self.column(1 + a as i32);
-        let at = self.f.ins().imul(i, w);
+        let (b, j) = self.block_of(i);
+        let array = self.block_column(1 + a as i32, b);
+        let at = self.f.ins().imul(j, w);
         let word = self.word(array, at);
         let mask = self.mask(w);
         let value = self.f.ins().band(word, mask);
@@ -582,8 +612,9 @@ fn number(b: &mut B<'_, '_>) -> Value {
     b.by_format(
         I32,
         |b| {
-            let codes = b.column(0);
-            let byte = b.u8(codes, i);
+            let (block, j) = b.block_of(i);
+            let codes = b.block_column(0, block);
+            let byte = b.u8(codes, j);
             let cut = b.view(at::CUT);
             let below = b.f.ins().icmp(IntCC::UnsignedLessThan, byte, cut);
             b.either(
@@ -634,8 +665,9 @@ fn start(b: &mut B<'_, '_>) -> Value {
             let byte = b.f.ins().icmp_imm(IntCC::Equal, gw, 1);
             b.f.ins().brif(byte, folded, &[], each, &[]);
             b.f.switch_to_block(folded);
-            let array = b.column(2);
-            let x = b.word(array, first);
+            let (block, row) = b.block_of(first);
+            let array = b.block_column(2, block);
+            let x = b.word(array, row);
             let all = b.c64(-1);
             let keep = b.f.ins().irsub_imm(r, i64::from(F16_K) - 1);
             let shift = b.f.ins().imul_imm(keep, 8);

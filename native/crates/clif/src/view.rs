@@ -3,7 +3,7 @@
 //! host), its format, its widths. One definition: the device's `DocView` is this, and its MSL is
 //! written from it ([`msl`]), with each field's offset asserted against Rust's.
 
-/// A document's view (116 bytes, u32s; the device's `DocView`, `metal_tape.metal`).
+/// A document's view (120 bytes, u32s; the device's `DocView`, `metal_tape.metal`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TapeView {
@@ -18,9 +18,12 @@ pub struct TapeView {
     /// measured from the node's own start. Format 16: the slot, gap and length widths at bits 0, 4
     /// and 8, the checkpoints' at 12, and the four side lists' value widths at 16, 20, 24 and 28.
     pub widths: u32,
-    /// Format 15's columns (code, size, base, off, tail), or format 16's arrays (codes, slots, gaps,
-    /// lengths, checkpoints).
+    /// Format 15's columns (code, size, base, off, tail). Format 16 (block-major, decision 0399): block
+    /// 0's start, then the bytes a row holds before the slots, the gaps, the lengths and the checkpoints
+    /// (a block of R rows holds column r at `R * columns[r]` from its start).
     pub columns: [u32; 5],
+    /// Format 16: the blocks' stride, in bytes (a block is `F16_PART` nodes).
+    pub stride: u32,
     /// Format 16: the four side lists (codes' low parts, escaped slots, gaps, lengths), and each
     /// one's part starts (u32s, a part a 1,024 nodes).
     pub side: [u32; 4],
@@ -44,19 +47,20 @@ pub struct TapeView {
     /// Where the stored tape starts.
     pub tape: u32,
 }
-const _: () = assert!(std::mem::size_of::<TapeView>() == 116);
+const _: () = assert!(std::mem::size_of::<TapeView>() == 120);
 
 /// The view's MSL: `struct TapeView`, `DocView` its name in the kernels, and each field's offset and
 /// the size asserted against this definition's, so the kernels cannot read a layout of their own.
 pub fn msl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 19] = [
+    let fields: [(&str, &str, usize); 20] = [
         ("uint", "at", offset_of!(TapeView, at)),
         ("uint", "nodes", offset_of!(TapeView, nodes)),
         ("uint", "node_base", offset_of!(TapeView, node_base)),
         ("uint", "format", offset_of!(TapeView, format)),
         ("uint", "widths", offset_of!(TapeView, widths)),
         ("uint", "columns[5]", offset_of!(TapeView, columns)),
+        ("uint", "stride", offset_of!(TapeView, stride)),
         ("uint", "side[4]", offset_of!(TapeView, side)),
         ("uint", "parts[4]", offset_of!(TapeView, parts)),
         ("uint", "cut", offset_of!(TapeView, cut)),
@@ -102,6 +106,7 @@ pub mod at {
     pub const FORMAT: i32 = offset_of!(TapeView, format) as i32;
     pub const WIDTHS: i32 = offset_of!(TapeView, widths) as i32;
     pub const COLUMNS: i32 = offset_of!(TapeView, columns) as i32;
+    pub const STRIDE: i32 = offset_of!(TapeView, stride) as i32;
     pub const SIDE: i32 = offset_of!(TapeView, side) as i32;
     pub const PARTS: i32 = offset_of!(TapeView, parts) as i32;
     pub const CUT: i32 = offset_of!(TapeView, cut) as i32;
