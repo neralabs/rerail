@@ -55,10 +55,10 @@ function repository(path: string): string {
   return realpathSync.native(path);
 }
 
-/** Git's own answer for `folder`, in this process's environment, as Rerail reads it from `git rev-parse`. */
-function gitsAnswer(folder: string): RepositoryIdentityLocation {
+/** Git's own answer for `folder`, in `env` (this process's environment by default), as Rerail reads it from `git rev-parse`. */
+function gitsAnswer(folder: string, env: NodeJS.ProcessEnv = process.env): RepositoryIdentityLocation {
   const requested = resolve(folder);
-  const result = spawnSync("git", ["-C", requested, "rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"], { encoding: "utf8" });
+  const result = spawnSync("git", ["-C", requested, "rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"], { encoding: "utf8", env });
   if (result.status !== 0) return { git: false, workspaceRoot: requested, identityPath: join(requested, ".rerail", "repository-id"), main: true };
   const [top, common, gitDirectory] = result.stdout.trim().split("\n").map(line => resolve(line.trim()));
   return { git: true, workspaceRoot: top!, identityPath: join(common!, "rerail-repository-id"), main: common === gitDirectory };
@@ -406,26 +406,77 @@ function takeOwnersAway(): void {
   });
 }
 
-describe("a kept answer's owners are read again each time the recorded checkouts change", () => {
-  it("asks Git again once its folders are another account's, as each start asked it before answers were kept", async () => {
+/**
+ * Has every Git process Rerail starts read the folders as another account's, as Git does for a folder `chown` or
+ * `takeown` gave to one, while Rerail's own reads see the environment as it is.
+ */
+function gitSeesAnotherOwner(): void {
+  const actual = vi.mocked(runGit).getMockImplementation()!;
+  vi.mocked(runGit).mockImplementation((cwd, args, options) => {
+    process.env["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = "1";
+    try {
+      return actual(cwd, args, options);
+    } finally {
+      delete process.env["GIT_TEST_ASSUME_DIFFERENT_OWNER"];
+    }
+  });
+  cleanups.push(async () => {
+    vi.mocked(runGit).mockImplementation(actual);
+  });
+}
+
+describe("a kept answer follows the folders' owners, and the user's trust in another account's, at the next ask", () => {
+  it("asks Git at the next ask once the folders are another account's, and at every ask while they are", async () => {
     const root = await temporaryRoot();
     const main = repository(join(root, "main"));
     git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
-    let recorded = "one checkout";
-    const owners = new CheckoutOwners(() => recorded);
     const folders = [main, join(root, "linked")];
     expect(expectGitsAnswers(...folders)).toBe(1);
-
-    recorded = "a checkout recorded, its owners as they were";
-    owners.lookAgainAt(root);
     expect(expectGitsAnswers(...folders)).toBe(0);
 
     takeOwnersAway();
-    expect(expectGitsAnswers(...folders)).toBe(0);
-    recorded = "a checkout recorded once the owners changed";
-    owners.lookAgainAt(root);
     expect(expectGitsAnswers(...folders)).toBe(2);
-    expect(expectGitsAnswers(...folders)).toBe(0);
+    expect(expectGitsAnswers(...folders)).toBe(2);
+  });
+
+  // Root's own folders are root's whatever SUDO_UID holds, so the case needs a test run that is not root's.
+  it.skipIf(process.platform === "win32" || process.geteuid?.() === 0)("takes the folders of the account SUDO_UID names for root's, as Git does", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
+    const folders = [main, join(root, "linked")];
+    const user = process.geteuid!();
+    const spy = vi.spyOn(process, "geteuid").mockReturnValue(0);
+    cleanups.push(async () => {
+      spy.mockRestore();
+    });
+
+    vi.stubEnv("SUDO_UID", String(user));
+    expect(expectGitsAnswers(...folders, ...folders)).toBe(1);
+    vi.stubEnv("SUDO_UID", String(user + 1));
+    expect(expectGitsAnswers(...folders, ...folders)).toBe(4);
+  });
+
+  it("places another account's checkout Git trusts through safe.directory, and no longer once the entry is removed", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
+    const folders = [main, join(root, "linked")];
+    const global = join(root, "global.gitconfig");
+    await writeFile(global, "[safe]\n\tdirectory = *\n");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", global);
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
+    takeOwnersAway();
+    gitSeesAnotherOwner();
+    const asGit = (): RepositoryIdentityLocation[] => folders.map(folder => gitsAnswer(folder, { ...process.env, GIT_TEST_ASSUME_DIFFERENT_OWNER: "1" }));
+    const asRerail = (): RepositoryIdentityLocation[] => folders.map(folder => repositoryIdentityLocation(folder));
+    expect(asGit().map(answer => answer.git)).toEqual([true, true]);
+    expect(asRerail()).toEqual(asGit());
+    expect(asRerail()).toEqual(asGit());
+
+    await writeFile(global, "");
+    expect(asGit().map(answer => answer.git)).toEqual([false, false]);
+    expect(asRerail()).toEqual(asGit());
   });
 });
 

@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { checkoutRealpath, physicalPath, storedPath } from "./checkout-control.js";
-import { linkedWorktreeFromFiles, ownedAsGitTakes, placementInputs, type PlacementInputs } from "./checkouts/git-placement.js";
+import { linkedWorktreeFromFiles, placementInputs, type PlacementInputs } from "./checkouts/git-placement.js";
 import { openNoFollowSync } from "../no-follow.js";
 import { GitUnavailableError, gitText, runGit } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
@@ -38,45 +38,13 @@ function nonGitLocation(requested: string): RepositoryIdentityLocation {
 /** The file in Git's common metadata directory that holds a clone's id, shared by every linked worktree. */
 export const GIT_IDENTITY_FILE = "rerail-repository-id";
 
-/** A kept answer, and the generation of {@link checkOwnersAgain} its folders' owners were last read at. */
-interface HeldTopLevel {
-  readonly stamp: string;
-  readonly location: RepositoryIdentityLocation;
-  ownersRead: number;
-}
-
 /**
- * Git's answers for the folders it took for their own checkout's top level, each kept while what Git read to give it
- * and the real paths it printed are unchanged ({@link PlacementInputs.stamp}) and Git would still take its folders as
- * the user's: a daemon asks after every registered worktree each time a repository starts, in every session's runtime,
- * and once a checkout is recorded every runtime asks again.
+ * Git's answers for the folders it took for their own checkout's top level, each kept while what Git read to give it,
+ * the real paths it printed and whether Git takes the folders for the user's are unchanged
+ * ({@link PlacementInputs.stamp}): a daemon asks after every registered worktree each time a repository starts, in every
+ * session's runtime, and once a checkout is recorded every runtime asks again.
  */
-const heldTopLevels = new Map<string, HeldTopLevel>();
-
-/** The recorded checkouts' version the current owner generation started at, and that generation. */
-let ownersVersion: string | undefined;
-let ownersGeneration = 0;
-
-/**
- * Has each kept answer's owners read again at its next use, once per change of the recorded checkouts (`version`,
- * the same string for every runtime of a daemon): Git refuses a checkout whose folders another account came to own, or
- * that a `safe.directory` entry no longer names, and before answers were kept each such change asked Git again. The
- * stamp holds no owner, so a change of one alone shows only here. Costs a few lstats per kept answer, and on Windows one
- * engine call; Git is asked only for a folder whose owners Git would not take.
- */
-export function checkOwnersAgain(version: string): void {
-  if (version === ownersVersion) return;
-  ownersVersion = version;
-  ownersGeneration += 1;
-}
-
-/** Whether `held` still answers for `inputs`: the same stamp, and owners read in this generation or read again now. */
-function stillAnswers(held: HeldTopLevel, inputs: PlacementInputs): boolean {
-  if (held.stamp !== inputs.stamp) return false;
-  if (held.ownersRead !== ownersGeneration && !ownedAsGitTakes(inputs)) return false;
-  held.ownersRead = ownersGeneration;
-  return true;
-}
+const heldTopLevels = new Map<string, { readonly stamp: string; readonly location: RepositoryIdentityLocation }>();
 
 /**
  * The common Git folders of the checkouts Git placed in this process, by real path, each with the identity the folder
@@ -120,7 +88,7 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
     return locatedByGit(requested).location;
   }
   const held = heldTopLevels.get(requested);
-  if (held !== undefined && stillAnswers(held, inputs)) return { ...held.location };
+  if (held?.stamp === inputs.stamp) return { ...held.location };
   const fromFiles = linkedLocation(inputs);
   const located = fromFiles === undefined ? locatedByGit(requested) : { location: fromFiles, byGit: false };
   holdTopLevel(requested, inputs, located);
@@ -147,14 +115,15 @@ function linkedLocation(inputs: PlacementInputs): RepositoryIdentityLocation | u
 
 /**
  * Keeps `located` for `folder` under the stamp of `inputs`, read before it was placed, when it names the folder as its
- * own top level ({@link answersInputs}): what makes that so is read at the folder and the Git folders it names, all in
- * the stamp. Any other answer depends on the folders above too, and is not kept.
+ * own top level ({@link answersInputs}) and Git takes the folders for the user's: what makes that so is read at the
+ * folder and the Git folders it names, all in the stamp. Any other answer depends on the folders above too, or on the
+ * `safe.directory` entries of the user's and the system's Git config, and is not kept.
  */
 function holdTopLevel(folder: string, inputs: PlacementInputs, located: Located): void {
   heldTopLevels.delete(folder);
   try {
-    if (!answersInputs(folder, inputs, located)) return;
-    heldTopLevels.set(folder, { stamp: inputs.stamp, location: located.location, ownersRead: ownersGeneration });
+    if (!inputs.owned || !answersInputs(folder, inputs, located)) return;
+    heldTopLevels.set(folder, { stamp: inputs.stamp, location: located.location });
     if (located.byGit) rememberGitPlaced(storedPath(dirname(located.location.identityPath)));
   } catch {
     // A folder whose real path cannot be read now is asked of Git again next time.

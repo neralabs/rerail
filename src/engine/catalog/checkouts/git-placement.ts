@@ -6,9 +6,9 @@
  * linked worktree is placed from these files once Git has placed a checkout of its repository; any other entry (a
  * clone's own `.git` folder, a submodule's, a Git folder kept apart), and any linked worktree whose files Git might read
  * otherwise, is left to Git, whose answer `repositoryIdentityLocation` keeps while these files and the real paths Git
- * prints are unchanged ({@link PlacementInputs.stamp}). Each file is read again at every use, as Git reads it at every
- * start: no file time stands in for its text, since a rewrite within one tick of the file system's clock leaves every
- * time as it was.
+ * prints are unchanged and Git takes the folders for the user's ({@link PlacementInputs.stamp}). Each file, and each
+ * owner, is read again at every use, as Git reads it at every start: no file time stands in for its text, since a
+ * rewrite within one tick of the file system's clock leaves every time as it was.
  */
 import { closeSync, constants as fsConstants, fstatSync, lstatSync, openSync, readFileSync, type Stats } from "node:fs";
 import { join, resolve } from "node:path";
@@ -23,7 +23,7 @@ export interface PlacementInputs {
   readonly realFolder: string;
   /**
    * One string that changes when any of these inputs changes in a way that can move Git's answer: the entry, the Git
-   * folder it names and their owners, that folder's `commondir`, whether Git takes it for a Git folder, what the common
+   * folder it names, whether Git takes their owners for the user's, that folder's `commondir`, whether Git takes it for a Git folder, what the common
    * `config` (and the Git folder's `config.worktree`, when the common one has Git read it) says of the format and the
    * work tree, and the real paths of the folder and of the common Git folder, which a link retargeted at a renamed
    * folder moves while every file stays as it was. A Git folder's own times are left out, since every index write
@@ -40,6 +40,12 @@ export interface PlacementInputs {
   readonly realCommon: string;
   /** Whether Git takes the Git folder for one: a `HEAD` Git takes, and `objects` and `refs` in the common folder. */
   readonly takenByGit: boolean;
+  /**
+   * Whether Git takes the folder, its `.git` entry and the Git folder that entry is or names for the current user's, read
+   * now ({@link ownedAsGitTakes}). Git reads `safe.directory` only for folders it does not, from files outside these
+   * inputs, so an answer for such a folder is not kept.
+   */
+  readonly owned: boolean;
   readonly config: ConfigFacts;
 }
 
@@ -155,6 +161,10 @@ interface NamedGitFolder {
   readonly file: boolean;
 }
 
+interface FoundGitFolder extends NamedGitFolder {
+  readonly owned: boolean;
+}
+
 const GITDIR = "gitdir: ";
 
 /** The Git folder a `.git` entry is, or the one a `.git` file names, as Git reads the file. */
@@ -168,27 +178,17 @@ function gitFolderOf(folder: string, entry: Stats): NamedGitFolder | undefined {
 }
 
 /**
- * {@link gitFolderOf} the `.git` entry in `folder`, when the Git folder is there; its stamp adds that folder's identity
- * and the owners Git compares with the user ({@link ownersStamp}).
+ * {@link gitFolderOf} the `.git` entry in `folder`, when the Git folder is there, with whether Git takes the folders for
+ * the user's ({@link ownedAsGitTakes}), read now; its stamp adds that folder's identity and that fact.
  */
-function gitFolderAt(folder: string): NamedGitFolder | undefined {
+function gitFolderAt(folder: string): FoundGitFolder | undefined {
   const entry = look(join(folder, ".git"));
   if (!isEntry(entry)) return undefined;
   const named = gitFolderOf(folder, entry);
   const gitFolder = named === undefined ? undefined : look(named.gitFolder);
   if (named === undefined || !isFolder(gitFolder)) return undefined;
-  return { ...named, stamp: [named.stamp, gitFolder.ino, ownersStamp(folder, entry, gitFolder)].join("\n") };
-}
-
-/**
- * The owners of the folder, its `.git` entry and its Git folder, which Git compares with the user's before it takes a
- * repository ({@link ownedAsGitTakes}): on POSIX their lstats give them, so a change of owner moves the stamp. Windows
- * gives Node no owner; there a kept answer's owners are read again at each change of the recorded checkouts.
- */
-function ownersStamp(folder: string, entry: Stats, gitFolder: Stats): string {
-  if (process.platform === "win32") return "";
-  const top = look(folder);
-  return `${isEntry(top) ? top.uid : "?"}:${entry.uid}:${gitFolder.uid}`;
+  const owned = ownedAsGitTakes(folder, named.gitFolder, [entry, gitFolder]);
+  return { ...named, owned, stamp: [named.stamp, gitFolder.ino, `owned:${owned}`].join("\n") };
 }
 
 interface CommonFolder {
@@ -215,7 +215,7 @@ export function placementInputs(folder: string): PlacementInputs | undefined {
   return entry === undefined || common === undefined ? undefined : withCommon(folder, entry, common);
 }
 
-function withCommon(folder: string, entry: NamedGitFolder, common: CommonFolder): PlacementInputs | undefined {
+function withCommon(folder: string, entry: FoundGitFolder, common: CommonFolder): PlacementInputs | undefined {
   const facts = gitFolderFacts(folder, entry.gitFolder, common.linked ?? entry.gitFolder);
   if (facts === undefined) return undefined;
   const { realFolder, realCommon, takenByGit, config } = facts;
@@ -225,6 +225,7 @@ function withCommon(folder: string, entry: NamedGitFolder, common: CommonFolder)
     gitFile: entry.file,
     gitFolder: entry.gitFolder,
     linkedCommon: common.linked,
+    owned: entry.owned,
     ...facts,
   };
 }
@@ -278,7 +279,7 @@ export function linkedWorktreeFromFiles(inputs: PlacementInputs, gitPlaced: (com
  * extension and a format every Git reads; and Git takes the folders for the current user's ({@link ownedAsGitTakes}).
  */
 function readAsGitReads(inputs: PlacementInputs): boolean {
-  return inputs.gitFile && inputs.config.plainFormat && inputs.takenByGit && namesBack(inputs) && ownedAsGitTakes(inputs);
+  return inputs.gitFile && inputs.config.plainFormat && inputs.takenByGit && inputs.owned && namesBack(inputs);
 }
 
 /**
@@ -314,22 +315,33 @@ function namesBack(inputs: PlacementInputs): boolean {
 
 /**
  * Whether Git, which refuses a repository whose folders another user owns unless `safe.directory` names it, takes the
- * folder, its `.git` entry and the Git folder that entry is or names as the current user's. On POSIX it compares their
- * owner with the effective user, as Git does (root is left to Git, which reads `SUDO_UID`). Windows gives Node no
- * owner: there the engine reads each one's owner as Git for Windows does ({@link pathsOwnedByCurrentUser}), and a
- * network path, or no engine that can tell, leaves the folder to Git. No Git process: a few lstats, and on Windows one
- * engine call.
+ * folder, its `.git` entry and the Git folder that entry is or names (`entries`: the lstats of the last two) as the
+ * current user's. On POSIX it compares their owner with the effective user as Git does ({@link ownedByUser}). Windows
+ * gives Node no owner: there the engine reads each one's owner as Git for Windows does
+ * ({@link pathsOwnedByCurrentUser}), and a network path, or no engine that can tell, counts as another's. No Git
+ * process: one lstat, and on Windows one engine call.
  */
-export function ownedAsGitTakes(inputs: PlacementInputs): boolean {
-  const paths = [inputs.folder, join(inputs.folder, ".git"), inputs.gitFolder];
-  const owned = paths.map(look);
-  if (!owned.every(isEntry)) return false;
-  return process.platform === "win32" ? paths.every(plainlyResolved) && pathsOwnedByCurrentUser(paths) === true : ownedByUser(owned);
+function ownedAsGitTakes(folder: string, gitFolder: string, entries: readonly Stats[]): boolean {
+  const top = look(folder);
+  if (!isEntry(top)) return false;
+  if (process.platform !== "win32") return [top, ...entries].every(stats => ownedByUser(stats.uid));
+  const paths = [folder, join(folder, ".git"), gitFolder];
+  return paths.every(plainlyResolved) && pathsOwnedByCurrentUser(paths) === true;
 }
 
-function ownedByUser(owned: readonly Stats[]): boolean {
+/**
+ * Whether Git takes an entry its lstat gives `owner` for the effective user's: the same id, or for root an entry root
+ * owns or one owned by the id `SUDO_UID` holds.
+ */
+function ownedByUser(owner: number): boolean {
   const user = process.geteuid?.();
-  return user !== undefined && user !== 0 && owned.every(stats => stats.uid === user);
+  return owner === user || (user === 0 && owner === sudoUser());
+}
+
+/** The id `SUDO_UID` holds, when it is one Git reads as a number. */
+function sudoUser(): number | undefined {
+  const value = process.env["SUDO_UID"];
+  return value !== undefined && /^\d{1,9}$/u.test(value) ? Number(value) : undefined;
 }
 
 /** What a Git config says about where Git places a checkout, read as Git reads its own repository's config. */
