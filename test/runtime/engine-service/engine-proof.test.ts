@@ -100,17 +100,24 @@ const PROBER = `
 const { engineCapabilityProof } = await import(process.argv[1]);
 process.stdout.write(JSON.stringify({ answer: await engineCapabilityProof(process.argv[2], "capability", 1000) }) + "\\n");`;
 /**
- * A process that asks the engine on a pipe for one proof with a 2 s limit, and prints the answer, how long it took and
- * how long its event loop worked meanwhile.
+ * A process that asks the engine on a pipe for one proof with a 2 s limit, and prints the answer, how many tries the
+ * proof made (one more than the waits it asked for) and how many folders it read meanwhile: `readdirSync` is counted
+ * before the proof's module loads, and Node hands the counted one to every module that imports it.
  */
-const WORK_PROBER = `
+const TRY_PROBER = `
+const fs = await import("node:fs");
+const read = fs.default.readdirSync;
+let counting = false;
+let folderReads = 0;
+fs.default.readdirSync = (...args) => { if (counting) folderReads += 1; return read(...args); };
+(await import("node:module")).syncBuiltinESMExports();
 const { engineCapabilityProof } = await import(process.argv[1]);
-const { performance } = await import("node:perf_hooks");
-const began = Date.now();
-const before = performance.eventLoopUtilization();
-const answer = await engineCapabilityProof(process.argv[2], "capability", 2000);
-const workMs = Math.round(performance.eventLoopUtilization(before).active);
-process.stdout.write(JSON.stringify({ answer, ms: Date.now() - began, workMs }) + "\\n");`;
+const { setTimeout: pause } = await import("node:timers/promises");
+let tries = 1;
+counting = true;
+const answer = await engineCapabilityProof(process.argv[2], "capability", 2000, { sleep: async (ms) => { tries += 1; await pause(ms); } });
+counting = false;
+process.stdout.write(JSON.stringify({ answer, tries, folderReads }) + "\\n");`;
 const PROOF_MODULE = new URL("../../../src/runtime/engine-proof.ts", import.meta.url).href;
 const TSX = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 
@@ -354,16 +361,16 @@ describe.runIf(process.platform === "win32")("the engine proof, against an engin
   }, 45_000);
 
   // A try on every tick is a connect that fails at once and a plain open. Measured on Windows 11 with 455 pipes, over a
-  // 2 s limit, by the event loop's own clock: 130 such tries took 37 to 43 ms, as much as 33 tries 50 ms apart that
-  // each listed the machine's pipes (37 to 49 ms), and a try on every tick with that listing took 135 to 155 ms. The
-  // bound leaves room for a loaded test machine.
-  it("costs its process no more work than a few dozen tries while every instance stays taken for the whole limit", async () => {
+  // 2 s limit, by the event loop's own clock: 130 such tries took 37 to 43 ms, and a try on every tick that also listed
+  // the machine's pipes took 135 to 155 ms. So the cost rests on what a try does, not on how fast the machine runs it:
+  // a try reads no folder.
+  it("reads no folder in any of its tries while every instance stays taken for the whole limit", async () => {
     const path = pipePath("cost");
     await stuckListener(path);
     expect(await takeEveryInstance(path)).toBeGreaterThan(0);
-    const printed = JSON.parse(await firstLine(startNode(WORK_PROBER, [PROOF_MODULE, path], true))) as { answer: unknown; ms: number; workMs: number };
-    expect({ answer: printed.answer, inTime: printed.ms < 2_000 + SLACK_MS }, `answered after ${printed.ms} ms`).toEqual({ answer: "silent", inTime: true });
-    expect(printed.workMs, `the proof's event loop worked ${printed.workMs} ms of its ${printed.ms} ms`).toBeLessThan(120);
+    const printed = JSON.parse(await firstLine(startNode(TRY_PROBER, [PROOF_MODULE, path], true))) as { answer: unknown; tries: number; folderReads: number };
+    expect({ answer: printed.answer, folderReads: printed.folderReads }, `over ${printed.tries} tries`).toEqual({ answer: "silent", folderReads: 0 });
+    expect(printed.tries, "the proof's tries").toBeGreaterThan(1);
   }, 45_000);
 });
 
