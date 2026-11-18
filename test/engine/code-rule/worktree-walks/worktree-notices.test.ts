@@ -1,6 +1,10 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { TreeNotice, TreeWatch } from "../../../../src/engine/code-rule/tree-watch.js";
-import { NOTICE_PATHS_CAP, noticeCounts, REWATCH_MS, SharedTreeWatch, WATCH_RETRY_MS, WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
+import { removeFolderSync } from "../../../support/platform/remove-folder.js";
+import { folderAt, NOTICE_PATHS_CAP, noticeCounts, REWATCH_MS, SharedTreeWatch, WATCH_RETRY_MS, WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
 
 /** A read that walked the worktree, `src` and `src/deep`, and left out an ignored folder, an ignored file and a worktree. */
 const seen = { folders: new Set(["", "src", "src/deep"]), leftOut: new Set(["node_modules", "src/cache.tmp", "nested"]) };
@@ -126,6 +130,54 @@ describe("WorktreeNotices", () => {
     clock.now = REWATCH_MS;
     expect(subject.changed("/w")).toBe(true);
     expect(watch.calls.filter(call => call.startsWith("watch"))).toEqual(["watch /w []", "watch /w []"]);
+  });
+
+  it("watches a worktree made again at its path as the next walk reads it, so a write after that read is a notice", () => {
+    const watch = new ScriptedWatch();
+    const folders = new Map([["/w", "1:10:5"]]);
+    const subject = new WorktreeNotices({ treeWatch: watch, platform: "win32", now: () => 0, folderAt: root => folders.get(root) ?? "" });
+    read(subject, "/w");
+    folders.delete("/w");
+    watch.notice("/w", { ended: true });
+    subject.collect();
+    expect(subject.noticed()).toEqual(new Set(["/w"]));
+    // No folder there yet: read whole, and no watch is tried that could only fail.
+    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
+    folders.set("/w", "1:11:7");
+    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, true]);
+    subject.reading("/w");
+    subject.read("/w", seen);
+    watch.notice("/w", { renamed: ["src/disk.py"] });
+    subject.collect();
+    expect([subject.changed("/w"), subject.noticed()]).toEqual([true, new Set(["/w"])]);
+  });
+
+  it("watches the same folder again only once `REWATCH_MS` passed after its watch ended", () => {
+    const watch = new ScriptedWatch();
+    const clock = { now: 0 };
+    const subject = new WorktreeNotices({ treeWatch: watch, platform: "win32", now: () => clock.now, folderAt: () => "1:10:5" });
+    read(subject, "/w");
+    watch.notice("/w", { ended: true });
+    subject.collect();
+    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
+    clock.now = REWATCH_MS - 1;
+    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, false]);
+    clock.now = REWATCH_MS;
+    expect([subject.changed("/w"), subject.watching("/w")]).toEqual([true, true]);
+  });
+
+  it("tells one folder from another, and a path with no folder", () => {
+    const root = mkdtempSync(join(tmpdir(), "rerail-folder-at-"));
+    try {
+      mkdirSync(join(root, "a"));
+      mkdirSync(join(root, "b"));
+      writeFileSync(join(root, "f"), "");
+      expect(folderAt(join(root, "a"))).toBe(folderAt(join(root, "a")));
+      expect(folderAt(join(root, "a"))).not.toBe(folderAt(join(root, "b")));
+      expect([folderAt(join(root, "a")) === "", folderAt(join(root, "f")), folderAt(join(root, "gone"))]).toEqual([false, "", ""]);
+    } finally {
+      removeFolderSync(root);
+    }
   });
 
   it("reads a worktree it cannot watch on every walk, and tries to watch it again after the retry", () => {
