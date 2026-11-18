@@ -2388,3 +2388,17 @@ segments, in `Life::Kept` blocks (`keptrows` spec line), with duplicates marked 
 heap copies gone at 300 files, peak unchanged. Next on the list: the base rows for the cross part (191 MB),
 the memo's rows, `Relation::push` staging, `Rows::clone`/`shared` tails and `merged`, the fixpoint's host indexes,
 and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q82, 0361 step 7).
+
+### Q90. A debug build's checks of the lowering on the version fail on ep2's rules
+
+- **Found** (2026-11-17, at a1de58655 plus 0373, a debug `rerail-engine` over 3 of ep2's files with its 317 rules,
+  `RERAIL_PREPARE=parts`, cold store): `the cone copied on the version is the tree's` (rr.rs, `lowered_in_version`)
+  fails on several of the pool's threads, and on the edit run after it `the lowering's tail on the version is the
+  tree's` (rr.rs, `lower_in_version`) fails too. In both, `differences` names nothing: the two images differ in
+  size or digest, but no rule, declaration, fact or about row is in one only.
+- Not from this session's changes: those hand the stored image to `lower_in_version` (ff852c438) and do not touch
+  the lowering. The checks are 0281 step 7b's.
+- **Next**: find what the digest covers that `differences` does not show (relation order, atom ids, settings, kind
+  sets, the header's lists) on one program, then fix whichever side makes it differ.
+- **Done when**: the debug build lowers ep2's rules with both checks passing. A debug run of the combine's splice
+  (0373) waits on it; meanwhile `RERAIL_COMBINE_LINK=check` checks the splice in the profiling build.

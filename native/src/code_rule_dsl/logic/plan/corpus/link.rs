@@ -20,6 +20,8 @@ fn plan(e: impl ToString) -> crate::code_rule_dsl::logic::plan::Error {
 pub(super) trait Part: Sized + Send {
     /// The programs linked.
     type Linked;
+    /// Whether a link of this form is kept (decision 0373): `link_counted`, `linked_version` and `spliced` are.
+    const KEEPS: bool = false;
     /// What the link takes of a part's rules.
     type Rules;
     /// A part from its tree.
@@ -54,6 +56,47 @@ pub(super) trait Part: Sized + Send {
     /// The linked program of `header` and each part's rules, in order. A rule `core.rr` gives (its head is the
     /// engine's) is taken once.
     fn link(header: Program, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<Self::Linked>;
+    /// `link`, and how many of the linked rules are each part's (in the parts' order), where a link of this form is
+    /// kept (decision 0373: `Versioned`'s).
+    fn link_counted(header: Program, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<(Self::Linked, Option<Vec<usize>>)> {
+        Ok((Self::link(header, rules, core)?, None))
+    }
+    /// The linked program as the version a kept link holds, where it is one.
+    fn linked_version(_linked: &Self::Linked) -> Option<&Arc<Version>> {
+        None
+    }
+    /// The last link `last`, whose parts' rules are `counts` of its rules in order, with each of `changed` (a part's
+    /// index and its rules) in its part's place, and the parts' counts after: what `link_counted` gives where the
+    /// changed parts' interfaces are their last ones. `None` where the form keeps no link or `counts` are not `last`'s.
+    fn spliced(_last: &Arc<Version>, _counts: &[usize], _changed: Vec<(usize, Self::Rules)>, _core: &BTreeSet<String>) -> Result<Option<(Self::Linked, Vec<usize>)>> {
+        Ok(None)
+    }
+}
+
+/// `linked` without the repeats of a rule `core.rr` gives after its first (`Part::link`), and each part's count of
+/// rules after (`counts`, the parts' rules in order, before).
+fn without_core_repeats(linked: Arc<Version>, counts: &[usize], core: &BTreeSet<String>) -> Result<(Arc<Version>, Vec<usize>)> {
+    let mut seen = BTreeSet::new();
+    let mut repeats = BTreeSet::new();
+    let mut counts = counts.to_vec();
+    let (mut part, mut left) = (0usize, counts.first().copied().unwrap_or(0));
+    for r in linked.rules() {
+        while left == 0 && part + 1 < counts.len() {
+            part += 1;
+            left = counts[part];
+        }
+        left = left.saturating_sub(1);
+        if core.contains(linked.rel_name(r.head().rel())) && !seen.insert(linked.show_rule(r)) {
+            repeats.insert(r.id());
+            counts[part] -= 1;
+        }
+    }
+    if repeats.is_empty() {
+        return Ok((linked, counts));
+    }
+    let mut b = Builder::on(&linked);
+    b.retain(|r| !repeats.contains(&r.id()));
+    Ok((b.finish().map_err(plan)?.0, counts))
 }
 
 /// The names a part's relations take in the linked program: its request's (`q<k>_`), its own (`p<i>_`), the axes
@@ -336,6 +379,7 @@ impl Rewrite for Renaming<'_> {
 
 impl Part for Versioned {
     type Linked = Arc<Version>;
+    const KEEPS: bool = true;
     type Rules = (Arc<Version>, BTreeSet<String>, Names);
     fn of_tree(prog: Program) -> Result<Self> {
         let (v, _) = Builder::of_program(&prog).and_then(|b| b.finish()).map_err(plan)?;
@@ -399,21 +443,57 @@ impl Part for Versioned {
         (self.head, (self.v, self.dropped, names))
     }
     fn link(header: Program, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<Self::Linked> {
+        Ok(Self::link_counted(header, rules, core)?.0)
+    }
+    fn link_counted(header: Program, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<(Self::Linked, Option<Vec<usize>>)> {
         let mut b = Builder::of_program(&header).map_err(plan)?;
+        // The header's own rules first (a version part's header holds none): no part's.
+        let mut counts = vec![header.rules.len()];
         for (v, dropped, names) in &rules {
+            let mut n = 0;
             for r in v.rules().filter(|r| !dropped.contains(v.rel_name(r.head().rel()))) {
                 b.rewrite(v, r, &mut Renaming { v, names }).finish().map_err(plan)?;
+                n += 1;
             }
+            counts.push(n);
         }
         let (linked, _) = b.finish().map_err(plan)?;
         // A rule `core.rr` gives, taken once: the copies after the first dropped.
-        let mut seen = BTreeSet::new();
-        let repeats: BTreeSet<_> = linked.rules().filter(|r| core.contains(linked.rel_name(r.head().rel())) && !seen.insert(linked.show_rule(*r))).map(|r| r.id()).collect();
-        if repeats.is_empty() {
-            return Ok(linked);
+        let (linked, counts) = without_core_repeats(linked, &counts, core)?;
+        Ok((linked, Some(counts)))
+    }
+    fn linked_version(linked: &Self::Linked) -> Option<&Arc<Version>> {
+        Some(linked)
+    }
+    fn spliced(last: &Arc<Version>, counts: &[usize], changed: Vec<(usize, Self::Rules)>, core: &BTreeSet<String>) -> Result<Option<(Self::Linked, Vec<usize>)>> {
+        let last_rules: Vec<_> = last.rules().collect();
+        if counts.iter().sum::<usize>() != last_rules.len() {
+            return Ok(None);
         }
-        let mut b = Builder::on(&linked);
-        b.retain(|r| !repeats.contains(&r.id()));
-        Ok(b.finish().map_err(plan)?.0)
+        let mut changed: BTreeMap<usize, Self::Rules> = changed.into_iter().collect();
+        let mut b = Builder::derive(last);
+        let mut now = Vec::with_capacity(counts.len());
+        let mut at = 0;
+        for (j, &n) in counts.iter().enumerate() {
+            if let Some((v, dropped, names)) = changed.remove(&j) {
+                let mut m = 0;
+                for r in v.rules().filter(|r| !dropped.contains(v.rel_name(r.head().rel()))) {
+                    b.rewrite(&v, r, &mut Renaming { v: &v, names: &names }).finish().map_err(plan)?;
+                    m += 1;
+                }
+                now.push(m);
+            } else {
+                for r in &last_rules[at..at + n] {
+                    b.copy_as_is(last, *r);
+                }
+                now.push(n);
+            }
+            at += n;
+        }
+        if !changed.is_empty() {
+            return Ok(None);
+        }
+        let (linked, _) = b.finish().map_err(plan)?;
+        Ok(Some(without_core_repeats(linked, &now, core)?))
     }
 }

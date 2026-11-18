@@ -76,6 +76,7 @@ pub use inputs::parameters as input_parameters;
 pub mod world;
 pub mod texts;
 mod link;
+mod kept_link;
 mod shape;
 pub mod connections;
 pub mod reuse;
@@ -811,6 +812,13 @@ type Beside = ();
 /// the tree's tail beside it and checks the two agree.
 fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let (v, tail) = combine_linked_as::<link::Versioned>(programs, extra, read, images_used)?;
+    // `RERAIL_COMBINE_LINK=check`: the splice (decision 0373) against the programs linked whole.
+    if combine_link_mode() == "check" {
+        let (whole, whole_tail) = crate::code_rule_dsl::logic::profile::quiet(|| combine_linked_spliced::<link::Versioned>(programs, extra, read, None, false))?;
+        assert_eq!((whole.size(), whole.digest()), (v.size(), v.digest()), "the combine's splice is its whole link: {}", crate::code_rule_dsl::logic::program_image::differences(&whole, &v));
+        assert_eq!(format!("{whole_tail:?}"), format!("{tail:?}"), "the combine's splice has its whole link's tail");
+        crate::code_rule_dsl::logic::profile::decision("the combine's last link (decision 0373)", || "checked: the splice is the whole link (RERAIL_COMBINE_LINK=check)".into());
+    }
     // The parts linked as trees beside (decision 0281's path, step 7a-2): the same program.
     #[cfg(debug_assertions)]
     let tree = {
@@ -1305,6 +1313,7 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
 /// What `combine_read` does to the linked program, on the whole (decision 0281's path, step 7a-1): one program's
 /// relations that are one merged; several programs' projected inputs, helpers retyped, attributes on request, the
 /// bound once where the libraries are held once, the fact spaces, and the relations that are one merged.
+#[derive(Debug)]
 enum Tail {
     One,
     Many { hide: Option<u32>, policies: Vec<scoping::Policy> },
@@ -1487,6 +1496,17 @@ fn combine_linked(programs: &[&str], extra: &added::Added, read: Option<&front::
 /// `combine_linked` over parts of either form (`link::Part`): trees, or versions (`link::Versioned`, the run's,
 /// decision 0281's path, step 7a-2).
 fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(P::Linked, Tail)> {
+    combine_linked_spliced::<P>(programs, extra, read, images_used, combine_link_mode() != "whole")
+}
+
+/// `RERAIL_COMBINE_LINK`: `whole` links every program each run (no splice, decision 0373); `check` splices and links
+/// whole beside it, and checks the two are one program with one tail.
+fn combine_link_mode() -> String {
+    std::env::var("RERAIL_COMBINE_LINK").unwrap_or_default()
+}
+
+/// `combine_linked_as`, splicing into the last link where `splice` (decision 0373).
+fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>, splice: bool) -> Result<(P::Linked, Tail)> {
     use front::Program;
     // Each program is given the rows the run adds once it is read (decision 0249): rows, not text after it.
     let given = |mut prog: Program| -> Result<Program> {
@@ -1604,6 +1624,28 @@ fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, rea
         }).collect(),
         None => vec![None; texts.len()],
     };
+    // The combine's last link (decision 0373): each program's slot is its image's key, and the run's shape the key the
+    // link is kept under. Where it is the last run's, only the programs whose image changed are lowered.
+    let per_program = std::env::var("RERAIL_REQUESTS").is_ok_and(|v| v == "copied");
+    let keeping: Option<(Vec<[u8; 32]>, [u8; 32])> = (|| {
+        let library = in_scope?;
+        images.as_ref()?;
+        if !splice || !P::KEEPS || programs.len() < 2 || read.is_some() || copied {
+            return None;
+        }
+        let keys = programs.iter().zip(&scope_of).zip(&texts).map(|((text, k), t)| t.as_ref().and_then(|_| scoped[(*k)?].program_image(text).sha256_bytes())).collect::<Option<Vec<_>>>()?;
+        Some((keys, kept_link::family(programs.len(), extra, &library.image_keys())))
+    })();
+    if let (Some((keys, family)), Some(store), Some(library)) = (&keeping, images.as_deref(), in_scope)
+        && let Some(got) = combine_spliced::<P>(store, family, keys, programs, &mut texts, &scope_of, &scoped, library, &modular, extra, per_program)?
+    {
+        drop(lowering);
+        if let Some(out) = images_used {
+            out.extend(library.image_keys());
+            out.extend(programs.iter().zip(&scope_of).filter_map(|(text, k)| Some(scoped[(*k)?].program_image(text))));
+        }
+        return Ok(got);
+    }
     // Each program's kept image, read for all of them at once (a few statements, not three each from the pool's
     // threads), its lease renewed in one more.
     let mut prefetched: Vec<Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>> = (0..programs.len()).map(|_| None).collect();
@@ -1670,7 +1712,8 @@ fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, rea
         let _ = std::fs::write(path, lines);
     }
     drop(parsing);
-    let makes_guests = parsed.iter().any(|p| guests::REQUESTS.iter().any(|r| p.has_head(r)));
+    let guests_of: Vec<bool> = parsed.iter().map(|p| guests::REQUESTS.iter().any(|r| p.has_head(r))).collect();
+    let makes_guests = guests_of.iter().any(|&g| g);
     let bounds: Vec<u32> = parsed.iter().map(|p| hiding::bound(p.head())).collect();
     // The libraries once (decision 0089): two or more programs name theirs as modules, and all are read under one
     // bound of the documents they show, so the library's relations are the same for each.
@@ -1698,6 +1741,9 @@ fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, rea
     let mut library: Option<P> = None;
     // A program's request (§3): its key's number and the relations it holds, named `q<k>_` for every asker.
     let mut requests: Vec<Option<(usize, BTreeSet<String>)>> = vec![None; parsed.len()];
+    // Each program's request as its interface reads it (decision 0373): its key, number, and whether it asked first.
+    let mut asked: Vec<Option<([u8; 32], usize, bool)>> = vec![None; parsed.len()];
+    let mut first_askers: BTreeMap<[u8; 32], (usize, usize)> = BTreeMap::new();
     if shared {
         for (i, modules) in modular.iter().enumerate() {
             let Some(modules) = modules else { continue };
@@ -1712,7 +1758,6 @@ fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, rea
         let mut kept = 0;
         // Each program's request (§3): the cone's library relations and the program's own relations they read, held
         // once per distinct key. `RERAIL_REQUESTS=copied` keeps one copy per program, to compare.
-        let per_program = std::env::var("RERAIL_REQUESTS").is_ok_and(|v| v == "copied");
         let mut keys: BTreeMap<[u8; 32], usize> = BTreeMap::new();
         let mut copies: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
         let mut asking = 0;
@@ -1728,6 +1773,10 @@ fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, rea
             let (unit, key) = request_unit(prog, &cone, core, i, per_program);
             let n = keys.len();
             let k = *keys.entry(key).or_insert(n);
+            asked[i] = Some((key, k, k == n));
+            if k == n {
+                first_askers.insert(key, (k, i));
+            }
             for rel in cone.iter() {
                 copies.entry(rel.clone()).or_default().insert(k);
             }
@@ -1787,6 +1836,7 @@ fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, rea
     // The library, when held once, is the first part: its names are the run's (decision 0089 §2).
     let units = library.into_iter().map(|l| (None, l)).chain(parsed.into_iter().enumerate().map(|(i, p)| (Some(i), p)));
     let mut rules: Vec<P::Rules> = Vec::new();
+    let mut interfaces: Vec<[u8; 32]> = Vec::new();
     for (unit, mut part) in units {
         let i = unit.unwrap_or(usize::MAX);
         let prog = part.head_mut();
@@ -1802,14 +1852,16 @@ fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, rea
             }
             _ => None,
         };
-        for g in std::mem::take(&mut prog.text_globs) {
-            if !all.text_globs.contains(&g) {
-                all.text_globs.push(g);
+        let globs = std::mem::take(&mut prog.text_globs);
+        for g in &globs {
+            if !all.text_globs.contains(g) {
+                all.text_globs.push(g.clone());
             }
         }
         // Kind sets by their kinds: this program's name for each, and the shared one.
         let mut set_of: BTreeMap<String, String> = BTreeMap::new();
-        for (name, kinds) in std::mem::take(&mut prog.kindsets) {
+        let kinds_of = std::mem::take(&mut prog.kindsets);
+        for (name, kinds) in kinds_of.clone() {
             let n = sets.len();
             let shared = sets.entry(kinds.clone()).or_insert_with(|| format!("ks{n}")).clone();
             all.kindsets.insert(shared.clone(), kinds);
@@ -1823,13 +1875,115 @@ fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, rea
         if unit.is_some() {
             policies.push(scoping::Policy { prefix: format!("p{i}_"), own: own.iter().map(|r| format!("p{i}_{r}")).collect(), named, library, scope });
         }
+        let core_rules = if keeping.is_some() && unit.is_some() { part.shown(core) } else { Vec::new() };
         let names = link::Names { i, own, request, set_of };
         let (header, renamed) = part.into_parts(&names);
+        if keeping.is_some() && let Some(u) = unit {
+            interfaces.push(kept_link::interface(&[&u, &bounds[u], &guests_of[u], &asked[u], &policies.last(), &globs, &kinds_of, &names.set_of, &names.own, &names.request, &header, &core_rules]));
+        }
         rules.push(renamed);
         link::link_header(&mut all, header, &names);
     }
-    let all = P::link(all, rules, core)?;
-    Ok((all, Tail::Many { hide: (shared && makes_guests).then_some(bounds[0]), policies }))
+    let (all, counts) = P::link_counted(all, rules, core)?;
+    let hide = (shared && makes_guests).then_some(bounds[0]);
+    // The link kept for the next run's splice (decision 0373), where the libraries are held once.
+    if let (Some((keys, family)), Some(store), Some(counts), Some(v), true) = (&keeping, images.as_deref(), counts, P::linked_version(&all), shared && interfaces.len() == programs.len()) {
+        let slots = keys.iter().zip(&interfaces).map(|(k, f)| kept_link::Slot { key: *k, interface: *f }).collect();
+        kept_link::record(store, family, v, &kept_link::Record { counts, slots, requests: first_askers, sets, bound: bounds[0], hide, policies: policies.clone() });
+    }
+    Ok((all, Tail::Many { hide, policies }))
+}
+
+/// `combine_linked_as` as a splice into the combine's last link (decision 0373): the programs whose image changed
+/// lowered and read as the merge reads each (`own_part`, the request, `undo_on_request`, the header's kind sets,
+/// globals and policy), and where each one's interface is its slot's, its rules written in its slot's place and every
+/// other program's copied from the last link (`Part::spliced`). `None` where nothing is kept for the run's shape, or a
+/// program's interface changed: the programs are then linked whole, and the link kept again.
+#[allow(clippy::too_many_arguments)]
+fn combine_spliced<P: link::Part>(
+    store: &ContentStore,
+    family: &[u8; 32],
+    keys: &[[u8; 32]],
+    programs: &[&str],
+    texts: &mut [Option<crate::code_rule_dsl::logic::rr::Text>],
+    scope_of: &[Option<usize>],
+    scoped: &[crate::code_rule_dsl::logic::rr::Scoped],
+    library: &crate::code_rule_dsl::logic::rr::Library,
+    modular: &[Option<crate::code_rule_dsl::logic::rr::Modules>],
+    extra: &added::Added,
+    per_program: bool,
+) -> Result<Option<(P::Linked, Tail)>> {
+    let Some((last, mut rec, sources)) = kept_link::lookup(store, family) else { return Ok(None) };
+    // Kept as the programs' images are, in the same store: its lease renewed where a run reads it (decision 0250).
+    crate::code_rule_dsl::logic::rr::renew_images(store, &sources);
+    // The header's rules, the library's, then each program's.
+    if rec.slots.len() != programs.len() || rec.counts.len() != programs.len() + 2 {
+        return Ok(None);
+    }
+    let changed: Vec<usize> = (0..programs.len()).filter(|&i| rec.slots[i].key != keys[i]).collect();
+    let _span = crate::code_rule_dsl::logic::profile::span(|| format!("the changed programs spliced into the combine's last link ({} of {}; decision 0373)", changed.len(), programs.len()));
+    let core = crate::code_rule_dsl::logic::rr::core_names();
+    let mut parts: Vec<(usize, P::Rules)> = Vec::new();
+    for &i in &changed {
+        let (Some(read), Some(k), Some(modules)) = (texts[i].take(), scope_of[i], modular[i].as_ref()) else { return Ok(None) };
+        let mut part = P::lowered_in(read, programs[i], library, &scoped[k], Some(store), None, extra)?;
+        let bound = hiding::bound(part.head());
+        if bound != rec.bound {
+            return Ok(None);
+        }
+        let guests = guests::REQUESTS.iter().any(|r| part.has_head(r));
+        for name in &modules.declared {
+            if let Some(file) = modules.files.iter().find(|(_, _, names)| names.contains(name) && !core.contains(name)) {
+                return Err(Error::Plan(format!("program #{i} declares {name}, which {} it includes declares", file.0.display())));
+            }
+        }
+        let (_, cone) = own_part(&mut part, modules, core);
+        let (mut request, mut asked) = (None, None);
+        if !cone.is_empty() {
+            let (unit, key) = request_unit(&part, &cone, core, i, per_program);
+            // A request no earlier program asks first would be numbered, and copied, otherwise.
+            let Some(&(k, first)) = rec.requests.get(&key).filter(|(_, first)| *first <= i) else { return Ok(None) };
+            if first != i {
+                drop_relations(&mut part, &unit);
+            }
+            asked = Some((key, k, first == i));
+            request = Some((k, unit));
+        }
+        part.undo_on_request();
+        let prog = part.head_mut();
+        let scope = prog.doc_scopes.clone();
+        let (named, library_names) = front::globals(&prog.settings);
+        prog.settings.retain(|(k, _)| k != front::GLOBAL);
+        prog.doc_scopes = None;
+        let globs = std::mem::take(&mut prog.text_globs);
+        let kinds_of = std::mem::take(&mut prog.kindsets);
+        let mut set_of: BTreeMap<String, String> = BTreeMap::new();
+        for (name, kinds) in &kinds_of {
+            let Some(shared) = rec.sets.get(kinds) else { return Ok(None) };
+            set_of.insert(name.clone(), shared.clone());
+        }
+        let own = own_names(&part, core);
+        let policy = scoping::Policy { prefix: format!("p{i}_"), own: own.iter().map(|r| format!("p{i}_{r}")).collect(), named, library: library_names, scope };
+        let core_rules = part.shown(core);
+        let names = link::Names { i, own, request, set_of };
+        let (header, renamed) = part.into_parts(&names);
+        let interface = kept_link::interface(&[&i, &bound, &guests, &asked, &Some(&policy), &globs, &kinds_of, &names.set_of, &names.own, &names.request, &header, &core_rules]);
+        if interface != rec.slots[i].interface {
+            crate::code_rule_dsl::logic::profile::decision("the combine's last link (decision 0373)", || format!("linked again: program #{i}'s interface changed"));
+            return Ok(None);
+        }
+        rec.slots[i].key = keys[i];
+        parts.push((2 + i, renamed));
+    }
+    let Some((linked, counts)) = P::spliced(&last, &rec.counts, parts, core)? else { return Ok(None) };
+    crate::code_rule_dsl::logic::profile::decision("the combine's last link (decision 0373)", || format!("spliced: {} of {} programs changed, each of the same interface", changed.len(), programs.len()));
+    if !changed.is_empty()
+        && let Some(v) = P::linked_version(&linked)
+    {
+        rec.counts = counts;
+        kept_link::record(store, family, v, &rec);
+    }
+    Ok(Some((linked, Tail::Many { hide: rec.hide, policies: rec.policies })))
 }
 
 /// The requests `sources_on_request` made, narrowed where the split finds them cross-file to the asked node's own
