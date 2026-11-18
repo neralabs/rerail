@@ -1,10 +1,12 @@
 import { totalmem } from "node:os";
+import { constants, PerformanceObserver, type PerformanceEntry, type PerformanceNodeEntry } from "node:perf_hooks";
 import { getHeapStatistics } from "node:v8";
 
 /**
- * What the daemon's memory reads as at one moment, in bytes. `available` is what the system says other programs can
- * still have; undefined where its figure does not count what the system would free: on macOS libuv reads only the free
- * pages, and the system keeps most of its memory as cache it gives back on demand, so the figure is low on an idle Mac.
+ * What the daemon's memory reads as at one moment, in bytes. `heapUsed` is the heap in use as the last full collection
+ * ended once `memoryRoom` watches them, else the heap's count now. `available` is what the system says other programs can still have; undefined where its
+ * figure does not count what the system would free: on macOS libuv reads only the free pages, and the system keeps most
+ * of its memory as cache it gives back on demand, so the figure is low on an idle Mac.
  */
 export interface MemoryReading {
   readonly heapUsed: number;
@@ -15,8 +17,9 @@ export interface MemoryReading {
 }
 
 /**
- * Past this share of its heap limit, garbage counted, the daemon lets go of what no session uses: under the 0.8 at which
- * the heap watch restarts the daemon (`HEAP_CEILING_RATIO`), so what it keeps warm never brings that restart about.
+ * Past this share of its heap limit after a full collection, the daemon lets go of what no session uses: under the 0.8
+ * at which the heap watch restarts the daemon (`HEAP_CEILING_RATIO`), so what it keeps warm never brings that restart
+ * about.
  */
 const HEAP_ROOM_RATIO = 0.6;
 /**
@@ -28,13 +31,37 @@ const RESIDENT_SHARE = 0.25;
 /** Below this share of the machine's memory left to other programs, the daemon lets go of what no session uses. */
 const AVAILABLE_FLOOR = 0.1;
 
+/** The heap in use as the last full collection ended, once `watchFullCollections` has seen one. */
+let collected: number | undefined;
+let watching = false;
+
+/**
+ * Notes the heap in use as each full collection ends, from now on (Node's `gc` performance entries), forcing none: what
+ * the daemon holds and cannot free. The heap's own count also holds the garbage made since, which on a busy daemon is
+ * most of it, so a reading past a mark could be garbage alone. Once per process.
+ */
+function watchFullCollections(): void {
+  if (watching) return;
+  watching = true;
+  new PerformanceObserver((list) => {
+    if (list.getEntries().some(isFullCollection)) collected = getHeapStatistics().used_heap_size;
+  }).observe({ type: "gc" });
+}
+
+/** Whether the gc performance entry `entry` is a full collection's: its detail names the collection's kind. */
+export function isFullCollection(entry: PerformanceEntry): boolean {
+  // A gc entry is a node entry, whose detail the types leave as any.
+  const detail: unknown = (entry as PerformanceNodeEntry).detail;
+  return typeof detail === "object" && detail !== null && "kind" in detail && detail.kind === constants.NODE_PERFORMANCE_GC_MAJOR;
+}
+
 /** The daemon's memory now: its heap, its resident size, and the machine's memory (a container's limit where it has one). */
 export function readMemory(platform: NodeJS.Platform = process.platform): MemoryReading {
-  const { used_heap_size: heapUsed, heap_size_limit: heapLimit } = getHeapStatistics();
   const constrained = process.constrainedMemory();
   const total = constrained > 0 && constrained < totalmem() ? constrained : totalmem();
   const available = platform === "darwin" ? undefined : process.availableMemory();
-  return { heapUsed, heapLimit, resident: process.memoryUsage.rss(), total, available };
+  const { used_heap_size: used, heap_size_limit: heapLimit } = getHeapStatistics();
+  return { heapUsed: collected ?? used, heapLimit, resident: process.memoryUsage.rss(), total, available };
 }
 
 /**
@@ -43,8 +70,18 @@ export function readMemory(platform: NodeJS.Platform = process.platform): Memory
  * memory, or the machine has less than `AVAILABLE_FLOOR` of it left. Otherwise keeping it costs nobody memory they need,
  * and a session that comes back to its checkout finds its rules compiled.
  */
-export function needsRoom(reading: MemoryReading = readMemory()): boolean {
+export function needsRoom(reading: MemoryReading): boolean {
   if (reading.heapUsed > reading.heapLimit * HEAP_ROOM_RATIO) return true;
   if (reading.resident > reading.total * RESIDENT_SHARE) return true;
   return reading.available !== undefined && reading.available < reading.total * AVAILABLE_FLOOR;
+}
+
+/**
+ * Whether the daemon needs the room now (`needsRoom`), read from its memory each time it is asked (`readMemory`), with
+ * the heap as the last full collection left it from the call on (`watchFullCollections`): the daemon's engine service
+ * makes one as it starts.
+ */
+export function memoryRoom(platform: NodeJS.Platform = process.platform): () => boolean {
+  watchFullCollections();
+  return () => needsRoom(readMemory(platform));
 }

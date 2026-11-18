@@ -21,7 +21,7 @@ import { isBusy } from "../engine/storage/sqlite-wal.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
 import { isNamedPipe } from "./engine-pipe.js";
-import { needsRoom } from "../engine/memory-room.js";
+import { memoryRoom } from "../engine/memory-room.js";
 import { checkoutStatus } from "./repository-start.js";
 import { nativeTreeWatch, type TreeWatch } from "../engine/code-rule/tree-watch.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
@@ -223,7 +223,7 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
   /** The clock idle sessions are measured by; defaults to `Date.now`. */
   now?: () => number;
   /**
-   * Whether the daemon needs the room a runtime no session uses takes (`needsRoom` in engine/memory-room.ts, by
+   * Whether the daemon needs the room a runtime no session uses takes (`memoryRoom` in engine/memory-room.ts, by
    * default): asked as such a runtime's last session leaves it, as a runtime opens and at each minute's sweep.
    */
   needsRoom?: () => boolean;
@@ -239,7 +239,7 @@ interface EngineRoutingState {
   pending: Set<Promise<readonly AdapterDelivery[]>>;
   /** The runtimes no session uses, the one unused longest first: each stays open until the daemon needs the room. */
   unused: Set<string>;
-  /** Whether the daemon needs the room the unused runtimes take: the service's `needsRoom`, else engine/memory-room.ts's. */
+  /** Whether the daemon needs the room the unused runtimes take: the service's `needsRoom`, else `memoryRoom`'s. */
   needsRoom: () => boolean;
   /** What each open runtime was made with, by its key: a suspended session's runtime is made again from it. */
   runtimeOptions: Map<string, RerailRuntimeOptions>;
@@ -1040,7 +1040,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     lanes: new SessionLanes(),
     pending: new Set(),
     unused: new Set(),
-    needsRoom: options.needsRoom ?? (() => needsRoom()),
+    needsRoom: options.needsRoom ?? memoryRoom(),
     runtimeOptions: new Map(),
     suspended: new Map(),
     resumeRetries: new Map(),
