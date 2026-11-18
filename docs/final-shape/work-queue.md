@@ -1802,3 +1802,18 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   `io_bare`, leaving too few for the engine comparison. Green at Go-C's dd6dcc161; at
   Parser-generators' 975117c82 33 steps differ (without dd6dcc161's `tier1_equal`).
 - **Done when**: both pass; Parser-generators' area (the edge body), taken at the next merge.
+
+### Q213. The engine keeps the grammars' proof answers as it keeps images (0402)
+
+- **What**: a compile takes the provers' known answers and returns the ones it made
+  (`bitlex_masks::compile_proved`, `Compiled::proofs`; `bitlex_prove::encode`/`decode` as bytes).
+  Kotlin: cold 2,355 answers; with them the Bitlex compiler takes 0.57 s, not 16–33 s, and the
+  program is the same (`known_answers_make_the_same_program`); an edit to a class asks 521 of them
+  again (7.3 s, against 35 s cold). Nothing keeps them across processes
+  yet: each process's first compile of a grammar is cold.
+- **Needs**: where a grammar is compiled for a run (`rerail_rr_parser::compiled`, the Bitlex
+  languages' parsers once they are the engine's), the answers read from and written to the engine
+  build's content store under a digest of the grammar's family (0264's `images::read`, a shipped
+  bundle as the seed): the encoded answers are one entry. No map of its own (0092, 0103).
+- **Done when**: a second process's compile of an unchanged or edited grammar makes no proofs it
+  made before, measured.

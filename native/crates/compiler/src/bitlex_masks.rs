@@ -74,7 +74,7 @@
 use crate::block::{BlockOp, BlockProgram, ClassTable};
 use crate::{bitlex_prove, bitlex_tier2, grammar};
 use ::bitlex::syntax::{Arg, Expr, NExpr, Stmt, TokenElem};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap as HashMap;
 
 /// A number's planes: a byte's value mod 2^32, exact for a place in a file or a distance.
 pub const NUMBER_BITS: u8 = 32;
@@ -107,6 +107,9 @@ pub struct Compiled {
     /// class by its name, each mark as `mark KIND`, each token row's first and last bytes as
     /// `token KIND start` and `token KIND last`. A value no output reads is left out.
     pub values: Vec<Named>,
+    /// The provers' answers this compile made (decision 0402): what a later compile is given to
+    /// answer the same questions without their proofs (`compile_proved`).
+    pub proofs: Vec<(Vec<u8>, bitlex_prove::Answer)>,
 }
 
 /// A named value of the block program (`Compiled::values`): its operation, and its delay (bit
@@ -275,7 +278,7 @@ pub fn first_bits(ops: &[BlockOp], tables: &[ClassTable], v: u16) -> Option<u32>
         memo.insert(v, b);
         b
     }
-    go(ops, tables, v, &mut HashMap::new(), 0).zero_from
+    go(ops, tables, v, &mut HashMap::default(), 0).zero_from
 }
 
 pub struct Lowering {
@@ -332,6 +335,8 @@ pub struct Lowering {
     /// stream (`within`) is then the file's bytes past it, and a class that holds one of its
     /// bytes is cut to the stream.
     pub prefix: Option<(Vec<u8>, Val)>,
+    /// The provers' answers, given and made (decision 0402).
+    pub proofs: bitlex_prove::Proofs,
     /// Lowering a mask read only at and after a token's first byte (`ahead`): no cut by the
     /// prefix, whose bytes lie before every token's.
     pub ahead: bool,
@@ -435,38 +440,45 @@ pub const MACHINE_STATES: usize = 64;
 
 /// `compile`, with tier 2 in `shape`.
 pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>, shape: Shape) -> Result<Compiled, String> {
+    compile_proved(stmts, outputs, symbols, shape, HashMap::default())
+}
+
+/// `compile_shaped`, with the provers' answers a compile made before (`Compiled::proofs`,
+/// decision 0402): a question among them is answered without its proof. The program is the same.
+pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>, shape: Shape, known: bitlex_prove::Known) -> Result<Compiled, String> {
     let mut low = Lowering {
+        proofs: bitlex_prove::Proofs { known, made: Vec::new() },
         shape,
         program: BlockProgram::default(),
-        seen: HashMap::new(),
+        seen: HashMap::default(),
         table_products: Vec::new(),
-        classes: HashMap::new(),
-        names: HashMap::new(),
+        classes: HashMap::default(),
+        names: HashMap::default(),
         fallbacks: Vec::new(),
         untaken: Vec::new(),
-        counts: HashMap::new(),
+        counts: HashMap::default(),
         pending_counts: Vec::new(),
         pending_checks: Vec::new(),
-        numbers: HashMap::new(),
+        numbers: HashMap::default(),
         tokens: Vec::new(),
-        token_rules: HashMap::new(),
-        token_pairs: HashMap::new(),
-        token_reads: HashMap::new(),
-        token_closer_last: HashMap::new(),
-        token_parts: HashMap::new(),
-        token_fills: HashMap::new(),
+        token_rules: HashMap::default(),
+        token_pairs: HashMap::default(),
+        token_reads: HashMap::default(),
+        token_closer_last: HashMap::default(),
+        token_parts: HashMap::default(),
+        token_fills: HashMap::default(),
         inside: Vec::new(),
         keywords: Vec::new(),
         skip: None,
         prefix: None,
         ahead: false,
-        mask_exprs: HashMap::new(),
+        mask_exprs: HashMap::default(),
         tree: Vec::new(),
         extra: Vec::new(),
         marks: Vec::new(),
         mark_exprs: Vec::new(),
-        token_marks: HashMap::new(),
-        unless: HashMap::new(),
+        token_marks: HashMap::default(),
+        unless: HashMap::default(),
         unplaced: Vec::new(),
         settles: Vec::new(),
         ends: Vec::new(),
@@ -556,7 +568,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     let mut delay = vals.iter().map(|x| x.1.d).max().unwrap_or(0);
     // Each output once, at one delay: its value's (`outputs`, the masks and the records find an
     // output by its value).
-    let mut index: HashMap<u16, u16> = HashMap::new();
+    let mut index: HashMap<u16, u16> = HashMap::default();
     let mut labels = Vec::new();
     let mut at = Vec::new();
     for (label, x) in &vals {
@@ -693,7 +705,21 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         .map(|(name, x)| Named { name, op: place[usize::from(x.v)] as u16, delay: x.d })
         .collect();
     let fallbacks = labels.iter().filter(|(l, _)| l == FALLBACK).map(|&(_, k)| k).collect();
-    Ok(Compiled { rows: rows(&program), program, words, machine, labels, fallbacks, costs, origin, values })
+    let proofs = std::mem::take(&mut low.proofs.made);
+    Ok(Compiled { rows: rows(&program), program, words, machine, labels, fallbacks, costs, origin, values, proofs })
+}
+
+/// The operations the provers read: the prefix's value zero (it is stripped before the passes,
+/// 0389).
+fn proof_ops<'a>(program: &'a BlockProgram, prefix: &Option<(Vec<u8>, Val)>) -> std::borrow::Cow<'a, [BlockOp]> {
+    match prefix {
+        Some((_, p)) => {
+            let mut ops = program.ops.clone();
+            ops[usize::from(p.v)] = BlockOp::Const(0);
+            std::borrow::Cow::Owned(ops)
+        }
+        None => std::borrow::Cow::Borrowed(&program.ops),
+    }
 }
 
 impl Lowering {
@@ -1334,14 +1360,49 @@ impl Lowering {
     /// stream, where its model has no byte in any class and every carried value 0, as the cut
     /// classes and `within` are there. Without a prefix, the operations as they are.
     pub fn proof_ops(&self) -> std::borrow::Cow<'_, [BlockOp]> {
-        match &self.prefix {
-            Some((_, p)) => {
-                let mut ops = self.program.ops.clone();
-                ops[usize::from(p.v)] = BlockOp::Const(0);
-                std::borrow::Cow::Owned(ops)
-            }
-            None => std::borrow::Cow::Borrowed(&self.program.ops),
-        }
+        proof_ops(&self.program, &self.prefix)
+    }
+
+    /// Whether `x` is zero everywhere, by the plain search (`bitlex_prove::never`), or answered
+    /// before (`Proofs`).
+    pub fn never(&mut self, x: Val) -> bool {
+        let ops = proof_ops(&self.program, &self.prefix);
+        let tables = &self.program.tables;
+        let key = bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, "plain never");
+        self.proofs.never(key, || bitlex_prove::never(&ops, tables, x.v, x.d))
+    }
+
+    /// The bytes `x` can be at, by the plain search (`bitlex_prove::first_bytes`).
+    pub fn first_bytes(&mut self, x: Val) -> ByteSet {
+        let ops = proof_ops(&self.program, &self.prefix);
+        let tables = &self.program.tables;
+        let key = bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, "plain first");
+        self.proofs.bytes(key, || bitlex_prove::first_bytes(&ops, tables, x.v, x.d))
+    }
+
+    /// Whether `x` is zero everywhere, by `prover` (with the fixed points' equations).
+    pub fn settled_never(&mut self, prover: &mut bitlex_prove::Induction, x: Val) -> bool {
+        let ops = proof_ops(&self.program, &self.prefix);
+        let tables = &self.program.tables;
+        let key = bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("never"));
+        self.proofs.never(key, || prover.never(&ops, tables, x.v, x.d))
+    }
+
+    /// The bytes `x` can be at, by `prover`.
+    pub fn settled_first_bytes(&mut self, prover: &mut bitlex_prove::Induction, x: Val) -> ByteSet {
+        let ops = proof_ops(&self.program, &self.prefix);
+        let tables = &self.program.tables;
+        let key = bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("first"));
+        self.proofs.bytes(key, || prover.first_bytes(&ops, tables, x.v, x.d))
+    }
+
+    /// Whether `x` is zero everywhere, by the plain search and else `prover`: one question, the
+    /// streams `prover` found refuting it first (`Induction::refutes`).
+    pub fn either_never(&mut self, prover: &mut bitlex_prove::Induction, x: Val) -> bool {
+        let ops = proof_ops(&self.program, &self.prefix);
+        let tables = &self.program.tables;
+        let key = bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, &prover.asker("either never"));
+        self.proofs.never(key, || !prover.refutes(&ops, tables, x.v, x.d) && (bitlex_prove::never(&ops, tables, x.v, x.d) || prover.never(&ops, tables, x.v, x.d)))
     }
 
     /// A prefix's value (`Stmt::Prefix`): the file's first `n` positions, where it starts with
@@ -1533,7 +1594,7 @@ impl Lowering {
             Some(k)
         }
         let mut out = Vec::new();
-        walk(self, x.v, &mut HashMap::new(), &mut out)?;
+        walk(self, x.v, &mut HashMap::default(), &mut out)?;
         Some(out)
     }
 
@@ -2411,7 +2472,7 @@ fn is_keyword_kind(keywords: &[(String, Vec<(Vec<u8>, Option<String>)>, bool)], 
 /// The row whose tokens hold every bit of `a`, proved: `a` at its starts, or inside a
 /// `fill(s, e)` whose runs are its tokens (its start `s`, its last the run's next byte).
 fn token_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows: &[(String, Val, Val)]) -> Result<Option<usize>, String> {
-    let proved = |low: &Lowering, x: Val| bitlex_prove::never(&low.proof_ops(), &low.program.tables, x.v, x.d) || bitlex_prove::never_unrolled(&low.proof_ops(), &low.program.tables, &[], x.v, x.d, 4, 1000);
+    let proved = |low: &mut Lowering, x: Val| low.never(x) || low.settled_never(&mut bitlex_prove::Induction::new(&[], 4, 1000), x);
     let grammar_rows: Vec<usize> = (0..rows.len()).filter(|&r| !low.extra.contains(&token_rows[r].0) && !row_kinds(&rows[r]).is_empty()).collect();
     for &r in &grammar_rows {
         let off = low.andnot(a, token_rows[r].1)?;
@@ -2571,7 +2632,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // Each check, a byte machine over its tokens' bytes (doc 18 §4), compiled into masks
     // over the whole file with the rest of the block program: a token it refuses joins the
     // fallback. Tier 2 keeps only the bytes a token passing it begins with.
-    let mut check_of: HashMap<usize, ByteSet> = HashMap::new();
+    let mut check_of: HashMap<usize, ByteSet> = HashMap::default();
     for (kind, g) in low.checks.clone() {
         let token = token_rows.iter().position(|t| t.0 == kind).ok_or_else(|| format!("check {kind}: no token row of that kind"))?;
         let (accept, arms) = grammar::byte_check(&g, &low.classes).map_err(|e| format!("check {kind}: {e}"))?;
@@ -2602,7 +2663,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             kind: if required.contains(kind) { 0 } else { id(kind)? },
             soft,
             one_byte: start.v == last.v && start.d == last.d,
-            first: bitlex_prove::first_bytes(&low.proof_ops(), &low.program.tables, start.v, start.d),
+            first: low.first_bytes(*start),
             keywords,
             check: check_of.get(&r).copied(),
             mask: None,
@@ -2623,7 +2684,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         for b in a + 1..rows.len() {
             if shares(a, b) {
                 let both = low.and(token_rows[a].1, token_rows[b].1)?;
-                if !bitlex_prove::never(&low.proof_ops(), &low.program.tables, both.v, both.d) {
+                if !low.never(both) {
                     low.fallbacks.push(both);
                 }
             }
@@ -2813,11 +2874,11 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             let t = low.expr(term)?;
             // Only at the grammar's token starts.
             let elsewhere = low.andnot(t, gs)?;
-            if !settled.never(&low.proof_ops(), &low.program.tables, elsewhere.v, elsewhere.d) {
+            if !low.settled_never(&mut settled, elsewhere) {
                 continue;
             }
             // The words whose first byte the term may be at.
-            let firsts = settled.first_bytes(&low.proof_ops(), &low.program.tables, t.v, t.d);
+            let firsts = low.settled_first_bytes(&mut settled, t);
             for w in candidates.iter().filter(|w| firsts[usize::from(w[0]) / 64] >> (w[0] % 64) & 1 == 1) {
                 // A token's record pairs its start with its row's last: one row starts at a
                 // byte (two that can go to the fallback), and the record pass checks the
@@ -2837,7 +2898,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 }
                 let Some(e) = e else { continue };
                 let differs = low.xor(t, e)?;
-                let ok = settled.never(&low.proof_ops(), &low.program.tables, differs.v, differs.d);
+                let ok = low.settled_never(&mut settled, differs);
                 if ok {
                     let mut rest = if looped { None } else { Some(gs) };
                     for (_, other) in parts.iter().enumerate().filter(|&(j, _)| j != i) {
@@ -2882,7 +2943,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         // out is proved apart, `never`). A state that refuses it tests it only on those bytes.
         // Proved on `m`, the mark's own: where it holds only at the grammar's starts
         // (`m & ~starts` never), the lift to the next start adds nothing.
-        let on_starts = bitlex_prove::never(&low.proof_ops(), &low.program.tables, before.v, before.d);
+        let on_starts = low.never(before);
         let mut first: ByteSet = [u64::MAX; 4];
         if on_starts {
             first = [0; 4];
@@ -2891,7 +2952,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     continue;
                 }
                 let both = low.and(m, token_rows[r].1)?;
-                if !bitlex_prove::never(&low.proof_ops(), &low.program.tables, both.v, both.d) {
+                if !low.never(both) {
                     for i in 0..4 {
                         first[i] |= rows[r].first[i];
                     }
@@ -2907,7 +2968,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 one[usize::from(b) / 64] |= 1 << (b % 64);
                 let class = low.class_set(one);
                 let both = low.and(m, class)?;
-                if bitlex_prove::never(&low.proof_ops(), &low.program.tables, both.v, both.d) {
+                if low.never(both) {
                     first[usize::from(b) / 64] &= !(1 << (b % 64));
                 }
             }
@@ -2959,7 +3020,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         let inside = |r: usize| low.inside.get(r).copied().unwrap_or(false);
         let starts = |r: usize, b: usize| !inside(r) && real_first[r][b / 64] >> (b % 64) & 1 == 1;
         let mut free: Vec<u8> = (0..256usize).rev().filter(|&b| !(0..rows.len()).any(|r| starts(r, b))).map(|b| b as u8).collect();
-        let mut byte_of: HashMap<String, u8> = HashMap::new();
+        let mut byte_of: HashMap<String, u8> = HashMap::default();
         for r in 0..rows.len() {
             let kind = &token_rows[r].0;
             if !low.token_reads.contains_key(kind) {
@@ -3018,7 +3079,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 for (r, w) in &words {
                     let k = low.keyword(token_rows[*r].1, token_rows[*r].2, w)?;
                     let both = low.and(x, k)?;
-                    if bitlex_prove::never(&low.proof_ops(), &low.program.tables, both.v, both.d) {
+                    if low.never(both) {
                         continue;
                     }
                     kinds.push(id(&String::from_utf8_lossy(w))?);
@@ -3029,7 +3090,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 }
                 let Some(all) = all else { return Ok(None) };
                 let differs = low.xor(x, all)?;
-                Ok(bitlex_prove::never(&low.proof_ops(), &low.program.tables, differs.v, differs.d).then_some(kinds))
+                Ok(low.never(differs).then_some(kinds))
             };
             let (u, d) = (kinds_of(up, low)?, kinds_of(down, low)?);
             match (u, d, u16::try_from(max)) {
@@ -3081,7 +3142,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // The records: a byte's kind, the class of first bytes no switch on the first byte tells
     // apart; the words, the strings. (A switch on a later byte, a keyword's, reads its byte.)
     let mut kinds = vec![0u8; 256];
-    let mut classes: HashMap<Vec<u16>, u8> = HashMap::new();
+    let mut classes: HashMap<Vec<u16>, u8> = HashMap::default();
     let mut sigs: Vec<Vec<u16>> = Vec::new();
     // A token mark's kinds (decision 0129): a column each, so a kind of the records is one
     // kind's tokens or none of them; a byte that starts that kind's tokens and another's can not
@@ -3503,7 +3564,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         let held: Vec<u16> = in_code.iter().map(|&(m, _)| m).filter(|&m| m != crate::records::WORD_ALONE).chain(retags.iter().map(|t| t.o)).collect();
         for m in held {
             let both = low.and(mark_masks[usize::from(m)], within)?;
-            if !settled.never(&low.proof_ops(), &low.program.tables, both.v, both.d) {
+            if !low.settled_never(&mut settled, both) {
                 quiet = false;
                 break;
             }
@@ -3549,10 +3610,8 @@ fn row_modes(
     // With the fixed points' equations (a region's carry is its fills' bytes after the openers)
     // where the plain search does not prove it, as the marks' proofs.
     let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
-    let mut proved = |low: &Lowering, v: Val| {
-        let ops = low.proof_ops();
-        bitlex_prove::never(&ops, &low.program.tables, v.v, v.d) || settled.never(&ops, &low.program.tables, v.v, v.d)
-    };
+    // A stream a solve found refutes most questions first (`Induction::refutes`): most fail.
+    let mut proved = |low: &mut Lowering, v: Val| low.either_never(&mut settled, v);
     // The toggles whose `x` bits are all token starts, at most eight.
     let mut starts: Option<Val> = None;
     for (_, s, _) in token_rows {
@@ -3584,11 +3643,12 @@ fn row_modes(
     for (_, s, _) in token_rows {
         let (mut n, mut f) = (Vec::new(), Vec::new());
         for &(t, x) in &modes {
-            let (tv, xv) = (fixed(low, *s, t)?, fixed(low, *s, x)?);
-            // The mode before the token: the toggle at its start, less `x` there.
-            n.push(match (tv, xv) {
-                (Some(a), Some(b)) => Some(a != b),
-                _ => None,
+            // The mode before the token: the toggle at its start, less `x` there (the toggle's
+            // asked only where `x`'s is fixed: else the mode is free).
+            let xv = fixed(low, *s, x)?;
+            n.push(match xv {
+                Some(b) => fixed(low, *s, t)?.map(|a| a != b),
+                None => None,
             });
             f.push(xv);
         }
@@ -3614,7 +3674,7 @@ fn row_modes(
             .collect()
     };
     // The states each level returns to.
-    let mut returns: HashMap<u16, Vec<u16>> = HashMap::new();
+    let mut returns: HashMap<u16, Vec<u16>> = HashMap::default();
     for a in arms {
         // The innermost call returns from the level it enters; each outer one from the level of
         // the call inside it, which it returns to.

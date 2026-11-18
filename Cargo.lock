@@ -3230,6 +3230,7 @@ dependencies = [
  "rerail-clif",
  "rerail-compiler",
  "rerail-tape-format",
+ "rustc-hash",
 ]
 
 [[package]]

@@ -5984,6 +5984,12 @@ impl Parser {
         Ok(Parser { tier1: crate::native_cpu_block::compile(block)?, tier2: compile_cut(native, cut)?, wide: Wide::new(native, cut.clone()) })
     }
 
+    /// Tiers 1 and 2 of `native` cut by `cut`, compiled by the caller (`native_cpu_block::compile`,
+    /// `compile_cut`, timed apart), with the wide tier 2s `with_cut` keeps.
+    pub fn with_tiers(native: &Structure, cut: &crate::native_cpu_clusters::Cut, tier1: crate::native_cpu_block::CompiledBlock, tier2: CompiledStream) -> Self {
+        Parser { tier1, tier2, wide: Wide::new(native, cut.clone()) }
+    }
+
     /// Tiers 1 and 2 compiled elsewhere (a probe timing tier 2's compile): no wide tier 2.
     pub fn from_parts(tier1: crate::native_cpu_block::CompiledBlock, tier2: CompiledStream) -> Self {
         Parser { tier1, tier2, wide: None }
