@@ -99,6 +99,9 @@ The daemon handles due releases in order of their next attempt time.
 If a store is unavailable, the daemon saves a later attempt time for that release.
 Other releases can make progress while the store is unavailable.
 
+Before a test deletes a store, it waits for active upkeep steps to close their SQLite connections.
+It removes the store's upkeep jobs before it deletes the files.
+
 The revision is an input to selection and provenance. It is absent from an
 immutable tree record's cache key. That key includes the repository, object
 ID, and decoder version. Document caches continue to depend on bytes, grammar,

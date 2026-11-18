@@ -471,6 +471,7 @@ export interface NativeBinding {
   contentStoreFileName(): string;
   deleteAnalysisScope(storePath: string, value: string, directory: boolean, release?: string): void;
   existingDirectoryAnalysisOwnership(storePath: string, directory: string, home: string): boolean;
+  retireUpkeepUnder?(directory: string): void;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;
   /** Git's exclude stack for the worktree around `root`, re-reading the index as it changes; null outside any Git worktree. */

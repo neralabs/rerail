@@ -500,6 +500,14 @@ pub fn existing_directory_analysis_ownership(store_path: String, directory: Stri
         .map_err(|error| Error::from_reason(error.to_string()))
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
+#[napi]
+pub fn retire_upkeep_under(directory: String) {
+    let path = Path::new(&directory);
+    let root = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    rerail_accel::upkeep::retire_files_under(&root);
+}
+
 #[napi]
 pub fn delete_analysis_scope(store_path: String, value: String, directory: bool, release: Option<String>) -> Result<()> {
     use content_store::analysis_scope;

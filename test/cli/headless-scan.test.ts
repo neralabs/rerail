@@ -18,7 +18,10 @@ import { setUpTestRepository } from "../support/repository-rules.js";
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) {
+    loadNativeBinding().retireUpkeepUnder?.(root);
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 function git(cwd: string, ...args: string[]): string {
