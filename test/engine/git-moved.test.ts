@@ -17,7 +17,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 vi.mock("node:child_process", { spy: true });
 vi.mock("node:fs/promises", { spy: true });
 
-import { findGit, gitExecutable, gitHead, gitLivesOn, readGitBlobs, runGit, runGitAsync } from "../../src/engine/git.js";
+import { findGit, gitExecutable, gitHead, prepareDaemonGit, readGitBlobs, runGit, runGitAsync } from "../../src/engine/git.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
@@ -83,8 +83,9 @@ describe("the Git a process keeps, gone under it", () => {
     vi.stubEnv("PATH", [earlier, ...folders, ...(process.env.PATH === undefined ? [] : [process.env.PATH])].join(delimiter));
     vi.mocked(spawnSync).mockImplementation((file, args, options) => actual.spawnSync(program(file), args, options));
     vi.mocked(spawn).mockImplementation((file, args, options) => actual.spawn(program(file), args, options));
-    // As the daemon, which lives on: only such a process looks for Git again.
-    gitLivesOn();
+    // Readied as the daemon readies its Git: only a process that lives on looks for Git again, so the cases that find
+    // Git again fail should the daemon's start stop marking it so.
+    prepareDaemonGit(repository);
     expect(gitExecutable()).toBe(join(folders[0]!, GIT));
   });
 
