@@ -20,6 +20,7 @@ import {
   type EngineGitStarts,
   type EngineStartedGit,
   type GitProcess,
+  type GitRunLimits,
 } from "../../src/engine/git-start.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -365,6 +366,16 @@ describe.runIf(LINUX)("Git started through the engine in the states where it and
     }
     expect([errors, readFileSync(runs, "utf8"), vi.mocked(spawn).mock.calls.length]).toEqual([[{ code: undefined }, { code: "ERR_INVALID_FD_TYPE" }], "ran\nran\n", 0]);
   }, 30_000);
+
+  it("runs a blocking Git with a maxBuffer or a timeout past the engine's 32 bits as spawnSync runs it", () => {
+    // 0 and a fraction too: spawnSync reads each limit's 0 in its own way, and refuses a time limit with a fraction.
+    const limits: GitRunLimits[] = [Infinity, 2 ** 32, 2 ** 32 + 1, -1, Number.NaN, 0, 1.5].flatMap(limit => [{ maxBuffer: limit }, { timeout: limit }]);
+    // The script runs on after it prints, so a run its output limit ends takes the SIGTERM whichever start ran it.
+    const answers = (): unknown[] => limits.map(limit => thrown(() => runGitSync("/bin/sh", ["-c", "echo ran; exec sleep 0.3"], process.env, limit)));
+    const throughNode = answers();
+    expect(startGitWithoutCopying(loadNativeBinding)).toBe(true);
+    expect(answers()).toEqual(throughNode);
+  });
 
   it("ends a blocking Git and says why when the engine's wait on its output fails, as spawnSync ends a run whose read fails", () => {
     const throughEngine = blockingRunsThroughEngine("poll-fails", tmpdir());

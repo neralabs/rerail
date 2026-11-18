@@ -177,19 +177,48 @@ export function runGitSync(executable: string, args: readonly string[], env: Nod
 
 /**
  * The engine's run as `spawnSync` answers it, or undefined when `spawnSync` should run Git: a program named without a
- * folder, and a run the engine refused before it started anything. What follows Git's run (its answer reaching
- * JavaScript, its output becoming strings) is outside the fallback: a throw there is thrown on, as `spawnSync`'s own
- * throws when its output cannot become a string, and Git has run once.
+ * folder, limits the engine's parameters cannot hold ({@link engineLimits}), and a run the engine refused before it
+ * started anything. What follows Git's run (its answer reaching JavaScript, its output becoming strings) is outside the
+ * fallback: a throw there is thrown on, as `spawnSync`'s own throws when its output cannot become a string, and Git has
+ * run once.
  */
 function ranByEngine(starts: Starts, executable: string, args: readonly string[], env: NodeJS.ProcessEnv, limits: GitRunLimits): GitRunResult | undefined {
-  if (!executable.includes("/")) return undefined;
+  const held = engineLimits(limits);
+  if (!executable.includes("/") || held === undefined) return undefined;
   let ran: EngineGitRun;
   try {
-    ran = starts.runGit(executable, [...args], environment(env), limits.timeout || undefined, limits.maxBuffer ?? SPAWN_SYNC_MAX_BUFFER);
+    ran = starts.runGit(executable, [...args], environment(env), ...held);
   } catch (error) {
     return refusedByEngine(error, "runGit");
   }
   return answerOf(ran, executable, args);
+}
+
+/** The largest number the engine's `u32` parameters hold. */
+const U32_MAX = 0xffff_ffff;
+
+/** True for a number from 0 to {@link U32_MAX}, which N-API hands a `u32` parameter as it is; false for NaN. */
+function inU32(limit: number): boolean {
+  return limit >= 0 && limit <= U32_MAX;
+}
+
+/**
+ * `limits` as the engine takes them, a time limit (undefined for none, as `spawnSync` reads 0) and an output limit, or
+ * undefined when either does not fit its `u32` and `spawnSync` should take them, which runs Git with what it accepts and
+ * refuses the rest as it always has. N-API would make Infinity or NaN 0 and wrap a number of 2^32 or more, so
+ * `maxBuffer: Infinity`, which spawnSync takes as no limit, would end every run at its first byte; so would 0, which it
+ * takes as no limit too. A time limit fits when it is an integer from 0 to 2^32 - 1 ms; an output limit when it is
+ * above 0 and at most 2^32 - 1, its fraction dropped, which passes and fails the same byte counts.
+ */
+function engineLimits({ timeout, maxBuffer = SPAWN_SYNC_MAX_BUFFER }: GitRunLimits): [number | undefined, number] | undefined {
+  const timeoutMs = engineTimeout(timeout);
+  return timeoutMs === null || maxBuffer === 0 || !inU32(maxBuffer) ? undefined : [timeoutMs, maxBuffer];
+}
+
+/** `timeout` as the engine takes it: undefined for none (absent or 0), null when it is not an integer it holds. */
+function engineTimeout(timeout: number | undefined): number | undefined | null {
+  if (timeout === undefined || timeout === 0) return undefined;
+  return Number.isInteger(timeout) && inU32(timeout) ? timeout : null;
 }
 
 /** The engine's run as `spawnSync` answers it. */
