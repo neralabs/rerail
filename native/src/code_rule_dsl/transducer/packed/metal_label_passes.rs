@@ -1234,6 +1234,11 @@ struct Runner<'a> {
     /// The anchors' leaf tests for the whole run (`size`), and their rows once read (`formulas`).
     run_leaves: Vec<u32>,
     run_leaf_rows: Option<MappedBuffer>,
+    /// `label_formula`'s scratch, one for the run: each level's formulas run after the last level's in the command
+    /// buffer, so they reuse it, and it grows where a level needs more, to `FORMULA_SCRATCH_BYTES` at most. A new one
+    /// each level counted toward the segment as an upload, so two levels of formulas ended the command buffer
+    /// (`SEGMENT_BYTES`; `the_wave_is_one_evaluation_on_metal`: 3 of them, 50 s against 0.9 s).
+    formula_scratch: Option<MappedBuffer>,
     /// The loop tier's stacks (`MICRO_POOL` of them), committed only as walks use them.
     stacks: Option<MappedBuffer>,
     /// The deep fused groups' stacks, one buffer for all of them: the groups run one after
@@ -1614,6 +1619,7 @@ fn encode(
         formula_stats: Vec::new(),
         run_leaves: Vec::new(),
         run_leaf_rows: None,
+        formula_scratch: None,
         stacks: kept.as_mut().and_then(|kept| kept.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone()))),
         group_stacks: [None, None, None, None, None],
         encoded: false,
@@ -2576,7 +2582,15 @@ impl Runner<'_> {
         let leaves = leaves.cloned().unwrap_or_else(|| own.as_ref().expect("the group's leaves").buffer.clone());
         let stride = depth as usize * region;
         let per = (FORMULA_SCRATCH_BYTES / 4 / stride).clamp(1, count);
-        let scratch = MappedBuffer::untouched::<u32>(self.device, stride * per)?;
+        if self.formula_scratch.as_ref().is_none_or(|scratch| (scratch.buffer.length() as usize) < 4 * stride * per) {
+            // Not an upload: one buffer for the run, at most `FORMULA_SCRATCH_BYTES`, as the stacks are.
+            let grown = MappedBuffer::untouched::<u32>(self.device, stride * per)?;
+            // The smaller one may still be read by the levels encoded before: it is kept with the command buffer.
+            if let Some(old) = self.formula_scratch.replace(grown) {
+                self.retained.push(old);
+            }
+        }
+        let scratch = self.formula_scratch.as_ref().expect("the formulas' scratch").buffer.clone();
         let docs = self.tapes.docs.buffer.clone();
         let head = self.tapes.supertypes.buffer.clone();
         let base = Shape { round: depth, recursive: region as u32, ..self.shape() };
@@ -2592,7 +2606,7 @@ impl Runner<'_> {
             encoder.set_label(KERNELS[FORMULA_KERNEL]);
             crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[FORMULA_KERNEL]), 1);
             encoder.set_compute_pipeline_state(&state);
-            for (index, buffer) in [&docs, &head, &headers, &words, rows, &scratch.buffer].into_iter().enumerate() {
+            for (index, buffer) in [&docs, &head, &headers, &words, rows, &scratch].into_iter().enumerate() {
                 encoder.set_buffer(index as u64, Some(buffer), 0);
             }
             encoder.set_bytes(6, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
@@ -2609,8 +2623,6 @@ impl Runner<'_> {
             self.outcome.dispatches += 1;
             self.split(KERNELS[FORMULA_KERNEL]);
         }
-        self.segment_bytes += scratch.buffer.length() as usize;
-        self.retained.push(scratch);
         if let Some(own) = own {
             self.segment_bytes += own.buffer.length() as usize;
             self.retained.push(own);
