@@ -113,7 +113,8 @@ fn capture_oldest(
     )
 }
 
-fn line_for(
+/// The line (from 0) source byte `byte` lies in (the batch's numbering): a search of the task's line starts.
+pub(super) fn line_for(
     function: &mut FunctionBuilder<'_>,
     task: cranelift_codegen::ir::Value,
     byte: cranelift_codegen::ir::Value,
