@@ -478,8 +478,11 @@ A daemon that runs but does not answer costs only the hooks that start in its fi
 event in `untaken-events` in the Rerail home and answers, and while such an event waits there each later hook leaves
 its own behind it at once without asking the daemon. A session's start still waits. As soon as the daemon reads again
 it checks those events as it checks any event, in the order their hooks met them and before any later event; what a
-check finds reaches the agent with the session's next answer, not with the hook that left the event. A tool's output
-is not kept with them. The folder keeps at most 256 events and 16 MiB, so what a daemon that reads again has to check
+check finds reaches the agent with the session's next answer, not with the hook that left the event. Rerail never saw
+such a tool call's files before it ran, so an edit is compared with what the session last saw of each file only when
+the file was last written before the call began; otherwise, as in a busy spell that starts with the session, the
+whole file the call left is checked, and a finding can name lines the call did not write. A tool's output is not kept
+with them. The folder keeps at most 256 events and 16 MiB, so what a daemon that reads again has to check
 is bounded; past that a hook's event is lost and the line above counts it. An entry there the daemon cannot read (a
 folder under an event's name, a file another user or program left, one another program holds open) counts once as
 an event it could not check, and is removed where it can be. While events wait, `rerail status` says
