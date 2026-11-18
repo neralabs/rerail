@@ -12765,11 +12765,15 @@ mod search_tests {
     /// generated programs.
     #[test]
     fn cyclic_relations_are_those_that_reach_themselves() {
-        let walked = |scc: &BTreeSet<String>, rules: &[&Rule]| -> BTreeSet<String> {
+        let walked = |scc: &BTreeSet<String>, v: &Version| -> BTreeSet<String> {
             let mut next: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-            for r in rules {
-                for a in r.body.iter().filter_map(Literal::atom).filter(|a| scc.contains(a.rel.as_str())) {
-                    next.entry(a.rel.as_str()).or_default().insert(r.head.rel.as_str());
+            for r in v.rules() {
+                for l in r.body() {
+                    if let super::super::program_image::Lit::Atom(a) = l.view()
+                        && scc.contains(v.rel_name(a.rel()))
+                    {
+                        next.entry(v.rel_name(a.rel())).or_default().insert(v.rel_name(r.head().rel()));
+                    }
                 }
             }
             scc.iter().filter(|start| {
@@ -12796,13 +12800,12 @@ mod search_tests {
                 }
             }
             text.push_str(&format!(".output {}\n", (0..n).map(|i| format!("r{i}")).collect::<Vec<_>>().join(",")));
-            let p = super::super::rr::parse(&text).unwrap();
+            let p = super::super::rr::parse_version(&text).unwrap();
             // The relations taken as one part (a superset of each strongly connected part), with base outside it.
             let scc: BTreeSet<String> = (0..n).map(|i| format!("r{i}")).collect();
-            let rules: Vec<&Rule> = p.rules.iter().collect();
-            let vs = body::Versions::of_placed(body::Placed::of_program(&p).unwrap());
-            let keys: Vec<RuleKey> = body::Versions::keys(0, p.rules.len()).collect();
-            assert_eq!(cyclic_relations(&vs, &scc, &keys), walked(&scc, &rules), "{text}");
+            let vs = body::Versions::of_placed(body::Placed::whole(p.clone()));
+            let keys: Vec<RuleKey> = body::Versions::keys(0, p.rules().count()).collect();
+            assert_eq!(cyclic_relations(&vs, &scc, &keys), walked(&scc, &p), "{text}");
         }
     }
 
@@ -12859,10 +12862,11 @@ mod search_tests {
     }
 
     /// A model of `prog` whose inputs have the rows and distinct values by column given.
-    fn model_with(prog: &Program, inputs: &[(&str, f64, &[f64])]) -> Model {
+    fn model_with(prog: &body::Placed, inputs: &[(&str, f64, &[f64])]) -> Model {
         let given = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
-        let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
-        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty(prog), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.into() };
+        let v = &prog.v;
+        let derived: HashSet<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
+        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&prog.fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.into() };
         model.stats.nodes = 1_000_000.0;
         for &(rel, rows, ndv) in inputs {
             model.stats.card.insert(rel.to_owned(), rows);
@@ -12879,7 +12883,7 @@ mod search_tests {
     /// which priced every unplaced join again (15% of `keeps::choose`).
     #[test]
     fn a_plans_step_rows_are_its_explain_records() {
-        let prog = crate::code_rule_dsl::logic::rr::parse(
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(
             ".decl a(x: number)\n.decl b(x: number, y: number)\n.decl c(y: number, z: number)\n.decl d(z: number, w: number)\n\
              .input a\n.input b\n.input c\n.input d\n.decl o(x: number, w: number)\n\
              o(x, w) :- a(x), b(x, y), c(y, z), d(z, w), !a(w), z != 3.\n\
@@ -12887,14 +12891,15 @@ mod search_tests {
              o(x, w) :- d(z, w), c(y, z), b(x, y), a(x).\n.output o\n",
         )
         .unwrap();
-        let model = model_with(&prog, &[("a", 50.0, &[50.0]), ("b", 100_000.0, &[1_000.0, 5_000.0]), ("c", 20_000.0, &[5_000.0, 300.0]), ("d", 9_000.0, &[300.0, 700.0])]);
+        let placed = body::Placed::whole(prog.clone());
+        let model = model_with(&placed, &[("a", 50.0, &[50.0]), ("b", 100_000.0, &[1_000.0, 5_000.0]), ("c", 20_000.0, &[5_000.0, 300.0]), ("d", 9_000.0, &[300.0, 700.0])]);
         let was = explaining(true);
-        for r in &prog.rules {
-            let made = body::alone(r).unwrap();
-            let b = body::nth(&made, 0);
+        for (k, rule) in prog.rules().enumerate() {
+            let b = body::nth(&prog, k);
+            let r = prog.show_rule(rule);
             for first in [None, Some(1)] {
-                let (plan, x) = model.plan_rule_explained(body::Placed::of_program(&prog).unwrap().fields().unwrap(), &b, first).unwrap();
-                let (lean, rows) = model.plan_rule_step_rows(body::Placed::of_program(&prog).unwrap().fields().unwrap(), &b, first).unwrap();
+                let (plan, x) = model.plan_rule_explained(placed.fields().unwrap(), &b, first).unwrap();
+                let (lean, rows) = model.plan_rule_step_rows(placed.fields().unwrap(), &b, first).unwrap();
                 let recorded: Vec<f64> = x.expect("explained").steps.iter().map(|s| s.rows).collect();
                 assert_eq!((b.shown(&lean.0), lean.1, lean.2), (b.shown(&plan.0), plan.1, plan.2), "{r}");
                 assert_eq!(rows, recorded, "{r} from {first:?}");

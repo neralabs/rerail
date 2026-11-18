@@ -621,8 +621,6 @@ fn analyses_agree(v: &Version, p: &Program) {
     let want: Vec<(String, String)> = p.answers.iter().flat_map(|(req, ps)| ps.iter().map(move |x| (x.clone(), req.clone()))).collect();
     let got: Vec<(String, String)> = about.produced().map(|(x, req)| (name(x), name(req))).collect();
     assert_eq!(got, want, "produced");
-    let produced: BTreeMap<String, String> = crate::code_rule_dsl::logic::answers::produced(p).into_iter().map(|(a, b)| (a.to_owned(), b.to_owned())).collect();
-    assert_eq!(got.into_iter().collect::<BTreeMap<_, _>>(), produced, "produced, by relation");
     // The composed path's, over the program's version, its components in the tree's order.
     let want = crate::code_rule_dsl::logic::plan::compose::accepts(&crate::code_rule_dsl::logic::plan::body::Placed::of_program(p).unwrap()).ok();
     let got = analyses::accepts(v, &about).ok();

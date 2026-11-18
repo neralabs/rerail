@@ -754,13 +754,16 @@ mod settings_tests {
         // Rows given to a program that declares `env`, and to no other (decision 0249).
         use crate::code_rule_dsl::logic::front::Value;
         let added = crate::code_rule_dsl::logic::plan::corpus::added::Added::settings(&settings);
-        let mut declares = crate::code_rule_dsl::logic::rr::parse(".decl env(key: symbol, value: symbol)\n").unwrap();
+        use crate::code_rule_dsl::logic::program_image::{Builder, fields::ProgramFields};
+        let mut declares = Builder::base();
+        declares.declare("env", &[("key", "symbol"), ("value", "symbol")]);
         added.add_to(&mut declares);
-        let rows: Vec<Vec<Value>> = declares.facts["env"].iter().map(|r| r.to_vec()).collect();
+        let rows: Vec<Vec<Value>> = declares.fact_rows("env").iter().map(|r| r.to_vec()).collect();
         assert_eq!(rows, [vec![Value::Str("quote".into()), Value::Str("a\"b".into())], vec![Value::Str("python.version".into()), Value::Str("3.13".into())]]);
-        let mut not = crate::code_rule_dsl::logic::rr::parse(".decl envy(x: symbol)\n").unwrap();
+        let mut not = Builder::base();
+        not.declare("envy", &[("x", "symbol")]);
         added.add_to(&mut not);
-        assert!(!not.facts.contains_key("env"));
+        assert!(!not.has_fact_rows("env"));
     }
 
     #[test]

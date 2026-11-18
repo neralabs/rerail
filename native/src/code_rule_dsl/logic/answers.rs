@@ -15,7 +15,7 @@
 //! Both passes are made on the program's version (decision 0241's form), reading its rules by their handles and its
 //! fields, never a tree.
 
-use super::front::{Edges, Program, tarjan};
+use super::front::{Edges, tarjan};
 use super::front::ast::Gate;
 use super::plan::body::Placed;
 use super::plan::fields::{Fields, FieldsData};
@@ -34,11 +34,6 @@ pub(in crate::code_rule_dsl) const HELD_BACK: &str = "rr_held_back:";
 /// joins only once they are bound.
 pub(in crate::code_rule_dsl) fn is_gate(rel: &str) -> bool {
     rel.starts_with("done_")
-}
-
-/// Every produced relation, with its request.
-pub fn produced(prog: &Program) -> BTreeMap<&str, &str> {
-    prog.answers.iter().flat_map(|(req, ps)| ps.iter().map(move |p| (p.as_str(), req.as_str()))).collect()
 }
 
 /// A term of `v`'s rule `r`, to write into a builder under `v`'s ids.
@@ -415,30 +410,29 @@ pub mod tests {
     /// `!seen(x)` inside a component that loads waits for its key's gate; the rule asking about it is its prefix.
     #[test]
     fn a_negation_inside_a_loading_component_is_gated_per_key() {
-        let prog = super::super::rr::parse(
+        let prog = super::super::rr::parse_version(
             ".decl want(x: symbol)\n.decl req(x: symbol)\n.decl got(x: symbol, y: symbol)\n.decl seen(x: symbol)\n.decl fresh(x: symbol)\n\
              want(\"a\").\nwant(y) :- got(_, y).\nseen(y) :- got(_, y).\nfresh(x) :- want(x), !seen(x).\nreq(x) :- fresh(x).\n",
         )
         .unwrap();
         let answers: BTreeMap<String, Vec<String>> = [("req".to_owned(), vec!["got".to_owned()])].into();
-        let lists = super::super::front::Lists::default();
-        let mut ungated = prog.clone();
-        ungated.answers = answers.clone();
-        assert!(super::super::front::strata(&ungated).is_err(), "ungated, the negation is inside the component");
-        let gated = gate(&Placed::of_program(&prog).unwrap(), &answers).unwrap();
-        // Checked on the tree the version is (a test's reading).
-        let tree = Placed::whole(gated.clone()).program(&lists).unwrap();
-        let (sccs, _) = super::super::front::strata(&tree).unwrap();
+        let mut ungated = Builder::on(&prog);
+        ungated.set_field(crate::code_rule_dsl::logic::program_facts::Field::Answers(&answers));
+        let (ungated, _) = ungated.finish().unwrap();
+        assert!(Placed::whole(ungated).components().is_err(), "ungated, the negation is inside the component");
+        let gated = gate(&Placed::whole(prog.clone()), &answers).unwrap();
+        let sccs = Placed::whole(gated.clone()).components().unwrap();
         let loading = sccs.iter().find(|s| s.contains("req")).unwrap();
         for rel in ["got", "want", "fresh", "seen", "ask_seen_b", "done_seen_b"] {
             assert!(loading.contains(rel), "{rel} in {loading:?}");
         }
-        let (done, g) = &tree.gates[0];
+        let gates = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::gates(&*gated);
+        let (done, g) = &gates[0];
         assert_eq!((done.as_str(), g.src.as_deref(), g.rel.as_str()), ("done_seen_b", Some("ask_seen_b"), "seen"));
         assert!(g.quiet.contains(&"req".to_owned()), "a request unanswered keeps the gate shut: {:?}", g.quiet);
-        let shown = super::super::rr::parse(".decl fresh(x: symbol)\n.decl shown(x: symbol)\nshown(x) :- fresh(x).\n").unwrap();
+        let shown = super::super::rr::parse_version(".decl fresh(x: symbol)\n.decl shown(x: symbol)\nshown(x) :- fresh(x).\n").unwrap();
         let mut b = Builder::on(&gated);
-        b.add(&shown.rules[0]).unwrap();
+        b.copy(&shown, shown.rules().next().unwrap());
         b.declare("shown", &[("x", "sym")]);
         let (with_shown, _) = b.finish().unwrap();
         let parts = split(&Placed::whole(with_shown.clone())).unwrap();

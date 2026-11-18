@@ -1508,7 +1508,7 @@ pub(in crate::code_rule_dsl) struct InFrames {
 /// The digest of `read` a derived relation records (t33 K4): as `known` has it (an input as the run bound it, a
 /// relation as derived or named), or, for the program's stated facts, their identity, which is the program's.
 /// Anything else (an answer the run binds by another way, as a load's) has none: what reads it is not current.
-fn read_digest(read: &str, known: &HashMap<String, u64>, derived: &BTreeSet<&String>, prog: &Placed, leaves: &crate::code_rule_dsl::logic::plan::Leaves<'_>) -> Option<u64> {
+fn read_digest(read: &str, known: &HashMap<String, u64>, derived: &BTreeSet<&String>, prog: &Placed, leaves: &crate::code_rule_dsl::logic::plan::Leaves) -> Option<u64> {
     if let Some(d) = known.get(read) {
         return Some(*d);
     }
@@ -2278,7 +2278,7 @@ impl Retained {
     }
 
     fn from_frame_snapshot(
-        store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &Placed, leaves: &crate::code_rule_dsl::logic::plan::Leaves<'_>,
+        store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &Placed, leaves: &crate::code_rule_dsl::logic::plan::Leaves,
         sccs: &[BTreeSet<String>], names: HashMap<String, FrameRel>, stored: HashMap<FrameRel, FrameStored>, bound: &HashMap<String, u64>,
     ) -> Result<Self> {
         let derived: BTreeSet<&String> = sccs.iter().flatten().collect();
