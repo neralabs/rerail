@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { closeSync, ftruncateSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs";
 import { mkdtemp, open, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { physicalPath } from "../../../../src/engine/catalog/checkout-control.js";
 import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
@@ -208,6 +208,21 @@ describe("every other folder, and every worktree whose files Git might read othe
     vi.unstubAllEnvs();
     vi.stubEnv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
     expect(expectGitsAnswers(join(root, "linked"), main)).toBe(2);
+  });
+});
+
+describe("GIT_CEILING_DIRECTORIES, which stops Git's search only above the folder whose own .git Git reads first", () => {
+  it("keeps Git's answer for a checkout asked twice and places its worktree from its files, even at the ceiling", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
+    const folders = [main, join(root, "linked")];
+    vi.stubEnv("GIT_CEILING_DIRECTORIES", [root, ...folders].join(delimiter));
+
+    expect(expectGitsAnswers(main, main)).toBe(1);
+    expect(expectGitsAnswers(join(root, "linked"), ...folders)).toBe(0);
+    expectGitsRegistries(...folders);
+    expect(folders.reduce((sum, folder) => sum + locateCalls(folder), 0)).toBe(1);
   });
 });
 

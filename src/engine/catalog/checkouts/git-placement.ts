@@ -51,14 +51,14 @@ export interface LinkedPlacement {
 
 /**
  * The environment variables that move Git's lookup away from the folder's own `.git` entry, or make Git refuse every
- * folder: with any of them set nothing is read from files or kept, and Git is asked each time.
+ * folder: with any of them set nothing is read from files or kept, and Git is asked each time. `GIT_CEILING_DIRECTORIES`
+ * is not one: it stops Git's search above a folder, and Git reads a folder's own `.git` entry before it looks above.
  */
 const LOOKUP_VARIABLES = [
   "GIT_DIR",
   "GIT_WORK_TREE",
   "GIT_COMMON_DIR",
   "GIT_OBJECT_DIRECTORY",
-  "GIT_CEILING_DIRECTORIES",
   "GIT_IMPLICIT_WORK_TREE",
   "GIT_TEST_ASSUME_DIFFERENT_OWNER",
 ];
