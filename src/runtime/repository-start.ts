@@ -1,9 +1,9 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { basename } from "node:path";
 import { and, asc, eq, getTableName, inArray, sql } from "drizzle-orm";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { rerailRunsIn, type CheckoutContext, type EffectiveRule, type RepositoryKey, type RepositoryStartState, type RepositoryStatus } from "../engine/catalog/repository-model.js";
-import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
+import { repositoryFolderName, repositoryIdentityLocation, worktreeRegistry } from "../engine/catalog/repository-identity.js";
 import {
   checkoutStatus,
   createCheckoutResolver,
@@ -175,6 +175,31 @@ export function isRerailStarted(workspace: string, databasePath = defaultRerailD
 }
 
 /** How start and stop name what they changed: the repository, or a worktree of it. */
+/**
+ * After a stop that did not cover the whole repository: how to stop Rerail in every checkout of it, when another
+ * recorded checkout (a worktree beside this one, or the main checkout) still runs; nothing otherwise.
+ */
+function otherCheckoutsLines(database: RerailDatabase, checkout: CheckoutContext, wholeRepository: boolean): string[] {
+  if (wholeRepository) return [];
+  const read = startStateReader(database);
+  const physical = (path: string): string | undefined => {
+    try {
+      return realpathSync(path);
+    } catch {
+      return undefined;
+    }
+  };
+  const here = physical(checkout.checkoutPath);
+  // Git's worktrees too: one no session has run in is not recorded, yet follows the repository and runs.
+  const candidates = new Set([
+    ...database.select({ path: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.repositoryKey, checkout.repositoryKey)).all().map(row => row.path),
+    ...(checkout.git ? worktreeRegistry(checkout.checkoutPath)?.worktrees ?? [] : []),
+  ].map(physical).filter(path => path !== undefined && path !== here));
+  if (![...candidates].some(path => read(path!) === "started")) return [];
+  const repository = repositoryFolderName(repositoryIdentityLocation(checkout.checkoutPath));
+  return [`  To stop it in every checkout of ${repository}: rerail stop --repository, or switch ${repository} off in the dashboard’s Settings.`];
+}
+
 export function checkoutName(workspace: string, wholeRepository: boolean): string {
   const location = repositoryIdentityLocation(workspace);
   const repository = repositoryFolderName(location);
@@ -323,6 +348,7 @@ export function stopRerail(workspace: string, io: RepositorySetupIo, options: Re
   const database = openRerailDatabase(databasePath);
   let previous: RepositoryStartState;
   let steered: readonly string[];
+  let others: string[];
   try {
     const known = lookupCheckout(database, workspace);
     previous = stateOf(checkoutStatus(database, known));
@@ -330,7 +356,9 @@ export function stopRerail(workspace: string, io: RepositorySetupIo, options: Re
       io.say(`○ Rerail has not been started in ${name}, so there is nothing to stop. Start it with ${startCommand}.`);
       return previous;
     }
-    setStarted(database, recordCheckout(database, workspace), false, wholeRepository);
+    const recorded = recordCheckout(database, workspace);
+    setStarted(database, recorded, false, wholeRepository);
+    others = otherCheckoutsLines(database, recorded, wholeRepository);
     const session = options.session;
     steered = session?.sessionId === undefined ? [] : sessionSteeredRules(database, session.host, session.sessionId);
   } finally {
@@ -339,6 +367,8 @@ export function stopRerail(workspace: string, io: RepositorySetupIo, options: Re
   io.say([
     `○ Rerail is stopped in ${name}. No rules run here, and nothing is logged.`,
     `  Start it again with ${startCommand}.`,
+    // Other checkouts of the repository still run: the whole-repository stop, and the dashboard's switch, reach them.
+    ...others,
     // The daemon serves every checkout and coding agent on the machine, so stopping one checkout leaves it running (#297).
     `  ${DAEMON_KEEPS_RUNNING}`,
     // Turning off one rule is something the person says to the coding agent, so a terminal is not offered it.

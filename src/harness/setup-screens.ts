@@ -609,7 +609,7 @@ function withoutRulesLines(names: readonly string[] | undefined, wouldFit: boole
   if (names === undefined || names.length === 0) return [];
   const one = names.length === 1;
   const has = one ? "has" : "have";
-  return [`  ${andList(names.map(clean))} ${wouldFit ? `would fit, but ${has}` : has} no rules yet, so set-up does not offer ${one ? "it" : "them"}.`];
+  return [`  ${andList(names.map(clean))} ${wouldFit ? `would be suggested, but ${has}` : has} no rules yet, so set-up does not offer ${one ? "it" : "them"}.`];
 }
 
 // Why no rule pack fits: labelled rows, each wrapped under its label.
@@ -821,7 +821,7 @@ export const PACKS_NOT_DOWNLOADED_ANSWERS = ["yes", "not-now"] as const;
 export function packsNotDownloadedQuestion(input: PacksNotDownloadedInput, lane: SetupLane): QuestionForm {
   const style = styleFor(lane);
   const repo = clean(input.repoName);
-  const headline = `Couldn’t download Rerail’s rule packs, so set-up can’t tell which fit ${repo}.`;
+  const headline = `Couldn’t download Rerail’s rule packs, so set-up can’t suggest rule packs for ${repo}.`;
   const shown = input.reasons.length > MAX_UNAVAILABLE_LINES ? input.reasons.slice(0, MAX_UNAVAILABLE_LINES - 1) : input.reasons;
   const more = input.reasons.length - shown.length;
   return {
@@ -1041,7 +1041,7 @@ function tipLines(agents: readonly CodingAgent[]): string[] {
     `    ${"Log".padEnd(MODE_WIDTH)}only record it, for you to review`,
     "  Change a rule’s mode in the dashboard.",
     "",
-    `  ${commandIn(agents, "rerail-create").padEnd(COMMAND_WIDTH)}write your own rule, in plain words`,
+    `  ${commandIn(agents, "rerail-create").padEnd(COMMAND_WIDTH)}write or change a rule, or get suggestions`,
     `  ${commandIn(agents, "rerail-stop").padEnd(COMMAND_WIDTH)}stop Rerail in this repo`,
     ...otherFormLines(agents, "rerail-create").map(line => `  ${line}`),
   ];
@@ -1195,7 +1195,7 @@ export function noRepoQuestion(input: NoRepoInput, lane: SetupLane): QuestionFor
     id: "no-repo",
     lead: [`${style.yellow("△")} No repo found here.  ${style.dim("Rerail needs one project to read.")}`],
     prompt: "Which project do you want to start with?",
-    trail: ["Rerail reads it on this computer only, to recommend rule packs."],
+    trail: ["Rerail reads it on this computer only, to suggest rule packs."],
     choices: [
       { answer: "folder", label: "Type the folder…", hint: "for example “~/code/acme-web”", args: [], input: folderInput("~/code/acme-web") },
       { answer: "skip", label: "Skip for now", hint: "start Rerail later, in a session", args: [SETUP_FLAGS.answer, "skip"] },

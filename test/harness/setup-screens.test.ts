@@ -612,7 +612,7 @@ describe("T6 / C6 summary", () => {
     expect(text).toContain("  Try it    Open a new agent session and type $rerail-show-me\n");
     expect(text).toContain("To add another repo, type $rerail-start there.");
     expect(text).toContain("  Type $rerail in any session for help and every command.");
-    expect(text).toContain("  $rerail-create   write your own rule, in plain words");
+    expect(text).toContain("  $rerail-create   write or change a rule, or get suggestions");
     expect(text).not.toMatch(/ \/rerail/u);
   });
 
@@ -674,7 +674,7 @@ describe("C6b tips", () => {
     expect(text).toContain("  When a rule is broken, Rerail can:\n    Steer   tell your agent, so it fixes it      most rules start here\n    Log     only record it, for you to review\n  Change a rule’s mode in the dashboard.");
     expect(text).not.toContain("Block");
     expect(text.match(/^ {2}\/rerail\S*/gm)).toEqual(["  /rerail-create", "  /rerail-stop"]);
-    expect(text).toContain("  /rerail-create   write your own rule, in plain words");
+    expect(text).toContain("  /rerail-create   write or change a rule, or get suggestions");
     expect(text).toContain("  /rerail-stop     stop Rerail in this repo");
   });
 
@@ -705,7 +705,7 @@ describe("E3 no repo here", () => {
     const text = stripAnsi(renderNoRepoQuestion({}, lane));
     expect(text).toContain("△ No repo found here.  Rerail needs one project to read.");
     expect(text).toContain("Which project do you want to start with?");
-    expect(text).toContain("Rerail reads it on this computer only, to recommend rule packs.");
+    expect(text).toContain("Rerail reads it on this computer only, to suggest rule packs.");
     expect(text).toMatch(/1\. Type the folder… +for example “~\/code\/acme-web”/);
     expect(text).toMatch(/2\. Skip for now +start Rerail later, in a session/);
     expect(text).not.toContain("pick rule packs");

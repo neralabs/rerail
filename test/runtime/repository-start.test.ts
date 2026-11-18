@@ -205,11 +205,16 @@ describe("repository start state", () => {
     expect(setUp.lines.join("\n")).toContain("● Rerail is on in acme-web · no rule packs on yet");
     expect(states()).toEqual({ main: "started", beside: "started", outer: "started", inner: "started" });
 
-    // A checkout stop reaches the worktrees inside it, not the ones beside it.
-    stopRerail(outer, recorder(), { databasePath });
+    // A checkout stop reaches the worktrees inside it, not the ones beside it, and says how to stop them all.
+    const everyCheckout = "  To stop it in every checkout of acme-web: rerail stop --repository, or switch acme-web off in the dashboard’s Settings.";
+    const outerStop = recorder();
+    stopRerail(outer, outerStop, { databasePath });
+    expect(outerStop.lines.join("\n")).toContain(everyCheckout);
     expect(states()).toEqual({ main: "started", beside: "started", outer: "stopped", inner: "stopped" });
     await startRerail(inner, recorder(), started(databasePath));
-    stopRerail(main, recorder(), { databasePath });
+    const mainStop = recorder();
+    stopRerail(main, mainStop, { databasePath });
+    expect(mainStop.lines.join("\n")).toContain(everyCheckout);
     // The main checkout's stop clears the settings inside it; the sibling worktree keeps following the repository.
     expect(states()).toEqual({ main: "stopped", beside: "started", outer: "stopped", inner: "stopped" });
     await startRerail(inner, recorder(), started(databasePath));
