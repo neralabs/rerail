@@ -622,12 +622,19 @@ export function mainInstanceHolderRuns(directory: string, pid: number, machine: 
 
 /**
  * What a reader of a state file may make of the daemon it records ({@link recordedDaemon}): it may be this user's and
- * be sent the capability (`alive`), it cannot be (`gone`), or its engine said nothing to the proof in time (`silent`).
+ * be sent the capability (`alive`), it cannot be (`gone`), or nothing proved either in time (`silent`): its engine said
+ * nothing to the proof, or had no proof to give and its process's start was not read.
  */
 export type RecordedDaemon = "alive" | "gone" | "silent";
 
 /** What an engine's answer to the proof makes of the daemon a Windows state records ({@link windowsRecordedDaemon}). */
-const PROOF_VERDICT: Readonly<Record<EngineProofAnswer, RecordedDaemon>> = { proved: "alive", refused: "gone", silent: "silent" };
+const PROOF_VERDICT: Readonly<Record<Exclude<EngineProofAnswer, "no-proof">, RecordedDaemon>> = { proved: "alive", refused: "gone", silent: "silent" };
+
+/**
+ * What the start of the process a Windows state names makes of the daemon it records, when its engine has no proof to
+ * give ({@link windowsRecordedDaemon}).
+ */
+const START_VERDICT: Readonly<Record<RecordedProcess, RecordedDaemon>> = { ours: "alive", "not-ours": "gone", unknown: "silent" };
 
 /**
  * Whether the daemon `state` records may still run, as this user's: the one check every reader of a state file makes
@@ -652,11 +659,20 @@ async function recordedDaemon(state: DaemonState, machine: DaemonMachine, timeou
  * this user's daemon, started from an elevated terminal or agent session. An engine silent for `timeoutMs` is `silent`:
  * a daemon busy in an audit is, and dropping its state for that would lose a daemon that still runs. A state without a
  * capability is sent none, and the pid and pipe decide.
+ *
+ * An engine of Rerail 0.1.4 or earlier has no proof to give (`no-proof`), nor has a listener without the proof's path
+ * on a gone daemon's pipe name. Then the start of the process holding the pid, read within what is left of `timeoutMs`,
+ * decides ({@link startVerdict}): a process keeps its pid for life, so one that started no later than the record's
+ * `startedAt` is the daemon that wrote it, and holds the recorded pipe and URL while it runs. One that started more than
+ * {@link START_CLOCK_SLACK_MS} later is another process, and a start not read, or within that slack, proves neither, so
+ * the state is kept and sent nothing.
  */
 async function windowsRecordedDaemon(state: DaemonState, signalable: boolean, machine: DaemonMachine, timeoutMs: number): Promise<RecordedDaemon> {
   if (!enginePipeExists(state, machine)) return "gone";
   if (state.accessToken === undefined) return signalable ? "alive" : "gone";
-  return PROOF_VERDICT[await machine.capabilityProof(state.kernelSocketPath, state.accessToken, timeoutMs)];
+  const deadline = Date.now() + timeoutMs;
+  const answer = await machine.capabilityProof(state.kernelSocketPath, state.accessToken, timeoutMs);
+  return answer === "no-proof" ? START_VERDICT[startVerdict(state, machine, deadline)] : PROOF_VERDICT[answer];
 }
 
 /**

@@ -452,8 +452,13 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   A recorded pid, whether this user may signal it or not, counts as the recorded daemon only when its engine pipe
   exists and the engine there proves it holds the capability `daemon.json` records, the challenge the engine start
   uses: Windows soon reuses a pid, often for another of this user's processes, and anyone can create the pipe's name.
-  Nothing goes to the recorded URL before that. An engine that does not answer the proof in time is taken for a busy
-  daemon: its state file is kept and the lookup reports it unresponsive, unless a fact proves the pid is another
+  Nothing goes to the recorded URL before that. An engine of Rerail 0.1.4 or earlier has no proof and answers the
+  challenge 404, as any listener without the proof's path does; then the process's creation time decides, read as
+  below within the lookup's limit: a pid that started no later than the `startedAt` that `daemon.json` records is the
+  daemon that wrote it, and gets the capability; one that started more than 10 s later is another process, and the
+  record is removed; one whose start is not read is sent nothing and kept as not answering. An engine that does not
+  answer the proof in time is taken for a busy daemon: its state file is kept and the lookup reports it unresponsive,
+  unless a fact proves the pid is another
   process (`recordedProcess`): it started more than 10 s after the `startedAt` that `daemon.json` records, or another
   process holds `locks/daemon.lock` as its recorded holder and started no later than that record was written. A start
   no later than `startedAt` makes the pid this home's daemon whatever the holder record says. Where the lock does not

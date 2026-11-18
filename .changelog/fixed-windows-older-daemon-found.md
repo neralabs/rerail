@@ -1,0 +1,1 @@
+On Windows, Rerail no longer loses a running daemon of 0.1.4 or earlier: `rerail status` deleted its record and said Rerail was not installed, and `rerail daemon stop` then said the daemon was not running and left it on. Both now find it, and the stop ends it.

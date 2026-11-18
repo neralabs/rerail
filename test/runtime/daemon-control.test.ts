@@ -772,6 +772,87 @@ describe("a state file Windows left behind", () => {
     expect(sent).toEqual(["capability"]);
   });
 
+  /** When the daemon of the records below stamped `startedAt`. */
+  const OLDER_STARTED_AT = 1_800_000_000_000;
+
+  /**
+   * A Windows machine where the daemon a state file records runs an engine of a release before the proof, which has no
+   * proof to give (`no-proof`), and whose process started at `started`; each start read's limit goes to `limits`.
+   */
+  function olderEngine(started: number | undefined, limits: number[] = []): DaemonMachine {
+    return {
+      ...windows([PIPE_NAME]),
+      capabilityProof: async () => "no-proof",
+      processStartedAt: (pid, timeoutMs) => {
+        limits.push(timeoutMs);
+        return pid === DEAD_PID ? started : undefined;
+      },
+    };
+  }
+
+  it("finds a daemon whose engine has no proof by when its process started, and sends it the capability only then", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", startedAt: OLDER_STARTED_AT });
+    const sent: Array<string | null> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: URL, init: RequestInit) => {
+      sent.push(new Headers(init.headers).get("x-rerail-access"));
+      return Response.json({ status: "ok", pid: DEAD_PID });
+    }));
+    // A process keeps its pid for life, so one that started before the record was stamped is the daemon that wrote it,
+    // and holds the port of the URL it recorded.
+    const limits: number[] = [];
+    await writeFile(stateFile, JSON.stringify(state));
+    expect(await lookupDaemon(home, olderEngine(OLDER_STARTED_AT - 600, limits))).toMatchObject({ status: "running", state: { pid: DEAD_PID } });
+    expect(sent).toEqual(["capability"]);
+    expect(existsSync(stateFile)).toBe(true);
+    // The start is read within what is left of the lookup's own limit.
+    expect(limits).toHaveLength(1);
+    expect(limits[0]).toBeGreaterThan(0);
+    expect(limits[0]).toBeLessThanOrEqual(2_000);
+    expect(await recordedDaemonAlive(state, olderEngine(OLDER_STARTED_AT - 600))).toBe(true);
+
+    // A process that took the pid once the daemon was gone started later: the record is stale, and nothing is sent.
+    sent.length = 0;
+    expect(await lookupDaemon(home, olderEngine(OLDER_STARTED_AT + 60_000))).toEqual({ status: "absent" });
+    expect(sent).toEqual([]);
+    expect(existsSync(stateFile)).toBe(false);
+
+    // A start that cannot be read proves neither: the record is kept, and nothing is sent.
+    await writeFile(stateFile, JSON.stringify(state));
+    expect(await lookupDaemon(home, olderEngine(undefined))).toEqual({ status: "unresponsive", state });
+    expect(await recordedDaemonAlive(state, olderEngine(undefined))).toBe(false);
+    expect(sent).toEqual([]);
+    expect(existsSync(stateFile)).toBe(true);
+  });
+
+  it("stops a daemon whose engine has no proof once its start shows it wrote the record", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", nativeToken: "native", startedAt: OLDER_STARTED_AT });
+    // A daemon of Rerail 0.1.4 or earlier answers its health probe and has no shutdown route.
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: URL) => {
+      const path = new URL(url).pathname;
+      asked.push(path);
+      return path === "/healthz" ? Response.json({ status: "ok", pid: DEAD_PID }) : new Response(null, { status: 404 });
+    }));
+    const signals: Array<string | number | undefined> = [];
+    let running = true;
+    const machine: DaemonMachine = {
+      ...olderEngine(OLDER_STARTED_AT - 600),
+      kill: (_pid, signal) => {
+        if (!running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        signals.push(signal);
+        if (signal === "SIGTERM") running = false;
+        return true;
+      },
+    };
+    await writeFile(stateFile, JSON.stringify(state));
+    expect(await stopDaemon(home, machine)).toBe("stopped");
+    expect(asked).toEqual(["/healthz", "/native/shutdown"]);
+    expect(signals.filter(signal => signal !== 0)).toEqual(["SIGTERM"]);
+    expect(existsSync(stateFile)).toBe(false);
+  });
+
   it("waits for a daemon whose engine is silent to the proof, as for a busy one, and sends it nothing", async () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", nativeToken: "native" });
