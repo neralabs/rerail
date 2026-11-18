@@ -102,3 +102,23 @@ fn a_checked_add_adds_only_what_a_rule_derives_now() {
     close(&db, "mn_h").unwrap();
     assert_eq!(unpadded(live(&held(&db, "mn_h").expect("held"))), vec![vec![1], vec![2]]);
 }
+
+/// A recheck reads only the rules whose heads can name the candidate: `h(1, x) :- a(x).  h(2, x) :- b(x).` with 5
+/// gone from `a` and `b` holding 5. The candidate (1, 5) is killed: `b`'s rule derives (2, 5), not it.
+#[test]
+fn a_recheck_takes_no_rule_whose_head_constants_differ_from_the_candidate() {
+    let db = connection();
+    let a0 = Arc::new(padded(&[&[5], &[6]], b"i"));
+    let a = Rel::based("mc_a", b"i", &a0, Some(&rel_of(&[&[5]], b"i"))).expect("few dead");
+    adopt(&db, "mc_a", Arc::new(InRel::moved(a)));
+    adopt(&db, "mc_b", Arc::new(rel_of(&[&[5]], b"i")));
+    adopt(&db, "mc_h_kept", Arc::new(padded(&[&[1, 5], &[1, 6], &[2, 5]], b"ii")));
+    let (v, r) = (|ver: &str, t: &str| format!("v:{ver}:{}", hex(t)), |t: &str| format!("r:{}", hex(t)));
+    let remove = format!("pos {} v0\nhead i:1 v0", v("m", "mc_a"));
+    let recheck_a = format!("pos {} v0\nhead i:1 v0", r("mc_a"));
+    let recheck_b = format!("pos {} v0\nhead i:2 v0", r("mc_b"));
+    open(&db, &format!("name mc_h\nrel mc_h ii base {} -\nnowrite\nremove 0 {}\nrecheck 0 {}\nrecheck 0 {}", hex("mc_h_kept"), hex(&remove), hex(&recheck_a), hex(&recheck_b))).unwrap();
+    run(&db, "mc_h", 0).unwrap();
+    close(&db, "mc_h").unwrap();
+    assert_eq!(unpadded(live(&held(&db, "mc_h").expect("held"))), vec![vec![1, 6], vec![2, 5]]);
+}

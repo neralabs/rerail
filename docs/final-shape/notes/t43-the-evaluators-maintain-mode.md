@@ -96,4 +96,22 @@ A session's relations stay in their blocks between runs; nothing moves to frames
   - A quiet recursive stratum plans no probes.
   - The recheck keeps the greedy bound-head order: no planner prices a bound head yet (Q116), and the lines report no
     work to the 0122 budget (Q116).
+- e1861f68b, stage 4.
+- Stage 5: relations kept in place between runs, surveyed; the mode widened.
+  - A session already keeps its part's relations in memory between runs (`Retained`, the session's cell). The mode
+    starts each from its kept rows in place (`Rel::based`), and its result is the next run's kept relation.
+  - The 459 "kept rows not in memory" fallbacks were all of a part's first run, which has nothing kept and no frames.
+    They are now named so ("nothing kept: its part's first run"), and are derived as before. A process with no
+    session reads its part from the frames, by design (K4).
+  - A relation a form maintained has no version, but its form derives the net deltas against the kept rows
+    (`r__minus`, `r__plus`). Its readers now take those, with its kept rows as old, as they take a changed input's
+    versions. Only deltas this run made count (`has_delta`), because the engine may still hold an earlier run's.
+    This took the session tests from 927 strata in the mode to 1095.
+  - Found and fixed on the way: a recheck took every rule of the head with the head's slots preset, but never
+    compared the head's constants. So `v("SEESE", i) :- …` "derived" the candidate `v("CYC", i)`, and it stayed.
+    That gave wrong findings in `the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_process`.
+    `MaintMode::derives` now skips a rule whose head constants (or repeated slots) cannot name the row. Unit test:
+    `a_recheck_takes_no_rule_whose_head_constants_differ_from_the_candidate`.
+  - Still derived again: the reach index (decision 0119) and its readers, as its tests expect.
+  - Still on forms: literals other than atoms and comparisons (30 in the session tests).
 

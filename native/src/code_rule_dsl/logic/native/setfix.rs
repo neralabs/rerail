@@ -1224,8 +1224,22 @@ struct MaintMode {
 impl MaintMode {
     /// Whether one of `head`'s rules derives `row` over the relations now.
     fn derives(&self, head: usize, row: &[i64], store: &Store, syms: &mut Interner, out: &mut Vec<i64>) -> Result<bool> {
-        for (_, j) in self.rechecks.iter().filter(|(h, _)| *h == head) {
-            let preset: Vec<(usize, i64)> = j.out.iter().zip(row).filter_map(|(t, &v)| match t { Term::Slot(s) => Some((*s, v)), _ => None }).collect();
+        'rules: for (_, j) in self.rechecks.iter().filter(|(h, _)| *h == head) {
+            // The rule's head must be able to name the row: its constants equal the row's values, a slot repeated
+            // the same value. Else it derives no such row (`v("CYC", i)` is not derived by `v("SEESE", i) :- …`).
+            let mut preset: Vec<(usize, i64)> = Vec::with_capacity(j.out.len());
+            for (t, &v) in j.out.iter().zip(row) {
+                match t {
+                    Term::Const(c) if *c != v => continue 'rules,
+                    Term::Const(_) => {}
+                    Term::Slot(s) => match preset.iter().find(|(x, _)| x == s) {
+                        Some(&(_, w)) if w != v => continue 'rules,
+                        Some(_) => {}
+                        None => preset.push((*s, v)),
+                    },
+                    Term::Cat(..) => return Err(err("the maintain mode: a recheck's head with a computed term")),
+                }
+            }
             out.clear();
             run_join_collect(j, store, syms, &preset, out)?;
             if !out.is_empty() {

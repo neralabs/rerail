@@ -7660,6 +7660,10 @@ impl<'a> Run<'a, '_> {
         if std::env::var("RERAIL_MAINTAIN_MODE").is_ok_and(|v| v == "off") {
             return Some("RERAIL_MAINTAIN_MODE=off".into());
         }
+        // Nothing kept: its part's first run (a cold run keeps nothing, and its part is read from no frame), derived.
+        if olds.is_empty() {
+            return Some("nothing kept: its part's first run".into());
+        }
         if olds.len() != scc.len() {
             return Some("its kept rows are not in memory".into());
         }
@@ -11783,8 +11787,21 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                     let olds: BTreeMap<String, Arc<super::native::component::InRel>> = scc.iter().filter_map(|r| m.kept(r).map(|k| (r.clone(), k))).collect();
                     // Its changed inputs' versions: the old rows the last run kept, and the deltas bound from the
                     // changed documents (`input_delta`).
-                    // A view of an input's columns has its input's, through its columns.
+                    // A view of an input's columns has its input's, through its columns. A relation a form maintained
+                    // (or the mode, whose versions are its own) has its kept rows as old, and the form's net deltas
+                    // (`r__minus :- r__del, !r__redo, !r__ins`, `r__plus :- r__ins, !r__old`) as minus and plus.
                     let ins: ModeInputs = moved.iter().filter_map(|r| {
+                        let formed = |s: &str| super::native::component::held(db, &format!("{r}__{s}"));
+                        // Only deltas this run made (`has_delta`): the engine may hold an earlier run's `r__minus`.
+                        if !f0.is_input(r)
+                            && m.has_delta(r)
+                            && super::native::component::held(db, r).is_some_and(|x| x.start().is_none())
+                            && let (Some(o), Some(mi), Some(pl)) = (m.kept(r), formed("minus"), formed("plus"))
+                        {
+                            let w = o.k;
+                            let cols = |x: &Arc<super::native::component::InRel>| x.source((0..w).map(|c| sql_col(r, c)).collect());
+                            return Some((r.clone(), ([cols(&o), cols(&mi), cols(&pl)], None)));
+                        }
                         let (base, cols) = if f0.is_input(r) {
                             (r.clone(), None)
                         } else {
