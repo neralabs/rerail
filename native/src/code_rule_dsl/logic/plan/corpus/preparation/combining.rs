@@ -430,6 +430,19 @@ impl ProgramPass for FoldOwn<'_> {
             let rows: Vec<Vec<Cell>> = renamed(f.demand().map(str::to_owned).collect()).iter().enumerate().map(|(k, r)| vec![p, Cell::Int(k as i64), Cell::Str(b.atom(r))]).collect();
             b.set_about_rows("demand", rows);
         }
+        // A request of a copy folded into its original serves the original (decision 0331), as the tree's `fold_own`
+        // renames the record's readers (`Program::rename_readers`).
+        let mut asked = super::prune::asked_of(v);
+        let mut renamed_any = false;
+        for readers in asked.values_mut().flatten() {
+            if readers.iter().any(|r| folded.contains_key(r)) {
+                *readers = std::mem::take(readers).into_iter().map(|r| folded.get(&r).cloned().unwrap_or(r)).collect();
+                renamed_any = true;
+            }
+        }
+        if renamed_any {
+            super::prune::set_asked(b, &asked);
+        }
         self.folded += folded.len() + sets.len();
         Ok(())
     }

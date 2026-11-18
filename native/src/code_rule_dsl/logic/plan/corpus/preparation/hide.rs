@@ -476,6 +476,40 @@ impl ProgramPass for Hide {
             }
             out.finish()?;
         }
+        // The request record (decision 0331), stated as the tree's hiding carries it (`Program::push_rule_from`): each
+        // rule of a request serves its source rule's readers, and a copy of a rule under another name reads what its
+        // source reads, so where its source's relation is a reader, so is the copy. Stated whole: these rules name no
+        // source, so the pipeline's carry takes the record from here.
+        let asked = super::prune::asked_of(v);
+        if !asked.is_empty() {
+            let mut by_rule: HashMap<RuleId, BTreeSet<String>> = HashMap::default();
+            for (req, readers) in &asked {
+                let Some(rel) = v.rel(req) else { continue };
+                let ids: Vec<RuleId> = v.heads(rel).map(|r| r.id()).collect();
+                if ids.len() == readers.len() {
+                    by_rule.extend(ids.into_iter().zip(readers.iter().cloned()));
+                }
+            }
+            let copies: BTreeSet<(String, String)> = rules
+                .iter()
+                .filter_map(|r| {
+                    let of = v.rel_name(v.rule(r.src)?.head().rel());
+                    (of != r.head).then(|| (of.to_owned(), r.head.clone()))
+                })
+                .collect();
+            let mut stated: BTreeMap<String, Vec<BTreeSet<String>>> = BTreeMap::new();
+            for (req, readers) in &asked {
+                let mine: Vec<BTreeSet<String>> = rules.iter().filter(|r| r.head == *req).map(|r| by_rule.get(&r.src).cloned().unwrap_or_else(|| BTreeSet::from([req.clone()]))).collect();
+                stated.insert(req.clone(), if mine.is_empty() { readers.clone() } else { mine });
+            }
+            for readers in stated.values_mut().flatten() {
+                let more: Vec<String> = copies.iter().filter(|(of, _)| readers.contains(of)).map(|(_, copy)| copy.clone()).collect();
+                readers.extend(more);
+            }
+            if stated != asked {
+                super::prune::set_asked(b, &stated);
+            }
+        }
         Ok(())
     }
 }

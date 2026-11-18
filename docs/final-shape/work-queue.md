@@ -3256,7 +3256,7 @@ and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q155, 
 - **Done** (2026-11-17, decision 0378): the documents frame records its granules; layouts and documents are made
   where first asked. ep2's edit: `kept_inputs` 0.077 s → 0.021 s, no documents frame decoded, rows as h1.
 
-### Q169. `a_parse_request_asks_only_for_the_strings_its_rule_reads`: the parts linked as versions are not the trees linked
+### Q169. (Done) `a_parse_request_asks_only_for_the_strings_its_rule_reads`: the parts linked as versions are not the trees linked
 
 Found 2026-11-18, at the roll-up's end (after the fold fix above, Q101). A debug build's check in `combine_tail`
 ("the parts linked as versions are the trees linked") fails. It fails the same at the hub's 8f11d22f4, before that fix
@@ -3266,6 +3266,20 @@ where the tree names `num_text`, `num_source`, `rr_agg75` and the annotation cop
 (`link::Versioned`, 0373's splice, the request copies) departs from the tree's. Ignored (this item) until then.
 
 - **Done when**: the test passes and the ignore is gone.
+- **Done** (2026-11-18): three places where the version's request record did not follow the tree's, found pass by
+  pass with the carry printed:
+  - **`hide`** wrote its rules with no source and stated no record, so the carry knew only the rules hide left as
+    they were (by content): 8 of `rr_value_req`'s 14 places fell back to the relation itself, and the guests' copies
+    of readers (`rr_in_annotation_0_version_index`) were not readers. It now states the record as the tree's hiding
+    carries it (`Program::push_rule_from`): each rule serves its source rule's readers, and a copy of a rule under
+    another name is a reader wherever its source's relation is one. (A carry rule for copies in every pass was tried
+    and refused: lowering writes helpers from readers' rules, `rr_ctx12`, which are no copies.)
+  - **`fold own guests' copies`** dropped the copies but left them in the record; the tree's `fold_own` renames them
+    to their originals (`rename_readers`). It now does.
+  - **`prune`** kept a reader it dropped in the record; the tree's takes it out where its request has readers left.
+    It now does.
+  Farm (M1 Max): the test passes, with 98 others (sessions, frames, hiding, preparation, program images, the request
+  record's tests, file_local, `str_answered_on_request_holds_the_eager_rows`).
 
 ### Q101. `corpus::tests::the_run_after_a_cold_one_writes_nothing` fails its warm run's strict check
 
