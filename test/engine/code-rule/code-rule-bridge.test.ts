@@ -2904,6 +2904,21 @@ describe("CodeRuleBridge and Git's own writes", () => {
     expect(auditGeneratedEdits).toHaveBeenCalledTimes(2);
   });
 
+  // No walk reads the `HEAD` of a checkout inside the session's folder until one finds a change in it. The reading of
+  // Git's verdicts that stands then keeps its `HEAD` as the checkout's first snapshot, which the restore is judged from.
+  it("still tells the auditor, in log mode, of a file it had changed that Git restored, in a checkout inside the session's folder", async () => {
+    const { root, nested, extra } = await nestedCheckout();
+    git(nested, "config", "core.autocrlf", "false");
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await shell(bridge, () => writeFile(join(nested, "src", "gone.py"), "gone\nours\nmine\n"));
+    await shell(bridge, () => git(nested, "restore", "src/gone.py"));
+    expect(auditGeneratedEdits.mock.calls.at(-1)?.[1]).toMatchObject({
+      mode: "log",
+      edits: [{ path: "lib/src/gone.py", language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\n" }],
+    });
+    expect(auditGeneratedEdits).toHaveBeenCalledTimes(2);
+  });
+
   it("audits nothing a merge wrote when it stopped on a conflict, and a later shell edit from the conflicted text", async () => {
     const root = await twoBranches();
     await writeFile(join(root, "src", "a.py"), "old\nours\n");
