@@ -393,7 +393,7 @@ fn the_hot_loop_carries_the_bytes_before_its_block() {
     }
 }
 
-/// Decision 0411: the hot loop's UTF-8 check and totals in simdjson's form.
+/// Decisions 0417 and 0418: the hot loop's UTF-8 check and totals in simdjson's form.
 /// - Lags 2 and 3 are made from the bytes 2 and 3 back, as simdjson's `prev2 >= 0xe0` of
 ///   `prev<2>(input)`: one `ext` of each lag a chunk, its compare after it.
 /// - The error vector is copied on no way through the loop: the only vector copy is the
@@ -417,6 +417,14 @@ fn the_hot_loop_keeps_simdjsons_utf8_and_error_registers() {
                 assert!(reader.starts_with("cmhs "), "{name}: `{}` read by `{reader}`, not compared", hot[i]);
             }
         }
+        // Decision 0418: the check's constants (its tables, `0xe0`, `0xf0`, `0x80`) are held in
+        // registers round the loop, as simdjson's: none is made between the first chunk's `prev`s
+        // and the last chunk's.
+        // Lags 2 and 3 are the check's alone; the first chunk's lag-1 lookups come 9 before.
+        let exts: Vec<usize> = (0..hot.len()).filter(|&i| hot[i].starts_with("ext v") && [", #14", ", #13"].iter().any(|k| hot[i].ends_with(k))).collect();
+        let (first, last) = (exts[0], exts[exts.len() - 1]);
+        let made: Vec<&String> = hot[first - 9..=last + 6].iter().filter(|l| l.starts_with("movi ") || l.starts_with("ldr q")).collect();
+        assert!(made.is_empty(), "{name}: constants made in the UTF-8 check: {made:?}");
         let copies: Vec<&String> = hot.iter().filter(|l| l.starts_with("mov v") && l.contains(".16b, v")).collect();
         assert!(copies.len() <= 1, "{name}: vector copies in the hot loop: {copies:?}");
         let stack = crate::clif_text::loop_costs(&hot).0;

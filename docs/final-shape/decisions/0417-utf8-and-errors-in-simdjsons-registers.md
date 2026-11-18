@@ -1,7 +1,8 @@
-# 0411: UTF-8 and errors in simdjson's registers
+# 0417: UTF-8 and errors in simdjson's registers
 
 Status: decided (the user, 2026-11-18: "please address these", the two items 0406 left).
-Follows 0405 and 0406.
+Follows 0405 and 0406. First numbered 0411, which Final-shape-quality's record has (commit
+44efa560b names it so).
 
 ## Intro
 
@@ -57,7 +58,7 @@ total's word is held to the block's end.
 took.** The others, which the full body made rightly, were lost: nine ladder steps differed
 from the interpreter.
 
-**Left: the constants.** The stretch builds six constants each block: `movi` of `0xe0`,
+**Left: the constants** (done in 0418). The stretch builds six constants each block: `movi` of `0xe0`,
 `0xf0` and `0x80`, and three table loads. simdjson keeps them in registers across its loop.
 Here Cranelift builds them where they are used: the mid-end's code motion is off (0069),
 because it hoists every vector constant and spills them. Holding just the UTF-8 check's six

@@ -1547,7 +1547,7 @@ impl<'a> Lanes<'a> {
                 // made as any chunk is; before a file they are zeros, read as no bits.
                 // A value that only `prev`s of this lag read, made from its own bytes: made from
                 // the bytes `k` back instead (`bytes`, an `ext` of the chunks in registers), as
-                // simdjson makes `prev2 >= 0xe0` from `prev<2>(input)` (decision 0411). An `ext`
+                // simdjson makes `prev2 >= 0xe0` from `prev<2>(input)` (decision 0417). An `ext`
                 // of its values would make it on five chunks, chunk 0 the fifth.
                 let lagged_only = lag == 0 && k < 16 && self.only_prev(o(a)) && reads_here(self.native, o(a), 0);
                 if !lagged_only && (c >= 2 || (c == 1 && lag == 0 && reads_here(self.native, o(a), 0))) {

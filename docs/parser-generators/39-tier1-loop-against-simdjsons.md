@@ -290,7 +290,7 @@ loop, reduced where the loop leaves, as simdjson's `error`.
 
 JSONC: 693 / 9 → 667 / 11.
 
-### simdjson's registers (0411)
+### simdjson's registers (0417)
 
 The four ORs a block were simdjson's four `error |=` already. What differed was the ASCII
 way's copy of the error vector, lags 2 and 3 compared before their `ext` (and chunk 0 compared
@@ -302,7 +302,7 @@ edge block remaking them.
 | `14-json` | Hot loop | Stack accesses | UTF-8 stretch |
 |---|---:|---:|---:|
 | After 0406 | 485 | 1 | 76 |
-| 0411 | **481** | **1** | **74** |
+| 0417 | **481** | **1** | **74** |
 | simdjson | | | 72 |
 
 JSONC: 667 / 11 → 651 / 7. A chunk of the stretch is simdjson's 16 instructions. The gap is the
@@ -310,6 +310,22 @@ six constants (`movi` of `0xe0`, `0xf0`, `0x80`, three table loads) built in the
 simdjson holds them in registers. The mid-end's code motion would hoist every constant and
 spill them (0069), so hoisting needs to choose which constants to hold, against the vector
 pressure of the number and string checks (peak 32).
+
+### The constants in registers (0418)
+
+The six constants are parameters of the hot body, made where the loop is entered and round
+the back edge, and made again on the way out of the cold edge part, which holds 37 vectors.
+Made at the function's entry, they were spilled there. The slow way also makes its error
+bytes first, so each chunk's `ext`s are made where read.
+
+| `14-json` | Hot loop | Stack accesses | UTF-8 stretch |
+|---|---:|---:|---:|
+| After 0417 | 481 | 1 | 74 |
+| 0418 | **475** | **1** | **68** |
+| simdjson | | | 72 |
+
+JSONC: 651 / 7 → 647 / 8. The stretch is the four chunks' 64 and four ORs. simdjson's 72
+includes its incomplete-sequence check, folded away here in a full block.
 
 ## Reproducing
 
