@@ -912,8 +912,10 @@ describe("source-scoped steers", () => {
           return await boundary;
         },
         close: async () => {
-          vi.useRealTimers();
           for (const workspace of attachments.workspaces) workspace.release();
+          // A boundary a regression left waiting on a faked bound answers before its runtime is disposed.
+          if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(60_000);
+          vi.useRealTimers();
           attachments.restore();
           for (const each of runtimes) await each.dispose();
           reader.close();
@@ -955,6 +957,18 @@ describe("source-scoped steers", () => {
       expect(test.rulesPending()).toEqual([]);
     }, 30_000);
 
+    it("waits at its first shell command for its rules, so what the command wrote is steered at the command's own result", async () => {
+      const test = await reopenedFixture();
+      await test.reopen();
+      const call = test.call("command", "Bash", { command: "printf 'NEEDLE\\n' > ran.py" });
+      test.attachments.workspaces[1]!.release();
+      expect(await call).toEqual([]);
+      // The command runs once its call is answered.
+      await writeFile(join(test.root, "ran.py"), "NEEDLE\n");
+      expect(await test.result("command", "Bash")).toEqual([needle("ran.py")]);
+      expect(test.rulesPending()).toEqual([]);
+    }, 30_000);
+
     it("waits its bound out once: no later tool call or result of the opening waits again, and what they skipped is checked once the rules open", async () => {
       const test = await reopenedFixture();
       await test.reopen();
@@ -968,9 +982,15 @@ describe("source-scoped steers", () => {
       expect(await test.write("second", "second.py")).toEqual([]);
       await writeFile(join(test.root, "second.py"), "NEEDLE\n");
       expect(await test.result("second", "Write")).toEqual([]);
+      expect(await test.call("command", "Bash", { command: "make" })).toEqual([]);
+      expect(await test.result("command", "Bash")).toEqual([]);
       vi.useRealTimers();
-      // The edits went without the checks of their results, and the history counts each; the read skipped none.
-      expect(test.rulesPending()).toEqual([{ boundary: "call" }, { boundary: "result" }, { boundary: "call" }, { boundary: "result" }]);
+      // The edits and the command went without the checks of their results, and the history counts each; the read
+      // skipped none.
+      expect(test.rulesPending()).toEqual([
+        { boundary: "call" }, { boundary: "result" }, { boundary: "call" }, { boundary: "result" },
+        { boundary: "call" }, { boundary: "result" },
+      ]);
       test.attachments.workspaces[1]!.release();
       await test.runtime.codeRulesOpened("reopened");
       // The first pass once they are open checks both edits, and the turn's end carries their steers.
