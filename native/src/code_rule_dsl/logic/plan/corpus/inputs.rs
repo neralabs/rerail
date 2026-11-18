@@ -179,7 +179,7 @@ fn unreadable(detail: impl std::fmt::Display) -> Failure { Failure { kind: "unre
 /// The tree of `rev` in the repository that holds `root`, and `root`'s path inside it.
 fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::ObjectId, PathBuf)> {
     let repo = gix::discover(root).map_err(|e| unreadable(format!("no repository holds {}: {e}", root.display())))?;
-    // `git_rev("base", …)`: the merge base of HEAD and `rev`, as core.rr defines it.
+    // `git_rev("base", …)`: the merge base of HEAD and `rev`, as core.rerail defines it.
     let (revs, _) = crate::code_rule_dsl::logic::strings::git::revisions(root, Some(rev)).map_err(unreadable)?;
     let base = revs.iter().find(|(n, _)| n == "base").map(|(_, id)| id.clone()).unwrap_or_default();
     let resolve = || -> std::result::Result<gix::ObjectId, Box<dyn std::error::Error + Send + Sync>> {

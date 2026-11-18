@@ -9,6 +9,7 @@ import { failed } from "../format.js";
 import { loadRecommendations } from "../poll.js";
 import { invalidate, toast } from "../shell.js";
 import { CREATE_COMMAND } from "../render/rules.js";
+import { commandBlock } from "../render/command.js";
 
 export const needs = [];
 
@@ -21,10 +22,6 @@ export function createSuggestions(recommendations, attachedPacks, packs) {
     seen.add(packId);
     return [{ packId, name: pack.name, reason }];
   });
-}
-
-function commandBlock(command) {
-  return h("div.cmd", null, h("code", null, command), h("button.btn.sm.solid", { "data-act": "cmdcopy", "data-i": command }, icon("copy"), "Copy"));
 }
 
 function placesToStart(suggestions) {

@@ -25,7 +25,7 @@
 //! in a test file) are left out: a test sets them on its own thread.
 //!
 //! The tests below read the source: every thread-local is listed, every listed one exists, and every **Carried**
-//! one is taken by [`Carry::here`]. `scripts/check/check-thread-state.py` refuses a commit that adds an unlisted
+//! one is taken by [`Carry::here`]. `scripts/check/check_thread_state.py` refuses a commit that adds an unlisted
 //! thread-local, before it is made.
 
 use std::any::Any;

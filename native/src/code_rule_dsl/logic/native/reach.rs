@@ -7,7 +7,7 @@
 //! r(x, z) :- r(x, y), edge(y, z).   // the one recursive rule
 //! ```
 //!
-//! is each start `x`'s set of nodes reachable over `edge` (none or more steps) from its seeds. `components.rr`'s
+//! is each start `x`'s set of nodes reachable over `edge` (none or more steps) from its seeds. `components.rerail`'s
 //! `rr_cx_reach` is one: 54 files' imports reach 6.3 M pairs, which as rows cost 220 MB and the cross-file part's
 //! whole keep budget. Here the graph is condensed into its strongly connected components, each component's closure
 //! is one bitmap (`roaring`) over the nodes, made from its successors' (sinks first), and a start holds the union of

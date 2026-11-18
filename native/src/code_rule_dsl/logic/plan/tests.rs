@@ -317,7 +317,7 @@ fn facts() -> std::path::PathBuf {
 
 /// T's `rdl.py sql` front: prune, demand (adornment for `.demand *`), prune.
 fn program(name: &str) -> Program {
-    let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rr"))).unwrap();
+    let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rerail"))).unwrap();
     let p = prune(parse(&src).unwrap());
     let options = Options::default();
     prune(if p.demand.iter().any(|d| d == "*") { magic_adorn(p, &options) } else { magic_sets(p, &options) }.unwrap())
@@ -719,13 +719,13 @@ fn t_programs_run_natively_over_atoms_like_t() {
 /// T's outputs on T's facts, through the same front (prune, magic sets, prune). Their plans may differ from
 /// T's; their outputs may not.
 #[test]
-#[ignore = "O95: T's facts predate relations calls.rr now reads (`value`, `str`, …); the facts need them, empty or rebuilt"]
+#[ignore = "O95: T's facts predate relations calls.rerail now reads (`value`, `str`, …); the facts need them, empty or rebuilt"]
 fn product_programs_derive_t_outputs() {
     let facts = facts();
-    // T's facts predate `strprefix` (which calls.rr's type relations read, decision 0047): empty here, so every
+    // T's facts predate `strprefix` (which calls.rerail's type relations read, decision 0047): empty here, so every
     // string is str. Likewise the guests (`parsed`, `host_node`, decision 0055): no string is parsed. No T output
-    // reads them. Nor do they have `name`, `str`, `value` and `op_at` (core.rr), which calls.rr reads through
-    // python/conditions.rr (Typing's B6, B10): empty here, so no `sys.version_info` or `sys.platform` test is
+    // reads them. Nor do they have `name`, `str`, `value` and `op_at` (core.rerail), which calls.rerail reads through
+    // python/conditions.rerail (Typing's B6, B10): empty here, so no `sys.version_info` or `sys.platform` test is
     // decided and every branch is taken, as T assumed.
     Connection::open(&facts).unwrap().execute_batch(
         "CREATE TABLE strprefix(n INTEGER, s TEXT); INSERT INTO stat_meta VALUES ('rows.strprefix', 0);
@@ -745,7 +745,7 @@ fn product_programs_derive_t_outputs() {
     ).unwrap();
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
-        let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
+        let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rerail"))).unwrap();
         let mut p = prune(parse(&src).unwrap());
         // T has no library stage (decision 0059): with no `stage` fact, the rules it opens are dead, and their
         // unbound reads of demanded relations (`need_attr(c, a) :- stage("library"), found(c, a, _)`) are not asked.
@@ -758,7 +758,7 @@ fn product_programs_derive_t_outputs() {
         }
         let golden = root().join(format!("plan/golden/{name}"));
         let got = run_sql(&p, &facts).unwrap_or_else(|e| panic!("{name}: {e}"));
-        // The product's own outputs (calls.rr's type relations, decision 0047) are not T's: they have no golden.
+        // The product's own outputs (calls.rerail's type relations, decision 0047) are not T's: they have no golden.
         for (rel, rows) in got.shown().iter().filter(|(rel, _)| golden.join(format!("{rel}.csv")).exists()) {
             let expected = golden_rows(&golden, rel);
             let expected: Vec<&str> = expected.iter().map(String::as_str).collect();
@@ -806,7 +806,7 @@ fn own_ingestion_derives_what_t_facts_do() {
     };
     let read = |out: &std::path::Path| output::Outputs::open(out).unwrap_or_else(|e| panic!("{}: {e}", out.display()));
     for name in ["workload", "calls"] {
-        let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rr"))).unwrap();
+        let src = crate::code_rule_dsl::logic::settings::program_text(&root().join(format!("../typing/programs/{name}.rerail"))).unwrap();
         let with_t = dir.join(format!("out-{name}-t"));
         let report = corpus::run(&src, &dir, Some(&facts), &with_t, "program", Binding::Cpu, 1 << 18).unwrap();
         assert!(report.rows.values().any(|&n| n > 0), "{name}: no outputs");
@@ -847,7 +847,7 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     write("decl/make.pyi", "# rerail.types/v1\n# module: vendor.core\ndef make() -> str: ...\n");
     write("app/main.py", "from vendor import version\nfrom vendor.core import make\nimport other\na = version()\nb = make()\nc = other.thing()\n");
     write("decl/other.pyi", "# rerail.types/v1\n# module: other\ndef thing() -> bytes | None: ...\n");
-    let src = std::fs::read_to_string(root().join("../typing/programs/workload.rr")).unwrap();
+    let src = std::fs::read_to_string(root().join("../typing/programs/workload.rerail")).unwrap();
     let cache = dir.join("cache");
 
     let summarize = Typing { summarize: Some(cache.clone()), declarations: vec![dir.join("decl/make.pyi")], ..Default::default() };
@@ -949,12 +949,12 @@ fn open_files() -> Vec<std::path::PathBuf> {
 fn a_second_corpus_run_deletes_and_creates_its_store_again() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("restore");
     std::fs::create_dir_all(&dir).unwrap();
-    let status = std::process::Command::new(std::env::current_exe().unwrap())
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
         .args(["--ignored", "--exact", "code_rule_dsl::logic::plan::tests::corpus_store_child", "--nocapture", "--test-threads=1"])
         .env(CORPUS_STORE_CHILD, &dir)
-        .env("RERAIL_TAPE_CACHE", "off")
-        .output()
-        .unwrap();
+        .env("RERAIL_TAPE_CACHE", "off");
+    let status = super::corpus::switches::started(|| child.output()).unwrap();
     // The child's own output, shown when it fails: a failure beside other tests says nothing without it (Q42).
     assert!(
         status.status.success() && dir.join("done").exists(),
@@ -1003,7 +1003,7 @@ async_in_fts(s) :- doc(d, p, _), glob("impl/*/fts/**", p), node(d, n, "identifie
 }
 
 /// The tree axes (decision 0036): `inside(n, a, set)` holds every ancestor of `n` whose kind is in the set, not
-/// only the nearest; `has(a, n, set)` every descendant of `a` whose kind is in the set (`core.rr`: the set tests the
+/// only the nearest; `has(a, n, set)` every descendant of `a` whose kind is in the set (`core.rerail`: the set tests the
 /// descendant); both negate.
 #[test]
 fn rules_read_inside_and_has_as_tape_relations() {
@@ -1224,7 +1224,7 @@ low(@lower(cat(a, " ", b))) :- w(a, b).
     assert_eq!(got["low"], [["x y"], ["àé i\u{307} ας"]]);
 }
 
-/// `@dot("", b)` is `b` (`core.rr`), built and split: a split of a bound whole gives `""` and the whole, and each
+/// `@dot("", b)` is `b` (`core.rerail`), built and split: a split of a bound whole gives `""` and the whole, and each
 /// cut at a "." with a part before it; with a bound part, the other. Recursive (the native set engine) and not.
 #[test]
 fn dot_of_the_empty_name_is_the_name() {
@@ -1307,8 +1307,8 @@ found(x, i, a, b, c) :- s(x), match_all("(?<c>x+)", x, i, a, b).
     assert!(found(["é xx xx", "1", "5", "7", "xx"]) && found(["x", "0", "0", "1", "x"]), "{:?}", got["found"]);
 }
 
-/// A head's `@dot` with a computed part (`walk_qualname(f, @dot(p, @nfkc(x)))`, data-layer `purity-ast.rr`), and an
-/// ordered comparison with an extremum's value (`k < v`, `v = min l : {…}`, `post-op-side-effects.rr`), on both
+/// A head's `@dot` with a computed part (`walk_qualname(f, @dot(p, @nfkc(x)))`, data-layer `purity-ast.rerail`), and an
+/// ordered comparison with an extremum's value (`k < v`, `v = min l : {…}`, `post-op-side-effects.rerail`), on both
 /// paths. The native engine declined both: the head's part was not a slot, and `v` had no type.
 #[test]
 fn a_heads_computed_part_and_an_extremums_comparison_run_natively() {
@@ -1336,7 +1336,7 @@ late(f, k) :- r(f, k), v = max x : { l(f, x) }, k >= v.
 
 // ---- violations ----
 
-/// A `.violation` at a `loc` (`core.rr`): a node's finding is at its document's path and line; a `@place(path,
+/// A `.violation` at a `loc` (`core.rerail`): a node's finding is at its document's path and line; a `@place(path,
 /// line)`'s at that path and line, line 0 for the file itself and a path that need not exist; a place passed through
 /// another relation keeps its path and line.
 #[test]
@@ -1744,7 +1744,7 @@ chained(a, top) :- child(a, b, _), child(b, top, _).
     assert_eq!(got[3], got[2]);
 }
 
-/// `s` as a `.rr` string literal (`rr::syntax`'s escapes: `\"`, `\\`, `\n`, `\t`, `\r`, `\u{…}`).
+/// `s` as a `.rerail` string literal (`rr::syntax`'s escapes: `\"`, `\\`, `\n`, `\t`, `\r`, `\u{…}`).
 fn rr_str(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
@@ -2207,7 +2207,7 @@ fn an_equality_binds_its_right_side_before_the_next_join() {
 }
 
 /// A concatenation given its inverse and a function made a join key (`simplify::concat_inverses`, `function_keys`)
-/// derive the rows the rule did: a module's stub file found from its head (`modules.rr`'s `py_try` "stubs"), and
+/// derive the rows the rule did: a module's stub file found from its head (`modules.rerail`'s `py_try` "stubs"), and
 /// the rest of a name by `substr`, which runs natively.
 #[test]
 fn join_keys_from_functions_derive_the_rules_rows() {

@@ -12,10 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Weak};
 
 /// A `utils` or `constraints` object: names to ast rules, in name order.
-pub fn rule_map<'a>(
-    value: Option<&'a Value>,
-    path: &str,
-) -> Result<BTreeMap<String, &'a Value>> {
+pub fn rule_map<'a>(value: Option<&'a Value>, path: &str) -> Result<BTreeMap<String, &'a Value>> {
     let Some(value) = value else {
         return Ok(BTreeMap::new());
     };
@@ -58,10 +55,7 @@ pub fn is_metavariable_name(name: &str) -> bool {
 
 /// A `utils` object as utility definitions, ids checked. A utility is a rule, or `{ params, rule }`:
 /// capture names its callers bind to their own (`{ "matches": { "id": { "P": "$C" } } }`).
-pub fn util_map<'a>(
-    value: Option<&'a Value>,
-    path: &str,
-) -> Result<BTreeMap<String, UtilDef<'a>>> {
+pub fn util_map<'a>(value: Option<&'a Value>, path: &str) -> Result<BTreeMap<String, UtilDef<'a>>> {
     let mut utils = BTreeMap::new();
     for (id, rule) in rule_map(value, path)? {
         if id.contains(['(', ')', ',', '=']) {

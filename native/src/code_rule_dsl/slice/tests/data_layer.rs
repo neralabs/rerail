@@ -3,7 +3,7 @@
 //! time and memory, and (`RERAIL_DL_W=1`) its keys against W's engine on the same files.
 //!
 //!   RERAIL_DL_POLICY=<policy.json>[:<policy.json>…] RERAIL_DL_ROOT=<dir>
-//!   [RERAIL_DL_LOGIC=<program.rr>] [RERAIL_DL_BACKEND=cpu|metal] [RERAIL_DL_W=1] [RERAIL_PROF=1]
+//!   [RERAIL_DL_LOGIC=<program.rerail>] [RERAIL_DL_BACKEND=cpu|metal] [RERAIL_DL_W=1] [RERAIL_PROF=1]
 //!   cargo test --profile profiling --lib -- slice::tests::data_layer::data_layer_bench --ignored --nocapture
 //!
 //! A clause the path cannot run is reported with its reason, and left out of the policy the slice
@@ -213,10 +213,10 @@ fn data_layer_bench() {
 }
 
 /// The data-layer fixtures on the final shape's path: each recorded pytest event of one check
-/// (`RERAIL_DL_RECORDING`, `RERAIL_DL_CHECK`, e.g. `gate/data-layer/fixtures/host/data-layer-port/
-/// batch-06-recording.json` and `serverplan_quality`) is a root of its files, audited cold with the
-/// policy compiled at the event's options; its keys (code, path, line) are compared with the
-/// recorded findings. Prints per entry point how many events agree.
+/// (`RERAIL_DL_RECORDING`, `RERAIL_DL_CHECK`, e.g. `packs/data-layer/upstream/lint/authored/fixtures/host/
+/// data-layer-port/batch-06-recording.json`, fetched by `npm run fixtures:pull`, and `serverplan_quality`)
+/// is a root of its files, audited cold with the policy compiled at the event's options; its keys (code,
+/// path, line) are compared with the recorded findings. Prints per entry point how many events agree.
 #[test]
 #[ignore = "the data-layer fixtures; RERAIL_DL_POLICY, RERAIL_DL_RECORDING, RERAIL_DL_CHECK, --ignored --nocapture"]
 fn data_layer_fixtures() {

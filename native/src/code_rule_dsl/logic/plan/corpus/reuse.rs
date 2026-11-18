@@ -139,7 +139,7 @@ fn settings(root: &Path, options: &serde_json::Value) -> Result<super::added::Ad
 /// The library files the programs include, each with its digest now: the record's `rule` entries.
 ///
 /// Read off phase 0's graphs (decision 0246): each text's includes (`Graph::digests`) and the phase programs its
-/// declarations name, with theirs (`Graph::rules`), which `bootstrap.rr` resolved as it loaded the modules. Nothing is
+/// declarations name, with theirs (`Graph::rules`), which `bootstrap.rerail` resolved as it loaded the modules. Nothing is
 /// parsed: listing them by reading every module again was 4.3 G of a one-file run, the parse the shipped bundle saves.
 /// A text phase 0 has no graph of (it includes nothing, or the run was handed it read), or a `phase_dir` the graph
 /// does not search, lists them as before (`listed`). `RERAIL_REUSE_CHECK` lists both and says where they differ.
@@ -161,7 +161,7 @@ pub fn rule_files(given: &super::Texts<'_>, options: &serde_json::Value) -> Resu
         None => listed(given, dir.as_deref())?,
     };
     let mut out = Vec::new();
-    // Phase 1's program (`sources.rr`), which every run's documents come from: its includes are core's, as the
+    // Phase 1's program (`sources.rerail`), which every run's documents come from: its includes are core's, as the
     // programs' are.
     let sources = super::phases::sources_path();
     let digest = observe(|o| o.digest(&sources)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
@@ -381,4 +381,4 @@ pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
 }
 
 // Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
+// engine registers as it loads (the languages, their `.rerail` libraries).

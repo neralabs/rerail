@@ -1,4 +1,4 @@
-//! Python's string annotations as core.rr's relation, made by a batch only for a program that reads it
+//! Python's string annotations as core.rerail's relation, made by a batch only for a program that reads it
 //! (`Annotations::new`'s `reads`), off the document's tape (`Document::tape`):
 //!
 //! ```text

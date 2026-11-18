@@ -136,12 +136,12 @@ describe("the report", () => {
   });
 
   it("fails a pack with a rule the candidate cannot run, whatever its timings", () => {
-    const report = buildReport(verdict([{ pack: "blade", noBaseline: false, missing: [{ rule: "blade-x", reason: "no .rr counterpart" }], extra: [], cells: [cell("real", [measured("wall-cold", [700], [700])])] }]), meta);
+    const report = buildReport(verdict([{ pack: "blade", noBaseline: false, missing: [{ rule: "blade-x", reason: "no .rerail counterpart" }], extra: [], cells: [cell("real", [measured("wall-cold", [700], [700])])] }]), meta);
     expect(report.candidates[0]?.status).toBe("FAIL");
     expect(report.candidates[0]?.failures.map((f) => f.item)).toEqual(["coverage"]);
   });
 
-  it("labels a .rr cell's chunked figures and says how the whole-pack run got on", () => {
+  it("labels a .rerail cell's chunked figures and says how the whole-pack run got on", () => {
     const rr: CellVerdict = {
       ...cell("real", [measured("wall-cold", [700], [900])]),
       completion: { status: "fail", kind: "candidate-failed", reason: "rr.cold1: killed at 2700 s", stoppedOn: "r9 (policy 9 of 20)" },
@@ -152,7 +152,7 @@ describe("the report", () => {
       fallback: [],
     };
     const v = verdict([{ pack: "python", noBaseline: false, missing: [], extra: [], cells: [rr] }]);
-    const report = buildReport({ ...v, candidates: [{ candidate: "rr", description: "the .rr rewrites", packs: v.candidates[0]!.packs }], gate: ["rr"], machine: { ...v.machine, memCap: ["24G", "56G"], timeCapS: [2700, 14400] } }, meta);
+    const report = buildReport({ ...v, candidates: [{ candidate: "rr", description: "the .rerail rewrites", packs: v.candidates[0]!.packs }], gate: ["rr"], machine: { ...v.machine, memCap: ["24G", "56G"], timeCapS: [2700, 14400] } }, meta);
     const cellItem = report.candidates[0]!.packs[0]!.cells[0]!;
     expect(cellItem.chunked).toMatchObject({ chunks: 2, rules_run: 20 });
     expect(report.candidates[0]!.failures.find((f) => f.item === "wall-cold")?.reason).toMatch(/chunked: the sum of 2 chunk runs/);

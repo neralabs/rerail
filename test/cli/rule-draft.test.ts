@@ -724,7 +724,7 @@ describe("rerail rules test", () => {
   });
 });
 
-/** A `.rr` rule with one test that passes and one that fails (decision 0130). */
+/** A `.rerail` rule with one test that passes and one that fails (decision 0130). */
 const RR_WITH_TESTS = [
   '.policy "local:no-print" revision 1',
   ".language python",
@@ -746,10 +746,10 @@ const RR_WITH_TESTS = [
   "",
 ].join("\n");
 
-describe("rerail rules test on a .rr file", () => {
+describe("rerail rules test on a .rerail file", () => {
   it("runs the tests the file carries, in the Engine, and fails when one fails", async () => {
     const repo = await repository();
-    const file = join(repo, "no-print.rr");
+    const file = join(repo, "no-print.rerail");
     writeFileSync(file, RR_WITH_TESTS);
 
     const json = await run("test", [file, "--json"]);
@@ -762,6 +762,23 @@ describe("rerail rules test on a .rr file", () => {
     ]);
     expect(text.stdout).toContain("pass print_is_reported (line 6)");
     expect(text.stdout).toContain("1 passed, 1 failed");
+  });
+
+  it("says it needs a Rerail checkout, as from an installed package, instead of running the tests without one", async () => {
+    const repo = await repository();
+    const file = join(repo, "no-print.rerail");
+    writeFileSync(file, RR_WITH_TESTS);
+    // A source root that is no Rerail checkout: what an installed package finds.
+    const root = process.env.RERAIL_SOURCE_ROOT;
+    process.env.RERAIL_SOURCE_ROOT = repo;
+    try {
+      await expect(run("test", [file])).rejects.toThrow(
+        "a .rerail file's tests read the engine's .rerail programs and rule library from a Rerail checkout",
+      );
+    } finally {
+      if (root === undefined) delete process.env.RERAIL_SOURCE_ROOT;
+      else process.env.RERAIL_SOURCE_ROOT = root;
+    }
   });
 });
 

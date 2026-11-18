@@ -1,4 +1,4 @@
-//! `core.rr`'s base relations (decision 0046), as `docs/rule-syntax/lib/core.rr` states them, read off the same
+//! `core.rerail`'s base relations (decision 0046), as `docs/rule-syntax/lib/core.rerail` states them, read off the same
 //! core facts as T's (`super`): what a node's own text and children say, per language.
 //!
 //! - **Lines** (`Lines`): a document's line starts, by the terminators the tools count: `\n`, `\r\n` and a lone
@@ -16,10 +16,10 @@
 use super::{Dialect, Projected, Relation};
 use crate::code_rule_dsl::facts::core::Facts;
 
-/// What a family reads of its own documents' core.rr facts, registered at load by the crate that knows it: the
+/// What a family reads of its own documents' core.rerail facts, registered at load by the crate that knows it: the
 /// literals it decodes itself, its syntax verdict, and its strings' constant parts. Defaults: the common reading.
 pub trait DialectFacts: Send + Sync {
-    /// The literal facts of a node of `kind` with source `text`, where the family reads them itself (`.rr`'s);
+    /// The literal facts of a node of `kind` with source `text`, where the family reads them itself (`.rerail`'s);
     /// `None`: the common reading.
     fn literal(&self, kind: &str, text: &str) -> Option<Literal> {
         let _ = (kind, text);
@@ -79,7 +79,7 @@ pub enum Family {
     Ecma,
     Php,
     Rust,
-    /// `.rr` rule files (decision 0061).
+    /// `.rerail` rule files (decision 0061).
     Rr,
     /// Python's format strings (decision 0176): `percent-format` and `brace-format` guests.
     Format,
@@ -522,7 +522,7 @@ pub fn failure(path: &str, raised: &str) -> crate::content_store::StoreError {
 /// it misses what tree-sitter accepts and CPython does not (Python 2's `print "x"`). `Err`: `ast.parse` raises no
 /// `SyntaxError` but another exception, which fails the batch (`python_syntax::failure`).
 pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Result<Option<(u32, String)>, String> {
-    // A family's own verdict: Python's CPython's, a `.rr` file's the one running it gives.
+    // A family's own verdict: Python's CPython's, a `.rerail` file's the one running it gives.
     if let Some(own) = dialect_facts(dialect.family).and_then(|facts| facts.verdict(f)) {
         return own;
     }
@@ -545,7 +545,7 @@ pub(super) fn first_error(f: &Facts, lines: &Lines, kind_name: &dyn Fn(u32) -> &
     })
 }
 
-/// `core.rr`'s relations of a batch, as rows with string indexes (`Batch::build`'s `string`) until the batch's
+/// `core.rerail`'s relations of a batch, as rows with string indexes (`Batch::build`'s `string`) until the batch's
 /// strings are interned.
 #[derive(Default)]
 pub(super) struct CoreRows {
@@ -830,7 +830,7 @@ impl CoreRows {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
         let f = &*p.facts;
-        let x = p.extra.as_ref().expect("core.rr's spans");
+        let x = p.extra.as_ref().expect("core.rerail's spans");
         let key = i64::from(p.key);
         if x.ends > 0 {
             let from = p.len() + x.ends_from();

@@ -469,11 +469,17 @@ impl Options {
             }
             Some("sql") => {
                 let escape = |value: &Value| -> Result<Value> {
-                    let hex = text(value, path)?.as_bytes().iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+                    let hex = text(value, path)?
+                        .as_bytes()
+                        .iter()
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect::<String>();
                     Ok(Value::String(format!("CAST(X'{hex}' AS TEXT)")))
                 };
                 value = match &value {
-                    Value::Array(items) => Value::Array(items.iter().map(escape).collect::<Result<_>>()?),
+                    Value::Array(items) => {
+                        Value::Array(items.iter().map(escape).collect::<Result<_>>()?)
+                    }
                     other => escape(other)?,
                 };
             }

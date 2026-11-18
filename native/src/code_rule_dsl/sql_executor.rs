@@ -466,7 +466,7 @@ impl CodeRuleSqlExecutor {
         })
     }
 
-    /// Lower an inline `.rr` program to SQL without running it. Its `.input` declarations read
+    /// Lower an inline `.rerail` program to SQL without running it. Its `.input` declarations read
     /// the session's bound facts, previous outputs, or existing database tables.
     #[napi]
     pub fn lower(&mut self, program: String, dialect: String) -> Result<String> {
@@ -505,7 +505,7 @@ impl CodeRuleSqlExecutor {
         })
     }
 
-    /// As `run`, with `core.rr` and the file's includes read by the normal rule front end.
+    /// As `run`, with `core.rerail` and the file's includes read by the normal rule front end.
     #[napi]
     pub fn run_file(
         &mut self,

@@ -10,13 +10,13 @@
 use super::{
     Binding, BuildError, DEADLINE_INTERVAL, Form, ImportKind, NodeRef, ScopeKind, ScopeTable,
 };
-use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::identifier::python_identifier;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
+use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{Doc, Node};
 use foldhash::{HashMap, HashMapExt};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// The forms whose usedness Ruff's `locals()`-aware checks read (F841's `Assignment`,
 /// `NamedExprAssignment` and `WithItemVar`; the unused-argument rules' `Argument`): in a function
@@ -238,7 +238,10 @@ impl Usage {
             cap,
             deadline,
         };
-        { let pack = language_pack::pack(table.family); language_pack::scope_usage(pack, table, root, &mut steps) }
+        {
+            let pack = language_pack::pack(table.family);
+            language_pack::scope_usage(pack, table, root, &mut steps)
+        }
     }
 
     /// The index of a file whose family's scope the engine does not read yet (registry

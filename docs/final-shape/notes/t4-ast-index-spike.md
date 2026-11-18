@@ -27,7 +27,7 @@ Setting (HI L18): tree-sitter syntax trees were stored as a per-file binary "tap
 - **Index roles** (PW L7-10):
   - The design index covers DESIGN/README/LA/LCS/SORA/AG. Use it for current conclusions, the revision and contradiction ledger, and the section map.
   - The history index covers DESIGN_HISTORY plus the bench notes. Use it for experiments with numbers, the 57 traps (T1-T57), the 75 dead ends (D1-D75) and the Part 4 checklist.
-- **Other prior source** (PW L12): `../lessons-ledger.md`, which holds lessons from nera-data-layer PR 2539 (a declarative YAML linter over SQLite facts) and a runtime comparison. It is outside T4's scope and was not read.
+- **Other prior source** (PW L12): `../lessons-ledger.md`, which holds lessons from the data-layer repository's PR 2539 (a declarative YAML linter over SQLite facts) and a runtime comparison. It is outside T4's scope and was not read.
 - **Protocol: every engine design decision** (tape, relations, vtabs, lowering, statistics, batching, plans, executors, rule language, findings contract) (PW L16-21):
   1. **Look it up.** Find the topic in both indexes. Part 4 of the history index is the fastest entry. Also check `../lessons-ledger.md`. Read the cited source lines, not only the summary.
   2. **Record it.** Write the decision in `../decisions/` using the template there. The record must cite the prior-work entries consulted (index topic plus source lines) and say whether it agrees or departs, and why. "No prior evidence" is allowed only if the index says so for that topic. Data flow and GPU are the known gaps.

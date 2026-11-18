@@ -1,4 +1,4 @@
-# `.rr`, step 5: strings, comments and backtick literals in any order; `!`, `must`/`may`
+# `.rerail`, step 5: strings, comments and backtick literals in any order; `!`, `must`/`may`
 # heads, `~` patterns.
 #
 # The engine's parser (logic/rr/syntax.rs) is the reference. What this step adds:

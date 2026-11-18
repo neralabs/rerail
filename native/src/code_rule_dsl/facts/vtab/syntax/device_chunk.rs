@@ -9,7 +9,7 @@
 //! - `up`, the projection's parent of each local id (`Projected::up`, `NONE` above the root and an anchor);
 //! - each node's `start`, `end`, `kind` (the tape's atom) and `field`, by local id, read off the tape through its API
 //!   (0293) when the chunk is made: an interim, until the device's kernels read the tape in the chunk (0293 step 5);
-//! - `core.rr`'s places (`Shape::Core`'s `Loc` views: `line`, `end_line`, `col`, `docof`), added on a `Loc` view's
+//! - `core.rerail`'s places (`Shape::Core`'s `Loc` views: `line`, `end_line`, `col`, `docof`), added on a `Loc` view's
 //!   first device read (`fill_locs`): the document's first row in them, its spans past its nodes (tokens, the whole
 //!   text, lines and end points, as `Projected::span` gives them) and its line starts (`core_rr::Lines`).
 //!
@@ -79,7 +79,7 @@ pub const VIEW_CORE: u32 = 3;
 /// A kind-set axis or containment read whole (`Within`): its batch's solve, as pairs of node rows (inner << 32 |
 /// outer) copied into the chunk, each made the two nodes' ids.
 pub const VIEW_AXIS: u32 = 4;
-/// `core.rr`'s places of nodes and spans (`View::Loc`): their first line, last line, start column and document.
+/// `core.rerail`'s places of nodes and spans (`View::Loc`): their first line, last line, start column and document.
 pub const VIEW_LOC_LINE: u32 = 5;
 pub const VIEW_LOC_END: u32 = 6;
 pub const VIEW_LOC_COL: u32 = 7;
@@ -216,7 +216,7 @@ pub fn build(batch: &Batch) -> Chunk {
 /// file, decision 0055) or the block cannot hold them: the views are then made on the host.
 pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
     *chunk.locs.get_or_init(|| {
-        let _span = crate::code_rule_dsl::logic::profile::span(|| "core.rr's places in the chunk block".into());
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "core.rerail's places in the chunk block".into());
         if batch.docs.iter().any(|p| p.extra.as_ref().is_none_or(|x| x.host.is_some())) {
             return false;
         }

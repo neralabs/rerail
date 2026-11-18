@@ -4,7 +4,7 @@ This document gathers what has been learned so far about running Rerail code rul
 
 - the current execution branches;
 - the Tempo Metal work;
-- nera-data-layer PR 2539, the declarative YAML linter over SQLite facts;
+- the data-layer repository's PR 2539, the declarative YAML linter over SQLite facts;
 - the `neralabs/ast-index-spike` repository, a syntax tape stored in SQL with structural patterns lowered to SQL.
 
 The other files here:
@@ -38,7 +38,7 @@ All three are required:
 
    A differential test runs both bindings on every rule. Precedent:
    - ast-index-spike swapped a native child-enumeration table function for its pure-SQL equivalent with 0 mismatches over 4,264 queries.
-   - The ner-1562 tests swap an ordinary table in for `rerail_matches`.
+   - The scale-test branch's tests swap an ordinary table in for `rerail_matches`.
 
 3. **Compiler.** Rules lower to SQL fragments over these contracts. The caller writes the anti-join, aggregate or recursion; there is no interpreter or program counter encoded in CTEs.
    - The compiler chooses the query shape at plan time from stored statistics: which kind to anchor on, whether to climb from a leaf or descend from the anchor, whether to seed from a value or a structure, whether to emit a probe.

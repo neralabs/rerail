@@ -33,7 +33,7 @@ import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engin
 import * as native from "../../../src/engine/native/native.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
-import { queryContentStore } from "../../support/content-store-query.js";
+import { queryContentStore } from "../../support/engine/content-store-query.js";
 
 
 vi.mock("node:fs/promises", { spy: true });
@@ -1009,38 +1009,64 @@ describe("mechanical code rule regressions", () => {
   it("never evaluates a spooled edit a newer edit of its file superseded while the pump was running", async () => {
     const { recorder, audits } = recordingAudits();
     const { enforcer } = await fixture({ scope: "ai-output", audits: recorder });
-    const spoolReads: string[] = [];
-    // The queue reads the superseded edit back from its spool: held until the pump has read it too (it took it out of
-    // the queue to evaluate it) or gone idle without it.
+    // Spool reads are told apart by the file their edit changes. The pump stops at its read of api/ahead.py, queued
+    // before api/late.py, until the newer edit of api/late.py has looked for the older one in the queue (the queue's
+    // read of the older edit back from the spool, or the newer edit's batch ending), so the pump cannot have taken the
+    // older edit first. The queue's read then waits until the pump has read the older edit too (it is evaluating it)
+    // or has gone idle without it. Each wait ends on an event the other side reaches, never on a state that may last.
+    const looked = Promise.withResolvers<void>();
+    const pumpReadOlder = Promise.withResolvers<void>();
+    let pumpStopped = true;
+    let older: string | undefined;
+    const lookedForOlder = () => {
+      pumpStopped = false;
+      looked.resolve();
+    };
+    const hold = async (spool: string, path: string): Promise<void> => {
+      if (path === "api/ahead.py") await looked.promise;
+      if (path !== "api/late.py") return;
+      if (spool === older) pumpReadOlder.resolve();
+      else if (pumpStopped) {
+        older = spool;
+        lookedForOlder();
+        await Promise.race([pumpReadOlder.promise, enforcer.settleGeneratedEdits()]);
+      }
+    };
     const reads = vi.spyOn(fsPromises, "readFile").mockImplementation(async (...args: Parameters<typeof fsPromises.readFile>) => {
       const path = String(args[0]);
-      if (path.includes("rerail-policy-")) {
-        spoolReads.push(path);
-        while (spoolReads.length === 1 && enforcer.snapshotStatus().pending) await new Promise(resolve => queueHostTurn(resolve));
-      }
       const handle = await fsPromises.open(path, "r");
+      let text: Awaited<ReturnType<typeof handle.readFile>>;
       try {
-        return await handle.readFile(args[1] as Parameters<typeof handle.readFile>[0]);
+        text = await handle.readFile(args[1] as Parameters<typeof handle.readFile>[0]);
       } finally {
         await handle.close();
       }
+      if (path.includes("rerail-policy-")) await hold(path, z.object({ path: z.string() }).parse(JSON.parse(String(text))).path);
+      return text;
     });
     try {
       await enforcer.openWorkspace("superseded-spool");
-      // Eight megabytes held in memory, so the next edit of api/late.py goes to the spool.
+      // Eight megabytes evaluated and kept in memory, so each later edit of over 388 KB goes to the spool.
       const held = Array.from({ length: 8 }, (_, index) => ({ path: `api/held-${index}.py`, language: "python" as const, generatedText: "x".repeat(1_000_000) }));
+      await enforcer.auditGeneratedEdits("superseded-spool", { revision: 1, checkpoints: ["edit"], edits: held });
+      await settled(enforcer);
       const first = `NEEDLE\n${"x".repeat(400_000)}\n`;
       await enforcer.auditGeneratedEdits("superseded-spool", {
-        revision: 1, checkpoints: ["edit"], edits: [...held, { path: "api/late.py", language: "python", generatedText: first }],
+        revision: 2, checkpoints: ["edit"], edits: [
+          { path: "api/ahead.py", language: "python", generatedText: "x".repeat(400_000) },
+          { path: "api/late.py", language: "python", generatedText: first },
+        ],
       });
       await enforcer.auditGeneratedEdits("superseded-spool", {
-        revision: 2, checkpoints: ["edit"], edits: [{ path: "api/late.py", language: "python", previousText: first, generatedText: `${first}NEEDLE\n` }],
-      });
+        revision: 3, checkpoints: ["edit"], edits: [{ path: "api/late.py", language: "python", previousText: first, generatedText: `${first}NEEDLE\n` }],
+      }).finally(lookedForOlder);
       await settled(enforcer);
       const late = [...audits.values()].filter(audit => audit.paths.includes("api/late.py"));
-      // The first edit's audit stays superseded; the second reports both edits' lines, since the first was never reported.
-      expect(late.map(audit => [audit.revision, audit.result?.status, audit.result?.violations?.length])).toEqual([[1, "superseded", 0], [2, "completed", 2]]);
+      // The older edit's audit stays superseded; the newer reports both edits' lines, since the older was never reported.
+      expect(late.map(audit => [audit.revision, audit.result?.status, audit.result?.violations?.length])).toEqual([[2, "superseded", 0], [3, "completed", 2]]);
     } finally {
+      lookedForOlder();
+      pumpReadOlder.resolve();
       reads.mockRestore();
       await enforcer.close();
     }

@@ -7,9 +7,9 @@
 //! operations from the language's own tables, not by hand:
 //!
 //! - every comparison operator, over every pair of operand kinds (numbers, symbols, constants, computed values);
-//! - every function `strings::functions` registers, every functor `plan::sql_term` computes, `.rr`'s arithmetic
+//! - every function `strings::functions` registers, every functor `plan::sql_term` computes, `.rerail`'s arithmetic
 //!   and Soufflé's built-ins;
-//! - every text test (`.rr`'s names, `rr::lower::TESTS`), with a constant, a set and a bound pattern;
+//! - every text test (`.rerail`'s names, `rr::lower::TESTS`), with a constant, a set and a bound pattern;
 //! - every aggregate (`front::AggOp`, matched exhaustively: a new one does not compile until it has a probe);
 //! - every literal form (`front::Literal`, matched exhaustively), negation, recursion and computed heads.
 //!
@@ -20,7 +20,7 @@
 //! written again (`RERAIL_BLESS_COVERAGE=1`). The ledger is the list of work the executors lack.
 //!
 //! The census (`every_operation_a_shipped_rule_uses_has_a_probe`) closes the loop from the other side: every
-//! function, comparison, aggregate and text test any shipped `.rr` file uses must be one the matrix probes.
+//! function, comparison, aggregate and text test any shipped `.rerail` file uses must be one the matrix probes.
 
 use super::*;
 use crate::content_store::ContentStore;
@@ -64,13 +64,13 @@ fn probe(name: impl Into<String>, ops: &[&str], cols: &'static str, rule: impl I
     Probe { name: name.into(), ops: ops.iter().map(|s| (*s).to_owned()).collect(), cols, rule: rule.into() }
 }
 
-/// The comparison operators `.rr` writes.
+/// The comparison operators `.rerail` writes.
 const COMPARISONS: [&str; 6] = ["=", "!=", "<", "<=", ">", ">="];
 
-/// `.rr`'s arithmetic, and the functor each lowers to.
+/// `.rerail`'s arithmetic, and the functor each lowers to.
 const ARITHMETIC: [(&str, &str); 5] = [("+", "add"), ("-", "sub"), ("*", "mul"), ("/", "div"), ("%", "mod")];
 
-/// Soufflé's built-in (non-`@`) functions `rr::lower` takes, by `.rr` name, with each argument's kind and the
+/// Soufflé's built-in (non-`@`) functions `rr::lower` takes, by `.rerail` name, with each argument's kind and the
 /// functor it lowers to.
 const BUILTINS: [(&str, &[Kind], &str); 7] = [
     ("strlen", &[Kind::Text], "strlen"),
@@ -180,7 +180,7 @@ fn probes() -> Vec<Probe> {
         out.push(probe(format!("functor @{name}/{}", kinds.len()), &[&format!("call {op}")], value(ret), format!("{{HEAD}}(v) :- {}, v = @{name}({}).", binds(kinds), args.join(", "))));
     }
     for &(name, kinds, ret) in functions() {
-        // `rr_*` are the native engine's names of `.rr`'s own arithmetic and built-ins, probed above by their spellings.
+        // `rr_*` are the native engine's names of `.rerail`'s own arithmetic and built-ins, probed above by their spellings.
         if name.starts_with("rr_") {
             continue;
         }
@@ -343,7 +343,7 @@ fn packs_ledger(all: &[Probe], matrix: &str) {
             return rest.split('/').next().unwrap_or("?").to_owned();
         }
         if let Some((_, rest)) = f.split_once("/rule-syntax/") {
-            return rest.split('/').next().filter(|d| !d.ends_with(".rr")).unwrap_or("rule-syntax").to_owned();
+            return rest.split('/').next().filter(|d| !d.ends_with(".rerail")).unwrap_or("rule-syntax").to_owned();
         }
         if f.contains("/programs/data_layer/") { "data-layer (engine)".into() } else { "engine".into() }
     };
@@ -491,7 +491,7 @@ fn every_operation_runs_on_every_executor() {
     }
 }
 
-/// The operations a file's statements use, by the names the probes give them (`Probe::ops`): read from the `.rr`
+/// The operations a file's statements use, by the names the probes give them (`Probe::ops`): read from the `.rerail`
 /// syntax (`rerail_rr_syntax`), as written, so no file needs its includes or a lowering to be counted.
 fn ops_of(items: &[rerail_rr_syntax::syntax::Statement], out: &mut BTreeMap<String, String>, file: &str) {
     use rerail_rr_syntax::syntax::{Item, Lit, Term as S};
@@ -564,7 +564,7 @@ fn ops_of(items: &[rerail_rr_syntax::syntax::Statement], out: &mut BTreeMap<Stri
     }
 }
 
-/// The shipped `.rr` files: the packs and the engine's own programs.
+/// The shipped `.rerail` files: the packs and the engine's own programs.
 fn shipped() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut out = Vec::new();
@@ -575,7 +575,7 @@ fn shipped() -> Vec<PathBuf> {
             let p = e.path();
             if p.is_dir() {
                 walk.push(p);
-            } else if p.extension().is_some_and(|x| x == "rr") {
+            } else if p.extension().is_some_and(|x| x == "rerail") {
                 out.push(p);
             }
         }
@@ -613,7 +613,7 @@ fn census() -> &'static (BTreeMap<String, BTreeSet<String>>, usize, usize) {
     })
 }
 
-/// The `.functor` declarations of the shipped files (`core.rr`'s and any file's own): each name's arguments' kinds
+/// The `.functor` declarations of the shipped files (`core.rerail`'s and any file's own): each name's arguments' kinds
 /// and its result's.
 fn functor_decls() -> BTreeMap<String, (Vec<Kind>, Kind)> {
     let kind = |t: &str| if t.trim() == "number" || t.trim() == "float" { Kind::Number } else { Kind::Text };

@@ -11,8 +11,8 @@
 //! Other calls' arguments are not; `Literal[...]` never is. Whether a generic or callable is the
 //! typing one is a qualified name, read from the finished table.
 
-use crate::code_rule_dsl::tree::Tree;
 use super::unparenthesized;
+use crate::code_rule_dsl::tree::Tree;
 
 use super::super::options::PythonTyping;
 use super::super::{
@@ -168,7 +168,8 @@ fn qualified_name<D: Doc>(
                 head = head.field("object")?;
             }
             "parenthesized_expression" => {
-                let inner = head.named()
+                let inner = head
+                    .named()
                     .filter(|child| child.kind() != "comment")
                     .collect::<Vec<_>>();
                 let [inner] = inner.as_slice() else {
@@ -433,7 +434,9 @@ fn plain_string<D: Doc>(node: &Node<'_, D>) -> bool {
     let parts: Vec<Node<'_, D>> = if node.kind() == "string" {
         vec![node.clone()]
     } else {
-        node.named().filter(|part| part.kind() == "string").collect()
+        node.named()
+            .filter(|part| part.kind() == "string")
+            .collect()
     };
     !parts.is_empty()
         && parts.iter().all(|part| {
@@ -539,7 +542,8 @@ impl Classifier<'_> {
         found: &mut Vec<Node<'r, D>>,
     ) -> Visit {
         let value = node.field("value");
-        let slices: Vec<Node<'r, D>> = node.named()
+        let slices: Vec<Node<'r, D>> = node
+            .named()
             .filter(|child| {
                 child.kind() != "comment"
                     && value
@@ -573,7 +577,8 @@ impl Classifier<'_> {
         };
         // A slice of several elements is Ruff's tuple.
         let elements: Vec<Node<'r, D>> = match slices.as_slice() {
-            [single] if single.kind() == "tuple" => single.named()
+            [single] if single.kind() == "tuple" => single
+                .named()
                 .filter(|child| child.kind() != "comment")
                 .collect(),
             _ => slices.clone(),
@@ -622,7 +627,8 @@ impl Classifier<'_> {
         let elements: Vec<Node<'r, D>> = parts
             .filter(|part| part.kind() == "type_parameter")
             .flat_map(|parameter| {
-                parameter.named()
+                parameter
+                    .named()
                     .filter(|child| child.kind() != "comment")
                     .collect::<Vec<_>>()
             })
@@ -696,7 +702,8 @@ impl Classifier<'_> {
             return Ok(());
         };
         // Arguments in source order: positional (a starred one too) and keyword.
-        let items: Vec<Node<'r, D>> = arguments.named()
+        let items: Vec<Node<'r, D>> = arguments
+            .named()
             .filter(|child| child.kind() != "comment")
             .collect();
         let positional: Vec<&Node<'r, D>> = items

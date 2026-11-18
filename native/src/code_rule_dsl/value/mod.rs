@@ -16,6 +16,7 @@ pub mod types;
 // cratify: `python_structure` is rerail-lang-python's (it mounts it)
 pub use rerail_lang::code_rule_dsl::value::text_regex;
 
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::tape::TapeDoc;
 use ast_grep_core::tree_sitter::StrDoc;
@@ -24,7 +25,6 @@ pub use num_bigint::BigInt;
 use num_traits::{FromPrimitive, Signed, ToPrimitive, Zero};
 use std::cmp::Ordering;
 use std::ops::Range;
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Nesting a decode follows before it gives up (`Unknown`).
 pub const MAX_DEPTH: usize = 256;
@@ -117,7 +117,9 @@ impl NodeRef {
     /// whose siblings never overlap, the nodes covering a nonempty range form one path from the
     /// root, so the descent starts at the topmost node of `near`'s nearest covering ancestor's
     /// range instead of reading every sibling before that path from the root down: a read in a
-    /// class of a thousand methods reads its own method's statements.
+    /// class of a thousand methods reads its own method's statements. A tape's tree is searched
+    /// from its root by start byte (`find_in_tape`), which reads no parent and no child list: the
+    /// climb from `near` would read a parent and a span a step.
     pub fn find_near<'r, D: Doc>(
         &self,
         root: Node<'r, D>,
@@ -131,6 +133,9 @@ impl NodeRef {
         };
         if start >= end || root.parent().is_some() || !file() {
             return self.find(root);
+        }
+        if let Some(found) = self.find_in_tape(&root) {
+            return found;
         }
         let covers = |node: &Node<'r, D>| {
             let range = node.range();
@@ -150,10 +155,7 @@ impl NodeRef {
         {
             from = parent;
         }
-        match self.find_in_tape(&from) {
-            Some(found) => found,
-            None => self.find(from),
-        }
+        self.find(from)
     }
 
     /// `find` from `from` in a tape's tree whose siblings never overlap, by binary search: such a
@@ -175,19 +177,20 @@ impl NodeRef {
         let (start, end) = (self.start as usize, self.end as usize);
         let (mut low, mut high) = (first, tape.transducer_descendants(first).end);
         let subtree_end = high;
+        // A search by start reads no end: format 15's end is read from the start of the subtree's last node.
         while low < high {
             let middle = low + (high - low) / 2;
-            if tape.transducer_span(middle).start < start {
+            if tape.transducer_start(middle) < start {
                 low = middle + 1;
             } else {
                 high = middle;
             }
         }
         let Some(found) = (low..subtree_end)
-            .take_while(|&ordinal| tape.transducer_span(ordinal).start == start)
+            .take_while(|&ordinal| tape.transducer_start(ordinal) == start)
             .find(|&ordinal| {
-                tape.transducer_span(ordinal).end == end
-                    && tape.transducer_kind(ordinal) == self.kind
+                tape.transducer_kind(ordinal) == self.kind
+                    && tape.transducer_span(ordinal).end == end
             })
         else {
             return Some(None);
@@ -294,9 +297,7 @@ impl<'a> Context<'a> {
     }
 
     /// The file's scope table, where the decode follows names through it.
-    pub fn table(
-        &mut self,
-    ) -> Option<std::sync::Arc<crate::code_rule_dsl::scope::ScopeTable>> {
+    pub fn table(&mut self) -> Option<std::sync::Arc<crate::code_rule_dsl::scope::ScopeTable>> {
         self.table.as_mut()?()
     }
 
@@ -465,7 +466,10 @@ impl Value {
     /// Truthiness in the value family `lang`'s sense (its `ValueRules::truthy`): Python's
     /// `bool(v)`, JavaScript's ToBoolean, PHP's `(bool)`. `None` when it is not known.
     pub fn truthy(&self, lang: Family) -> Option<bool> {
-        { let pack = language_pack::pack(lang); pack.value_truthy(self) }
+        {
+            let pack = language_pack::pack(lang);
+            pack.value_truthy(self)
+        }
     }
 
     /// Truthiness as Python's `bool(v)` and JavaScript's ToBoolean agree (objects and arrays are
@@ -505,7 +509,10 @@ impl Value {
     /// Python's `type(v).__name__`, for JavaScript `typeof` refined with `null`, `array` and
     /// `regexp`, PHP's `get_debug_type`.
     pub fn type_name(&self, lang: Family) -> Option<&'static str> {
-        { let pack = language_pack::pack(lang); pack.value_type_name(self) }
+        {
+            let pack = language_pack::pack(lang);
+            pack.value_type_name(self)
+        }
     }
 
     /// The type's name, Python's and JavaScript's alike but for the names in `names`.
@@ -553,14 +560,20 @@ impl Value {
     /// Equality in the value family `lang`'s sense (its `ValueRules::equals`): Python `==`,
     /// JavaScript `Object.is`, PHP `===`. `None` when it depends on elements that are not known.
     pub fn equals(&self, other: &Self, lang: Family) -> Option<bool> {
-        { let pack = language_pack::pack(lang); pack.value_equals(self, other) }
+        {
+            let pack = language_pack::pack(lang);
+            pack.value_equals(self, other)
+        }
     }
 
     /// Order in the value family `lang`'s sense (its `ValueRules::order`). `Some(None)` when the
     /// two do not order (different types, NaN, PHP arrays neither of which PHP finds smaller);
     /// `None` when it is not known.
     pub fn order(&self, other: &Self, lang: Family) -> Option<Option<Ordering>> {
-        { let pack = language_pack::pack(lang); pack.value_order(self, other) }
+        {
+            let pack = language_pack::pack(lang);
+            pack.value_order(self, other)
+        }
     }
 
     /// Order as Python and JavaScript agree, under `rules`: numbers numerically, Python strings

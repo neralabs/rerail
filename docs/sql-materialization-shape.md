@@ -30,7 +30,7 @@ Every selected materialization must have a named owner, consumers, coverage unit
 
 ## Evidence and current gaps
 
-The [placement audit](../fixtures/host/data-layer-port/profiling/sql-materialization-design-20261023.json) resolves local CTE dependencies and earlier physical producers.
+The [placement audit](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-materialization-design-20261023.json) resolves local CTE dependencies and earlier physical producers.
 It binds parameter types and values before comparing structural definitions.
 Local names such as `needed` cannot identify equivalent producers without their complete dependency context.
 

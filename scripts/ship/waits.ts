@@ -127,6 +127,9 @@ class Home {
     env.BROWSER = "none";
     env.RERAIL_DEVICE_SECRET_STORE = "file";
     env.RERAIL_CONTENT_STORE_PATH = join(dir, "store", contentStoreFile(this.checkout));
+    // W1's warm-up, W4's store, W5 and W8 scan the repository (`rerail scan --session`), which the daemon refuses
+    // unless it starts with the experiment on (src/engine/experimental-features.ts); the daemon inherits it from the CLI.
+    env.RERAIL_EXPERIMENTAL_REPOSITORY_SCAN = "1";
     this.env = env;
   }
 
@@ -294,8 +297,10 @@ const storeFiles = new Map<string, string>();
 function contentStoreFile(checkout: string): string {
   let name = storeFiles.get(checkout);
   if (name === undefined) {
-    const addon = readdirSync(join(checkout, "native")).find((file) => /^rerail_engine\..+\.node$/.test(file));
-    if (addon === undefined) throw new Error(`${checkout} has no native engine (native/rerail_engine.*.node): build it`);
+    // This machine's engine, as the product loads it (src/engine/native/native.ts, nativePlatformSuffix; waits runs on
+    // Linux only): a release baseline (`release:<version>`) holds the prebuilt engines of every platform.
+    const addon = `rerail_engine.linux-${process.arch}-gnu.node`;
+    if (!existsSync(join(checkout, "native", addon))) throw new Error(`${checkout} has no native engine (native/${addon}): build it`);
     const result = spawnSync(process.execPath, ["-e", `process.stdout.write(require(${JSON.stringify(join(checkout, "native", addon))}).contentStoreFileName())`], { encoding: "utf8" });
     if (result.status !== 0 || result.stdout === "") throw new Error(`${checkout}'s engine names no content store: ${lastLine(result.stderr)}`);
     name = result.stdout;

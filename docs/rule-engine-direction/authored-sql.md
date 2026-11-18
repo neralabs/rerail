@@ -73,7 +73,7 @@ The relational engine is about 7,000 lines of Rust: `relational.rs`, `relational
 | data-layer-serverplan-quality | 6 |
 | execution-authority-bypass, impl-direct-execution, internal-dead-code, legacy-execution-surfaces, public-api-triples, serverplan-dispatch-architecture, serverplan-target-architecture | 1 each |
 
-Also: `fixtures/host/data-layer-port/profiling/{batched-sql,evidence,native-relations-metrics}.json` and `test/scripts/test_sql_variants.py`.
+Also: `packs/data-layer/upstream/benchmarks/authored/profiling/{batched-sql,evidence,native-relations-metrics}.json` and `test/scripts/test_sql_variants.py`.
 
 ### What the SQL computes, by semantic primitive
 

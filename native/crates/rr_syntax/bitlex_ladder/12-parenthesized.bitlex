@@ -1,4 +1,4 @@
-# `.rr`, step 12: a parenthesized term at a literal's start.
+# `.rerail`, step 12: a parenthesized term at a literal's start.
 #
 #   budget(n) :- observed(o), total(n), (o - n) * 10 > o.
 #   p(x) :- ((a(x))) + 1 > 2.

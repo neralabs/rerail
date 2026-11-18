@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Port a data-layer .rr program (main file + its part files, over prelude.rr) to programs over core.rr.
+"""Port a data-layer .rerail program (main file + its part files, over prelude.rerail) to programs over core.rerail.
 
 usage: data_layer_rr_port.py <programs dir> <main stem> <out dir>
 
 Each file stays a program of its own (the parts' relations are their own), each with the main file's `.policy`
-line (so the corpus includes core.rr and the matchers' `$option`s resolve) and a shim for what prelude.rr defines
-that core.rr does not. The rewrites (decision 0107):
+line (so the corpus includes core.rerail and the matchers' `$option`s resolve) and a shim for what prelude.rerail defines
+that core.rerail does not. The rewrites (decision 0107):
 - prelude's `doc(d, path)` is core's `doc(d, path, module)`;
 - `@within(n, a) = 1` (`= 0`) is core's `within(n, a)` (`!within`); `@depth(a)` is `ast_depth(a, k)`, a fresh `k`;
 - `@rx_matches(s, re) = 1` (`= 0`, `!= 1`) is the text test `@rx(s, re) = 1` (`= 0`);
@@ -16,11 +16,11 @@ that core.rr does not. The rewrites (decision 0107):
 import re, sys, pathlib
 src, stem, out = pathlib.Path(sys.argv[1]), sys.argv[2], pathlib.Path(sys.argv[3])
 out.mkdir(parents=True, exist_ok=True)
-main = src / f"{stem}.rr"
-files = [main] + sorted(f for f in src.glob(f"{stem}.*.rr") if "unwidened" not in f.name)
+main = src / f"{stem}.rerail"
+files = [main] + sorted(f for f in src.glob(f"{stem}.*.rerail") if "unwidened" not in f.name)
 policy = next(l for l in main.read_text().splitlines() if l.startswith(".policy"))
 shim = """
-// prelude.rr's relations core.rr does not hold, over core's (the data-layer port).
+// prelude.rerail's relations core.rerail does not hold, over core's (the data-layer port).
 .decl start(n: node, s: number)
 start(n, s) :- node(_, n, _, s, _).
 // The tree builtins @class_path and @class_prefix as relations (decision 0107): the `name` texts of a class and its

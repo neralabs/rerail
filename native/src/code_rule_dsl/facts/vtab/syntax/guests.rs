@@ -5,7 +5,7 @@
 //! doc_role(d, r)              "primary", "program" or "fragment"
 //! doc_root(d, n)              the root of d's tree; a fragment's is the expression inside its wrapper
 //! guest(g, host, at, grammar) guest document g is the code at host node or span `at`, parsed as `grammar`
-//! parsed(at, grammar, r)      `guest` and `doc_root` joined: the view `core.rr` has always declared
+//! parsed(at, grammar, r)      `guest` and `doc_root` joined: the view `core.rerail` has always declared
 //! sub_tape(at, grammar, t)    `guest` and `tape_of` joined
 //! host_node(n, h)             h is the innermost host node over the bytes guest node n stands for
 //! parse_of(x, g, t)           `@parse(g, x)` is tape t (decision 0058 §4): a value document places it

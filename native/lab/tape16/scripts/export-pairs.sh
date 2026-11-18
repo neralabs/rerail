@@ -8,7 +8,7 @@ mkdir -p "$out"
 n=0
 for c in $(git -C "$repo" rev-list --no-merges -n "$commits" HEAD); do
   git -C "$repo" diff --diff-filter=M --name-only "$c^" "$c" -- \
-      '*.py' '*.ts' '*.tsx' '*.js' '*.php' '*.rs' '*.sql' '*.rr' 2>/dev/null | head -n "$per" |
+      '*.py' '*.ts' '*.tsx' '*.js' '*.php' '*.rs' '*.sql' '*.rerail' 2>/dev/null | head -n "$per" |
   while IFS= read -r f; do
     d="$out/$n"
     mkdir -p "$d/old/$(dirname "$f")" "$d/new/$(dirname "$f")"

@@ -21,7 +21,7 @@ fn packs() -> Vec<(String, Value)> {
     out
 }
 
-/// Every pack's policy round-trips: document → AST → `.rr` text → AST → the same document, its matchers as `ast`
+/// Every pack's policy round-trips: document → AST → `.rerail` text → AST → the same document, its matchers as `ast`
 /// atoms of `violation` rules.
 #[test]
 fn pack_policies_round_trip_through_datalog_text() {

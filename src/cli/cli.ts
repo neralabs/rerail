@@ -263,7 +263,7 @@ function usage(): string {
     "  rerail rules export [--output <rules.json>]",
     "  rerail rules import <rules.json> [--approve]",
     "  rerail rules show <rule id> [--repo <dir>]",
-    "  rerail rules test <draft.json | rule.json> [--repo <dir>] [--json]",
+    "  rerail rules test <draft.json | rule.json | rule.rerail> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
     "  rerail rules approve [<rule id | pack> …] [--repo <dir>]",

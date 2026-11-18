@@ -1,4 +1,4 @@
-"""Check next-no-unwanted-polyfillio.facts.rr against the policy JSON by a round trip: rebuild the JSON's src regex
+"""Check next-no-unwanted-polyfillio.facts.rerail against the policy JSON by a round trip: rebuild the JSON's src regex
 from the table's rows (hosts and features, in table order, escaped as the JSON escapes them) and compare it with the
 shipped regex, byte for byte. Run: python3 check-polyfillio.py   (exit status 1 on any difference)
 It does not use gen-polyfillio.py's parser.
@@ -8,7 +8,7 @@ import json, os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 JSON = os.path.normpath(os.path.join(HERE, "..", "..", "..", "..", "packs", "next", "rules",
                                      "next-no-unwanted-polyfillio.json"))
-FACTS = os.path.join(HERE, "next-no-unwanted-polyfillio.facts.rr")
+FACTS = os.path.join(HERE, "next-no-unwanted-polyfillio.facts.rerail")
 
 
 def esc(s):

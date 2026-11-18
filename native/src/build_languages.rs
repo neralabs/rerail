@@ -14,12 +14,18 @@ use std::path::{Path, PathBuf};
 
 const FORMAT: &str = "rerail.language/v1";
 /// The parser implementations a dialect may name: tree-sitter, Forte (Rerail's port,
-/// `code_rule_dsl::blade::forte`), the rule engine's own `.rr` parser (`logic::rr::syntax`), or a
+/// `code_rule_dsl::blade::forte`), the rule engine's own `.rerail` parser (`logic::rr::syntax`), or a
 /// Bitlex grammar compiled by the transducer, with its tree-sitter grammar's ids, and tree-sitter
 /// for a file it refuses (JSON's: `transducer::packed::json_parser`).
 const PARSERS: &[&str] = &["tree-sitter", "forte", "rr", "bitlex", "literal"];
 /// The grammars Rerail implements itself (`native:<name>`): no tree-sitter grammar backs them.
-const NATIVE_GRAMMARS: &[&str] = &["forte", "rr", "percent-format", "brace-format", "eslint-directive"];
+const NATIVE_GRAMMARS: &[&str] = &[
+    "forte",
+    "rr",
+    "percent-format",
+    "brace-format",
+    "eslint-directive",
+];
 /// ast-grep-language 0.45's `SupportLang` variants. A vendored grammar whose dialect variant is
 /// one of them (Python, TypeScript and TSX, which Rerail vendors with patches) still lends that
 /// language's pattern syntax (`GrammarDialect::support`); any other vendored grammar, and a
@@ -182,7 +188,16 @@ fn read_directory(
 
 /// The vendored tree-sitter grammars (`native/grammars/`): the engine's build script compiles them (its `GRAMMARS`
 /// lists the same names, and checks it), and every registry is generated against them.
-pub const VENDORED: &[&str] = &["vue", "python", "sql", "typescript", "tsx", "javascript", "markdown", "markdown-inline"];
+pub const VENDORED: &[&str] = &[
+    "vue",
+    "python",
+    "sql",
+    "typescript",
+    "tsx",
+    "javascript",
+    "markdown",
+    "markdown-inline",
+];
 
 /// The registry's supported languages this build leaves out: each language `<id>` is built only with its feature
 /// `lang-<id>` (`CARGO_FEATURE_LANG_<ID>` in the build script running this). `languages` is `languages/`.
@@ -194,11 +209,17 @@ pub(crate) fn omitted_languages(languages: &Path) -> Vec<String> {
             continue;
         }
         let value: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).expect("registry file")).expect("registry JSON");
-        let (Some(id), Some("supported")) = (value["id"].as_str(), value["status"].as_str()) else { continue };
+            serde_json::from_slice(&std::fs::read(&path).expect("registry file"))
+                .expect("registry JSON");
+        let (Some(id), Some("supported")) = (value["id"].as_str(), value["status"].as_str()) else {
+            continue;
+        };
         // a guest language is built with the language it names (`builtWith`), never alone
         let built = value["builtWith"].as_str().unwrap_or(id);
-        let feature = format!("CARGO_FEATURE_LANG_{}", built.to_ascii_uppercase().replace('-', "_"));
+        let feature = format!(
+            "CARGO_FEATURE_LANG_{}",
+            built.to_ascii_uppercase().replace('-', "_")
+        );
         if std::env::var_os(&feature).is_none() {
             omitted.push(id.to_owned());
         }
@@ -210,13 +231,23 @@ pub(crate) fn omitted_languages(languages: &Path) -> Vec<String> {
 /// The registry generated into `out` for the build script running this, `native` being the `native/` directory
 /// (the engine's, and `rerail-lang`'s, which compiles `code_rule_dsl::language`). Returns each registry file and its
 /// bytes, as [`generate`].
-pub(crate) fn generate_registry(native: &Path, omitted: &[String], out: &Path) -> Vec<(String, Vec<u8>)> {
+pub(crate) fn generate_registry(
+    native: &Path,
+    omitted: &[String],
+    out: &Path,
+) -> Vec<(String, Vec<u8>)> {
     let root = native.parent().expect("repository root");
     let directory = root.join("languages");
     let test_directory = native.join("test-languages");
     println!("cargo:rerun-if-changed={}", directory.display());
     println!("cargo:rerun-if-changed={}", test_directory.display());
-    generate(&directory, test_directory.is_dir().then_some(test_directory.as_path()), VENDORED, omitted, out)
+    generate(
+        &directory,
+        test_directory.is_dir().then_some(test_directory.as_path()),
+        VENDORED,
+        omitted,
+        out,
+    )
 }
 
 /// Reads and validates every registry file in `directory`, writes `language_registry.rs` to
@@ -265,12 +296,20 @@ pub(crate) fn generate(
     let registry = render_built(&entries, &test_only, omitted);
     // `with_adapter!` in a file of its own, for the crates that dispatch by family (the test kit, `adapter/kit.rs`);
     // the registry's crate does not, so its registry leaves the macro out.
-    let start = registry.find("/// Evaluates `$body` with `$a` the adapter").expect("with_adapter");
+    let start = registry
+        .find("/// Evaluates `$body` with `$a` the adapter")
+        .expect("with_adapter");
     let use_line = "\npub(crate) use with_adapter;\n";
     let end = registry.find(use_line).expect("with_adapter's use");
-    std::fs::write(out.join("with_adapter.rs"), &registry[start..end]).expect("generated with_adapter is writable");
-    let rest = format!("{}{}", &registry[..start], &registry[end + use_line.len()..]);
-    std::fs::write(out.join("language_registry.rs"), rest).expect("generated language registry is writable");
+    std::fs::write(out.join("with_adapter.rs"), &registry[start..end])
+        .expect("generated with_adapter is writable");
+    let rest = format!(
+        "{}{}",
+        &registry[..start],
+        &registry[end + use_line.len()..]
+    );
+    std::fs::write(out.join("language_registry.rs"), rest)
+        .expect("generated language registry is writable");
     read
 }
 
@@ -362,7 +401,10 @@ fn validate_entry(name: &str, stem: &str, entry: &Entry, vendored: &[&str]) {
     );
     // A dialect with no suffix is read only as a guest grammar (decision 0238): its language has another.
     assert!(
-        entry.dialects.iter().any(|dialect| !dialect.suffixes.is_empty()),
+        entry
+            .dialects
+            .iter()
+            .any(|dialect| !dialect.suffixes.is_empty()),
         "{name}: no dialect lists a file suffix"
     );
     let supported = entry.status == Status::Supported;
@@ -444,7 +486,11 @@ fn validate_entry(name: &str, stem: &str, entry: &Entry, vendored: &[&str]) {
         "{name}: suppressions repeat"
     );
     for fragment in &entry.fragments {
-        assert!(is_name(&fragment.name), "{name}: fragment `{}` is not lowercase letters, digits and dashes", fragment.name);
+        assert!(
+            is_name(&fragment.name),
+            "{name}: fragment `{}` is not lowercase letters, digits and dashes",
+            fragment.name
+        );
         assert!(
             entry.dialects.iter().any(|d| d.label == fragment.dialect),
             "{name}: fragment {} names dialect {}, which is not one of the entry's",
@@ -488,7 +534,10 @@ fn validate_registry(entries: &[(String, Entry)]) {
             panic!("{name}: id {} is also {other}'s", entry.id);
         }
         if let Some(with) = &entry.built_with {
-            assert!(ids.contains(with.as_str()) && with != &entry.id, "{name}: builtWith names no other language: {with}");
+            assert!(
+                ids.contains(with.as_str()) && with != &entry.id,
+                "{name}: builtWith names no other language: {with}"
+            );
         }
         assert!(
             entry.capabilities.keys().collect::<Vec<_>>() == capabilities,
@@ -515,11 +564,17 @@ fn validate_registry(entries: &[(String, Entry)]) {
         }
     }
     // A fragment's name is a grammar name beside the dialects' labels: unique among both.
-    let mut grammars: BTreeMap<&str, &str> = labels.iter().map(|(label, (name, _))| (*label, name.as_str())).collect();
+    let mut grammars: BTreeMap<&str, &str> = labels
+        .iter()
+        .map(|(label, (name, _))| (*label, name.as_str()))
+        .collect();
     for (name, entry) in entries {
         for fragment in &entry.fragments {
             if let Some(other) = grammars.insert(fragment.name.as_str(), name.as_str()) {
-                panic!("{name}: fragment {} is also {other}'s dialect label or fragment", fragment.name);
+                panic!(
+                    "{name}: fragment {} is also {other}'s dialect label or fragment",
+                    fragment.name
+                );
             }
         }
         for embed in &entry.embeds {
@@ -750,11 +805,19 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     }
     out.push_str("];\n\n");
 
-    out.push_str("/// The registry's fragment grammars (decision 0082): name, dialect, start symbol.\n");
+    out.push_str(
+        "/// The registry's fragment grammars (decision 0082): name, dialect, start symbol.\n",
+    );
     out.push_str("const FRAGMENTS: &[(&str, GrammarDialect, &str)] = &[\n");
     for entry in &supported {
         for fragment in &entry.fragments {
-            let _ = writeln!(out, "    ({:?}, {}, {:?}),", fragment.name, variant(&fragment.dialect), fragment.start);
+            let _ = writeln!(
+                out,
+                "    ({:?}, {}, {:?}),",
+                fragment.name,
+                variant(&fragment.dialect),
+                fragment.start
+            );
         }
     }
     out.push_str("];\n\n");
@@ -765,10 +828,17 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     let mut declared = BTreeSet::new();
     let mut arms = String::new();
     let mut built = String::new();
-    for (entry, dialect) in supported.iter().flat_map(|entry| entry.dialects.iter().map(move |dialect| (entry, dialect))) {
+    for (entry, dialect) in supported
+        .iter()
+        .flat_map(|entry| entry.dialects.iter().map(move |dialect| (entry, dialect)))
+    {
         let text = dialect.grammar.as_deref().expect("validated");
         let in_build = !omitted.contains(&entry.id);
-        let _ = writeln!(built, "            {} => {in_build},", variant(&dialect.label));
+        let _ = writeln!(
+            built,
+            "            {} => {in_build},",
+            variant(&dialect.label)
+        );
         let language = match parse_grammar(text).expect("validated grammar") {
             _ if !in_build => "None".to_owned(),
             Grammar::Vendored(name) => {
@@ -789,7 +859,9 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     }
     out.push_str("    }\n    match lang {\n");
     out.push_str(&arms);
-    out.push_str("        #[cfg(any(test, feature = \"test-hooks\"))]\n        _ => None,\n    }\n}\n\n");
+    out.push_str(
+        "        #[cfg(any(test, feature = \"test-hooks\"))]\n        _ => None,\n    }\n}\n\n",
+    );
     out.push_str("impl GrammarDialect {\n    /// Whether this build parses the dialect: its language's `lang-<id>` feature is on. Files of a dialect\n    /// not built are routed to none, as a planned language's are.\n    pub const fn built(self) -> bool {\n        match self {\n");
     out.push_str(&built);
     // A test-only dialect is ast-grep's grammar (`support`), always linked: built in every test build.
@@ -805,17 +877,11 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
         let _ = writeln!(out, "    {},", pascal(&entry.id));
     }
     out.push_str("}\n\nimpl CodeRuleLanguage {\n");
-    let _ = writeln!(
-        out,
-        "    pub const ALL: [Self; {}] = [",
-        supported.len()
-    );
+    let _ = writeln!(out, "    pub const ALL: [Self; {}] = [", supported.len());
     for entry in &supported {
         let _ = writeln!(out, "        Self::{},", pascal(&entry.id));
     }
-    out.push_str(
-        "    ];\n\n    pub const fn name(self) -> &'static str {\n        match self {\n",
-    );
+    out.push_str("    ];\n\n    pub const fn name(self) -> &'static str {\n        match self {\n");
     for entry in &supported {
         let _ = writeln!(
             out,
@@ -826,7 +892,9 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
     }
     out.push_str("        }\n    }\n\n");
     out.push_str("    /// The dialects its rules run on, the first being the one its own text (transform templates,\n    /// define clauses) is read in.\n");
-    out.push_str("    pub const fn dialects(self) -> &'static [GrammarDialect] {\n        match self {\n");
+    out.push_str(
+        "    pub const fn dialects(self) -> &'static [GrammarDialect] {\n        match self {\n",
+    );
     for entry in &supported {
         let own = entry
             .dialects
@@ -841,7 +909,9 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
             .join(", ");
         let _ = writeln!(out, "            Self::{} => &[{list}],", pascal(&entry.id));
     }
-    out.push_str("        }\n    }\n\n    pub const fn family(self) -> Family {\n        match self {\n");
+    out.push_str(
+        "        }\n    }\n\n    pub const fn family(self) -> Family {\n        match self {\n",
+    );
     for entry in &supported {
         let _ = writeln!(
             out,
@@ -969,11 +1039,7 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
             .find(|entry| entry.family == *family)
             .expect("family entry");
         for suppression in &entry.suppressions {
-            honoured.push(format!(
-                "(Self::{}, {:?})",
-                pascal(family),
-                suppression
-            ));
+            honoured.push(format!("(Self::{}, {:?})", pascal(family), suppression));
         }
     }
     let body = if honoured.is_empty() {
@@ -988,7 +1054,9 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
 
     out.push_str("/// Evaluates `$body` with `$a` the adapter of `$family` (`adapter`): one arm per registry family.\n");
     // Every crate that includes the registry gets the macro; not every one evaluates over adapters (`rerail-lang`).
-    out.push_str("#[allow(unused_macros, reason = \"not every crate including the registry uses it\")]\n");
+    out.push_str(
+        "#[allow(unused_macros, reason = \"not every crate including the registry uses it\")]\n",
+    );
     out.push_str("macro_rules! with_adapter {\n    ($family:expr, $a:ident => $body:expr) => {\n        match $family {\n");
     for (family, _, ids) in &families {
         // the adapter by its module (`adapter::python::Python`): a crate whose `adapter` re-exports the modules,
@@ -996,7 +1064,10 @@ fn render_built(entries: &[Entry], test_planned: &[String], omitted: &[String]) 
         let module = family.replace('-', "_");
         let family = pascal(family);
         // A family whose every language this build leaves out reads no file: its adapter is never linked.
-        if ids.iter().all(|id| omitted.iter().any(|omitted| omitted == id)) {
+        if ids
+            .iter()
+            .all(|id| omitted.iter().any(|omitted| omitted == id))
+        {
             let _ = writeln!(
                 out,
                 "            $crate::code_rule_dsl::language::Family::{family} => unreachable!(\"{family}: no language of this family is in this build\"),"
@@ -1065,7 +1136,9 @@ mod tests {
                 &self.0.join("out"),
             );
             // The registry and the dispatch macro written beside it, as one text.
-            let read = |name: &str| std::fs::read_to_string(self.0.join("out").join(name)).expect("generated");
+            let read = |name: &str| {
+                std::fs::read_to_string(self.0.join("out").join(name)).expect("generated")
+            };
             read("language_registry.rs") + &read("with_adapter.rs")
         }
 
@@ -1206,10 +1279,26 @@ mod tests {
     #[test]
     fn a_language_left_out_of_the_build_keeps_its_tables_but_no_grammar() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let vendored = ["python", "sql", "typescript", "tsx", "javascript", "vue", "markdown", "markdown-inline"];
+        let vendored = [
+            "python",
+            "sql",
+            "typescript",
+            "tsx",
+            "javascript",
+            "vue",
+            "markdown",
+            "markdown-inline",
+        ];
         let out = Registry::new("omitted", &[]);
-        generate(&root.join("../languages"), None, &vendored, &["php".to_owned(), "sql".to_owned()], &out.0.join("out"));
-        let generated = std::fs::read_to_string(out.0.join("out/language_registry.rs")).expect("generated");
+        generate(
+            &root.join("../languages"),
+            None,
+            &vendored,
+            &["php".to_owned(), "sql".to_owned()],
+            &out.0.join("out"),
+        );
+        let generated =
+            std::fs::read_to_string(out.0.join("out/language_registry.rs")).expect("generated");
         // No grammar and no extern symbol for SQL, which is not built; Python keeps both.
         assert!(generated.contains("        GrammarDialect::Sql => None,"));
         assert!(!generated.contains("fn tree_sitter_sql()"));
@@ -1217,7 +1306,8 @@ mod tests {
         assert!(generated.contains("            GrammarDialect::Sql => false,"));
         assert!(generated.contains("            GrammarDialect::Python => true,"));
         // PHP's family has no language in the build: its adapter is unreachable. Blade's still is.
-        let dispatch = std::fs::read_to_string(out.0.join("out/with_adapter.rs")).expect("generated");
+        let dispatch =
+            std::fs::read_to_string(out.0.join("out/with_adapter.rs")).expect("generated");
         assert!(dispatch.contains("Family::Php => unreachable!"));
         assert!(!dispatch.contains("Family::Blade => unreachable!"));
         // Nothing embeds SQL.
@@ -1227,7 +1317,16 @@ mod tests {
     #[test]
     fn the_repository_registry_generates_the_engine_tables() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let vendored = ["python", "sql", "typescript", "tsx", "javascript", "vue", "markdown", "markdown-inline"];
+        let vendored = [
+            "python",
+            "sql",
+            "typescript",
+            "tsx",
+            "javascript",
+            "vue",
+            "markdown",
+            "markdown-inline",
+        ];
         let planned_ids = planned_ids(&root.join("../languages"));
         let planned = quoted(&planned_ids);
         let tested_planned = quoted(&[planned_ids, vec!["exemplar".to_owned()]].concat());
@@ -1274,7 +1373,16 @@ mod tests {
             generate(
                 &root.join("../languages"),
                 test_directory,
-                &["python", "sql", "typescript", "tsx", "javascript", "vue", "markdown", "markdown-inline"],
+                &[
+                    "python",
+                    "sql",
+                    "typescript",
+                    "tsx",
+                    "javascript",
+                    "vue",
+                    "markdown",
+                    "markdown-inline",
+                ],
                 &[],
                 &out.0.join("out"),
             )
@@ -1437,9 +1545,7 @@ mod tests {
             ],
         )
         .generate();
-        assert!(
-            generated.contains("    pub const ALL: [Self; 2] = [Self::One, Self::Two];\n")
-        );
+        assert!(generated.contains("    pub const ALL: [Self; 2] = [Self::One, Self::Two];\n"));
     }
 
     #[test]

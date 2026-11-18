@@ -277,7 +277,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "LOG"),
     ("code_rule_dsl/logic/plan.rs", "PATH"),
     ("code_rule_dsl/logic/plan.rs", "SETTING"),
-    // core.rr's declarations (RER-131), read once from the engine's own library text: not a result kept.
+    // core.rerail's declarations (RER-131), read once from the engine's own library text: not a result kept.
     ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
     // This thread's zstd contexts by dictionary (RER-131): open things, not results.
     ("content_store/compression.rs", "DECODERS"),
@@ -323,7 +323,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/rr.rs", "READS"),
     // `core_names` less 0174's on-request relations: a set of the engine's own, as `CORE`, the same for every run.
     ("code_rule_dsl/logic/rr.rs", "SHAPE"),
-    // The library images shipped beside the executable (0264), read once: an input, as `CORE`'s core.rr, no result.
+    // The library images shipped beside the executable (0264), read once: an input, as `CORE`'s core.rerail, no result.
     ("code_rule_dsl/logic/rr/images.rs", "SHIPPED"),
     // The rule files' entries a thread read before its run (0275), taken by the run's manifest: a queue.
     ("code_rule_dsl/logic/plan/corpus/combined.rs", "READ_BEFORE"),
@@ -411,7 +411,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "RUN_PHASES"),
     ("code_rule_dsl/logic/profile.rs", "DECIDING"),
     ("code_rule_dsl/logic/profile/life.rs", "ENTERED"),
-    // `core.rr`'s shape less what decision 0174's rewrite adds, read once from the engine's own library, as `DECLS`.
+    // `core.rerail`'s shape less what decision 0174's rewrite adds, read once from the engine's own library, as `DECLS`.
     ("code_rule_dsl/logic/rr.rs", "SHAPE"),
     // The rule images shipped with the engine (decision 0264), opened once: an open thing, not a result kept.
     ("code_rule_dsl/logic/rr/images.rs", "SHIPPED"),

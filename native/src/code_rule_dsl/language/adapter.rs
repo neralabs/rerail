@@ -37,7 +37,7 @@ use super::{
 use crate::code_rule_dsl::identifier::{ecma_name, python_name};
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::matcher::{file_index};
+use crate::code_rule_dsl::matcher::file_index;
 use crate::code_rule_dsl::model::{ViolationSpec, python_module_path_on_disk};
 use crate::code_rule_dsl::suppress::{Suppress, root};
 use ast_grep_core::{Doc, Node};
@@ -155,9 +155,7 @@ pub(crate) fn source_type(
     package: Option<PackageType>,
 ) -> Option<SourceType> {
     match super::dialect_by_label(label) {
-        Some(dialect) => {
-            super::base(Family::of(dialect)).source_type(path, package)
-        }
+        Some(dialect) => super::base(Family::of(dialect)).source_type(path, package),
         None => Some(SourceType::Module),
     }
 }
@@ -174,8 +172,14 @@ pub(crate) fn packages(label: &str) -> bool {
 /// Asked before any family is registered, it panics as `base` does: an empty union kept for the
 /// process would answer every later walk wrongly.
 fn every_family_kind(kinds: impl Fn(Family) -> &'static [&'static str]) -> Vec<&'static str> {
-    let registered = Family::ALL.into_iter().filter(|&family| super::registered_base(family).is_some()).collect::<Vec<_>>();
-    assert!(!registered.is_empty(), "no language registered for any family");
+    let registered = Family::ALL
+        .into_iter()
+        .filter(|&family| super::registered_base(family).is_some())
+        .collect::<Vec<_>>();
+    assert!(
+        !registered.is_empty(),
+        "no language registered for any family"
+    );
     let mut union = Vec::new();
     for kind in registered.into_iter().flat_map(kinds) {
         if !union.contains(kind) {
@@ -188,11 +192,8 @@ fn every_family_kind(kinds: impl Fn(Family) -> &'static [&'static str]) -> Vec<&
 static WALK_COMMENT_KINDS: LazyLock<Vec<&'static str>> =
     LazyLock::new(|| every_family_kind(|family| super::base(family).comment_kinds()));
 
-static PAREN_KINDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    every_family_kind(
-        |family| super::base(family).paren_kinds(),
-    )
-});
+static PAREN_KINDS: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| every_family_kind(|family| super::base(family).paren_kinds()));
 
 /// Whether `kind` is a comment that a token or sibling walk passes over, in any family's grammar
 /// (`Adapter::WALK_COMMENT_KINDS`). The matchers that walk (`compare`, `layout`) hold no family, and

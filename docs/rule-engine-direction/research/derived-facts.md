@@ -3,7 +3,7 @@
 The normative text derived from this report is `spec.md` §21 and decision 0005. Part (e) lists the spec edits that were applied.
 
 **Sources and short forms**
-- **PR** = nera-data-layer PR 2539 at tip `281f500d7c`, read from the checkout `/Users/jeremy/orca/workspaces/nera-data-layer-10/DL-PR-2564`. `dd/` means `docs/design/`.
+- **PR** = the data-layer repository's PR 2539 at tip `281f500d7c`, read from the checkout `/Users/jeremy/orca/workspaces/data-layer-10/DL-PR-2564`. `dd/` means `docs/design/`.
 - **FE** = `origin/Moti-Velz/facts-engine` at tip `685db3f7`.
 - **HEAD** = the Pulling-it-all-together worktree.
 - Gate-corpus row counts come from `/private/tmp/claude-501/-Users-jeremy-orca-workspaces-rerail-Pulling-it-all-together/3adb237a-22e7-4e0c-9a7a-33e109d2ab63/scratchpad/rule-profiles/out/facts.sqlite`, `.../flow.sqlite` and `.../measure.txt` in the same folder, plus `research/heavy-rule-profiles.md`.

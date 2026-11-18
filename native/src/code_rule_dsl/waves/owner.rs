@@ -164,4 +164,4 @@ impl Drop for Lease<'_> {
 }
 
 // Its tests run in the engine's test binary (its facade of this module mounts `owner/tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
+// engine registers as it loads (the languages, their `.rerail` libraries).

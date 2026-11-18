@@ -105,6 +105,18 @@ describe("#24 harnesses in CI", () => {
     expect(result.findings).toEqual([]);
   });
 
+  it("reads an interpreter named by its absolute path as the interpreter, and leaves the explorer's samples out", () => {
+    const result = harnessesInCi(
+      memoryRepo({
+        ".github/workflows/ci.yml": ci("/usr/bin/python3 test/scripts/test_native.py"),
+        "test/scripts/test_native.py": "",
+        "docs/rule-syntax/site/explorer/scenarios/pytest-raises-broad/test_parse.py": "",
+        "docs/rule-syntax/site/explorer/test_other.py": "",
+      }),
+    );
+    expect(paths(result)).toEqual(["docs/rule-syntax/site/explorer/test_other.py"]);
+  });
+
   it("counts the specs under the Playwright config's testDir, and only those, as run by playwright test", () => {
     const result = harnessesInCi(
       memoryRepo({

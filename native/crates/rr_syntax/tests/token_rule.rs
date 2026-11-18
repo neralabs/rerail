@@ -1,4 +1,4 @@
-//! The named-only tape's rule (RER-131's) on every `.rr` file of the repository. A token is a
+//! The named-only tape's rule (RER-131's) on every `.rerail` file of the repository. A token is a
 //! **delimiter** (a bracket, `,`, `;`, `|`, `<`, `>`, a quote) or not. A delimiter is left out
 //! where its gap is implied. Any other token (a keyword, an operator, `:`, `.`, `=>`) is left out
 //! only where its parent's kind implies it in every gap it can stand in: under one parent kind,
@@ -22,7 +22,7 @@ fn corpus() -> Vec<(String, String)> {
             let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
             if p.is_dir() && !skip {
                 work.push(p);
-            } else if p.extension().is_some_and(|x| x == "rr") {
+            } else if p.extension().is_some_and(|x| x == "rerail") {
                 files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
             }
         }

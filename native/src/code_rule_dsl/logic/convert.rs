@@ -17,12 +17,13 @@
 //!
 //! # The authored overlay
 //!
-//! What the converter cannot say is written by hand, one `.rr` file per rule (decision 0043), and merged over the
+//! What the converter cannot say is written by hand, one `.rerail` file per rule (decision 0043), and merged over the
 //! converted program (`overlay`):
-//! - the file is `gate/data-layer/packs/data-layer/candidates/datalog/authored/<rule-id>.rr`, the rule id as in the
-//!   policy (`data-layer-lazy-architecture`), read whenever the rule is converted (no rebuild);
-//! - it declares every relation it reads or defines but core.rr's, which are the engine's (decision 0141:
-//!   `rr::read_file` refuses a file that declares or derives one): core.rr's declarations are its prelude
+//! - the file is `candidates/datalog/authored/<rule-id>.rerail` in the data-layer pack's test data
+//!   (`packs/data-layer/upstream/lint/authored/packs/data-layer/`, which `npm run fixtures:pull` fetches), the rule id
+//!   as in the policy (`data-layer-lazy-architecture`), read whenever the rule is converted (no rebuild);
+//! - it declares every relation it reads or defines but core.rerail's, which are the engine's (decision 0141:
+//!   `rr::read_file` refuses a file that declares or derives one): core.rerail's declarations are its prelude
 //!   (`rr::lower::core`), in the column types of the converter's (`BASE`): `doc(d, path, module)`,
 //!   `node(d, n, kind, start, end)`, `child(p, c, i)` (named children), `field(p, f, c)`, `text(n, s)`,
 //!   `name(n, s)`, `str(n, v)`, `strprefix(n, p)`, `intval(n, v)`, `op(n, s)`, `line(n, l)`, and those the README
@@ -30,11 +31,11 @@
 //!   W's values and f-string trees: `fstring_piece`, `fstring_template`, whose marker is a constant; Ruff's string
 //!   annotations and their trees, `string_annotation(s)` and `parsed(s, grammar, root)`, each tree a document of its
 //!   own; W's pythonAst `literal_json(n, v)`, `dump_sha256(n, h)`, `body_sha256(f, h)` and `signature_sha256(f, h)`).
-//!   Not core.rr's: core.rr's `@py_unparse(n)` and `@ast_dump(n)` as `cpython_unparse(n: node, s: symbol)` and
-//!   `cpython_ast_dump(n: node, s: symbol)`, and the two syntax verdicts: CPython's, core.rr's `syntax_error(d, l,
+//!   Not core.rerail's: core.rerail's `@py_unparse(n)` and `@ast_dump(n)` as `cpython_unparse(n: node, s: symbol)` and
+//!   `cpython_ast_dump(n: node, s: symbol)`, and the two syntax verdicts: CPython's, core.rerail's `syntax_error(d, l,
 //!   msg)`, as `cpython_syntax_error(d: number, l: number, msg: symbol)`, and the tape's (tree-sitter's ERROR and
 //!   MISSING nodes, the converter's `syntax_error(d: number)`) as `tape_syntax_error(d: number)`, given (below).
-//!   The base relations it reads are inputs, `.input` or not. It may `#include` the libraries (`python/ast.rr`):
+//!   The base relations it reads are inputs, `.input` or not. It may `#include` the libraries (`python/ast.rerail`):
 //!   their `.output`s are theirs. The scope, `in_scope(d: number)` and `out_scope(d: number)`, is the converter's
 //!   (the policy's, or the replay's per event): read, never derived. So is the tape's verdict, `tape_syntax_error`
 //!   (decision 0141). So is the report gate, `report_when_gt(k: number)`: one row
@@ -46,7 +47,7 @@
 //!   converter does not gate its own clauses: in a policy with a report gate they are gaps, for the file to give.
 //!   The options, as the run resolves them (the policy's config, else each option's default; the replay's per
 //!   event), are given too, read, never derived: `option_on(name: symbol)`, a row per boolean option that is true;
-//!   `option_item(name: symbol, i: number, v: symbol)`, a row per item of an array option, i from 0 (core.rr's; strings
+//!   `option_item(name: symbol, i: number, v: symbol)`, a row per item of an array option, i from 0 (core.rerail's; strings
 //!   as they are, others as JSON); `option_value(name: symbol, v: symbol)`, a row per string, number or object
 //!   option, as text;
 //!   `option_json(name: symbol, pointer: symbol, v: symbol)`, a row per leaf of a JSON option (an object or array,
@@ -814,7 +815,7 @@ impl Emitter {
 }
 
 /// The base relations every converted program reads, and those the corpus runner binds for an authored file beyond
-/// them (core.rr's, `facts::vtab::syntax::Extra`): the source text, its spans and node columns T had not; and W's
+/// them (core.rerail's, `facts::vtab::syntax::Extra`): the source text, its spans and node columns T had not; and W's
 /// Python reference graph (`logic::plan::corpus::references`).
 pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl doc(d: int, path: sym, module: sym)
@@ -962,7 +963,7 @@ fn types<S: AsRef<str>>(columns: &[(S, S)]) -> Vec<&str> {
     columns.iter().map(|(_, t)| t.as_ref()).collect()
 }
 
-/// Column types in `.rr` spellings, for the errors.
+/// Column types in `.rerail` spellings, for the errors.
 #[cfg(test)]
 fn spelled<'a>(types: impl IntoIterator<Item = &'a str>) -> String {
     let spell = |t: &'a str| match t {
@@ -1001,7 +1002,7 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
     // program's, made once over all its readers below.
     super::rr::lower::undo_on_request(&mut converted);
     super::rr::lower::undo_on_request(&mut authored);
-    // The prelude's declarations the file does not use are core.rr's, not the file's (`rr::drop_unread_core`).
+    // The prelude's declarations the file does not use are core.rerail's, not the file's (`rr::drop_unread_core`).
     super::rr::drop_unread_core(&mut authored);
     // `.global library …` is what reading the file wrote of the libraries it includes (decision 0091), not a
     // directive of its own: it goes with the merged program.
@@ -1060,7 +1061,7 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
             }
             // A bridged relation (`typing_<program>__<output>`, the library's calls) is the runner's to give; so are
             // decision 0055's settings (`guest_policy`, the lowering's facts, empty where the program sets none), which
-            // the library reads (`python/names.rr`).
+            // the library reads (`python/names.rerail`).
             if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || authored.inputs.iter().any(|i| i == rel) || super::plan::corpus::bridge::is_bridged(rel)
                 || rel == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY) {
                 return err(format!("{rel} is read, and nothing derives or inputs it"));
@@ -1120,7 +1121,7 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
     for (rel, rows) in facts {
         converted.facts.entry(rel).or_default().extend(rows);
     }
-    // core.rr's `.input` of a relation the converter gives (`option_item`) is the converter's facts, not an input.
+    // core.rerail's `.input` of a relation the converter gives (`option_item`) is the converter's facts, not an input.
     push_new(&mut converted.inputs, inputs.into_iter().filter(|i| !GIVEN.contains(&i.as_str())).chain(reads_base));
     push_new(&mut converted.outputs, outputs.into_iter().chain(["violation".to_owned()]));
     push_new(&mut converted.demand, demand);
@@ -1246,7 +1247,7 @@ fn replace_var(literal: &str, from: &str, to: &str) -> String {
     out
 }
 
-/// `a` strictly below `b` in the tree: the language's `within` (`core.rr`), which the engine reads off the tree
+/// `a` strictly below `b` in the tree: the language's `within` (`core.rerail`), which the engine reads off the tree
 /// (decision 0050).
 fn within_strict(a: &str, b: &str) -> String {
     format!("within({a}, {b})")

@@ -1013,15 +1013,16 @@ function ruleDraftHelp(): string {
   return [
     "Usage:",
     "  rerail rules show <rule id> [--repo <dir>]",
-    "  rerail rules test <draft.json | rule.json | rule.rr> [--repo <dir>] [--json]",
+    "  rerail rules test <draft.json | rule.json | rule.rerail> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "",
     "rules show prints a rule as a draft: one of yours, or a By Rerail rule from an installed pack.",
     "rules test checks a draft without storing it: it validates the rule, runs its cases, and for a code rule lists the",
     "places it matches in the repository, in the folders rules add would add it at, and says where rules add would",
     "refuse the draft. It also takes a rule document on its own (a worktree's .rerail/rules/<name>.json), which has no",
-    "cases, and a .rr rule file, whose own tests (.test ... .end) it runs. rules add stores the rule in your library and",
-    "adds it to the repository. A draft that keeps a By Rerail rule's id is stored as your copy of it, added where the",
+    "cases, and a .rerail rule file, whose own tests (.test ... .end) it runs from a Rerail checkout, which holds the .rerail",
+    "programs they read (or with RERAIL_SOURCE_ROOT naming one). rules add stores the rule in your library and adds",
+    "it to the repository. A draft that keeps a By Rerail rule's id is stored as your copy of it, added where the",
     "original is; approving the copy turns the original off there.",
     "",
     "A draft is one JSON file:",
@@ -1128,7 +1129,7 @@ async function runAdd(file: string, repo: string, stdout: CommandOutput, stderr:
 }
 
 /**
- * The tests a `.rr` rule file carries (`.test` … `.end`), each run by the Engine as `rerail-engine test-rr` runs them:
+ * The tests a `.rerail` rule file carries (`.test` … `.end`), each run by the Engine as `rerail-engine test-rr` runs them:
  * one line a test, and each failed expectation under it.
  */
 export function testRrFile(file: string): NativeRrTestResult[] {
@@ -1148,7 +1149,7 @@ export function formatRrTestReport(results: readonly NativeRrTestResult[]): stri
 }
 
 async function runTest(file: string, repo: string, json: boolean, stdout: CommandOutput): Promise<number> {
-  if (file.endsWith(".rr")) {
+  if (file.endsWith(".rerail")) {
     const results = testRrFile(file);
     stdout.write(`${json ? JSON.stringify(results) : formatRrTestReport(results)}\n`);
     return results.every(result => result.status === "pass") ? 0 : 1;
@@ -1159,8 +1160,8 @@ async function runTest(file: string, repo: string, json: boolean, stdout: Comman
 }
 
 /**
- * `rerail rules show <id>`, `rerail rules test <draft.json | rule.json>` and `rerail rules add <draft.json>`; with
- * `--help`, the draft format.
+ * `rerail rules show <id>`, `rerail rules test <draft.json | rule.json | rule.rerail>` and `rerail rules add <draft.json>`;
+ * with `--help`, the draft format.
  */
 export async function runRuleDraftCommand(
   action: RuleDraftAction,

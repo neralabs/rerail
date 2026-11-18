@@ -1,4 +1,4 @@
-"""Writes ruff-air312-airflow3-suggested-to-move-to-provider.moved.rr: the Airflow names deprecated in Airflow 3
+"""Writes ruff-air312-airflow3-suggested-to-move-to-provider.moved.rerail: the Airflow names deprecated in Airflow 3
 in favour of the standard provider (AIR312), from the JSON's `deprecated` import list. The new module is the old one
 under `airflow.providers.standard`, except for the two Ruff spells differently (NEW below); the name is unchanged.
     python3 docs/rule-syntax/packs/python/gen-ruff-air312-airflow3-suggested-to-move-to-provider.py
@@ -6,7 +6,7 @@ under `airflow.providers.standard`, except for the two Ruff spells differently (
 import json, os
 HERE = os.path.dirname(os.path.abspath(__file__))
 JSON = os.path.join(HERE, "..", "..", "..", "..", "packs", "python", "rules", "ruff-air312-airflow3-suggested-to-move-to-provider.json")
-OUT = os.path.join(HERE, "ruff-air312-airflow3-suggested-to-move-to-provider.moved.rr")
+OUT = os.path.join(HERE, "ruff-air312-airflow3-suggested-to-move-to-provider.moved.rerail")
 NEW = {"airflow.sensors.bash": "airflow.providers.standard.sensor.bash",  # sic, as Ruff 0.16.9 has it
        "airflow.sensors.time_sensor": "airflow.providers.standard.sensors.time"}
 

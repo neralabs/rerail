@@ -178,7 +178,7 @@ C408 found a `dict({})` call there in a pack, which it does not find alone.
   asked for it, and a program's bound is one comparison on that key. Keeping each program to its own guests needs a
   join on every bounded atom, or keys made per asker by the runner.
 
-Measured on the Python fixtures (536 rules; release build, nera-port-4, idle, two runs each):
+Measured on the Python fixtures (536 rules; release build, a Linux build box, idle, two runs each):
 
 | | packs | wall | CPU | peak RSS |
 |---|---|---|---|---|

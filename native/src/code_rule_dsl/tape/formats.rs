@@ -252,7 +252,7 @@ impl TapeImage {
     }
 }
 
-/// A `.rr` file's tape from its lean parser, in the run's format: format 16 or 16z written in one pass over the
+/// A `.rerail` file's tape from its lean parser, in the run's format: format 16 or 16z written in one pass over the
 /// writer, as `lean` writes the other languages', else format 15's image. One per file, moved once: its variants'
 /// sizes do not matter.
 #[allow(clippy::large_enum_variant)]
@@ -261,7 +261,7 @@ pub(super) enum RrTape {
     Written(f16::Written),
 }
 
-/// The finish the `.rr` parser's writer is given (`rerail_rr_syntax::lean::tape_into`): `lean`'s, for a parser whose
+/// The finish the `.rerail` parser's writer is given (`rerail_rr_syntax::lean::tape_into`): `lean`'s, for a parser whose
 /// keys are the codes (`kf | flags << 16`, no supertypes).
 struct Rr<'s>(&'s str);
 
@@ -293,7 +293,7 @@ impl rerail_tape_format::Finish for Rr<'_> {
     }
 }
 
-/// `source`'s tape from the `.rr` parser, in the run's format (`Rr`).
+/// `source`'s tape from the `.rerail` parser, in the run's format (`Rr`).
 pub(super) fn rr_tape(source: &str) -> RrTape {
     rerail_rr_syntax::lean::tape_into(source, &mut Rr(source))
 }
@@ -318,6 +318,8 @@ pub struct DocTape {
     /// A 16z tape laid out as the format 16 tape it is the blocks of, once, for the readers that read format 16's
     /// arrays in place (`in_place`), as the device's slab lays it out.
     laid: OnceLock<Result<f16::Tape16, String>>,
+    /// Each node's parent, kept once a read asks for one that no step knew (`parents`).
+    parents: OnceLock<Box<[u32]>>,
 }
 
 impl DocTape {
@@ -327,13 +329,41 @@ impl DocTape {
         // is in the `Arc`'s allocation, which does not move, and is never changed once held; this holds the `Arc`
         // for as long as the reader, and `reader` lends it at the borrow of `self` only.
         let reader = unsafe { std::mem::transmute::<AnyTape<'_>, AnyTape<'static>>(reader) };
-        DocTape { reader, image, other: Default::default(), laid: OnceLock::new() }
+        DocTape { reader, image, other: Default::default(), laid: OnceLock::new(), parents: OnceLock::new() }
     }
 
     /// The tape's reader, made once: a node's reads dispatch on the format, and nothing is built a read.
     #[inline]
     pub fn reader(&self) -> &AnyTape<'_> {
         &self.reader
+    }
+
+    /// Each node's parent (`NONE` at the root), kept once a read asks for one that no step knew (`TapeNode::up`,
+    /// `TapeDoc::transducer_parent`): one pass of the subtrees open around each node, a subtree end a node, as
+    /// `TapeDoc::transducer_parents` reads them; 4 bytes a node.
+    ///
+    /// The tape stores no parent: format 15 searches back at most 64 nodes and then descends from the root over the
+    /// siblings' subtree ends, format 16 steps back over the siblings' slots (0293 §8). The matcher asks for one at
+    /// every step of a climb from a node the anchors or a binary search handed it (`NodeRef::find_near`, `inside`,
+    /// a field's first child): a search a step where the records it read before held a load. Kept, a step is a
+    /// load again, as a projection keeps the parents its walk finds (0293 §6, "kept on measurement"): the
+    /// shipped Node.js built-in tables read a search per step on every file, 2.4 times main's time.
+    pub fn parents(&self) -> &[u32] {
+        self.parents.get_or_init(|| {
+            use rerail_tape_format::tape::Tape;
+            rerail_tape_format::with_tape!(&self.reader, |t| {
+                let mut parents = Vec::with_capacity(t.len());
+                let mut open: Vec<(u32, usize)> = Vec::new();
+                for i in 0..t.len() {
+                    while open.last().is_some_and(|&(_, end)| end <= i) {
+                        open.pop();
+                    }
+                    parents.push(open.last().map_or(super::NONE, |&(p, _)| p));
+                    open.push((i as u32, t.subtree_end(i)));
+                }
+                parents.into_boxed_slice()
+            })
+        })
     }
 
     pub fn image(&self) -> &TapeImage {
@@ -345,6 +375,7 @@ impl DocTape {
         self.image.estimated_bytes()
             + self.other.iter().filter_map(OnceLock::get).map(TapeImage::estimated_bytes).sum::<usize>()
             + self.laid.get().and_then(|laid| laid.as_ref().ok()).map_or(0, f16::Tape16::bytes)
+            + self.parents.get().map_or(0, |parents| 4 * parents.len())
     }
 
     /// The tape as the reads written once take it (decision 0310): the bytes every offset of its view counts

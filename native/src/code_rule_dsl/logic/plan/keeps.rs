@@ -585,7 +585,7 @@ fn refusals(f: &Fields<'_>, base: &Placed, n: usize, rules_of: &BTreeMap<&str, V
         } else if f.answer(rel) || f.nullary(rel) {
             Some("an answer or nullary")
         } else if super::corpus::guests::REQUESTS.contains(&rel) || core.contains(rel) || rel.contains("__") {
-            Some("the engine's (a request, core.rr's, or a session's copy)")
+            Some("the engine's (a request, core.rerail's, or a session's copy)")
         } else if recursive.contains(rel) || rules().any(|r| reads(r).contains(&rel)) {
             Some("recursive")
         } else if rules().any(|r| r.body().any(|l| !matches!(l.view(), Lit::Atom(_) | Lit::Cmp { .. } | Lit::Nearest { .. }))) {

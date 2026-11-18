@@ -1,8 +1,8 @@
-"""Rewrite .rr text from the first draft's syntax into Soufflé form.
+"""Rewrite .rerail text from the first draft's syntax into Soufflé form.
 
 First draft            Soufflé form
   $x                   x                       (`$` stays only inside backtick patterns and templates)
-  .use a/b             #include "a/b.rr"
+  .use a/b             #include "a/b.rerail"
   .set s = "a" | "b"   .decl s(v: symbol)  s("a"). s("b").
   .kindset k = …       .decl k(kind: symbol)  k("…").
   .native r(…)         .decl r(…) and an `.input` list per section
@@ -313,7 +313,7 @@ def directives(text):
             flush()
         m = re.match(r"\.use\s+(\S+)(.*)$", line)
         if m:
-            out.append(f'#include "{m.group(1)}.rr"{m.group(2)}')
+            out.append(f'#include "{m.group(1)}.rerail"{m.group(2)}')
             i += 1
             continue
         m = re.match(r"\.(set|kindset)\s+(\w+)\s*=\s*(.*)$", line)

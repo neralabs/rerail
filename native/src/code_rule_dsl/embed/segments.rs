@@ -158,14 +158,7 @@ impl SegmentMap {
     /// the host bytes `anchor`: copied byte for byte (`copied`), or written over them; `omit` marks
     /// a placeholder the program's tree does not keep. Positions past `u32` are clamped: no tape
     /// holds a source that long (`tape` refuses it).
-    pub fn push(
-        &mut self,
-        at: usize,
-        end: usize,
-        anchor: Range<usize>,
-        copied: bool,
-        omit: bool,
-    ) {
+    pub fn push(&mut self, at: usize, end: usize, anchor: Range<usize>, copied: bool, omit: bool) {
         let narrow = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
         self.segments.push(Segment {
             at: narrow(at),
@@ -449,9 +442,7 @@ impl SegmentMap {
 
     /// Each copied stretch: its program bytes and the host bytes they copy, in program order.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn copied_stretches(
-        &self,
-    ) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {
+    pub fn copied_stretches(&self) -> impl Iterator<Item = (Range<usize>, Range<usize>)> + '_ {
         self.segments
             .iter()
             .filter(|segment| segment.copied)

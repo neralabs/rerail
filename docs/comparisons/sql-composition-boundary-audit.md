@@ -17,7 +17,7 @@ The first problem accounts for this profile. Fixing only the second problem does
 
 ## Evidence
 
-Source profile: `benchmark/async-family-integration/retained-demands/after/rr-profile.json.gz`.
+Source profile: `packs/data-layer/upstream/benchmarks/authored/async-family-integration/retained-demands/after/rr-profile.json.gz`.
 The job processes 5,725 files in 72 chunks.
 
 | Executed statement | Count |

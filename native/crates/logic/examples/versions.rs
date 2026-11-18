@@ -856,7 +856,7 @@ fn reads(dir: &Path) {
     let lists = Lists::default();
     let mut names: Vec<_> = std::fs::read_dir(dir).expect("trace dir").filter_map(|e| {
         let p = e.ok()?.path();
-        (p.extension()? == "rr").then_some(p)
+        (p.extension()? == "rerail").then_some(p)
     }).collect();
     names.sort();
     let (mut text, mut image, mut open, mut rules) = (Cost::default(), Cost::default(), Cost::default(), 0usize);
@@ -896,7 +896,7 @@ fn validate(dir: &Path) {
     let mut progs: HashMap<String, Program> = HashMap::new();
     let load = |d: &str, progs: &mut HashMap<String, Program>| {
         if !progs.contains_key(d) {
-            let t = std::fs::read_to_string(dir.join(format!("{d}.rr"))).expect("program text");
+            let t = std::fs::read_to_string(dir.join(format!("{d}.rerail"))).expect("program text");
             progs.insert(d.to_owned(), program_text::read_in(&t, &lists).expect("reads"));
         }
     };
@@ -962,7 +962,7 @@ fn replay(dir: &Path) {
     for op in &ops {
         for d in [&op.from, &op.to] {
             if !progs.contains_key(d) {
-                let text = std::fs::read_to_string(dir.join(format!("{d}.rr"))).expect("program text");
+                let text = std::fs::read_to_string(dir.join(format!("{d}.rerail"))).expect("program text");
                 let tree = program_text::read_in(&text, &lists).expect("program reads");
                 let items = encode(&tree, &mut atoms);
                 progs.insert(d.clone(), Prog { tree, items });

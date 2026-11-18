@@ -4,9 +4,9 @@
 //! (tree-sitter-php's `string_content` byte for byte, an `escape_sequence` to the whole escape); a
 //! heredoc or nowdoc, whose indentation PHP strips, maps every node to the whole literal.
 
-use crate::code_rule_dsl::tree::Tree;
 use super::HostMap;
 use super::offsets::{Decoded, Span};
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::value::{Context, MAX_STRING_BYTES, Value, php};
 use ast_grep_core::{Doc, Node};
 use std::ops::Range;
@@ -142,9 +142,9 @@ fn parse_text(
     if !spend(root.size()) {
         return None;
     }
-    Some(super::Parsed::Tree(std::sync::Arc::new(super::SubTree::new(
-        grammar, text, 0, root, map,
-    ))))
+    Some(super::Parsed::Tree(std::sync::Arc::new(
+        super::SubTree::new(grammar, text, 0, root, map),
+    )))
 }
 
 #[cfg(test)]

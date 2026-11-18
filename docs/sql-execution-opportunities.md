@@ -12,7 +12,7 @@ The [count ledger](../fixtures/host/data-layer-port/profiling/sql-execution-oppo
 ## Post-C survey: current 975 submissions
 
 Production remains at `82d82d89`, with 975 engine submissions and 106 separately counted SQLite internal executions.
-The [survey evidence](../fixtures/host/data-layer-port/profiling/post-c-sql-survey-20261024.json) reconciles every engine submission to one bucket.
+The [survey evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/post-c-sql-survey-20261024.json) reconciles every engine submission to one bucket.
 These counts describe the complete fixed guard, including snapshot and workspace execution for two observations.
 
 All areas below now have [executable spikes and recorded decisions](sql-post-c-spikes.md).
@@ -204,7 +204,7 @@ Replacement writes and cleanup remain counted. The 68 compiler empty-schema prob
 The target below is the original component budget; measured components meet the full net target through a different balance.
 Median CPU is roughly flat at 1,546 → 1,541 ms; median peak RSS is 335,536 → 332,960 KiB.
 See the [journal](data-layer-performance-journal.md#relational-storage-delivery-r5-b-2026-10-24) and
-[checked evidence](../fixtures/host/data-layer-port/profiling/relational-storage-recovery-20261024.json).
+[checked evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/relational-storage-recovery-20261024.json).
 
 | Component | Current or modeled baseline | Replacement cap | Net target |
 | --- | ---: | ---: | ---: |
@@ -253,7 +253,7 @@ These are frontend-prototype results on the small guard, not completed C or repo
 The nine remaining state sessions with empty syntax gates submit 500 statements.
 Early admission removes these sessions before SQLite, with no SQL probe or fresh index construction.
 That component remains modeled until runtime implementation.
-The [scope ledger](../fixtures/host/data-layer-port/profiling/sql-execution-chunk-c-20261024.json) records the complete trace, empty sessions, controls, and hashes.
+The [scope ledger](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-execution-chunk-c-20261024.json) records the complete trace, empty sessions, controls, and hashes.
 
 The required combined removal is 761 + 500 = 1,261. A 1,000-removal result does not complete this chunk.
 C leaves a projected 989 submissions, still 889 above the unchanged final limit.

@@ -1,4 +1,4 @@
-//! The `.rr` parser built ahead of time, run on the JIT's harness, compiled by rustc and LLVM
+//! The `.rerail` parser built ahead of time, run on the JIT's harness, compiled by rustc and LLVM
 //! from Rust the build script writes: tier 1's the JIT's own functions (their Cranelift IR,
 //! `clif_rust`); tier 2's the structured backend of the native IR (`rust_stream`), a function a
 //! rule, as the lean parser's.

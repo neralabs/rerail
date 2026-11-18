@@ -5,10 +5,10 @@ four files:
 
 | file | what |
 |---|---|
-| `lib/rust/syntax.rr` | macro bodies and token trees, format strings, comments, parentheses, binary operators, attributes, `#[clippy::msrv]` (`msrv_older`), struct fields |
-| `lib/rust/syntax-literals.rr` | number literals as Clippy's NumericLiteral splits them: digit groups, hex digits of a value, raw-string hashes, octal escapes |
-| `lib/rust/syntax-patterns.rr` | patterns: `ref`/`mut` wrappers, `..`, `_` elements read through tokens, parentheses, tuple-like elements |
-| `lib/rust/syntax-attrs.rr` | lint attributes (`allow`, `expect`), direct or out of a `cfg_attr`, and their `reason` |
+| `lib/rust/syntax.rerail` | macro bodies and token trees, format strings, comments, parentheses, binary operators, attributes, `#[clippy::msrv]` (`msrv_older`), struct fields |
+| `lib/rust/syntax-literals.rerail` | number literals as Clippy's NumericLiteral splits them: digit groups, hex digits of a value, raw-string hashes, octal escapes |
+| `lib/rust/syntax-patterns.rerail` | patterns: `ref`/`mut` wrappers, `..`, `_` elements read through tokens, parentheses, tuple-like elements |
+| `lib/rust/syntax-attrs.rerail` | lint attributes (`allow`, `expect`), direct or out of a `cfg_attr`, and their `reason` |
 
 ## Scores
 
@@ -110,7 +110,7 @@ The two longest rules carry Clippy's algorithm:
   - it does not report C strings (`c"\033"`);
   - `println!("{}", "\033")` and `vec!["\033"]` are reported.
 
-  The format argument is found by position (`format_string` in rust/syntax.rr). Literals in a macro_rules!
+  The format argument is found by position (`format_string` in rust/syntax.rerail). Literals in a macro_rules!
   transcriber are read, as in (c).
 - **(h) unnested-or-patterns.**
   - Clippy 0.1.99 never nests struct patterns that have `..`, even where both sides have it:
@@ -146,7 +146,7 @@ These are proposals. No existing file was edited.
    - Without them, `--all` counts the default-config findings of every other file against the rule.
 3. **rrlab: two lowering bugs found on the way.** The rules here avoid both.
    - **`has(a, n, set)` tests the set on `a`.** It lowers to `rr_has(a, n) :- rr_within(n, a), set(a)`, which
-     agrees with core.rr's comment ("a is a strict ancestor of n whose kind is in set"). The name, though, reads as
+     agrees with core.rerail's comment ("a is a strict ancestor of n whose kind is in set"). The name, though, reads as
      "a has a descendant n in set", and that is the form a rule wants for `has(u, s, "scoped_identifier")`.
      - Either the comment or the lowering should change. The descendant reading is the one JSON's `has` uses.
    - **A comma list in a string set is one kind.** `nearest(n, s, "block,match_arm")` matches the kind

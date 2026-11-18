@@ -106,7 +106,7 @@ fn term(b: &Body<'_>, t: TermRef<'_>, env: &Env, atoms: Option<[i64; 3]>) -> Res
                 }
                 // A node's document (`@doc`): nodes are `d << 32 | index`.
                 ("doc", [x]) => bin(Op::Divide, x.clone(), integer(1i64 << 32)),
-                // A sibling's position (`logic::convert`: `precedes`, `follows`), and `.rr`'s arithmetic.
+                // A sibling's position (`logic::convert`: `precedes`, `follows`), and `.rerail`'s arithmetic.
                 ("add", [x, y]) => bin(Op::Add, x.clone(), y.clone()),
                 ("sub", [x, y]) => bin(Op::Subtract, x.clone(), y.clone()),
                 ("mul", [x, y]) => bin(Op::Multiply, x.clone(), y.clone()),
@@ -114,21 +114,21 @@ fn term(b: &Body<'_>, t: TermRef<'_>, env: &Env, atoms: Option<[i64; 3]>) -> Res
                 // Soufflé's `max(a, b)` and `min(a, b)`: SQL's scalar `max` and `min`.
                 ("max", [x, y]) => call("max", vec![x.clone(), y.clone()]),
                 ("min", [x, y]) => call("min", vec![x.clone(), y.clone()]),
-                // `.rr`'s string functions (Soufflé's): `substr` counts from 0.
+                // `.rerail`'s string functions (Soufflé's): `substr` counts from 0.
                 ("strlen", [x]) => length(&text_of(atoms, x)),
                 ("concat", [x, y]) => symbol_of(atoms, bin(Op::Concatenate, text_of(atoms, x), text_of(atoms, y))),
                 ("to_string", [x]) => symbol_of(atoms, bin(Op::Concatenate, x.clone(), string(""))),
-                // A named group of a regex's match (`.rr`'s `match` with captures, `strings::group`); NULL without one.
+                // A named group of a regex's match (`.rerail`'s `match` with captures, `strings::group`); NULL without one.
                 ("rx_group", [x, re, g]) => symbol_of(atoms, call("rx_group", vec![text_of(atoms, x), text_of(atoms, re), text_of(atoms, g)])),
                 ("substr", [x, i, n]) => symbol_of(atoms, substr(vec![text_of(atoms, x), bin(Op::Add, i.clone(), integer(1)), n.clone()])),
-                // `@dot` (`core.rr`): `a.b`, and `"" . b` is `b`.
+                // `@dot` (`core.rerail`): `a.b`, and `"" . b` is `b`.
                 ("cat", [x, y]) if atoms.is_some() => call("sym_cat", vec![x.clone(), y.clone()]),
-                // `@dot("", y)` is `y` (`core.rr`).
+                // `@dot("", y)` is `y` (`core.rerail`).
                 ("cat", [x, y]) => Expr::Case {
                     branches: vec![(bin(Op::Equal, x.clone(), string("")), y.clone())],
                     fallback: Box::new(bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone())),
                 },
-                // core.rr's functors whose meaning is W's (`register_functors`), ahead of `strings::functions`' below.
+                // core.rerail's functors whose meaning is W's (`register_functors`), ahead of `strings::functions`' below.
                 ("replace_all", [s, re, by]) => symbol_of(atoms, call("rr_replace_all", vec![text_of(atoms, s), text_of(atoms, re), text_of(atoms, by)])),
                 // A JSON string literal as W's signed-list stages write one (`json_group_array`'s elements): SQLite's
                 // `json_quote` of the text.
@@ -154,7 +154,7 @@ fn term(b: &Body<'_>, t: TermRef<'_>, env: &Env, atoms: Option<[i64; 3]>) -> Res
                         fallback: Box::new(integer(TOP)),
                     }
                 }
-                // `.rr`'s `@place(path, line)` (`rr::lower`'s `PLACE`): `-2 - (path << 32 | line)`, the path's symbol
+                // `.rerail`'s `@place(path, line)` (`rr::lower`'s `PLACE`): `-2 - (path << 32 | line)`, the path's symbol
                 // atom and the line, below `unset` (-1) and every node id; `unset` for a line outside `0 .. 2^32`.
                 // `@place_path` and `@place_line` take it apart.
                 ("place", [p, l]) if atoms.is_some() => {
@@ -170,7 +170,7 @@ fn term(b: &Body<'_>, t: TermRef<'_>, env: &Env, atoms: Option<[i64; 3]>) -> Res
                 ("place" | "place_path" | "place_line", _) => {
                     return Err(Error::Plan(format!("no SQL for {}: a place is made of a symbol atom", b.v.show_term(b.rule, t))));
                 }
-                // `core.rr`'s text functors (`strings::functions`): symbols in as text, a symbol result back.
+                // `core.rerail`'s text functors (`strings::functions`): symbols in as text, a symbol result back.
                 (f, items) if let Some((f, kinds, ret)) = strings::functions::signature(f) && kinds.len() == items.len() => {
                     use strings::functions::Kind;
                     let items = items.iter().zip(kinds).map(|(e, k)| if *k == Kind::Text { text_of(atoms, e) } else { e.clone() }).collect();

@@ -18,15 +18,15 @@
 //! expression), as the global name where PHP 8.5.11 defines it (`data/php_builtins.generated.json`), and as
 //! unknown otherwise: another file may declare it.
 
-use std::sync::Arc;
-use crate::code_rule_dsl::tree::Tree;
 use super::{BuildError, NodeRef};
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::value::php_compare::{ImportKind, import_kind};
 use crate::code_rule_dsl::value::{Context, Value, php as php_value};
 use ast_grep_core::{Doc, Node};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
+use std::sync::Arc;
 use std::sync::LazyLock;
 
 /// Nodes between two reads of the evaluation deadline.
@@ -191,8 +191,7 @@ impl PhpNames {
     }
 
     fn class_constant<D: Doc>(&self, access: &Node<'_, D>) -> Option<NodeRef> {
-        let mut parts = access
-            .named_code();
+        let mut parts = access.named_code();
         let (Some(scope), Some(name), None) = (parts.next(), parts.next(), parts.next()) else {
             return None;
         };
@@ -778,9 +777,7 @@ fn argument_for<'r, D: Doc>(
             None => *index == position,
             Some(label) => label.text() == name,
         })?;
-    let expression = argument
-        .named_code()
-        .last()?;
+    let expression = argument.named_code().last()?;
     if expression.kind() == "variadic_unpacking"
         || argument
             .field("name")
@@ -810,8 +807,7 @@ fn is_top_level_statement<D: Doc>(call: &Node<'_, D>) -> bool {
 
 /// The value a `const_element` gives its name.
 fn const_value<'r, D: Doc>(element: &Node<'r, D>) -> Option<Node<'r, D>> {
-    let mut named = element
-        .named_code();
+    let mut named = element.named_code();
     let _name = named.next()?;
     let value = named.next()?;
     named.next().is_none().then_some(value)
@@ -860,7 +856,10 @@ fn position<D: Doc>(node: &Node<'_, D>) -> Option<Option<NameKind>> {
         "named_type" if is_builtin_type(node) => return None,
         "named_type" => NameKind::Class,
         "class_constant_access_expression" => {
-            if !parent.first_code().is_some_and(|first| first.range() == range) {
+            if !parent
+                .first_code()
+                .is_some_and(|first| first.range() == range)
+            {
                 return None;
             }
             NameKind::Class
@@ -900,7 +899,11 @@ fn position<D: Doc>(node: &Node<'_, D>) -> Option<Option<NameKind>> {
         {
             return None;
         }
-        "const_element" if parent.first_code().is_some_and(|first| first.range() == range) => {
+        "const_element"
+            if parent
+                .first_code()
+                .is_some_and(|first| first.range() == range) =>
+        {
             return None;
         }
         "subscript_expression" if is_string_part(&parent) && !follows_brace(&parent) => {
@@ -930,7 +933,8 @@ fn is_string_part<D: Doc>(part: &Node<'_, D>) -> bool {
 /// Whether an interpolation is the complex (`{$a[KEY]}`) form, whose key is an expression; in
 /// the simple form (`$a[KEY]`) a bare key is a string.
 fn follows_brace<D: Doc>(part: &Node<'_, D>) -> bool {
-    part.token_before().is_some_and(|previous| previous.kind() == "{")
+    part.token_before()
+        .is_some_and(|previous| previous.kind() == "{")
 }
 
 fn is_construct<D: Doc>(node: &Node<'_, D>) -> bool {
@@ -967,7 +971,6 @@ fn is_builtin_type<D: Doc>(node: &Node<'_, D>) -> bool {
 fn is_name_kind(kind: &str) -> bool {
     REFERENCE_KINDS.contains(&kind)
 }
-
 
 /// A name's form and segments; `None` for a name PHP would not read as one token.
 fn parse<D: Doc>(node: &Node<'_, D>) -> Option<(Form, Vec<String>)> {

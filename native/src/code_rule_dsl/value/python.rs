@@ -1,8 +1,8 @@
 //! Python values (tree-sitter-python 0.25): literals as CPython reads them, and the operators and
 //! builtin constructors over them folded as CPython evaluates them.
 
-use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::language::Family;
+use crate::code_rule_dsl::tree::Tree;
 
 pub mod ops;
 pub mod words;
@@ -149,15 +149,13 @@ pub const VALUE_KINDS: &[&str] = &[
 
 /// Named children other than comments.
 fn operands<'r, D: Doc>(node: &Node<'r, D>) -> Vec<Node<'r, D>> {
-    node.named_code()
-        .collect()
+    node.named_code().collect()
 }
 
 /// The one named child of a parenthesized expression, comments aside; a parenthesized yield or a
 /// generator has other shapes.
 pub(super) fn single_child<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
-    let mut named = node
-        .named_code();
+    let mut named = node.named_code();
     match (named.next(), named.next()) {
         (Some(inner), None) => Some(inner),
         _ => None,
@@ -275,9 +273,7 @@ fn string<D: Doc>(node: &Node<'_, D>) -> Value {
 pub(crate) fn string_literal<D: Doc>(node: &Node<'_, D>) -> Option<String> {
     let parts = match node.kind().as_ref() {
         "string" => vec![node.clone()],
-        "concatenated_string" => node
-            .named_code()
-            .collect(),
+        "concatenated_string" => node.named_code().collect(),
         _ => return None,
     };
     let mut value = String::new();
@@ -337,7 +333,7 @@ fn concatenated<D: Doc>(node: &Node<'_, D>) -> Value {
     }
 }
 
-/// A string literal's value from its source text (`core.rr`'s `value`): its body decoded, escapes and all; none for
+/// A string literal's value from its source text (`core.rerail`'s `value`): its body decoded, escapes and all; none for
 /// bytes, templates, or a literal Python refuses.
 pub(crate) fn str_value(text: &str) -> Option<String> {
     match piece(text)? {
@@ -682,9 +678,7 @@ fn iterable(name: &str, value: &Value) -> Value {
 /// A display: a tuple whose elements are all known is a value; otherwise, and for lists, sets and
 /// dicts, only its kind, length and emptiness are, so far as splats allow.
 fn sequence<D: Doc>(node: &Node<'_, D>, kind: ContainerKind, context: &mut Context<'_>) -> Value {
-    let elements = node
-        .named_code()
-        .collect::<Vec<_>>();
+    let elements = node.named_code().collect::<Vec<_>>();
     let splat = |element: &Node<'_, D>| {
         matches!(
             element.kind().as_ref(),

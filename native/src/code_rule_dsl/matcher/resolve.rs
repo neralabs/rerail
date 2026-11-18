@@ -1,8 +1,8 @@
-use crate::code_rule_dsl::tree::Tree;
 use super::GrammarMatcher;
 use super::util::{UNKNOWN, UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::code_rule_dsl::budget;
 use crate::code_rule_dsl::identifier::{name_in, python_identifier};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::language::{
     JsxRuntime, SourceType, has_module_syntax, is_stub_file, jsx_runtime_in_source,
@@ -15,6 +15,7 @@ use crate::code_rule_dsl::scope::options::{DEFAULT_PYTHON_MINOR, LanguageOptions
 use crate::code_rule_dsl::scope::usage::Usage;
 use crate::code_rule_dsl::scope::{Binding, BuildError, Import, Reading, ScopeTable, TYPE, VALUE};
 use crate::code_rule_dsl::suppress::RerailIgnores;
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::value::NodeRef;
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
 use crate::code_rule_dsl::value::{Followed, Value};
@@ -25,7 +26,6 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// `resolves`: file-local name resolution (a Rerail extension). It binds and reads no captures.
 #[derive(Clone)]
@@ -212,8 +212,7 @@ fn has_use_strict<D: Doc>(body: &Node<'_, D>) -> bool {
             "expression_statement" => {}
             _ => return false,
         }
-        let mut parts = statement
-            .named_code();
+        let mut parts = statement.named_code();
         let (Some(literal), None) = (parts.next(), parts.next()) else {
             return false;
         };
@@ -239,7 +238,10 @@ enum ThisBoundary {
 
 impl Resolves {
     pub fn holds<D: Doc>(&self, node: &Node<'_, D>) -> bool {
-        { let pack = language_pack::pack(Family::of(self.language)); self.holds_in::<D>(pack, node) }
+        {
+            let pack = language_pack::pack(Family::of(self.language));
+            self.holds_in::<D>(pack, node)
+        }
     }
 
     /// `holds`, where `S` reads the family's scope.
@@ -285,7 +287,8 @@ impl Resolves {
             return false;
         }
         if let Some(mode) = self.unresolved {
-            return !self.attribute_kinds.contains(&kind) && self.is_unresolved::<D>(pack, node, mode);
+            return !self.attribute_kinds.contains(&kind)
+                && self.is_unresolved::<D>(pack, node, mode);
         }
         let chain = (!self.imports.is_empty() || self.import_any)
             && (pack.scope_import_paths() || self.import_chain(node).is_some());
@@ -315,7 +318,8 @@ impl Resolves {
     /// `import: true`, there is one).
     fn is_import_path<D: Doc>(
         &self,
-        pack: &dyn language_pack::LanguagePack, table: &ScopeTable,
+        pack: &dyn language_pack::LanguagePack,
+        table: &ScopeTable,
         node: &Node<'_, D>,
     ) -> bool {
         let file = file_path();
@@ -331,7 +335,12 @@ impl Resolves {
 
     /// Ruff's F821 and F405, ESLint's no-undef: `node` reads a name with no binding (or one an
     /// unconditional `del` unbound) that is no builtin, declared global or implicit name.
-    fn is_unresolved<D: Doc>(&self, pack: &dyn language_pack::LanguagePack, node: &Node<'_, D>, mode: Unresolved) -> bool {
+    fn is_unresolved<D: Doc>(
+        &self,
+        pack: &dyn language_pack::LanguagePack,
+        node: &Node<'_, D>,
+        mode: Unresolved,
+    ) -> bool {
         let Some(table) = file_table(node, self.language, self.reading()) else {
             return false;
         };
@@ -694,7 +703,6 @@ impl Resolves {
     }
 }
 
-
 /// The expression inside any parentheses (of `paren_kinds`) around `node`.
 pub(super) fn unparenthesized<'r, D: Doc>(
     paren_kinds: &BTreeSet<u16>,
@@ -987,7 +995,10 @@ fn syntax_source_type<D: Doc>(root: &Node<'_, D>) -> SourceType {
 
 /// The JSX runtime of a file whose tree is `root` and whose nearest manifest is `package`: the
 /// one its text names (`jsx_runtime_in_source`), else its manifest's; `Unknown` without either.
-fn jsx_runtime_of<D: Doc>(root: &Node<'_, D>, package: Option<&dyn crate::code_rule_dsl::language::ProjectManifest>) -> JsxRuntime {
+fn jsx_runtime_of<D: Doc>(
+    root: &Node<'_, D>,
+    package: Option<&dyn crate::code_rule_dsl::language::ProjectManifest>,
+) -> JsxRuntime {
     #[cfg(any(test, feature = "test-hooks"))]
     JSX_RUNTIME_DERIVATIONS.set(JSX_RUNTIME_DERIVATIONS.get() + 1);
     jsx_runtime_in_source(root)
@@ -1143,14 +1154,20 @@ pub fn file_lines(source: &str, terminators: Terminators) -> Rc<LineTable> {
 pub fn file_index<T: 'static>(read: impl FnOnce() -> T) -> Rc<T> {
     let key = std::any::TypeId::of::<T>();
     if let Some(index) = FILE_SCOPES.with_borrow(|scopes| {
-        scopes.as_ref().and_then(|scopes| scopes.indexes.get(&key).cloned())
+        scopes
+            .as_ref()
+            .and_then(|scopes| scopes.indexes.get(&key).cloned())
     }) {
-        return index.downcast::<T>().unwrap_or_else(|_| unreachable!("an index under another type's key"));
+        return index
+            .downcast::<T>()
+            .unwrap_or_else(|_| unreachable!("an index under another type's key"));
     }
     let index = Rc::new(read());
     FILE_SCOPES.with_borrow_mut(|scopes| {
         if let Some(scopes) = scopes {
-            scopes.indexes.insert(key, Rc::clone(&index) as Rc<dyn std::any::Any>);
+            scopes
+                .indexes
+                .insert(key, Rc::clone(&index) as Rc<dyn std::any::Any>);
         }
     });
     index
@@ -1290,15 +1307,16 @@ pub fn constant_value<D: Doc>(
         return None;
     }
     let names = file_names(node, language)?;
-    language_pack::scope_constant(language_pack::pack(Family::of(language)), &names, &target.find_near(node.root().root(), node)?)
+    language_pack::scope_constant(
+        language_pack::pack(Family::of(language)),
+        &names,
+        &target.find_near(node.root().root(), node)?,
+    )
 }
 
 /// How a table reads the file under these options: Python annotations after the module from 3.14,
 /// TypeScript blocks as scopes from ES2015.
-pub fn table_reading(
-    options: Option<&LanguageOptions>,
-    python: Option<&PythonOptions>,
-) -> Reading {
+pub fn table_reading(options: Option<&LanguageOptions>, python: Option<&PythonOptions>) -> Reading {
     Reading {
         deferred_annotations: python.is_some_and(|python| python.defers_annotations()),
         block_scopes: options.is_none_or(|options| options.block_scopes()),
@@ -1394,7 +1412,10 @@ fn exceed<T>() -> Option<T> {
 /// `maxVisitedNodes` once per file. A PHP table's flow reads these (`file_table`), so a clause that
 /// reads names alone pays for them alone. `None` means the clause failed for the file
 /// (`UTIL_EXCEEDED` is set): a missing table must not read as "not listed".
-pub fn file_names<D: Doc>(node: &Node<'_, D>, language: GrammarDialect) -> Option<crate::code_rule_dsl::scope::NameTable> {
+pub fn file_names<D: Doc>(
+    node: &Node<'_, D>,
+    language: GrammarDialect,
+) -> Option<crate::code_rule_dsl::scope::NameTable> {
     if UTIL_EXCEEDED.get().is_some() {
         return None;
     }
@@ -1508,12 +1529,15 @@ pub fn calls_tables<D: Doc>(
     node: &Node<'_, D>,
     language: GrammarDialect,
 ) -> Option<crate::code_rule_dsl::calls::FileTables> {
-    
-    { let pack = language_pack::pack(Family::of(language)); language_pack::calls_tables(pack, 
-        || file_table(node, language, Reading::default()),
-        file_module,
-        || file_names(node, language),
-    ) }
+    {
+        let pack = language_pack::pack(Family::of(language));
+        language_pack::calls_tables(
+            pack,
+            || file_table(node, language, Reading::default()),
+            file_module,
+            || file_names(node, language),
+        )
+    }
 }
 
 /// The table of `node`'s file under `reading`, charging its build to the current clause's
@@ -1528,10 +1552,10 @@ pub fn file_table<D: Doc>(
     if UTIL_EXCEEDED.get().is_some() {
         return None;
     }
-    let (stubs, flow) = { let pack = language_pack::pack(Family::of(language)); (
-        pack.scope_stubs(),
-        pack.scope_flow(),
-    ) };
+    let (stubs, flow) = {
+        let pack = language_pack::pack(Family::of(language));
+        (pack.scope_stubs(), pack.scope_flow())
+    };
     let stub = stubs && FILE_SCOPES.with_borrow(|slot| slot.as_ref().is_some_and(|slot| slot.stub));
     let reading = Reading {
         stub,

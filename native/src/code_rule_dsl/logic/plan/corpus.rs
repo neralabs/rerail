@@ -32,7 +32,7 @@ pub mod scoping;
 #[cfg(test)]
 pub mod cache_architecture;
 // Its tests run in the engine's test binary (its facade of this module mounts `corpus/cache_tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
+// engine registers as it loads (the languages, their `.rerail` libraries).
 pub use hiding::qualified;
 pub mod memo;
 pub mod kept_strata;
@@ -78,7 +78,7 @@ pub mod texts;
 pub mod connections;
 pub mod reuse;
 
-/// The switches that change the combined program (`combine_read`, with the `.rr` lowering its `rr::parse` runs): its
+/// The switches that change the combined program (`combine_read`, with the `.rerail` lowering its `rr::parse` runs): its
 /// key (`texts_digest`, in memory and in the store) holds their values, so a combined program kept or stored under
 /// one value is not another's. Every prepared key holds the combined program's.
 pub const COMBINING: &[&str] = &[
@@ -86,7 +86,7 @@ pub const COMBINING: &[&str] = &[
     "RERAIL_LIBRARIES",
     "RERAIL_REQUESTS",
     "RERAIL_SCOPE_GUARDS",
-    // The `.rr` lowering: source attributes answered eagerly (`sources_on_request`), node ids compared raw
+    // The `.rerail` lowering: source attributes answered eagerly (`sources_on_request`), node ids compared raw
     // (`front::finish`'s `order_nodes`).
     "RERAIL_NODE_SOURCES",
     "RERAIL_ORDER_RAW",
@@ -563,7 +563,7 @@ fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: 
 
 pub mod session;
 
-/// Runs `program` (`.rr` text, `logic::rr`) over the files T's `t_facts` names under `root`, in native `modes`, with `nearest`
+/// Runs `program` (`.rerail` text, `logic::rr`) over the files T's `t_facts` names under `root`, in native `modes`, with `nearest`
 /// bound as `binding`, and writes its outputs into `out` as T does. The store and its derived tables live in `out`.
 ///
 /// The program is split at its file-local relations (`typing::file_local::programs`, list step 29). Documents are
@@ -575,7 +575,7 @@ pub mod session;
 /// Repository readers publish typed rows once, before file-local partitioning.
 fn external_inputs(prog: &mut front::Program, root: &Path) -> Result<()> {
     inputs::populate(prog, root)?;
-    // `core.rr` relations the engine does not make yet, read as empty, each named in the profile (open item O76).
+    // `core.rerail` relations the engine does not make yet, read as empty, each named in the profile (open item O76).
     for (rel, what) in NOT_MADE {
         if prog.inputs.iter().any(|i| i == rel) {
             crate::code_rule_dsl::logic::profile::decision("relations not made yet (O76)", || format!("{rel} is empty: {what}"));
@@ -603,7 +603,7 @@ fn chunk_mix<'a>(docs: impl Iterator<Item = (&'a str, usize)>) -> String {
     format!("{types}/{size}")
 }
 
-/// The `core.rr` relations a rule may read that the engine does not make yet (O76): each is empty. None now:
+/// The `core.rerail` relations a rule may read that the engine does not make yet (O76): each is empty. None now:
 /// `string_annotation` is made (`facts::vtab::syntax::annotation`, Ruff's table) and `parsed` is a guest (0055).
 const NOT_MADE: [(&str, &str); 0] = [];
 
@@ -649,7 +649,7 @@ pub fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, binding:
     run_typed(programs, root, None, out, modes, binding, chunk_nodes, &Typing::default())
 }
 
-/// The programs `programs` (`.rr` text) as one program. One program is parsed as it is.
+/// The programs `programs` (`.rerail` text) as one program. One program is parsed as it is.
 /// Of several, each one's own relations (the ones it derives or declares beyond its inputs) take a prefix, `p<i>_`,
 /// so programs that name relations alike (a converter's `m650`, `exists_0`) do not meet. The base inputs and the
 /// `violation` output are shared, and kind sets are named by their kinds (`ks<j>`), so programs asking for one set
@@ -667,7 +667,7 @@ pub struct Texts<'a> {
     pub programs: &'a [&'a str],
     /// Each text's include graph's digest (`phase0::Graph::digest`), `None` for a text that includes nothing.
     pub graphs: Vec<Option<[u8; 32]>>,
-    /// Phase 0's graphs for the texts that include something, one run of `bootstrap.rr` for all of them.
+    /// Phase 0's graphs for the texts that include something, one run of `bootstrap.rerail` for all of them.
     pub derived: Vec<Arc<phase0::Graph>>,
     /// The program the run was handed, already read (`run_read`): the run holds it, and `programs` is its key.
     pub read: Option<&'a front::Program>,
@@ -924,8 +924,8 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
     use std::io::Write;
     // The two parts' rules beside it, a line each (printed from their versions, 0276 §6), and the exports.
     let rules = |v: &Version| v.rules().map(|r| format!("{}\n", v.show_rule(r))).collect::<String>();
-    let _ = std::fs::write(path.with_extension("local.rr"), rules(&split.versions.local));
-    let _ = std::fs::write(path.with_extension("cross.rr"), rules(&split.versions.cross));
+    let _ = std::fs::write(path.with_extension("local.rerail"), rules(&split.versions.local));
+    let _ = std::fs::write(path.with_extension("cross.rerail"), rules(&split.versions.cross));
     let _ = std::fs::write(path.with_extension("exports.txt"), split.exports.join("\n"));
     const ORDER: [&str; 10] = ["config", "same-unit", "union", "recursive-local", "lookup", "exists", "grouped", "total", "recursive", "-"];
     let rank = |c: &str| ORDER.iter().position(|o| *o == c).unwrap_or(0);
@@ -1457,7 +1457,7 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
     let mut library_sets: BTreeMap<String, String> = BTreeMap::new();
     let core = crate::code_rule_dsl::logic::rr::core_names();
     let mut policies: Vec<scoping::Policy> = Vec::new();
-    // A library's rule may ask for guests too (`vue/view.rr`'s view, decision 0222): read once, it is no program's.
+    // A library's rule may ask for guests too (`vue/view.rerail`'s view, decision 0222): read once, it is no program's.
     let makes_guests = makes_guests || library.as_ref().is_some_and(|l| l.rules.iter().any(|r| guests::REQUESTS.contains(&r.head.rel.as_str())));
     // The node attributes answered on request (decision 0174) are the combined program's, made once below over all
     // its readers: a part lowered on its own (a program's own part, without the library's rules) could not see
@@ -1565,7 +1565,7 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
             native.rename_reads(rename);
             all.natives.insert(rename(&rel), native);
         }
-        // A rule `core.rr` gives (its head is the engine's) is taken once.
+        // A rule `core.rerail` gives (its head is the engine's) is taken once.
         for rule in prog.rules {
             if !(core.contains(rule.head.rel.as_str()) && all.rules.contains(&rule)) {
                 all.rules.push(rule);
@@ -1603,7 +1603,7 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
             }
         }
     }
-    // core.rr's `kind(n, k)` and `docof(n, d)` are projections of `node` in a part that reads them (`rr::lower`'s
+    // core.rerail's `kind(n, k)` and `docof(n, d)` are projections of `node` in a part that reads them (`rr::lower`'s
     // `projections`) and inputs in one that does not: once one part projects them, they are no inputs of the combined
     // program. Both would give `kind` two domains.
     let projected: BTreeSet<&str> = all.rules.iter().filter(|r| r.body.len() == 1 && r.body[0].atom().is_some_and(|a| a.rel == "node")).map(|r| r.head.rel.as_str()).filter(|rel| matches!(*rel, "kind" | "docof")).collect();
@@ -1716,7 +1716,7 @@ pub fn drop_repeated_rules(prog: &mut front::Program) -> usize {
     before - prog.rules.len()
 }
 
-/// core.rr's functors only CPython gives, each of a node, and the relations the batches bind them as
+/// core.rerail's functors only CPython gives, each of a node, and the relations the batches bind them as
 /// (`facts::vtab::syntax::cpython`): `@py_unparse(n)` is the `s` of `cpython_unparse(n, s)`. `@unparse` is decision
 /// 0058's, a tape's text (`rr::lower`, `unparse_of`), not intercepted here.
 const CPYTHON_FUNCTORS: [(&str, &str); 2] = [("py_unparse", crate::code_rule_dsl::facts::core::cpython_relations::UNPARSE), ("ast_dump", crate::code_rule_dsl::facts::core::cpython_relations::AST_DUMP)];
@@ -1774,23 +1774,23 @@ fn cpython_functors(prog: &mut front::Program) -> Result<()> {
 }
 
 /// What the converter gives an authored file to read (`logic::convert`, test-only): the scope, the report gate, the
-/// options, and the tape's syntax verdict (`tape_syntax_error(d)`: core.rr's `syntax_error` is the engine's, decision
+/// options, and the tape's syntax verdict (`tape_syntax_error(d)`: core.rerail's `syntax_error` is the engine's, decision
 /// 0141). Here so the runner, which is not test-only, can tell them from unbound core relations.
 pub const GIVEN: [&str; 8] = ["in_scope", "out_scope", "report_when_gt", "option_on", "option_item", "option_value", "option_json", "tape_syntax_error"];
 
-/// Fails, naming it, where `prog` reads one of core.rr's relations that nothing derives and the runner does not bind
+/// Fails, naming it, where `prog` reads one of core.rerail's relations that nothing derives and the runner does not bind
 /// (`value`, `str_part`, …): the planner would otherwise fail on its missing statistics (`no statistics for
 /// value.c0`). A program's own inputs are its business (facts it is given later), so are the facts the converter
-/// gives (`GIVEN`: core.rr's `option_item` among them, empty for an option of no items), and the relations not made
+/// gives (`GIVEN`: core.rerail's `option_item` among them, empty for an option of no items), and the relations not made
 /// yet are empty (`NOT_MADE`, O76).
 fn bound(prog: &front::Program) -> Result<()> {
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).chain(prog.facts.keys().map(String::as_str)).collect();
-    let cpython = "CPython (core.rr: the isolated `ast.parse` worker), which the corpus runner does not run";
+    let cpython = "CPython (core.rerail: the isolated `ast.parse` worker), which the corpus runner does not run";
     // `env` is the run's settings (`tools::with_settings`): facts when there are any, else empty. The world's
     // relations (`dir_entry`, `file_line`, …, and `loaded`) are answered by the runner (`world`).
     let world = |rel: &str| rel == world::LOADED || crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
     let given = |rel: &str| GIVEN.contains(&rel) || rel == "env" || world(rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
-    // core.rr's literal parts are made in core.rr's shape only (`syntax::core_rr`): a program that declares its base
+    // core.rerail's literal parts are made in core.rerail's shape only (`syntax::core_rr`): a program that declares its base
     // relations itself (T's shape) has none.
     let t_shape = syntax::Projection::of(prog, BTreeSet::new()).shape == syntax::Shape::T;
     let parts = |rel: &str| t_shape && rel.starts_with("str_part");
@@ -1801,7 +1801,7 @@ fn bound(prog: &front::Program) -> Result<()> {
                 continue;
             }
             let why = match rel {
-                _ if parts(rel) => format!("core.rr's shape makes it (a program that includes core.rr); without it, it needs {cpython}"),
+                _ if parts(rel) => format!("core.rerail's shape makes it (a program that includes core.rerail); without it, it needs {cpython}"),
                 "list_len" => "it counts a pattern's list variable ($$$X), and patterns do not lower".to_owned(),
                 _ => "the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md)".to_owned(),
             };
@@ -1888,7 +1888,7 @@ fn own_part(prog: &mut front::Program, modules: &crate::code_rule_dsl::logic::rr
 }
 
 /// A program's relations that take its prefix (`p<i>_`) when programs are combined: what it declares, holds facts of
-/// or derives, other than the base inputs, the shared outputs, `core.rr`'s (decision 0141), the bridged and the
+/// or derives, other than the base inputs, the shared outputs, `core.rerail`'s (decision 0141), the bridged and the
 /// guests' shared relations. A repository file a policy reads (`.input r(IO=…)`) is its own.
 fn own_names(prog: &front::Program, core: &BTreeSet<String>) -> BTreeSet<String> {
     // `violation`, and each finding's relation (`rr::is_diagnostic`, named by its policy).
@@ -2568,9 +2568,9 @@ fn run_handed(
     });
     drop(watching);
     let lifecycle_observed = usage();
-    // Phase 0 first: each text's include graph, from `bootstrap.rr`'s run, before anything reads a text (the later
+    // Phase 0 first: each text's include graph, from `bootstrap.rerail`'s run, before anything reads a text (the later
     // reads keep it while its files hold).
-    // Resolve `components.rr` only when the program or one of its modules can use
+    // Resolve `components.rerail` only when the program or one of its modules can use
     // it, before the main run takes its execution lock.
     let seeding = crate::code_rule_dsl::logic::profile::span(|| "phase 0: the texts' include graphs".into());
     // Each text read once here (`Texts`): its seed and its graph, its names when the cutoff asks.
@@ -2602,7 +2602,7 @@ fn run_handed(
             })
         });
         if component_seeded
-            && let Ok(components) = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library().join("components.rr")) {
+            && let Ok(components) = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library().join("components.rerail")) {
                 phase0::graph(&phase0::Seed::File(components))?;
             }
     }
@@ -2960,7 +2960,7 @@ fn run_observed(
     // Earlier phases' exports it reads (`phases`, decision 0083 §1): each phase runs first, in its own fact space.
     // The constants' own run runs no phase: a constant reads no input (`constants::foldable`), and a phase export is
     // one. Run here, a phase took the constants' option for its own, and wrote none of its exports.
-    // Phase 1 (`sources.rr`, decision 0104) runs first: it loads the source files and the libraries their imports
+    // Phase 1 (`sources.rerail`, decision 0104) runs first: it loads the source files and the libraries their imports
     // reach, to the imports' fixed point. Its documents are this run's, and every later phase's run inside it: a phase's
     // own run, phase 0's (another tree) and the constants' (no documents) list none of theirs from it. A run given its
     // files (`inputFiles`, T's facts) has no phase 1.
@@ -3009,7 +3009,7 @@ fn run_observed(
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 1: the source files".into());
                 let (one, run) = phases::sources(&stated, &own_sources, label, root, out, modes, binding, chunk_nodes, typing, options)?;
                 let (made, libraries) = (one.documents.len(), one.libraries.len());
-                crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rr)", || {
+                crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rerail)", || {
                     format!("{made} of {} source files are its documents; {libraries} library documents the imports reached", stated.len())
                 });
                 phase_one_run = Some(run);
@@ -3058,7 +3058,7 @@ fn run_observed(
     let (mut folded, mut constants_plans) = fold_constants(&mut prog, &added)?;
     phase("constants", 0);
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
-    // The program's `.language` (above) picks the corpus's files: `.rr` files only when it names `rr` (decision 0061).
+    // The program's `.language` (above) picks the corpus's files: `.rerail` files only when it names `rr` (decision 0061).
     // The library documents phase 1's imports reached, for a program that reads them (`sources__library`): each a
     // loaded document of this run, `(canonical path, module)`.
     let mut libraries: Vec<(String, String)> = Vec::new();
@@ -3281,7 +3281,7 @@ fn run_observed(
     // over many roots prepares it once. The key is what preparing reads besides the store's atoms, which are asked
     // again below.
     // Cross-file rows memoised per import component (decision 0076): the program asks, and its documents' language
-    // has import rules in `components.rr`. Not for a discovery round of `world`, which runs part of the program; the
+    // has import rules in `components.rerail`. Not for a discovery round of `world`, which runs part of the program; the
     // final round's world facts are program facts, so they are in the plan's digest.
     let cross_mode = cross_memo::mode();
     // With requests answered inside the fixpoint too: the cone runs first, so every loaded document's exports, the
@@ -3785,7 +3785,7 @@ fn run_observed(
     };
     // Each relation a file's entry holds, by its identity (decision 0225 §2): a rule's edit misses only the relations
     // derived from it, in every file; the others are read from the entry.
-    // The tree's projection: `core.rr`'s for a program that includes it, T's for one that declares its base relations
+    // The tree's projection: `core.rerail`'s for a program that includes it, T's for one that declares its base relations
     // itself (decision 0046); relations no rule reads are not made. Made before the memo's identities: an entry's
     // rows are its relations' only under the projection they were made under (`Projection::rows_digest`).
     let read: BTreeSet<String> = prepared_placed.v.rules().flat_map(|r| r.reads().map(|a| prepared_placed.v.rel_name(a.rel()).to_owned()).collect::<Vec<_>>()).collect();
@@ -7930,7 +7930,7 @@ fn run_observed(
     let mut cross_delta_counts = [0usize; 6];
     let mut cross_recursive = 0;
     // `returns`, held for the typing outputs (`corpus::typing`), when the cross-file part derives it: a program that
-    // declares it and derives it per file (`python/typing.rr` in a rule's program) has no table of it here.
+    // declares it and derives it per file (`python/typing.rerail` in a rule's program) has no table of it here.
     let mut wanted: BTreeSet<String> = run_f.declared("returns").then(|| "returns".to_owned()).into_iter().filter(|r| !prog.outputs.contains(r)).collect();
     // The import components (decision 0076): derived first, from the exports, and each one's stored rows looked up.
     // The hits' rows are bound as `<rel>__cross` with `rr_cross_doc`; the misses are derived and stored after.
@@ -10122,7 +10122,7 @@ fn text_document(path: &str, label: &str) -> bool {
     crate::code_rule_dsl::language::label_of_path(path) != Some(label)
 }
 
-/// A corpus's files by language: Python's, Rust's and `.rr` rule files, and the text-only documents.
+/// A corpus's files by language: Python's, Rust's and `.rerail` rule files, and the text-only documents.
 #[derive(Clone)]
 pub struct CorpusFiles {
     /// Each dialect's files, by its label (the language registry's).
@@ -10348,7 +10348,7 @@ pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[Strin
 }
 
 /// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files
-/// (`.rr`), skipping hidden directories and `target`.
+/// (`.rerail`), skipping hidden directories and `target`.
 pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     let (mut by_label, mut text): (BTreeMap<&'static str, Vec<String>>, Vec<String>) = (BTreeMap::new(), Vec::new());
     let mut classify = |relative: String| match crate::code_rule_dsl::language::label_of_path(&relative) {
@@ -10376,7 +10376,16 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     } else {
     // Phase 0's observer lists each directory: again only when its stat changed (t23).
     let mut pending = vec![root.to_path_buf()];
-    observe(|o| o.preload(root));
+    // The run reads its files by their canonical paths too (`Observer::canonical`): a root reached through a symlink
+    // (macOS's `/var` is `/private/var`) has its real part read before the waves as well, where no store is asked.
+    observe(|o| {
+        o.preload(root);
+        if let Ok(real) = dunce::canonicalize(root)
+            && real != root
+        {
+            o.preload(&real);
+        }
+    });
     while let Some(dir) = pending.pop() {
         let listing = observe(|o| o.listing(&dir)).ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
         for (name, is_dir) in listing.iter() {
@@ -10778,12 +10787,12 @@ pub mod tests {
         std::fs::write(work.join("ignored/pkg/a.py"), "x = 1\n").unwrap();
         git(&["add", ".gitignore"]);
         git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "a work tree with a head"]);
-        let out = std::process::Command::new(std::env::current_exe().unwrap())
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
             .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::git_seeing_no_file_under_the_root_is_kept_child", "--ignored", "--test-threads", "1", "--nocapture"])
             .env("RERAIL_TAPE_CACHE", dir.path().join("store.sqlite"))
-            .env("RERAIL_GIT_FILES_CHILD", work.join("ignored"))
-            .output()
-            .unwrap();
+            .env("RERAIL_GIT_FILES_CHILD", work.join("ignored"));
+        let out = super::switches::started(|| child.output()).unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(out.status.success() && stdout.contains("1 passed"), "{stdout}\n{}", String::from_utf8_lossy(&out.stderr));
     }

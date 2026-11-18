@@ -1,4 +1,4 @@
-//! The front end's checks (stratification, lattices, value cycles, prune) on programs in `.rr` (`logic::rr`).
+//! The front end's checks (stratification, lattices, value cycles, prune) on programs in `.rerail` (`logic::rr`).
 
 use super::*;
 use crate::code_rule_dsl::logic::rr::parse;
@@ -15,14 +15,14 @@ fn program(name: &str) -> Program {
 fn t_programs_match_t_front_end() {
     type Expected = (usize, usize, usize, usize, &'static [&'static str], usize, usize, usize, usize, usize, usize, usize);
     let golden: [(&str, Expected); 5] = [
-        ("calls.rr", (99, 221, 160, 0, &[], 3, 8, 7, 76, 7, 221, 76)),
-        ("calls_rust.rr", (61, 147, 9, 0, &[], 5, 6, 4, 45, 8, 146, 44)),
-        ("workload.rr", (42, 63, 35, 1, &[], 1, 7, 3, 29, 2, 63, 29)),
+        ("calls.rerail", (99, 221, 160, 0, &[], 3, 8, 7, 76, 7, 221, 76)),
+        ("calls_rust.rerail", (61, 147, 9, 0, &[], 5, 6, 4, 45, 8, 146, 44)),
+        ("workload.rerail", (42, 63, 35, 1, &[], 1, 7, 3, 29, 2, 63, 29)),
         (
-            "workload_demand.rr",
+            "workload_demand.rerail",
             (43, 63, 35, 1, &["class_ref", "cv", "fn_ref", "has_def", "lookup", "returns", "type_of"], 1, 7, 3, 30, 2, 63, 30),
         ),
-        ("workload_perdoc.rr", (45, 66, 35, 1, &[], 1, 10, 3, 29, 2, 66, 29)),
+        ("workload_perdoc.rerail", (45, 66, 35, 1, &[], 1, 10, 3, 29, 2, 66, 29)),
     ];
     for (name, expected) in golden {
         let p = program(name);
@@ -50,8 +50,8 @@ fn t_programs_match_t_front_end() {
         // O11: the value cycles, each bounded by the tree.
         let treed: Vec<String> = cycles::check(&p).unwrap().iter().map(|c| c.iter().cloned().collect::<Vec<_>>().join(",")).collect();
         let expected: &[&str] = match name {
-            "calls.rr" => &["qn"],
-            "calls_rust.rr" => &["modn"],
+            "calls.rerail" => &["qn"],
+            "calls_rust.rerail" => &["modn"],
             _ => &["resolves"],
         };
         for rel in expected {
@@ -165,7 +165,7 @@ fn named_errors() {
     assert!(parse(&derived).is_ok());
 
     // Depth bounds what preorder cannot: a parent relation with a decorator's edge (to the definition, a later
-    // node: up two edges, down one) still climbs one level each step (`ast_parent` in `python/ast.rr`).
+    // node: up two edges, down one) still climbs one level each step (`ast_parent` in `python/ast.rerail`).
     let tree = ".decl child(p: node, c: node, i: number)\n.decl kind(n: node, k: symbol)\n.decl nm(n: node, s: symbol)\n.input child, kind, nm\n\
         .decl deco(f: node, e: node)\ndeco(f, e) :- kind(dd, \"decorated_definition\"), child(dd, f, 1), child(dd, dc, 0), child(dc, e, 0).\n\
         .decl up(n: node, p: node)\nup(n, p) :- child(p, n, _), !kind(p, \"block\").\nup(e, f) :- deco(f, e).\nup(n, q) :- child(p, n, _), kind(p, \"block\"), up(p, q).\n";
@@ -175,7 +175,7 @@ fn named_errors() {
     let sideways = format!("{tree}.decl sib(a: node, b: node)\nsib(a, b) :- child(p, a, _), child(p, b, _).\n.decl qn(k: node, s: symbol)\nqn(k, s) :- nm(k, s).\nqn(k, @dot(p, s)) :- sib(k, o), qn(o, p), nm(k, s).\n");
     assert!(matches!(parse(&sideways), Err(Error::UnboundedValueCycle { .. })));
 
-    // The engine joins on variables: a computed atom argument is refused (`.rr` binds it first, `rr::lower`).
+    // The engine joins on variables: a computed atom argument is refused (`.rerail` binds it first, `rr::lower`).
     let computed = super::parse(".decl e(x: sym)\n.decl a(x: sym)\na($x) :- e(@cat($x, $x)).\n");
     assert!(matches!(computed, Err(Error::Syntax(m)) if m.contains("computed term")));
 }
@@ -256,7 +256,7 @@ fn comparisons_bind_like_t() {
 /// The components come in T's order, which the planner and the native strata follow.
 #[test]
 fn components_in_t_order() {
-    let (sccs, _) = strata(&program("calls_rust.rr")).unwrap();
+    let (sccs, _) = strata(&program("calls_rust.rerail")).unwrap();
     let got = sccs.iter().map(|c| c.iter().cloned().collect::<Vec<_>>().join(",")).collect::<Vec<_>>().join(" | ");
     assert_eq!(
         got,

@@ -163,7 +163,7 @@ Guest roots, withheld trees, dialect shape, and definition-ID mode belong in its
 
 ## Evidence and reproduction
 
-Checked-in evidence is under `benchmark/async-family-integration/input-lifecycle/`.
+Checked-in evidence is under `packs/data-layer/upstream/benchmarks/authored/async-family-integration/input-lifecycle/`.
 `run.py` contains the controlled environment, focused tests, initial profiles, and alternating timing rounds.
 `paired.py` adds the warm profiles and adjacent comparisons.
 `runs.json` records all 47 full-corpus executions and their environments.
@@ -269,7 +269,7 @@ The raw regression results remain in the evidence. They are not discarded in fav
 
 ### Production evidence
 
-`benchmark/async-family-integration/input-lifecycle-production/` contains the drivers, summaries, source hashes, and audit results.
+`packs/data-layer/upstream/benchmarks/authored/async-family-integration/input-lifecycle-production/` contains the drivers, summaries, source hashes, and audit results.
 `raw-reports.tar.xz` contains the raw reports, test logs, build logs, and earlier bulk-reader measurements.
 `manifest.json` identifies the merged baseline and measured binaries.
 `audit.py` checks counts, SQL budgets, VM work, source hashes, and test results without repeating the workload.

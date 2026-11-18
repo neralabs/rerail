@@ -1,7 +1,7 @@
-//! `.rdl` text to `.rr` text, comments and line breaks kept: how the engine's earlier dialect moved to Soufflé form
+//! `.rdl` text to `.rerail` text, comments and line breaks kept: how the engine's earlier dialect moved to Soufflé form
 //! (`docs/rule-syntax/ALIGNMENT.md`, the wolfeel row). Each statement is rewritten in place:
 //!
-//! | `.rdl`                                   | `.rr`                                                      |
+//! | `.rdl`                                   | `.rerail`                                                      |
 //! |------------------------------------------|------------------------------------------------------------|
 //! | `$x`                                     | `x` (`count_` where the name is a keyword)                 |
 //! | `int`, `sym`                             | `number`, `symbol`                                         |
@@ -39,7 +39,7 @@ enum Tok {
 
 const PUNCT: [&str; 22] = [":-", "!=", "<=", ">=", "(", ")", ",", ".", ";", ":", "=", "<", ">", "!", "{", "}", "|", "@", "*", "[", "]", "-"];
 
-/// Names that are words of `.rr` where a term may stand.
+/// Names that are words of `.rerail` where a term may stand.
 const KEYWORDS: [&str; 12] = ["count", "sum", "min", "max", "mean", "join", "top", "by", "sep", "must", "may", "nil"];
 
 /// The `.rdl` tokens, as `front` reads them, with their byte ranges.
@@ -144,11 +144,11 @@ struct Translator<'s> {
     lattices: BTreeSet<String>,
 }
 
-/// The built-in constraints of `.rr`: a relation of the same name is renamed with a trailing `_`.
+/// The built-in constraints of `.rerail`: a relation of the same name is renamed with a trailing `_`.
 pub(super) const RESERVED: [&str; 14] =
     ["glob", "iglob", "prefix", "iprefix", "suffix", "isuffix", "contains", "icontains", "word", "iword", "match", "match_all", "match_group", "split_dot"];
 
-/// A relation's `.rr` name.
+/// A relation's `.rerail` name.
 pub fn relation(r: &str) -> String {
     if RESERVED.contains(&r) { format!("{r}_") } else { r.to_owned() }
 }
@@ -174,9 +174,9 @@ impl T {
             T::Str(s) => quote(s),
             T::Top => "top".to_owned(),
             T::Name(n) => n.clone(),
-            T::Call(f, _) if is_test(f) => return Err(Error::Syntax(format!("the text test @{f} as a value: no .rr form"))),
+            T::Call(f, _) if is_test(f) => return Err(Error::Syntax(format!("the text test @{f} as a value: no .rerail form"))),
             T::Call(f, args) => format!("@{}({})", if f == "cat" { "dot" } else { f }, list(args)?),
-            T::Set(_) => return Err(Error::Syntax("a set outside a text test: no .rr form".to_owned())),
+            T::Set(_) => return Err(Error::Syntax("a set outside a text test: no .rerail form".to_owned())),
         })
     }
 }
@@ -185,7 +185,7 @@ fn list(args: &[T]) -> Result<String, Error> {
     Ok(args.iter().map(T::print).collect::<Result<Vec<_>, _>>()?.join(", "))
 }
 
-/// A text test `@op(s, pattern)`, holding (`neg` false) or failing, in `.rr`.
+/// A text test `@op(s, pattern)`, holding (`neg` false) or failing, in `.rerail`.
 fn test(op: &str, s: &T, pattern: &T, neg: bool) -> Result<String, Error> {
     let s = s.print()?;
     let one = |p: &T| -> Result<String, Error> {
@@ -515,7 +515,7 @@ impl Translator<'_> {
                 };
                 self.out.push_str(&format!(".pragma \"magic-transform\" {}", quote(&names.join(", "))));
             }
-            // `.pragma "key" "value"` is `.rr` already.
+            // `.pragma "key" "value"` is `.rerail` already.
             "pragma" => {
                 let (Tok::Str(key), Tok::Str(value)) = (self.peek().clone(), self.peek_at(1).clone()) else {
                     return self.fail("a pragma's two strings");
@@ -581,7 +581,7 @@ impl Translator<'_> {
     }
 }
 
-/// The `.rr` text of an `.rdl` program.
+/// The `.rerail` text of an `.rdl` program.
 pub fn translate(src: &str) -> Result<String, Error> {
     let mut t = Translator { src, toks: tokens(src)?, i: 0, out: String::new(), lattices: BTreeSet::new() };
     loop {

@@ -154,7 +154,7 @@ jobs:
         run: npm audit --omit=dev --audit-level=moderate
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2.90.1
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-audit
 
@@ -215,6 +215,8 @@ jobs:
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - '.cargo/**'
+              - 'scripts/check/check-rustfmt.mjs'
+              - 'scripts/check/check-rustfmt/files.txt'
               - 'scripts/profiling/reachability/**'
               - 'scripts/profiling/preparation/**'
               - 'scripts/profiling/composition.py'
@@ -341,7 +343,7 @@ jobs:
               - 'scripts/host/**'
 
   # Fills the Actions cache with every key the jobs below restore (.github/actions/pack-test-data, `fetch: "true"`): every
-  # tool-pack's archives for the unit jobs (Linux and Windows) and the conformance jobs, and the three tool-packs the
+  # tool-pack's archives for the unit jobs (Linux and Windows) and the conformance jobs, and the four tool-packs the
   # Rust tests read, each its own key. It holds the OIDC token, which only a miss uses, runs nothing but the pull
   # (scripts/s3/pack-fixtures.mjs, this commit's code), and never extracts a cache entry; the jobs that read the data
   # restore it holding no token. The Release pull request reads none.
@@ -390,6 +392,12 @@ jobs:
         with:
           pack: vue
           tool: eslint-plugin-vue
+          fetch: "true"
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: data-layer
+          tool: lint
           fetch: "true"
 
   # S3 holds every archive each test-data.lock names and every samples archive each samples.lock names
@@ -446,7 +454,8 @@ jobs:
           AWS_REGION: us-east-2
         run: node scripts/s3/pack-fixtures.mjs check
 
-  # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
+  # rustfmt (on the files scripts/check/check-rustfmt/files.txt lists) and clippy, and the engine's own tests, side by
+  # side; nothing downstream waits for them.
   # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts. The tests read three
   # tool-packs' test data (native/src/code_rule_dsl/test_support.rs's callers), restored from what the test-data job
   # saved, so the job runs where that job does (the note at the top). The tests run in five legs: the workspace's (much
@@ -508,8 +517,9 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
-      # The clippy leg only compiles the tests; the tests legs run them, and three read pack test data: Ruff's fixtures,
-      # SQLFluff's expected findings and fixtures, and eslint-plugin-vue's fixtures.
+      # The clippy leg only compiles the tests; the tests legs run them, and four read pack test data: Ruff's fixtures,
+      # SQLFluff's expected findings and fixtures, eslint-plugin-vue's fixtures, and the data-layer port's recordings and
+      # rule corpus (the converter, census, replay and text tests).
       - if: matrix.task == 'test'
         uses: ./.github/actions/pack-test-data
         with:
@@ -529,6 +539,13 @@ jobs:
         with:
           pack: vue
           tool: eslint-plugin-vue
+          fetch: "false"
+
+      - if: matrix.task == 'test'
+        uses: ./.github/actions/pack-test-data
+        with:
+          pack: data-layer
+          tool: lint
           fetch: "false"
 
       # The canonical Python AST facts (`value::python_ast`) run CPython 3.13 as `python3.13`; the runner has 3.12.
@@ -943,8 +960,8 @@ jobs:
       # The engine's #[cfg(windows)] tests (process starts, Windows import roots, the tree watch's oplock watch) are
       # compiled out on Linux, where the rust job runs every other test; these filters select them and the
       # Windows-neutral tests beside them: the process and tree watch tests are the engine's, the import roots'
-      # rerail-lang-ecma's, which mounts `import_target`. The `.rr` library's canonical path is joined with `/` by
-      # `bootstrap.rr`, which only Windows' verbatim paths broke: its test runs here too. A debug build, as in the rust
+      # rerail-lang-ecma's, which mounts `import_target`. The `.rerail` library's canonical path is joined with `/` by
+      # `bootstrap.rerail`, which only Windows' verbatim paths broke: its test runs here too. A debug build, as in the rust
       # job, so none of the release build above is reused.
       - name: Engine Windows tests
         if: steps.native-cache.outputs.cache-hit != 'true' && matrix.shard == 2

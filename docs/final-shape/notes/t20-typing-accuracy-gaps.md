@@ -290,7 +290,7 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
     counts a `resolve()` or `resolve_async()` with no arguments only when its receiver may be a `LazyResult` or a
     `LazySeq` (`possible_type`). It reports a function that reaches one through calls in its own file.
   - **Fixture.** `typing::oracle_tests::leg_083_typed_counts_resolve_by_the_receivers_type` pins it on
-    `fixtures/python/leg083`: a declared return, a decorated method, a class attribute and an attribute chain are
+    `fixtures/python/typing/leg083`: a declared return, a decorated method, a class attribute and an attribute chain are
     counted; a path, a quoted annotation and an untyped parameter are unknown; a call with an argument is
     not counted.
   - **Data layer.** On the 84 files, the 16 calls it counts are all lazy terminals, and none of the 17 pathlib

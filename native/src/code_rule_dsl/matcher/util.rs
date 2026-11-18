@@ -463,7 +463,11 @@ impl UtilRef {
     /// The deterministic identity of the compiled utility closure.
     pub fn semantic_key(&self) -> Option<[u8; 32]> {
         let table = self.table.upgrade()?;
-        table.origins.get(self.index)?.as_ref().map(|origin| origin.digest)
+        table
+            .origins
+            .get(self.index)?
+            .as_ref()
+            .map(|origin| origin.digest)
     }
 
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
@@ -561,9 +565,11 @@ fn context_free(matcher: &AstMatcher, read: &mut BTreeMap<(usize, usize), Option
         super::StopBy::Neighbor | super::StopBy::End => true,
     };
     match matcher {
-        AstMatcher::Pattern(_) | AstMatcher::Kind(_) | AstMatcher::Supertype(_) | AstMatcher::Regex(_) | AstMatcher::Never => {
-            true
-        }
+        AstMatcher::Pattern(_)
+        | AstMatcher::Kind(_)
+        | AstMatcher::Supertype(_)
+        | AstMatcher::Regex(_)
+        | AstMatcher::Never => true,
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             items.iter().all(|item| context_free(item, read))
         }

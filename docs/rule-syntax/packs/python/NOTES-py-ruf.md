@@ -2,11 +2,11 @@
 
 43 rules. Each rule file includes one shared library:
 
-- `lib/python/ruff.rr` (246 lines): names, arguments, literals, int and dict inference (`typed_as`), slices,
-  contexts and side effects. The target version comes from `python/version.rr` (`target_minor`, `targets`).
-- `lib/python/ruff-classes.rr` (206 lines): dataclasses, attrs, class fields and annotations.
-- `lib/python/ruff-sorting.rr` (84 lines): the `__all__` and `__slots__` sequences and their sort orders.
-- `lib/python/compare.rr` (66 lines, new): `cmp_same(a, b)`, two expressions that are the same as Ruff's
+- `lib/python/ruff.rerail` (246 lines): names, arguments, literals, int and dict inference (`typed_as`), slices,
+  contexts and side effects. The target version comes from `python/version.rerail` (`target_minor`, `targets`).
+- `lib/python/ruff-classes.rerail` (206 lines): dataclasses, attrs, class fields and annotations.
+- `lib/python/ruff-sorting.rerail` (84 lines): the `__all__` and `__slots__` sequences and their sort orders.
+- `lib/python/compare.rerail` (66 lines, new): `cmp_same(a, b)`, two expressions that are the same as Ruff's
   ComparableExpr says. The rule lists the pairs it asks about in `cmp_same_ask`. Used by RUF019 and RUF034.
 
 Two rules have generated tables:
@@ -136,14 +136,14 @@ have no case of it.
 tests run at 3.14, so with the default 3.10 those 3 snapshot findings are missed. With `--options
 '{"pythonVersion": "3.14"}'` they are found.
 
-**D6. A comment as a parenthesis's first child.** In `(  # Foo` + newline + `itertools) .starmap(…)`, ast.rr's
-`unparen` takes the parenthesis's first child, which is the comment. `ruff.rr`'s `ruff_bare` skips it, and
+**D6. A comment as a parenthesis's first child.** In `(  # Foo` + newline + `itertools) .starmap(…)`, ast.rerail's
+`unparen` takes the parenthesis's first child, which is the comment. `ruff.rerail`'s `ruff_bare` skips it, and
 `ruff_qual` resolves an attribute whose object is in parentheses, so RUF046, RUF057 and RUF058 are right. Rules
 that reach `unparen` directly are not. See request L1.
 
 ## Library and core changes
 
-**L1. ast.rr `unparen`: skip comments.** Replace
+**L1. ast.rerail `unparen`: skip comments.** Replace
 
 ```
 unparen(e, m) :- kind(e, "parenthesized_expression"), child(e, i, 0), unparen(i, m).
@@ -155,9 +155,9 @@ with
 unparen(e, m) :- kind(e, "parenthesized_expression"), child(e, i, _), !kind(i, "comment"), unparen(i, m).
 ```
 
-After that, `ruff_bare` in ruff.rr is just `unparen`: its second rule can go, and the alias with it.
+After that, `ruff_bare` in ruff.rerail is just `unparen`: its second rule can go, and the alias with it.
 
-**L2. ast.rr `bool_operand` counts comments.** A comment inside `a and  # x` + newline + `b` is a child of the
+**L2. ast.rerail `bool_operand` counts comments.** A comment inside `a and  # x` + newline + `b` is a child of the
 `boolean_operator`, so it becomes an operand. RUF019 works around it with a count. Proposed change:
 
 ```
@@ -168,20 +168,20 @@ bool_part(t, y) :- bool_part(t, x), bool_top(t, o), same_bool(x, o), child(x, y,
 **L3. rrlab: model `match_all`.** It should give one row per match and bind the captures as text, as `match`
 does. This would let RUF001–003 be scored. Also model `parsed` for string annotations (RUF013).
 
-**L4. names.rr `builtin` is a subset.** pyflakes.rr's `builtin_name` has the full list, and ruff.rr uses it.
+**L4. names.rerail `builtin` is a subset.** pyflakes.rerail's `builtin_name` has the full list, and ruff.rerail uses it.
 py-f-e has already proposed this change.
 
 **L5. core: an `@upper` functor.** RUF022's isort order needs Ruff's `is_cased_uppercase`: no lowercase
 letter, and at least one uppercase one. `@lower(s) != s` finds the uppercase letter in any script. Without
 `@upper`, though, the "no lowercase" test sees only ASCII `a`–`z`, so `"ÉÉé"` counts as a constant. The
-proposal, next to `@lower` in core.rr:
+proposal, next to `@lower` in core.rerail:
 
 ```
 // @upper("Foo") = "FOO": the Unicode default case mapping, as @lower.
 .functor upper(s: symbol): symbol
 ```
 
-ruff-sorting.rr's `constant` would then test `@upper(s) = s`, not the ASCII `!match`.
+ruff-sorting.rerail's `constant` would then test `@upper(s) = s`, not the ASCII `!match`.
 
 **L6. rrlab: `\s` is ASCII.** natord skips Unicode whitespace (`char::is_whitespace`). `nat_key` removes
 `\s`, which the engine's matcher takes as Unicode, but std::regex in rrlab takes as ASCII.
@@ -192,16 +192,16 @@ These have the same meaning as another batch's relation. They are named with a `
 
 | here | there |
 |---|---|
-| `side_effect(e)`, `ruff_effect_node`, `ruff_effect_kind`, `ruff_safe_operand` (ruff.rr) | `sim_effect(e)`, `effect_node`, `effect_kind_sim`, `safe_operand` (simplify.rr): both are Ruff's contains_effect |
-| `future_annotations_in(d)` (RUF001) | `future_annotations(d)` (upgrade.rr, which also checks the import is in the leading run) |
-| `ruff_qual(e, q)` (ruff.rr) | `up_qual(e, q)` (upgrade-imports.rr) |
-| `ruff_type_nargs(t, n)` (ruff-classes.rr) | `up_type_nargs(s, k)` (upgrade-typing.rr) |
-| `ruff_int(e, v)` (ruff.rr) | `pyi_int(e)` (typing.rr; no value) |
+| `side_effect(e)`, `ruff_effect_node`, `ruff_effect_kind`, `ruff_safe_operand` (ruff.rerail) | `sim_effect(e)`, `effect_node`, `effect_kind_sim`, `safe_operand` (simplify.rerail): both are Ruff's contains_effect |
+| `future_annotations_in(d)` (RUF001) | `future_annotations(d)` (upgrade.rerail, which also checks the import is in the leading run) |
+| `ruff_qual(e, q)` (ruff.rerail) | `up_qual(e, q)` (upgrade-imports.rerail) |
+| `ruff_type_nargs(t, n)` (ruff-classes.rerail) | `up_type_nargs(s, k)` (upgrade-typing.rerail) |
+| `ruff_int(e, v)` (ruff.rerail) | `pyi_int(e)` (typing.rerail; no value) |
 
-`ruff_arg(c, i, a)` is not a duplicate of calls.rr's `call_arg(c, i, keyword, v)`. Mine follows Ruff's argument
+`ruff_arg(c, i, a)` is not a duplicate of calls.rerail's `call_arg(c, i, keyword, v)`. Mine follows Ruff's argument
 list: positional arguments only, none after a `*args`, and a lone generator counts as the first.
 
 ## Files of other batches edited
 
-- `ruff-pyi050-no-return-argument-annotation-in-stub.rr`: its version test `ruff_target_minor(m), m >= 11` is now
-  `targets(11)`, because ruff.rr no longer has `ruff_target_minor`. It means the same thing.
+- `ruff-pyi050-no-return-argument-annotation-in-stub.rerail`: its version test `ruff_target_minor(m), m >= 11` is now
+  `targets(11)`, because ruff.rerail no longer has `ruff_target_minor`. It means the same thing.

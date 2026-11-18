@@ -85,10 +85,10 @@ pub fn documents(prog: &Program) -> Result<Vec<Value>, Error> {
     Ok(out)
 }
 
-/// The `.rr` text of a program of policies: its declarations, outputs, `.policy` documents and rules.
+/// The `.rerail` text of a program of policies: its declarations, outputs, `.policy` documents and rules.
 pub fn text(prog: &Program) -> String {
     let printed = Program { decls: prog.decls.clone(), outputs: prog.outputs.clone(), policies: prog.policies.clone(), rules: prog.rules.clone(), ..Program::default() };
-    crate::code_rule_dsl::logic::rr::print(&printed).expect("matcher rules print as .rr")
+    crate::code_rule_dsl::logic::rr::print(&printed).expect("matcher rules print as .rerail")
 }
 
 // cratify: `tests` is rerail-logic's (it mounts it)

@@ -184,7 +184,9 @@ impl View {
             None => (VIRTUAL_BASE.to_owned(), None),
         };
         Self {
-            canonical_root: root.as_ref().and_then(|root| dunce::canonicalize(root).ok()),
+            canonical_root: root
+                .as_ref()
+                .and_then(|root| dunce::canonicalize(root).ok()),
             held,
             root,
             base,

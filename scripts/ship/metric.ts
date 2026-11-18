@@ -57,7 +57,7 @@ const PARSED = new Set(Object.values(FAMILY));
 export const KNOWN_GAPS = [
   "syntax node counts cover each file's host language only: Vue's `<script>` and Blade's PHP code are not counted (Vue has 0.3–0.4 nodes per lexical token against about 1 elsewhere), so evaluate per rule·node overstates those packs",
   "node counts come from the candidate checkout's rerail-engine; both sides are divided by the same count",
-  "start-up (T0) and phases are the product path's; the .rr side has neither (run-policies takes no empty rule set)",
+  "start-up (T0) and phases are the product path's; the .rerail side has neither (run-policies takes no empty rule set)",
 ];
 
 export interface LanguageWorkload {
@@ -117,7 +117,7 @@ export function engineBinary(checkout: string): string | undefined {
 function countNodes(engine: string, corpus: string, family: string): number | null {
   const scratch = mkdtempSync(join(tmpdir(), "shipbar-nodes-"));
   try {
-    const rule = join(scratch, `nodes-${family}.rr`);
+    const rule = join(scratch, `nodes-${family}.rerail`);
     writeFileSync(
       rule,
       [

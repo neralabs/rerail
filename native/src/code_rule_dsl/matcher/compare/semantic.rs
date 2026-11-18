@@ -1,11 +1,11 @@
 use super::super::Reading;
 use super::super::exported::exported_text;
 use super::{Collation, CompareOp, Comparison};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::value::Value;
 use crate::code_rule_dsl::value::structure::Equality;
 use ast_grep_core::meta_var::MetaVarEnv;
 use ast_grep_core::{Doc, Node};
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// The text modes that read what the captures mean rather than their text.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,12 +53,16 @@ pub(super) fn unbound<D: Doc>(
         return None;
     }
     let reading = comparison.reading.as_ref()?;
-    Some({ let pack = language_pack::pack(reading.family); unbound_names::<D>(pack, comparison, env) })
+    Some({
+        let pack = language_pack::pack(reading.family);
+        unbound_names::<D>(pack, comparison, env)
+    })
 }
 
 /// `name` where a side is not a bound node, `A` reading the bound ones.
 fn unbound_names<D: Doc>(
-    pack: &dyn language_pack::LanguagePack, comparison: &Comparison,
+    pack: &dyn language_pack::LanguagePack,
+    comparison: &Comparison,
     env: &MetaVarEnv<'_, D>,
 ) -> Option<bool> {
     // `None` for a node Blade wrote tokens into (`ValueRules::spelled`): its name is not known.
@@ -95,12 +99,16 @@ pub(super) fn name<D: Doc>(
     node: &Node<'_, D>,
 ) -> Option<Option<Vec<u16>>> {
     let reading = comparison.reading.as_ref()?;
-    { let pack = language_pack::pack(reading.family); name_in::<D>(pack, reading, text, node) }
+    {
+        let pack = language_pack::pack(reading.family);
+        name_in::<D>(pack, reading, text, node)
+    }
 }
 
 /// `name` read with `reading`, whose family's adapter is `A`.
 fn name_in<D: Doc>(
-    pack: &dyn language_pack::LanguagePack, reading: &Reading,
+    pack: &dyn language_pack::LanguagePack,
+    reading: &Reading,
     text: SemanticText,
     node: &Node<'_, D>,
 ) -> Option<Option<Vec<u16>>> {
@@ -125,12 +133,16 @@ pub(super) fn holds<D: Doc>(
     right: &Node<'_, D>,
 ) -> Option<bool> {
     let reading = comparison.reading.as_ref()?;
-    { let pack = language_pack::pack(reading.family); holds_in::<D>(pack, comparison, reading, text, left, right) }
+    {
+        let pack = language_pack::pack(reading.family);
+        holds_in::<D>(pack, comparison, reading, text, left, right)
+    }
 }
 
 /// `holds` read with `reading`, whose family's adapter is `A`.
 fn holds_in<D: Doc>(
-    pack: &dyn language_pack::LanguagePack, comparison: &Comparison,
+    pack: &dyn language_pack::LanguagePack,
+    comparison: &Comparison,
     reading: &Reading,
     text: SemanticText,
     left: &Node<'_, D>,
@@ -230,15 +242,18 @@ fn values<D: Doc>(
     match comparison.op {
         CompareOp::Eq => left.equals(&right, lang),
         CompareOp::Ne => left.equals(&right, lang).map(|equal| !equal),
-        op => { let pack = language_pack::pack(lang); pack.value_relation(
-            match op {
-                CompareOp::Lt => "<",
-                CompareOp::Le => "<=",
-                CompareOp::Gt => ">",
-                _ => ">=",
-            },
-            &left,
-            &right,
-        ) },
+        op => {
+            let pack = language_pack::pack(lang);
+            pack.value_relation(
+                match op {
+                    CompareOp::Lt => "<",
+                    CompareOp::Le => "<=",
+                    CompareOp::Gt => ">",
+                    _ => ">=",
+                },
+                &left,
+                &right,
+            )
+        }
     }
 }
