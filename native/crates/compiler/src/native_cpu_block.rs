@@ -132,6 +132,9 @@ pub struct PassShape {
     /// The run rules its token loop reads in their arm (`RuleMode::Short`'s form there, no
     /// call), as the lean lexer reads a number in its `match` arm.
     pub arms: usize,
+    /// The rules whose short form is the loop's arm (`arms`'s, each once), by their index in
+    /// `Records::rules`: a test names the rule it expects there.
+    pub arm_rules: Vec<u8>,
     /// The rare arms whose tail knows its first bytes' entry (`rare_entry`), as the lean
     /// lexer's arm knows its kind.
     pub known_entries: usize,
@@ -1609,7 +1612,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         context.func.signature = signature.clone();
         context.set_disasm(true);
         let mut hot = Vec::new();
-        let mut shape = PassShape { back: false, block_loop: false, exits: Vec::new(), clif: String::new(), ascii_branch: false, gate_branches: 0, round_branches: 0, extracts: 0, disassembly: String::new(), pressure: Default::default(), outlined: Vec::new(), region_calls: Vec::new(), inlined_regions: 0, reads_back: 0, arms: 0, known_entries: 0 };
+        let mut shape = PassShape { back: false, block_loop: false, exits: Vec::new(), clif: String::new(), ascii_branch: false, gate_branches: 0, round_branches: 0, extracts: 0, disassembly: String::new(), pressure: Default::default(), outlined: Vec::new(), region_calls: Vec::new(), inlined_regions: 0, reads_back: 0, arms: 0, arm_rules: Vec::new(), known_entries: 0 };
         match pass {
             Pass::Forward { body, stores } => {
                 // The general body, outlined (`general`): declared, built with the pass, defined
@@ -1620,7 +1623,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 general_context.func.signature = signature.clone();
                 general_context.set_disasm(true);
                 let regions;
-                (shape.ascii_branch, shape.gate_branches, shape.round_branches, regions, shape.region_calls, shape.inlined_regions, shape.reads_back, shape.arms, shape.known_entries) = forward(&mut context, &mut general_context, (general_id, signature), &mut module, &name, body, stores, passes.slots, &mut hot, &mut shape.exits, native.records.as_ref().zip(tables.as_ref()).filter(|_| merged && k + 1 == passes.passes.len()).map(|(r, t)| (r, t, native.outputs.len())), made)?;
+                (shape.ascii_branch, shape.gate_branches, shape.round_branches, regions, shape.region_calls, shape.inlined_regions, shape.reads_back, shape.arms, shape.known_entries) = forward(&mut context, &mut general_context, (general_id, signature), &mut module, &name, body, stores, passes.slots, &mut hot, &mut shape.exits, &mut shape.arm_rules, native.records.as_ref().zip(tables.as_ref()).filter(|_| merged && k + 1 == passes.passes.len()).map(|(r, t)| (r, t, native.outputs.len())), made)?;
                 let made = body.records_made();
                 shape.extracts = counted(body).into_iter().take(body.extracts.len()).filter(|k| !made.contains(k)).count();
                 // `forward` gives the block loop's blocks, none where it cut the loop.
@@ -2062,6 +2065,8 @@ struct FileCols {
     /// The run rules whose short form is the loop's arm (`rule_last`'s `arm`), for its shape
     /// (`PassShape::arms`).
     arms: std::cell::Cell<usize>,
+    /// Their rules (`PassShape::arm_rules`).
+    arm_rules: std::cell::RefCell<Vec<u8>>,
     /// The rare arms whose entry is a constant (`PassShape::known_entries`).
     known_entries: std::cell::Cell<usize>,
 }
@@ -2075,7 +2080,7 @@ impl FileCols {
     }
 
     fn of(p: &[Value], layout: crate::records::RecordLayout) -> Self {
-        FileCols { bytes: p[0], starts: p[1], lasts: p[2], codes: p[3], ns: p[4], nl: p[5], out: p[6], counts: p[7], blocks: p[8], tables: p[9], mult: p[10], slots: p[11], len: p[12], layout, reads_back: Default::default(), arms: Default::default(), known_entries: Default::default() }
+        FileCols { bytes: p[0], starts: p[1], lasts: p[2], codes: p[3], ns: p[4], nl: p[5], out: p[6], counts: p[7], blocks: p[8], tables: p[9], mult: p[10], slots: p[11], len: p[12], layout, reads_back: Default::default(), arms: Default::default(), arm_rules: Default::default(), known_entries: Default::default() }
     }
 
     /// As `of`, the grammar's tables, their slots and the word table's multiplier constants
@@ -2753,7 +2758,7 @@ fn rule_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Recor
     let (tables, mult, slots) = tables_consts(&mut f, t);
     // The records' columns: not read by the rules.
     let zero = f.ins().iconst(types::I64, 0);
-    let c = FileCols { bytes, starts: zero, lasts: zero, codes: zero, ns: zero, nl: zero, out: zero, counts: zero, blocks, len, tables, mult, slots, layout: t.layout, reads_back: Default::default(), arms: Default::default(), known_entries: Default::default() };
+    let c = FileCols { bytes, starts: zero, lasts: zero, codes: zero, ns: zero, nl: zero, out: zero, counts: zero, blocks, len, tables, mult, slots, layout: t.layout, reads_back: Default::default(), arms: Default::default(), arm_rules: Default::default(), known_entries: Default::default() };
     let rd = Reads { bytes: Some((bw, crate::native_cpu_bytes::File { bytes, len, nibble: consts.nibble, weights: consts.weights, even: consts.even })), outputs, calls };
     let mut heads = vec![];
     let (exits, _) = rule_last(&mut f, r, t, &rd, &c, s, raw, (first, false), None, None, mode, Side::Both, &mut heads);
@@ -2856,7 +2861,7 @@ fn file_cols(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     let blocks = f.ins().load(types::I64, ro, at, 8);
     let len = f.ins().load(types::I64, ro, at, 16);
     let (tables, mult, slots) = tables_consts(f, t);
-    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts, blocks, tables, mult, slots, len, layout: t.layout, reads_back: Default::default(), arms: Default::default(), known_entries: Default::default() }
+    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts, blocks, tables, mult, slots, len, layout: t.layout, reads_back: Default::default(), arms: Default::default(), arm_rules: Default::default(), known_entries: Default::default() }
 }
 
 /// The record pass's tables' address, its word table's multiplier and its slots' address, as
@@ -3225,6 +3230,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         let own = rd.calls.iter().find(|x| x.0 == RULES_CALL | k as u16).filter(|_| !arm);
         if arm {
             c.arms.set(c.arms.get() + 1);
+            c.arm_rules.borrow_mut().push(k as u8);
         }
         if let (RuleMode::Calls, Some((_, id, sig)), false) = (mode, own, fused.is_some_and(|(kn, kr)| k == kn || k == kr)) {
             f.set_cold_block(b);
@@ -3251,7 +3257,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         // lexer's number arm finds its `.` among its digits.
         let reg_o = |o: u16| regs.and_then(|g| g.runs.iter().find(|&&(k, _)| k == o));
         let run_outs: Vec<u16> = match (rule, rd.bytes) {
-            (EndRule::Run(o), Some((b, _))) if b.can(o) && reg_o(o).is_none() => run_tests(r, b, k, &tests),
+            (EndRule::Run(o), Some((b, _))) if b.can(o) && reg_o(o).is_none() => run_tests(r, b, k, &tests, short),
             _ => Vec::new(),
         };
         let window: Option<Vec<Value>> = match (rule, rd.bytes) {
@@ -4284,14 +4290,36 @@ fn first_bytes(r: &crate::records::Records, k: usize) -> [u64; 4] {
 /// (`tested`'s `pre`): each output a byte set at its own byte (`native_cpu_bytes::exact`, no
 /// delay), read from the bytes, that none of the rule's first bytes is in, so the token's first
 /// byte has no bit.
-fn run_tests(r: &crate::records::Records, b: &crate::native_cpu_bytes::Bytewise<'_>, k: usize, tests: &[(crate::records::TokenCheck, Option<i64>)]) -> Vec<u16> {
+fn run_tests(r: &crate::records::Records, b: &crate::native_cpu_bytes::Bytewise<'_>, k: usize, tests: &[(crate::records::TokenCheck, Option<i64>)], short: bool) -> Vec<u16> {
     let firsts: Vec<u8> = (0..256).filter(|&x| r.ends.get(x).is_some_and(|&e| usize::from(e) == k)).map(|x| x as u8).collect();
-    let mut v: Vec<u16> = tests.iter().filter(|(t, _)| t.counted() && b.can(t.o)).filter(|(t, _)| {
+    // A short form's cut too (`run R once D`, `cut_in_window`): its `D` in the run's window, as a
+    // lexer reads a number's `.`. The whole function cuts by words (`cut_last`) and has no use
+    // for those lanes.
+    let mut v: Vec<u16> = tests.iter().filter(|(t, _)| (t.counted() || short && t.then == crate::records::CheckThen::Cut) && b.can(t.o)).filter(|(t, _)| {
         crate::native_cpu_bytes::exact(b.native, t.o).is_some_and(|n| n.lo == 0 && n.hi == 0 && !firsts.iter().any(|&x| n.has(x)))
     }).map(|(t, _)| t.o).collect();
     v.sort_unstable();
     v.dedup();
     v
+}
+
+/// Token `s..=l`'s last after its rule's cut `t`, 16 bytes at most, from the run's window `m`
+/// (`stride` bits a lane, lane `i` the byte `s + 1 + i`): its lanes below the token's end, the
+/// lowest cleared; the token ends before the one left, else at `l`.
+fn cut_in_window(f: &mut FunctionBuilder<'_>, t: &crate::records::TokenCheck, m: Value, stride: u32, s: Value, l: Value) -> Value {
+    assert_eq!(t.least, 2, "a cut at the second bit (`once`)");
+    let n = f.ins().isub(l, s);
+    let below = lanes_below(f, n, stride, 15);
+    let bits = f.ins().band(m, below);
+    let bits = if stride > 1 { f.ins().band_imm(bits, lane_bits(stride)) } else { bits };
+    let less = f.ins().iadd_imm(bits, -1);
+    let second = f.ins().band(bits, less);
+    let lane = f.ins().ctz(second);
+    let at = if stride > 1 { f.ins().ushr_imm(lane, i64::from(stride.trailing_zeros())) } else { lane };
+    // Lane `at` is byte `s + 1 + at`: the byte before it, `s + at`.
+    let cut = f.ins().iadd(s, at);
+    let has = f.ins().icmp_imm(IntCC::NotEqual, second, 0);
+    f.ins().select(has, cut, l)
 }
 
 /// Token `s..=l`'s last after its rule's cut `t` (`records::cut`, `run R once D`): the byte
@@ -4389,8 +4417,16 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
     let word_at = |f: &mut FunctionBuilder<'_>, q: Value, o: u16, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>| rd.word(f, c, q, o, heads);
     // The rule's cut first (`run R once D`, `records::cut`): the token ends before it, and the
     // other tests are of the token it leaves.
+    // A token of 16 bytes at most whose run's window has `D` (`pre`, `run_tests`) is cut there:
+    // the window's lanes below the token's end, the lowest cleared, as the lean lexer's number
+    // arm finds its `.` in its digits' pass. The whole function (a run past the window) by its
+    // words (`cut_last`), one call of `D`'s bytes a 64 bytes.
     for (t, _) in tests.iter().filter(|(t, _)| t.then == crate::records::CheckThen::Cut) {
-        l = cut_last(f, t, &word_at, s, l, heads);
+        let window = pre.iter().find(|&&(o, _)| o == t.o).map(|&(_, m)| m);
+        l = match (window, most) {
+            (Some(m), Some(mo)) if mo <= 16 => cut_in_window(f, t, m, pre_stride, s, l),
+            _ => cut_last(f, t, &word_at, s, l, heads),
+        };
     }
     let tests: Vec<(crate::records::TokenCheck, Option<i64>)> = tests.iter().filter(|(t, _)| t.then != crate::records::CheckThen::Cut).copied().collect();
     let tests = &tests[..];
@@ -6470,7 +6506,9 @@ fn general_signature(module: &JITModule) -> cranelift_codegen::ir::Signature {
 /// branches on ASCII, the gated regions' branches and the fixed points' loops.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
-fn forward(context: &mut Context, general_context: &mut Context, outlined: (cranelift_module::FuncId, cranelift_codegen::ir::Signature), module: &mut JITModule, name: &str, native: &BlockNative, slot_of: &[u16], slots: u16, hot: &mut Vec<cranelift_codegen::ir::Block>, exits: &mut Vec<String>, records: Option<(&crate::records::Records, &RecordTables, usize)>, made: &BlockNative) -> Result<(bool, usize, usize, Vec<(cranelift_module::FuncId, cranelift_codegen::ir::Function)>, Vec<(usize, usize)>, usize, usize, usize, usize), Error> {
+fn forward(context: &mut Context, general_context: &mut Context, outlined: (cranelift_module::FuncId, cranelift_codegen::ir::Signature), module: &mut JITModule, name: &str, native: &BlockNative, slot_of: &[u16], slots: u16, hot: &mut Vec<cranelift_codegen::ir::Block>, exits: &mut Vec<String>, arm_rules: &mut Vec<u8>, records: Option<(&crate::records::Records, &RecordTables, usize)>, made: &BlockNative) -> Result<(bool, usize, usize, Vec<(cranelift_module::FuncId, cranelift_codegen::ir::Function)>, Vec<(usize, usize)>, usize, usize, usize, usize), Error> {
+    // This build's alone (`forward` builds the body in rounds).
+    arm_rules.clear();
     // The outputs the token loop makes from the bytes (`native_cpu_bytes`), from the program
     // before its CPU form.
     let mut bytewise = crate::native_cpu_bytes::Bytewise::of(made);
@@ -6886,6 +6924,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             record_tokens(&mut f, rec, t, native.extracts.len(), outputs, &cols, Some(RecPart { ready, init }), Some((&bytewise, &consts, &byte_ids)), after, &mut heads);
             reads_back += cols.reads_back.get();
             arms += cols.arms.get();
+            arm_rules.extend(cols.arm_rules.borrow().iter().copied());
+            arm_rules.sort_unstable();
+            arm_rules.dedup();
             known_entries += cols.known_entries.get();
             f.switch_to_block(after);
             let st = f.block_params(after).to_vec();

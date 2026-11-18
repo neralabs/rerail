@@ -983,6 +983,12 @@ pass.
   - Found on the way: a tokened pass with a body overwrote the token loop's refusals at the
     row's end (the totals' flag is now ORed). The shape check also learned such a body's exits
     (`PassShape::exits`) and the calls Cranelift keeps (`clif_text::reached_calls`).
+  - **Then** (the user's shape review of the generated Rust): the word-loop cut called `D`'s
+    bytes function from the short form, so the number lost its arm, and every number was a
+    cold call of the whole function (225.4 instructions a token, against 115.0 before and the
+    lean lexer's 102.8). The cut is now in the run's window (`cut_in_window`), and the arm is
+    back: 118.0. `a_readers_short_form_is_the_loops_arm` names the number's rule
+    (`PassShape::arm_rules`). Corpus: 396.0 M instructions.
 
 ## Questions for the user
 

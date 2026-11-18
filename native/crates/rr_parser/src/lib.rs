@@ -1489,6 +1489,13 @@ pub mod tests {
         let c = crate::compiled().expect("compiles");
         let shape = c.parser.tier1.passes.last().expect("a pass");
         assert!(shape.arms >= 4, "the run's and the readers' arms: {}", shape.arms);
+        // The number's by name: its cut (`run … once dot`) is made in the run's window, so its
+        // short form calls nothing but its whole function (decision 0400).
+        let r = c.native.records.as_ref().expect("records");
+        for (what, b) in [("the number", b'7'), ("the string", b'"'), ("the comment", b'/')] {
+            let k = r.ends[usize::from(b)];
+            assert!(shape.arm_rules.contains(&k), "{what}'s rule {k} is no arm: {:?}", shape.arm_rules);
+        }
     }
 
     /// Decision 0177, stage 2a: the tokens by the loop, each at the first byte after the one
