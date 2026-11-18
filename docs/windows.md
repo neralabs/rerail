@@ -256,8 +256,11 @@ through a mapped or `subst` drive letter, or by an 8.3 name, saved the stop unde
 with the folder's own spelling (a hook's, with a daemon or without, the daemon's check on each event, `rerail status`,
 `rerail start` and `stop`, and the status line's) reads the checkout's row under the stored spelling and under that key
 in one statement (`earlierCheckoutPath`), the stored one first, and the earlier one only where it names the folder's
-repository. The key is resolved once per spelling in each process. A hook and the status line ask a daemon with the
-folder as spelt for that reason. A start or stop saved here through a mapped or `subst` letter decides from then on. In
+repository. The key is resolved once per spelling in each process. A hook and the status line ask a daemon about the
+folder's real path, as before, and hand it the folder as spelt apart (`spelling`) where the two differ, so the daemon's
+check forms that key once per spelling and makes no more file calls per event than before. They hand it only to a
+daemon whose state file says it reads it: an older daemon refuses a query value it does not know. A start or stop saved
+here through a mapped or `subst` letter decides from then on. In
 a folder reached in another letter case, 0.1.4's next start or stop there decides, as it did before: 0.1.4 compares
 Windows paths without letter case, so it counts the row under the stored spelling as a checkout inside its own and
 clears that row's on/off. For a session the daemon has recorded, the status line reads the start state under the
@@ -267,8 +270,10 @@ still shows Rerail on.
 Two settings an earlier version saved under the folder's spelling stay unread after the update, and a person who set
 one sets it again:
 
-- **A status line hidden for one folder.** A presentation preference is keyed through `physicalPath` of the folder its
-  caller named, and nothing reads it under the earlier key. Earlier versions saved one only through the daemon's API,
+- **A status line hidden for one folder opened in another letter case.** A presentation preference is keyed through
+  `physicalPath` of the folder its caller named, and nothing reads it under the earlier key. Through a mapped or `subst`
+  letter or by an 8.3 name, 0.1.4 drew the status line too: it asked with the folder's real path, which matches no
+  preference saved under the spelling. Earlier versions saved one only through the daemon's API,
   and it is set again the same way: `PUT /api/presentation-preferences` with the folder ([Hiding the
   footer](in-session-surfaces.md#hiding-the-footer)). The dashboard's Settings switch hides the status line in every
   folder; it is saved under no folder and is kept.
@@ -276,9 +281,9 @@ one sets it again:
   That rule setting belongs to the checkout row 0.1.4 recorded under the spelling, and the rule loader reads the
   settings of the checkout and of the recorded checkouts containing it. It is turned off again for that folder as it was
   turned off: by the coding agent working there, or in the dashboard for a rule of the folder's own `.rerail/rules`.
-  Under another letter case the earlier row still contains the folder, so its setting is read. A rule turned off for the
-  repository, and every rule setting and stop of a Git checkout, keep applying: 0.1.4 keyed them by the repository or by
-  Git's top level, which Git for Windows gives as the disk spells it, and as the share for a mapped letter.
+  A rule turned off for the repository, and every rule setting and stop of a Git checkout, keep applying: 0.1.4 keyed
+  them by the repository or by Git's top level, which Git for Windows gives as the disk spells it, and as the share for
+  a mapped letter.
 
 Measured on Windows 11 with 0.1.4 from npm saving Log mode, stops and a hidden status line in folders reached in
 another letter case, through a mapped and a `subst` drive letter and by an 8.3 name, inside and outside Git, and Log

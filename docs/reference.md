@@ -478,7 +478,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `audits_list` | `GET /api/audits?auditId=&sessionId=&status=&scope=&mode=&origin=` | `{ audits, total }` with `violations` and failures; `mode` is run mode, `origin` is `ongoing` or `scan`. |
 | `violations_list` | `GET /api/violations?since=&ruleId=&sessionId=&limit=&cursor=` | Violations newest first with `ruleId`, `clauseId`, session, `host`, `auditId`, and `logged` (the agent wasn't told: the audit or the rule was in Log mode); `total`, `nextCursor`. |
 | `rule_approvals_set` | `POST /api/rule-approvals` | Approve a rule's or pack's content so it steers; people only ([Approval](rule-scoping.md#approval)). |
-| `presentation_get` | `GET /api/presentation?repository=&host=&sessionId=&onDemand=` | The presentation preference that applies, optionally with that session's status ([Hiding the footer](in-session-surfaces.md#hiding-the-footer)). |
+| `presentation_get` | `GET /api/presentation?repository=&host=&sessionId=&onDemand=&spelling=` | The presentation preference that applies, optionally with that session's status ([Hiding the footer](in-session-surfaces.md#hiding-the-footer)). On Windows, `spelling` is the folder as its host spelt it, read only for a start or stop Rerail 0.1.4 saved under it. |
 | `presentation_preferences_list` | `GET /api/presentation-preferences` | The stored presentation preferences. |
 | `presentation_preferences_upsert` | `PUT /api/presentation-preferences` | Set `compact` or `silent` for a repository and coding agent; people only. |
 | `presentation_preferences_remove` | `DELETE /api/presentation-preferences?repository=&host=` | Remove an override, so the next default applies; people only. |
