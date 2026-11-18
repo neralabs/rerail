@@ -112,6 +112,26 @@ describe("SQLite audit persistence", () => {
     });
     store.close();
   });
+
+  // Every evaluator's open interrupts its session's earlier runs. Before, it updated with nothing to match and waited up
+  // to 5 s on the daemon's thread for another process's write lock.
+  it("interrupts a session with nothing running without waiting for another process's write lock", async () => {
+    const path = await temporaryDatabase();
+    const store = new SqliteAuditStore(path);
+    store.finish(store.start(input), { status: "completed" });
+    const writer = new Database(path);
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      const asked = performance.now();
+      store.interrupt("session-a");
+      expect(performance.now() - asked).toBeLessThan(1_000);
+    } finally {
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      store.close();
+    }
+  });
+
   it("assembles bounded result pages in SQLite without a JavaScript result aggregate", async () => {
     const path = await temporaryDatabase();
     const store = new SqliteAuditStore(path);

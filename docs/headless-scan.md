@@ -70,8 +70,12 @@ Worktree, `--rules-ref` and non-npm pack rules run in **Log** until approved wit
 <summary>Exact conditions and approval policy</summary>
 
 Home applies when Rerail is started and set up in this checkout on this machine. It runs the rules as a session there
-would. `rulesSource` is `{"kind":"home"}`; a throwaway configuration gives `{"kind":"worktree"}`, or
-`{"kind":"ref","ref":…}` with `--rules-ref`.
+would, in a worktree or a copy of the checkout that no session has recorded too: the scan records the checkout in its
+own copy of the configuration, as a session started there records it. `rulesSource` is `{"kind":"home"}`; a throwaway
+configuration gives `{"kind":"worktree"}`, or `{"kind":"ref","ref":…}` with `--rules-ref`. It is `null` when the scan
+had files to scan and audited none, so no rules ran: the scan fails, and a `checkout-not-audited` failure for each
+checkout it meant to audit says why (for example, the only paths asked for are in a submodule Rerail has no record
+of). A scan given an empty `paths` list has nothing to scan: it completes with no rules and keeps its `rulesSource`.
 
 Session [rule approvals](writing-rules.md) apply. These run in **Log** until a person approves that exact content in
 the Rerail home with `rerail rules approve`:
@@ -91,6 +95,8 @@ A CI runner starts with an empty Rerail home. Install packs, approve **from the 
 change under review), then scan the change:
 
 ```sh
+# rerail scan without --session refuses unless this is set (internal testing).
+export RERAIL_EXPERIMENTAL_HEADLESS_SCAN=1
 # Rerail's own packs from npm: no approval needed.
 rerail packs add typescript complexity
 # A pack kept in the repository: install it from the base branch's checkout, then approve that version.
@@ -120,7 +126,7 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
   "scope": "repository" | "git-diff",
   "base": null | { "ref": "origin/main", "mergeBase": "<sha>" },
   "paths": null | ["src/a.ts"],          // the files scanned, when not the whole checkout
-  "rulesSource": { "kind": "home" } | { "kind": "worktree" } | { "kind": "ref", "ref": "origin/main" },
+  "rulesSource": { "kind": "home" } | { "kind": "worktree" } | { "kind": "ref", "ref": "origin/main" } | null,
   "status": "completed" | "failed",
   "rules": [
     { "ruleId": "no-todo", "payloadHash": "sha256:…", "mode": "log" | "steer" | "block",
@@ -141,6 +147,8 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
 - **`payloadHash`**: digest of the exact rule text that produced the finding.
 - **`fingerprint`**: stable across scans, so you can tell new findings from existing ones.
 - **`failures`**: execution failures and coverage gaps, as an audit records them ([reference](reference.md#scan-and-settings-controls)).
+  The scan adds its own: `rule-left-out` for a rule file at `--rules-ref` that does not load, and
+  `checkout-not-audited` for each checkout it meant to audit, when it had files to scan and no audit ran.
 
 <details>
 <summary>Exact field semantics</summary>

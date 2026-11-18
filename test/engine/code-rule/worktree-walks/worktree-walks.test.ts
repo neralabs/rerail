@@ -599,6 +599,45 @@ describe("a walk of the other worktrees with change notices", () => {
     expect(edits(noticed)).toEqual(edits(everyWorktree));
   });
 
+  it("records nothing a merge wrote beside a modify/delete conflict in a checkout inside another worktree, and a shell edit of the conflicted file, as walks of every worktree do", async () => {
+    const { worktrees, checkouts } = await repository();
+    const nested = join(worktrees[2]!, "lib");
+    await mkdir(nested);
+    await writeFile(join(nested, "gone.py"), "gone\n");
+    await writeFile(join(nested, "both.py"), "1\n2\n3\n4\n5\n6\n7\n");
+    git(nested, "init", "--quiet", "--initial-branch=main");
+    git(nested, "add", ".");
+    git(nested, "commit", "--quiet", "-m", "seed");
+    git(nested, "switch", "--quiet", "-c", "other");
+    git(nested, "rm", "--quiet", "gone.py");
+    await writeFile(join(nested, "both.py"), "theirs\n2\n3\n4\n5\n6\n7\n");
+    git(nested, "commit", "--quiet", "-am", "other");
+    git(nested, "switch", "--quiet", "-c", "ours", "main");
+    await writeFile(join(nested, "gone.py"), "gone\nours\n");
+    await writeFile(join(nested, "both.py"), "1\n2\n3\n4\n5\n6\nours\n");
+    git(nested, "commit", "--quiet", "-am", "ours");
+    await awaitClockAfter(join(nested, "both.py"));
+    const sessions = await Promise.all([
+      session(worktrees[0]!, checkouts, noticedWalks(), { nested: [nested] }),
+      session(worktrees[0]!, checkouts, new WorktreeWalks({ gapMs: 0, fullWalkMs: 0 }), { nested: [nested] }),
+    ]);
+    const [noticed, everyWorktree] = sessions;
+    // A change found there first, so each walk after it reads the checkout's `HEAD` too.
+    await writeFile(join(nested, "note.py"), "mine\n");
+    await turn(...sessions);
+    for (const { auditGeneratedEdits } of sessions) auditGeneratedEdits.mockClear();
+    expect(() => git(nested, "merge", "--quiet", "other")).toThrow();
+    await turn(...sessions);
+    expect(edits(noticed)).toEqual([]);
+    await awaitClockAfter(join(nested, "both.py"));
+    await writeFile(join(nested, "gone.py"), "gone\nours\nmine\n");
+    await turn(...sessions);
+    expect(edits(noticed)).toEqual([
+      [[{ path: "../w3/lib/gone.py", language: "python", previousText: "gone\nours\n", generatedText: "gone\nours\nmine\n" }], "log"],
+    ]);
+    expect(edits(noticed)).toEqual(edits(everyWorktree));
+  });
+
   it("takes a worktree added since, and records a write in it, as walks of every worktree do", async () => {
     const { main, worktrees, checkouts } = await repository();
     const { noticed, everyWorktree } = await bothWays(worktrees[0]!, checkouts);
@@ -859,7 +898,7 @@ function watcherOf(roots: readonly string[], scans: string[]): WorktreeWatcher {
   return {
     clock: async () => Date.now(),
     start: () => ({
-      worktrees: new Set(roots), checkout: undefined, firstSight: new Set(), startedAt: 0,
+      worktrees: new Set(roots), checkout: undefined, firstSight: new Set(), startedAt: 0, heads: new Set(), unmerged: new Set(),
       scan: async ({ root }) => {
         scans.push(root);
         return {

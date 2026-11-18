@@ -113,3 +113,125 @@ describe.runIf(NPM_RUNS)("release-version.mjs, each released pack's rules", () =
     expect(changelog).not.toContain("`tagged-old`");
   });
 });
+
+describe.runIf(NPM_RUNS)("release-version.mjs, a released pack's core range", () => {
+  const CORE = "@neralabs/rerail";
+  const java = { mode: "steer", description: "A Java rule.", clauses: [{ forbid: { ast: { language: "java" } } }] };
+  const python = { mode: "steer", description: "A Python rule.", clauses: [{ forbid: { ast: { language: "python" } } }] };
+
+  /** Writes pack `id` at 0.1.0 with the core range `range`, its rules `{ id: document }`, and `heldOff` naming the ones it holds off. */
+  function writeRangedPack({ write }, id, range, rules, heldOff = []) {
+    const manifest = { name: packName(id), version: "0.1.0", peerDependencies: { [CORE]: range }, peerDependenciesMeta: { [CORE]: { optional: true } } };
+    write(`packs/${id}/package.json`, `${JSON.stringify(manifest, null, 2)}\n`);
+    const entries = Object.keys(rules).map((rule) => ({ id: rule, document: `rules/${rule}.json`, ...(heldOff.includes(rule) ? { on: false, heldOff: "Its steer does harm." } : {}) }));
+    write(`packs/${id}/pack.json`, `${JSON.stringify({ rules: entries }, null, 2)}\n`);
+    for (const [rule, document] of Object.entries(rules)) write(`packs/${id}/rules/${rule}.json`, `${JSON.stringify(document)}\n`);
+  }
+
+  /** A lockfile recording each of `ids` as a workspace with the core range `range`. */
+  function writeLock({ write }, ids, range) {
+    const packages = { "": { name: "core", version: "1.0.0" } };
+    for (const id of ids) packages[`packs/${id}`] = { name: packName(id), version: "0.1.0", peerDependencies: { [CORE]: range }, peerDependenciesMeta: { [CORE]: { optional: true } } };
+    write("package-lock.json", `${JSON.stringify({ name: "core", version: "1.0.0", lockfileVersion: 3, packages }, null, 2)}\n`);
+  }
+
+  const rangeOf = ({ root }, id) => JSON.parse(readFileSync(join(root, `packs/${id}/package.json`), "utf8")).peerDependencies[CORE];
+  const lockedRangeOf = ({ root }, id) => JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8")).packages[`packs/${id}`].peerDependencies[CORE];
+
+  it("raises it for a pack holding a rule off and for one with a rule in a language added since, in package.json and the lockfile, and leaves the others", () => {
+    const repo = repository();
+    writeRangedPack(repo, "held", ">=0.1.0-0", { "held-one": python, "held-two": python }, ["held-two"]);
+    writeRangedPack(repo, "javaish", ">=0.1.0-0", { "javaish-one": java });
+    writeRangedPack(repo, "plain", ">=0.1.0-0", { "plain-one": python });
+    writeLock(repo, ["held", "javaish", "plain"], ">=0.1.0-0");
+    commit(repo, "the packs");
+    const plainBefore = readFileSync(join(repo.root, "packs/plain/package.json"), "utf8");
+    releaseVersion(repo);
+    expect([rangeOf(repo, "held"), lockedRangeOf(repo, "held")]).toEqual([">=0.1.5-0", ">=0.1.5-0"]);
+    expect([rangeOf(repo, "javaish"), lockedRangeOf(repo, "javaish")]).toEqual([">=0.1.5-0", ">=0.1.5-0"]);
+    expect([rangeOf(repo, "plain"), lockedRangeOf(repo, "plain")]).toEqual([">=0.1.0-0", ">=0.1.0-0"]);
+    // Only the version the stub bumped differs in the pack no older core refuses.
+    expect(readFileSync(join(repo.root, "packs/plain/package.json"), "utf8")).toBe(plainBefore.replace('"0.1.0"', '"0.1.1"'));
+    const body = readFileSync(join(repo.root, "body.md"), "utf8");
+    expect(body).toContain(`- \`${packName("held")}\`: \`>=0.1.0-0\` → \`>=0.1.5-0\``);
+    expect(body).toContain(`- \`${packName("javaish")}\`: \`>=0.1.0-0\` → \`>=0.1.5-0\``);
+    expect(body).not.toContain(`- \`${packName("plain")}\`: `);
+    expect(body).not.toContain("Not released by this pull request");
+    expect(body).not.toContain("Do not merge yet");
+  });
+
+  it("changes nothing but the range in the package.json it raises", () => {
+    const repo = repository();
+    writeRangedPack(repo, "javaish", ">=0.1.0-0", { "javaish-one": java });
+    commit(repo, "the pack");
+    const before = readFileSync(join(repo.root, "packs/javaish/package.json"), "utf8");
+    releaseVersion(repo);
+    expect(readFileSync(join(repo.root, "packs/javaish/package.json"), "utf8")).toBe(before.replace('"0.1.0"', '"0.1.1"').replace('">=0.1.0-0"', '">=0.1.5-0"'));
+  });
+
+  it("leaves a range alone while core is older than the release that first loads the pack", () => {
+    const repo = repository();
+    repo.write("package.json", `${JSON.stringify({ name: "core", version: "0.1.4", type: "module", scripts: { "version:packs": "node bump.mjs" } }, null, 2)}\n`);
+    writeRangedPack(repo, "javaish", ">=0.1.0-0", { "javaish-one": java });
+    writeLock(repo, ["javaish"], ">=0.1.0-0");
+    commit(repo, "the pack");
+    releaseVersion(repo);
+    expect([rangeOf(repo, "javaish"), lockedRangeOf(repo, "javaish")]).toEqual([">=0.1.0-0", ">=0.1.0-0"]);
+    const body = readFileSync(join(repo.root, "body.md"), "utf8");
+    expect(body).not.toContain("Core range raised");
+    // The pack is released here and core stays at 0.1.4, which cannot load it: nothing released could.
+    expect(body).toContain(`> Do not merge yet: this pull request releases \`${packName("javaish")}\` (needs Rerail 0.1.5 or newer) and leaves core at 0.1.4, so no released Rerail could load it.`);
+  });
+
+  it("leaves a range that already leaves older cores out", () => {
+    const repo = repository();
+    writeRangedPack(repo, "javaish", ">=0.1.5-0", { "javaish-one": java });
+    commit(repo, "the pack");
+    releaseVersion(repo);
+    expect(rangeOf(repo, "javaish")).toBe(">=0.1.5-0");
+    expect(readFileSync(join(repo.root, "body.md"), "utf8")).not.toContain("Core range raised");
+  });
+
+  it("stops at a released pack whose range is not a plain >=<version>, and leaves the range as it is", () => {
+    const repo = repository();
+    writeRangedPack(repo, "capped", ">=0.1.0-0 <0.2.0", { "capped-one": java });
+    commit(repo, "the pack");
+    let stderr = "";
+    try {
+      releaseVersion(repo);
+    } catch (error) {
+      stderr = String(error.stderr);
+    }
+    expect(stderr).toContain("packs/capped/package.json: its core range >=0.1.0-0 <0.2.0 admits Rerail older than this release needs and is not a plain >=<version>; raise it by hand to >=0.1.5-0 or stricter");
+    expect(rangeOf(repo, "capped")).toBe(">=0.1.0-0 <0.2.0");
+  });
+
+  it("releases the others when a pack it does not release has such a range, and says to raise that one by hand", () => {
+    const repo = repository();
+    repo.write("bump.mjs", BUMP.replace('for (const id of readdirSync("packs")) {', 'for (const id of ["moving"]) {'));
+    writeRangedPack(repo, "moving", ">=0.1.0-0", { "moving-one": java });
+    writeRangedPack(repo, "idle", ">=0.1.0-0||>=2.0.0", { "idle-one": java });
+    commit(repo, "the packs");
+    releaseVersion(repo);
+    expect(rangeOf(repo, "moving")).toBe(">=0.1.5-0");
+    expect(rangeOf(repo, "idle")).toBe(">=0.1.0-0||>=2.0.0");
+    expect(readFileSync(join(repo.root, "body.md"), "utf8")).toContain(
+      `\`${packName("idle")}\` (\`>=0.1.0-0||>=2.0.0\`, needs \`>=0.1.5-0\`, raised by hand: it is not a plain \`>=<version>\`)`,
+    );
+  });
+
+  it("warns of a pack that needs it and is not released, and does not edit it", () => {
+    const repo = repository();
+    // The stub bumps only `moving`, as `changeset version` bumps only the packs a changeset names.
+    repo.write("bump.mjs", BUMP.replace('for (const id of readdirSync("packs")) {', 'for (const id of ["moving"]) {'));
+    writeRangedPack(repo, "moving", ">=0.1.0-0", { "moving-one": python });
+    writeRangedPack(repo, "idle", ">=0.1.0-0", { "idle-one": java });
+    commit(repo, "the packs");
+    const idleBefore = readFileSync(join(repo.root, "packs/idle/package.json"), "utf8");
+    releaseVersion(repo);
+    expect(readFileSync(join(repo.root, "packs/idle/package.json"), "utf8")).toBe(idleBefore);
+    const body = readFileSync(join(repo.root, "body.md"), "utf8");
+    expect(body).toContain(`Not released by this pull request, and an older Rerail cannot load it: \`${packName("idle")}\` (\`>=0.1.0-0\`, needs \`>=0.1.5-0\`).`);
+    expect(body).not.toContain("Core range raised");
+  });
+});

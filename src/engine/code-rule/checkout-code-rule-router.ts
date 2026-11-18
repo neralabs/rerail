@@ -520,8 +520,19 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
 
   /** Whether `root` may run rules in this session: it is eligible, and the session's own checkout is not stopped. */
   #mayRun(root: string): boolean {
-    const starting = this.#eligibilityOf(this.#options.startingCheckout);
-    return starting !== "stopped" && starting !== "unrecorded" && this.#eligibilityOf(root) === "ok";
+    return this.whyNoRules(root) === undefined;
+  }
+
+  /**
+   * Why the checkout at `root` runs no rules in this session, or undefined when it may: the starting checkout's
+   * eligibility while it is stopped or unrecorded, which keeps every lane closed, else `root`'s own unless it is `ok`.
+   */
+  whyNoRules(root: string): { checkoutRoot: string; eligibility: Exclude<CheckoutEligibility, "ok"> } | undefined {
+    const starting = this.#options.startingCheckout;
+    const startingEligibility = this.#eligibilityOf(starting);
+    if (startingEligibility === "stopped" || startingEligibility === "unrecorded") return { checkoutRoot: starting, eligibility: startingEligibility };
+    const eligibility = this.#eligibilityOf(root);
+    return eligibility === "ok" ? undefined : { checkoutRoot: root, eligibility };
   }
 
   #eligibilityOf(root: string): CheckoutEligibility {
