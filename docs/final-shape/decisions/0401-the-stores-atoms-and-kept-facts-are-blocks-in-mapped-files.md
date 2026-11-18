@@ -206,6 +206,29 @@ overflow chains row by row). The space's size is then what its live programs rea
 
 Each space's kept relations are readable through a virtual table over the mapped blocks, as the atoms are.
 
+### F6. What the keep puts, and how (step 6)
+
+- **A derived relation** is the run's `InRel`: its rows as one relation (`Rows::in_block`: the one part, or its
+  parts merged once), its dead bits, and its rows' levels (decision 0090). The entry holds all three. The rows are
+  copied by `Relation::try_copy_into`, which needs only a relation nothing writes meanwhile, not a frozen one: a run's
+  parts are written in any order and carry the indexes the run added, and the copy keeps both.
+- **Atom ids.** A run's `s` columns hold the ids the store gives them, except in a forked process (0170), whose ids
+  past the fork are its own. A forked process's copy is mapped in place, in the kept block, through the fork's map,
+  column by column over the chunks: the rows are still copied, not encoded. A frame was written as the store numbers
+  it for the same reason (0212).
+- **An input's granules** are rows the run read from its sources, not a relation it froze. Each granule's rows are
+  pushed into a relation of the kept block (`KeptW::put_rows`), one write, with no index.
+- **Reads changed, rows the same** (a frame's retag) carries the previous entry with the new reads. **A relation
+  changed by a delta** (a frame's delta after its frame) is put whole: a copy costs what its bytes do, where an
+  encode cost what its values did.
+- **The write** is the store writer's, behind the run, in the transaction that commits the run's other writes. It
+  writes the space's next delta: the previous delta's entries not replaced are carried, and the run's are put. The
+  temp name, rename and sweep are the atoms' (A2, A5). `facts_blocks(space, base, base_tag, delta, delta_tag)` is
+  replaced in the same transaction. The job holds the run's relations (their blocks' `Arc`s) until the copy.
+- **Alongside the frames until step 9.** Each place a frame is written also puts the entry, so that step 7 can bind
+  from the blocks and be checked against the frames (F-R2) before the frames are retired. Every copy is placed
+  before any original is removed.
+
 ### Interface (rerail-blocks), as built in step 5 (`kept.rs`)
 
 ```rust

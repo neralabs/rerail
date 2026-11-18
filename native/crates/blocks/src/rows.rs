@@ -263,6 +263,31 @@ impl Rows {
         true
     }
 
+    /// Each value of column `c` replaced by `f` of it, where it lies, chunk by chunk: the one writer of an open block's
+    /// rows (a copy's, mapped to another numbering, 0401 F6).
+    ///
+    /// # Safety
+    /// Nothing else reads or writes these rows meanwhile.
+    pub unsafe fn map_col(&self, c: usize, mut f: impl FnMut(i64) -> i64) {
+        let w = self.col(c).width;
+        let mut k = 0;
+        while let Some((_, len, p)) = self.chunk_raw(c, k, u64::from(self.len())) {
+            // SAFETY: chunk `k` holds `len` rows of width `w`; the caller's: no one else touches them.
+            unsafe {
+                if w == 4 {
+                    for v in std::slice::from_raw_parts_mut(p.cast::<u32>(), len) {
+                        *v = f(i64::from(*v)) as u32;
+                    }
+                } else {
+                    for v in std::slice::from_raw_parts_mut(p.cast::<i64>(), len) {
+                        *v = f(*v);
+                    }
+                }
+            }
+            k += 1;
+        }
+    }
+
     /// Gives every column's chunks back to `block`'s free list (decision 0342), when it keeps one; the rows are
     /// then none. Returns the bytes given to the OS with them (`Block::free_chunk`).
     ///

@@ -49,6 +49,10 @@ structure! {
         pub gone: u32,
         pub pad: u32,
         pub rows: Ptr<Relation>,
+        /// Its dead rows (bit `id`), as the run kept them beside its rows; empty when none is.
+        pub dead: Span<u64>,
+        /// Each row's level (decision 0090), when the run derived them; empty otherwise.
+        pub levels: Span<u32>,
     }
 }
 
@@ -78,6 +82,10 @@ pub struct Kept<'b> {
     /// Each column's value type.
     pub types: &'b [u8],
     pub rows: &'b Relation,
+    /// Its dead rows (bit `id`); empty when none is.
+    pub dead: &'b [u64],
+    /// Each row's level; empty when the run derived none.
+    pub levels: &'b [u32],
     reads: &'b [ReadDigest],
     strings: &'b [u8],
 }
@@ -184,7 +192,7 @@ impl KeptFacts {
         let reads = &self.root().reads.as_slice()[e.reads_at as usize..(e.reads_at + e.nreads) as usize];
         let types = &self.strings()[e.types_at as usize..(e.types_at + e.ntypes) as usize];
         let rows = e.rows.get().expect("a kept entry has rows");
-        Found::Kept(Kept { key: self.key_of(e), digest: e.digest, types, rows, reads, strings: self.strings() })
+        Found::Kept(Kept { key: self.key_of(e), digest: e.digest, types, rows, dead: e.dead.as_slice(), levels: e.levels.as_slice(), reads, strings: self.strings() })
     }
 
     fn find(&self, key: &FactKey) -> Option<Found<'_>> {
@@ -294,6 +302,20 @@ struct Pending {
     types: Vec<u8>,
     /// Its rows' copy's offset in the block; `None` for a gone entry.
     rows: Option<usize>,
+    /// Its dead bits' and levels' copies in the block: (offset, count).
+    dead: (usize, usize),
+    levels: (usize, usize),
+}
+
+/// What an entry records beside its rows.
+#[derive(Clone, Copy)]
+pub struct Meta<'a> {
+    pub key: FactKey<'a>,
+    pub digest: u64,
+    pub reads: &'a [(&'a str, u64)],
+    pub types: &'a [u8],
+    pub dead: &'a [u64],
+    pub levels: &'a [u32],
 }
 
 /// A kept block being written: a space's next base or delta. Its rows are copied in as they are put; the directory,
@@ -308,6 +330,10 @@ pub struct KeptW {
 
 // SAFETY: one writer, through `&mut self`.
 unsafe impl Send for KeptW {}
+
+fn room() -> io::Error {
+    io::Error::new(io::ErrorKind::StorageFull, "the kept block's room is spent")
+}
 
 fn full(path: &Path) -> io::Error {
     io::Error::new(io::ErrorKind::StorageFull, format!("{}: the kept block's room is spent", path_name(path)))
@@ -344,31 +370,83 @@ impl KeptW {
         })
     }
 
-    /// A relation a run derived, frozen in its own block, copied whole into this one.
-    pub fn put(&mut self, key: FactKey, digest: u64, reads: &[(&str, u64)], types: &[u8], rows: &Relation) -> io::Result<()> {
-        let copy = rows.try_copy_into(&self.block).ok_or_else(|| io::Error::new(io::ErrorKind::StorageFull, "the kept block's room is spent"))?;
+    /// A relation a run derived (frozen, or a part nothing writes now), copied whole into this one, its columns
+    /// `map`ped where they lie in the copy (a forked process's atom ids to the store's, 0401 F6): `None` maps none.
+    /// The copy is returned.
+    pub fn put(&mut self, meta: Meta, rows: &Relation, map: Option<(&[usize], &dyn Fn(i64) -> i64)>) -> io::Result<&Relation> {
+        let copy = rows.try_copy_into(&self.block).ok_or_else(room)?;
+        if let Some((cols, f)) = map {
+            for &c in cols {
+                // SAFETY: the copy is this writer's, in its open block, read by no one before `finish`.
+                unsafe { copy.rows.map_col(c, f) };
+            }
+        }
         let at = self.block.offset_of(std::ptr::from_ref(copy));
-        self.pending.push(Pending {
-            rel: key.rel.to_owned(),
-            ident: *key.ident,
-            part: key.part,
-            digest,
-            reads: reads.iter().map(|&(r, d)| (r.to_owned(), d)).collect(),
-            types: types.to_vec(),
-            rows: Some(at),
-        });
-        Ok(())
+        self.pend(meta, Some(at))?;
+        // SAFETY: the copy lies in this writer's block, which outlives the borrow of `self`.
+        Ok(unsafe { &*self.block.ptr::<Relation>(at) })
     }
 
-    /// An entry of the previous delta (or base), kept as it is: its rows copied whole.
-    pub fn carry(&mut self, kept: &Kept) -> io::Result<()> {
-        let reads: Vec<(&str, u64)> = kept.reads().collect();
-        self.put(kept.key, kept.digest, &reads, kept.types, kept.rows)
+    /// Rows not held as a relation (an input's granule, read from its sources): `n` rows of `widths.len()` columns,
+    /// flat, pushed into a relation of this block. No index is built.
+    pub fn put_rows(&mut self, meta: Meta, widths: &[u32], rows: &[i64], n: usize) -> io::Result<()> {
+        let spec = crate::relation::Spec { widths: widths.to_vec(), order: Vec::new(), indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
+        let rel = Relation::try_create(&self.block, &spec, None).ok_or_else(room)?;
+        if !rel.rows.try_reserve(&self.block, n as u64) {
+            return Err(room());
+        }
+        if !widths.is_empty() {
+            for (c, _) in widths.iter().enumerate() {
+                let col: Vec<i64> = rows.chunks_exact(widths.len()).take(n).map(|r| r[c]).collect();
+                rel.rows.write_col(c, &col);
+            }
+        }
+        rel.rows.len.store(n as u32, std::sync::atomic::Ordering::Release);
+        rel.live.store(n as u32, std::sync::atomic::Ordering::Relaxed);
+        let at = self.block.offset_of(std::ptr::from_ref(rel));
+        self.pend(meta, Some(at))
+    }
+
+    /// An entry of the previous delta (or base), kept as it is, `reads` in place of its own when given (its rows the
+    /// same, what they were derived from read again): its rows copied whole.
+    pub fn carry(&mut self, kept: &Kept, reads: Option<&[(&str, u64)]>) -> io::Result<()> {
+        let own: Vec<(&str, u64)> = kept.reads().collect();
+        let meta = Meta { key: kept.key, digest: kept.digest, reads: reads.unwrap_or(&own), types: kept.types, dead: kept.dead, levels: kept.levels };
+        self.put(meta, kept.rows, None).map(|_| ())
     }
 
     /// In a delta: the base's entry for `key` is no longer kept.
     pub fn gone(&mut self, key: FactKey) {
-        self.pending.push(Pending { rel: key.rel.to_owned(), ident: *key.ident, part: key.part, digest: 0, reads: Vec::new(), types: Vec::new(), rows: None });
+        let none = Meta { key, digest: 0, reads: &[], types: &[], dead: &[], levels: &[] };
+        self.pend(none, None).expect("a gone entry takes no room");
+    }
+
+    fn pend(&mut self, meta: Meta, rows: Option<usize>) -> io::Result<()> {
+        let dead = self.copy_slice(meta.dead)?;
+        let levels = self.copy_slice(meta.levels)?;
+        self.pending.push(Pending {
+            rel: meta.key.rel.to_owned(),
+            ident: *meta.key.ident,
+            part: meta.key.part,
+            digest: meta.digest,
+            reads: meta.reads.iter().map(|&(r, d)| (r.to_owned(), d)).collect(),
+            types: meta.types.to_vec(),
+            rows,
+            dead,
+            levels,
+        });
+        Ok(())
+    }
+
+    /// `items` copied into the block: (offset, count); none for none.
+    fn copy_slice<T: Copy>(&self, items: &[T]) -> io::Result<(usize, usize)> {
+        if items.is_empty() {
+            return Ok((0, 0));
+        }
+        let p: *mut T = self.block.try_alloc_t(items.len()).ok_or_else(room)?;
+        // SAFETY: `p` holds `items.len()` items, just allocated in this open block.
+        unsafe { std::ptr::copy_nonoverlapping(items.as_ptr(), p, items.len()) };
+        Ok((self.block.offset_of(p), items.len()))
     }
 
     /// The directory written, sorted by key, then the block frozen (its file truncated to what it holds) and put on
@@ -401,7 +479,6 @@ impl KeptW {
             strings.extend_from_slice(&p.types);
             entries.push((rel_at, rel_len, reads_at, types_at));
         }
-        let room = || io::Error::new(io::ErrorKind::StorageFull, "the kept block's room is spent");
         let es: *mut KeptEntry = self.block.try_alloc_t(self.pending.len().max(1)).ok_or_else(room)?;
         let rs: *mut ReadDigest = self.block.try_alloc_t(reads.len().max(1)).ok_or_else(room)?;
         let ss: *mut u8 = self.block.try_alloc_t(strings.len().max(1)).ok_or_else(room)?;
@@ -429,6 +506,12 @@ impl KeptW {
                 match p.rows {
                     Some(at) => Ptr::set(&raw const (*e).rows, self.block.ptr::<Relation>(at)),
                     None => (*e).gone = 1,
+                }
+                if p.dead.1 > 0 {
+                    Span::set(&raw const (*e).dead, self.block.ptr::<u64>(p.dead.0), p.dead.1);
+                }
+                if p.levels.1 > 0 {
+                    Span::set(&raw const (*e).levels, self.block.ptr::<u32>(p.levels.0), p.levels.1);
                 }
             }
             Span::set(&raw const (*root).entries, es, self.pending.len());
@@ -478,6 +561,10 @@ mod tests {
         rel
     }
 
+    fn meta(key: FactKey<'_>, digest: u64) -> Meta<'_> {
+        Meta { key, digest, reads: &[], types: &[], dead: &[], levels: &[] }
+    }
+
     fn rows_of(v: &View) -> Vec<Vec<i64>> {
         v.ordered().into_iter().map(|id| v.row(id)).collect()
     }
@@ -494,7 +581,8 @@ mod tests {
         let data: Vec<(i64, i64)> = (0..5_000).map(|i| ((i * 7919) % 5_003, i % 13)).collect();
         let rel = made(&run, &data);
         let mut w = KeptW::create(&d.join("b1.blk"), 11, None, 64 << 20).unwrap();
-        w.put(FactKey { rel: "calls", ident: &A, part: 0 }, 99, &[("defs", 5), ("uses", 6)], &[1, 2], rel).unwrap();
+        let reads = [("defs", 5), ("uses", 6)];
+        w.put(Meta { reads: &reads, types: &[1, 2], ..meta(FactKey { rel: "calls", ident: &A, part: 0 }, 99) }, rel, None).unwrap();
         w.finish().unwrap();
         let k = KeptFacts::open(&d.join("b1.blk"), 11).unwrap();
         let got = k.get(&FactKey { rel: "calls", ident: &A, part: 0 }).unwrap();
@@ -521,15 +609,15 @@ mod tests {
         let (r1, r2, r3) = (made(&run, &[(1, 1)]), made(&run, &[(2, 2)]), made(&run, &[(3, 3)]));
         let key = |rel, ident, part| FactKey { rel, ident, part };
         let mut w = KeptW::create(&d.join("b1.blk"), 1, None, 16 << 20).unwrap();
-        w.put(key("p", &A, 0), 1, &[], &[], r1).unwrap();
-        w.put(key("p", &A, 7), 2, &[], &[], r2).unwrap();
-        w.put(key("q", &B, 0), 3, &[], &[], r3).unwrap();
+        w.put(meta(key("p", &A, 0), 1), r1, None).unwrap();
+        w.put(meta(key("p", &A, 7), 2), r2, None).unwrap();
+        w.put(meta(key("q", &B, 0), 3), r3, None).unwrap();
         w.finish().unwrap();
         let base = KeptFacts::open(&d.join("b1.blk"), 1).unwrap();
         let mut w = KeptW::create(&d.join("d2.blk"), 2, Some(1), 16 << 20).unwrap();
-        w.put(key("p", &A, 7), 20, &[], &[], r3).unwrap();
+        w.put(meta(key("p", &A, 7), 20), r3, None).unwrap();
         w.gone(key("q", &B, 0));
-        w.put(key("p", &A, 3), 30, &[], &[], r1).unwrap();
+        w.put(meta(key("p", &A, 3), 30), r1, None).unwrap();
         w.finish().unwrap();
         let delta = KeptFacts::open(&d.join("d2.blk"), 2).unwrap();
         assert_eq!(delta.base_tag(), Some(1));
@@ -549,9 +637,40 @@ mod tests {
         let run = Block::anon(kind::FACTS, 16 << 20);
         let r = made(&run, &[(1, 1)]);
         let mut w = KeptW::create(&d.join("b1.blk"), 1, None, 16 << 20).unwrap();
-        w.put(FactKey { rel: "p", ident: &A, part: 0 }, 1, &[], &[], r).unwrap();
-        w.put(FactKey { rel: "p", ident: &A, part: 0 }, 1, &[], &[], r).unwrap();
+        w.put(meta(FactKey { rel: "p", ident: &A, part: 0 }, 1), r, None).unwrap();
+        w.put(meta(FactKey { rel: "p", ident: &A, part: 0 }, 1), r, None).unwrap();
         assert!(w.finish().is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// F6: an input's granule put from flat rows; a forked process's ids mapped in the copy, the run's left as they
+    /// were; dead bits and levels kept beside; a carry with new reads keeps the rows.
+    #[test]
+    fn the_keep_puts_rows_maps_ids_and_carries() {
+        let d = dir("puts");
+        let run = Block::anon(kind::FACTS, 16 << 20);
+        let r = made(&run, &[(10, 1), (20, 2), (30, 3)]);
+        let mut w = KeptW::create(&d.join("b1.blk"), 1, None, 16 << 20).unwrap();
+        let f = |v: i64| v + 1000;
+        let dead = [0b10u64];
+        let levels = [1u32, 2, 3];
+        w.put(Meta { dead: &dead, levels: &levels, ..meta(FactKey { rel: "m", ident: &A, part: 0 }, 1) }, r, Some((&[0], &f))).unwrap();
+        w.put_rows(meta(FactKey { rel: "g", ident: &B, part: 5 }, 2), &[8, 8], &[1, 2, 3, 4, 5, 6], 3).unwrap();
+        w.finish().unwrap();
+        assert_eq!(rows_of(&View::full(r)), [vec![10, 1], vec![20, 2], vec![30, 3]], "the run's rows as they were");
+        let k = KeptFacts::open(&d.join("b1.blk"), 1).unwrap();
+        let m = k.get(&FactKey { rel: "m", ident: &A, part: 0 }).unwrap();
+        assert_eq!(rows_of(&m.view()), [vec![1010, 1], vec![1020, 2], vec![1030, 3]]);
+        assert_eq!((m.dead, m.levels), (&dead[..], &levels[..]));
+        let g = k.get(&FactKey { rel: "g", ident: &B, part: 5 }).unwrap();
+        assert_eq!((0..3).map(|i| g.view().row(i)).collect::<Vec<_>>(), [vec![1, 2], vec![3, 4], vec![5, 6]]);
+        let mut w = KeptW::create(&d.join("d2.blk"), 2, Some(1), 16 << 20).unwrap();
+        w.carry(&m, Some(&[("x", 9)])).unwrap();
+        w.finish().unwrap();
+        let k2 = KeptFacts::open(&d.join("d2.blk"), 2).unwrap();
+        let c = k2.get(&m.key).unwrap();
+        assert_eq!(c.reads().collect::<Vec<_>>(), [("x", 9)]);
+        assert_eq!((rows_of(&c.view()), c.dead, c.levels), (rows_of(&m.view()), m.dead, m.levels));
         let _ = std::fs::remove_dir_all(&d);
     }
 }

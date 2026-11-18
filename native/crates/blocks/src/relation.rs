@@ -147,12 +147,13 @@ impl Relation {
         Some(rel)
     }
 
-    /// A copy of this frozen full relation in open `block`: its descriptor made again, then its rows' and kills'
-    /// chunks, dead bits, indexes and statistics copied whole by `memcpy` (no row decoded or re-sorted, no index
-    /// rebuilt), each reference set to its copy. A reader of the copy reads what a reader of this reads (0401 F2).
-    /// `None` when `block` has no room.
+    /// A copy of this full relation in open `block`: its descriptor made again, then its rows' and kills' chunks,
+    /// dead bits, indexes and statistics copied whole by `memcpy` (no row decoded or re-sorted, no index rebuilt),
+    /// each reference set to its copy. A reader of the copy reads what a reader of this reads (0401 F2, F6). It is
+    /// frozen or not (a run's part, its rows in any order, with the indexes the run added); nothing writes it
+    /// meanwhile, and an open relation's set test (`pending`) is not copied. `None` when `block` has no room.
     pub fn try_copy_into<'b>(&self, block: &'b Block) -> Option<&'b Relation> {
-        assert!(self.is_frozen() && !self.is_delta(), "only a frozen full relation is copied");
+        assert!(!self.is_delta(), "only a full relation is copied");
         let spec = Spec {
             widths: (0..self.arity as usize).map(|c| self.rows.col(c).width).collect(),
             order: self.okey[..self.nokey as usize].to_vec(),
