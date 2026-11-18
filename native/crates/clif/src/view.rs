@@ -158,7 +158,11 @@ pub mod cache {
     /// A lookup's probes of a generation's index, its tries, and its waits for an entry another thread writes.
     pub const PROBES: u32 = 16;
     pub const TRIES: u32 = 4;
-    pub const SPIN: u32 = 1024;
+    pub const SPIN: u32 = 1 << 16;
+    /// An index slot's u32: its key's tag (16 bits, never 0) above its entry's number + 1 (0 while its writer has
+    /// claimed the slot and not yet an entry), so a generation holds at most `NUMBER` entries.
+    pub const TAG_SHIFT: u32 = 16;
+    pub const NUMBER: u32 = (1 << TAG_SHIFT) - 1;
     /// The room past the dead entry: an entry's masked loads reach at most an entry and a word past it.
     pub const SLACK: usize = 256;
 
@@ -180,7 +184,8 @@ pub mod cache {
         /// The smallest index for `entries`.
         pub fn new(gens: u32, entries: u32, entry_bytes: usize) -> Spec {
             let shift = entry_bytes.next_power_of_two().trailing_zeros();
-            Spec { gens: gens.max(3), entries: entries.max(1), shift, slots: (2 * entries.max(1)).next_power_of_two().max(8), stats: false }
+            let entries = entries.clamp(1, NUMBER - 1);
+            Spec { gens: gens.max(3), entries, shift, slots: (2 * entries).next_power_of_two().max(8), stats: false }
         }
         /// The same cache in the statistics mode.
         pub fn with_stats(self) -> Spec {

@@ -318,6 +318,10 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
     // by its address less its tape's, its entry size the cache's, its reads checked (shared).
     let cache = (!zrows.is_empty()).then(|| {
         let spec = zcache_spec(zblocks, zentry);
+        crate::code_rule_dsl::prof::count("zcache.batches", 1);
+        crate::code_rule_dsl::prof::count("zcache.blocks", zblocks);
+        crate::code_rule_dsl::prof::count("zcache.entries", spec.entries as usize);
+        crate::code_rule_dsl::prof::count("zcache.entry_kb", spec.entry_bytes() >> 10);
         let cache = device.new_buffer(spec.bytes() as u64, metal::MTLResourceOptions::StorageModeShared);
         // SAFETY: the buffer's bytes, shared with the host, read by no stage yet.
         spec.init(unsafe { std::slice::from_raw_parts_mut(cache.contents().cast::<u8>(), spec.bytes()) }).expect("a cache's buffer of its size");

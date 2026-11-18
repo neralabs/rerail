@@ -487,7 +487,15 @@ Each step ends with:
          masked to it). A generation holds four times the batch's blocks, 64 at least, within an eighth of a
          chunk's budget (`RERAIL_ZCACHE_MB`, 48 MB): with one entry a block, the device test's batch of five
          blocks turned 25 times in one pass and 8 reads found no room (the dead entry read: wrong ends); with
-         the room, 5 misses, no turn, no failure. A stage whose cache's failures rose while it ran is refused
+         the room, 5 misses, no turn, no failure. On hogql (24 batches of about 136 blocks, 544 entries a generation,
+         8 KB entries) two more faults showed, both fixed: waits of 1,024 loads ran out while a block was
+         decoded on a loaded device (11 M duplicates; `SPIN` is now 65,536), and a thread that missed took its
+         entry before it raced for the block's index slot, so the thousands that missed one block at once took
+         thousands of entries and gave them back (the head turned 111 times a batch, 330 M reads found no room).
+         Now the slot is claimed first: an index slot holds the key's tag (16 bits) above its entry's number,
+         0 while its writer has not taken one, and a thread that finds its tag pending waits on the slot; only
+         the slot's winner takes an entry. Then hogql's 46 batches: 1,880 decodes for 2,769 blocks, 18.9 M hits,
+         1.4 M waits, no duplicate, no turn, no failure. A stage whose cache's failures rose while it ran is refused
          (`Run::failed`), and the stratum runs on the CPU. The cache's counts go to the profile (`zcache.*`)
          when the batch's directory goes, the statistics mode's with `RERAIL_ZCACHE_STATS=1`.
        - Left for the kernels: the transducer's residency lays a 16z tape out whole in its slab
