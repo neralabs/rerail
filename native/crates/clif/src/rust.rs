@@ -711,6 +711,9 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Isub => set(format!("{}.wrapping_sub({})", args[0], args[1])),
         Opcode::Ineg => set(format!("{}.wrapping_neg()", args[0])),
         Opcode::Imul => set(format!("{}.wrapping_mul({})", args[0], args[1])),
+        // A divisor of 0 panics, as CLIF's traps.
+        Opcode::Udiv => set(format!("{} / {}", args[0], args[1])),
+        Opcode::Urem => set(format!("{} % {}", args[0], args[1])),
         Opcode::Band => set(format!("{} & {}", args[0], args[1])),
         Opcode::Bor => set(format!("{} | {}", args[0], args[1])),
         Opcode::Bxor => set(format!("{} ^ {}", args[0], args[1])),

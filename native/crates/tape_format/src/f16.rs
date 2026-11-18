@@ -551,6 +551,9 @@ fn mask(w: usize) -> u64 {
 
 // ---- the writer ------------------------------------------------------------------------------------------
 
+/// The writer whose ops are the CLIF ones (decision 0399 §6).
+pub mod ops;
+
 /// A node's cells as `write` takes them: its code's number in the language's table, its span, and one past its
 /// subtree's last node.
 #[derive(Clone, Copy, Debug)]
@@ -1382,7 +1385,8 @@ impl F16<'_> {
     pub fn line_start(&self, k: u32) -> u32 {
         reads::tape_line_start(self.bytes, &self.view, k)
     }
-    /// The source's lines: one more than its newlines.
+    /// The source's lines: one more than its newlines (the view's `line_count`, not its `lines`, the index's place).
+    #[allow(clippy::misnamed_getters)]
     pub fn lines(&self) -> u32 {
         self.view.line_count
     }
@@ -1542,11 +1546,6 @@ impl Tape16Z {
     /// Where its bytes are.
     pub fn home(&self) -> &crate::home::Home {
         &self.buf
-    }
-
-    /// The pieces: `PIECES` a block.
-    fn pieces(&self) -> usize {
-        PIECES * self.p.block_count()
     }
 
     /// The stored tape, held as it is: its header, its regions and its piece index are checked against its length,
@@ -1847,12 +1846,12 @@ impl F16Z<'_> {
         slot.raw.clear();
         slot.raw.resize(q.end + 32, 0);
         let mut scratch = std::mem::take(&mut slot.scratch);
-        for r in 0..PIECES {
+        for (r, &side) in sides.iter().enumerate() {
             let at = q.column(0, r);
             let fixed = nb * cell(t.p.widths, t.p.cw, r);
             let bytes = t.piece_bytes(PIECES * b + r, &mut scratch).expect("a 16z block decodes to its length");
             slot.raw[at..at + fixed].copy_from_slice(&bytes[..fixed]);
-            slot.raw[q.side[r]..q.side[r] + sides[r]].copy_from_slice(&bytes[fixed..]);
+            slot.raw[q.side[r]..q.side[r] + side].copy_from_slice(&bytes[fixed..]);
         }
         slot.scratch = scratch;
         let (at, len) = (q.column(0, 4), nb.div_ceil(K) * t.p.cw);
@@ -2326,7 +2325,7 @@ mod tests {
         let mut stated = z.as_bytes().to_vec();
         let at = z.zat[ZLENS] + 4 * packed;
         stated[at..at + 4].copy_from_slice(&1u32.to_le_bytes());
-        let refused = Tape16Z::from_bytes(stated).err().expect("refused");
+        let refused = Tape16Z::from_bytes(stated).expect_err("refused");
         assert!(refused.contains(&format!("piece {packed} does not fit")), "{refused}");
         // The last LZ4 piece's literals made to claim more bytes than the piece has, within its decoded room.
         let mut bytes = z.as_bytes().to_vec();
@@ -2603,15 +2602,22 @@ mod tests {
         let source = source_of(pos + 2);
         let number: Vec<u32> = (0..600).collect();
         let Ok(Written::F16(want)) = write_from(&lang, &Plain(&nodes, &table), &number, &source, 0, false) else { panic!("format 16") };
+        let mut in_place = 0;
         for (z, every) in [(false, 1), (false, 1_000_000), (true, 1), (true, 97)] {
             let mut w = Writer::new(&lang, &source, 0, z, true, nodes.len());
             by_ops(&mut w, &nodes, every);
-            let room = w.buf.as_ptr();
+            let (room, cap) = (w.buf.as_ptr(), w.buf.capacity());
             let f = w.finish().unwrap();
             match f.tape {
                 Written::F16(t) => {
                     assert_eq!(t.as_bytes(), want.as_bytes(), "16 by the ops");
-                    assert_eq!(t.as_bytes().as_ptr(), room, "the tape is the writer's room");
+                    // A tape within the room the nodes' hint made is the room; one whose side lists outgrow it
+                    // moves as its buffer grows, wherever the allocator puts it (an escaped tape's: the hint is
+                    // the nodes', not their side lists').
+                    if t.as_bytes().len() <= cap {
+                        assert_eq!(t.as_bytes().as_ptr(), room, "the tape is the writer's room");
+                        in_place += 1;
+                    }
                 }
                 Written::F16Z(t) => {
                     let mut d = vec![0u8; t.decoded_len()];
@@ -2636,6 +2642,19 @@ mod tests {
             }
             assert_eq!(p.doc, doc, "the document's presence");
             assert!(p.has_kind(299) && !p.has_kind(300) && p.has_field(6), "its bits");
+        }
+        assert_eq!(in_place, 0, "the escaped tape's side lists outgrow the hint's room");
+        // A tape of few escapes (its side lists within the hint's `nodes / 2` bytes) is the writer's own room (R4).
+        let n = 3000usize;
+        let mut plain: Vec<(u32, u64, u64, usize)> = (1..n as u64).map(|i| (1 + (i % 3) as u32, 4 * i, 4 * i + 2, 1)).collect();
+        plain.insert(0, (0, 0, 4 * n as u64, n));
+        let source = source_of(4 * n as u64);
+        for every in [1, 1_000_000] {
+            let mut w = Writer::new(&lang, &source, 0, false, false, plain.len());
+            by_ops(&mut w, &plain, every);
+            let room = w.buf.as_ptr();
+            let Ok(Finished { tape: Written::F16(t), .. }) = w.finish() else { panic!("format 16") };
+            assert_eq!(t.as_bytes().as_ptr(), room, "the tape is the writer's room (commit every {every})");
         }
     }
 
@@ -2753,5 +2772,178 @@ mod tests {
             case(&mut w);
             assert!(w.finish().is_err(), "case {k}");
         }
+    }
+
+    /// The writer's ops as `ops_write_the_tape` and `retag_and_set_start` call them, over either writer.
+    trait WriterOps {
+        fn open(&mut self, number: u32, start: u64) -> usize;
+        fn close(&mut self, end: u64);
+        fn leaf(&mut self, number: u32, start: u64, end: u64) -> usize;
+        fn commit(&mut self);
+        fn retag(&mut self, i: usize, number: u32);
+        fn set_start(&mut self, i: usize, start: u64);
+    }
+    macro_rules! writer_ops {
+        ($t:ty) => {
+            impl WriterOps for $t {
+                fn open(&mut self, number: u32, start: u64) -> usize {
+                    <$t>::open(self, number, start)
+                }
+                fn close(&mut self, end: u64) {
+                    <$t>::close(self, end)
+                }
+                fn leaf(&mut self, number: u32, start: u64, end: u64) -> usize {
+                    <$t>::leaf(self, number, start, end)
+                }
+                fn commit(&mut self) {
+                    <$t>::commit(self)
+                }
+                fn retag(&mut self, i: usize, number: u32) {
+                    <$t>::retag(self, i, number)
+                }
+                fn set_start(&mut self, i: usize, start: u64) {
+                    <$t>::set_start(self, i, start)
+                }
+            }
+        };
+    }
+    writer_ops!(Writer<'_>);
+    writer_ops!(ops::OpsWriter);
+
+    /// `nodes` written by `w`'s ops, a commit every `every` nodes; with `late`, each inner node opened with another
+    /// code and the node before's start, then retagged and its start set once its first child is open.
+    fn by_ops_of(w: &mut impl WriterOps, nodes: &[(u32, u64, u64, usize)], every: usize, late: bool) {
+        let mut ends: Vec<(usize, u64)> = Vec::new();
+        let mut held: Option<(usize, u32, u64)> = None;
+        for (i, &(code, start, end, size)) in nodes.iter().enumerate() {
+            while ends.last().is_some_and(|e| e.0 <= i) {
+                w.close(ends.pop().unwrap().1);
+            }
+            if size == 1 {
+                w.leaf(code, start, end);
+            } else if late {
+                let early = if i == 0 { start } else { nodes[i - 1].1 };
+                w.open((code + 301) % 600, early);
+                ends.push((i + size, end));
+            } else {
+                w.open(code, start);
+                ends.push((i + size, end));
+            }
+            if let Some((p, code, start)) = held.take() {
+                w.retag(p, code);
+                w.set_start(p, start);
+            }
+            if late && size > 1 {
+                held = Some((i, code, start));
+            }
+            if i % every == 0 {
+                w.commit();
+            }
+        }
+        while let Some((_, end)) = ends.pop() {
+            w.close(end);
+        }
+    }
+
+    /// Decision 0399 §6, R13: the writer's ops in CLIF, through their Rust, write the reference writer's tape and
+    /// presence from the same ops: escaped codes and values, late closes, a commit at every node or none, `retag`
+    /// and `set_start`, a presence a block; and a tape of one node, and of none.
+    #[test]
+    fn the_clif_ops_write_the_references_tape() {
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k % 300, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let source = source_of(pos + 2);
+        let small = [(3u32, 0u64, 5u64, 1usize)];
+        for (label, nodes) in [("escaped", &nodes[..]), ("one node", &small[..]), ("none", &[][..])] {
+            for (every, late, blocks) in [(1, false, true), (1_000_000, false, false), (97, false, true), (1, true, false), (13, true, true)] {
+                if late && nodes.len() < 2 {
+                    continue;
+                }
+                let mut r = Writer::new(&lang, &source, 3, false, blocks, nodes.len());
+                by_ops_of(&mut r, nodes, every, late);
+                let mut c = ops::OpsWriter::new(&lang, &source, 3, blocks, nodes.len() / 3);
+                by_ops_of(&mut c, nodes, every, late);
+                let what = format!("{label}: commit every {every}, late {late}, blocks {blocks}");
+                match (r.finish(), c.finish()) {
+                    (Ok(r), Ok(c)) => {
+                        let (Written::F16(rt), Written::F16(ct)) = (&r.tape, &c.tape) else { panic!("format 16") };
+                        assert_eq!(ct.as_bytes(), rt.as_bytes(), "{what}: the tape");
+                        assert_eq!(c.presence, r.presence, "{what}: the presence");
+                    }
+                    (Err(_), Err(_)) => assert!(nodes.is_empty(), "{what}: both failed"),
+                    (r, c) => panic!("{what}: the reference {:?}, the ops {:?}", r.map(|_| ()), c.map(|_| ())),
+                }
+            }
+        }
+    }
+
+    /// Decision 0399 §6, R14: an op that breaks the tape's bounds fails in the ops as in the reference, and the
+    /// writer makes no tape: `broken_nodes_make_no_tape`'s cases, and an edit of a final block.
+    #[test]
+    fn the_clif_ops_fail_as_the_reference() {
+        use rerail_clif::writer::fail;
+        let entries: Vec<Entry> = (0..4u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let source = source_of(5000);
+        // Each case calls its ops through `op(which, a, b)`, with its first failure.
+        type Case = fn(&mut dyn FnMut(u8, u64, u64));
+        let cases: [(Case, u32); 6] = [
+            (|w| { w(0, 10, 0); w(1, 5, 6); w(2, 20, 0); }, fail::BOUNDS),
+            (|w| { w(0, 0, 0); w(2, 5001, 0); }, fail::BOUNDS),
+            (|w| { w(1, 0, 10); w(1, 10, 20); }, fail::OUTSIDE),
+            (|w| { w(0, 0, 0); w(1, 0, 1); }, fail::UNCLOSED),
+            (|w| { w(2, 0, 0); }, fail::NO_OPEN),
+            (|w| {
+                // Block 1 holds no open node: final once the frontier passes it.
+                w(0, 0, 0);
+                for k in 0..2100 { w(1, k, k + 1); }
+                w(3, 0, 0);
+                w(4, 1500, 1);
+            }, fail::FINAL),
+        ];
+        for (k, (case, code)) in cases.into_iter().enumerate() {
+            let mut r = Writer::new(&lang, &source, 0, false, false, 4);
+            let mut c = ops::OpsWriter::new(&lang, &source, 0, false, 4);
+            // 0 open, 1 leaf, 2 close, 3 commit, 4 retag.
+            case(&mut |op, a, b| match op {
+                0 => { r.open(1, a); c.open(1, a); }
+                1 => { r.leaf(2, a, b); c.leaf(2, a, b); }
+                2 => { r.close(a); c.close(a); }
+                3 => { r.commit(); c.commit(); }
+                _ => { r.retag(a as usize, b as u32); c.retag(a as usize, b as u32); }
+            });
+            let (rf, cf) = (r.finish(), c.finish());
+            assert!(rf.is_err(), "case {k}: the reference fails");
+            let Err(e) = cf else { panic!("case {k}: the ops fail") };
+            assert!(e.starts_with(&format!("the writer's ops failed: {code:#x} ")), "case {k}: the ops' first failure is {code:#x}: {e}");
+        }
+    }
+
+    /// Decision 0399 §6, R14: a part with no room fails its op as full, naming the part, and the op writes nothing
+    /// past the part's capacity and its 8 bytes of room: the tape's blocks, the open nodes, a block's entries, the
+    /// laid side lists, the side areas given back.
+    #[test]
+    fn a_full_writer_writes_nothing_past_its_parts() {
+        use rerail_clif::writer::{fail, part};
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k % 300, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let source = source_of(pos + 2);
+        let mut cases = 0;
+        for (k, cap) in [(part::OUT, 5000), (part::OUT, 30_000), (part::OPEN, 24), (part::TABLE, 16), (part::LAID, 100), (part::LAID_AT, 0), (part::FREE, 0)] {
+            let mut c = ops::OpsWriter::new(&lang, &source, 0, false, 0);
+            c.fix(k, cap, 0xa5);
+            by_ops_of(&mut c, &nodes, 1, false);
+            let failure = c.failure();
+            assert_eq!(failure.map(|f| f.0), Some(fail::FULL + k), "part {k} at {cap} bytes: full");
+            assert!(c.buffer(k)[cap + 8..].iter().all(|&b| b == 0xa5), "part {k} at {cap} bytes: nothing written past its room");
+            assert!(c.finish().is_err(), "part {k} at {cap} bytes: no tape");
+            cases += 1;
+        }
+        assert_eq!(cases, 7);
     }
 }

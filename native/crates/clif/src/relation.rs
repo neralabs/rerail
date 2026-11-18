@@ -371,7 +371,7 @@ mod tests {
         type Put = extern "C" fn(*const u8, u32, u32, u64) -> u32;
         type Two = extern "C" fn(*const u8, u32, u32) -> u64;
         // SAFETY: each read's signature: its descriptor's address, then its parameters.
-        let (put, get): (Put, Two) = unsafe { (std::mem::transmute(reads.function("rows_put")), std::mem::transmute(reads.function("rows_get"))) };
+        let (put, get): (Put, Two) = unsafe { (std::mem::transmute::<*const u8, Put>(reads.function("rows_put")), std::mem::transmute::<*const u8, Two>(reads.function("rows_get"))) };
         let spec = Spec { widths: vec![8, 4], order: vec![0], indexes: vec![], min_log: 4 };
         let lock = Mutex::new(());
         let block = Block::anon(kind::FACTS, 1 << 20);

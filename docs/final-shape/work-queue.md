@@ -3851,6 +3851,6 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
 - **Fixed**: `Building` and `Written` (each relation a batch writes, checked when it is done) hold the relation
   (`DevRel::holder`: its own `Part`, or the one `in_block` reads, now kept as `kept`) until the batch is done or
   failed.
-- **Since the fix**: 30 hogql runs (16z and 16 in turn, three at a time, M3), all 1,629, no panic, no bound fired;
-  the device join's 29 tests pass. Short of the 180 this item asks.
+- **Since the fix**: 66 hogql runs (16z and 16 in turn, three at a time, M3; 30, then 36), all 1,629, no panic,
+  no bound fired; the device join's 29 tests pass. Short of the 180 this item asks.
 - **Done when**: 180 format 16 runs, three at a time, have no panic.

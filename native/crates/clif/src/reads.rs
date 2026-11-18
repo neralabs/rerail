@@ -779,7 +779,7 @@ impl B<'_, '_> {
     pub(crate) fn call_tape(&mut self, name: &str, args: &[Value]) -> Value {
         let (base, view) = self.doc_tape.expect("a view read");
         let tape = std::mem::replace(&mut self.tape, base);
-        let held = std::mem::replace(&mut self.view, Some(view));
+        let held = self.view.replace(view);
         let value = self.call(name, args);
         self.tape = tape;
         self.view = held;

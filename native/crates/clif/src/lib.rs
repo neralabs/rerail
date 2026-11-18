@@ -31,5 +31,7 @@ pub mod msl;
 #[cfg(feature = "ir")]
 pub mod rust;
 pub mod view;
+/// The tape's writer in CLIF (decision 0399 §6): its state's layout, and (with `ir`) its ops.
+pub mod writer;
 #[cfg(feature = "ir")]
 pub mod view_reads;

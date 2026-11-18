@@ -180,6 +180,56 @@ tail        the four side lists (each block's part, as today), their part starts
   within the block, literals for the rest. Decoders do not change.
 - Measured against LZ4 HC 9 in the lab before it replaces it.
 
+### 6. The ops in CLIF (step 4, 2026-11-18)
+
+The reference writer (`f16::Writer`) holds its state in `Vec`s that grow and a map of the pieces seen. A device
+holds none of those. The ops in CLIF work on one region of memory whose layout is fixed when it is made:
+
+- **The writer's state** (`rerail_clif::writer::State`, `repr(C)`, at the start of its region): the document's
+  constants (the language's widths, cut and per, the escapes, the source's length, the block's stride and column
+  offsets, 16 or 16z, whether a presence a block is kept), the variables (`n`, the last start, the frontier, the
+  first failure), and each part of the region as an offset and a capacity:
+  - the open nodes, a stack of `{node, children, last, start}`;
+  - the blocks: each one's room and whether it is final. In 16 a block's room is its place in the tape, which is
+    the output; in 16z a room is one of a few, given back when its block is final and compressed;
+  - the side lists of the blocks not yet final: four sorted lists a room, each up to a block's rows (`Z`). They are
+    the reference's `side`, kept as a node offset and a value an entry. An entry inserted shifts the ones after it,
+    at most a block's;
+  - the laid parts: each final block's four side-list parts as stored (`part_into`), in the order blocks become
+    final, with each one's start and length by block. `finish` puts them in block order in the tail (16), or a
+    block's are compressed with its columns (16z);
+  - the presence: the document's bitmap, and one a block where asked;
+  - 16z's output: the payload, the piece index (start, length, kind), each list's part lengths, the checkpoints,
+    and the pieces seen (a hash table of a piece's 64-bit hash to its number). A repeat is taken only after the
+    earlier piece's bytes compare equal (a raw piece read where it lies, an LZ4 one decoded with `z_lz4` into a
+    scratch room), so a hash collision costs a compare, never a wrong tape.
+- **The ops** are CLIF functions whose one pointer is the state, as a relation's reads take their descriptor
+  (the backends' `Family::Relation` convention, so no new family): `w_open`, `w_close`, `w_leaf`, `w_commit`,
+  `w_retag`, `w_set_start` and `w_finish`, on top of `w_put`, `w_put_code`, `w_settle`, `w_finalize`, `w_lay`
+  and the 16z block sink (an LZ4 compressor in CLIF, its hash table in the state). A part is named by its offset
+  from the state's address, so a region moves whole. A cell is written as a word (its bytes in a 64-bit load and
+  store, the bytes past it kept), so each part keeps 8 bytes of room past its capacity; no op has a loop a byte.
+  Each
+  returns 0 or its failure, the first of which is kept: the reference's (a bound, a node outside the root, an edit
+  of a final block), or *full*, naming the part of the region with no room. A full op writes nothing past its
+  part's capacity.
+- **Who sizes the region.** The host makes it from the document's size, and before each op reserves what the op
+  can need, as a `Vec` reserves before a push (a part's buffer grown and the state's offset moved: the writer's
+  own memory, not a tape), so a host op never finds a part full. The device makes it from the batch's
+  budget; a document whose writer fills is parsed again on the host, counted (as a full arena is, 0334).
+- **One implementation.** Once the CLIF ops give the reference's bytes, the host's `Writer` is the generated
+  Rust ops behind the same API, and the hand-written writer stays only as the tests' oracle.
+
+**Done (2026-11-18): format 16's ops.** `rerail_clif::writer` holds the state and the ops; `rust_source` makes
+`tape_format/src/generated_writer.rs` (checked by `the_tape_crates_writer_is_this`), and every op passes
+Cranelift's verifier (`the_ops_verify`). `f16::ops::OpsWriter` is the host's region behind `f16::Writer`'s API.
+R13 holds for format 16: the ops write the reference's bytes and presence for escaped codes and values, late
+closes, a commit every node, every 97 or none, `retag` and `set_start`, a presence a block, one node. R14 holds:
+the reference's broken cases fail with the same first failure, and a part held at a capacity (the tape, the open
+nodes, the block table, the laid lists and their places, the side areas given back) fails as full, naming it,
+with nothing written past its room. Next: 16z's block sink, the ops on the JIT and in MSL (R15), the host's
+`Writer` as the ops (R16), tier 2 (R17).
+
 ## Requirements, each with its test
 
 | | Requirement | Test |
@@ -197,6 +247,11 @@ tail        the four side lists (each block's part, as today), their part starts
 | R10 | The presence is the kinds and fields the tape's nodes have, per document and (optionally) per block | `presence_is_the_tapes_kinds` |
 | R11 | The device reads block-major tapes as the CPU does | `the_label_kernels_compile_for_every_format`, `on_metal_anchored_walks_find_the_unanchored_roots` |
 | R12 | No format 15 column, image or tape is made for a format 16 run (lean, tier 2, tree-sitter) | `no_intermediate_tape` (step 3) |
+| R13 | The CLIF ops write the reference's tape, in 16 and 16z, for any sequence of ops the reference takes (escapes, late closes, `retag`, `set_start`, repeats), on the Rust backend and the JIT | `the_clif_ops_write_the_references_tape` (step 4) |
+| R14 | An op fails as the reference does; a full part fails as full, and nothing is written past its capacity | `the_clif_ops_fail_as_the_reference`, `a_full_writer_writes_nothing_past_its_parts` (step 4) |
+| R15 | The ops in MSL write the same tape on the device | `the_device_writes_the_references_tape` (step 4) |
+| R16 | The host's `Writer` is the generated ops; the hand-written one is the tests' oracle only | `the_writer_is_the_clif_ops` (step 4) |
+| R17 | Tier 2's tape words call the ops, and its GPU path writes its tape on the device | `tier2_writes_format_16_by_the_ops` (step 4) |
 
 ## Steps
 
