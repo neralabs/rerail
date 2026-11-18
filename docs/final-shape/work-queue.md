@@ -1648,6 +1648,17 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 - **Seen beside it**: the measurement script's watchdog killed its shell, not the engine: four hung engines ran on
   for hours on the m3. Scripts kill the engine by name now.
 
+### Q139. Statistics and kept plans in blocks, a round's checks on the device (decision 0387, proposed)
+
+- **Asked** (the user, 2026-11-17): "we will end up calculating statistics on the GPU, as with every single step,
+  which means storing them in linear blocks like the rest of the GPU-compatible engine / please survey the sibling
+  worktrees to identify sibling work and the correct design, and then tell me how we will implement this".
+- **Survey**: relations are blocks (0325, built on the hub), one relation (0384), blocks never copied (0353), one
+  allocator (0342), declared shapes (0361, to build), semi-join statistics in the frames (0369). No sibling has
+  statistics or kept plans in blocks.
+- **Proposed** (0387): six steps, from the statistics block to rounds by wave. Two choices are open for the user:
+  0301's snapshot replaced by a block table, and whether 0361 or this goes first.
+
 ### Q82. The learned correction of the join estimates (decision 0354)
 
 - **Asked** (the user, 2026-11-17): roll out the classifier; the extra planning work now costs more than the joins
