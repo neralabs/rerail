@@ -553,8 +553,15 @@ function takenSource(worktree: string, findings: WorktreeFindings, path: string)
 /** Puts into `scan` what a walk of `worktree` could not check where the session takes it, named as the session names it. */
 function takeGaps(worktree: string, findings: WorktreeFindings, scan: SourceScan, takes: (path: string) => boolean): void {
   for (const failed of findings.failedRoots) if (takes(failed)) scan.failedRoots.add(inWorktree(worktree, failed));
-  for (const error of findings.errors) if (takes(error.path)) scan.errors.push({ ...error, path: inWorktree(worktree, error.path) });
+  scan.errors.push(...takenErrors(worktree, findings.errors, takes));
   for (const [path, unread] of findings.unread) if (takes(path)) scan.unread.set(inWorktree(worktree, path), unread);
+}
+/**
+ * The errors of a walk of `worktree` the session takes, named as the session names them, each with all it holds: an EPERM
+ * the shared walk had no room to look at again stays unrecorded (`ScanError.unrecorded`), as in the session folder.
+ */
+function takenErrors(worktree: string, errors: readonly ScanError[], takes: (path: string) => boolean): ScanError[] {
+  return errors.filter(error => takes(error.path)).map(error => ({ ...error, path: inWorktree(worktree, error.path) }));
 }
 
 /**
