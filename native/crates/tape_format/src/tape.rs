@@ -237,6 +237,12 @@ pub trait Tape {
     }
     /// `i`'s parent.
     fn parent(&self, i: usize) -> Option<usize>;
+    /// `i`'s parent, where the caller knows an ancestor of it, `a` (whose subtree holds `i`): a format whose parent
+    /// read is a search may start it there. Its parent read by default.
+    #[inline(always)]
+    fn parent_within(&self, i: usize, _a: usize) -> Option<usize> {
+        self.parent(i)
+    }
     fn start(&self, i: usize) -> u64;
     fn end(&self, i: usize) -> u64;
     /// A cursor's step in preorder: `i`'s start, given the start of the node before it (unused for the first). A
@@ -389,6 +395,35 @@ impl Tape for F15<'_> {
     fn parent(&self, i: usize) -> Option<usize> {
         let p = reads::tape_parent(self.bytes, &self.view, i as u32);
         (p != u32::MAX).then_some(p as usize)
+    }
+    /// The node before when it holds `i` (a first child), else a descent from `a` over the siblings' subtree ends:
+    /// as long as the path's siblings below `a`, not the root's. From the root, a child of a module's top level
+    /// hopped every statement before it.
+    fn parent_within(&self, i: usize, a: usize) -> Option<usize> {
+        if i == 0 {
+            return None;
+        }
+        if self.subtree_end(i - 1) > i {
+            return Some(i - 1);
+        }
+        if a >= i || self.subtree_end(a) <= i {
+            return self.parent(i);
+        }
+        let mut p = a;
+        loop {
+            let mut c = p + 1;
+            loop {
+                let end = self.subtree_end(c);
+                if end > i {
+                    break;
+                }
+                c = end;
+            }
+            if c == i {
+                return Some(p);
+            }
+            p = c;
+        }
     }
     #[inline(always)]
     fn start(&self, i: usize) -> u64 {
@@ -574,6 +609,10 @@ impl Tape for AnyTape<'_> {
     #[inline]
     fn parent(&self, i: usize) -> Option<usize> {
         with_tape!(self, |t| t.parent(i))
+    }
+    #[inline]
+    fn parent_within(&self, i: usize, a: usize) -> Option<usize> {
+        with_tape!(self, |t| t.parent_within(i, a))
     }
     #[inline]
     fn start(&self, i: usize) -> u64 {

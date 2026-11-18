@@ -584,7 +584,13 @@ pub struct Table {
     /// before its subtree's end. With them a numbered item's id is read from its number alone, no select.
     rank_starts: [Cells<u32>; 2],
     rank_ends: [Cells<u32>; 2],
+    /// By item, the last granule starting at or before item number `JUMP * b`, for each `b`: a number's granule is
+    /// searched between two of them (`granule_of_number`), not among all the granules. 4 bytes a `JUMP` items.
+    jumps: [Cells<u32>; 2],
 }
+
+/// The items one of `Table::jumps` stands for.
+const JUMP: u32 = 64;
 
 /// `v`, a table column being computed, written into `block`.
 fn placed<T: Cell>(block: &Arc<Block>, v: &[T]) -> Cells<T> {
@@ -672,6 +678,10 @@ impl Table {
         // Written once into the projection's block, beside its rank index (decision 0353 step 2), where the device's
         // reads will find them too.
         let b = r.block();
+        let jumped = |at: &[u32], item: Item| {
+            (0..=r.count(item) / JUMP).map(|q| at.partition_point(|&s| s <= q * JUMP).saturating_sub(1) as u32).collect::<Vec<u32>>()
+        };
+        let jumps = [jumped(&rank_starts[0], Item::Node), jumped(&rank_starts[1], Item::Token)];
         let [rs0, rs1] = rank_starts;
         let [re0, re1] = rank_ends;
         Table {
@@ -690,6 +700,7 @@ impl Table {
             preorder_keys,
             rank_starts: [placed(b, &rs0), placed(b, &rs1)],
             rank_ends: [placed(b, &re0), placed(b, &re1)],
+            jumps: [placed(b, &jumps[0]), placed(b, &jumps[1])],
         }
     }
 
@@ -697,8 +708,13 @@ impl Table {
     #[inline]
     fn granule_of_number(&self, item: Item, k: u32) -> Option<(usize, usize)> {
         let (starts, ends) = (&self.rank_starts[item as usize], &self.rank_ends[item as usize]);
-        // A granule starts at a node: an item numbered `k` is at or after a start when `k` items come before it.
-        let j = starts.partition_point(|&s| s <= k).checked_sub(1)?;
+        // A granule starts at a node: an item numbered `k` is at or after a start when `k` items come before it. The
+        // last one is between the jumps either side of `k` (`jumps`).
+        let jumps = &self.jumps[item as usize];
+        let q = (k / JUMP) as usize;
+        let lo = jumps.get(q).map_or(0, |&j| j as usize);
+        let hi = jumps.get(q + 1).map_or(starts.len(), |&j| j as usize + 1).min(starts.len());
+        let j = (lo + starts[lo..hi].partition_point(|&s| s <= k)).checked_sub(1)?;
         let mut g = j;
         while k >= ends[g] {
             g = self.parents[g] as usize;
@@ -727,10 +743,44 @@ impl Table {
         Some(self.low(g, self.index_of_number(item, k, g, j)))
     }
 
+    /// The start of the innermost granule whose subtree holds tape node `x` below its start (an ancestor of `x`),
+    /// 0 when none does: where a parent search may start (`Facts::parent_within`).
+    pub fn holding(&self, x: u32) -> u32 {
+        let mut g = self.starts.partition_point(|&s| s < x);
+        while g > 0 {
+            g -= 1;
+            if self.starts[g] < x && self.ends[g] > x {
+                return self.starts[g];
+            }
+            // An earlier granule's subtree ended before `x`, or it starts at `x`: its parent's may hold it.
+            let up = self.parents[g];
+            if up == u32::MAX {
+                return 0;
+            }
+            g = up as usize + 1;
+        }
+        0
+    }
     /// The item whose id's low 32 bits are `low` (`low_of`'s inverse): what it is and its number.
     pub fn number_of(&self, low: u32) -> Option<(Item, u32)> {
         let slot = low >> INDEX_BITS;
-        let at = self.by_slot.partition_point(|e| e[0] < slot);
+        // The slots are hashes, about evenly spread: the entry is near `slot`'s share of them, a few steps from a
+        // guess there; a run of clashes past `STEPS` is bisected.
+        const STEPS: usize = 8;
+        let by = &*self.by_slot;
+        let mut at = ((slot as usize * by.len()) >> SLOT_BITS).min(by.len().saturating_sub(1));
+        let mut steps = 0;
+        while at < by.len() && by[at][0] < slot && steps < STEPS {
+            at += 1;
+            steps += 1;
+        }
+        while at > 0 && by[at - 1][0] >= slot && steps < STEPS {
+            at -= 1;
+            steps += 1;
+        }
+        if steps == STEPS {
+            at = by.partition_point(|e| e[0] < slot);
+        }
         let &[s, g, c] = self.by_slot.get(at)?;
         if s != slot {
             return None;
@@ -802,7 +852,7 @@ impl Table {
 
     /// Bytes the table holds.
     pub fn bytes(&self) -> usize {
-        4 * (self.starts.len() * 3 + self.nodes.len() * 2 + self.at.len() + self.slots.len() + 3 * self.by_slot.len() + self.first_kid.len() + self.runs.len() + 2 * self.run_at.len() + 4 * self.starts.len())
+        4 * (self.starts.len() * 3 + self.nodes.len() * 2 + self.at.len() + self.slots.len() + 3 * self.by_slot.len() + self.first_kid.len() + self.runs.len() + 2 * self.run_at.len() + 4 * self.starts.len() + self.jumps[0].len() + self.jumps[1].len())
             + std::mem::size_of::<Kid>() * self.kids.len()
     }
 

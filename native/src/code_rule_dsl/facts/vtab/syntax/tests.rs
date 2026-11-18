@@ -1598,6 +1598,12 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                 for (l, _, q) in p.walk() {
                     assert_eq!(q, p.parent(l as usize), "{label} {format:?} {shape:?}: the parent of local {l}");
                 }
+                // A parent searched from the innermost granule holding the node is the tape's (`Tape::parent_within`).
+                if let Some(t) = p.table() {
+                    for x in 1..f.len() as u32 {
+                        assert_eq!(f.parent_within(x, t.holding(x)), f.parent(x), "{label} {format:?} {shape:?}: tape node {x}'s parent");
+                    }
+                }
                 let reference = p.reference(&dialect);
                 let low = &reference.low[..];
                 let table = p.table().expect("ids by definition");

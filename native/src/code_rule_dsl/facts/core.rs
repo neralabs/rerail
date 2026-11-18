@@ -724,6 +724,11 @@ impl Facts {
         })
     }
     /// The node's parent, `NONE` for the root.
+    /// `id`'s parent, `a` an ancestor of it the caller knows (`Tape::parent_within`: on format 15 the search starts
+    /// there).
+    pub fn parent_within(&self, id: u32, a: u32) -> Option<u32> {
+        on_tape!(self, |t| t.parent_within(id as usize, a as usize).map(|p| p as u32))
+    }
     pub fn parent_or_none(&self, id: u32) -> u32 {
         self.parent(id).unwrap_or(NONE)
     }

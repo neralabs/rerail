@@ -150,9 +150,10 @@ impl Ranks {
             return None;
         }
         let mut g = self.samples[item as usize][(r / SAMPLE) as usize] as usize;
+        let groups = &*self.groups;
         loop {
-            let m = self.groups[g][item as usize];
-            let k = r - self.before(g, item);
+            let m = groups[g][item as usize];
+            let k = r - before_of(&groups[g], item);
             if k < m.count_ones() {
                 return Some((self.first + g as u32) * 64 + select64(m, k));
             }

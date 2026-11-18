@@ -1944,7 +1944,13 @@ impl Projected {
         if local == 0 {
             return NONE;
         }
-        match self.facts.parent(self.node(local as u32)).map_or(NONE, |q| self.local_of_node(q)) {
+        self.parent_of_node(self.node(local as u32))
+    }
+    /// The parent's local id of the node at tape node `x` (a node of the projection, not its root): its tape parent,
+    /// searched from the innermost granule holding it (`granules::Table::holding`), else its document's root.
+    pub fn parent_of_node(&self, x: u32) -> u32 {
+        let anchor = self.defs.as_ref().map_or(0, |d| d.table.holding(x));
+        match self.facts.parent_within(x, anchor).map_or(NONE, |q| self.local_of_node(q)) {
             NONE => 0,
             p => p,
         }
@@ -3764,6 +3770,9 @@ impl Source for Viewed {
         };
         Some(if lo > hi { Vec::new() } else { self.batch.between(self.view, lo, hi) })
     }
+    fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        self.read_matches(column, value, columns, each)
+    }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         self.lookup_docs(column, values, None)
     }
@@ -3853,6 +3862,28 @@ impl Source for Viewed {
             });
         }
     }
+    fn for_rows_in(&self, range: std::ops::Range<usize>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) {
+        let offsets = self.batch.offsets(self.view);
+        let mut row = vec![0i64; columns.len()];
+        let mut go = true;
+        // The documents the range holds: from the one holding its first row.
+        let first = offsets.partition_point(|&o| o <= range.start).saturating_sub(1);
+        for (doc, p) in self.batch.docs.iter().enumerate().skip(first) {
+            let base = offsets[doc];
+            if !go || base >= range.end {
+                break;
+            }
+            self.each_row(p, offsets[doc + 1] - base, columns.iter().copied(), |i, value| {
+                if !go || !range.contains(&(base + i)) {
+                    return;
+                }
+                for (o, &c) in row.iter_mut().zip(columns) {
+                    *o = value(c);
+                }
+                go = each(base + i, &row);
+            });
+        }
+    }
     /// A column that is a row's id, or its document (`node` and `core`'s first): every row of a document has its key.
     fn documents_of(&self, column: usize, each: &mut dyn FnMut(usize, i64)) {
         let own = match self.view {
@@ -3888,7 +3919,7 @@ impl Source for Viewed {
         let (n, up) = (std::cell::OnceCell::new(), std::cell::OnceCell::new());
         let x = || *node.get_or_init(|| p.node(local));
         for (o, &c) in out.iter_mut().zip(columns) {
-            *o = self.value_of(p, local, &x, &|| *n.get_or_init(|| p.global(local)), &|| *up.get_or_init(|| Self::parent_id(p, local)), c);
+            *o = self.value_of(p, local, &x, &|| *n.get_or_init(|| p.global(local)), &|| *up.get_or_init(|| Self::parent_id_of(p, local, x())), c);
         }
     }
 }
@@ -3940,6 +3971,77 @@ impl Viewed {
             }
         }
         Some(rows)
+    }
+    /// `Source::lookup_read`: `lookup_docs`'s matches for one value, each row's `columns` read from what found it.
+    /// A lookup by a node's id knows the row's id; by its parent, the parent's id and each child's tape node; by a
+    /// kind or a tape node, the tape node: no select, granule search or parent search a row for those. Views whose
+    /// rows are not one a node (`field`, `loc`), and the other lookups, read none (`false`).
+    fn read_matches(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        if columns.len() > 8 || matches!(self.view, View::Field | View::Loc(_)) {
+            return false;
+        }
+        let b = &*self.batch;
+        let mut vals = [0i64; 8];
+        // A match: its document, local id, tape node (`NONE`: unknown), own id and parent's id where known.
+        let mut emit = |doc: usize, local: u32, x: u32, id: Option<i64>, up: Option<i64>| {
+            let Some(row) = b.row(self.view, doc, local) else { return };
+            let p = &b.docs[doc];
+            let node = std::cell::OnceCell::new();
+            if x != NONE {
+                let _ = node.set(x);
+            }
+            let (n, parent) = (std::cell::OnceCell::new(), std::cell::OnceCell::new());
+            if let Some(id) = id {
+                let _ = n.set(id);
+            }
+            if let Some(up) = up {
+                let _ = parent.set(up);
+            }
+            let x = || *node.get_or_init(|| p.node(local));
+            for (o, &c) in vals.iter_mut().zip(columns) {
+                *o = self.value_of(p, local, &x, &|| *n.get_or_init(|| p.global(local)), &|| *parent.get_or_init(|| Self::parent_id_of(p, local, x())), c);
+            }
+            each(row, &vals[..columns.len()]);
+        };
+        if column == self.own() {
+            if let Some((doc, local)) = b.node(value) {
+                emit(doc, local, NONE, Some(value), None);
+            }
+        } else if Some(column) == self.parent() {
+            if value == -1 {
+                return false;
+            }
+            if let Some((doc, local)) = b.node(value) {
+                b.docs[doc].each_child_node(local, |c, x| emit(doc, c, x, None, Some(value)));
+            }
+        } else if matches!(self.view, View::Core) && column == 1 {
+            let Ok(t) = u32::try_from(value) else { return true };
+            for (doc, p) in b.docs.iter().enumerate() {
+                if let Some(local) = p.ranks().local(Item::Node, t) {
+                    emit(doc, local, t, None, None);
+                }
+            }
+        } else if matches!(self.view, View::Node) && column == 2 {
+            let (Ok(tag), Ok(code)) = (u8::try_from(value / i64::from(KIND_STRIDE)), u16::try_from(value % i64::from(KIND_STRIDE))) else {
+                return true;
+            };
+            let Some(dialect) = b.dialects.get(tag).filter(|_| value >= 0) else { return true };
+            let atoms: Vec<u32> = dialect.codes.get(&code).map_or(&[][..], Vec::as_slice).iter().map(|&c| kind_atom(tag, c)).collect();
+            for doc in b.of_tag[usize::from(tag)].iter().map(|&d| d as usize) {
+                let p = &b.docs[doc];
+                for &kind in &atoms {
+                    for id in p.facts.of_kind(kind) {
+                        let l = p.local_of_node(id as u32);
+                        if l != NONE {
+                            emit(doc, l, id as u32, None, None);
+                        }
+                    }
+                }
+            }
+        } else {
+            return false;
+        }
+        true
     }
     fn row_value(&self, row: usize, column: usize) -> i64 {
         let (p, i) = self.batch.locate(self.view, row);
@@ -4020,6 +4122,16 @@ impl Viewed {
     /// The id of node `local`'s parent (`Projected::parent`), `-1` above the root.
     fn parent_id(p: &Projected, local: u32) -> i64 {
         match p.parent(local as usize) {
+            NONE => -1,
+            q => p.global(q),
+        }
+    }
+    /// `parent_id`, the node's tape node in hand (not selected again).
+    fn parent_id_of(p: &Projected, local: u32, x: u32) -> i64 {
+        if local == 0 {
+            return -1;
+        }
+        match p.parent_of_node(x) {
             NONE => -1,
             q => p.global(q),
         }

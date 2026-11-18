@@ -974,9 +974,14 @@ const FROZEN_RUNS: usize = 1;
 
 /// Candidate row ids: a range, a list, or a key's ranges of an index's runs.
 /// A join step's last probe of a source's lookup: its key and the candidates it gave.
-type LastProbe = Option<(Vec<i64>, Vec<u32>)>;
+type LastProbe = Option<(Vec<i64>, Probed)>;
+/// A probe's candidates: their ids, or their ids with their rows' values read as they were found (`View::find_read`).
 #[derive(Clone)]
-enum Cands<'a> { Range(u32, u32), Slice(&'a [u32]), Owned(Vec<u32>), Runs(runs::Found<'a>), Pending(runs::Found<'a>, u32, u32) }
+enum Probed { Ids(Vec<u32>), Read(Arc<Vec<(u32, [i64; READ])>>, u64) }
+#[derive(Clone)]
+enum Cands<'a> { Range(u32, u32), Slice(&'a [u32]), Owned(Vec<u32>), Runs(runs::Found<'a>), Pending(runs::Found<'a>, u32, u32),
+    /// Rows with the values a step reads, read as the probe found them (`View::find_read`).
+    Read(Arc<Vec<(u32, [i64; READ])>>) }
 impl Cands<'_> {
     /// Calls `f` on each id until it returns true; returns whether one did.
     fn any(self, mut f: impl FnMut(u32) -> bool) -> bool {
@@ -986,6 +991,7 @@ impl Cands<'_> {
             Cands::Owned(ids) => ids.into_iter().any(f),
             Cands::Runs(found) => found.ids().any(f),
             Cands::Pending(found, lo, hi) => found.ids().any(&mut f) || (lo..hi).any(f),
+            Cands::Read(rows) => rows.iter().any(|&(id, _)| f(id)),
         }
     }
 }
@@ -3245,6 +3251,37 @@ impl View {
         }
         self.find(cols[lead], key[lead])
     }
+    /// `find_keyed`'s rows, each with its values of view columns `need` (bit `c`: column `c`), read as the source's
+    /// probe found them (`Source::lookup_read`); `None` where it has no such read, or the probe is not `find`'s.
+    fn find_read(&self, cols: &[usize], key: &[i64], lead: usize, need: u64) -> Option<Vec<(u32, [i64; READ])>> {
+        if !self.eqs.is_empty() || self.ids.is_some() || self.cols.len() > READ {
+            return None;
+        }
+        // `find_keyed`'s document-kept lookup goes first where it applies.
+        if let Some(dc) = self.src.doc_column()
+            && cols.iter().any(|&k| self.cols[k] == dc)
+            && cols.iter().any(|&k| self.src.kept_to_doc(self.cols[k]))
+        {
+            return None;
+        }
+        let (mut src, mut at, mut m) = ([0usize; READ], [0usize; READ], 0);
+        for c in 0..self.cols.len() {
+            if need >> c & 1 != 0 {
+                src[m] = self.cols[c];
+                at[m] = c;
+                m += 1;
+            }
+        }
+        let mut rows = Vec::new();
+        let read = self.src.lookup_read(self.cols[cols[lead]], key[lead], &src[..m], &mut |row, got| {
+            let mut vals = [0i64; READ];
+            for j in 0..m {
+                vals[at[j]] = got[j];
+            }
+            rows.push((row as u32, vals));
+        });
+        read.then_some(rows)
+    }
     fn find(&self, c: usize, v: i64) -> Vec<u32> {
         if !self.eqs.is_empty() && let Some(rows) = self.src.lookup_eq(self.cols[c], v, &self.eqs) {
             return rows.into_iter().map(|r| r as u32).collect();
@@ -3258,6 +3295,9 @@ impl View {
 pub enum RowRef<'a> { Flat(&'a [i64]), Rows(&'a rows::Rows, u32, usize), View(&'a View, usize), Source(&'a View, usize), Read([i64; READ], usize) }
 /// The widest view row read whole (`RowRef::read`); a wider one is read a value at a time.
 const READ: usize = 8;
+/// The fewest rows of a view's scan read in one walk (`Rows::each`), not a row at a time: a walk reads each document
+/// the range holds whole.
+const WALK_SCAN: u32 = 64;
 impl<'a> RowRef<'a> {
     #[inline]
     pub fn at(self, c: usize) -> i64 {
@@ -3268,6 +3308,38 @@ impl<'a> RowRef<'a> {
             RowRef::Source(v, row) => v.src.value(row, v.cols[c]),
             RowRef::Read(vals, _) => vals[c],
         }
+    }
+    /// `read`, the view's columns in `need` alone (bit `c`: column `c`), the others left 0 and never read: a step
+    /// reads only the columns it binds, tests or checks. A view's column may be a search on the tape (a node's
+    /// parent on format 15), which a key the probe already matched need not pay (decision 0353 step 2).
+    #[inline]
+    pub fn read_need(self, need: u64) -> RowRef<'a> {
+        let (v, row) = match self {
+            RowRef::View(v, id) => (v, v.ids.as_ref().map_or(id, |ids| ids[id] as usize)),
+            RowRef::Source(v, row) => (v, row),
+            other => return other,
+        };
+        let n = v.cols.len();
+        if n > READ {
+            return self;
+        }
+        if need & ((1u64 << n) - 1) == (1u64 << n) - 1 {
+            return self.read();
+        }
+        let (mut cols, mut at, mut m) = ([0usize; READ], [0usize; READ], 0);
+        for c in 0..n {
+            if need >> c & 1 != 0 {
+                cols[m] = v.cols[c];
+                at[m] = c;
+                m += 1;
+            }
+        }
+        let (mut got, mut vals) = ([0i64; READ], [0i64; READ]);
+        v.src.row_at(row, &cols[..m], &mut got[..m]);
+        for j in 0..m {
+            vals[at[j]] = got[j];
+        }
+        RowRef::Read(vals, row)
     }
     /// The row with its view's columns read at once (`Source::row_at`): a view of a batch finds the row's document
     /// once, not once per column a step reads.
@@ -6212,6 +6284,45 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         fn row(self, id: u32) -> RowRef<'a> {
             match self { Rows::In(r) => r.at(id as usize).read(), Rows::Comp(r) => RowRef::Rows(&r.data, id, r.k), Rows::Source(v) => RowRef::Source(v, id as usize).read() }
         }
+        /// `row`, a view's columns in `need` alone (`RowRef::read_need`).
+        fn row_need(self, id: u32, need: u64) -> RowRef<'a> {
+            match self { Rows::In(r) => r.at(id as usize).read_need(need), Rows::Comp(r) => RowRef::Rows(&r.data, id, r.k), Rows::Source(v) => RowRef::Source(v, id as usize).read_need(need) }
+        }
+        /// Calls `f` on each candidate and its row (`row_need`) until it returns true; returns whether one did. A
+        /// scan of a whole view (a range of its rows) reads them in one walk (`Source::for_rows_in`): a view of the
+        /// tape then finds each row's node, id and parent as it walks, where a row at a time is a select, a granule
+        /// search and a parent search (decision 0353 step 2).
+        fn each(self, cands: Cands<'_>, need: u64, mut f: impl FnMut(u32, RowRef<'a>) -> bool) -> bool {
+            if let (Rows::In(r), &Cands::Range(lo, hi)) = (self, &cands)
+                && hi - lo >= WALK_SCAN
+                && let Some(v) = &r.view
+                && v.ids.is_none()
+                && v.cols.len() <= READ
+            {
+                let (mut cols, mut at, mut m) = ([0usize; READ], [0usize; READ], 0);
+                for c in 0..v.cols.len() {
+                    if need >> c & 1 != 0 {
+                        cols[m] = v.cols[c];
+                        at[m] = c;
+                        m += 1;
+                    }
+                }
+                let mut hit = false;
+                v.src.for_rows_in(lo as usize..hi as usize, &cols[..m], &mut |row, got| {
+                    let mut vals = [0i64; READ];
+                    for j in 0..m {
+                        vals[at[j]] = got[j];
+                    }
+                    hit = f(row as u32, RowRef::Read(vals, row));
+                    !hit
+                });
+                return hit;
+            }
+            if let Cands::Read(rows) = cands {
+                return rows.iter().any(|&(id, vals)| f(id, RowRef::Read(vals, id as usize)));
+            }
+            cands.any(|id| f(id, self.row_need(id, need)))
+        }
         /// A row deleted in place (`Rel::based`), which no step reads.
         #[inline]
         fn dead(self, id: u32) -> bool {
@@ -6374,7 +6485,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         /// The candidates: an input's index on exactly the key columns, a component relation's composite index, or
         /// its shortest posting chain among its key columns (every key is then checked), or every tuple when none is
         /// bound.
-        fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe) -> (Rows<'a>, Cands<'a>) {
+        fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe, need: u64) -> (Rows<'a>, Cands<'a>) {
             match src {
                 Src::In(rel, ix) => {
                     if !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
@@ -6395,15 +6506,32 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     }
                     else if ix.sorted && let Some(v) = &rel.view { (Rows::Source(v), Cands::Slice(v.src.sorted_rows(v.cols[ix.cols[ix.lead]], key[ix.lead]).unwrap_or(&[]))) }
                     else if ix.source && let Some(v) = &rel.view {
-                        let ids = match last {
-                            Some((k, ids)) if k.as_slice() == key => ids.clone(),
+                        let probed = match last {
+                            Some((k, p)) if k.as_slice() == key && !matches!(&*p, Probed::Read(_, n) if *n != need) => p.clone(),
                             _ => {
-                                let ids = v.find_keyed(&ix.cols, key, ix.lead);
-                                *last = Some((key.to_vec(), ids.clone()));
-                                ids
+                                // A step that reads columns has them read as the probe finds its rows; one that reads
+                                // none (`need` 0, a test) takes the ids.
+                                let read = if need != 0 { v.find_read(&ix.cols, key, ix.lead, need) } else { None };
+                                let p = match read {
+                                    Some(rows) => Probed::Read(Arc::new(rows), need),
+                                    None => Probed::Ids(v.find_keyed(&ix.cols, key, ix.lead)),
+                                };
+                                match last {
+                                    Some((k, q)) => {
+                                        k.clear();
+                                        // copy: not block data (a probe key's values, kept to compare the next probe with)
+                                        k.extend_from_slice(key);
+                                        *q = p.clone();
+                                    }
+                                    None => *last = Some((key.to_vec(), p.clone())),
+                                }
+                                p
                             }
                         };
-                        (Rows::Source(v), Cands::Owned(ids))
+                        match probed {
+                            Probed::Ids(ids) => (Rows::Source(v), Cands::Owned(ids)),
+                            Probed::Read(rows, _) => (Rows::Source(v), Cands::Read(rows)),
+                        }
                     }
                     else { (Rows::In(rel), Cands::Slice(ix.get(rel, key))) }
                 }
@@ -6432,7 +6560,23 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
                 let given = if i == 0 { cx.first.take() } else { None };
                 let handed = given.is_some();
-                let (rows, mut cands) = given.unwrap_or_else(|| candidates(src, store, &cx.key, keys, &mut cx.hints[i], &mut cx.last[i]));
+                // The key columns a view's probe matched exactly, which its rows need not be read or checked for: the
+                // sorted index's column, a lookup on one key column, every column of a composite lookup. A view's
+                // column may be a search on the tape (decision 0353 step 2: a node's parent on format 15).
+                let exact: u64 = match src {
+                    _ if handed || keys.is_empty() => 0,
+                    Src::In(rel, ix) if rel.view.is_some() && ix.runs(rel).is_none() => {
+                        if ix.composite { ix.cols.iter().fold(0, |m, &c| m | 1 << c) }
+                        else if ix.sorted || (ix.source && ix.cols.len() == 1) { 1 << ix.cols[ix.lead] }
+                        else { 0 }
+                    }
+                    _ => 0,
+                };
+                let need: u64 = keys.iter().filter(|&&(c, _)| exact >> c & 1 == 0).fold(0u64, |m, &(c, _)| m | 1 << c)
+                    | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0)
+                    | binds.iter().fold(0u64, |m, &(c, _)| m | 1 << c)
+                    | j.fused[i].as_deref().map_or(0, |f| f.gather.iter().fold(0u64, |m, &(_, c)| m | 1 << c));
+                let (rows, mut cands) = given.unwrap_or_else(|| candidates(src, store, &cx.key, keys, &mut cx.hints[i], &mut cx.last[i], need));
                 // A scan's rows in the next step's key order: its probes are then one sorted batch (decision 0112).
                 // A morsel's rows are in that order already (`morsels`).
                 // Decision 0206: the rows still to read, at the step restricted to them (rows of another place, an
@@ -6498,11 +6642,10 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         s.ids.clear();
                         s.columns.iter_mut().for_each(Vec::clear);
                     }
-                    cands.any(|id| {
+                    rows.each(cands, need, |id, row| {
                         if cx.stop { return true; }
                         if rows.dead(id) || only.as_ref().is_some_and(|o| !o.has(id)) { return false; }
-                        let row = rows.row(id);
-                        if !keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
+                        if !keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
                         for &(k, c) in &f.gather { s.columns[k].push(row.at(c)); }
                         if i == 0 { s.ids.push(id); }
                         s.rows += 1;
@@ -6525,11 +6668,10 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 // tested against `fv` by `$m` alone and every one rejected, where few distinct `$m` were tested.
                 let factor = if exists { None } else { cx.factor[i] };
                 if factor.is_some() && !cx.failed[i].is_empty() { cx.failed[i].clear(); }
-                let found = cands.any(|id| {
+                let found = rows.each(cands, need, |id, row| {
                     if cx.stop { return true; }
                     if rows.dead(id) || only.as_ref().is_some_and(|o| !o.has(id)) { return false; }
-                    let row = rows.row(id);
-                    if !keys.iter().all(|&(c, k)| row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
+                    if !keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
                     if exists { return true; }
                     for &(c, s) in binds { slots[s] = row.at(c); }
                     if i == 0 { cx.at0 = id; cx.seen0 = true; }
@@ -6578,7 +6720,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let build = |value: Option<usize>| {
                     let _cpu=crate::code_rule_dsl::logic::profile::span(||"native scalar summary fold".into());
                     let mut inspected=0;
-                    let (rows, cands) = candidates(src, store, &cx.key, keys, &mut [0; runs::HINTS], &mut None);
+                    let (rows, cands) = candidates(src, store, &cx.key, keys, &mut [0; runs::HINTS], &mut None, 0);
                     let mut summary = scalars::Summary::default();
                     cands.any(|id| {
                         inspected+=1;
@@ -6623,7 +6765,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 enum Sortable { Number(i64), Text(String) }
                 cx.key.clear();
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
-                let (rows, cands) = candidates(src, store, &cx.key, keys, &mut cx.hints[i], &mut cx.last[i]);
+                let (rows, cands) = candidates(src, store, &cx.key, keys, &mut cx.hints[i], &mut cx.last[i], 0);
                 let mut got: Vec<(Vec<Sortable>, String)> = Vec::new();
                 let syms = &cx.syms;
                 let sortable = |v: i64, sym: bool| if sym { Sortable::Text(syms.name(v).to_string()) } else { Sortable::Number(v) };

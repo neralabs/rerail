@@ -107,6 +107,25 @@ pub trait Source: Send + Sync {
             each(r, &row);
         }
     }
+    /// The rows whose `column` is `value`, each with its values of `columns` (at most 8), given to `each`, as
+    /// `lookup` and `row_at` would; `false` (nothing given) where the source has no such read. A view of the tape
+    /// gives each match's values from what the lookup found it by (its tape node, its own or its parent's id), not
+    /// a point read a row (decision 0353 step 2).
+    fn lookup_read(&self, _column: usize, _value: i64, _columns: &[usize], _each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        false
+    }
+    /// `for_rows` over rows `range` alone, until `each` returns false: a join step's scan of a view reads its rows
+    /// so (decision 0353 step 2), a view of a batch's documents walking the documents the range holds once, each row's
+    /// node, id and parent coming from the walk, not a point read a row.
+    fn for_rows_in(&self, range: Range<usize>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) {
+        let mut row = vec![0i64; columns.len()];
+        for r in range {
+            self.row_at(r, columns, &mut row);
+            if !each(r, &row) {
+                return;
+            }
+        }
+    }
     /// Each row's document: the high 32 bits of the id in `column` (a value below `1 << 32` is its own document), row
     /// after row with the row's number. A view of a batch's documents gives each document's rows its key, reading no
     /// row's id.

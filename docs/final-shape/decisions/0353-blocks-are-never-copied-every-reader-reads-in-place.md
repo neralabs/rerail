@@ -335,6 +335,27 @@ Each step ends with:
 The order removes the measured cost first: step 4 is the 660 MB. Steps 2 and 3 come before it because the GPU's
 reads need the ids, and the CPU's reads are their check.
 
+
+### Step 2's reads in joins (2026-11-17)
+
+With the per-node arrays gone, a join step read each candidate's row a column at a time from the tape: its tape node
+by a select of the rank index, its id by a search of the granule table, its parent (format 15) by a search on the
+tape. On 50 Python files of B-now, format 15 cold, that was 340 G instructions against 315 G before step 2, with
+the same findings. Three changes keep the reads where the work already is:
+
+- A step reads only the columns it binds, tests or checks, and not a key column the probe matched exactly
+  (`RowRef::read_need`).
+- A probe reads its rows' values as it finds them (`Source::lookup_read`). A lookup by a node's id knows the row's
+  id. A lookup by a parent knows the parent's id and each child's tape node. A lookup by kind or by tape node knows
+  the tape node. None of these is searched again.
+- The id and number conversions search less: `number_of` finds a slot from an interpolated guess (the slots are
+  hashes), and `low_of` searches between two jumps, one every 64 numbers (4 bytes for each 64 nodes).
+
+A scan of a whole view reads its rows in one walk (`Source::for_rows_in`), as `for_rows` does.
+
+After: 322 G against 314 G on format 15 (+2.6%), 319 against 315 on format 16 (+1.1%), 397 against 391 on 16z
+(+1.4%), and the same findings on all three. What remains is in-place reading the arrays never paid for: on format
+15 the parent search, and the select that finds the tape node of a node probed by its id.
 ## What it replaces
 
 - **0289 §1–2.** The chunk block holds the placed tapes, the line starts and the granule tables. It holds no node
