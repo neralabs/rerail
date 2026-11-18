@@ -349,8 +349,13 @@ fn clone_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     let Ok(entries) = std::fs::read_dir(from) else { return Ok(()) };
     std::fs::create_dir_all(to)?;
     for e in entries.flatten() {
-        if e.file_type()?.is_file() {
+        let kind = e.file_type()?;
+        if kind.is_file() {
             clone_file(&e.path(), &to.join(e.file_name()))?;
+        } else if kind.is_dir() {
+            // The kept facts' blocks are a folder a space (decision 0401 step 6, `<store>.facts/<space>/`): copied
+            // only at the top, a copy's rows named blocks it did not have ("a space's kept facts: No such file").
+            clone_dir(&e.path(), &to.join(e.file_name()))?;
         }
     }
     Ok(())
