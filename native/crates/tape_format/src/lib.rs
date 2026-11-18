@@ -72,8 +72,11 @@ pub const RR_TAG: u8 = 13;
 /// A kind's bits in a code's `kf`: the field is above them.
 pub const KIND_BITS: u32 = 10;
 
-/// A node's key (`Writer`'s): its kind and field, and its flags (`CODE_EXTRA`, …).
+/// A node's key (`Writer`'s): its kind and field, and its flags (`CODE_EXTRA`, …). A kind past
+/// `KIND_BITS` or a field past the 6 bits above it would spill into the next: a grammar's ids
+/// stay inside them.
 pub const fn key(kind: u16, field: u16, flags: u8) -> u32 {
+    debug_assert!((kind as u32) < 1 << KIND_BITS && (field as u32) < 1 << (16 - KIND_BITS), "a kind or field past its bits");
     (kind as u32 | (field as u32) << KIND_BITS) | (flags as u32) << 16
 }
 
@@ -146,6 +149,10 @@ impl Widths {
     pub fn guess(len: usize) -> Self {
         Widths { size: if len < SIZE_GUESS_BYTES { 2 } else { 4 }, off: 2, tail: 2, from_start: false }
     }
+
+    /// Every column at 4 bytes: the widths a file is parsed again at when 2 do not hold it
+    /// (docs/parser-generators/37). A start and an end are `u32`s, so every value fits.
+    pub const WIDE: Widths = Widths { size: 4, off: 4, tail: 4, from_start: false };
 }
 
 /// A writer's widths, as a type: `Narrow`, the widths nearly every file is written at, fixed

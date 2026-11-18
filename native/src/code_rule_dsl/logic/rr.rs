@@ -126,7 +126,7 @@ pub use lower::drop_unread_core;
 pub use aggregate_demand::retype_helpers;
 pub use lower::is_core;
 pub use lower::findings::{is_diagnostic, HEAD as DIAGNOSTIC_HEAD};
-pub use lower::WORLD;
+pub use lower::{FILE_SYSTEM, WORLD};
 pub use print::print;
 pub use syntax::quote;
 pub use translate::translate;
@@ -1473,6 +1473,13 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statemen
     let mut keep: BTreeSet<(usize, usize)> = BTreeSet::new();
     let mut todo: Vec<String> = reached.iter().cloned().collect();
     while let Some(rel) = todo.pop() {
+        // An answer read reaches its request: a request of several columns is a rule's (`c_pp_tu_req(tu, spec)`),
+        // which nothing reads by name.
+        for (_, req) in WORLD.iter().filter(|(a, _)| *a == rel) {
+            if reached.insert((*req).to_owned()) {
+                todo.push((*req).to_owned());
+            }
+        }
         for &(f, s) in by_head.get(rel.as_str()).into_iter().flatten() {
             if !keep.insert((f, s)) {
                 continue;

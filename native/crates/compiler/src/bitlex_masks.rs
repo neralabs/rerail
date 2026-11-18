@@ -1008,7 +1008,8 @@ impl Lowering {
     /// every value is at one delay `D`, the largest of its openers' and closers' (one more with
     /// an `else`), so a word's bit is one byte throughout and the group is a walk
     /// (`block::Walk`) as well as a fixed point. Each opener and closer brought to `D` and cut to
-    /// the stream; the carry `H`; per kind `o_K = O & ~H`, `f_K = fill(o_K, C)`, and the hidden
+    /// the stream; the carry `H`; per kind `o_K = O & ~H & ~(an earlier kind's O)` (a byte two
+    /// kinds open is the first's, as the walk takes it), `f_K = fill(o_K, C)`, and the hidden
     /// bytes after them by `prev`s at `D`. An `else`'s "a closer after the byte" is the closer's
     /// `back_fill` at `D - 1`: the same bits, a byte on.
     pub fn regions(&mut self, regions: &::bitlex::syntax::Regions) -> Result<(), String> {
@@ -1054,11 +1055,20 @@ impl Lowering {
         let code = self.op(BlockOp::AndNot(w, hidden));
         let mut hide: Vec<u16> = Vec::new();
         let mut kinds = Vec::new();
+        // The earlier kinds' openers: a byte one of them opens is not a later kind's.
+        let mut earlier: Option<u16> = None;
         let named = |me: &mut Self, name: String, v: u16| {
             me.names.insert(name, Val { v, d, dirty: true, set: None });
         };
         for (r, &(opener, closer, c_before)) in regions.kinds.iter().zip(&ins) {
-            let taken = self.op(BlockOp::And(opener, code));
+            let mut taken = self.op(BlockOp::And(opener, code));
+            if let Some(e) = earlier {
+                taken = self.op(BlockOp::AndNot(taken, e));
+            }
+            earlier = Some(match earlier {
+                Some(e) => self.op(BlockOp::Or(e, opener)),
+                None => opener,
+            });
             let (open, empty) = match &r.empty {
                 Some((e, m)) => {
                     let later = self.op(BlockOp::BackFill(c_before.expect("made with an else"), zero));
@@ -3155,7 +3165,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     };
     // The token marks, their kinds the records' (`Words::token_marks`).
     if !lowered.token_marks.is_empty() {
-        if !token_extras {
+        // Extras between a mark's tokens are placed in the token step only; a grammar with none
+        // has nothing to place.
+        if !token_extras && !low.extra.is_empty() {
             return Err("token marks with extras not taken in the token step".into());
         }
         let mut tms = Vec::new();

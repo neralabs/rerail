@@ -1293,6 +1293,7 @@ mod language {
         pub mod java;
         // Go's, C's and C++'s families: syntax only so far, their tapes from the lean parsers.
         pub mod c;
+        pub mod c_pp;
         pub mod go;
         // Kotlin's, Swift's and Scala's families: syntax only so far, their tapes from the lean parsers.
         pub mod kotlin;
@@ -4707,6 +4708,8 @@ pub(crate) fn install_languages() {
     language::register_base(Family::Swift, &Pack::<Swift>::NEW);
     register(Family::Scala, &Pack::<Scala>::NEW);
     language::register_base(Family::Scala, &Pack::<Scala>::NEW);
+    // Answers inside the fixpoint (`answers`): C's directives by file (0327 mode (a)).
+    language::install_answerers(vec![&language::adapter::c_pp::Directives, &language::adapter::c_pp::Units, &language::adapter::c_pp::CompileCommands]);
     register(Family::Html, &Pack::<Html>::NEW);
     language::register_base(Family::Html, &Pack::<Html>::NEW);
     register(Family::Css, &Pack::<Css>::NEW);

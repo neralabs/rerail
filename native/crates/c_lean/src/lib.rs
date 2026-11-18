@@ -30,12 +30,13 @@ mod block;
 mod kinds;
 mod lex;
 mod parse;
+pub mod pp;
 
 #[cfg(test)]
 mod oracle;
 
 pub use kinds::{FIELDS, K, KINDS, f};
-pub use lex::Refusal;
+pub use lex::{NO_NL, Refusal, T, Tok, number_end, refused, word};
 pub use rerail_tape_format::Columns as Tape;
 
 /// The language read: C (tree-sitter-c) or C++ (tree-sitter-cpp).
@@ -85,19 +86,37 @@ pub fn tape(src: &[u8], dialect: Dialect) -> Result<Tape, Refusal> {
     parse::parse(src, dialect)
 }
 
+/// The tape of `src` read from `toks` (ending in `Eof`), which are `src`'s tokens as the lexer
+/// would make them: a preprocessor's tokens over its expanded text (decision 0327), parsed with no
+/// lexing of the text.
+pub fn tape_of_tokens(src: &[u8], toks: &[Tok], dialect: Dialect) -> Result<Tape, Refusal> {
+    if src.len() >= u32::MAX as usize / 2 {
+        return Err(Refusal::TooLarge);
+    }
+    parse::parse_tokens(src, toks, dialect)
+}
+
+/// Stage 1 alone over `src` (its masks), for the cost examples: the text's first NUL, if any.
+#[doc(hidden)]
+pub fn stage1_only(src: &[u8]) -> Option<usize> {
+    block::Blocks::of(src).first_nul()
+}
+
 /// The tokens of `src`, lexed alone (no parse), as the parser's buffer lexes them: their count,
 /// and comments; `None` where the lexer refuses one. For the cost examples (`*_costs lex`).
 #[doc(hidden)]
 pub fn lex_only(src: &[u8], dialect: Dialect) -> Option<(usize, usize)> {
     let lx = lex::Lexer::new(src, dialect == Dialect::Cpp);
-    let (mut at, mut n, mut extras) = (0, 0, Vec::new());
+    let (mut at, mut n, mut extras, mut toks) = (0, 0, Vec::new(), Vec::with_capacity(16));
     loop {
-        let t = lx.token(at, &mut extras).ok()?;
-        n += 1;
-        if t.kind == lex::T::Eof {
-            return Some((n, extras.len()));
+        toks.clear();
+        at = lx.run(at, &mut extras, &mut toks, 16);
+        n += toks.len();
+        match toks.last() {
+            Some(t) if t.kind == lex::T::Eof && t.word == u8::MAX => return None,
+            Some(t) if t.kind == lex::T::Eof => return Some((n, extras.len())),
+            _ => {}
         }
-        at = t.end as usize;
     }
 }
 

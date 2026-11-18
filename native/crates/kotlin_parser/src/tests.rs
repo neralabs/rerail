@@ -28,7 +28,6 @@ fn refused(texts: &[&str]) {
 }
 
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn headers_are_the_lean_parsers() {
     same(&[
         "package a\n",
@@ -43,7 +42,6 @@ fn headers_are_the_lean_parsers() {
 /// A comment after a header on its line is the header's in tree-sitter's tree: the scanner's
 /// semicolon is the line break after it (`mark line …, settles`). One on the next line is not.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn a_comment_on_a_headers_line_is_the_headers() {
     same(&[
         "package a // after\nimport c.D\n",
@@ -56,7 +54,6 @@ fn a_comment_on_a_headers_line_is_the_headers() {
 
 /// Step 2: declarations, types, statements and the core of expressions.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn declarations_are_the_lean_parsers() {
     same(&[
         "fun f() {}\n",
@@ -79,7 +76,6 @@ fn declarations_are_the_lean_parsers() {
 }
 
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn statements_and_expressions_are_the_lean_parsers() {
     same(&[
         "fun f() {\n    val a = 1 + 2 * 3\n    b.c(d, e)\n    f[g] = h\n    if (a) b else c\n    x?.y ?: z\n    !a && b || c\n    for (i in 0..10) {}\n    while (true) {}\n}\n",
@@ -95,7 +91,6 @@ fn statements_and_expressions_are_the_lean_parsers() {
 
 /// Step 3: strings, with `$name` templates.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn strings_are_the_lean_parsers() {
     same(&[
         "val a = \"x\"\n",
@@ -112,7 +107,6 @@ fn strings_are_the_lean_parsers() {
 
 /// Step 4: characters and backtick names.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn characters_and_backtick_names_are_the_lean_parsers() {
     same(&[
         "val a = 'c'\n",
@@ -131,7 +125,6 @@ fn characters_and_backtick_names_are_the_lean_parsers() {
 
 /// Step 5: callable references.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn callable_references_are_the_lean_parsers() {
     same(&[
         "val a = String::class\n",
@@ -148,7 +141,6 @@ fn callable_references_are_the_lean_parsers() {
 
 /// Step 5: a trailing comma keeps its `,` and the list's closer.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn trailing_commas_are_the_lean_parsers() {
     same(&[
         "val a = f(1,)\n",
@@ -163,7 +155,6 @@ fn trailing_commas_are_the_lean_parsers() {
 
 /// Step 6: lambdas.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn lambdas_are_the_lean_parsers() {
     same(&[
         "val a = { x }\n",
@@ -182,7 +173,6 @@ fn lambdas_are_the_lean_parsers() {
 
 /// Step 7: annotations on lines of their own, use-site targets, file annotations.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn annotations_are_the_lean_parsers() {
     same(&[
         "@file:JvmName(\"A\")\npackage a\n",
@@ -196,7 +186,6 @@ fn annotations_are_the_lean_parsers() {
 
 /// Step 8: `${…}` templates.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn templates_are_the_lean_parsers() {
     same(&[
         "val a = \"x${y}z\"\n",
@@ -210,7 +199,6 @@ fn templates_are_the_lean_parsers() {
 
 /// Step 9: numbers.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn numbers_are_the_lean_parsers() {
     same(&[
         "val a = 1L + 2u + 3UL + 0xFF + 0b10 + 1.5 + 2f + 1e5 + .5 + 1_000 + 0xFFL + 1.0e-3f\n",
@@ -223,7 +211,6 @@ fn numbers_are_the_lean_parsers() {
 
 /// Step 10: a class's members.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn members_are_the_lean_parsers() {
     same(&[
         "class A : B() {\n    companion object {\n        const val X = 1\n    }\n    init {\n        super.f()\n    }\n    val y: Int\n        get() = 1\n    var z = 0\n        private set\n}\n",
@@ -233,7 +220,6 @@ fn members_are_the_lean_parsers() {
 
 /// Step 11: `when`.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn when_is_the_lean_parsers() {
     same(&[
         "fun f(x: Int) = when (x) {\n    1, 2 -> a()\n    in r -> b\n    is T -> { c() }\n    else -> d\n}\n",
@@ -245,7 +231,6 @@ fn when_is_the_lean_parsers() {
 
 /// Step 12: `;`.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn semicolons_are_the_lean_parsers() {
     same(&[
         "package a;\nimport b.C;\nfun f() {\n    a(); b()\n    c(); // x\n    d();\n}\nclass A { val x = 1; }\n",
@@ -257,7 +242,6 @@ fn semicolons_are_the_lean_parsers() {
 
 /// Step 13: `try`, and `as`.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn try_and_as_are_the_lean_parsers() {
     same(&[
         "fun f() {\n    try {\n        a()\n    } catch (e: E) {\n        b()\n    } finally {\n        c()\n    }\n    val x = try { 1 } catch (_: Exception) { 2 }\n    val y = z as T\n    val w = (q as List<Int>).size\n}\n",
@@ -267,7 +251,6 @@ fn try_and_as_are_the_lean_parsers() {
 
 /// Step 14: a lambda that opens a lambda.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn nested_lambdas_are_the_lean_parsers() {
     same(&[
         "fun f() {\n    Row {\n        xs.forEach { x ->\n            g(x)\n        }\n    }\n    a { b.c { d, e -> 1 } }\n}\n",
@@ -276,7 +259,6 @@ fn nested_lambdas_are_the_lean_parsers() {
 
 /// Step 15: extension receivers.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn receivers_are_the_lean_parsers() {
     same(&[
         "fun String.faint(): String = this\nfun List<T>.g() {}\nval A.B.c: Int get() = 2\n",
@@ -286,7 +268,6 @@ fn receivers_are_the_lean_parsers() {
 
 /// Step 16: generic functions.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn generic_functions_are_the_lean_parsers() {
     same(&[
         "fun <T> List<T>.g() {}\nfun <T> f(x: T): T = x\nprivate fun <A, B> h() {}\n",
@@ -296,7 +277,6 @@ fn generic_functions_are_the_lean_parsers() {
 
 /// Step 17: delegation, and the three-byte operators.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn delegates_are_the_lean_parsers() {
     same(&[
         "class A(b: B) : I by b, J {\n    val x by lazy { 1 }\n    private val y: Int by mapOf()\n}\nval z by lazy {\n    2\n}\n",
@@ -306,7 +286,6 @@ fn delegates_are_the_lean_parsers() {
 
 /// Step 18: object literals, secondary constructors, destructuring.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn objects_are_the_lean_parsers() {
     same(&[
         "val h = object : Handler(), I {\n    override fun f() {}\n}\nclass A @Inject constructor(\n    private val b: B,\n) : C() {\n    constructor(x: Int) : this(B()) {\n        g()\n    }\n    constructor() : super()\n}\nfun g() {\n    val (a, b) = p\n    val (c: Int, _) = q\n}\n",
@@ -316,7 +295,6 @@ fn objects_are_the_lean_parsers() {
 
 /// Step 19: type arguments where the lean parser reads them.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn type_arguments_are_the_lean_parsers() {
     same(&[
         "fun f() {\n    val d = a.b<T>(x)\n    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {}\n    val e = listOf<Map<String, Int>>()\n    g<A> { }\n    val n = x < y\n    val m = i < n && j > (k)\n}\nclass C<T>(val t: T) : D<T>() {\n    val l: List<T>? = null\n}\n",
@@ -326,7 +304,6 @@ fn type_arguments_are_the_lean_parsers() {
 
 /// Step 20: enum classes, labels, `as?`, reified type parameters, spread arguments.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn enums_and_labels_are_the_lean_parsers() {
     same(&[
         "enum class E(val v: Int) {\n    A(1),\n    B(2) {\n        override fun f() = 1\n    };\n    fun g() = 0\n}\nenum class F { X, Y }\ninline fun <reified T : Any, R> h(vararg a: T) = g(*a)\nclass P private constructor(x: Int)\nfun k() {\n    xs.map { return@map 1 }\n    for (i in a) break@loop\n    val t = this@P\n}\n",
@@ -336,7 +313,6 @@ fn enums_and_labels_are_the_lean_parsers() {
 
 /// Step 21: raw strings.
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn raw_strings_are_the_lean_parsers() {
     same(&[
         "val a = \"\"\"x\n  \"y\" $b \\n\"\"\"\nval d = \"\"\"\"\"\"\nval f = \"\"\"$\"\"\"\nval g = \"\"\"\n    a\"\"b\n\"\"\"\nval i = \"\"\"a\"\n\"\"\"\n",
@@ -352,7 +328,6 @@ fn raw_strings_are_the_lean_parsers() {
 }
 
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn destructured_parameters_are_the_lean_parsers() {
     same(&[
         "val f = m.forEach { (k, v) -> g(k) }\n",
@@ -373,7 +348,6 @@ fn destructured_parameters_are_the_lean_parsers() {
 }
 
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn what_step_22_does_not_read_is_refused() {
     refused(&[
         "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",
@@ -384,7 +358,6 @@ fn what_step_22_does_not_read_is_refused() {
 }
 
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn what_step_21_does_not_read_is_refused() {
     refused(&[
         "val h = \"\"\"\"a\"\"\"\n",
@@ -395,7 +368,6 @@ fn what_step_21_does_not_read_is_refused() {
 }
 
 #[test]
-#[ignore = "Q127: the hub's compiler does not finish Kotlin's grammar (bitlex_prove, first_bits); back at the roll-up's end"]
 fn what_step_20_does_not_read_is_refused() {
     refused(&[
         "val a = b to f<T>()\n",

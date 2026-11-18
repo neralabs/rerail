@@ -18,6 +18,12 @@
 //!     pass: each record's parent and extra flag);
 //!   - `Return`: the next call of the call stack, popped (the words' verifier: no call is made
 //!     on a cycle without a token, so the returns are at most the calls).
+//!   - `Pop`: the next entry of a stack the machine keeps, popped (the preprocessing words: a
+//!     source at its end, the conditionals opened in a file), so at most what was pushed.
+//!   - `Probe`: the next slot of a hash table probed, at most every slot once.
+//!   - `Halve`: a sorted list's search range halved, so at most its length's log.
+//!   - `Item`: the next item of a list the machine stored (a definition's argument uses, a
+//!     level's tokens, a frame's expansions), so at most its length.
 //!
 //!   So no loop steps a byte at a time. The check is on the graph: with the named blocks taken
 //!   out, it must have no cycle (a depth-first search), as the words' verifier cuts `TOKEN`'s
@@ -43,6 +49,10 @@ pub enum Step {
     /// in `native_cpu_block::RunForm::Bytes`). The one byte loop allowed, and only as
     /// `run_of_bytes` has it: one block that steps one byte while the byte it reads is in a set.
     Bytes,
+    Pop,
+    Probe,
+    Item,
+    Halve,
 }
 
 /// Why a function was refused.

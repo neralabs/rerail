@@ -538,7 +538,7 @@ pub fn check_shape(name: &str, c: &Compiled) {
             // The table's final pass (parents, extras), and the wraps' placing.
             Step::Node => true,
             // No loop over bits: a local check (`CHECK`) is word-parallel, a loop over words.
-            Step::Bits | Step::File | Step::Round | Step::Region | Step::Word | Step::Bytes => false,
+            Step::Bits | Step::File | Step::Round | Step::Region | Step::Word | Step::Bytes | Step::Pop | Step::Probe | Step::Item | Step::Halve => false,
         };
         assert!(ok, "{name}: tier 2 loops at {b} over {step:?}");
     }

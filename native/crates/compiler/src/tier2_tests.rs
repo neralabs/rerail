@@ -90,6 +90,40 @@ fn every_ladder_step_compiles_here_and_equals_the_interpreters() {
     assert!(parsed >= 30, "{parsed} documents parsed");
 }
 
+/// A document whose tape does not fit 2-byte columns (70,000 blanks after its first separator: a
+/// later node's offset from its block's base past 64 KiB) is read again by the wide tier 2 (`Parser::wide`, at `Widths::WIDE`): its nodes
+/// are the interpreter's, and its image is the writer's: offsets at 4 bytes, the rest at 2.
+#[test]
+fn a_tape_past_two_byte_columns_is_read_at_four() {
+    let mut steps: Vec<_> = std::fs::read_dir(DIR).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
+    steps.sort();
+    let mut wide = 0;
+    for path in steps {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
+        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(&path).expect("a step")).expect("parses");
+        let ids = Ids::default();
+        let kind = |n: &str| Some(ids.of(n));
+        let field = |n: &str| Some(ids.of(&format!("field {n}")));
+        let symbols = Symbols { kind: &kind, field: &field };
+        let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], Some(&symbols)).expect("compiles");
+        let words = rir_asm::assemble(&compiled.text()).expect("assembles");
+        let structure = native_ir::lower(&words, 0, 0).expect("lowers");
+        let parser = Parser::new(&structure).expect("Cranelift compiles");
+        let block = &words.block_programs[0];
+        for doc in DOCUMENTS {
+            let Some(at) = doc.find([';', ',']) else { continue };
+            let big = format!("{}{}{}", &doc[..=at], " ".repeat(70_000), &doc[at + 1..]);
+            let bytes = big.as_bytes();
+            let Ok(want) = stream::run(&words, bytes, &block.run(bytes)) else { continue };
+            let image = parser.image(bytes).expect("an image");
+            assert_eq!(image, stream::image(&want, &words.readings.extras, structure.tag, bytes), "{name}: {doc:?} with the blanks: the writer's image");
+            assert_eq!(parser.parse(bytes).map_err(|e| e.pc), Ok(want), "{name}: {doc:?} with the blanks");
+            wide += usize::from(image[rerail_tape_format::header::WIDTHS + 1] == 4);
+        }
+    }
+    assert!(wide >= 10, "{wide} documents written at 4-byte offsets");
+}
+
 /// The crate's assembler takes a parser's program only: a matcher's rows are the engine's.
 #[test]
 fn the_crate_assembles_only_a_parsers_program() {

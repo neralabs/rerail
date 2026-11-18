@@ -1541,6 +1541,91 @@ code. 0366's change is tier 1's alone and leaves both sides' trees as they were.
   `a_returned_call_is_the_return` kept in `clif_rust` for the JIT's IR, and `a_short_tokens_arm_calls_only_its_whole`
   states the shape now (the number's and `/` arms call at most their whole function).
 
+### Q128. (Q30 on Go-C-and-C-support) The dropping test red again (Q3's, after the merges)
+
+- **Found** (2026-11-17, on Go-C-and-C-support, red at 88b3e3389 before that day's change):
+  `dropping_unreached_clauses_prunes_to_the_same_program*` failed 7 of 8. Two causes were the test's and are fixed:
+  an input counted as read when its name stood quoted anywhere in the rules' text (Python's field `"value"`), now
+  read atoms and natives only; and the lowering's inlined variables (`{v}_rr_d{k}_{i}`, numbered by definitions
+  met) were not masked. 6 of 8 pass now. Two parts stay red (`_script_packs`, `_other_packs`), each a difference
+  of the programs, not of the test:
+  - `packs/javascript/eslint-class-methods-use-this.rr`: `rr_value_req_by_static_string_0`'s rule is kept only in
+    the whole program (its reader unreached in the dropped one);
+  - `packs/rust/clippy-double-parens.rr`: `rr_token_req_by_sole_group_0`'s rules differ.
+- **Done when**: the 8 tests pass, each remaining difference fixed in the lowering or explained.
+
+### Q31. A tape past 2-byte columns is parsed again at wider ones in the compiler's `Parser`
+
+- **Keep**: decision 0140's guess (2-byte columns, written once for nearly every file); page 37's
+  "parsed again at wider ones", which no caller built: `native_cpu_stream::Parser` compiled tier 2
+  at `Narrow::WIDTHS` only, so every compiled grammar refused a file whose tape needs 4 bytes, and
+  the file went to its fallback. The image stays the engine writer's, byte for byte.
+- **Done when**: `Parser` reads such a file again for every language, on the CPU and over Metal's
+  buffers, with an image equal to the writer's.
+- **Record** (2026-11-17): `Parser::again`: tier 2 at `Widths::WIDE`, then at `least_widths` of
+  that image (the writer's choice: sizes by node count, offsets and tails by their largest) when
+  narrower; each width set compiled on first use from the structure and cut the parser keeps.
+  `Parser::image`, `parse` and `tier2_on::image_on` use it; `Parser::from_parts` (a timing probe)
+  has none. Tests: `a_tape_past_two_byte_columns_is_read_at_four` (every ladder step, the image
+  the writer's), `.rr`'s `corpus_images_are_the_lean_tapes` (two large files now taken, equal),
+  C's `a_file_past_64_kib_is_read_at_wide_columns` on every backend. Fixed with it: an offset was
+  flagged wide at any width (`native_cpu_tape::blocks_from`, `rust_stream`'s `blocks`). Reviewed
+  against reviewer-brief.md: no narrow-path change (the retry runs after a refusal only).
+
+### Q129. (Q32 on Go-C-and-C-support) A token start inside its own kind's run: refuse it the same way on every backend
+
+- **Keep**: `run R`'s meaning is `TokenRule::last`, which stops before the kind's next start
+  (Metal's last-byte mask). The CPU's and the interpreter's rule reads through such a start, and
+  JSON's tier 2 shape: no own calls, no pass over the table.
+- **Done when**: a grammar whose run holds a start of its own kind gives one answer on the
+  interpreter, Cranelift and Metal, or is refused on all of them. Bitlex's evaluator already
+  errors on it ("token starts inside the one before"). A compile-time check where the masks
+  prove it cannot happen, and a test of a grammar where it does.
+- **Record** (2026-11-17): found by C's token grammar (0348 stage 1). `"a""b"` was one string on
+  the CPU and two on Metal. Making the rule `R & ~S` gave every backend Metal's answer, but cost
+  JSON 30 own calls (`json_compiled_path_equals_the_interpreters`), so it was reverted. The C
+  grammar keeps its starts out of the run.
+
+### Q130. (Q33 on Go-C-and-C-support) JSON's tier 2 makes 30 calls of its own (`json_compiled_path_equals_the_interpreters` red)
+
+- **Keep**: the test's shape claim: JSON defers no leaf, so tier 2 has no own call and no pass
+  over the table at its end.
+- **Done when**: the test passes, by finding out what the 30 calls are, then either removing them
+  or, if 0177 meant them, writing the new claim with its reason.
+- **Record** (2026-11-17): it fails at this branch's head, at `b6fad73e5~1`, and on both parents
+  of `534c74dbf` (the Parser-generators merge, 0177's token-loop steps), with the compiler,
+  tape-format, Metal, rr-parser and parser-tests sources of each. So it came in with that line,
+  not with 0327's or 0348's work. Found by the farm run for 0348 stage 1.
+
+### Q131. (Q34 on Go-C-and-C-support) Lowering C's token grammar takes minutes in a debug build
+
+- **Keep**: the c-directives tests' claims (every backend's tape, the expansion's tokens).
+- **Done when**: a test that lowers `bitlex_tokens/tokens.bitlex` (no Cranelift) runs in well
+  under a minute on the farm, by finding which pass of `lower_kinds` takes the time and making
+  it cheaper, not by raising the timeout or the crate's opt-level (a profile setting every
+  worktree's builds share).
+- **Record** (2026-11-17): on the farm (cargo, debug), `the_examples_expand_as_the_lean_pass_does`
+  took 416 s, lowering C's and C++'s grammars and interpreting 14 small files twice; the
+  nextest override ends a c-directives test at 480 s. Under Relax the same test takes 43 s.
+- **Done** (2026-11-17): timed by phase, 13 of 13 s were `tree_section`'s proofs, 204 of 206
+  `bitlex_prove::never` questions failing after proving all 256 bytes each. `never` now stops at
+  the first class of bytes not proved, and the position's byte is asked once per class its
+  readers tell apart (`Proof::own`), in `first_bytes` too; both grammars' programs are the same
+  text as before. And `rerail-compiler` is optimized in dev builds (the root `Cargo.toml`). On
+  the farm: the lowering 1.3 s a dialect, the examples test 416 s → 2.4 s.
+
+### Q132. (Q35 on Go-C-and-C-support) C's token grammar refuses digit separators and `u8'…'`
+
+- **Keep**: a TU the grammar does not read goes to the lean pass whole
+  (`what_the_grammar_does_not_read_is_refused` states `1'000` so).
+- **Done when**: `bitlex_tokens/tokens.bitlex` reads `1'000'000`, `0'7`, `0x'1` (C23, C++14) and
+  `u8'a'` (C23, C++17) as one token each, the lean lexer agrees on them, and the refusal test
+  drops `1'000`. Then `the_compiled_ifs_have_the_interpreters_values` compares those five cases
+  too: `pp_expr::number` and the JIT's `number` already pass separators, and `char_value`
+  takes the `u8` prefix.
+- **Record** (2026-11-17): the values test lists the five cases as refused by the grammar, in C
+  and C++, and compares the other 95.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
@@ -1918,3 +2003,8 @@ always a refusal.
   0326, so no run depends on the compiled grammar).
 - **Done when**: the grammar compiles in seconds again, traced to its cause (which commit, and why its proof grows),
   and the tests pass unignored.
+- **Done** (2026-11-17, at the hub's merge of Go-C-and-C-support 3764d6b71): Go-C's Q34 (Q131 here) is the cause and
+  the fix. The hub's compiler was unoptimized in dev builds, where Kotlin's mask proofs take minutes. Go-C builds
+  `rerail-compiler` at opt-level 3 in dev (root Cargo.toml). Its prover fix was the same as the one the hub already had
+  from Swift-Kotlin-Scala. `headers_are_the_lean_parsers` then passed in 36 s on the M1 Max (it had timed out at
+  240 s), and the crate's tests are unignored.

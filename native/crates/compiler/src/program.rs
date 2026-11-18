@@ -100,7 +100,125 @@ pub const CHECK: u8 = 0x66;
 /// hold, from the first on, are no longer pending: the nodes closed next keep them, as a leaf
 /// taken after them would. A settling mark's arm (`mark … , settles`): the extras before its
 /// line break are the statement's.
-pub const SETTLE: u8 = 0x67;
+pub const SETTLE: u8 = 0x84;
+
+// The preprocessing words (decision 0348, `pp_words`): tier 2's words over a stack of token
+// sources (a file's tape, a range of the TU's arena), with a token register `T`, a macro register
+// `D`, the macro table and a stack of call frames. A test runs the next word where it holds and
+// skips it where not.
+/// `T` ← the next token, unexpanded: an ended source left (its macro enabled again), a stop
+/// source's end read as `EOF` with `STOP`.
+pub const READ: u8 = 0x67;
+/// A test: `T` ← the directive line's next token (the file source on top); not where it ended.
+pub const LINE: u8 = 0x68;
+/// A test of `T`: `m=0` its kind is the operand; `m=1` it is spelled string `operand`; `m=3` it is
+/// a directive's `#` (a line's first token, read from a file).
+pub const IS: u8 = 0x69;
+/// A test of the next token, unread (through ended sources, never past a stop): spelled string
+/// `operand`.
+pub const PEEK: u8 = 0x6a;
+/// A test: `D` ← the macro `T` names, unless `T` is painted.
+pub const LOOKUP: u8 = 0x6b;
+/// A test of `D`: `m=0` disabled (being expanded); `m=1` function-like.
+pub const MACRO: u8 = 0x6c;
+/// `T` painted: never expanded again.
+pub const PAINT: u8 = 0x6d;
+/// `T` onto the output tape.
+pub const PUT: u8 = 0x6e;
+/// A call frame for `D`, named by `T` (a function-like macro's first argument opened).
+pub const FRAME: u8 = 0x6f;
+/// The top frame's arguments: `m=0` `T` appended; `m=1` a `(`, appended; `m=2` a test, a `)`:
+/// the call's end at depth 0, else appended; `m=3` a `,`: a new argument at depth 0 (not the
+/// variadic one's), else appended; `m=4` a test, the call's end: the arguments' count right, else
+/// the frame dropped and `T` its name, painted; `m=5` the frame dropped (no `)`).
+pub const ARG: u8 = 0x70;
+/// `m=0` a test: the top frame's next argument to expand before substitution, pushed as a stop
+/// source with a level opened for its tokens; `m=1`: that level closed, the argument's expansion.
+pub const PRE: u8 = 0x71;
+/// `T` onto the open level.
+pub const KEEP: u8 = 0x72;
+/// A `#define`'s line read into the macro table, a token a turn (`pp_words::DefState`; a malformed
+/// one left): `m=0`, a test: its name read (else the line passed); `m=1`, a test: `(` right after
+/// it, function-like; `m=2`, a test: a parameter list's token read, the list going on; `m=3`, a
+/// test: the list closed (else malformed or unterminated: no definition); `m=4` the body begun;
+/// `m=5`, a test: the body's next token read and marked (a parameter, `__VA_OPT__`, `##`); `m=6`
+/// the walk of its argument uses begun; `m=7`, a test: one body token walked (`Def::pre`'s
+/// order); `m=8` the definition entered.
+pub const DEFINE: u8 = 0x74;
+/// An `#undef`'s line read: its macro taken out of the table.
+pub const UNDEF: u8 = 0x75;
+/// The directive line's tokens left unread.
+pub const SKIPLINE: u8 = 0x76;
+/// The file source to the next directive of the chain of the conditional whose `#` it read last
+/// (mode (a)'s `c_cond_next`, `pp_words::File::chains`): a group not taken passed unread. No
+/// next: the file's end.
+pub const SKIP: u8 = 0x77;
+/// The file's conditional stack: `m=0` a group opened, not taken; `m=1` opened, taken; `m=2` a
+/// test, a group is open in this file; `m=3` a test, its chain was taken or had its `#else`;
+/// `m=4` its chain taken; `m=5` its `#else` seen; `m=6` closed.
+pub const COND: u8 = 0x78;
+/// `m=0`: an `#if`'s line (the rest of it) pushed as a stop source, a level opened for its
+/// expansion, `defined` an operator; `m=1`: the level closed, its tokens the expression `EXPR`
+/// reads; `m=2`: as `m=0`, `defined` no operator (an `#include`'s line).
+pub const IF: u8 = 0x79;
+/// A test: `T` is `defined` (not painted), its operand (`X` or `( X )`) read unexpanded, and
+/// `T` the number `1` or `0`.
+pub const DEFINED: u8 = 0x7a;
+/// An `#include`, `#include_next` or `#import` (`T` its word): `m=0`, a test: its header name
+/// was read by mode (a) (`pp_words::File::includes`), its file looked up, its line passed; `m=1`,
+/// a test: the level `IF m=2` opened closed, a header name made of its tokens, and its file
+/// found by name (`File::named`; one not there is wanted, `Expanded::wanted`); `m=2` the file
+/// entered, unless not found, once only, or too deep.
+pub const INCLUDE: u8 = 0x7b;
+/// A `#pragma`'s line, unexpanded: `once`, `push_macro("X")` and `pop_macro("X")` carried out.
+pub const PRAGMA: u8 = 0x7c;
+/// A built-in macro `D` (`pp_words::BUILTINS`), `T` its name: `m=0` `T` its value (one with no
+/// operand); `m=1`, a test: an operator here (`__has_include` and `__has_embed` only in `#if`),
+/// its operand's level opened; `m=2`, a test: `T` is the operand's `)` (else kept); `m=3`, a
+/// test: the operand is to be expanded (`_Pragma`'s, a header name that is neither `"…"` nor
+/// `<…>`), pushed as a stop source, else `T` its value; `m=4`, a test: the expanded operand's
+/// level closed, and `T` its value (else the pragma carried out: no token).
+pub const BUILTIN: u8 = 0x7d;
+/// `#line` and GNU's line marker: `m=0` `T` the marker's number; `m=1` the level `IF m=2` opened
+/// closed, the file's presumed line (and name) set from its tokens.
+pub const LINEDIR: u8 = 0x7e;
+/// `#embed` (`T` its word): `m=0`, a test: its name's tokens pushed to be expanded (a
+/// level), else its parameters' (the name read by mode (a) or spelled); `m=1` the name's level
+/// closed, the name made, the parameters pushed; `m=2` the parameters' level closed, its tokens
+/// left in place; `m=3`, a test: a parameter's name read (and its argument's `(`); `m=4`, a test:
+/// an argument's token stepped; `m=5`, a test: the argument closed, and the parameter `limit` (its
+/// expression `EXPR`'s; else `prefix`, `suffix` or `if_empty` kept); `m=6` `limit` its value;
+/// `m=7`, a test: the file found, its first tokens pushed (`prefix`, or `if_empty` where it has no
+/// bytes), and it has bytes; `m=8`, a test: a byte pushed, a number (after a `,`); `m=9` `suffix`
+/// pushed; `m=10` the tokens pushed a source.
+pub const EMBED: u8 = 0x7f;
+/// The top frame's macro substituted into the arena, a body token a turn (`pp_words::Sub`):
+/// `m=0` begun (the expansion recorded); `m=1`, a test: the body's next token taken (`B`);
+/// `m=2`, a test: `B` is `#` before a parameter, its argument the range to stringize; `m=3`, a
+/// test: `B` is `#` before `__VA_OPT__`, its content opened, to be stringized; `m=4`, a test:
+/// `B` is `__VA_OPT__`, its content opened (or a placemarker); `m=5` `B` substituted: a
+/// parameter's argument (raw beside `##`, else expanded; GNU's comma elision), or `B` itself;
+/// `m=6`, a test: the content closed by `m=7` is to be stringized, its pastes begun; `m=7`, a
+/// test: a content ended, the body's walk after it resumed; `m=8` the content's placemarkers
+/// dropped, the range to stringize; `m=9` the output's pastes begun; `m=10` its placemarkers
+/// dropped, the frame dropped, the output pushed as a source that disables the macro.
+pub const SUB: u8 = 0x80;
+/// `#`'s literal (C17 §6.10.3.2), a token a turn: `m=0` begun; `m=1`, a test: the range's next
+/// token's spelling appended (a blank where white space was, `"` and `\` escaped in literals);
+/// `m=2` the literal appended to the output; `m=3` the range replaced by the literal.
+pub const STR: u8 = 0x81;
+/// `m=0`, a test: one step of the range's pastes (`##` joins its neighbours into one token, or
+/// leaves them two); where none is left, the range ends at its last token written.
+pub const GLUE: u8 = 0x82;
+/// `#if`'s expression a step at a time (`pp_expr`'s precedence climbing as rules, its values on a
+/// stack, `pp_words::Ex`): `m=0`, a test: an operand's token taken (else an error, the value 0);
+/// `m=1`, a test: it is a prefix operator, pushed; `m=2` the prefix applied; `m=3`, a test: it is
+/// `(`; `m=4` its `)` read (else an error); `m=5` its value pushed (a primary); `m=6`, a test: `,`
+/// read, the left value dropped; `m=7` a binary operand's least precedence 1; `m=8`, a test: a
+/// binary operator of that precedence or more read; `m=9` it applied; `m=10` the least dropped;
+/// `m=11`, a test: `?` read; `m=12` its `:` read (else an error); `m=13` the arm chosen; `m=14`, a
+/// test: the expression whole, with no error, and true.
+pub const EXPR: u8 = 0x83;
 
 pub const NAMED: u8 = 1;
 pub const GREEDY: u8 = 1;
@@ -167,6 +285,20 @@ pub struct Words {
     /// at `ACCEPT`, the file is refused where `L` holds at a bit of `A`. As the lean lexer checks
     /// a string's `\u` escapes where it notes one.
     pub local_checks: Vec<LocalCheck>,
+    /// The preprocessing words' tables (`pp_words`), when the program has them.
+    pub pp: PpTables,
+}
+
+/// The preprocessing words' tables: what a paste (`##`) may make, which a dialect sets.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PpTables {
+    /// The punctuators (`ppop sN`): two punctuators paste into one where their bytes spell one.
+    pub ops: Vec<u16>,
+    /// A literal pastes with an identifier after it into one literal, its suffix (`ppsuffix`,
+    /// C++'s user-defined literals).
+    pub suffix: bool,
+    /// `#if` reads C++'s alternative tokens as operators and `true` as 1 (`ppcpp`).
+    pub cpp: bool,
 }
 
 /// A local check (`Words::local_checks`): at each byte `j` of mask `mask`, `ops`' last value at

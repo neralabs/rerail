@@ -120,34 +120,19 @@ rerail_simd8::dispatch! {
 /// The text's masks (stage 1), for the parser's scans (stage 2).
 pub struct Blocks<'s> {
     src: &'s [u8],
-    m: Vec<Masks>,
+    m: rerail_simd8::blocks::Masks<MASKS>,
 }
 
 impl<'s> Blocks<'s> {
     /// Stage 1 over `src`, on the best backend the CPU runs.
     pub fn of(src: &'s [u8]) -> Self {
-        Blocks { src, m: stage1_best(src) }
+        Blocks { src, m: rerail_simd8::blocks::Masks::new(src.len(), stage1_best(src)) }
     }
 
     /// The first byte from `at` on whose bit in mask `k` is `set`.
     #[inline(always)]
     fn next(&self, at: usize, k: usize, set: bool) -> usize {
-        if at >= self.src.len() {
-            return self.src.len();
-        }
-        let flip = if set { 0 } else { !0 };
-        let mut b = at / 64;
-        let mut m = (self.m[b][k] ^ flip) & (!0u64 << (at % 64));
-        loop {
-            if m != 0 {
-                return (b * 64 + m.trailing_zeros() as usize).min(self.src.len());
-            }
-            b += 1;
-            if b >= self.m.len() {
-                return self.src.len();
-            }
-            m = self.m[b][k] ^ flip;
-        }
+        self.m.next(at, k, set)
     }
 
     /// The end of a run of ASCII white space from `at`.
