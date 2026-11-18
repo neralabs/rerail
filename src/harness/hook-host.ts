@@ -5,6 +5,7 @@ import { readRepositoryState } from "../presentation/session-presentation.js";
 import { isRerailStarted } from "../runtime/repository-start.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { engineRequestBody, ingestEngineEvent, type EngineRuntimeConfiguration } from "../runtime/engine-service.js";
+import { RERAIL_EVENT_MAX_FRAME_BYTES } from "../runtime/event-protocol.js";
 import { leaveUntaken, UntakenFolderFullError } from "../engine/untaken-events.js";
 import { scrubValue } from "../engine/secret-scrub.js";
 import { WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
@@ -302,18 +303,35 @@ const NO_LOCK: SessionLock = {
 /**
  * Leaves `adapterEvent` for `daemon` as the daemon keeps what it records: its secrets scrubbed, and a tool's output
  * withheld, since the hook cannot tell whether the call named a secret-like path, whose output the daemon never writes
- * down. An event that cannot be left is lost, and the failure log says so.
+ * down. An event that cannot be left is lost, and the failure log says why.
  */
 async function leaveEvent(hook: HookRun, daemon: DaemonState, adapterEvent: AdapterEvent): Promise<readonly AdapterDelivery[]> {
-  try {
-    await leaveUntaken(defaultRerailHome(), daemon.pid, engineRequestBody(untakenForm(adapterEvent), hook.configuration), hook.arrivedAt);
-  } catch (error) {
-    const reason = error instanceof UntakenFolderFullError
-      ? `the Rerail daemon (pid ${daemon.pid}) is running but not reading, and ${error.message}, so this event was not recorded`
-      : lostEventReason({ status: "unresponsive", state: daemon });
-    recordHookFailure({ host: hook.host, event: hook.event, reason });
+  const lost = await leftOrWhyNot(hook, daemon, adapterEvent);
+  if (lost !== undefined) {
+    recordHookFailure({ host: hook.host, event: hook.event, reason: `the Rerail daemon (pid ${daemon.pid}) is running but not reading, and ${lost}, so this event was not recorded` });
   }
   return [];
+}
+
+/**
+ * Leaves the event, or says why it could not: one an engine request cannot carry (`engineRequestBody` refuses it, as
+ * the daemon would), a folder at its bound, or a write that failed. Said of the event itself, since a hook that leaves
+ * its event behind an earlier one waited for nothing.
+ */
+async function leftOrWhyNot(hook: HookRun, daemon: DaemonState, adapterEvent: AdapterEvent): Promise<string | undefined> {
+  let body: string;
+  try {
+    body = engineRequestBody(untakenForm(adapterEvent), hook.configuration);
+  } catch {
+    return `the event is larger than the ${RERAIL_EVENT_MAX_FRAME_BYTES / (1024 * 1024)} MiB one event may hold`;
+  }
+  return await leaveUntaken(defaultRerailHome(), daemon.pid, body, hook.arrivedAt).then(() => undefined, leaveRefusal);
+}
+
+/** Why `leaveUntaken` refused an event: the folder at its bound, or the write's own failure. */
+function leaveRefusal(error: unknown): string {
+  if (error instanceof UntakenFolderFullError) return error.message;
+  return `the event could not be left for it (${error instanceof Error ? error.message : String(error)})`;
 }
 
 /** What a tool's result keeps of its output in the untaken folder: none. */

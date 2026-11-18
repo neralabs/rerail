@@ -659,6 +659,46 @@ describe("a hook beside a daemon that runs but does not read", () => {
     expect(await daemonLeftEventUntaken()).toBeUndefined();
   });
 
+  it("names the limit of one event, and no wait, when its event is too large to leave", async () => {
+    const rerailHome = await home();
+    const front = await silentFront();
+    const closeEngine = await recordedDaemon(rerailHome, (front.server.address() as AddressInfo).port);
+    try {
+      await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
+      const large = { ...prompt("large"), text: "x".repeat(1024 * 1024) };
+      const handle = async (runtime: { ingest: (event: ReturnType<typeof prompt>) => Promise<unknown> }) => ({ answered: await runtime.ingest(large) });
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now() + 60_000, arrivedAt: 2_000 };
+      expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "UserPromptSubmit")).toEqual({ answered: [] });
+      expect(front.requests()).toBe(0);
+      expect(untaken(rerailHome)).toEqual(["first"]);
+      // Before, it was logged as a 12 s wait for the daemon, which this hook never made.
+      expect(readHookFailures(rerailHome, 0).failures).toEqual([expect.objectContaining({
+        event: "UserPromptSubmit",
+        reason: `the Rerail daemon (pid ${process.pid}) is running but not reading, and the event is larger than the 1 MiB one event may hold, so this event was not recorded`,
+      })]);
+    } finally {
+      await Promise.all([closeFront(front.server), closeEngine()]);
+    }
+  });
+
+  it("says what kept it from leaving its event when the folder cannot take it", async () => {
+    const rerailHome = await home();
+    const closeEngine = await recordedDaemon(rerailHome, await closedPort());
+    try {
+      // A file where the folder was: the hook that waited out its wait cannot write its event there.
+      await removeFolder(join(rerailHome, UNTAKEN_EVENTS_DIR));
+      writeFileSync(join(rerailHome, UNTAKEN_EVENTS_DIR), "");
+      const handle = async (runtime: { ingest: (event: ReturnType<typeof prompt>) => Promise<unknown> }) => ({ answered: await runtime.ingest(prompt("first")) });
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now(), arrivedAt: 1_000 };
+      expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "UserPromptSubmit")).toEqual({ answered: [] });
+      expect(readHookFailures(rerailHome, 0).failures).toEqual([expect.objectContaining({
+        event: "UserPromptSubmit", reason: expect.stringContaining(`the Rerail daemon (pid ${process.pid}) is running but not reading, and the event could not be left for it (`),
+      })]);
+    } finally {
+      await closeEngine();
+    }
+  });
+
   it("holds no session lock: it leaves its event while another hook of its session holds the lock, and keeps none waiting", async () => {
     const rerailHome = await home();
     const front = await silentFront();
