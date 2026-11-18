@@ -546,6 +546,30 @@ mod tests {
         git(root, &["config", "core.ignoreCase", value]);
     }
 
+    /// Puts a new file of `contents`, as long as the old one, in `path`'s place by rename, with
+    /// the old file's write time, so only the file's identity tells the two apart: its inode on
+    /// Unix; on Windows, where a file renamed into a removed one's place within seconds takes its
+    /// creation time, the read-only attribute the new file carries.
+    fn replace_keeping_size_and_time(path: &Path, contents: &str) {
+        let old = std::fs::metadata(path).unwrap();
+        assert_eq!(old.len(), contents.len() as u64, "the new file is as long");
+        let swap = path.with_extension("swap");
+        std::fs::write(&swap, contents).unwrap();
+        let file = std::fs::File::options().write(true).open(&swap).unwrap();
+        file.set_modified(old.modified().unwrap()).unwrap();
+        drop(file);
+        #[cfg(windows)]
+        set_read_only(&swap, true);
+        std::fs::rename(&swap, path).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn set_read_only(path: &Path, read_only: bool) {
+        let mut permissions = std::fs::metadata(path).unwrap().permissions();
+        permissions.set_readonly(read_only);
+        std::fs::set_permissions(path, permissions).unwrap();
+    }
+
     #[test]
     fn says_whether_a_matcher_opened_now_reads_its_rules() {
         let root = fixture(
@@ -583,6 +607,14 @@ mod tests {
         assert!(ignore.sources_unchanged());
         std::fs::write(root.join("named-a"), "b.py\nc.py\n").unwrap();
         assert!(!ignore.sources_unchanged(), "the named file changed");
+        let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
+        replace_keeping_size_and_time(&root.join("named-a"), "d.py\ne.py\n");
+        assert!(
+            !ignore.sources_unchanged(),
+            "the named file replaced, its size and write time kept"
+        );
+        #[cfg(windows)]
+        set_read_only(&root.join("named-a"), false);
         let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
         turn_ignore_case(&root);
         assert!(!ignore.sources_unchanged(), "the pattern case changed");
