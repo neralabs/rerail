@@ -22,15 +22,9 @@
 
 use objc::{msg_send, sel, sel_impl};
 
-use metal::{ArgumentRef, ArrayTypeRef, ComputePipelineDescriptor, ComputePipelineState, DeviceRef, Function, Library, MTLArgumentAccess, MTLArgumentType, MTLDataType, MTLPipelineOption, StructTypeRef};
+pub use crate::compute_kernel::*;
 
-/// `MemoryRegionAccess`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MemoryRegionAccess {
-    Read,
-    Write,
-    ReadWrite,
-}
+use metal::{ArgumentRef, ArrayTypeRef, ComputePipelineDescriptor, ComputePipelineState, DeviceRef, Function, Library, MTLArgumentAccess, MTLArgumentType, MTLDataType, MTLPipelineOption, StructTypeRef};
 
 fn convert_access(access: MTLArgumentAccess) -> MemoryRegionAccess {
     match access {
@@ -38,68 +32,6 @@ fn convert_access(access: MTLArgumentAccess) -> MemoryRegionAccess {
         MTLArgumentAccess::ReadWrite => MemoryRegionAccess::ReadWrite,
         MTLArgumentAccess::WriteOnly => MemoryRegionAccess::Write,
     }
-}
-
-/// A basic (scalar) type: its name as the kernel registrations spell it (`f32`, `u32`, ...) and its width.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BasicType {
-    pub name: &'static str,
-    pub width: u64,
-}
-
-/// The layout of a kernel argument's type (MLDB's value descriptions, as `getKernelType` built them).
-#[derive(Clone, Debug, PartialEq)]
-pub enum KernelBaseType {
-    /// A basic type with its SIMD shape (`[1]` scalar, `[2]` a float2, `[2,2]` a float2x2, ...).
-    Basic { ty: BasicType, simd: Vec<u32> },
-    /// A structure: its fields at their offsets.
-    Struct { name: String, align: Option<u64>, width: Option<u64>, fields: Vec<StructField> },
-    /// A fixed-length array.
-    Array { name: String, width: u64, align: u64, length: u64, element: Box<KernelBaseType> },
-    /// Opaque memory of a width and alignment (threadgroup memory).
-    Atom { name: String, width: u64, align: u64 },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct StructField {
-    pub name: String,
-    pub offset: u64,
-    pub ty: KernelBaseType,
-}
-
-impl KernelBaseType {
-    pub fn width(&self) -> u64 {
-        match self {
-            KernelBaseType::Basic { ty, simd } => ty.width * simd.iter().map(|&s| s as u64).product::<u64>(),
-            KernelBaseType::Struct { width, fields, .. } => width.unwrap_or_else(|| fields.iter().map(|f| f.offset + f.ty.width()).max().unwrap_or(0)),
-            KernelBaseType::Array { width, .. } | KernelBaseType::Atom { width, .. } => *width,
-        }
-    }
-
-    pub fn align(&self) -> u64 {
-        match self {
-            KernelBaseType::Basic { ty, .. } => ty.width,
-            KernelBaseType::Struct { align, fields, .. } => align.unwrap_or_else(|| fields.iter().map(|f| f.ty.align()).max().unwrap_or(1)),
-            KernelBaseType::Array { align, .. } | KernelBaseType::Atom { align, .. } => *align,
-        }
-    }
-
-    /// The field called `name`, for a structure.
-    pub fn field(&self, name: &str) -> Option<&StructField> {
-        match self {
-            KernelBaseType::Struct { fields, .. } => fields.iter().find(|f| f.name == name),
-            _ => None,
-        }
-    }
-}
-
-/// `ComputeKernelType`: a base type, the array dimensions over it (one, unsized, for a pointer to a basic type),
-/// and the access.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ComputeKernelType {
-    pub base_type: KernelBaseType,
-    pub dims: usize,
-    pub access: MemoryRegionAccess,
 }
 
 fn basic(name: &'static str, width: u64, simd: &[u32]) -> KernelBaseType {
@@ -231,22 +163,6 @@ fn get_kernel_type_from_array_type(array_type: &ArrayTypeRef, name: &str, align:
     Ok(KernelBaseType::Array { name: name.to_string(), width, align, length, element: Box::new(element) })
 }
 
-/// `GridComputeFunctionArgumentDisposition`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GridComputeFunctionArgumentDisposition {
-    Buffer,
-    Threadgroup,
-}
-
-/// `GridComputeFunctionArgument`: one argument of a compute function, as its reflection describes it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct GridComputeFunctionArgument {
-    pub name: String,
-    pub compute_function_arg_index: u64,
-    pub ty: ComputeKernelType,
-    pub disposition: GridComputeFunctionArgumentDisposition,
-}
-
 /// Parses a Metal kernel argument info structure, and turns it into a compute kernel type.
 fn get_kernel_type(arg: &ArgumentRef) -> Result<ComputeKernelType, String> {
     let name = format!("__metal_arg_{}", arg.name());
@@ -363,6 +279,11 @@ impl MetalComputeEvent {
             }
             s => Err(format!("Metal command buffer: {s:?}")),
         }
+    }
+
+    /// Whether the work has completed (or failed), polled.
+    pub fn is_complete(&self) -> bool {
+        matches!(self.command_buffer.status(), metal::MTLCommandBufferStatus::Completed | metal::MTLCommandBufferStatus::Error)
     }
 
     /// The seconds the GPU spent on the work, from its start to its end (`GPUStartTime`, `GPUEndTime`; the work must
@@ -491,6 +412,11 @@ impl MetalComputeQueue {
 
     pub fn finish(mut self) -> Result<(), String> {
         self.flush().await_()
+    }
+
+    /// Holds the queue's later work until the host signals `event` with `value` or more (`encodeWaitForEvent`).
+    pub fn wait_for_event(&self, event: &metal::SharedEventRef, value: u64) {
+        self.command_buffer.encode_wait_for_event(event, value);
     }
 }
 

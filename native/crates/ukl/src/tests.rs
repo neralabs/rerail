@@ -69,7 +69,11 @@ fn cuda_random_forest_kernels_preprocess_as_clang_does() {
     let main = format!("{}/mldb/plugins/jml/randomforest_kernels_ukl.h", forest());
     same_as_clang(Backend::Cuda { sm: 121 }, &main);
     let out = Preprocess::new(Backend::Cuda { sm: 121 }).dir(forest()).run(&main).unwrap();
-    assert_eq!(out.matches("extern \"C\" __global__ void").count(), 17, "one entry per kernel");
+    // An entry and its rows' descriptor per kernel; a layout kernel per reflected `args` structure.
+    assert_eq!(out.matches("__ukl_params[] =").count(), 17, "one descriptor per kernel");
+    let layouts = out.matches("__ukl_layout(unsigned long long").count();
+    assert_eq!(layouts, 10, "one layout kernel per args structure");
+    assert_eq!(out.matches("extern \"C\" __global__ void").count(), 17 + layouts);
     assert!(out.contains("__shared__ WIndexed wStartBest[2];"), "a SHARED row declares its storage");
 }
 

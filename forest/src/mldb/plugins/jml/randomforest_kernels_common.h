@@ -89,9 +89,10 @@ UKL_FUNCTION(v1,uint16_t,extract16BitRange32)(ROBUFFER(uint32_t) data,
         return extract_bits(data[wordNumber], wordOffset, bottomBits);
     }
     else {
-        uint2 words = CAST_ROBUFFER(data + wordNumber, uint2)[0];
-        uint16_t bottom = extract_bits(ukl_vec_el(words, x), wordOffset, bottomBits);
-        return bottom | extract_bits(ukl_vec_el(words, y), 0, topBits) << bottomBits;
+        // Two loads of a word, not one of a uint2: `data + wordNumber` is only 4-byte aligned, and an 8-byte load
+        // from it faults on CUDA (Apple's GPUs tolerate it).
+        uint16_t bottom = extract_bits(data[wordNumber], wordOffset, bottomBits);
+        return bottom | extract_bits(data[wordNumber + 1], 0, topBits) << bottomBits;
     }
 }
 

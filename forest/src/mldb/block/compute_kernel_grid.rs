@@ -20,8 +20,8 @@
 //! hazard tracking, events, tracing and the multi-device context are not brought over: a buffer argument is a
 //! Metal buffer.
 
-use crate::compute_kernel_metal::{ComputeKernelType, GridComputeFunctionArgumentDisposition, KernelBaseType, MetalComputeFunction};
-use metal::BufferRef;
+use crate::device::{ComputeKernelType, GridComputeFunctionArgumentDisposition, KernelBaseType, ComputeFunction};
+use crate::device::BufferRef;
 use std::collections::BTreeMap;
 
 /// A value an expression evaluates to, or a known holds.
@@ -513,12 +513,12 @@ impl GridBindAction {
 /// A template specialized against its compute function's arguments.
 pub struct GridComputeKernelSpecialization {
     pub kernel: GridComputeKernelTemplate,
-    pub function: &'static MetalComputeFunction,
+    pub function: &'static ComputeFunction,
     pub bind_actions: Vec<GridBindAction>,
 }
 
 impl GridComputeKernelSpecialization {
-    pub fn new(tmplate: &GridComputeKernelTemplate, function: &'static MetalComputeFunction) -> Result<Self, String> {
+    pub fn new(tmplate: &GridComputeKernelTemplate, function: &'static ComputeFunction) -> Result<Self, String> {
         let kernel_name = &tmplate.kernel_name;
         let mut actions = Vec::new();
         for (i, arg) in function.get_argument_info().iter().enumerate() {

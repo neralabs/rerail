@@ -9,7 +9,8 @@
     parameter's name, as the hand-written Metal wrappers this file replaces named them); the CUDA shim makes them for NVRTC.
 
     Rows beyond MLDB's (decision 0400 §3.1):
-    - ARGS: a structure of arguments, constant (Metal: `constant const T &`; CUDA: by value);
+    - ARGS: a structure of arguments the host fills field by field, constant (Metal: `constant const T &`; CUDA:
+      by value); its fields are reflected for CUDA's host by UKL_REFLECT_STRUCT after its definition;
     - CONSTBUFFER: a buffer in Metal's constant address space (CUDA: `const T * __restrict__`);
     - SHARED: `T Name[Count]` in threadgroup memory, declared in the kernel's scope; the body gets a pointer;
     - TGID0..2: the threadgroup's position in the grid; LANE, NLANES: the SIMD lane and the group's width.
@@ -33,6 +34,8 @@ struct DecompressRowsKernelArgs {
     float weightMultiplier;
     uint32_t numTargets;
 };
+UKL_REFLECT_STRUCT(DecompressRowsKernelArgs, rowDataLength, weightBits, exampleNumBits, numRows, weightFormat, weightMultiplier, numTargets)
+
 
 DEFINE_KERNEL2(randomforest_kernels, decompressRowsKernel,
                ARGS,     DecompressRowsKernelArgs, args,           ,
@@ -52,6 +55,8 @@ struct TestFeatureArgs {
     uint32_t numRows;
     uint32_t maxLocalBuckets;
 };
+UKL_REFLECT_STRUCT(TestFeatureArgs, numRows, maxLocalBuckets)
+
 
 DEFINE_KERNEL2(randomforest_kernels, testFeatureKernel,
                ARGS,     TestFeatureArgs, args,              ,
@@ -77,10 +82,12 @@ DEFINE_KERNEL2(randomforest_kernels, testFeatureKernel,
 struct GetPartitionSplitsArgs {
     uint32_t wLocalSize;
 };
+UKL_REFLECT_STRUCT(GetPartitionSplitsArgs, wLocalSize)
+
 
 // this expects [bucket, feature, partition]
 DEFINE_KERNEL2(randomforest_kernels, getPartitionSplitsKernel,
-               ARGS,     TreeTrainingInfo,       treeTrainingInfo,          ,
+               CONSTBUFFER, TreeTrainingInfo,        treeTrainingInfo,          ,
                ARGS,     GetPartitionSplitsArgs, args,                      ,
                ROBUFFER, uint32_t,               bucketNumbers,             "[nf]",
                ROBUFFER, uint32_t,               activeFeatureList,         "[naf]",
@@ -100,7 +107,7 @@ DEFINE_KERNEL2(randomforest_kernels, getPartitionSplitsKernel,
                GID2,     uint32_t,               gid2,                      ,
                GSZ2,     uint32_t,               gsz2,                      )
 {
-    getPartitionSplitsImpl(&treeTrainingInfo, bucketNumbers, activeFeatureList, featureIsOrdinal,
+    getPartitionSplitsImpl(treeTrainingInfo, bucketNumbers, activeFeatureList, featureIsOrdinal,
                            buckets, wAll, featurePartitionSplitsOut,
                            treeDepthInfo, wLocal, args.wLocalSize, wStartBest, wRanked, ranked,
                            gid1, gsz1, lid0, lsz0, gid2, gsz2);
@@ -108,7 +115,7 @@ DEFINE_KERNEL2(randomforest_kernels, getPartitionSplitsKernel,
 
 // id 0: partition number
 DEFINE_KERNEL2(randomforest_kernels, bestPartitionSplitKernel,
-               ARGS,     TreeTrainingInfo,      treeTrainingInfo,       ,
+               CONSTBUFFER, TreeTrainingInfo,       treeTrainingInfo,       ,
                ROBUFFER, TreeDepthInfo,         treeDepthInfo,          "[1]",
                ROBUFFER, uint32_t,              activeFeatureList,      "[numActiveFeatures]",
                ROBUFFER, PartitionSplit,        featurePartitionSplits, "[numActivePartitions * numActiveFeatures]",
@@ -117,7 +124,7 @@ DEFINE_KERNEL2(randomforest_kernels, bestPartitionSplitKernel,
                GID0,     uint32_t,              gid0,                   ,
                GSZ0,     uint32_t,              gsz0,                   )
 {
-    bestPartitionSplitImpl(&treeTrainingInfo, treeDepthInfo, activeFeatureList,
+    bestPartitionSplitImpl(treeTrainingInfo, treeDepthInfo, activeFeatureList,
                            featurePartitionSplits, partitionIndexes, allPartitionSplitsOut,
                            gid0, gsz0);
 }
@@ -129,7 +136,7 @@ DEFINE_KERNEL2(randomforest_kernels, bestPartitionSplitKernel,
 // - 1-254 means we're partition number (n-1) on the small side
 // - 255 means we're partition number 254 or greater on the small side
 DEFINE_KERNEL2(randomforest_kernels, assignPartitionNumbersKernel,
-               ARGS,     TreeTrainingInfo,                 treeTrainingInfo,             ,
+               CONSTBUFFER, TreeTrainingInfo,                  treeTrainingInfo,             ,
                RWBUFFER, TreeDepthInfo,                    treeDepthInfo,                "[1]",
                ROBUFFER, IndexedPartitionSplit,            allPartitionSplits,           "[np]",
                RWBUFFER, PartitionIndex,                   partitionIndexesOut,          "[maxActivePartitions]",
@@ -140,7 +147,7 @@ DEFINE_KERNEL2(randomforest_kernels, assignPartitionNumbersKernel,
                LANE,     uint16_t,                         lane_id,                      ,
                NLANES,   uint16_t,                         num_lanes,                    )
 {
-    assignPartitionNumbersImpl(&treeTrainingInfo, treeDepthInfo, allPartitionSplits,
+    assignPartitionNumbersImpl(treeTrainingInfo, treeDepthInfo, allPartitionSplits,
                                partitionIndexesOut, partitionInfoOut,
                                smallSideIndexesOut, smallSideIndexToPartitionOut,
                                localState, lane_id, num_lanes);
@@ -148,7 +155,7 @@ DEFINE_KERNEL2(randomforest_kernels, assignPartitionNumbersKernel,
 
 // [partition, bucket]
 DEFINE_KERNEL2(randomforest_kernels, clearBucketsKernel,
-               ARGS,        TreeTrainingInfo, treeTrainingInfo,           ,
+               CONSTBUFFER, TreeTrainingInfo,  treeTrainingInfo,           ,
                ROBUFFER,    TreeDepthInfo,    treeDepthInfo,              "[1]",
                RWBUFFER,    W,                bucketsOut,                 "[numActiveBuckets * numActivePartitions]",
                RWBUFFER,    W,                wAllOut,                    "[numActivePartitions]",
@@ -158,13 +165,13 @@ DEFINE_KERNEL2(randomforest_kernels, clearBucketsKernel,
                GSZ0,        uint32_t,         gsz0,                       ,
                GID1,        uint32_t,         gid1,                       )
 {
-    clearBucketsImpl(&treeTrainingInfo, treeDepthInfo, bucketsOut, wAllOut, numNonZeroDirectionIndices,
+    clearBucketsImpl(treeTrainingInfo, treeDepthInfo, bucketsOut, wAllOut, numNonZeroDirectionIndices,
                      smallSideIndexes, gid0, gsz0, gid1);
 }
 
 // Second part: per feature plus wAll, transfer examples. [rowNumber]
 DEFINE_KERNEL2(randomforest_kernels, updatePartitionNumbersKernel,
-               ARGS,        TreeTrainingInfo,                 treeTrainingInfo,           ,
+               CONSTBUFFER, TreeTrainingInfo,                  treeTrainingInfo,           ,
                ROBUFFER,    TreeDepthInfo,                    treeDepthInfo,              "[1]",
                RWBUFFER,    RowPartitionInfo,                 partitions,                 "[numRows]",
                RWBUFFER,    uint32_t,                         directions,                 "[numRows / 32]",
@@ -185,7 +192,7 @@ DEFINE_KERNEL2(randomforest_kernels, updatePartitionNumbersKernel,
                LID0,        uint32_t,                         lid0,                       ,
                LSZ0,        uint32_t,                         lsz0,                       )
 {
-    updatePartitionNumbersImpl(&treeTrainingInfo, treeDepthInfo, partitions, directions,
+    updatePartitionNumbersImpl(treeTrainingInfo, treeDepthInfo, partitions, directions,
                                numNonZeroDirectionIndices, nonZeroDirectionIndices, smallSideIndexes,
                                allPartitionSplits, partitionInfo,
                                bucketData, bucketDataOffsets, bucketNumbers, bucketEntryBits,
@@ -196,11 +203,13 @@ DEFINE_KERNEL2(randomforest_kernels, updatePartitionNumbersKernel,
 struct UpdateBucketsArgs {
     uint32_t maxLocalBuckets;
 };
+UKL_REFLECT_STRUCT(UpdateBucketsArgs, maxLocalBuckets)
+
 
 // [row, feature]
 DEFINE_KERNEL2(randomforest_kernels, updateBucketsKernel,
                ARGS,        UpdateBucketsArgs,       args,                       ,
-               ARGS,        TreeTrainingInfo,        treeTrainingInfo,           ,
+               CONSTBUFFER, TreeTrainingInfo,         treeTrainingInfo,           ,
                ROBUFFER,    TreeDepthInfo,           treeDepthInfo,              "[1]",
                ROBUFFER,    RowPartitionInfo,        partitions,                 "[numRows]",
                RWBUFFER,    uint32_t,                directions,                 "[numRows / 32]",
@@ -225,7 +234,7 @@ DEFINE_KERNEL2(randomforest_kernels, updateBucketsKernel,
                LID0,        uint32_t,                lid0,                       ,
                LSZ0,        uint32_t,                lsz0,                       )
 {
-    updateBucketsImpl(&treeTrainingInfo, treeDepthInfo, partitions, directions,
+    updateBucketsImpl(treeTrainingInfo, treeDepthInfo, partitions, directions,
                       numNonZeroDirectionIndices, nonZeroDirectionIndices, buckets, wAll,
                       smallSideIndexes, smallSideIndexToPartition,
                       decodedRows, bucketData, bucketDataOffsets, bucketNumbers, bucketEntryBits,
@@ -241,7 +250,7 @@ DEFINE_KERNEL2(randomforest_kernels, updateBucketsKernel,
 // Dimension 0 = partition number (from 0 to the old number of partitions)
 // Dimension 1 = bucket number (from 0 to the number of active buckets); may be padded
 DEFINE_KERNEL2(randomforest_kernels, fixupBucketsKernel,
-               ARGS,     TreeTrainingInfo, treeTrainingInfo, ,
+               CONSTBUFFER, TreeTrainingInfo,  treeTrainingInfo, ,
                ROBUFFER, TreeDepthInfo,    treeDepthInfo,    "[1]",
                RWBUFFER, W,                buckets,          "[numActiveBuckets * numActivePartitions]",
                RWBUFFER, W,                wAll,             "[numActivePartitions]",
@@ -251,7 +260,7 @@ DEFINE_KERNEL2(randomforest_kernels, fixupBucketsKernel,
                GSZ0,     uint32_t,         gsz0,             ,
                GID1,     uint32_t,         gid1,             )
 {
-    fixupBucketsImpl(&treeTrainingInfo, treeDepthInfo, buckets, wAll, partitionInfo, smallSideIndexes,
+    fixupBucketsImpl(treeTrainingInfo, treeDepthInfo, buckets, wAll, partitionInfo, smallSideIndexes,
                      gid1, gid0, gsz0);
 }
 
@@ -262,6 +271,8 @@ struct PredictForestArgs {
     uint32_t lanesPerRow;
     uint32_t columnStride;
 };
+UKL_REFLECT_STRUCT(PredictForestArgs, numItems, numForests, maxDepth, lanesPerRow, columnStride)
+
 
 // [row group]
 DEFINE_KERNEL2(randomforest_kernels, predictForestKernel,
@@ -289,6 +300,8 @@ struct NumericBucketsArgs {
     uint32_t numSplits;
     uint32_t numericOffset;
 };
+UKL_REFLECT_STRUCT(NumericBucketsArgs, numRows, numSplits, numericOffset)
+
 
 // [row]
 DEFINE_KERNEL2(randomforest_kernels, numericBucketsKernel,
@@ -305,6 +318,8 @@ struct CodesArgs {
     uint32_t numRows;
     uint32_t numCodes;
 };
+UKL_REFLECT_STRUCT(CodesArgs, numRows, numCodes)
+
 
 // [row]
 DEFINE_KERNEL2(randomforest_kernels, markCodesKernel,
@@ -332,6 +347,8 @@ struct RowBucketsArgs {
     uint32_t numColumns;
     uint32_t columnStride;
 };
+UKL_REFLECT_STRUCT(RowBucketsArgs, numRows, numColumns, columnStride)
+
 
 // [column * columnStride + word]
 DEFINE_KERNEL2(randomforest_kernels, rowBucketsKernel,
@@ -353,6 +370,8 @@ struct PackBucketsArgs {
     uint32_t entryBits;
     uint32_t numWords;
 };
+UKL_REFLECT_STRUCT(PackBucketsArgs, numRows, entryBits, numWords)
+
 
 // [word]
 DEFINE_KERNEL2(randomforest_kernels, packBucketsKernel,
@@ -371,6 +390,8 @@ struct BagRowsArgs {
     uint32_t sample;
     float scale;
 };
+UKL_REFLECT_STRUCT(BagRowsArgs, numExamples, seed, keep24, sample, scale)
+
 
 // [example]
 DEFINE_KERNEL2(randomforest_kernels, bagRowsKernel,

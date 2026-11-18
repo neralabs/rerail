@@ -357,9 +357,13 @@ files, and the library gathers them into UKL headers, with each primitive's inte
 
 These are written against the trait. "Metal" in their names becomes "the GPU lane".
 
-**Bindings: `cudarc`.** It loads `libcuda` and `libnvrtc` at run time, so the engine builds with no CUDA toolkit,
-and runs without a GPU where none exists. ROCm is the same shape through `libamdhip64` and hipRTC, with thin
-bindings of our own. OpenCL goes through `opencl3`.
+**Bindings: our own, opened at run time** (changed from `cudarc` while building step 4, 2026-11-18). The forest's
+CUDA runtime (`forest/src/mldb/builtin/cuda/compute_kernel_cuda.rs`) opens `libcuda` and `libnvrtc` with `dlopen`
+and takes the 36 entry points it uses by name. The engine builds with no CUDA toolkit and runs without a GPU where
+none exists, as `cudarc` would allow. We chose our own because:
+- it needs no feature that pins a CUDA version: the entry points used have the same ABI on CUDA 12 and 13;
+- it adds no dependency.
+ROCm is the same shape through `libamdhip64` and hipRTC. OpenCL goes through `opencl3`.
 
 **Builds.** The CUDA backend compiles on Linux and Windows under a `cuda` feature (on by default on Linux). The
 GPU code stops being gated on macOS and is gated per backend. The Sparks build it as farm hosts (Linux, aarch64).
@@ -481,7 +485,7 @@ on a Spark.
 | 1 | `rerail-c-pp` preprocesses UKL | token-equal to `cc -E` on the random forest kernels for Metal and CUDA; `forest/build.rs` uses it; no host `cc` |
 | 2 | Repair the CUDA shim; the forest's kernels on CUDA through NVRTC | the random forest tests (`rf_kernel_test.rs`) give Metal's results on a Spark: the cost model runs on CUDA. This is the smallest real GPU user that is end to end |
 | 3 | The device trait, with Metal behind it | no behaviour change on Metal (named Metal tests); the 48 files moved |
-| 4 | The CUDA implementation of the trait (`cudarc`) and the kernel store for CUDA | the forest runs through the trait on a Spark |
+| 4 | The CUDA implementation of the trait (run-time bindings, §6) and the kernel store for CUDA | the forest runs through the trait on a Spark |
 | 5 | The library (§5) in UKL, tested on the CPU shim, Metal and CUDA | each primitive equal across backends on random inputs and edge sizes; Metal's speed not worse than today's per primitive |
 | 6 | `clif/src/msl.rs` becomes the UKL backend | every generated read equals the tape crate's on every test tape, on Metal and CUDA (0310 §4's test, per backend) |
 | 7 | The hand-written MSL ported to UKL, file by file (copy into place first), in the product path's order: tape reads, label passes, views and ids, the batch runtime, block programs, joins | each file's Metal output passes its semantic conformance tests, unchanged, before the MSL file goes |
@@ -503,7 +507,42 @@ Progress (2026-11-18):
   - UKL gained the rows the kernels needed (§3.1): `ARGS` (a structure of arguments), `CONSTBUFFER`, `SHARED`
     (threadgroup storage declared in the kernel's own scope, which is the only place Metal allows it),
     `TGID0..2`, `LANE` and `NLANES`.
-  - The second half, Metal's results on CUDA, needs a host that launches the kernels, which is step 4's job.
+- **Step 2: done, through steps 3 and 4 for the forest.** On a GB10, the forest's 42 tests pass on CUDA, three runs
+  out of three. They include:
+  - every training kernel of a level against the host's;
+  - trees and forests trained on the device against the recursive and partitioned host trainers;
+  - classification and regression;
+  - bagging, row decoding, column bucketizing, prediction, and armed predictions.
+
+  The Mac's 41 pass on Metal from the same source.
+  - **The device layer, for the forest** (`forest/src/device.rs`): one interface, picked by target (Metal on
+    macOS, CUDA on Linux), with buffers, queues, events, libraries, functions, bind contexts and host-signalled
+    events. The forest's code names only it. The argument types moved to `compute_kernel.rs`, which is neutral.
+    The engine's own 48 Metal files (step 3 proper) are not moved yet.
+  - **Arguments without reflection.** Beside each kernel, the CUDA shim emits:
+    - the text of its rows;
+    - each row's type's size, alignment and kind;
+    - for each `args` structure, its fields' names (`UKL_REFLECT_STRUCT`) and a one-thread kernel that measures
+      its layout. NVRTC has no constant `offsetof`.
+
+    The host turns these into the argument list Metal's reflection gives, so the grid binds both backends the
+    same way. A structure whose named fields do not tile it is refused.
+  - **Memory: pinned blocks in a pool** of power-of-two classes (`cuMemHostAlloc`, E1's choice). A block goes back
+    to the pool, never to the driver: `cuMemFreeHost` waits for the whole device. Under an armed prediction,
+    whose stream waits for the host's signal, freeing a buffer deadlocked the host.
+  - **Buffer lifetimes as Metal's.** A queue keeps each buffer its launches bind, and each one its copies and
+    fills touch, until that work completes. Work dropped unawaited keeps its buffers on a pending list, swept as
+    it completes.
+  - **Two kernel-side fixes the port found:**
+    - `extract16BitRange32` loaded two words as a `uint2` from a 4-byte-aligned address. Apple's GPUs tolerate
+      the misaligned 8-byte load; CUDA faults on it. It now reads two words.
+    - An empty grid launches nothing, as on Metal; CUDA calls an empty launch an invalid argument.
+  - **Not yet run:**
+    - sm_70 (the V100) runs nothing yet: its kernels compile, but the forest has not run there, so the warp sum
+      for sm < 80 (a shuffle loop) is not exercised.
+    - A discrete card reads the pool's pinned blocks over PCIe (12.3 GB/s): correct, but slow until step 10.
+    - Separately, `rerail-accel` does not build on Linux. This predates this work: it declares `rerail-blocks`
+      for macOS only but uses it everywhere.
 
 Steps 1, 2 and E1 are small and settle the bets the rest rests on: the preprocessor, the shim, and in-place
 bandwidth. Step 3 can run beside them.

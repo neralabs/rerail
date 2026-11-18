@@ -277,7 +277,44 @@ static __device__ __forceinline__ uint32_t ukl_simdgroup_broadcast_first(uint32_
 
 #define GEN_OUTER_PARAMETER2(Access, Type, Name, Bounds) CALL2_A(GEN_OUTER_PARAMETER_, Access, Type, Name)
 
+// What the host binds a kernel by (NVRTC has no reflection): beside each kernel, its rows as written
+// (`Name__ukl_params`, the text of DEFINE_KERNEL2's rows), and each row's type's size, alignment and kind
+// (`Name__ukl_rows`, three numbers a row; the kind is ukl_type_code's). The host reads them from the module.
+template<typename T> struct ukl_type_code { static constexpr unsigned long long value = __is_class(T) ? 's' : 'u'; };
+template<> struct ukl_type_code<float> { static constexpr unsigned long long value = 'f'; };
+template<> struct ukl_type_code<double> { static constexpr unsigned long long value = 'd'; };
+template<> struct ukl_type_code<bool> { static constexpr unsigned long long value = 'b'; };
+template<> struct ukl_type_code<char> { static constexpr unsigned long long value = 'i'; };
+template<> struct ukl_type_code<signed char> { static constexpr unsigned long long value = 'i'; };
+template<> struct ukl_type_code<short> { static constexpr unsigned long long value = 'i'; };
+template<> struct ukl_type_code<int> { static constexpr unsigned long long value = 'i'; };
+template<> struct ukl_type_code<long> { static constexpr unsigned long long value = 'i'; };
+template<> struct ukl_type_code<long long> { static constexpr unsigned long long value = 'i'; };
+
+#define GEN_ROW_LAYOUT2(Access, Type, Name, Bounds) sizeof(Type), alignof(Type), ukl_type_code<Type>::value
+
+// A structure passed by value (an `ARGS` row), reflected for the host, which fills it field by field: the fields'
+// names (`Type__ukl_fields`), and a one-thread kernel (`Type__ukl_layout`) that writes the structure's size and
+// alignment, then each field's offset, size and kind, measured on an instance (NVRTC has no constant `offsetof`).
+// Every field must be named: the host refuses a structure its fields do not cover.
+#define __UKL_FIELD_LAYOUT(Type, Field) \
+    (unsigned long long)((const char *)&__ukl_v.Field - (const char *)&__ukl_v), sizeof(__ukl_v.Field), \
+    ukl_type_code<decltype(__ukl_v.Field)>::value
+#define UKL_REFLECT_STRUCT(Type, ...) \
+    extern "C" __device__ const char Type ## __ukl_fields[] = #__VA_ARGS__; \
+    extern "C" __global__ void Type ## __ukl_layout(unsigned long long * __ukl_out) \
+    { \
+        Type __ukl_v; \
+        const unsigned long long __ukl_l[] = \
+            { sizeof(Type), alignof(Type), __UKL_FOREACH_CTX(__UKL_FIELD_LAYOUT, Type, __VA_ARGS__) }; \
+        for (unsigned __ukl_i = 0; __ukl_i < sizeof(__ukl_l) / sizeof(__ukl_l[0]); ++__ukl_i) \
+            __ukl_out[__ukl_i] = __ukl_l[__ukl_i]; \
+    }
+
 #define DEFINE_KERNEL2(Library, Name, ...) \
+    extern "C" __device__ const char Name ## __ukl_params[] = #__VA_ARGS__; \
+    extern "C" __device__ const unsigned long long Name ## __ukl_rows[] = \
+        { __UKL_FOREACH_QUAD(GEN_ROW_LAYOUT2, __VA_ARGS__) }; \
     __device__ __forceinline__ void Name ## _inner( __UKL_FOREACH_QUAD(GEN_INNER_PARAMETER2, __VA_ARGS__) ); \
     extern "C" __global__ void Name ( __UKL_FOREACH_QUAD(GEN_OUTER_PARAMETER2, __VA_ARGS__) ) \
     { \

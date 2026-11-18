@@ -166,3 +166,18 @@ for n in range(4,max_num_args,4):
     argnames = ", ".join(["__a" + str(n) for n in range(0,n)])
     calls = " ".join([f"Fn({an(i)},{an(i+1)},{an(i+2)},{an(i+3)})" for i in range(0,n,4)])
     print(f"#define __UKL_FOREACH_QUAD_NOSEP_{n}(Fn, {argnames}) {calls}")
+
+# Generate UKL_FOREACH_CTX (Rerail, decision 0400): Fn(Ctx, a) for each argument a, separated by commas; a
+# structure's fields reflected for the CUDA host (UKL_REFLECT_STRUCT).
+max_ctx_args = 64
+print()
+print("// Internal switch to forward to __UKL_FOREACH_CTX_(numargs) to implement __UKL_FOREACH_CTX")
+print("#define __UKL_FOREACH_CTX_N(Fn, Ctx, Count, ...) __UKL_CALL2(__UKL_FOREACH_CTX_, Count, Fn, Ctx, __VA_ARGS__)")
+print()
+print(f"// Call the given macro Fn(Ctx, a) for each argument a passed (at most {max_ctx_args}), with commas between the calls")
+print("#define __UKL_FOREACH_CTX(Fn, Ctx, ...) __UKL_FOREACH_CTX_N(Fn, Ctx, __UKL_COUNT_ARGS(__VA_ARGS__), __VA_ARGS__)")
+print()
+for n in range(1,max_ctx_args+1):
+    argnames = ", ".join([an(i) for i in range(0,n)])
+    calls = ", ".join([f"Fn(Ctx,{an(i)})" for i in range(0,n)])
+    print(f"#define __UKL_FOREACH_CTX_{n}(Fn, Ctx, {argnames}) {calls}")

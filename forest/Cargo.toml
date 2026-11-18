@@ -15,6 +15,10 @@ metal = "0.33.0"
 objc = "0.2.7"
 block = "0.1.6"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# The kernels preprocessed at run time for the CUDA device's architecture (decision 0400 §4).
+rerail-ukl = { path = "../native/crates/ukl" }
+
 [build-dependencies]
 # UKL's shims applied by the in-process preprocessor (decision 0400 §4).
 rerail-ukl = { path = "../native/crates/ukl" }

@@ -238,6 +238,8 @@ static inline uint32_t ukl_prefix_exclusive_sum_bitmask(uint32_t bits, uint16_t 
 #define GEN_OUTER_PARAMETER_NLANES(Type, Name)
 
 #define GEN_OUTER_PARAMETER_SHARED(Type, Name)
+// Metal reflects a structure's fields itself (UKL_REFLECT_STRUCT is for backends without reflection).
+#define UKL_REFLECT_STRUCT(Type, ...)
 #define GEN_SHARED_DECL_SHARED(Type, Name, Bounds) threadgroup Type Name[Bounds];
 
 #define GEN_OUTER_PARAMETER2(Access, Type, Name, Bounds) CALL2_A(GEN_OUTER_PARAMETER_, Access, Type, Name)

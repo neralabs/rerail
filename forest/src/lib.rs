@@ -1,12 +1,13 @@
-//! rerail's forest: MLDB's Metal random forest trainer (`mldb/`, copied from mldbai/mldb@e3caed6f, branch
+//! rerail's forest: MLDB's random forest trainer (`mldb/`, copied from mldbai/mldb@e3caed6f, branch
 //! opencl-random-forests), training and predicting on the device, and the cost model built on it (`cost_model`).
-//! macOS only (Metal); elsewhere the crate is empty.
+//! The device is Metal on macOS and CUDA on Linux (`device`, decision 0400); elsewhere the crate is empty.
 //!
 //! The kernels are one C source (`mldb/plugins/jml/randomforest_kernels_common.h`) written against UKL's shims; the
-//! build step preprocesses `randomforest_kernels_ukl.h` with the Metal shim into Metal source, compiled once per
-//! process on the shared device (`gpu::shared`; randomforest_kernels_metal.rs).
+//! build step preprocesses `randomforest_kernels_ukl.h` with the Metal shim into Metal source; on CUDA it is
+//! preprocessed at run time for the device's architecture. Either is compiled once per process on the shared device
+//! (`gpu::shared`; randomforest_kernels_metal.rs).
 
-#![cfg(target_os = "macos")]
+#![cfg(any(target_os = "macos", target_os = "linux"))]
 
 // The copied host sources, each translated to Rust where it sits (upstream paths under `mldb/`).
 #[path = "mldb/utils/fixed_point_accum.rs"]
@@ -41,8 +42,15 @@ pub mod randomforest_types;
 pub mod randomforest_kernels;
 #[path = "mldb/plugins/jml/randomforest_recursive.rs"]
 pub mod randomforest_recursive;
+#[path = "mldb/block/compute_kernel.rs"]
+pub mod compute_kernel;
+#[cfg(target_os = "macos")]
 #[path = "mldb/builtin/metal/compute_kernel_metal.rs"]
 pub mod compute_kernel_metal;
+#[cfg(target_os = "linux")]
+#[path = "mldb/builtin/cuda/compute_kernel_cuda.rs"]
+pub mod compute_kernel_cuda;
+pub mod device;
 #[path = "mldb/plugins/jml/randomforest_kernels_metal.rs"]
 pub mod randomforest_kernels_metal;
 #[path = "mldb/block/compute_kernel_grid.rs"]
@@ -59,38 +67,49 @@ pub mod randomforest_predict;
 #[path = "mldb/plugins/jml/testing/rf_kernel_test.rs"]
 mod rf_kernel_test;
 
-pub use randomforest_kernels_metal::{function, library, KERNELS, SOURCE};
+pub use randomforest_kernels_metal::{function, library, KERNELS};
+#[cfg(target_os = "macos")]
+pub use randomforest_kernels_metal::SOURCE;
 
 pub mod cost_model;
 
-/// The process's one Metal device and command queue. They are made here, in the lowest crate that uses Metal, so
+/// The process's one device and command queue. They are made here, in the lowest crate that uses the device, so
 /// that the forest's training and prediction and the engine's every submission (`rerail_accel::gpu::shared`, which
-/// takes them from here) share one queue: one order of command buffers, no queue apart (decision 0100 §2).
+/// takes them from here on Metal) share one queue: one order of command buffers, no queue apart (decision 0100 §2).
+/// On CUDA each `ComputeQueue` is a stream of its own, made from the device (`queue` and `waiting` are the device).
 pub mod gpu {
     pub mod shared {
+        use crate::device::{Device, QueueRoot};
         use std::sync::OnceLock;
 
         pub struct Shared {
-            pub device: metal::Device,
-            pub queue: metal::CommandQueue,
+            pub device: Device,
+            pub queue: QueueRoot,
             /// The queue of work committed ahead that waits on an event (the forest's armed prediction): a command
             /// buffer waiting on an event holds back the ones its queue commits after it, so it is not `queue`.
-            pub waiting: metal::CommandQueue,
+            pub waiting: QueueRoot,
         }
 
-        /// The process's device and queue: `None` without a Metal device.
+        /// The process's device and queue: `None` without a device.
         pub fn get() -> Option<&'static Shared> {
             static SHARED: OnceLock<Option<Shared>> = OnceLock::new();
-            SHARED
-                .get_or_init(|| {
-                    objc::rc::autoreleasepool(|| {
-                        let device = metal::Device::system_default()?;
-                        let queue = device.new_command_queue();
-                        let waiting = device.new_command_queue();
-                        Some(Shared { device, queue, waiting })
-                    })
-                })
-                .as_ref()
+            SHARED.get_or_init(open).as_ref()
+        }
+
+        #[cfg(target_os = "macos")]
+        fn open() -> Option<Shared> {
+            objc::rc::autoreleasepool(|| {
+                let device = metal::Device::system_default()?;
+                let queue = device.new_command_queue();
+                let waiting = device.new_command_queue();
+                Some(Shared { device, queue, waiting })
+            })
+        }
+
+        #[cfg(target_os = "linux")]
+        fn open() -> Option<Shared> {
+            let device = crate::compute_kernel_cuda::CudaDevice::system_default()?;
+            Some(Shared { device, queue: device, waiting: device })
         }
     }
 }
