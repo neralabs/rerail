@@ -1,6 +1,6 @@
 # Settings: an earlier version's Log mode and stop read again on Windows
 
-For [pull request #753](https://github.com/neralabs/rerail/pull/753), head ca49f9699. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #753](https://github.com/neralabs/rerail/pull/753), head f9c9957e9. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #753](https://github.com/neralabs/rerail/pull/753), head ca49f
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 918 lines in 20 files: 287 ship, 631 are tests and text | Careful. It changes what the agent is told: a code owner. | Nothing. The approach was chosen on #666. | 3 |
+| 979 lines in 20 files: 306 ship, 673 are tests and text | Careful. It changes what the agent is told: a code owner. | Nothing. The approach was chosen on #666. | 3 |
 
 ## 2. Intent, and the gap
 
@@ -32,7 +32,7 @@ Found on 13 November 2026 on a Windows 11 machine, reading a database 0.1.4 wrot
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Earlier key read at lookup, high risk, 212 lines; B, The spelling handed apart, medium risk, 75 lines. Read first: audit-control.ts, repository-registry.ts, operations.ts. To skim: 573 lines of tests and 58 lines of what is read again, and resetting the rest.">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Earlier key read at lookup, high risk, 231 lines; B, The spelling handed apart, medium risk, 75 lines. Read first: audit-control.ts, repository-registry.ts, operations.ts. To skim: 615 lines of tests and 58 lines of what is read again, and resetting the rest.">
 
 1. **Read first**, 12 min: `audit-control.ts`: `#settingsRow`, `#savedHere`, `#earlierKey`. Can a stored row lose to the earlier one, or another folder's earlier row count outside Git?
 2. **Read first**, 8 min: `repository-registry.ts`: `ownStarted`, `earlierKeyOf`, `spelledCheckout`. Does another repository's stop, or another folder's spelling, ever decide?
@@ -89,7 +89,7 @@ Start at change A: it changes what the agent is told. CI has not run.
 
 | Option | What a user gets | Cost | What it breaks |
 |---|---|---|---|
-| Read the earlier key where the stored one has nothing **(chosen)** | Log mode and a stop come back, and a start and a stop 0.1.4 makes later are read too. | 249 source lines in 11 files, 149 of them code; no storage change; per hook event main's file calls and statements in each spelling the daemon resolves. | A status line hidden in a folder opened in another letter case, and a checkout's rule setting outside Git through a mapped or subst letter or an 8.3 name, stay lost, as at main. |
+| Read the earlier key where the stored one has nothing **(chosen)** | Log mode and a stop come back, and a start and a stop 0.1.4 makes later are read too. | 266 source lines in 11 files, 150 of them code; no storage change; per hook event main's file calls and statements in each spelling the daemon resolves. | A status line hidden in a folder opened in another letter case, and a checkout's rule setting outside Git through a mapped or subst letter or an 8.3 name, stay lost, as at main. |
 | Copy the rows to the stored key, with a table of spellings | Those two settings come back as well. | 802 source lines in 16 files, a migration step and a new table under the storage folder. | What 0.1.4 writes later is not read: after 0.1.4 changed the scope, the copy kept the old one. |
 | Move the rows to the stored key, with no table | The same as the copy. | A migration step. | An earlier version sharing the database loses what it saved. |
 
@@ -152,6 +152,6 @@ The description holds the table under "How you tested it", the fails-first runs,
 | Linux x64 | The same 77 files, CI's integration job, the changed cases 20 times | 2,138 passed; 1 race case failed, as in main's run there. Integration: 90 passed, 0 failed. The changed cases: 20 of 20 runs passed. |
 | Linux x64 | The rules scan against main | No new finding against main at e8a6b0b5a, with the published 0.1.1 and with Rerail built from main; highest complexity 5. |
 
-**Sources.** The branch at ca49f9699, whose source is 8fb57720c's, against main at e8a6b0b5a; the tags v0.1.3 and v0.1.4 and 0.1.5's release commit for what each version keys.
+**Sources.** The branch at f9c9957e9 against main at e8a6b0b5a; the tags v0.1.3 and v0.1.4 and 0.1.5's release commit for what each version keys.
 
 </details>
