@@ -57,7 +57,6 @@ class at_sign   = '@'
 class semicolon = ';'
 class rbrace    = '}'
 # What a lambda's parameters are made of, up to their `->` (the lean parser's `lambda_params_end`).
-class lam_punct = ',' ':' '.' '?' '*' '@' '&' '(' ')' '[' ']' '<' '>'
 class dq        = '"'
 class sq        = '\''
 class bt        = '`'
@@ -343,18 +342,9 @@ escape "a nullable receiver" when rdot_at & prev(text("?"))
 mask as_kw      = kw_start & text("as") & ~next(w, 2)
 mask as_run     = fill(prev(as_kw, 2), ~(code & (word | dot | text(" ") | text("?"))))
 escape "a dotted type after `as` before a `<`" when code & text("<") & prev(fill(as_run & dot, ~as_run))
-mask get_call   = text("get") & next(back_fill(code & text("(") & ~text("()"), solid), 3)
-mask acc_at     = code & (line_first | line_mod & acc_vis) & (text("get") | text("set")) & ~next(w, 3) & ~next(back_fill(code & (dot | text(":")), solid), 3) & ~get_call
-
-# A lambda's `{` with parameters before a `->` (`lam_params`), or with a `->` and none
-# (`lam_bare`): from the `{`, the bytes parameters are made of, the byte after them a `->`.
-mask lam_open   = code & lbrace
-mask lam_fill   = fill(lam_open, ~(code & (word | ws | lam_punct)))
-# A `{` inside the run starts one of its own: the byte before it ends the outer run, so an
-# inner lambda's `->` does not mark the outer `{` (`{ xs.forEach { x -> … } }`).
-mask lam_last   = lam_fill & (~next(lam_fill) | next(lam_open))
-mask lam_to_arrow = lam_open & back_fill(lam_last & next(code & text("->")), lam_last)
-mask lam_bare_at = lam_open & next(back_fill(code & text("->"), solid))
+# A property's accessor: its `get` or `set` at a line's start (or after a visibility word
+# there), where no `.` or `:` follows it, and, for `get`, no `(` with arguments.
+mask acc_word   = code & (line_first | line_mod & acc_vis) & (text("get") | text("set")) & ~next(w, 3)
 
 # --- Tokens ------------------------------------------------------------------------------------
 
@@ -452,8 +442,6 @@ skip swallowed
 mark semi       = lf_end & ~class_head, unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "as?" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, end, settles, ends
 mark semi       = lf_end & class_head, unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "as?" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, unless before "constructor", unless before "@" | "public" | "private" | "internal" | "protected" (simple_identifier | "." | "@")* "constructor", end, settles, ends
 mark semi_close = close_at, before "}", settles, ends
-# A function type's receiver's `.`: the next solid byte is a `(` (no expression has `.(`).
-mask ft_dot     = code & dot & next(back_fill(code & text("("), solid))
 # An annotation's `@` before an `if` or a `when`: back from the `)` before it to the `@`.
 mask ann_go     = kw_start & (text("if") & ~next(w, 2) | text("when") & ~next(w, 4))
 mask ann_tail   = code & text(")") & next(back_fill(ann_go, solid))
@@ -463,35 +451,36 @@ mask ann_expr   = code & at_sign & next(back_fill(ann_tail, code & (at_sign | lf
 # receiver's first token too.
 mark dotted     = recv_at | del_brace
 # A property's accessor: its `get` or `set` at a line's start (or after a visibility word there).
-mark acc        = acc_at
+mark acc        = acc_word, unless before "get" | "set" "." | ":", unless before "get" "(" ~")"
 # A `{` after `)`, `else`, `do`, `try` or `finally`: where a control structure's body goes, a
 # block, not a lambda; after a call's arguments, the call's own lambda (the lean parser's
 # `call`), not another call's. Before the lambda's marks, which hold at the same token.
 mark blk        = tokens after ")" | "else" | "do" | "try" | "finally" | "->" "{"
-# A lambda's parameters, before its `->`.
-mark lam_params = lam_to_arrow & ~lam_bare_at
+# A lambda's parameters, before its `->` (the lean parser's `lambda_params_end`): from the `{`,
+# the tokens parameters are made of, at least one, then a `->`. A `{` inside them is another
+# lambda's: it ends the run, so an inner lambda's `->` does not mark the outer `{`.
+mark lam_params = tokens "{" simple_identifier | backtick_name | "in" | "," | ":" | "." | "?" | "*" | "@" | "(" | ")" | "[" | "]" | "<" | ">" (simple_identifier | backtick_name | "in" | "," | ":" | "." | "?" | "*" | "@" | "(" | ")" | "[" | "]" | "<" | ">")* "->"
 # A `!` that starts a line before `in` or `is`: a `when` entry's negated test. `named`'s token
 # marks (below) are its other cases.
 mask bang_test  = code & text("!") & prev(fill(lf & code, solid)) & next(text("in") & ~next(w, 2) | text("is") & ~next(w, 2))
 mark named      = bang_test
-# A `<` that opens type arguments in an expression (the lean parser's `type_args_end`): the bytes
-# from it are a type's (words, blanks, `, . ? * @ : < > [ ] & -`) up to a `>` that `(`, `{`, `.`,
-# `?.` or `::` follows. It touches the name before it, as a comparison's `<` seldom does (the lean
+# A `<` that opens type arguments in an expression (the lean parser's `type_args_end`): the tokens
+# from it are a type's (names, `, . ? * @ : -> ( ) [ ] < >`) up to a `>` that `(`, `{`, `.`, `?.`
+# or `::` follows. It touches the name before it, as a comparison's `<` seldom does (the lean
 # parser does not ask: a spaced `f <T>()` is refused, read as a comparison). In a type it opens
 # type arguments or parameters anyway, which take it. Where no rule takes it, the file is refused.
-mask type_byte  = code & (word | ws | text(",") | dot | text("?") | star | at_sign | text(":") | text("<") | text(">") | text("[") | text("]") | text("&") | text("-") | text("(") | text(")"))
-mask gt_ok      = code & text(">") & next(back_fill(code & (text("(") | lbrace | dot | text("?.") | text("::")), solid))
-mask gen_lt     = code & text("<") & ~text("<=") & prev(w) & back_fill(gt_ok, ~type_byte)
-# And a parenthesized type's `(`: after a `:`, before another `(`. One mark (a code holds 16):
-# no type starts with `<`, and no type arguments with `(`.
+# The run is the first such `>`, not the one whose depth closes the `<`, as the lean parser counts.
+mark generic    = code & text("<") & ~text("<=") & prev(w), before "<" (simple_identifier | backtick_name | "in" | "," | "." | "?" | "*" | "@" | ":" | "->" | "(" | ")" | "[" | "]" | "<" | ">")* ">" "(" | "{" | "." | "?." | "::"
+# And a parenthesized type's `(`: after a `:`, before another `(`; and a `suspend` there.
 mask colon_ty   = code & text(":") & ~text("::") & ~prev(text(":")) & ~prev(text("?"))
-mask ptype_at   = code & text("(") & prev(fill(prev(colon_ty), solid)) & next(back_fill(code & text("("), solid))
-# And a function type's receiver's first name (`frecv`), back from its `ft_dot` over names,
-# dots and type arguments without blanks, and a `suspend` after a `:` before a `(`.
-mask ft_run     = back_fill(ft_dot, ~(w | dot | text("<") | text(">")))
-mask frecv      = w & ft_run & ~prev(ft_run)
-mask suspend_ty = code & text("suspend") & ~next(w, 7) & prev(fill(prev(colon_ty), solid)) & next(back_fill(code & text("("), solid), 7)
-mark generic    = gen_lt | ptype_at | frecv | suspend_ty | ann_expr
+mask after_ty   = prev(fill(prev(colon_ty), solid))
+mark generic    = code & text("(") & after_ty, before "(" "("
+mark generic    = code & text("suspend") & ~next(w, 7) & after_ty, before "suspend" "("
+# And a function type's receiver's first name: names, dots and type arguments from it to a `.`
+# before a `(`.
+mark generic    = w & ~prev(w | dot | text("<") | text(">")), before simple_identifier (simple_identifier | "." | "<" | ">")* "." "("
+# And an annotation's `@` before an `if` or a `when`.
+mark generic    = ann_expr
 # A backtick name before `::`: no rule takes it, so the file is refused where it holds. It
 # refuses at every level, tested once a token by its bit: the code holds it (decision 0407).
 mark bt_cref    = tokens backtick_name "::"
