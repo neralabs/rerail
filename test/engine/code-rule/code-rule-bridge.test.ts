@@ -13,9 +13,12 @@ import {
   CodeRuleBridge,
   filesystemClock,
   generatedEditPaths,
+  inputTextEdits,
   isCommandTool,
   ledgerPreimage,
   type SourceObservationCache,
+  type TextEdit,
+  undoTextEdits,
 } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import { MAX_FINISHED_CALLS, ToolCallWindows } from "../../../src/engine/code-rule/tool-call-windows.js";
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
@@ -1887,6 +1890,64 @@ async function withWorktree(root: string, place: string, branch = "other") {
   };
   return { worktree, roots, extra };
 }
+
+const once = (oldString: string, newString: string): TextEdit => ({ oldString, newString, replaceAll: false });
+const everywhere = (oldString: string, newString: string): TextEdit => ({ oldString, newString, replaceAll: true });
+
+describe("the text edits a tool call's input asks for", () => {
+  it("reads an Edit's one edit, made once unless it asks for every place", () => {
+    expect(inputTextEdits({ file_path: "a.py", old_string: "1", new_string: "2" })).toEqual([once("1", "2")]);
+    expect(inputTextEdits({ file_path: "a.py", old_string: "1", new_string: "2", replace_all: true })).toEqual([everywhere("1", "2")]);
+  });
+
+  it("reads a MultiEdit's edits in the order they are made", () => {
+    const input = { file_path: "a.py", edits: [{ old_string: "a", new_string: "b" }, { old_string: "b", new_string: "c", replace_all: true }] };
+    expect(inputTextEdits(input)).toEqual([once("a", "b"), everywhere("b", "c")]);
+  });
+
+  it("reads none from an input that asks for no text edit, or one whose fields are not of their kind", () => {
+    expect(inputTextEdits({ file_path: "a.py", content: "x" })).toBeUndefined();
+    expect(inputTextEdits({ file_path: "a.py", edits: [] })).toBeUndefined();
+    expect(inputTextEdits({ file_path: "a.py", edits: [{ old_string: "a", new_string: "b" }, { old_string: "b" }] })).toBeUndefined();
+    expect(inputTextEdits({ file_path: "a.py", old_string: "1", new_string: 2 })).toBeUndefined();
+    expect(inputTextEdits({ file_path: "a.py", old_string: "1", new_string: "2", replace_all: "yes" })).toBeUndefined();
+    expect(inputTextEdits("a.py")).toBeUndefined();
+    expect(inputTextEdits(null)).toBeUndefined();
+  });
+});
+
+describe("the text a tool call's edits were made on, from the text they left", () => {
+  it("puts an edit's old text back where the text holds its new text once", () => {
+    expect(undoTextEdits("def a():\n    print(1)\n    return 1\n", [once("    return 1", "    print(1)\n    return 1")])).toBe("def a():\n    return 1\n");
+  });
+
+  it("gives none where the text holds the new text more than once, or not at all, as the place is then unknown", () => {
+    expect(undoTextEdits("print(1)\nx\nprint(1)\n", [once("pass", "print(1)")])).toBeUndefined();
+    expect(undoTextEdits("aaa\n", [once("b", "aa")])).toBeUndefined();
+    expect(undoTextEdits("print(3)\n", [once("pass", "print(2)")])).toBeUndefined();
+  });
+
+  it("puts an edit made at every place back at every place, and gives none where the text no longer holds it", () => {
+    expect(undoTextEdits("y = 2\nz = 2\n", [everywhere("1", "2")])).toBe("y = 1\nz = 1\n");
+    expect(undoTextEdits("y = 3\n", [everywhere("1", "2")])).toBeUndefined();
+  });
+
+  it("gives none for an edit that removed its old text, as nothing marks where it was", () => {
+    expect(undoTextEdits("a\nb\n", [once("x\n", "")])).toBeUndefined();
+    expect(undoTextEdits("a\nb\n", [everywhere("x\n", "")])).toBeUndefined();
+  });
+
+  it("undoes a MultiEdit's edits from the last to the first", () => {
+    expect(undoTextEdits("c\n", [once("a", "b"), once("b", "c")])).toBe("a\n");
+    expect(undoTextEdits("b\n", [once("a", "b"), once("x", "y")])).toBeUndefined();
+  });
+
+  it("matches the edit's lines with CRLF in a text with CRLF line breaks, as an editor keeping them writes them", () => {
+    const edit = once("    return 1", "    print(1)\n    return 1");
+    expect(undoTextEdits("def a():\r\n    print(1)\r\n    return 1\r\n", [edit])).toBe("def a():\r\n    return 1\r\n");
+    expect(undoTextEdits("x = 2\r\n", [once("x = 1\ny = 1", "x = 2")])).toBe("x = 1\r\ny = 1\r\n");
+  });
+});
 
 describe("CodeRuleBridge and every worktree of the repository", () => {
   /** Runs `run` as a shell call, then lets the walk of the other worktrees, which the call does not wait for, find it. */

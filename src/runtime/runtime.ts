@@ -1484,8 +1484,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * Begins a tool call on the open evaluator. One answered while the evaluator opens is never begun, but what it writes
    * is the session's own, so it opens only its window (`CodeRuleBridge.unwatchedCall`). One no one waited for as it
    * began (`signal` aborted: its hook gave up, or left it while the daemon did not read) may have run already, so what
-   * its files hold now is no "before": it captures none, and its edit is read against what the session last saw of them,
-   * unless that already holds what it left, then with its "before" unknown (`UNSEEN_START`).
+   * its files hold now is no "before": it captures none, and its edit is read against the text it left with its own text
+   * edits undone where that is exact, else against what the session last saw of the file (`UNSEEN_START`).
    */
   async #beginCall(
     state: RuntimeSessionState,
