@@ -736,7 +736,7 @@ function recommendationLines(input: RecommendedPacksInput, lane: SetupLane): str
     : `Scanned ${repo}. ${count === 1 ? "1 rule pack" : `${count} rule packs`} suggested for what it’s built with:`;
   const connecting = input.agentsFound.length === 0
     ? ["  Will connect to: no coding agents found"]
-    : [`  Will connect to: ${agentNames(input.agentsFound).join(", ")}`, `  Adds ${sigilIn(input.agentsFound)}rerail commands and a status line to each. Connecting is free.`];
+    : [`  Will connect to: ${agentNames(input.agentsFound).join(", ")}`, `  Adds ${sigilIn(input.agentsFound)}rerail commands and a status line to each. Connecting is free.`, "  The commands load Rerail’s skills: instructions your agent follows to write rules and to work out what went wrong."];
   return [
     lane === "terminal" ? bullet(scanned, style) : scanned,
     ...fitLines(input, style),
