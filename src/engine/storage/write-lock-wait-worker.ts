@@ -7,11 +7,7 @@
 import Database from "better-sqlite3";
 import { parentPort, workerData } from "node:worker_threads";
 import { isBusy } from "./sqlite-wal.js";
-import { WRITE_LOCK_FREE, type WriteLockWaitData } from "./write-lock-wait.js";
-
-/** The pauses of SQLite's default busy handler (`sqliteDefaultBusyCallback`), in ms; the last one repeats. */
-const PAUSES_MS = [1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100];
-const LAST_PAUSE_MS = 100;
+import { busyPauseMs, WRITE_LOCK_FREE, type WriteLockWaitData } from "./write-lock-wait.js";
 
 // `waitForWriteLock` starts this thread with a `WriteLockWaitData`.
 const { path, stop } = workerData as WriteLockWaitData;
@@ -35,7 +31,7 @@ try {
       parentPort?.postMessage(WRITE_LOCK_FREE);
       break;
     }
-    Atomics.wait(stop, 0, 0, PAUSES_MS[tries] ?? LAST_PAUSE_MS);
+    Atomics.wait(stop, 0, 0, busyPauseMs(tries));
   }
 } finally {
   database.close();

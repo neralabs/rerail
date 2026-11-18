@@ -1,4 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { deserialize, serialize } from "node:v8";
 import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -9,16 +12,18 @@ import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { isWorktreePack, WORKTREE_PACK_ID, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
-import { flushRecordWrites, openRecordWriter, type RecordWriter } from "../engine/storage/record-writes.js";
+import { flushRecordWrites, openRecordWriter, type RecordWrite, type RecordWriter } from "../engine/storage/record-writes.js";
 import { listRepositoryRules, ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
 import { auditViolations, checkouts, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
+import { SteerReceiptSchema, type SteerReceipt } from "./event-protocol.js";
 import { conflictFooter, type ConflictFooter } from "./merge-assist/notes.js";
 import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
 import { physicalPath, withinCheckout } from "../engine/catalog/checkout-control.js";
+import { lookupCheckout } from "../engine/catalog/repository-registry.js";
 
 /** The events that wait for the session's code-rule evaluator: a tool call, its result and a turn's end. */
 export type CodeRulesPendingBoundary = "call" | "result" | "turn-end";
@@ -284,12 +289,7 @@ export class SqliteSessionStore {
     ruleIds: readonly string[] = [],
     attribution?: SessionAttribution,
   ): void {
-    this.append({
-      sessionId: session.sessionId,
-      eventId: `steering-delivered:${receiptId}`,
-      kind: "steering-delivered",
-      payload: { ruleIds: [...ruleIds] },
-    }, session, attribution);
+    this.append(steerEvent(session, receiptId, ruleIds), session, attribution);
   }
 
   /** Marks the session's history incomplete over a stretch of events its host never delivered. */
@@ -419,6 +419,11 @@ export class SqliteSessionStore {
 }
 
 type EventRow = typeof events.$inferInsert & { eventId: string; payloadJson: string; payloadV8: Buffer };
+
+/** The event a steer's receipt is recorded as: its id is the receipt's, so a receipt recorded twice counts once. */
+function steerEvent(session: AdapterSession, receiptId: string, ruleIds: readonly string[]): SessionEvent {
+  return { sessionId: session.sessionId, eventId: `steering-delivered:${receiptId}`, kind: "steering-delivered", payload: { ruleIds: [...ruleIds] } };
+}
 
 /** The row `event` is stored as, its id and time taken now: a write that waits for the lock is made later. */
 function eventRow(event: SessionEvent): EventRow {
@@ -709,5 +714,126 @@ export function lastObservedEventAt(databasePath: string): number | null {
     return null;
   } finally {
     database?.$client.close();
+  }
+}
+
+/**
+ * The record write of `receipt` in the database at `databasePath`, for a record writer (`openRecordWriter`): its event
+ * (`steerEvent`), and, when a reset removed its session's row, that row put back, crediting the repository of the
+ * checkout the session's folder is in. The file is opened read-only here to find that repository, which checks it is a
+ * database this build can write, as a writable open does, without taking its write lock.
+ */
+export function steerReceiptWrite(databasePath: string, { session, receiptId, ruleIds }: SteerReceipt): RecordWrite {
+  const database = openRerailDatabase(databasePath, { readonly: true });
+  let repositoryId: string | null;
+  try {
+    repositoryId = checkoutRepository(database, session.cwd);
+  } finally {
+    database.$client.close();
+  }
+  const row = eventRow(steerEvent(session, receiptId, ruleIds));
+  const restore = { ...session, repositoryId, startedAt: Date.now(), endedAt: null };
+  return target => insertEvent(target, row, restore);
+}
+
+/** The repository key of the checkout `cwd` is in; null when none is known or the lookup fails. */
+function checkoutRepository(database: RerailDatabase, cwd: string): string | null {
+  try {
+    return lookupCheckout(database, cwd)?.repositoryKey ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/*
+ * The receipts of steers the daemon took from hooks while another process held the database's write lock, kept on
+ * disk until their records are made. The hook that handed one over has ended by then, so a daemon that dies first
+ * (killed, crashed, the machine shut down) would lose it, where the hook used to wait for the lock and record it
+ * itself. One file per receipt in a folder beside the database (`rerail.sqlite-receipts`), named by its id's hash, which
+ * goes once its record is made; the next daemon's start records what is left (`keptReceipts`). A receipt recorded twice
+ * counts once, so a file a removal missed costs one more insert of nothing.
+ */
+
+/** A receipt kept on disk, and the record write that removes its file once queued behind the receipt's own write. */
+export interface KeptReceipt {
+  readonly receipt: SteerReceipt;
+  /**
+   * Removes the receipt's file. A record writer makes writes in the order they were asked for, so queued behind the
+   * receipt's own write it runs only once that one is made. A removal that fails leaves the file for the next start.
+   */
+  readonly forget: RecordWrite;
+}
+
+function keptReceiptsFolder(databasePath: string): string {
+  return `${databasePath}-receipts`;
+}
+
+/** Removes `file`; one a scanner holds on Windows stays, and the next start records it again, which counts once. */
+function forgetFile(file: string): void {
+  try {
+    rmSync(file, { force: true });
+  } catch {
+    // Left for the next start.
+  }
+}
+
+function keptReceipt(file: string, receipt: SteerReceipt): KeptReceipt {
+  return { receipt, forget: () => forgetFile(file) };
+}
+
+/**
+ * Keeps `receipt` in a file beside the database at `databasePath` (0600, in a 0700 folder) before it resolves, off the
+ * calling thread. The file survives the end of this process; it is not flushed to the drive, as the hook that held
+ * the receipt in memory before survived no power loss either.
+ */
+export async function keepReceipt(databasePath: string, receipt: SteerReceipt): Promise<KeptReceipt> {
+  const folder = keptReceiptsFolder(databasePath);
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  const file = join(folder, `${createHash("sha256").update(receipt.receiptId).digest("hex")}.json`);
+  await writeFile(file, JSON.stringify(receipt), { mode: 0o600 });
+  return keptReceipt(file, receipt);
+}
+
+/**
+ * The receipts kept beside the database at `databasePath` whose records were never made: a daemon took them and ended
+ * first. A file read whole that holds no receipt (one whose write the daemon's end cut short, before it answered the
+ * hook, which then recorded the receipt itself) is removed. A file that cannot be read now (another process holds it,
+ * access is refused, no descriptor is free) stays, so the next start reads it again. None when the folder does not
+ * exist, as it does not until a receipt is handed over while the lock is held.
+ */
+export function keptReceipts(databasePath: string): KeptReceipt[] {
+  const folder = keptReceiptsFolder(databasePath);
+  let names: string[];
+  try {
+    names = readdirSync(folder);
+  } catch {
+    return [];
+  }
+  return names.flatMap(name => {
+    const file = join(folder, name);
+    const text = keptText(file);
+    if (text === undefined) return [];
+    const receipt = receiptIn(text);
+    if (receipt !== undefined) return [keptReceipt(file, receipt)];
+    forgetFile(file);
+    return [];
+  });
+}
+
+/** What `file` holds, or undefined when it cannot be read now. */
+function keptText(file: string): string | undefined {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/** The receipt `text` holds, or undefined when it holds none. */
+function receiptIn(text: string): SteerReceipt | undefined {
+  try {
+    return SteerReceiptSchema.parse(JSON.parse(text));
+  } catch {
+    return undefined;
   }
 }

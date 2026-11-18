@@ -20,7 +20,7 @@ import { resolve } from "node:path";
 import Database from "better-sqlite3";
 import { BUSY_TIMEOUT_MS, openSqliteDatabase, type RerailDatabase } from "./database.js";
 import { isBusy } from "./sqlite-wal.js";
-import { waitForWriteLock } from "./write-lock-wait.js";
+import { busyPauseMs, waitForWriteLock } from "./write-lock-wait.js";
 
 const { SqliteError } = Database;
 
@@ -38,6 +38,18 @@ export interface RecordWriter {
    * no effect takes no write lock. `write` checks again itself, since it may be made later.
    */
   writeUnless(unchanged: () => boolean, write: RecordWrite, bytes?: number): void;
+  /**
+   * Makes `write` now and answers true when the write lock is free and no write waits, throwing what it throws;
+   * answers false, keeping nothing, when another connection holds the lock or a write waits: for a caller that has
+   * somewhere else to take the write meanwhile (a hook hands a steer's receipt to the daemon).
+   */
+  writeNow(write: RecordWrite): boolean;
+  /**
+   * `writeNow` tried again at the pauses of SQLite's busy handler, between this thread's turns, never holding it, as a
+   * statement waits for the lock: true once made; false, keeping nothing, once the pauses reach `BUSY_TIMEOUT_MS` or
+   * `signal` aborts first.
+   */
+  writeWhenFree(write: RecordWrite, signal: AbortSignal): Promise<boolean>;
   /** Resolves once no write waits. */
   settled(): Promise<void>;
   /**
@@ -127,6 +139,8 @@ class FileRecordWriter {
         if (this.#waiting.length === 0 && unchanged()) return;
         this.#write(write, bytes);
       },
+      writeNow: write => { open(); return this.#writeNow(write); },
+      writeWhenFree: async (write, signal) => await triedUntilFree(() => { open(); return this.#writeNow(write); }, signal),
       settled: () => this.#whenSettled(),
       close: () => {
         if (closed) return;
@@ -149,8 +163,13 @@ class FileRecordWriter {
   }
 
   #write(write: RecordWrite, bytes: number): void {
-    if (this.#waiting.length === 0 && this.#makeNow(write)) return;
+    if (this.#writeNow(write)) return;
     this.#keep(write, bytes);
+  }
+
+  /** Made now only behind no waiting write, so writes commit in the order they were asked for. */
+  #writeNow(write: RecordWrite): boolean {
+    return this.#waiting.length === 0 && this.#makeNow(write);
   }
 
   /**
@@ -301,6 +320,39 @@ class FileRecordWriter {
       client.pragma("busy_timeout = 0");
     }
   }
+}
+
+/**
+ * `attempt` (true once it took the write lock and did its work) now and then again at the times SQLite's busy handler
+ * tries, as a statement on a connection whose `busy_timeout` is `BUSY_TIMEOUT_MS` does: after each of its pauses, which
+ * sum to that bound, the last one cut to fit. Each pause is a timer, so the thread answers other work between tries,
+ * and each ends at its try's time from the first: a timer that fires late, as Node's do by about a millisecond, and the
+ * work the thread did meanwhile shorten the next pause instead of pushing every later try back.
+ */
+async function triedUntilFree(attempt: () => boolean, signal: AbortSignal): Promise<boolean> {
+  const startedAt = performance.now();
+  for (let tries = 0, due = 0; !signal.aborted; tries += 1) {
+    if (attempt()) return true;
+    if (due >= BUSY_TIMEOUT_MS) return false;
+    due = Math.min(due + busyPauseMs(tries), BUSY_TIMEOUT_MS);
+    if (!await pauseFor(Math.max(0, startedAt + due - performance.now()), signal)) return false;
+  }
+  return false;
+}
+
+/** True once `ms` passed; false at once when `signal` aborts first. */
+function pauseFor(ms: number, signal: AbortSignal): Promise<boolean> {
+  return new Promise(resolve => {
+    const aborted = (): void => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", aborted);
+      resolve(true);
+    }, ms);
+    signal.addEventListener("abort", aborted, { once: true });
+  });
 }
 
 function messageOf(error: unknown): string {
