@@ -2103,63 +2103,6 @@ pub fn drop_repeated_rules(prog: &mut front::Program) -> usize {
     before - prog.rules.len()
 }
 
-/// core.rr's functors only CPython gives, each of a node, and the relations the batches bind them as
-/// (`facts::vtab::syntax::cpython`): `@py_unparse(n)` is the `s` of `cpython_unparse(n, s)`. `@unparse` is decision
-/// 0058's, a tape's text (`rr::lower`, `unparse_of`), not intercepted here.
-const CPYTHON_FUNCTORS: [(&str, &str); 2] = [("py_unparse", crate::code_rule_dsl::facts::core::cpython_relations::UNPARSE), ("ast_dump", crate::code_rule_dsl::facts::core::cpython_relations::AST_DUMP)];
-
-/// Each call of a functor only CPython gives (`CPYTHON_FUNCTORS`) in a rule, lowered to a variable its relation binds
-/// in the rule's body: `v(@sha256(@ast_dump(n))) :- kind(n, "call").` is `v(@sha256(x)) :- kind(n, "call"),
-/// cpython_ast_dump(n, x).` (one variable per functor and argument). Where the node has no value (no `ast` node of its
-/// kind at its span, or CPython raises) the rule has no row, as a functor's undefined value gives none. A call in an
-/// aggregate's atom is refused: its relation would have to be read inside the aggregate.
-fn cpython_functors(prog: &mut front::Program) -> Result<()> {
-    fn lift(t: &mut front::Term, bound: &mut Vec<(&'static str, front::Term, String)>) {
-        let front::Term::Call(f, args) = t else { return };
-        args.iter_mut().for_each(|a| lift(a, bound));
-        let (Some(&(_, rel)), [arg]) = (CPYTHON_FUNCTORS.iter().find(|(g, _)| g == f), args.as_slice()) else { return };
-        let var = match bound.iter().find(|(r, a, _)| *r == rel && a == arg) {
-            Some((_, _, v)) => v.clone(),
-            None => {
-                let v = format!("{rel}_{}", bound.len());
-                bound.push((rel, arg.clone(), v.clone()));
-                v
-            }
-        };
-        *t = front::Term::Var(var.into());
-    }
-    fn calls(t: &front::Term) -> bool {
-        matches!(t, front::Term::Call(f, args) if CPYTHON_FUNCTORS.iter().any(|(g, _)| g == f) || args.iter().any(calls))
-    }
-    let mut used = BTreeSet::new();
-    for rule in &mut prog.rules {
-        let mut bound = Vec::new();
-        for l in &mut rule.body {
-            match l {
-                front::Literal::Atom(a) => a.args.iter_mut().for_each(|t| lift(t, &mut bound)),
-                front::Literal::Cmp { l, r, .. } => {
-                    lift(l, &mut bound);
-                    lift(r, &mut bound);
-                }
-                front::Literal::Agg { atom, .. } if atom.args.iter().any(calls) => {
-                    return Err(Error::Plan(format!("@py_unparse or @ast_dump in an aggregate over {}: bind it to a variable outside the aggregate", atom.rel)));
-                }
-                _ => {}
-            }
-        }
-        rule.head.args.iter_mut().for_each(|t| lift(t, &mut bound));
-        for (rel, arg, var) in bound {
-            used.insert(rel);
-            rule.body.push(front::Literal::Atom(front::Atom { rel: rel.to_owned().into(), args: [arg, front::Term::Var(var.into())].into(), neg: false, gated: false }));
-        }
-    }
-    for rel in used {
-        let cols = crate::code_rule_dsl::facts::core::cpython_relations::columns(rel);
-        prog.decls.entry(rel.to_owned().into()).or_insert_with(|| [(cols[0].to_owned().into(), "node".into()), (cols[1].to_owned().into(), "sym".into())].into());
-    }
-    Ok(())
-}
-
 /// What the converter gives an authored file to read (`logic::convert`, test-only): the scope, the report gate, the
 /// options, and the tape's syntax verdict (`tape_syntax_error(d)`: core.rr's `syntax_error` is the engine's, decision
 /// 0141). Here so the runner, which is not test-only, can tell them from unbound core relations.
@@ -8627,7 +8570,7 @@ fn run_observed(
     let storing = cross_state.as_ref().is_some_and(|(_, found)| !found.misses.is_empty() || cross_mode == cross_memo::Mode::Verify);
     let memo_rels: BTreeSet<String> = cross_plan.as_ref().filter(|_| storing).map(|p| p.memo.keys().cloned().collect()).unwrap_or_default();
     let mut memo_rows: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
-    // `derived`: the relations the part derives, each with its width (`derived_widths`).
+    // `derived`: the relations the part derives, each with its width (`derived_widths_in`).
     let mut collect = |db: &Connection, got: &Outcome, derived: BTreeMap<&str, usize>| -> Result<()> {
         for (rel, width) in derived.into_iter().filter(|(r, _)| memo_rels.contains(*r)) {
             let rows = held_rows(db, got, rel, width)?;
@@ -10532,12 +10475,7 @@ fn constant_counts(tested: Option<&BTreeSet<(usize, i64)>>, source: &dyn crate::
     wanted.into_iter().filter(|((c, _), _)| *c < names.len()).map(|((c, v), n)| (names[c].clone(), v, n)).collect()
 }
 
-/// The relations `p` derives, each with its declared width (`collect`'s).
-fn derived_widths(p: &front::Program) -> BTreeMap<&str, usize> {
-    p.rules.iter().map(|r| (r.head.rel.as_str(), p.decls[r.head.rel.as_str()].len())).collect()
-}
-
-/// `derived_widths` of a version's program, read from its fields.
+/// The relations a version's program derives, each with its declared width (`collect`'s), read from its fields.
 fn derived_widths_in<'v>(f: &super::fields::Fields<'v>) -> BTreeMap<&'v str, usize> {
     f.v.rules().map(|r| f.v.rel_name(r.head().rel())).map(|rel| (rel, f.width(rel))).collect()
 }
@@ -11137,25 +11075,6 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
         }
     }
     Ok(CorpusFiles { by_label, text })
-}
-
-/// Makes the base relations `prog` reads and does not derive inputs (`select::input_columns` names a base relation).
-fn base_inputs(prog: &mut front::Program) {
-    let read: Vec<String> = {
-        let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).chain(prog.facts.keys().map(String::as_str)).collect();
-        prog.rules
-            .iter()
-            .flat_map(|r| r.body.iter().filter_map(front::Literal::atom))
-            .map(|a| a.rel.as_str())
-            .filter(|rel| !derived.contains(rel) && prog.decls.contains_key(*rel) && super::super::sql::select::input_columns(rel).is_some())
-            .map(str::to_owned)
-            .collect()
-    };
-    for rel in read {
-        if !prog.inputs.contains(&rel) {
-            prog.inputs.push(rel);
-        }
-    }
 }
 
 /// A relation's column statistics (`syntax::statistics`: rows, ndv, sq, sqd) measured over `first` rows, scaled to

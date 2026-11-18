@@ -350,6 +350,23 @@ Progress (2026-11-18):
   image is that version with its `module_*` rows (no header decoded). The lowerer's header is a builder written
   through the fields API, and the walk writes its rules onto it. Left of step 5: each clause still builds a
   `front::Rule` that the builder encodes (`Builder::add`), and the walk reads `rr/from_tape.rs`'s statements.
+- **Step 6's order** (the user, 2026-11-18: step 6 first, then every intermediate form goes). Bottom-up, each
+  stage committed when its tests pass under Relax:
+  1. *The run's trees.* Policy combination (`corpus::combine*`, `scoping::guard`, `hiding`, `merge_and_drop_repeats`,
+     `drop_repeated_rules`) on versions; the dialect runs (`run_dialects*`); phases', the bridge's and `tools`'
+     handed trees (`handed_version` goes); `waves` (`policies`, `schedule`, `matches`, its `magic_sets`); typing's
+     split (`file_local`, `split_memo`, `export_demand`, `shape`); the SQL executor's and the vtab's readers; the
+     memo (`corpus/memo.rs`).
+  2. *The tree twins.* `simplify.rs`, `magic.rs`, `reach_form.rs`, `strings`' tree passes, `matchers`', `front`'s
+     passes (`prune`, `strata`, `declared`, `subsume_requests`, `finish`) and `lower::sources_on_request`: each one's
+     tests ported to its version pass, then the tree form deleted.
+  3. *The converters.* `json_rules/*`, `front/yaml.rs`, `convert.rs`, `program_text.rs` write through the builder.
+  4. *Tests* that build or read a `front::Program` load text (`Part::load`) or write through the builder, and
+     compare `show_rule` lines.
+  5. *The forms.* `front::Program`, `program_facts`' encoding of it (`Builder::of_program`, `set_program_header`,
+     `about_of`), the decoder (`program_image::Tree`, `Version::program`), `lower::Tree`; §6's guard.
+  6. *The intermediate forms* (step 7, the user's): `front::Rule`, `Literal`, `Atom`, `Term`; `rr/from_tape.rs`'s
+     statements. The clause lowering writes through the builder from the tape, form by form (§5).
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 

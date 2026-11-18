@@ -2736,7 +2736,8 @@ pub fn decide(report: &Report) {
 
 // ---- before the prune: the program as the batches bind it ----
 
-/// `corpus::base_inputs`: the base relations the program reads and does not derive are inputs.
+/// The base relations the program reads and does not derive are inputs (`select::input_columns` names a base
+/// relation).
 #[derive(Default)]
 pub struct BaseInputs;
 
@@ -2764,10 +2765,16 @@ impl ProgramPass for BaseInputs {
     }
 }
 
-/// `corpus::CPYTHON_FUNCTORS`.
+/// core.rr's functors only CPython gives, each of a node, and the relations the batches bind them as
+/// (`facts::vtab::syntax::cpython`): `@py_unparse(n)` is the `s` of `cpython_unparse(n, s)`. `@unparse` is decision
+/// 0058's, a tape's text (`rr::lower`, `unparse_of`), not intercepted here.
 const CPYTHON_FUNCTORS: [(&str, &str); 2] = [("py_unparse", crate::code_rule_dsl::facts::core::cpython_relations::UNPARSE), ("ast_dump", crate::code_rule_dsl::facts::core::cpython_relations::AST_DUMP)];
 
-/// `corpus::cpython_functors`: each call of a functor only CPython gives, a variable its relation binds in the body.
+/// Each call of a functor only CPython gives (`CPYTHON_FUNCTORS`) in a rule, lowered to a variable its relation binds
+/// in the rule's body: `v(@sha256(@ast_dump(n))) :- kind(n, "call").` is `v(@sha256(x)) :- kind(n, "call"),
+/// cpython_ast_dump(n, x).` (one variable per functor and argument). Where the node has no value (no `ast` node of its
+/// kind at its span, or CPython raises) the rule has no row, as a functor's undefined value gives none. A call in an
+/// aggregate's atom is refused: its relation would have to be read inside the aggregate.
 #[derive(Default)]
 pub struct CpythonFunctors;
 
