@@ -160,6 +160,22 @@ describe("the OS lock", () => {
     expect({ taken: free.value !== null, refused: held.value }).toEqual({ taken: true, refused: null });
   });
 
+  // Windows queues a waiting take's request in the kernel before the call returns and grants it as the holder lets go.
+  // Linux and macOS wake a waiting take, which then takes the lock, so a try can come first there.
+  it.runIf(process.platform === "win32")("hands a waiting take the lock as its holder lets go, before a handle that only tries", async () => {
+    const path = join(await temporaryHome(), "work.lock");
+    const native = loadNativeBinding();
+    const holder = native.tryLockExclusive(path);
+    const waiting = native.lockExclusive(path, 60_000);
+    holder?.release();
+    const between = native.tryLockExclusive(path);
+    between?.release();
+    const handed = await waiting;
+    handed?.release();
+
+    expect({ held: holder !== null, between: between !== null, handed: handed !== null }).toEqual({ held: true, between: false, handed: true });
+  });
+
   it("names the holder when the lock is still held at the end of the wait", async () => {
     const home = await temporaryHome();
 
