@@ -171,6 +171,17 @@ into notes once the queue is done).
     listed switch must be read in combining, preparing or what hangs off the prepared key (`run_observed`,
     `facts/vtab/syntax.rs`). Verified live under Relax (9/9) and under cargo.
 
+  - *Review 6* (0d55e852d; by me, 2026-11-17): (1) the module, program and linked-library images (`rr.rs`
+    `module_key`, `program_key`, `linked_key`, decision 0246 §6) were keyed by text, engine and scope alone, yet the
+    lowering they store reads `RERAIL_NODE_SOURCES` (`sources_on_request`), `RERAIL_ORDER_RAW` and
+    `RERAIL_NODE_IDS` (`front::finish`'s `order_nodes`): a run under another value read the image the default had
+    stored, so keying the combined program (`texts_digest`) did not reach it. Fixed: the three keys hold each set
+    `COMBINING` switch (`rr::switched`); an unset switch keeps every key, the engine's shipped bundle (0264) with it.
+    Test `rr::key_tests::an_image_lowered_under_a_lowering_switch_is_keyed_apart` (logic crate). Checked, no
+    finding: `RERAIL_INLINE`/`_ONLY` key the plan choices (`choices.rs` 66); `combined::plan` hashes every
+    `COMBINING` switch (the rule-file entries, 0275, look up under it); the shipped bundle is made per engine build,
+    so its plan follows the switch list; the moved switches still reach every prepared key through the combined
+    program's.
 ### Q3. No duplicate widened copies; the dropping test strict again
 
 - **Keep**: 0174's widened copies where they serve a reader; the user's "Prune knows requests" (gated prune);
@@ -246,6 +257,16 @@ into notes once the queue is done).
     name and the new test hold: under the suffix rule `same_q` would name the class and `out` read it, which the
     test refuses. Verified live under Relax (9/9) and under cargo.
 
+  - *Review 6* (4dbc395b2, the request's copy merged; by me, 2026-11-17): (1) the version's `congruence`
+    (preparation/merge.rs) had no request guard: `rr_token_req` and the like could merge into any equal relation and
+    be renamed, though the answer reads them by name, and the tree's (`simplify::fixed`, `request`) keeps them apart
+    (the debug build's tree-against-version digest would differ); (2) merging a request's copy into the request
+    dropped the copy's record, so the copy's readers, now reading the request, were in no gate of its rules.
+    Fixed: both sides let a request join only a class with its own widened copies (the rest of the class stays a
+    class); each of the request's rules takes the readers of the copy's equal rule (by `canonical_rule`, the version
+    by its templates), before the copy's rules and rows go; the version's rows are written in the tree's order. Test
+    `a_request_merges_with_its_own_copy_only` (an equal `other` stays apart; the version is the tree's, record and
+    digest).
 ### Q4. The `.rdl` comparison checks the on-request step independently
 
 - **Keep**: the `.rdl` ↔ `.rr` comparison as an independent check of lowering, 0174's requests.
@@ -390,6 +411,10 @@ data-layer-eager-resolve fails (rc 1), on 50 sampled data-layer files.
   - The Native-and-GPU-strata merge (645070bce) takes its generator-made mounts (`tools/cratify/mounts.py`): the
     engine's library and test builds compile with no warning but the linker's `__eh_frame` note.
 
+  - *Verified* (2026-11-17, at 4dbc395b2 plus the Q2/Q3 review-6 fixes): `cargo build --profile profiling -p
+    rerail-engine --bin rerail-engine` on the M3 prints no warning and no error. Done when holds. Found beside it:
+    the library built with `test-hooks` alone (`cargo check --lib --features test-hooks`, AGENTS.md's CLI feature
+    set) lists 90 warnings, all in the generated mounts (`native/src/code_rule_dsl/mod.rs`): Q51.
 ### Q14. Plan-time switches and the plan cache
 
 (Found in Q2's review 4.) `keeps::choose` (what each derived relation keeps, stored or inlined) runs in
@@ -1285,6 +1310,21 @@ are the same.
   build asserts the record holds an entry a request rule where the image is made. Tests: the family (8), the
   targeted set (548), `the_request_record_follows_the_preparation_steps` (logic crate), the prune case in
   `a_request_is_kept_for_a_gone_reader_and_for_a_readers_copy`.
+
+### Q51. The engine's library built with `test-hooks` alone warns in the generated mounts
+
+Seen 2026-11-17 (`cargo check --lib --features test-hooks`, the CLI's feature set): 90 warnings, every one in
+`native/src/code_rule_dsl/mod.rs` (tools/cratify/mounts.py's mounts). Two kinds: a facade's glob re-export under
+`any(test, feature = "test-hooks")` that only `cfg(test)` code reads (`blade::forte::tree::*` at 9, `calls::python`
+at 84, about 50 more), and a `#[cfg_attr(any(test, feature = "test-hooks"), path = …)]` on an inline module whose one
+file module is `#[cfg(test)] mod tests` (4, 60, 440, about 40 more). 65589d40c made this build clean; the mounts
+regenerated since keep the wider condition. The profiling build has none (Q13).
+
+- **Keep**: every build's mounts (tests, CLI, profiling, wasm) compile; the engine-hosted tests read the facades.
+- **Done when**: the generator gives each re-export and `#[path]` the condition of what reads it (`dir_attr`'s union,
+  apply.py's test-hooks rule), the mounts are regenerated, and the `test-hooks` library and the test build list no
+  warning.
+- **Record**: —
 
 ## Questions for the user
 

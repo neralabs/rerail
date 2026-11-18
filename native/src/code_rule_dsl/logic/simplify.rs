@@ -2163,6 +2163,28 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
         let args: Vec<Term> = (0..width).map(|i| Term::Var(format!("c{i}").into())).collect();
         copies.push(Rule { head: Atom { rel: from.clone().into(), args: args.clone().into(), neg: false, gated: false }, body: [Literal::Atom(Atom { rel: to.clone().into(), args: args.into(), neg: false, gated: false })].into() });
     }
+    // A request's copy merged into it (`congruence`): the copy's rules are the request's, so each of the request's
+    // serves the readers of the copy's equal rule too (decision 0331), before the copy's rules and record go.
+    let label = |r: &str| crate::code_rule_dsl::logic::front::Name::new(rename.get(r).map_or(r, String::as_str));
+    for (from, to) in &rename {
+        let (Some(copy), true) = (prog.asked_by.get(from.as_str()), prog.asked_by.contains_key(to.as_str())) else { continue };
+        let canon = |rel: &str| prog.rules.iter().filter(|r| r.head.rel == rel).map(|r| canonical_rule(r, &label)).collect::<Vec<String>>();
+        let (theirs, ours) = (canon(from), canon(to));
+        if theirs.len() != copy.len() {
+            continue;
+        }
+        let mut add = vec![BTreeSet::new(); ours.len()];
+        for (t, by) in theirs.iter().zip(copy) {
+            if let Some(j) = ours.iter().position(|o| o == t) {
+                add[j].extend(by.iter().cloned());
+            }
+        }
+        if let Some(by) = prog.asked_by.get_mut(to.as_str()) {
+            for (b, a) in by.iter_mut().zip(add) {
+                b.extend(a);
+            }
+        }
+    }
     prog.rules.retain(|r| !rename.contains_key(r.head.rel.as_str()) || firsts.contains(r.head.rel.as_str()));
     let to = |rel: &mut crate::code_rule_dsl::logic::front::Name| {
         if let Some(t) = rename.get(rel.as_str()) {
