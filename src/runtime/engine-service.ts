@@ -18,6 +18,7 @@ import {
 } from "./event-protocol.js";
 import { defaultRerailDatabasePath, failWhileWriteLocked, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { isBusy } from "../engine/storage/sqlite-wal.js";
+import { waitForWriteLock } from "../engine/storage/write-lock-wait.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
 import { isNamedPipe } from "./engine-pipe.js";
@@ -87,12 +88,6 @@ export const IDLE_SESSION_MS = 30 * 60_000;
 const OWING_SESSION_IDLE_MS = 24 * 60 * 60_000;
 /** How often the engine service looks for idle sessions. */
 const IDLE_SWEEP_MS = 60_000;
-/**
- * How soon a quiet session's open for a scan is tried again after it met another process's write lock: as often as an
- * open session's control timer looks for its scans.
- */
-const RESUME_RETRY_MS = 250;
-
 const ConfigurationSchema = z
   .object({
     storageRoot: z.string().min(1),
@@ -248,8 +243,8 @@ interface EngineRoutingState {
   runtimeOptions: Map<string, RerailRuntimeOptions>;
   /** The sessions the idle close suspended, by session id, until a runtime opens one again or the service closes. */
   suspended: Map<string, SuspendedEntry>;
-  /** The timer of each suspended session whose open for a scan met another process's write lock (`retryResume`). */
-  resumeRetries: Map<string, NodeJS.Timeout>;
+  /** The wait of each suspended session whose open for a scan met another process's write lock (`retryResume`). */
+  resumeRetries: Map<string, AbortController>;
   /**
    * The lock the service holds for its life beside its own database (`holdOwnerLock`), which the owner rows of its
    * runtimes over that database name (`ownerLockFor`); none where it could take none.
@@ -619,18 +614,20 @@ async function resumeSuspended(state: EngineRoutingState, sessionId: string, now
 }
 
 /**
- * Opens `sessionId` again (`resumeSuspended`) in `RESUME_RETRY_MS`, once however often it is asked meanwhile: its open
- * met another process's write lock. A session no longer suspended by then is left alone; the service's close drops the
- * timer.
+ * Opens `sessionId` again (`resumeSuspended`) once the write lock its open met is given back (`waitForWriteLock`, on a
+ * worker thread), once however often it is asked meanwhile. A session no longer suspended by then is left alone; the
+ * service's close stops the wait. A wait that fails fails the session's queued scans, saying why, as a failed open does.
  */
 function retryResume(state: EngineRoutingState, sessionId: string, now: () => number): void {
-  if (state.resumeRetries.has(sessionId)) return;
-  const timer = setTimeout(() => {
-    state.resumeRetries.delete(sessionId);
-    void resumeSuspended(state, sessionId, now);
-  }, RESUME_RETRY_MS);
-  timer.unref();
-  state.resumeRetries.set(sessionId, timer);
+  const entry = state.suspended.get(sessionId);
+  if (entry === undefined || state.resumeRetries.has(sessionId)) return;
+  const wait = new AbortController();
+  state.resumeRetries.set(sessionId, wait);
+  const done = (): boolean => state.resumeRetries.get(sessionId) === wait && state.resumeRetries.delete(sessionId);
+  waitForWriteLock(entry.suspension.databasePath, wait.signal).then(
+    free => { if (done() && free) void resumeSuspended(state, sessionId, now); },
+    (error: unknown) => { if (done()) failScans(entry.suspension, error instanceof Error ? error.message : String(error)); },
+  );
 }
 
 /**
@@ -1084,7 +1081,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     resumeSession: sessionId => resumeSuspended(routing, sessionId, options.now ?? Date.now),
     async close() {
       clearInterval(idleSweep);
-      for (const timer of routing.resumeRetries.values()) clearTimeout(timer);
+      for (const wait of routing.resumeRetries.values()) wait.abort();
       routing.resumeRetries.clear();
       try {
         // Every hook whose request has arrived gets its answer, with the block or steer in it, and its event is recorded,

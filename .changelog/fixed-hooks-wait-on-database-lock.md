@@ -1,0 +1,1 @@
+Hook answers no longer wait for the daemon's records while another Rerail process, such as `rerail reset` or `rerail scrub`, holds the database: the daemon writes the session's events and checks once the database is free. Before, each record held every hook up to 5 seconds and was lost when that wait ran out.
