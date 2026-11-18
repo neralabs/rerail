@@ -50,7 +50,7 @@ const NOT_CACHES: &[&str] = &[
 /// such rows as one image in a pack (`memo_entries`, `memo_packs`: decision 0240 §4, which they replace the memo's
 /// frames for). A cache's rows are kept here as any relation's are, never in a table of their own.
 const RELATIONS: &[&str] = &[
-    "frames", "frame_spaces", "frame_confirmed", "frame_used", "frame_part_used", "frame_program_used", "memo_entries",
+    "frames", "facts_blocks", "frame_spaces", "frame_confirmed", "frame_used", "frame_part_used", "frame_program_used", "memo_entries",
     "memo_packs", "frame_segments",
 ];
 

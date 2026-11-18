@@ -1254,7 +1254,7 @@ mod tests {
         let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
         let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
         let mut p = Pipeline::new("test", v);
-        p.program(&mut super::Hide { bound: 1 << 30 });
+        p.program(&mut super::Hide::new(1 << 30));
         let (out, _) = p.finish().unwrap();
         crate::code_rule_dsl::logic::plan::corpus::hiding::hide(&mut tree, 1 << 30);
         let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();

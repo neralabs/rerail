@@ -4492,3 +4492,15 @@ native join it falls back to the planner's whole-rule order.
 - **Next**: the writer opens only to append, and each warm run appended one atom. Compare a warm run that appends
   none on the same store. `vmmap` and `footprint` cannot attach over the farm's ssh, so take the footprint from
   inside the process (`task_info(TASK_VM_INFO)`) before and after the append.
+
+### Q215. `rerail-logic`'s test target did not compile, so its table and map guards had stopped checking
+
+- **Found** (2026-11-18, 0401 step 6): `cargo test -p rerail-logic --lib` failed to compile. `lanes::mark_at` built
+  a `Mark` of 2 fields, where it has 4. A test in `hide.rs` built `Hide` without `kept`. Both are fixed in the
+  0401 step 6 commit. With the target compiling again, three guards fail on tables and maps no list names:
+  - `every_table_is_facts_or_listed`: `frame_segments`, `guest_keys`, `object_segments`, `observed_changes`;
+  - `every_stored_table_is_a_relations_the_stores_own_or_a_cache_not_yet_moved`: `guest_keys`, `observed_changes`;
+  - `every_kept_map_is_state_or_listed`: `lanes.rs OPEN`, `setfix/device.rs OWN_TEXTS`, `keptstats.rs`
+    `COUNTING`, `KEPT_DOCS` and `KEPT_ROWS`, and more.
+- **Next**: classify each by its decision (0103, 0104), or move it where the guard says. A table or map that is a
+  cache is to be rules, not a list entry ([[caches-are-ordinary-rules]]).

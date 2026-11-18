@@ -462,6 +462,18 @@ CREATE TABLE IF NOT EXISTS atom_blocks (
     tag INTEGER NOT NULL
 ) STRICT;
 
+-- A space's kept facts (decision 0401 F2): a base block and one cumulative delta in
+-- `<store>.facts/<space>/`, each with its maker's tag (a block not its row's is refused). Replaced
+-- in the transaction that commits a run's writes. Additive: an older binary reads the frames.
+CREATE TABLE IF NOT EXISTS facts_blocks (
+    space BLOB PRIMARY KEY CHECK(length(space) = 32),
+    base TEXT,
+    base_tag INTEGER,
+    delta TEXT,
+    delta_tag INTEGER,
+    CHECK((base IS NULL) = (base_tag IS NULL) AND (delta IS NULL) = (delta_tag IS NULL) AND (delta IS NULL OR base IS NOT NULL))
+) STRICT;
+
 -- The derivation graph (derivation.rs): fact names (atoms) bound to digests, and each
 -- derivation's inputs with the digest it read. A derivation's output is a name too, so an
 -- unchanged output rebinds nothing (early cutoff). Additive: older binaries never read these tables.

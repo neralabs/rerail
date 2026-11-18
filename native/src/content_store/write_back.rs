@@ -106,6 +106,8 @@ pub(super) enum Kind {
     Frames(Box<super::frames::FramesWrite>),
     /// A space's memo entries in their segments (`queue_memo_segments`).
     Memo(Box<super::frames::memo_pack::MemoWrite>),
+    /// A space's next kept block (`queue_kept`, decision 0401 F6).
+    Kept(Box<super::kept_facts::KeptWrite>),
     /// Sources and tapes gathered into segments, or each in its own rows where no segment could be placed.
     Objects(Box<super::object_segments::ObjectsWrite>),
     /// The pending atoms; `queued` clears the flag that keeps a second flush from being queued meanwhile.
@@ -136,6 +138,7 @@ impl Work {
             Kind::Record { text, bytes } => super::record::apply(store, text, bytes),
             Kind::Frames(w) => w.run(store),
             Kind::Memo(w) => w.run(store),
+            Kind::Kept(w) => w.run(store),
             Kind::Objects(w) => w.run(store),
             Kind::Atoms { queued } => {
                 if *queued {

@@ -173,6 +173,11 @@ impl KeptFacts {
         p >= base && p < base + self.block.reserved()
     }
 
+    /// The keys this delta records as gone (none in a base).
+    pub fn gone_keys(&self) -> impl Iterator<Item = FactKey<'_>> + '_ {
+        self.entries().iter().filter(|e| e.gone != 0).map(move |e| self.key_of(e))
+    }
+
     fn entries(&self) -> &[KeptEntry] {
         self.root().entries.as_slice()
     }

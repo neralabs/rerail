@@ -82,7 +82,7 @@ struct Known {
 }
 
 /// A new block's tag: no other block's, in practice.
-fn new_tag() -> u64 {
+pub(crate) fn new_tag() -> u64 {
     use std::hash::BuildHasher as _;
     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     std::collections::hash_map::RandomState::new().hash_one((at, std::process::id()))
@@ -362,7 +362,7 @@ fn sweep(dir: &Path, rows: &[Row]) {
 }
 
 /// The directory made private to its user, as the store's other directories are.
-fn private_dir(dir: &Path) -> std::io::Result<()> {
+pub(crate) fn private_dir(dir: &Path) -> std::io::Result<()> {
     if dir.is_dir() {
         return Ok(());
     }
@@ -374,7 +374,7 @@ fn private_dir(dir: &Path) -> std::io::Result<()> {
 }
 
 /// A new file's name on the disk before the commit that names it.
-fn sync_dir(dir: &Path) -> std::io::Result<()> {
+pub(crate) fn sync_dir(dir: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         std::fs::File::open(dir)?.sync_all()
@@ -407,7 +407,7 @@ pub fn copy_blocks(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 /// `to`, a clone of `from` where the file system makes one (APFS), else a copy.
-fn clone_file(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(crate) fn clone_file(from: &Path, to: &Path) -> std::io::Result<()> {
     #[cfg(target_vendor = "apple")]
     {
         use std::os::unix::ffi::OsStrExt as _;

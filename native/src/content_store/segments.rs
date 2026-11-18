@@ -75,7 +75,7 @@ fn private_dir(dir: &Path) -> std::io::Result<()> {
 /// beside its file, as the store's disk budget counts them.
 pub(super) fn segment_bytes(database: &Path) -> u64 {
     let mut bytes = 0;
-    for suffix in [".memo", ".frames", ".objects", ".atoms"] {
+    for suffix in [".memo", ".frames", ".objects", ".atoms", ".facts"] {
         let mut dir = database.as_os_str().to_owned();
         dir.push(suffix);
         let Ok(entries) = std::fs::read_dir(PathBuf::from(dir)) else { continue };
