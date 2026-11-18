@@ -6,7 +6,7 @@ import { git } from "../../support/merge-assist/git.js";
 import { FakeGithub, mergeAssistWorkspaces, type Workspace } from "../../support/merge-assist/workspace.js";
 
 // Every process Rerail starts goes through this module: the test stops the service as a pass starts a given Git read,
-// and sees every process started after.
+// and sees every Git process started after. On Windows the stop ends a running Git with taskkill, which is no Git read.
 vi.mock("node:child_process", { spy: true });
 
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
@@ -46,24 +46,29 @@ function pullOf(sha: string, index: number): PullRequestSummary {
 /** A process the code under test started, as its command line. */
 const commandLine = (args: readonly unknown[]): string => [args[0], ...(Array.isArray(args[1]) ? args[1] : [])].join(" ");
 
+/** Whether a process started with these arguments is Git. */
+const isGit = (args: readonly unknown[]): boolean => /(?:^|[\\/])git(?:\.exe)?$/iu.test(String(args[0]));
+
 const { spawn: actualSpawn } = await vi.importActual<typeof import("node:child_process")>("node:child_process");
 
 /**
  * Starts a session's scan of the workspace's checkout and stops the service as the scan starts its first Git read
- * whose arguments hold `at`. Answers, once the stop and the scan are over, the processes the scan started that still
+ * whose arguments hold `at`. Answers, once the stop and the scan are over, the Git processes the scan started that still
  * ran when the stop resolved, and those started from the stop on.
  */
 async function stopDuringScan(ws: Workspace, github: GithubClient, at: string): Promise<{ runningAtStop: string[]; startedAfter: string[] }> {
   const service = ws.service({ github });
-  const children: Array<{ line: string; child: ChildProcess }> = [];
+  const gits: Array<{ line: string; child: ChildProcess }> = [];
   const startedAfter: string[] = [];
   const stopping = Promise.withResolvers<Promise<void>>();
   let stopped = false;
   vi.mocked(spawn).mockImplementation((...args: Parameters<typeof spawn>) => {
     const line = commandLine(args);
-    if (stopped) startedAfter.push(line);
     const child = actualSpawn(...args);
-    children.push({ line, child });
+    if (isGit(args)) {
+      if (stopped) startedAfter.push(line);
+      gits.push({ line, child });
+    }
     if (!stopped && line.includes(at)) {
       stopped = true;
       stopping.resolve(service.stop());
@@ -73,7 +78,7 @@ async function stopDuringScan(ws: Workspace, github: GithubClient, at: string): 
   try {
     const scan = service.openSession(ws.repo, "claude-code", "session-1");
     await (await stopping.promise);
-    const runningAtStop = children.filter(({ child }) => child.exitCode === null && child.signalCode === null).map(({ line }) => line);
+    const runningAtStop = gits.filter(({ child }) => child.exitCode === null && child.signalCode === null).map(({ line }) => line);
     await scan;
     return { runningAtStop, startedAfter };
   } finally {
