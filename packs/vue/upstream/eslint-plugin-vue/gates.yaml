@@ -61,7 +61,7 @@ rules:
   "vue/no-mutating-props":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
-    repetition_exempt: "each step is a separate lookup on the way from a mutated name, in the template or the script, to the props declaration it names, such as the name, the props variable and the defineProps callee. Two steps return to a node another lookup already reached from a different side, the withDefaults call around defineProps and the file's one program root, and none repeats another lookup's question"
+    repetition_exempt: "each step is a separate lookup on the way from a mutated name, in the template or the script, to the props declaration it names, such as the name, the props variable and the defineProps callee. Some steps land on a node an earlier step already reached, from a different side and with a different question: the withDefaults call around defineProps and that call's arguments, reached once going down from the props variable and once from defineProps checking its wrapper, and the file's one program root, which all three steps of the program run land on"
   "vue/no-ref-as-operand":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
