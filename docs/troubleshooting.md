@@ -454,7 +454,9 @@ failed, the coding agent and its version, the Rerail version and the reason, suc
 (the daemon was down; the next hook starts it), `the Rerail daemon (pid …) is running but did not answer within 12 s`
 (it was busy, for example opening a large checkout, and the hook could not leave the event for it: the daemon is of an
 older version, or could not watch `untaken-events`; events are recorded again once it answers), `the Rerail daemon
-(pid …) is running but not reading, and 256 events already wait for it, the most Rerail keeps` (see below),
+(pid …) is running but not reading, and 256 events already wait for it, the most Rerail keeps` (see below), `… and
+the event is larger than the 1 MiB one event may hold` (a tool call that large, which a daemon that reads refuses
+too), `… and the event could not be left for it` with the error that kept it out of `untaken-events`,
 `the Rerail daemon (pid …) refused the access capability in daemon.json` (`daemon.json` was edited or written by
 another daemon; run `rerail daemon stop`, then `rerail daemon start`) or a payload field the coding agent sent in a
 shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in the Rerail home; past 256 KB one hook
@@ -476,8 +478,10 @@ event in `untaken-events` in the Rerail home and answers, and while such an even
 its own behind it at once without asking the daemon. A session's start still waits. As soon as the daemon reads again
 it checks those events as it checks any event, in the order their hooks met them and before any later event; what a
 check finds reaches the agent with the session's next answer, not with the hook that left the event. A tool's output
-is not kept with them. The folder keeps at most 256 events and 16 MB, so what a daemon that reads again has to check
-is bounded; past that a hook's event is lost and the line above counts it. While events wait, `rerail status` says
+is not kept with them. The folder keeps at most 256 events and 16 MiB, so what a daemon that reads again has to check
+is bounded; past that a hook's event is lost and the line above counts it. An entry there the daemon cannot read (a
+folder under an event's name, a file another user or program left, one another program holds open) counts once as
+an event it could not check, and is removed where it can be. While events wait, `rerail status` says
 `Hooks: N hook events wait in untaken-events for the Rerail daemon, which has not read since <time>`; once the daemon
 has checked them it says how many it checked late, and how many it could not check. In Cursor, prompts and answers
 read from the transcript stay unread until the next hook the daemon answers, which checks them.
