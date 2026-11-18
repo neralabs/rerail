@@ -221,12 +221,14 @@ describe("the look for a kept runtime's removed checkout", () => {
         return new Promise<boolean>(() => undefined);
       },
     });
-    for (const key of ["a", "b", "c"]) runtimes.left(key);
-    room.short = true;
+    runtimes.left("a");
+    runtimes.left("b");
     clock.now += 15 * MINUTE;
+    runtimes.left("c");
+    room.short = true;
     runtimes.sweep();
     runtimes.sweep();
-    await vi.waitFor(() => expect(closed).toEqual(["a", "b", "c"]));
+    await vi.waitFor(() => expect(closed).toEqual(["a", "b"]));
     expect(looks).toBe(1);
   });
 

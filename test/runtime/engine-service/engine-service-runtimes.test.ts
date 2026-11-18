@@ -11,6 +11,7 @@ import {
   type CodeRuleAuditor, type RuleSteerDelivery,
 } from "../../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
+import { KeptRuntimes } from "../../../src/runtime/memory/kept-runtimes.js";
 import { RerailRuntime } from "../../../src/runtime/runtime.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { setUpTestRepository, type TestRepositoryRules } from "../../support/repository-rules.js";
@@ -984,25 +985,32 @@ describe("the engine service's idle close", () => {
     expect(service.openRuntimes()).toBe(0);
   });
 
-  // A quiet session's end opens it again in its checkout's runtime and notes no use of it. The end's hold on the runtime
-  // ended as its work began, so the runtime read as kept while the end still ran in it, and a relief closed it under the
-  // end.
+  // A quiet session's end opens it again in its checkout's runtime to close it, and notes no use of the runtime. The
+  // end's hold on the runtime ended as its work began, so the runtime read as kept while the end still ran in it, and a
+  // relief closed it under the end.
   it("writes a quiet session's end and closes nothing under it while the daemon is short of room", async () => {
-    const gate = Promise.withResolvers<void>();
-    const { create, reopened } = recordingAuditor({ reopening: gate.promise });
-    const { clock, service, session, send, start, ended, live } = await idleService({ createAuditor: create });
+    const hold = { on: false, entered: Promise.withResolvers<void>(), released: Promise.withResolvers<void>() };
+    const { clock, service, session, send, start, ended, live } = await idleService({
+      beforeSessionPublish: async () => {
+        if (!hold.on) return;
+        hold.on = false;
+        hold.entered.resolve();
+        await hold.released.promise;
+      },
+    });
     await start("a");
     clock.now += 60_000;
     await service.closeIdleSessions();
     expect(service.openRuntimes()).toBe(0);
     const disposed = vi.spyOn(RerailRuntime.prototype, "dispose");
     try {
+      hold.on = true;
       const ending = send({ kind: "session-end", eventId: "a:end", sessionId: "a", session: session("a") });
-      await reopened;
+      await hold.entered.promise;
       // The heap watch's relief while the end opens the session: it closes every runtime no session uses.
       const relief = service.closeUnusedRuntimes();
       expect(disposed).not.toHaveBeenCalled();
-      gate.resolve();
+      hold.released.resolve();
       await Promise.all([ending, relief]);
       expect(disposed).not.toHaveBeenCalled();
       expect(ended("a")).not.toBeNull();
@@ -1559,16 +1567,24 @@ describe("the engine service's idle close", () => {
 
   it("looks for quiet sessions every minute on its own", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const left = vi.spyOn(KeptRuntimes.prototype, "left");
     try {
       const { second, clock, service, start, ended } = await idleService();
       await start("a");
       await start("b", second);
+      left.mockClear();
       clock.now += 60_000;
       vi.advanceTimersByTime(60_000);
-      // Both quiet sessions suspended, and of the two runtimes they left, the one left first closed for want of room.
-      await vi.waitFor(() => expect(service.openRuntimes()).toBe(1));
+      // Both quiet sessions suspended: the runtimes they left are kept, under 15 minutes though the daemon needs the room.
+      await vi.waitFor(() => expect(left).toHaveBeenCalledTimes(2));
+      expect(service.openRuntimes()).toBe(2);
       expect(ended("a")).toBeNull();
+      // 15 minutes on, the minute's sweep closes them.
+      clock.now += 15 * 60_000;
+      vi.advanceTimersByTime(60_000);
+      await vi.waitFor(() => expect(service.openRuntimes()).toBe(0));
     } finally {
+      left.mockRestore();
       vi.useRealTimers();
     }
   });
