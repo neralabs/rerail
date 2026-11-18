@@ -1670,3 +1670,97 @@ fn ast_pattern_verdicts_reuse_their_bindings() {
     }
 }
 
+
+/// A tape's presence bitmap (the codes it holds, in its header): of every (program, file) pair, how many the file's
+/// kinds and fields alone rule out before any label is known (`possible`), against how many have an empty anchor
+/// with every label read as every node (what any file-level test could rule out at most), by pairs and by the
+/// nodes a pass over those files would read.
+#[test]
+#[ignore = "a census, run by name"]
+fn presence_bitmap_census() {
+    use super::compile_sets::Set;
+    use std::collections::HashSet;
+    fn possible(set: &Set, kinds: &HashSet<u16>, fields: &HashSet<u16>) -> bool {
+        match set {
+            Set::Kind(k) => kinds.contains(k),
+            Set::Field(f) => fields.contains(f),
+            Set::And(parts) => parts.iter().all(|p| possible(p, kinds, fields)),
+            Set::Or(parts) => parts.iter().any(|p| possible(p, kinds, fields)),
+            Set::Child { of, .. } | Set::Descendant { of, .. } | Set::Parent(of) | Set::Following { of, .. } | Set::Reached { from: of, .. } => possible(of, kinds, fields),
+            Set::Chain { to, .. } => possible(to, kinds, fields),
+            Set::All | Set::Flags { .. } | Set::Class(_) | Set::Text(_) => true,
+        }
+    }
+    let mut tapes = fixtures();
+    if std::env::var_os("RERAIL_S1_FILES").is_none() {
+        tapes.truncate(20);
+    }
+    let mut lowered = Vec::new();
+    for (_, compiled) in &clauses() {
+        for (_, grammar) in python_matchers(compiled) {
+            if let Ok(tree) = match_tree(grammar)
+                && let Ok(matcher) = LoweredMatcher::lower(&tree)
+            {
+                lowered.push(matcher);
+            }
+        }
+    }
+    let present: Vec<(HashSet<u16>, HashSet<u16>)> = tapes
+        .iter()
+        .map(|t| (0..t.transducer_len() as u32).map(|n| (t.transducer_kind(n), t.transducer_field(n))).unzip())
+        .collect();
+    let distinct: Vec<usize> = present.iter().map(|(k, _)| k.len()).collect();
+    eprintln!("presence: {} files, {} nodes, kinds a file: min {} median {} max {}", tapes.len(), tapes.iter().map(TapeDoc::transducer_len).sum::<usize>(), distinct.iter().min().unwrap_or(&0), {
+        let mut d = distinct.clone();
+        d.sort_unstable();
+        d.get(d.len() / 2).copied().unwrap_or(0)
+    }, distinct.iter().max().unwrap_or(&0));
+    // (role) -> pairs, pairs ruled out by presence, pairs with an empty anchor; the same weighted by the file's nodes.
+    let mut counts = BTreeMap::<&str, [u64; 6]>::new();
+    for chunk in lowered.chunks(16) {
+        let wave = LoweredWave::new(&chunk.iter().collect::<Vec<_>>()).unwrap();
+        let active = vec![vec![true; tapes.len()]; chunk.len()];
+        let Ok(views) = wave.labelled(&tapes, &active) else { continue };
+        let indexes: Vec<super::compile_sets::Index> = views.iter().map(|_| Default::default()).collect();
+        for clause in &wave.clauses {
+            let mut programs = vec![("clause", &clause.program)];
+            for def in &clause.labels.defs {
+                match def {
+                    Label::Roots(p, _) | Label::Targets(p, _) | Label::Pattern(p, _) | Label::Constrained(p, _, _) => programs.push(("label", p)),
+                    Label::Count { program, .. } => programs.push(("label", program)),
+                    Label::Complement(_) | Label::Fact(..) | Label::Empty => {}
+                }
+            }
+            for (role, program) in programs {
+                let walk = super::compile_micro::Micro::of(program);
+                for ((view, index), (kinds, fields)) in views.iter().zip(&indexes).zip(&present) {
+                    let texts = walk.as_ref().and_then(|walk| walk.texts(program, view));
+                    let set = match (&walk, &texts) {
+                        (Some(walk), Some(_)) => Set::anchor(&walk.words, &|_| true),
+                        _ => Set::anchor(&program.words, &|_| false),
+                    }
+                    .labels_unknown(&|_| true);
+                    let texts = texts.unwrap_or_default();
+                    let empty = super::compile_sets::Reader { tape: view, index, labels: view.transducer_labels(), texts: &texts }.eval(&set).iter().all(|w| *w == 0);
+                    let ruled_out = !possible(&set, kinds, fields);
+                    assert!(!ruled_out || empty, "a set ruled out by presence has members");
+                    let nodes = view.transducer_len() as u64;
+                    let c = counts.entry(role).or_default();
+                    c[0] += 1;
+                    c[1] += u64::from(ruled_out);
+                    c[2] += u64::from(empty);
+                    c[3] += nodes;
+                    c[4] += if ruled_out { nodes } else { 0 };
+                    c[5] += if empty { nodes } else { 0 };
+                }
+            }
+        }
+    }
+    for (role, c) in &counts {
+        let pct = |a: u64, b: u64| 100.0 * a as f64 / b.max(1) as f64;
+        eprintln!(
+            "presence: {role:<6} {} pairs: ruled out by presence {} ({:.1}%), empty anchor {} ({:.1}%); by nodes: {:.1}% and {:.1}%",
+            c[0], c[1], pct(c[1], c[0]), c[2], pct(c[2], c[0]), pct(c[4], c[3]), pct(c[5], c[3])
+        );
+    }
+}
