@@ -334,42 +334,9 @@ function resolveRuntimeRoute(
   state: EngineRoutingState,
 ): RuntimeRoute {
   const workspaceRoot = configuration?.workspaceRoot ?? options.workspaceRoot ?? cwd;
-  const configurationKey = configuration === undefined
-    ? undefined
-    : JSON.stringify([
-        resolvePath(configuration.storageRoot),
-        resolvePath(configuration.modelPath),
-        resolvePath(configuration.databasePath ?? options.databasePath ?? defaultRerailDatabasePath()),
-      ]);
-  if (workspaceRoot === undefined) {
-    const configuredRuntimeKey = configurationKey === undefined
-      ? undefined
-      : state.runtimeKeysByConfiguration.get(configurationKey);
-    const candidates = state.runtimeKeysBySession.get(sessionId);
-    if (configuredRuntimeKey === undefined && candidates?.size !== 1) {
-      throw new Error("Kernel runtime requires workspaceRoot or unambiguous session context");
-    }
-    return { runtimeKey: configuredRuntimeKey ?? candidates!.values().next().value! };
-  }
-  const serviceDatabasePath = resolvePath(options.databasePath ?? defaultRerailDatabasePath());
-  const { accessToken: _accessToken, ...serviceDefaults } = options;
-  const runtimeOptions: RerailRuntimeOptions = configuration === undefined
-    ? {
-        ...serviceDefaults,
-        storageRoot: resolvePath(options.storageRoot),
-        databasePath: serviceDatabasePath,
-        workspaceRoot: resolvePath(workspaceRoot),
-      }
-    : {
-        storageRoot: resolvePath(configuration.storageRoot),
-        modelPath: resolvePath(configuration.modelPath),
-        databasePath: resolvePath(configuration.databasePath ?? serviceDatabasePath),
-        workspaceRoot: resolvePath(workspaceRoot),
-      };
-  // The service's Merge Assist is over its own database; a runtime over another makes its own.
-  if (configuration !== undefined && options.mergeAssist !== undefined && runtimeOptions.databasePath === serviceDatabasePath) {
-    runtimeOptions.mergeAssist = options.mergeAssist;
-  }
+  const configurationKey = configurationKeyOf(configuration, options);
+  if (workspaceRoot === undefined) return { runtimeKey: knownRuntimeKey(sessionId, configurationKey, state) };
+  const runtimeOptions = routedRuntimeOptions(workspaceRoot, configuration, options);
   const runtimeKey = JSON.stringify([
     runtimeOptions.storageRoot,
     runtimeOptions.modelPath,
@@ -378,6 +345,48 @@ function resolveRuntimeRoute(
   ]);
   if (configurationKey !== undefined) state.runtimeKeysByConfiguration.set(configurationKey, runtimeKey);
   return { runtimeKey, runtimeOptions };
+}
+
+/** What names a request's configuration among the runtimes: its storage, model and database; none without one. */
+function configurationKeyOf(configuration: EngineRuntimeConfiguration | undefined, options: EngineServiceOptions): string | undefined {
+  if (configuration === undefined) return undefined;
+  return JSON.stringify([
+    resolvePath(configuration.storageRoot),
+    resolvePath(configuration.modelPath),
+    resolvePath(configuration.databasePath ?? options.databasePath ?? defaultRerailDatabasePath()),
+  ]);
+}
+
+/** The runtime of a request that names no folder: its configuration's, else the one runtime its session uses. */
+function knownRuntimeKey(sessionId: string, configurationKey: string | undefined, state: EngineRoutingState): string {
+  const configured = configurationKey === undefined ? undefined : state.runtimeKeysByConfiguration.get(configurationKey);
+  if (configured !== undefined) return configured;
+  const candidates = state.runtimeKeysBySession.get(sessionId);
+  if (candidates?.size !== 1) throw new Error("Kernel runtime requires workspaceRoot or unambiguous session context");
+  return candidates.values().next().value!;
+}
+
+/** What a runtime over `workspaceRoot` is made with: the request's configuration, else the service's own options. */
+function routedRuntimeOptions(
+  workspaceRoot: string,
+  configuration: EngineRuntimeConfiguration | undefined,
+  options: EngineServiceOptions,
+): RerailRuntimeOptions {
+  const serviceDatabasePath = resolvePath(options.databasePath ?? defaultRerailDatabasePath());
+  if (configuration === undefined) {
+    const { accessToken: _accessToken, ...serviceDefaults } = options;
+    return { ...serviceDefaults, storageRoot: resolvePath(options.storageRoot), databasePath: serviceDatabasePath, workspaceRoot: resolvePath(workspaceRoot) };
+  }
+  const databasePath = resolvePath(configuration.databasePath ?? serviceDatabasePath);
+  // The service's Merge Assist is over its own database; a runtime over another makes its own.
+  const mergeAssist = databasePath === serviceDatabasePath ? options.mergeAssist : undefined;
+  return {
+    storageRoot: resolvePath(configuration.storageRoot),
+    modelPath: resolvePath(configuration.modelPath),
+    databasePath,
+    workspaceRoot: resolvePath(workspaceRoot),
+    ...(mergeAssist === undefined ? {} : { mergeAssist }),
+  };
 }
 
 async function routeEngineEvent(
@@ -408,7 +417,7 @@ async function routeEngineEvent(
 /**
  * Records the receipt of a steer a hook handed over (`answerReceipt`), never waiting for the database's write lock on
  * this thread: in the runtime its session's events go to, found as theirs are, as an OMP or Pi host's receipts are
- * (`RerailRuntime.recordSteer`); else, when no open runtime holds the session (its runtime retired, or this daemon
+ * (`RerailRuntime.recordHeldSteer`); else, when no open runtime holds the session (its runtime retired, or this daemon
  * started after the event), through the service's own use of the database's record writer. Either way the record
  * writer makes it now, or keeps it until another process gives the lock back. A receipt recorded twice counts once.
  */
@@ -420,7 +429,7 @@ function recordHandedReceipt(
 ): void {
   const { session, receiptId, ruleIds } = receipt;
   const { runtimeKey } = resolveRuntimeRoute(session, configuration, options, state);
-  if (state.runtimes.get(runtimeKey)?.recordSteer(session.sessionId, receiptId, ruleIds) === true) return;
+  if (state.runtimes.get(runtimeKey)?.recordHeldSteer(session.sessionId, receiptId, ruleIds) === true) return;
   const databasePath = resolvePath(configuration?.databasePath ?? state.databasePath);
   receiptWriter(state, databasePath).write(steerReceiptWrite(databasePath, receipt));
 }

@@ -182,7 +182,7 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
           message.content.trim() === "" || message.content.startsWith(MERGE_ASSIST_NOTE_LEAD) ? message : { ...message, content: messageSteer(message.content) },
           options_,
         ),
-        async (sessionId, receiptId, ruleIds) => { await current.recordSteer(sessionId, receiptId, ruleIds); },
+        (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds),
         (toolCallId, delivery) => {
           const placed = openResults.get(toolCallId);
           placed?.push(delivery);

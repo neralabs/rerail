@@ -1823,11 +1823,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     };
   }
 
+  /** Records the receipt of a steer delivered in `sessionId`, crediting `ruleIds`; throws for a session it does not hold. */
+  recordSteer(sessionId: string, receiptId: string, ruleIds: readonly string[] = []): void {
+    if (!this.recordHeldSteer(sessionId, receiptId, ruleIds)) throw new Error(`Unknown session: ${sessionId}`);
+  }
+
   /**
-   * Records the receipt of a steer delivered in `sessionId`, crediting `ruleIds`; false, recording nothing, when this
-   * runtime holds no such session, open or closed by it.
+   * `recordSteer` for a caller that may hand over a receipt of a session this runtime does not hold (the engine service
+   * routes a hook's receipt by its folder): false, recording nothing, for such a session, open or closed by it.
    */
-  recordSteer(sessionId: string, receiptId: string, ruleIds: readonly string[] = []): boolean {
+  recordHeldSteer(sessionId: string, receiptId: string, ruleIds: readonly string[] = []): boolean {
     if (!this.#sessions.has(sessionId) && !this.#closedSessions.has(sessionId)) return false;
     this.#recordSessionFact(sessionId, (store, descriptor, attribution) => store.recordSteer(descriptor, receiptId, ruleIds, attribution));
     return true;
