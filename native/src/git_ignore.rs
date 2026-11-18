@@ -530,6 +530,22 @@ mod tests {
         path.to_string_lossy().replace('\\', "/")
     }
 
+    /// Sets `core.ignoreCase` to the opposite of what it reads now. `git init` writes it true
+    /// where file names fold case (Windows, macOS) and leaves it out elsewhere, so setting one
+    /// fixed value would change nothing on one of those systems.
+    fn turn_ignore_case(root: &Path) {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["config", "--type=bool", "--default=false", "--get", "core.ignoreCase"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git config --get core.ignoreCase failed");
+        let folds = String::from_utf8_lossy(&output.stdout).trim() == "true";
+        let value = if folds { "false" } else { "true" };
+        git(root, &["config", "core.ignoreCase", value]);
+    }
+
     #[test]
     fn says_whether_a_matcher_opened_now_reads_its_rules() {
         let root = fixture(
@@ -568,8 +584,8 @@ mod tests {
         std::fs::write(root.join("named-a"), "b.py\nc.py\n").unwrap();
         assert!(!ignore.sources_unchanged(), "the named file changed");
         let mut ignore = GitIgnore::open(&root).unwrap().unwrap();
-        git(&root, &["config", "core.ignoreCase", "true"]);
-        assert!(!ignore.sources_unchanged(), "patterns fold case now");
+        turn_ignore_case(&root);
+        assert!(!ignore.sources_unchanged(), "the pattern case changed");
 
         // Each folder's .gitignore is read again once the sources hold.
         let mut ignore = GitIgnore::open(&root).unwrap().unwrap();

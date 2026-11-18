@@ -41,6 +41,11 @@ async function checkout() {
   return { root, main, home, linked: await realpath(join(root, "linked")), excludes: join(home, "config", "git", "ignore") };
 }
 
+/** Whether Git folds the case of patterns in `cwd`'s repository: `git init` sets it where file names fold case (Windows, macOS). */
+function foldsCase(cwd: string): boolean {
+  return execFileSync("git", ["config", "--type=bool", "--default=false", "--get", "core.ignoreCase"], { cwd, encoding: "utf8" }).trim() === "true";
+}
+
 /** A path as a configuration value: forward slashes, which Git reads on every platform. */
 function slashed(path: string): string {
   return path.split("\\").join("/");
@@ -138,9 +143,11 @@ describe("GitIgnoreMatchers", () => {
     expect(ask("configured", "named.py")).toBe(false);
     await writeFile(named, "named.py\n");
     expect(ask("named", "named.py")).toBe(true);
-    // Git folds the case of patterns once core.ignoreCase holds (on Windows from `git init` already).
-    git(main, "config", "core.ignoreCase", "true");
-    expect(ask("folded", "GEN/x.py")).toBe(true);
+    // Git folds the case of patterns while core.ignoreCase holds: turned the other way, a later router follows it.
+    const folds = foldsCase(main);
+    expect(ask("named", "GEN/x.py")).toBe(folds);
+    git(main, "config", "core.ignoreCase", String(!folds));
+    expect(ask("turned", "GEN/x.py")).toBe(!folds);
   });
 
   it("follows an excludes file the global configuration names in a file it includes, and that file's changes", async () => {
