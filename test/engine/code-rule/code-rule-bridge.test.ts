@@ -1957,6 +1957,32 @@ describe("CodeRuleBridge", () => {
       expect(toldPaths(onDiscoveryGaps)).toEqual(folders.slice(10, MAX_TOLD_AT_ONCE).map(folder => `src/${basename(folder)}`));
     });
 
+    // The walk of the other worktrees is shared by every session watching them; what it had no room to look at again
+    // reaches each session marked so, and is said, not recorded, as in the session folder.
+    it(`tells none of the refusals past the first ${MAX_TOLD_AT_ONCE} in path order in another worktree, which its walk had no room to look at`, async () => {
+      const root = await twoBranches();
+      const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+      const folders = Array.from({ length: MAX_TOLD_AT_ONCE + 5 }, (_, index) => join(worktree, "src", `a${String(index).padStart(3, "0")}`));
+      for (const folder of folders) {
+        await mkdir(folder);
+        denyFolder(folder, () => 0, "EPERM");
+      }
+      // Being removed: the first ten in path order, whose delete is pending at every look. The five past the hundredth
+      // are never looked at, so never told.
+      for (const folder of folders.slice(0, 10)) discovery.accesses.set(folder, Array.from({ length: 50 }, () => deletePending(folder)));
+      const onDiscoveryGaps = vi.fn();
+      const audit = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+      const bridge = createBridge(root, { ...auditor(audit), ...extra }, { worktreeWalkGapMs: 0, onDiscoveryGaps });
+      await bridge.openWorkspace("session-1");
+      for (let turn = 0; turn < 2; turn += 1) {
+        await bridge.checkpoint("turn");
+        await bridge.settleWorktreeWalk();
+      }
+      await bridge.checkpoint("turn");
+      const named = relative(root, worktree).split(sep).join("/");
+      expect(toldPaths(onDiscoveryGaps)).toEqual(folders.slice(10, MAX_TOLD_AT_ONCE).map(folder => `${named}/src/${basename(folder)}`));
+    });
+
     it("reads the files it held in a folder as deleted when the folder refused it with EPERM and was gone by the look, as when its lstat finds it gone", async () => {
       const root = await workspace();
       const sub = join(root, "src", "sub");
