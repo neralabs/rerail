@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b408-import-xml-minidom",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Avoid importing xml.dom.minidom to parse XML; it is open to XML attacks, so use defusedxml.",
   "scope": {
@@ -19,19 +19,53 @@
           "rule": {
             "any": [
               {
-                "pattern": "import xml.dom.minidom"
+                "kind": "import_statement",
+                "has": {
+                  "any": [
+                    {
+                      "kind": "dotted_name"
+                    },
+                    {
+                      "kind": "aliased_import"
+                    }
+                  ],
+                  "regex": "^xml\\s*\\.\\s*dom\\s*\\.\\s*minidom"
+                }
               },
               {
-                "pattern": "import xml.dom.minidom as $ALIAS"
+                "kind": "import_from_statement",
+                "has": {
+                  "field": "module_name",
+                  "regex": "^[.\\s]*xml\\s*\\.\\s*dom\\s*\\.\\s*minidom"
+                }
               },
               {
-                "pattern": "from xml.dom.minidom import $$$NAMES"
-              },
-              {
-                "pattern": "from xml.dom import minidom"
-              },
-              {
-                "pattern": "from xml.dom import minidom as $ALIAS"
+                "kind": "import_from_statement",
+                "all": [
+                  {
+                    "has": {
+                      "field": "module_name",
+                      "regex": "^[.\\s]*xml\\s*\\.\\s*dom$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "dotted_name"
+                        },
+                        {
+                          "kind": "aliased_import"
+                        }
+                      ],
+                      "regex": "^minidom",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^import$"
+                      }
+                    }
+                  }
+                ]
               }
             ]
           }
