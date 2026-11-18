@@ -17,6 +17,12 @@
 //! The include search mirrors MLDB's build: the caller's directories, then the shims' root (`mldb/...`), the
 //! common UKL headers (`<ukl>`, `<ukl_shim.h>`) and the backend's own (`<ukl_metal_shim.h>`, ...). UKL's
 //! `ukl_shim.h` picks the backend from the predefines (`__METAL_VERSION__`, `__CUDA_ARCH__`).
+//!
+//! **The library** (decision 0400 §5): Rerail's UKL headers, in `lib/ukl/`, carried here too and found as
+//! `<ukl/NAME.h>` by every kernel, hand-written or generated. `ukl/backend.h` holds the intrinsics, one section per
+//! backend; every other header is written once over them (`LIBRARY` lists them, lowest first). A kernel takes what
+//! it uses by `#include`: the library is linked by inclusion, and the backend's compiler (the Metal front end,
+//! NVRTC) sees one translation unit and inlines across it, as a device-code link would not.
 
 use rerail_c_pp::files::{DirKind, Search};
 use rerail_c_pp::sink::{At, Diag, Sink, TextSink};
@@ -34,6 +40,19 @@ const HEADERS: &[(&str, &str)] = &[
     ("mldb/block/ukl/ukl_auto_macros.h", include_str!("../../../../forest/src/mldb/block/ukl/ukl_auto_macros.h")),
     ("mldb/builtin/metal/ukl/ukl_metal_shim.h", include_str!("../../../../forest/src/mldb/builtin/metal/ukl/ukl_metal_shim.h")),
     ("mldb/builtin/cuda/ukl/ukl_cuda_shim.h", include_str!("../../../../forest/src/mldb/builtin/cuda/ukl/ukl_cuda_shim.h")),
+];
+
+/// The library's headers, by the name a kernel includes them by (`#include <ukl/memory.h>`), each after the ones it
+/// includes. Their tests are `rerail-gpu`'s (`library_tests`), on each device.
+pub const LIBRARY: &[(&str, &str)] = &[
+    ("ukl/backend.h", include_str!("../lib/ukl/backend.h")),
+    ("ukl/bits.h", include_str!("../lib/ukl/bits.h")),
+    ("ukl/memory.h", include_str!("../lib/ukl/memory.h")),
+    ("ukl/simd.h", include_str!("../lib/ukl/simd.h")),
+    ("ukl/group.h", include_str!("../lib/ukl/group.h")),
+    ("ukl/lz4.h", include_str!("../lib/ukl/lz4.h")),
+    ("ukl/scan.h", include_str!("../lib/ukl/scan.h")),
+    ("ukl/compact.h", include_str!("../lib/ukl/compact.h")),
 ];
 
 /// A GPU backend a kernel is preprocessed for.
@@ -157,6 +176,7 @@ impl Preprocess {
         d.push((ROOT.to_string(), DirKind::Angle));
         d.push((format!("{ROOT}/mldb/block/ukl"), DirKind::Angle));
         d.push((format!("{ROOT}/mldb/builtin/{}/ukl", self.backend.dir()), DirKind::Angle));
+        d.push((format!("{ROOT}/lib"), DirKind::Angle));
         d
     }
 
@@ -166,8 +186,11 @@ impl Preprocess {
         cfg.predefines = vec![("__cplusplus".into(), Some("202002L".into()))];
         cfg.predefines.extend(self.backend.predefines());
         cfg.predefines.extend(self.defines.iter().cloned());
-        let carried: HashMap<String, &'static str> =
-            HEADERS.iter().map(|(p, t)| (format!("{ROOT}/{p}"), *t)).collect();
+        let carried: HashMap<String, &'static str> = HEADERS
+            .iter()
+            .map(|(p, t)| (format!("{ROOT}/{p}"), *t))
+            .chain(LIBRARY.iter().map(|(p, t)| (format!("{ROOT}/lib/{p}"), *t)))
+            .collect();
         let files = &self.files;
         let read = |p: &str| -> Option<Vec<u8>> {
             if let Some(t) = files.get(p) {

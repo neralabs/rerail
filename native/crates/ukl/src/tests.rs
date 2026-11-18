@@ -33,6 +33,7 @@ fn clang(backend: Backend, main: &str) -> Option<String> {
     let mut c = Command::new("clang++");
     c.args(["-x", "c++", "-std=gnu++20", "-undef", "-nostdinc", "-E", "-P", "-w"]);
     c.arg(format!("-I{f}")).arg(format!("-I{f}/mldb/block/ukl")).arg(format!("-I{f}/mldb/builtin/{}/ukl", backend.dir()));
+    c.arg(format!("-I{}/lib", env!("CARGO_MANIFEST_DIR")));
     for (n, v) in backend.predefines() {
         c.arg(format!("-D{n}={}", v.unwrap_or_default()));
     }
@@ -42,7 +43,7 @@ fn clang(backend: Backend, main: &str) -> Option<String> {
 }
 
 /// Ours and clang's tokens are the same; on a difference, the first one with its context.
-fn same_as_clang(backend: Backend, main: &str) {
+fn same_as_clang(backend: Backend, main: &str, min_tokens: usize) {
     let ours = Preprocess::new(backend).dir(forest()).run(main).unwrap_or_else(|e| panic!("{e}"));
     let Some(theirs) = clang(backend, main) else {
         eprintln!("no clang++ here: ours preprocessed {main} without error, unchecked against clang");
@@ -54,20 +55,45 @@ fn same_as_clang(backend: Backend, main: &str) {
         let show = |v: &[String]| v[k.saturating_sub(8)..(k + 8).min(v.len())].join(" ");
         panic!("token {k} differs (ours {}, clang {}):\n  ours:  {}\n  clang: {}", a.len(), b.len(), show(&a), show(&b));
     }
-    assert!(a.len() > 1000, "too few tokens ({}) for the random forest's kernels", a.len());
+    assert!(a.len() > min_tokens, "too few tokens ({}) for {main}", a.len());
+}
+
+/// Each library header alone, for each backend: it takes what it needs by `#include`, and preprocesses as clang does.
+#[test]
+fn every_library_header_stands_alone_on_every_backend() {
+    let dir = format!("{}/lib", env!("CARGO_MANIFEST_DIR"));
+    for backend in [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }] {
+        for (name, _) in LIBRARY {
+            // The shim's tokens, at least, and the header's own.
+            same_as_clang(backend, &format!("{dir}/{name}"), 300);
+        }
+    }
+}
+
+/// A kernel reaches the library by `<ukl/...>`, from memory as from disk: the carried copy.
+#[test]
+fn a_kernel_includes_the_library() {
+    let k = "#include <ukl/scan.h>\n";
+    let cuda = Preprocess::new(Backend::Cuda { sm: 121 }).file("/mem/k.cu", k).run("/mem/k.cu").unwrap();
+    assert!(cuda.contains("ukl_scan_u32_tiles__ukl_params"), "the scan's kernels, with their rows");
+    assert!(cuda.contains("__reduce_add_sync"), "sm 8.0 and up: the native warp sum");
+    let old = Preprocess::new(Backend::Cuda { sm: 70 }).file("/mem/k.cu", k).run("/mem/k.cu").unwrap();
+    assert!(!old.contains("__reduce_add_sync"), "sm 7.0: the reference sum, by shuffles");
+    let metal = Preprocess::new(Backend::Metal { version: 310 }).file("/mem/k", k).run("/mem/k").unwrap();
+    assert!(metal.contains("simd_prefix_inclusive_sum"), "Metal's native scan");
 }
 
 /// The random forest's kernels for Metal, as `forest/build.rs` preprocesses them.
 #[test]
 fn metal_random_forest_kernels_preprocess_as_clang_does() {
-    same_as_clang(Backend::Metal { version: 310 }, &format!("{}/mldb/plugins/jml/randomforest_kernels_ukl.h", forest()));
+    same_as_clang(Backend::Metal { version: 310 }, &format!("{}/mldb/plugins/jml/randomforest_kernels_ukl.h", forest()), 1000);
 }
 
 /// The same source for CUDA: one `extern "C" __global__` entry per kernel, its threadgroup storage declared.
 #[test]
 fn cuda_random_forest_kernels_preprocess_as_clang_does() {
     let main = format!("{}/mldb/plugins/jml/randomforest_kernels_ukl.h", forest());
-    same_as_clang(Backend::Cuda { sm: 121 }, &main);
+    same_as_clang(Backend::Cuda { sm: 121 }, &main, 1000);
     let out = Preprocess::new(Backend::Cuda { sm: 121 }).dir(forest()).run(&main).unwrap();
     // An entry and its rows' descriptor per kernel; a layout kernel per reflected `args` structure.
     assert_eq!(out.matches("__ukl_params[] =").count(), 17, "one descriptor per kernel");

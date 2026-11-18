@@ -1,0 +1,163 @@
+// The UKL library's test kernels (decision 0400 §5): each wraps library calls, one result a slot, so that
+// `library_tests.rs` compares each primitive with its Rust reference, on random inputs and edge sizes, on the device.
+
+#include <ukl/memory.h>
+#include <ukl/group.h>
+#include <ukl/lz4.h>
+
+struct TestArgs {
+    uint32_t n;
+    uint32_t w;
+};
+UKL_REFLECT_STRUCT(TestArgs, n, w)
+
+// ukl/memory.h: loads at every byte address, and bit fields of width `w` from bit `i * w + i % 5`.
+DEFINE_KERNEL2(tests, t_loads,
+               ARGS,     TestArgs, args,  ,
+               ROBUFFER, uint8_t,  bytes, "[n + 16]",
+               RWBUFFER, uint64_t, out,   "[n * 6]",
+               GID0,     uint32_t, i,     )
+{
+    if (i >= args.n)
+        return;
+    out[i * 6u + 0u] = ukl_ld_u8(bytes, i);
+    out[i * 6u + 1u] = ukl_ld_u16(bytes, i);
+    out[i * 6u + 2u] = ukl_ld_u32(bytes, (uint64_t)i);
+    out[i * 6u + 3u] = ukl_ld_u64(bytes, i);
+    out[i * 6u + 4u] = ukl_ld_bits(bytes, (uint64_t)i * args.w + i % 5u, args.w);
+    out[i * 6u + 5u] = ukl_ld_packed(bytes, i, args.w);
+}
+
+// Stores into each thread's own 32 bytes at unaligned addresses (a u16 in its first 8, a u32 in its next 8, a u64
+// from 16), read back through the coherent loads.
+DEFINE_KERNEL2(tests, t_stores,
+               ARGS,     TestArgs, args,  ,
+               RWBUFFER, uint8_t,  bytes, "[n * 32]",
+               RWBUFFER, uint64_t, out,   "[n * 3]",
+               GID0,     uint32_t, i,     )
+{
+    if (i >= args.n)
+        return;
+    UKL_COHERENT uint8_t* t = (UKL_COHERENT uint8_t*)bytes;
+    uint32_t base = i * 32u;
+    uint64_t v = ((uint64_t)i * 0x9e3779b97f4a7c15ul) ^ 0x0123456789abcdeful;
+    ukl_stc_u16(t, base + i % 7u, v);
+    ukl_stc_u32(t, base + 8u + i % 5u, v >> 7);
+    ukl_stc_u64(t, base + 16u + i % 9u % 8u, v >> 3);
+    out[i * 3u + 0u] = ukl_ldc_u16(t, base + i % 7u);
+    out[i * 3u + 1u] = ukl_ldc_u32(t, base + 8u + i % 5u);
+    out[i * 3u + 2u] = ukl_ldc_u64(t, base + 16u + i % 9u % 8u);
+}
+
+// ukl/bits.h on one word a thread.
+DEFINE_KERNEL2(tests, t_bits,
+               ARGS,     TestArgs, args,  ,
+               ROBUFFER, uint64_t, words, "[n]",
+               RWBUFFER, uint64_t, out,   "[n * 12]",
+               GID0,     uint32_t, i,     )
+{
+    if (i >= args.n)
+        return;
+    uint64_t w = words[i];
+    uint32_t lo = (uint32_t)w;
+    RWBUFFER(uint64_t) o = out + i * 12u;
+    o[0] = ukl_popcount32(lo);
+    o[1] = ukl_popcount64(w);
+    o[2] = ukl_clz32(lo);
+    o[3] = ukl_clz64(w);
+    o[4] = ukl_ctz32(lo);
+    o[5] = ukl_ctz64(w);
+    o[6] = ukl_rank32(lo, i % 33u);
+    o[7] = ukl_rank64(w, i % 65u);
+    o[8] = ukl_select32(lo, i % 33u);
+    o[9] = ukl_select64(w, i % 65u);
+    o[10] = ukl_bits64(w, i % 64u, i * 7u % 65u);
+    o[11] = ukl_bits32(lo, i % 33u, i * 5u % 33u);
+}
+
+// The first set bit at or after `i`, in a bitset of `w` bits.
+DEFINE_KERNEL2(tests, t_bitset_next,
+               ARGS,     TestArgs, args,  ,
+               ROBUFFER, uint32_t, words, "[(w + 31) / 32]",
+               RWBUFFER, uint32_t, out,   "[n]",
+               GID0,     uint32_t, i,     )
+{
+    if (i < args.n)
+        out[i] = ukl_bitset_next(words, args.w, i);
+}
+
+// Threads set bits (some the same one): whether each was set before.
+DEFINE_KERNEL2(tests, t_bitset_set,
+               ARGS,     TestArgs, args,  ,
+               ROBUFFER, uint32_t, bits,  "[n]",
+               RWBUFFER, uint32_t, words, "[(w + 31) / 32]",
+               RWBUFFER, uint32_t, out,   "[n]",
+               GID0,     uint32_t, i,     )
+{
+    if (i < args.n)
+        out[i] = ukl_bitset_set(words, bits[i]) ? 1u : 0u;
+}
+
+// ukl/simd.h: every operation, the backend's form and the reference.
+DEFINE_KERNEL2(tests, t_simd,
+               ARGS,     TestArgs, args, ,
+               ROBUFFER, uint32_t, in,   "[n]",
+               RWBUFFER, uint32_t, out,  "[n * 14]",
+               GID0,     uint32_t, i,    ,
+               LANE,     uint16_t, lane, )
+{
+    uint32_t v = in[i];
+    RWBUFFER(uint32_t) o = out + i * 14u;
+    o[0] = ukl_sg_sum(v);
+    o[1] = ukl_sg_sum_ref(v);
+    o[2] = ukl_sg_min(v);
+    o[3] = ukl_sg_min_ref(v);
+    o[4] = ukl_sg_max(v);
+    o[5] = ukl_sg_max_ref(v);
+    o[6] = ukl_sg_inclusive_sum(v, lane);
+    o[7] = ukl_sg_inclusive_sum_ref(v, lane);
+    o[8] = ukl_sg_exclusive_sum(v, lane);
+    o[9] = ukl_sg_exclusive_sum_ref(v, lane);
+    o[10] = ukl_sg_count_below((v & 1u) != 0u, lane);
+    o[11] = ukl_sg_count((v & 1u) != 0u);
+    o[12] = ukl_sg_first(v % 5u == 0u);
+    o[13] = ukl_sg_broadcast(v, (i / 32u) % 32u);
+}
+
+// ukl/group.h: the group's sum, and each thread's exclusive scan and the total.
+DEFINE_KERNEL2(tests, t_group,
+               ARGS,     TestArgs, args,    ,
+               ROBUFFER, uint32_t, in,      "[n]",
+               RWBUFFER, uint32_t, out,     "[n * 3]",
+               SHARED,   uint32_t, scratch, UKL_TG_SCRATCH,
+               GID0,     uint32_t, i,       ,
+               LID0,     uint32_t, lid,     ,
+               LSZ0,     uint32_t, lsz,     )
+{
+    uint32_t v = in[i];
+    uint32_t s = ukl_tg_sum(v, lid, lsz, scratch);
+    UklScan r = ukl_tg_exclusive_sum(v, lid, lsz, scratch);
+    out[i * 3u + 0u] = s;
+    out[i * 3u + 1u] = r.exclusive;
+    out[i * 3u + 2u] = r.total;
+}
+
+// ukl/lz4.h: a block a SIMD group; job `j` is {source offset, source length, output offset, capacity}.
+DEFINE_KERNEL2(tests, t_lz4,
+               ARGS,     TestArgs, args,    ,
+               ROBUFFER, uint32_t, jobs,    "[n * 4]",
+               ROBUFFER, uint8_t,  in,      "[inLength]",
+               RWBUFFER, uint8_t,  outData, "[outLength]",
+               RWBUFFER, uint32_t, lengths, "[n]",
+               TGID0,    uint32_t, j,       ,
+               LANE,     uint16_t, lane,    )
+{
+    if (j >= args.n)
+        return;
+    ROBUFFER(uint32_t) job = jobs + j * 4u;
+    UklLz4Contiguous out;
+    out.dst = outData + job[2];
+    uint32_t got = ukl_lz4_decode_sg(in + job[0], job[1], out, job[3], lane);
+    if (lane == 0u)
+        lengths[j] = got;
+}

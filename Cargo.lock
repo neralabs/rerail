@@ -3544,6 +3544,7 @@ version = "0.1.0"
 dependencies = [
  "block",
  "libc",
+ "lz4-sys",
  "metal",
  "objc",
  "rerail-ukl",

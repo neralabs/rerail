@@ -1,8 +1,9 @@
 //! The GPU device layer (decision 0400): one interface over the backends, Metal on macOS and CUDA on Linux (`device`),
 //! MLDB's compute-kernel runtime (the argument types, the grid launcher that binds a kernel's parameters by name, and
-//! each backend's runtime, at their upstream paths under `mldb/`), the process's shared device, and kernels compiled
-//! from UKL source with the UKL libraries (`kernels`). The forest's trainer and the UKL libraries' tests run on it;
-//! the engine's GPU lane moves onto it (0400 step 3).
+//! each backend's runtime, at their upstream paths under `mldb/`), the process's shared device, kernels compiled
+//! from UKL source at run time with the UKL library on their include path (`kernels`), and the library's device-wide
+//! calls (`library`). The library's tests (`library_tests`) run each primitive on the device against its reference.
+//! The forest's trainer runs on it; the engine's GPU lane moves onto it (0400 step 3).
 
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 
@@ -17,6 +18,10 @@ pub mod compute_kernel_metal;
 #[path = "mldb/builtin/cuda/compute_kernel_cuda.rs"]
 pub mod compute_kernel_cuda;
 pub mod device;
+pub mod kernels;
+pub mod library;
+#[cfg(test)]
+mod library_tests;
 
 /// A plain value a buffer can be viewed as: any bit pattern is a value, no padding read as data, no pointers.
 ///
