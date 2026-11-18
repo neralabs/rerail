@@ -504,10 +504,11 @@ export class RerailDaemon {
         if (collecting) return;
         collecting = true;
         try {
-          settleAnalysisScopeReleases(databasePath);
+          try { settleAnalysisScopeReleases(databasePath); }
+          catch (error) { process.stderr.write(`rerail: analysis scope release failed: ${String(error)}\n`); }
           await collectAnalysisCaches(databasePath);
         }
-        catch (error) { process.stderr.write(`rerail: analysis scope release failed: ${String(error)}\n`); }
+        catch (error) { process.stderr.write(`rerail: analysis cache collection failed: ${String(error)}\n`); }
         finally { collecting = false; }
       };
       void releaseScopes();

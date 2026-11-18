@@ -134,6 +134,8 @@ To share this store with `rerail-engine`, set `RERAIL_TAPE_CACHE` to that path f
 A filesystem scan uses its current directory as the analysis scope.
 If you give `--repo`, the scan uses that directory as the scope.
 `rerail stop` releases filesystem scopes for the directories it stops.
+Rerail records the stores used by filesystem scans and watches.
+A stop releases scopes in those stores even if the configured store changes.
 
 ### In CI
 

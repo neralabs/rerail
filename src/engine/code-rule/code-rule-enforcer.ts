@@ -588,7 +588,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #revisionSource: NativeGitRevisionSource | undefined;
   readonly #analysisStore: string | undefined;
   readonly #analysisRun: NativeAnalysisScopeRun | undefined;
-  readonly #analysisGeneration: (() => number) | undefined;
+  readonly #analysisGeneration: ((store: string) => number) | undefined;
   readonly #analysisHome: string | undefined;
   /** Git's exclude stack for this checkout, opened on first use; null outside Git or where it cannot be opened. */
   #gitIgnore: NativeGitIgnoreMatcher | null | undefined;
@@ -673,7 +673,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       revisionSource?: NativeGitRevisionSource;
       analysisStore?: string;
       analysisRun?: NativeAnalysisScopeRun;
-      analysisGeneration?: () => number;
+      analysisGeneration?: (store: string) => number;
       analysisHome?: string;
     },
   ) {
@@ -1041,11 +1041,19 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * return; `#applyRequest` waits for the storage attach before the first apply.
    */
   #prepareWorkspace(): PreparedWorkspace {
-    const generation = this.#analysisRun === undefined ? this.#analysisGeneration?.() : undefined;
     const snapshot = this.#catalog.snapshot();
     // This build's own store; only the main daemon may open the machine-wide one.
-    const storePath = this.#analysisStore ?? contentStorePath();
+    let storePath = this.#analysisStore ?? contentStorePath();
     assertContentStoreOwner(storePath);
+    let generation: number | undefined;
+    if (this.#analysisStore === undefined) {
+      try {
+        generation = this.#analysisGeneration?.(storePath);
+      } catch (error) {
+        process.stderr.write(`rerail: analysis ownership is unavailable: ${errorMessage(error)}\n`);
+        storePath = ":memory:";
+      }
+    }
     const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)();
     let storage: Promise<boolean>;
     try {

@@ -79,6 +79,11 @@ directory scopes. A directory scope keeps the latest snapshot for each
 workspace. It protects the latest manifest for each policy set. An edited
 policy keeps its policy set and gets a new cache key.
 
+The home records each directory analysis store in a separate SQLite database.
+The scan registers the store before it reads the generation.
+This order lets a stop find every store that accepted an ended generation.
+The stop remains pending until each registered store accepts its release.
+
 The revision is an input to selection and provenance. It is absent from an
 immutable tree record's cache key. That key includes the repository, object
 ID, and decoder version. Document caches continue to depend on bytes, grammar,

@@ -15,7 +15,7 @@ import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
 import { worktreeRegistry } from "../catalog/repository-identity.js";
 import type { NativeAnalysisScopeRun, NativeGitRevisionSource } from "../native/native.js";
-import { analysisScopeHome, readAnalysisScopeGeneration } from "../native/analysis-scope.js";
+import { acquireDirectoryAnalysisGeneration, analysisScopeHome } from "../native/analysis-scope.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import type {
   AuditorCloseOptions,
@@ -372,7 +372,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
         ...(this.#options.revisionSource === undefined ? {} : { revisionSource: this.#options.revisionSource }),
         ...(this.#options.analysisStore === undefined ? {} : { analysisStore: this.#options.analysisStore }),
         ...(this.#options.analysisRun === undefined ? {} : { analysisRun: this.#options.analysisRun }),
-        analysisGeneration: () => readAnalysisScopeGeneration(this.#options.catalogs.databasePath),
+        analysisGeneration: store => acquireDirectoryAnalysisGeneration(this.#options.catalogs.databasePath, store),
         analysisHome: analysisScopeHome(this.#options.catalogs.databasePath),
       });
       // The enforcer registers its code rules synchronously, so the new lane answers `acceptsPath` at once.

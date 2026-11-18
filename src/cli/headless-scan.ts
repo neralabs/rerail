@@ -30,7 +30,7 @@ import { isWorktreePack, MAX_RULE_DOCUMENT_BYTES, rrPayloadHash, WORKTREE_PACK_I
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
 import { loadNativeBinding, type NativeAnalysisScopeRun, type NativeGitRevisionSource } from "../engine/native/native.js";
-import { analysisScopeHome, readAnalysisScopeGeneration, scanContentStore } from "../engine/native/analysis-scope.js";
+import { acquireDirectoryAnalysisGeneration, analysisScopeHome, scanContentStore } from "../engine/native/analysis-scope.js";
 import { assertContentStoreOwner } from "../engine/native/main-instance.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES } from "../engine/code-rule/code-rule-languages.js";
 import { runGit } from "../engine/git.js";
@@ -671,7 +671,6 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   const binding = loadNativeBinding();
   const homeDatabase = options.databasePath ?? defaultRerailDatabasePath();
   const directory = options.revision === undefined;
-  const generation = directory ? readAnalysisScopeGeneration(homeDatabase) : 0;
   const scanId = randomUUID();
   const root = scanRoot(options);
   const durableStore = scanContentStore(homeDatabase);
@@ -681,6 +680,7 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   let cacheWarning: string | undefined;
   try {
     mkdirSync(dirname(homeDatabase), { recursive: true, mode: 0o700 });
+    const generation = directory ? acquireDirectoryAnalysisGeneration(homeDatabase, durableStore) : 0;
     analysisRun = new binding.AnalysisScopeRun(durableStore, options.analysisScope ?? resolve(options.repo), directory, scanId, generation, directory ? analysisScopeHome(homeDatabase) : undefined);
   } catch (error) {
     cacheWarning = error instanceof Error ? error.message : String(error);

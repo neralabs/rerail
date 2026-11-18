@@ -417,6 +417,47 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     } finally { vi.unstubAllEnvs(); }
   });
 
+  it("releases a stopped directory from each store that held it and retries an unavailable store", async () => {
+    const root = checkout();
+    const home = `${root}-home`;
+    const databasePath = join(home, "rerail.sqlite");
+    const earlier = join(home, "first.sqlite");
+    const current = join(home, "second.sqlite");
+    const owners = (path: string) => {
+      const db = new Database(path, { readonly: true });
+      try { return db.prepare("SELECT count(*) FROM analysis_scope_workspace_snapshot").pluck().get(); }
+      finally { db.close(); }
+    };
+    try {
+      for (const store of [earlier, current]) {
+        vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+        expect((await scan(root, { databasePath })).status).toBe("completed");
+        expect(owners(store)).toBe(1);
+      }
+      const homeDb = openRerailDatabase(databasePath);
+      try {
+        const checkout = recordCheckout(homeDb, root);
+        setCheckoutStarted(homeDb, checkout, false);
+        const binding = loadNativeBinding();
+        const release = binding.deleteAnalysisScope;
+        const fail = vi.spyOn(binding, "deleteAnalysisScope").mockImplementation((store, ...args) => {
+          if (store === earlier) throw new Error("store unavailable");
+          return release(store, ...args);
+        });
+        const pending = () => homeDb.$client.prepare("SELECT count(*) FROM analysis_scope_releases").pluck().get();
+        try {
+          expect(() => settleAnalysisScopeReleases(databasePath)).toThrow("store unavailable");
+          expect(pending()).toBe(1);
+          expect(owners(earlier)).toBe(1);
+          expect(owners(current)).toBe(0);
+        } finally { fail.mockRestore(); }
+        settleAnalysisScopeReleases(databasePath);
+        expect(pending()).toBe(0);
+        expect(owners(earlier)).toBe(0);
+      } finally { homeDb.$client.close(); }
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it("rejects duplicate explicit policy IDs and leaves no named ownership", async () => {
     const root = checkout();
     const databasePath = join(`${root}-home`, "rerail.sqlite");

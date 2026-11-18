@@ -10,7 +10,11 @@ import { assertContentStoreOwner } from "./main-instance.js";
 import { storedPath } from "../catalog/checkout-control.js";
 
 export function scanContentStore(databasePath: string): string {
-  return contentStoreOverride() ?? join(dirname(databasePath), `revision-${loadNativeBinding().contentStoreFileName()}`);
+  return contentStoreOverride() ?? defaultScanStore(databasePath);
+}
+
+function defaultScanStore(databasePath: string): string {
+  return join(dirname(databasePath), `revision-${loadNativeBinding().contentStoreFileName()}`);
 }
 
 // Keep generation tokens above the legacy microsecond timestamps already stored on ownership rows.
@@ -31,6 +35,39 @@ export function readAnalysisScopeGeneration(databasePath: string): number {
   }
 }
 
+function storeRegistryPath(databasePath: string): string {
+  return `${storedPath(databasePath)}.analysis-stores.sqlite`;
+}
+
+/** Register the store before acquiring a generation. A stop can then find that generation at any store it reaches. */
+export function acquireDirectoryAnalysisGeneration(databasePath: string, store: string): number {
+  const index = openSqliteDatabase(storeRegistryPath(databasePath));
+  try {
+    index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_store (path TEXT PRIMARY KEY NOT NULL) STRICT");
+    index.$client.prepare("INSERT OR IGNORE INTO analysis_store VALUES (?)").run(storedPath(store));
+  } finally {
+    index.$client.close();
+  }
+  return readAnalysisScopeGeneration(databasePath);
+}
+
+function analysisStores(databasePath: string): Set<string> {
+  const stores = new Set([defaultScanStore(databasePath), scanContentStore(databasePath), contentStorePath()]
+    .filter(path => existsSync(path)).map(path => storedPath(path)));
+  const indexPath = storeRegistryPath(databasePath);
+  if (!existsSync(indexPath)) return stores;
+  const index = openSqliteDatabase(indexPath, { readonly: true });
+  try {
+    if (!index.$client.prepare("SELECT 1 FROM sqlite_schema WHERE name = 'analysis_store'").get()) return stores;
+    for (const path of index.$client.prepare("SELECT path FROM analysis_store").pluck().all() as string[]) {
+      stores.add(path);
+    }
+  } finally {
+    index.$client.close();
+  }
+  return stores;
+}
+
 type Transaction = Parameters<Parameters<RerailDatabase["transaction"]>[0]>[0];
 
 /** Advance the acquisition generation in the same transaction as the stop. */
@@ -46,13 +83,17 @@ export function queueAnalysisScopeReleases(tx: Transaction, directories: readonl
 }
 
 export async function collectAnalysisCaches(databasePath: string): Promise<void> {
-  const scanned = scanContentStore(databasePath);
-  const stores = new Set([scanned, contentStorePath()]);
-  for (const store of stores) {
+  const failures: string[] = [];
+  for (const store of analysisStores(databasePath)) {
     if (!existsSync(store)) continue;
-    assertContentStoreOwner(store);
-    await loadNativeBinding().collectAnalysisCacheAsync(store);
+    try {
+      assertContentStoreOwner(store);
+      await loadNativeBinding().collectAnalysisCacheAsync(store);
+    } catch (error) {
+      failures.push(`${store}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
+  if (failures.length > 0) throw new Error(failures.join("\n"));
 }
 
 /** The daemon owns the content store even if the checkout has no active session. */
@@ -64,15 +105,31 @@ export function settleAnalysisScopeReleases(databasePath: string, limit = 32): v
     finally { reader.$client.close(); }
   })();
   if (pending.length === 0) return;
+  const stores = analysisStores(databasePath);
   const database = openRerailDatabase(databasePath);
   try {
-    const stores = new Set([scanContentStore(databasePath), contentStorePath()]);
+    const failed = new Map<string, unknown>();
     for (const { id, directory } of pending) {
+      let acknowledged = true;
       for (const store of stores) {
-        assertContentStoreOwner(store);
-        loadNativeBinding().deleteAnalysisScope(store, directory, true, id);
+        if (failed.has(store)) {
+          acknowledged = false;
+          continue;
+        }
+        try {
+          assertContentStoreOwner(store);
+          if (!existsSync(store)) throw new Error("The registered store is unavailable");
+          loadNativeBinding().deleteAnalysisScope(store, directory, true, id);
+        } catch (error) {
+          failed.set(store, error);
+          acknowledged = false;
+        }
       }
-      database.delete(analysisScopeReleases).where(eq(analysisScopeReleases.id, id)).run();
+      if (acknowledged) database.delete(analysisScopeReleases).where(eq(analysisScopeReleases.id, id)).run();
+    }
+    if (failed.size > 0) {
+      const reasons = [...failed].map(([store, error]) => `${store}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`Could not deliver analysis scope releases. ${reasons.join("\n")}`);
     }
   } finally {
     database.$client.close();

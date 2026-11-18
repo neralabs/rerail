@@ -314,7 +314,11 @@ export function stopRerail(workspace: string, io: RepositorySetupIo, options: Re
   let steered: readonly string[];
   const settleLocalRelease = () => {
     if (isMainRerailBuild()) return;
-    settleAnalysisScopeReleases(databasePath, -1);
+    try {
+      settleAnalysisScopeReleases(databasePath, -1);
+    } catch (error) {
+      process.stderr.write(`rerail: analysis scope release is pending: ${String(error)}\n`);
+    }
     void collectAnalysisCaches(databasePath).catch(error => process.stderr.write(`rerail: analysis cache collection failed: ${String(error)}\n`));
   };
   try {
