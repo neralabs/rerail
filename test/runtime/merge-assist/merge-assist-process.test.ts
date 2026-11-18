@@ -13,7 +13,8 @@ withExperiments("MERGE_ASSIST");
 
 /**
  * Loaded into the command's process: a stat of gh's hosts file never answers and holds Node's loop meanwhile, as a stat
- * of a folder on a drive that does not answer does (a message port that is never closed stands for it).
+ * of a folder on a drive that does not answer does (a message port that is never closed stands for it). With
+ * `CLOSE_FAILS` set, closing the database fails from then on, as an error Rerail did not foresee would.
  */
 const STALLED_STAT = `
 const fsp = require("node:fs/promises");
@@ -24,6 +25,9 @@ fsp.stat = function (file, ...rest) {
   if (!String(file).endsWith("hosts.yml")) return stat.call(fsp, file, ...rest);
   process.stderr.write("stat of hosts.yml asked\\n");
   new MessageChannel().port1.on("message", () => undefined);
+  if (process.env.CLOSE_FAILS === "1") {
+    require(require.resolve("better-sqlite3", { paths: [process.cwd()] })).prototype.close = () => { throw new Error("the database did not close"); };
+  }
   return new Promise(() => undefined);
 };
 syncBuiltinESMExports();
@@ -37,10 +41,11 @@ describe("rerail merge-assist as its own process", () => {
     child = undefined;
   });
 
-  it("ends once its answer is written, while a stat of gh's hosts file has not answered", async () => {
+  /** `rerail merge-assist status` in its own process, Merge Assist on a minute ago, beside a stat that never answers. */
+  async function status(closeFails: boolean): Promise<{ code: unknown; stdout: string; stderr: string }> {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
-    const env = { ...process.env, RERAIL_HOME: ws.folder, RERAIL_AUTOSTART: "0", RERAIL_EXPERIMENTAL_MERGE_ASSIST: "1", GH_CONFIG_DIR: join(ws.folder, "gh") };
-    // Turned on a minute ago under the command's own gh environment, so its status reads no gh.
+    const env = { ...process.env, RERAIL_HOME: ws.folder, RERAIL_AUTOSTART: "0", RERAIL_EXPERIMENTAL_MERGE_ASSIST: "1", GH_CONFIG_DIR: join(ws.folder, "gh"), CLOSE_FAILS: closeFails ? "1" : "0" };
+    // Turned on under the command's own gh environment, so its status reads no gh.
     const github = new FakeGithub({ signInEnvironment: ghSignInStamps(env)().environment });
     await ws.service({ github, now: () => Date.now() - 60_000 }).setEnabled(ws.repo, true);
     const preload = join(ws.folder, "stalled-stat.cjs");
@@ -53,10 +58,19 @@ describe("rerail merge-assist as its own process", () => {
     let stderr = "";
     started.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
     started.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-
-    // Without the end, the process waits for the stat, and this case for its time limit.
+    // Without the end, the process waits for the stat, and the case for its time limit.
     const [code] = await once(started, "close");
+    return { code, stdout, stderr };
+  }
+
+  it("ends once its answer is written, while a stat of gh's hosts file has not answered", async () => {
+    const { code, stdout, stderr } = await status(false);
     expect({ code, stderr }).toEqual({ code: 0, stderr: "stat of hosts.yml asked\n" });
     expect(stdout).toContain("  GitHub: gh signed in as tbelanger (acme/app), read ");
+  }, 60_000);
+
+  it("ends once its failure is written, while a stat of gh's hosts file has not answered", async () => {
+    const { code, stdout, stderr } = await status(true);
+    expect({ code, stdout, stderr }).toEqual({ code: 1, stdout: "", stderr: "stat of hosts.yml asked\nrerail: the database did not close\n" });
   }, 60_000);
 });
