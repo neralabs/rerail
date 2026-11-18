@@ -319,17 +319,17 @@ async function leaveEvent(hook: HookRun, daemon: DaemonState, adapterEvent: Adap
  * its event behind an earlier one waited for nothing.
  */
 async function leftOrWhyNot(hook: HookRun, daemon: DaemonState, adapterEvent: AdapterEvent): Promise<string | undefined> {
-  let body: string;
   try {
-    body = engineRequestBody(untakenForm(adapterEvent), hook.configuration);
-  } catch {
-    return `the event is larger than the ${RERAIL_EVENT_MAX_FRAME_BYTES / (1024 * 1024)} MiB one event may hold`;
+    await leaveUntaken(defaultRerailHome(), daemon.pid, engineRequestBody(untakenForm(adapterEvent), hook.configuration), hook.arrivedAt);
+    return undefined;
+  } catch (error) {
+    return whyNotLeft(error);
   }
-  return await leaveUntaken(defaultRerailHome(), daemon.pid, body, hook.arrivedAt).then(() => undefined, leaveRefusal);
 }
 
-/** Why `leaveUntaken` refused an event: the folder at its bound, or the write's own failure. */
-function leaveRefusal(error: unknown): string {
+/** Why an event could not be left: too large for one engine request, the folder at its bound, or the error itself. */
+function whyNotLeft(error: unknown): string {
+  if (error instanceof RangeError) return `the event is larger than the ${RERAIL_EVENT_MAX_FRAME_BYTES / (1024 * 1024)} MiB one event may hold`;
   if (error instanceof UntakenFolderFullError) return error.message;
   return `the event could not be left for it (${error instanceof Error ? error.message : String(error)})`;
 }
