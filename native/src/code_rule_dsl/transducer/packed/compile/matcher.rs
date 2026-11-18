@@ -202,8 +202,8 @@ pub fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::m
             .flat_map_iter(|tape| crate::code_rule_dsl::prof::time("fact_rows.tape", || {
                 let file = ast_grep_core::AstGrep::doc(tape.clone());
                 let _scopes = crate::code_rule_dsl::matcher::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
-                // The tape's parents' gaps for its facts' gap tests (Q135's spike, `RERAIL_GAPS`).
-                let _gaps = crate::code_rule_dsl::matcher::gap::GapScope::install(&file.root(), tape.grammar().dialect());
+                // The tape's parents' gaps for its facts' gap tests, each parent's made once (Q135).
+                let _gaps = crate::code_rule_dsl::matcher::gap::GapScope::install(tape.transducer_len());
                 let source = Arc::as_ptr(tape.document_source()) as usize;
                 // The tape's sibling positions and `nthChild` answers, shared by its facts.
                 let siblings = crate::code_rule_dsl::matcher::SiblingPositions::default();

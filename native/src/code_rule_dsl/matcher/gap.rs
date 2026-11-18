@@ -5,8 +5,9 @@
 //! parentheses or the comma. A rule that asks "is the node before me a `,`" can no longer find the
 //! `,` as a node. It asks the grammar instead: the parent's stored children, walked through its
 //! automaton, say which word each gap between them holds ([`TokenGrammar::gaps`]). That reads the
-//! kinds and fields of one parent's children and static tables, never the source; nothing is
-//! cached or indexed.
+//! kinds and fields of one parent's children and static tables, never the source. A tape's facts
+//! make each parent's gaps once, the first time a test asks (`GapScope`, a scratch of their call:
+//! Q135), not for each child; nothing outlives the call.
 //!
 //! ```text
 //! argument_list  f(a, b)       stored: a, b       gaps: before a "(", before b ",", end ")"
@@ -26,75 +27,77 @@ pub use crate::code_rule_dsl::tape::tokens::stored_gaps;
 use ast_grep_core::{Doc, Node};
 use regex::Regex;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 use crate::code_rule_dsl::tape::tokens::Gaps;
 
 /// A parent's stored children (their node ids, ascending, and which are extras) and its gaps, as `stored_gaps` gives
-/// them (Q135's spike).
+/// them, made once a tape's call (`GapScope`, Q135), and the gaps an `Earlier` or `Later` test found matching, by test.
 pub(in crate::code_rule_dsl) struct ParentGaps {
     ids: Vec<usize>,
     extra: Vec<bool>,
     gaps: Gaps<'static>,
+    /// Per test asked (its address while the tape's call holds it), the first and the last gap with a token it matches
+    /// (`before`'s, then `end` as the last), `NONE` for none: an `Earlier` or `Later` test is then a comparison, not a
+    /// pass over the gaps before or after each child.
+    matching: RefCell<Vec<(usize, u32, u32)>>,
 }
+
+const NONE: u32 = u32::MAX;
 
 fn parent_gaps<D: Doc>(grammar: &'static TokenGrammar, parent: &Node<'_, D>) -> Option<ParentGaps> {
     let (children, gaps) = stored_gaps(grammar, parent)?;
-    Some(ParentGaps { ids: children.iter().map(Node::node_id).collect(), extra: children.iter().map(|child| grammar.is_extra(&child.kind())).collect(), gaps })
+    Some(ParentGaps {
+        ids: children.iter().map(Node::node_id).collect(),
+        extra: children.iter().map(|child| grammar.is_extra(&child.kind())).collect(),
+        gaps,
+        matching: RefCell::new(Vec::new()),
+    })
 }
 
-/// Q135's spike, `RERAIL_GAPS`: `each` (each test makes its parent's gaps, as t31 has it), `scratch` (made once per
-/// parent a tape's facts ask, kept for that tape's call), `fact` (every parent's, made once a tape before its facts).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum GapMode {
-    Each,
-    Scratch,
-    Fact,
-}
-
-pub fn gap_mode() -> GapMode {
-    match std::env::var("RERAIL_GAPS").as_deref() {
-        Ok("each") => GapMode::Each,
-        Ok("fact") => GapMode::Fact,
-        _ => GapMode::Scratch,
+impl ParentGaps {
+    /// The first and last gap holding a token `test` matches (`matching`), found once a test.
+    fn matching(&self, test: &GapTest) -> (u32, u32) {
+        let key = std::ptr::from_ref(test) as usize;
+        if let Some(&(_, first, last)) = self.matching.borrow().iter().find(|(known, ..)| *known == key) {
+            return (first, last);
+        }
+        let holds = |word: &[(&str, &str)]| word.iter().any(|token| test.regex.is_match(token.0));
+        let words = self.gaps.before.iter().map(Vec::as_slice).chain(std::iter::once(self.gaps.end.as_slice()));
+        let (mut first, mut last) = (NONE, NONE);
+        for (at, word) in words.enumerate() {
+            if holds(word) {
+                first = first.min(at as u32);
+                last = at as u32;
+            }
+        }
+        self.matching.borrow_mut().push((key, first, last));
+        (first, last)
     }
 }
 
-/// By the dialect whose automata made them (a test's own; a guest document's tape is its host's grammar's) and the
-/// parent's node id.
-enum TapeGaps {
-    Scratch(HashMap<(GrammarDialect, usize), Option<Rc<ParentGaps>>>),
-    Fact(GrammarDialect, Vec<Option<Rc<ParentGaps>>>),
+/// A tape's parents' gaps by parent node id, made when a gap test first asks (`None` until then; `Some(None)` where
+/// the parent has none), per dialect whose automata made them (a test's own: a guest document's tape is its host's
+/// grammar's).
+struct TapeGaps {
+    nodes: usize,
+    by: Vec<(GrammarDialect, Vec<Option<Option<Rc<ParentGaps>>>>)>,
 }
 
 thread_local! {
     static TAPE_GAPS: RefCell<Option<TapeGaps>> = const { RefCell::new(None) };
 }
 
-/// One tape's parents' gaps for its facts' gap tests, on this thread until dropped (`fact_rows`).
+/// One tape's parents' gaps for its facts' gap tests (a scratch of the call, on this thread until dropped:
+/// `fact_rows`), so a parent's are made once, not for each child a test asks of (Q135: a parent of n children cost
+/// n²). Outside a scope each test makes its parent's.
 pub struct GapScope {
     previous: Option<TapeGaps>,
 }
 
 impl GapScope {
-    pub fn install<D: Doc>(root: &Node<'_, D>, dialect: GrammarDialect) -> Self {
-        let tape = match gap_mode() {
-            GapMode::Each => None,
-            GapMode::Scratch => Some(TapeGaps::Scratch(HashMap::new())),
-            GapMode::Fact => TokenGrammar::of_dialect_static(dialect).map(|grammar| {
-                let _stage = crate::code_rule_dsl::prof::Stage::start("gaps.fact");
-                let mut by = Vec::new();
-                for node in root.dfs() {
-                    let id = node.node_id();
-                    if by.len() <= id {
-                        by.resize_with(id + 1, || None);
-                    }
-                    by[id] = parent_gaps(grammar, &node).map(Rc::new);
-                }
-                TapeGaps::Fact(dialect, by)
-            }),
-        };
-        Self { previous: TAPE_GAPS.with(|gaps| gaps.replace(tape)) }
+    /// The scope for a tape of `nodes` nodes (node ids below it).
+    pub fn install(nodes: usize) -> Self {
+        Self { previous: TAPE_GAPS.with(|gaps| gaps.replace(Some(TapeGaps { nodes, by: Vec::new() }))) }
     }
 }
 
@@ -105,12 +108,20 @@ impl Drop for GapScope {
     }
 }
 
-/// `parent`'s gaps: the tape's where its scope holds them, else made here.
+/// `parent`'s gaps: the scope's, made the first time they are asked, else made here.
 fn gaps_of<D: Doc>(dialect: GrammarDialect, grammar: &'static TokenGrammar, parent: &Node<'_, D>) -> Option<Rc<ParentGaps>> {
-    TAPE_GAPS.with(|gaps| match &mut *gaps.borrow_mut() {
-        Some(TapeGaps::Scratch(by)) => by.entry((dialect, parent.node_id())).or_insert_with(|| parent_gaps(grammar, parent).map(Rc::new)).clone(),
-        Some(TapeGaps::Fact(made, by)) if *made == dialect => by.get(parent.node_id()).cloned().flatten(),
-        _ => parent_gaps(grammar, parent).map(Rc::new),
+    let id = parent.node_id();
+    TAPE_GAPS.with(|gaps| {
+        let mut gaps = gaps.borrow_mut();
+        let Some(tape) = gaps.as_mut().filter(|tape| id < tape.nodes) else { return parent_gaps(grammar, parent).map(Rc::new) };
+        let at = match tape.by.iter().position(|(made, _)| *made == dialect) {
+            Some(at) => at,
+            None => {
+                tape.by.push((dialect, vec![None; tape.nodes]));
+                tape.by.len() - 1
+            }
+        };
+        tape.by[at].1[id].get_or_insert_with(|| parent_gaps(grammar, parent).map(Rc::new)).clone()
     })
 }
 
@@ -210,8 +221,12 @@ impl GapTest {
                             k -= 1;
                         }
                     }
-                    Place::Earlier => gaps.before[..=at].iter().flatten().any(matches),
-                    Place::Later => gaps.before[at + 1..].iter().flatten().chain(&gaps.end).any(matches),
+                    // A matching gap at or before the node's, or after it (the end last).
+                    Place::Earlier => parent_gaps.matching(self).0 <= at as u32,
+                    Place::Later => {
+                        let last = parent_gaps.matching(self).1;
+                        last != NONE && last > at as u32
+                    }
                     // The gap after the node: the first token on that the walk does not pass,
                     // before the next children, or at the end.
                     _ => {

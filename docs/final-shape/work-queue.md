@@ -1891,6 +1891,19 @@ where the rest goes (a sample of the run), before reading the wave's CPU totals 
   Both end the quadratic part. The fact reads by index where the scratch hashes; it is made per wave here, as the
   scratch is, so kept with the document it would cost its 2.2 ms a tape once. Still in both: `Earlier` and `Later`
   test each token of the gaps before (after) the node, linear in the siblings for each.
+- **Done** (2026-11-18, the user: "please do scratch, including fixing the lookup cost"): the scratch stays, the
+  other two and `RERAIL_GAPS` are gone. `GapScope::install(nodes)` (in `fact_rows`) holds a tape's parents' gaps in a
+  vector by the parent's node id, made the first time a test asks, per dialect that made them (a guest's tape is its
+  host's grammar's); no hash. A child is found by a binary search of its parent's ascending ids. An `Earlier` or
+  `Later` test reads, per parent and test, the first and the last gap holding a token it matches, found once
+  (`ParentGaps::matching`): a comparison with the child's position, not a pass over its siblings' gaps. On the same
+  run (M3 Max, load 19): `fact_rows.tape` 2.53 s CPU (scratch was 3.06 s, the fact 2.78 s), the labelling's 5.25 s,
+  the same anchors (143,274 kept, 301,004 dropped). Tests: the gap and token rules' tests, `a_gap_under_embedded`.
+- **Prior art** (found 2026-11-18): Tim's e1e0209ae on `tbelanger/final-rerail-shape-integration` (not on the hub)
+  keeps a parent's gaps in W's file memo (`memo::parent_gaps`, an `FxHashMap` by grammar and node id) and runs
+  `fact_rows` under `with_file_memo`, which memoizes the utilities' verdicts and counted siblings for the facts too.
+  Where both meet, one mechanism stays: this scratch's shape (by node id, the `Earlier`/`Later` bounds) inside
+  whichever scope the merge keeps.
 
 ### Q136. (Q25 on sync-integration-hub-tape) The label pipelines compile cold for 110 s
 
