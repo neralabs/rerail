@@ -17,8 +17,8 @@ export interface HeapWatch {
   /** Runs a full collection; `gc()`, exposed for the call, by default. */
   collect?: () => void;
   /**
-   * Frees what the daemon keeps but no session uses (`EngineService.closeUnusedRuntimes`), settling once it is freed:
-   * asked before a restart, since what it frees may bring the heap under the ceiling.
+   * Frees what the daemon keeps but no session uses (`EngineService.closeUnusedRuntimes`), settling once what it closed
+   * was collected: asked before a restart, since what it frees may bring the heap under the ceiling.
    */
   relieve?: () => Promise<void>;
   ratio?: number;
@@ -50,34 +50,42 @@ function pastCeiling(read: () => HeapUse, collect: () => void, ratio: number): H
  * Watches the daemon's heap. Near its limit, V8 spends most of its time in mark-compact pauses of a second or two, in
  * which the daemon answers no health probe and records no event, and then the process dies without cleaning up; a
  * daemon that restarts at `ratio` loses a few seconds instead. The used heap counts garbage V8 has not collected yet,
- * which can pass the ceiling on a live heap far below it, so a reading past it is taken again after a full collection;
- * then what the daemon keeps but no session uses is freed (`relieve`) and the heap read again after another collection,
- * and only that reading decides. Past the ceiling within `graceMs` of the start, the watch ends without a restart: the
- * daemon used to restart anyway once the grace was over, and so again every few minutes for as long as its live heap
- * stayed high. While a relief runs, the next looks skip; with no `relieve` the first reading after a collection decides.
- * Returns the function that stops the watch. The timer keeps no process alive.
+ * which can pass the ceiling on a live heap far below it, so a reading past it is taken again after a full collection,
+ * and only that one decides. Past the ceiling, what the daemon keeps but no session uses is freed first (`relieve`), and
+ * the heap read once that has settled decides: the relief collected after what it closed. A relief that has not settled
+ * by the next look does not hold the restart: that look decides on its own reading after a full collection, as a look
+ * without `relieve` does. Past the ceiling within `graceMs` of the start, the watch ends without a restart: the daemon
+ * used to restart anyway once the grace was over, and so again every few minutes for as long as its live heap stayed
+ * high. Returns the function that stops the watch. The timer keeps no process alive.
  */
 export function watchHeap({ read = v8Heap, collect = collectGarbage, relieve, ratio = HEAP_CEILING_RATIO, intervalMs = HEAP_CHECK_INTERVAL_MS, graceMs = HEAP_CEILING_GRACE_MS, onCeiling }: HeapWatch): () => void {
   const started = Date.now();
-  let relieving = false;
+  /** Set once a relief was asked for, until a reading finds the heap under the ceiling again. */
+  let relieved = false;
   let stopped = false;
   const stop = (): void => {
     stopped = true;
     clearInterval(timer);
   };
-  const atCeiling = (use: HeapUse | undefined): void => {
-    if (use === undefined || stopped) return;
+  const atCeiling = (use: HeapUse): void => {
+    if (stopped) return;
     stop();
     if (Date.now() - started >= graceMs) onCeiling(use);
   };
+  const afterRelief = (): void => {
+    const use = read();
+    if (use.used < use.limit * ratio) relieved = false;
+    else atCeiling(use);
+  };
   const look = (): void => {
-    const use = relieving ? undefined : pastCeiling(read, collect, ratio);
-    if (use === undefined || relieve === undefined) return atCeiling(use);
-    relieving = true;
-    void relieve().catch(() => undefined).then(() => {
-      relieving = false;
-      atCeiling(pastCeiling(read, collect, ratio));
-    });
+    const use = pastCeiling(read, collect, ratio);
+    if (use === undefined) {
+      relieved = false;
+      return;
+    }
+    if (relieve === undefined || relieved) return atCeiling(use);
+    relieved = true;
+    void relieve().catch(() => undefined).then(afterRelief);
   };
   const timer = setInterval(look, intervalMs);
   timer.unref();

@@ -81,15 +81,16 @@ describe("the daemon's heap ceiling", () => {
 
   // What the daemon keeps for its checkouts' next sessions filled the heap toward the ceiling, and the watch restarted
   // the daemon, making every hook wait through a start, where closing those runtimes would have made the room.
-  it("frees what no session uses before it restarts, and restarts only for a heap still past the ceiling after that", async () => {
+  it("frees what no session uses before it restarts, and restarts only for a heap still past the ceiling after that, with no collection of its own after the relief's", async () => {
     vi.useFakeTimers();
     const heldByKept = { used: 900, limit: 1_000 };
     const read = vi.fn(() => heldByKept);
+    const collect = vi.fn();
     const relieve = vi.fn(async () => {
       heldByKept.used = 500;
     });
     const onCeiling = vi.fn();
-    const stop = watchHeap({ read, collect: () => {}, relieve, ratio: 0.8, intervalMs: 1_000, graceMs: 0, onCeiling });
+    const stop = watchHeap({ read, collect, relieve, ratio: 0.8, intervalMs: 1_000, graceMs: 0, onCeiling });
     await vi.advanceTimersByTimeAsync(1_000);
     expect(relieve).toHaveBeenCalledTimes(1);
     expect(onCeiling).not.toHaveBeenCalled();
@@ -98,29 +99,39 @@ describe("the daemon's heap ceiling", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(relieve).toHaveBeenCalledTimes(2);
     expect(onCeiling).toHaveBeenCalledExactlyOnceWith({ used: 950, limit: 1_000 });
+    // One collection per look; the relief collects after what it closed, and its reading decides.
+    expect(collect).toHaveBeenCalledTimes(2);
     stop();
   });
 
-  it("looks again only once a relief has ended, restarts though the relief failed, and not once stopped meanwhile", async () => {
+  // A runtime's close waits for the evaluator opens and steers in flight in it: a close that never settled held the
+  // restart off for good while the heap stayed past the ceiling.
+  it("decides at the next look though a relief never settles, restarts once a relief failed, and not once stopped meanwhile", async () => {
     vi.useFakeTimers();
     const read = vi.fn(() => ({ used: 900, limit: 1_000 }));
-    const relieved = Promise.withResolvers<void>();
-    const relieve = vi.fn(async () => await relieved.promise);
+    const relieve = vi.fn(async () => await new Promise<void>(() => undefined));
     const onCeiling = vi.fn();
     const stop = watchHeap({ read, collect: () => {}, relieve, ratio: 0.8, intervalMs: 1_000, graceMs: 0, onCeiling });
-    await vi.advanceTimersByTimeAsync(3_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(relieve).toHaveBeenCalledTimes(1);
-    relieved.reject(new Error("a runtime failed to close"));
-    await vi.advanceTimersByTimeAsync(0);
-    expect(onCeiling).toHaveBeenCalledTimes(1);
+    expect(onCeiling).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(onCeiling).toHaveBeenCalledExactlyOnceWith({ used: 900, limit: 1_000 });
+    expect(relieve).toHaveBeenCalledTimes(1);
+    stop();
+    const onFailed = vi.fn();
+    const failing = watchHeap({ read, collect: () => {}, relieve: async () => await Promise.reject(new Error("a runtime failed to close")), ratio: 0.8, intervalMs: 1_000, graceMs: 0, onCeiling: onFailed });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(onFailed).toHaveBeenCalledTimes(1);
+    failing();
+    const onStopped = vi.fn();
     const stopped = Promise.withResolvers<void>();
-    const second = watchHeap({ read, collect: () => {}, relieve: async () => await stopped.promise, ratio: 0.8, intervalMs: 1_000, graceMs: 0, onCeiling });
+    const second = watchHeap({ read, collect: () => {}, relieve: async () => await stopped.promise, ratio: 0.8, intervalMs: 1_000, graceMs: 0, onCeiling: onStopped });
     await vi.advanceTimersByTimeAsync(1_000);
     second();
     stopped.resolve();
     await vi.advanceTimersByTimeAsync(5_000);
-    expect(onCeiling).toHaveBeenCalledTimes(1);
-    stop();
+    expect(onStopped).not.toHaveBeenCalled();
   });
 
   it("stops reading once stopped", () => {
