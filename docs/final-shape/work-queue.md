@@ -2102,6 +2102,33 @@ Also left (from rr-align's list): the views (source views over a batch, 88 MB on
   differ run to run (Q59: +600 G in 2 of 7 runs). Findings do not. `plans_learnt` (a kept plan's price and work) is
   last writer wins as well.
 - **Wanted**: what a chunk plans with is a function of the run's inputs, never of timing.
+- **Record** (2026-11-18): built. Chunk `n` (from 0, in the order the main thread files them) plans from the run's
+  plans and observations as they were once chunks `0..=n - 8` were filed (`PLAN_WINDOW`, the most chunks that
+  evaluate at once: those are always filed when `n` begins, so it never waits). What it plans, prices, learns and
+  observes is its own (`ChunkView`: new entries over the view's, which no chunk changes in place) and is the run's
+  as the main thread files it, in the chunks' order (`OrderedPlans`, `in_view`; `keeps::chunk_observed`). The same
+  rule holds whether chunks evaluate at once or one by one, so both plan alike. The guest slice's and the inputs'
+  statistics measured once per mix (`measured_once`, `guest_postings_once`) are each the earliest chunk's that made
+  them, and a chunk reads one only from a chunk filed before it began (`Once`, `once_keep`). Test:
+  `plan::ordered_tests::a_chunk_sees_the_plans_filed_before_its_window_never_a_neighbours` (rerail-logic; red with
+  the view taken as filed now, `(Some(10.0), Some(20.0))`).
+  - **Still timing-dependent: where the corpus is cut.** The chunk sizes come from the footprint each chunk adds
+    (Q74, Q55's 47785e475: bytes a node, the most measured this run), and the builder cuts ahead of the
+    measurements. Two runs cut PostHog differently: 331 chunks in sd1 (2026-11-17), 541 in q18a (2026-11-18,
+    one chunk measured at 4,138 bytes a node, every later chunk sized from it at 97,294 nodes). `RERAIL_CHUNK_NODES`
+    (a measurement aid) fixes the size after the first chunk.
+  - **Measured** (PostHog cold, profiled, M3 at load 20–57, 262,144 nodes a chunk): two runs with Q94 alone,
+    3,101 and 3,103 G instructions, 755 M native work each: the plans repeat once the cut does.
+  - **The instruction increase** (sd1 2,589 G, q18a 3,005 G, q94n 3,101 G) was not the chunks' count: 546 M native
+    work in sd1 against 755 M, of which `tp_name`, `demand_tp_name` and the `pre_<i>` feeding them made 92 + 55 + 89 M.
+    `tp_name` was demanded again, and `tp_ref`'s split joined every identifier with each of its ancestors (55 M
+    rows), the 0319 fault by another way: since Q37 `kind` is a view of `node`'s columns, so the split's scan took
+    `kind(o, "type_alias_statement")` as derived and bounding nothing, and a definition's `field(o, "left", l)`
+    (8,152 rows in a chunk) made `tp_name` large. Which way a run went depended on the chunk whose choice was kept
+    first (decision 0090 §5): one run with Q132 reverted did 503 M, another 755 M. Fixed: `demand::over` reads a
+    view of an input as its input's columns (`view_of`; test
+    `demand::over::tests::a_view_of_an_input_reads_as_the_inputs_columns`). Two runs: 2,888 and 2,862 G, 561 and
+    562 M native work, `tp_name` not demanded in any chunk, the same 29,747 findings.
 
 ### Q95. (Q61 at django-bugs 33fc22249) The fast path's peak, by holder (PostHog cold, the memory line lifted)
 
