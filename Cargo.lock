@@ -3159,6 +3159,7 @@ dependencies = [
  "rayon",
  "rerail-blocks",
  "rerail-forest",
+ "rustc-hash",
  "sha2 0.10.9",
 ]
 
@@ -3519,11 +3520,11 @@ name = "rerail-forest"
 version = "0.1.0"
 dependencies = [
  "block",
- "cc",
  "libc",
  "metal",
  "objc",
  "rayon",
+ "rerail-ukl",
  "sha2 0.10.9",
 ]
 
@@ -4703,6 +4704,14 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-ukl"
+version = "0.1.0"
+dependencies = [
+ "rerail-c-lean",
+ "rerail-c-pp",
 ]
 
 [[package]]

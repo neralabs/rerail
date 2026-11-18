@@ -1,0 +1,12 @@
+[package]
+name = "rerail-ukl"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "UKL, the kernel language every GPU backend shares (decision 0400): its shims carried in the binary, and a kernel preprocessed for a backend by rerail-c-pp, in-process."
+
+[dependencies]
+# The preprocessor that applies a backend's shim (decision 0327, mode (b)).
+rerail-c-pp = { path = "../c_pp" }
+# Its lexer's options (the C++ dialect UKL is written in).
+rerail-c-lean = { path = "../c_lean" }
