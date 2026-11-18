@@ -24,13 +24,14 @@ static MADE: [std::sync::atomic::AtomicBool; 3] = [const { std::sync::atomic::At
 
 static CPU: LazyLock<Executor> = LazyLock::new(|| {
     MADE[0].store(true, std::sync::atomic::Ordering::Relaxed);
+    // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
     super::costs::start();
-    super::costs::ready();
     Executor::with(cpu_lanes())
 });
 
 /// The CPU binding's lanes: the cores, SQL and, where the CPU has one, its matrix unit (`sme::backend` asks the CPU
-/// itself). No device lane is asked for: asking compiles the GPU's kernels and builds the Neural Engine's lane.
+/// itself). No device lane is asked for: asking compiles the GPU's kernels and builds the Neural Engine's lane (11 ms
+/// of a run on the cores, decision 0285).
 fn cpu_lanes() -> Vec<Arc<dyn Backend>> {
     #[cfg_attr(not(all(target_os = "macos", target_arch = "aarch64")), allow(unused_mut))]
     let mut lanes: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(SqlBackend)];
@@ -40,8 +41,8 @@ fn cpu_lanes() -> Vec<Arc<dyn Backend>> {
 }
 static ALL: LazyLock<Executor> = LazyLock::new(|| {
     MADE[1].store(true, std::sync::atomic::Ordering::Relaxed);
+    // The statistics kept; their stored prices are read when the first job is priced (`costs::ready`).
     super::costs::start();
-    super::costs::ready();
     // Every submission the executor makes is checked against the engine's launch budget (decision 0100 §2).
     if let Some(dev) = crate::code_rule_dsl::logic::device::solver() {
         dev.install_launch_guard();
@@ -508,6 +509,21 @@ pub mod prof {
             }
         }
         Ok(r)
+    }
+
+    /// Per form and lane with launches: (form, lane, launches, wall seconds, the lane's job CPU seconds).
+    pub fn by_lane() -> Vec<(&'static str, Lane, u64, f64, f64)> {
+        let forms = FORMS.lock().unwrap();
+        let mut out = Vec::new();
+        for (name, f) in forms.iter() {
+            for l in Lane::ALL {
+                let i = l.index();
+                if f.launches[i] > 0 {
+                    out.push((*name, l, f.launches[i], f.wall[i], f.lane_cpu[i]));
+                }
+            }
+        }
+        out
     }
 
     /// The section: per form, the host phases, then per lane the launches and where the submission's time went, then

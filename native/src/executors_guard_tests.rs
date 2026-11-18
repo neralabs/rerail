@@ -81,8 +81,16 @@ pub(crate) fn product_lines(text: &str) -> Vec<(usize, &str)> {
                 let item = lines[j];
                 let indent = item.len() - item.trim_start().len();
                 if item.trim_end().ends_with('{') {
+                    // Its closing brace: at the item's indent, outside a raw string (a kernel's source in a test
+                    // may close its functions at column 0).
                     let mut k = j + 1;
-                    while k < lines.len() && !(lines[k].len() - lines[k].trim_start().len() == indent && lines[k].trim_start().starts_with('}')) {
+                    let mut raw = false;
+                    while k < lines.len() && (raw || !(lines[k].len() - lines[k].trim_start().len() == indent && lines[k].trim_start().starts_with('}'))) {
+                        let mut rest = lines[k];
+                        while let Some(at) = rest.find(if raw { "\"#" } else { "r#\"" }) {
+                            rest = &rest[at + if raw { 2 } else { 3 }..];
+                            raw = !raw;
+                        }
                         k += 1;
                     }
                     i = k + 1;

@@ -23,6 +23,25 @@ impl Version {
         self.write_lit(&mut s, r, l);
         s
     }
+    /// The whole program, for a measurement aid (`version_trace`, 0276 §6): each declaration, the inputs and outputs,
+    /// then each rule, a line each, in the version's order.
+    pub fn show(&self) -> String {
+        let mut s = String::new();
+        for d in self.decls() {
+            let cols: Vec<String> = d.cols().map(|(n, t)| format!("{}: {}", self.text(n), self.text(t))).collect();
+            let _ = writeln!(s, ".decl {}({})", self.text(d.name()), cols.join(", "));
+        }
+        for i in self.inputs() {
+            let _ = writeln!(s, ".input {}", self.text(i));
+        }
+        for o in self.outputs() {
+            let _ = writeln!(s, ".output {}", self.text(o));
+        }
+        for r in self.rules() {
+            let _ = writeln!(s, "{}.", self.show_rule(r));
+        }
+        s
+    }
     /// Rule `r`, as `front::Rule` writes it.
     pub fn show_rule(&self, r: RuleRef<'_>) -> String {
         let mut s = String::new();
@@ -51,6 +70,9 @@ impl Version {
                 let _ = write!(out, "{n}");
             }
             TermRef::Str(a) => out.push_str(&serde_json::to_string(self.text(a)).expect("a string serializes")),
+            TermRef::Branded(b) => {
+                let _ = write!(out, "{b}");
+            }
             TermRef::Top => out.push_str("top"),
             TermRef::Call(f, args) => {
                 out.push('@');

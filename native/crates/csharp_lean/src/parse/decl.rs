@@ -354,30 +354,26 @@ impl<'a> P<'a> {
         self.tk(K::PreprocIfInAttributeList, K::THashIf)?;
         self.preproc_condition()?;
         self.one_attribute_list()?;
-        loop {
-            match self.peek() {
-                T::PpElif => {
-                    let a = self.open(K::PreprocElif, f::ALTERNATIVE, C_NONE)?;
-                    self.tk(K::PreprocElifInAttributeList, K::THashElif)?;
-                    self.preproc_condition()?;
-                    self.one_attribute_list()?;
-                    self.close(a);
-                    // Further branches nest in this one: not read.
-                    if matches!(self.peek(), T::PpElif | T::PpElse) {
-                        return self.refuse();
-                    }
-                    break;
+        match self.peek() {
+            T::PpElif => {
+                let a = self.open(K::PreprocElif, f::ALTERNATIVE, C_NONE)?;
+                self.tk(K::PreprocElifInAttributeList, K::THashElif)?;
+                self.preproc_condition()?;
+                self.one_attribute_list()?;
+                self.close(a);
+                // Further branches nest in this one: not read.
+                if matches!(self.peek(), T::PpElif | T::PpElse) {
+                    return self.refuse();
                 }
-                T::PpElse => {
-                    let a = self.open(K::PreprocElse, f::ALTERNATIVE, C_NONE)?;
-                    // Its tape kind is `preproc_else`, whose `#else` is stored.
-                    self.tk(K::PreprocElse, K::THashElse)?;
-                    self.one_attribute_list()?;
-                    self.close(a);
-                    break;
-                }
-                _ => break,
             }
+            T::PpElse => {
+                let a = self.open(K::PreprocElse, f::ALTERNATIVE, C_NONE)?;
+                // Its tape kind is `preproc_else`, whose `#else` is stored.
+                self.tk(K::PreprocElse, K::THashElse)?;
+                self.one_attribute_list()?;
+                self.close(a);
+            }
+            _ => {}
         }
         if self.peek() != T::PpEndif {
             return self.refuse();

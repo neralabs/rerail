@@ -129,8 +129,11 @@ Built (2026-11-15) as above, with one change: the sections keep their relations'
 identities it was made under in one more section (`memo::COVERED`, two words each). A relation with no rows for
 a file has no section, so whether an entry holds it is read there, not from its rows. The space names the phase
 and the file-local part's relations as well: nested runs with no memoised relations otherwise shared one space
-and overwrote each other's frames. The kept statistics, the tree counts and a session's inputs stay keyed by the
-whole program: they are of every file together.
+and overwrote each other's frames. The kept statistics and the tree counts stay keyed by the whole program: they
+are of every file together. The cross-file part is not (2026-11-15): its inputs' frames and a session's kept part
+are named by the cross program alone (`retain::keys`), since an edit of a file-local rule leaves that program as it
+was. Under the whole program's key every edit gave each input a frame of a new name, none found again, and an input
+no memo entry holds read as changed (ep2: 574 of 2,375 cross strata ran again; a session ran all 2,715).
 
 Measured on the edit profile (ep2, load 30–45), findings identical to the warm run's at each step:
 
@@ -150,6 +153,18 @@ the files around them (profile shares of the edit):
 
 Each is the shape this section asks for, not yet met: an entry's sections written when their rows change, and a
 partial hit built only for what its cone reads. Next.
+
+Measured again (2026-11-15, after the cross part's keying above and the hub's roll-up; ep2, B101's body edited,
+finding sets identical to the unchanged run's):
+
+| Step | Instructions | CPU | Wall | Cross strata run |
+|---|---|---|---|---|
+| unchanged (the whole-run cutoff) | 6.9 G | 0.8 s | 1.9 s | — |
+| one rule's body, a new process | 80.2 G | 10.8 s | 13.6 s | 1 of 2,715, no input changed |
+| the same in a session (dl30, 30 files) | 53.6 G | 8.1 s | — | 1 of 2,715 |
+
+Combining the 317 programs (34 G) and preparing (12 G) are now most of an edit, in a session as in a new process:
+the next lever (work queue).
 
 ### 3. A message is not the program
 
@@ -256,6 +271,14 @@ then the split (§5), then the other questions, then §7.
   document's nodes again: one stratum went from 1,422 to 7.9 M rows. Fixed in 2ff9ffe8e: the factorized parts' keys
   and export demand's keys are never inlined. Now 300 files cold: 75 s wall, 847 G, and 50 files' violations
   identical to 5de418d7a's.
+- **A partial hit read rows made under another projection** (found merging the hub into benchmarks-on-integration,
+  2026-11-15). A relation's identity digested its rules and the value inputs they reach, not what the documents' base
+  rows were made of: the projection (decision 0046) the program's facts and rules choose, beside its rules. Two runs
+  on one store with the same rules and `.on guest_error skip` then `partial` gave the second the first's `roots`, the
+  broken guest's tree withheld (`guests_that_do_not_parse_follow_the_policy`, red whenever its two runs shared a
+  store). Every identity now digests the projection's rows (`Projection::rows_digest`: shape, patterns, text bounds,
+  narrowed nodes, guest policy; not which relations are made), so an edit that changes text demand misses the
+  relations it changes the rows of, as it must.
 - **Peak memory on corpus0 is 2.5 GB**, over decision 0126's 1 GB overall budget (cold, and the edits 1.6–2.9 GB). 50
   files cold: 1.0 GB, as 5de418d7a's 991 MB. Open (O-corpus0-peak-memory).
 

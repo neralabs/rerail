@@ -1119,6 +1119,591 @@ pub mod f16 {
     return v23;
     }
 
+    #[inline(never)]
+    unsafe fn f15(len: u64, a0: u64, a1: u64, a2: u32, a3: u32) -> u32 {
+        let mut v0: u64 = 0;
+        let mut v1: u64 = 0;
+        let mut v2: u32 = 0;
+        let mut v3: u32 = 0;
+        let mut v4: u32 = 0;
+        let mut v5: u32 = 0;
+        let mut v6: u64 = 0;
+        let mut v7: u64 = 0;
+        let mut v8: u64 = 0;
+        let mut v9: u64 = 0;
+        let mut v10: u32 = 0;
+        let mut v11: u32 = 0;
+        let mut v12: u32 = 0;
+        let mut v13: u64 = 0;
+        let mut v14: u64 = 0;
+        let mut v15: u64 = 0;
+        let mut v16: u64 = 0;
+        let mut v17: u32 = 0;
+        let mut v18: u32 = 0;
+        let mut v19: u32 = 0;
+        let mut v20: u32 = 0;
+        let mut v21: u32 = 0;
+        let mut v22: u32 = 0;
+        let mut v23: u32 = 0;
+        let mut v24: u32 = 0;
+        let mut v25: u32 = 0;
+        let mut v26: u32 = 0;
+        let mut v27: u64 = 0;
+        let mut v28: u64 = 0;
+        let mut v29: u64 = 0;
+        let mut v30: u64 = 0;
+        let mut v31: u32 = 0;
+        let mut v32: u32 = 0;
+        let mut v33: u64 = 0;
+        let mut v34: u64 = 0;
+        let mut v35: u64 = 0;
+        let mut v36: u64 = 0;
+        let mut v37: u32 = 0;
+        let mut v38: u32 = 0;
+        let mut v39: u32 = 0;
+        let mut v40: u32 = 0;
+        let mut v41: u32 = 0;
+        let mut v42: u32 = 0;
+        let mut v43: u32 = 0;
+        let mut v44: u32 = 0;
+        let mut v45: u32 = 0;
+        let mut v46: u32 = 0;
+        let mut v47: u64 = 0;
+        let mut v48: u64 = 0;
+        let mut v49: u64 = 0;
+        let mut v50: u64 = 0;
+        let mut v51: u64 = 0;
+        let mut v52: u64 = 0;
+        let mut v53: u64 = 0;
+        let mut v54: u64 = 0;
+        let mut v55: u32 = 0;
+        let mut v56: u32 = 0;
+        let mut v57: u8 = 0;
+        let mut v58: u32 = 0;
+        let mut v59: u32 = 0;
+        let mut v60: u32 = 0;
+        let mut v61: u64 = 0;
+        let mut v62: u64 = 0;
+        let mut v63: u32 = 0;
+        let mut v64: u8 = 0;
+        let mut v65: u32 = 0;
+        let mut v66: u32 = 0;
+        let mut v67: u64 = 0;
+        let mut v68: u64 = 0;
+        let mut v69: u32 = 0;
+        let mut v70: u32 = 0;
+        let mut v71: u64 = 0;
+        let mut v72: u64 = 0;
+        let mut v73: u32 = 0;
+        let mut v74: u8 = 0;
+        let mut v75: u32 = 0;
+        let mut v76: u32 = 0;
+        let mut v77: u64 = 0;
+        let mut v78: u64 = 0;
+        let mut v79: u32 = 0;
+        let mut v80: u32 = 0;
+        let mut v81: u64 = 0;
+        let mut v82: u64 = 0;
+        let mut v83: u32 = 0;
+        let mut v84: u8 = 0;
+        let mut v85: u32 = 0;
+        let mut v86: u32 = 0;
+        let mut v87: u64 = 0;
+        let mut v88: u64 = 0;
+        let mut v89: u32 = 0;
+        let mut v90: u32 = 0;
+        let mut v91: u64 = 0;
+        let mut v92: u64 = 0;
+        let mut v93: u32 = 0;
+        let mut v94: u8 = 0;
+        let mut v95: u32 = 0;
+        let mut v96: u32 = 0;
+        let mut v97: u64 = 0;
+        let mut v98: u64 = 0;
+        let mut v99: u32 = 0;
+        let mut v100: u32 = 0;
+        let mut v101: u64 = 0;
+        let mut v102: u64 = 0;
+        let mut v103: u32 = 0;
+        let mut v104: u8 = 0;
+        let mut v105: u32 = 0;
+        let mut v106: u32 = 0;
+        let mut v107: u64 = 0;
+        let mut v108: u64 = 0;
+        let mut v109: u32 = 0;
+        let mut v110: u32 = 0;
+        let mut v111: u64 = 0;
+        let mut v112: u64 = 0;
+        let mut v113: u32 = 0;
+        let mut v114: u8 = 0;
+        let mut v115: u32 = 0;
+        let mut v116: u32 = 0;
+        let mut v117: u64 = 0;
+        let mut v118: u64 = 0;
+        let mut v119: u32 = 0;
+        let mut v120: u32 = 0;
+        let mut v121: u32 = 0;
+        let mut v122: u32 = 0;
+        v0 = a0;
+        v1 = a1;
+        v2 = a2;
+        v3 = a3;
+        let mut d: u32 = 0;
+    v4 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v5 = 8i64 as u32;
+    v6 = v4 as u64;
+    v7 = v5 as u64;
+    v8 = v0.wrapping_add(v6);
+    v9 = v8.wrapping_add(v7);
+    v10 = ld::<u32>(v0, len, (v9 as usize)) as u32;
+    v11 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v12 = 12i64 as u32;
+    v13 = v11 as u64;
+    v14 = v12 as u64;
+    v15 = v0.wrapping_add(v13);
+    v16 = v15.wrapping_add(v14);
+    v17 = ld::<u32>(v0, len, (v16 as usize)) as u32;
+    v18 = v10.wrapping_mul(8i64 as u32);
+    v19 = 0i64 as u32;
+    v20 = if v2 != 0 { v18 } else { v19 };
+    v21 = v3.wrapping_shr(8);
+    v22 = v21.wrapping_mul(8i64 as u32);
+    v23 = v20.wrapping_add(v22);
+    v24 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v25 = v24.wrapping_add(v23);
+    v26 = v25.wrapping_add(20i64 as u32);
+    v27 = v26 as u64;
+    v28 = v19 as u64;
+    v29 = v0.wrapping_add(v27);
+    v30 = v29.wrapping_add(v28);
+    v31 = ld::<u32>(v0, len, (v30 as usize)) as u32;
+    v32 = 4i64 as u32;
+    v33 = v26 as u64;
+    v34 = v32 as u64;
+    v35 = v0.wrapping_add(v33);
+    v36 = v35.wrapping_add(v34);
+    v37 = ld::<u32>(v0, len, (v36 as usize)) as u32;
+    v38 = v10.wrapping_add(v17);
+    v39 = v38.wrapping_mul(8i64 as u32);
+    v40 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v41 = v40.wrapping_add(v39);
+    v42 = v41.wrapping_add(20i64 as u32);
+    { let t = (v31, v37); v43 = t.0; v44 = t.1; 'b1: loop {
+    v46 = v43.wrapping_mul(8i64 as u32);
+    v47 = v42 as u64;
+    v48 = v46 as u64;
+    v49 = v0.wrapping_add(v47);
+    v50 = v49.wrapping_add(v48);
+    v51 = ld::<u64>(v0, len, (v50 as usize)) as u64;
+    v52 = !v51;
+    v53 = if v2 != 0 { v51 } else { v52 };
+    v54 = v53.count_ones() as u64;
+    v55 = v54 as u32;
+    v56 = v44.wrapping_add(v55);
+    v57 = ((v56 as u32) > (v3 as u32)) as u8;
+    if v57 != 0 { v59 = v3.wrapping_sub(v44);
+    v60 = 0i64 as u32;
+    v61 = v53 & (4294967295i64 as u64);
+    v62 = v61.count_ones() as u64;
+    v63 = v62 as u32;
+    v64 = ((v59 as u32) >= (v63 as u32)) as u8;
+    v65 = v59.wrapping_sub(v63);
+    v66 = if v64 != 0 { v65 } else { v59 };
+    v67 = v53.wrapping_shr(32);
+    v68 = if v64 != 0 { v67 } else { v53 };
+    v69 = v60.wrapping_add(32i64 as u32);
+    v70 = if v64 != 0 { v69 } else { v60 };
+    v71 = v68 & (65535i64 as u64);
+    v72 = v71.count_ones() as u64;
+    v73 = v72 as u32;
+    v74 = ((v66 as u32) >= (v73 as u32)) as u8;
+    v75 = v66.wrapping_sub(v73);
+    v76 = if v74 != 0 { v75 } else { v66 };
+    v77 = v68.wrapping_shr(16);
+    v78 = if v74 != 0 { v77 } else { v68 };
+    v79 = v70.wrapping_add(16i64 as u32);
+    v80 = if v74 != 0 { v79 } else { v70 };
+    v81 = v78 & (255i64 as u64);
+    v82 = v81.count_ones() as u64;
+    v83 = v82 as u32;
+    v84 = ((v76 as u32) >= (v83 as u32)) as u8;
+    v85 = v76.wrapping_sub(v83);
+    v86 = if v84 != 0 { v85 } else { v76 };
+    v87 = v78.wrapping_shr(8);
+    v88 = if v84 != 0 { v87 } else { v78 };
+    v89 = v80.wrapping_add(8i64 as u32);
+    v90 = if v84 != 0 { v89 } else { v80 };
+    v91 = v88 & (15i64 as u64);
+    v92 = v91.count_ones() as u64;
+    v93 = v92 as u32;
+    v94 = ((v86 as u32) >= (v93 as u32)) as u8;
+    v95 = v86.wrapping_sub(v93);
+    v96 = if v94 != 0 { v95 } else { v86 };
+    v97 = v88.wrapping_shr(4);
+    v98 = if v94 != 0 { v97 } else { v88 };
+    v99 = v90.wrapping_add(4i64 as u32);
+    v100 = if v94 != 0 { v99 } else { v90 };
+    v101 = v98 & (3i64 as u64);
+    v102 = v101.count_ones() as u64;
+    v103 = v102 as u32;
+    v104 = ((v96 as u32) >= (v103 as u32)) as u8;
+    v105 = v96.wrapping_sub(v103);
+    v106 = if v104 != 0 { v105 } else { v96 };
+    v107 = v98.wrapping_shr(2);
+    v108 = if v104 != 0 { v107 } else { v98 };
+    v109 = v100.wrapping_add(2i64 as u32);
+    v110 = if v104 != 0 { v109 } else { v100 };
+    v111 = v108 & (1i64 as u64);
+    v112 = v111.count_ones() as u64;
+    v113 = v112 as u32;
+    v114 = ((v106 as u32) >= (v113 as u32)) as u8;
+    v115 = v106.wrapping_sub(v113);
+    v116 = if v114 != 0 { v115 } else { v106 };
+    v117 = v108.wrapping_shr(1);
+    v118 = if v114 != 0 { v117 } else { v108 };
+    v119 = v110.wrapping_add(1i64 as u32);
+    v120 = if v114 != 0 { v119 } else { v110 };
+    v121 = v43.wrapping_mul(64i64 as u32);
+    v122 = v121.wrapping_add(v120);
+    { v45 = v122; return v45;
+     }
+     } else { v58 = v43.wrapping_add(1i64 as u32);
+    { let t = (v58, v56); v43 = t.0; v44 = t.1; continue 'b1; }
+     }
+    }
+     }
+    }
+
+    #[inline(always)]
+    unsafe fn f16(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+        let mut v0: u64 = 0;
+        let mut v1: u64 = 0;
+        let mut v2: u32 = 0;
+        let mut v3: u32 = 0;
+        let mut v4: u32 = 0;
+        let mut v5: u64 = 0;
+        let mut v6: u64 = 0;
+        let mut v7: u64 = 0;
+        let mut v8: u64 = 0;
+        let mut v9: u32 = 0;
+        let mut v10: u8 = 0;
+        let mut v11: u32 = 0;
+        let mut v12: u32 = 0;
+        let mut v13: u32 = 0;
+        let mut v14: u32 = 0;
+        let mut v15: u64 = 0;
+        let mut v16: u64 = 0;
+        let mut v17: u64 = 0;
+        let mut v18: u64 = 0;
+        let mut v19: u32 = 0;
+        let mut v20: u32 = 0;
+        let mut v21: u32 = 0;
+        let mut v22: u32 = 0;
+        let mut v23: u32 = 0;
+        let mut v24: u32 = 0;
+        let mut v25: u64 = 0;
+        let mut v26: u32 = 0;
+        let mut v27: u8 = 0;
+        let mut v28: u32 = 0;
+        let mut v29: u32 = 0;
+        let mut v30: u32 = 0;
+        let mut v31: u32 = 0;
+        let mut v32: u32 = 0;
+        let mut v33: u32 = 0;
+        let mut v34: u32 = 0;
+        let mut v35: u32 = 0;
+        let mut v36: u32 = 0;
+        let mut v37: u32 = 0;
+        let mut v38: u8 = 0;
+        let mut v39: u32 = 0;
+        let mut v40: u32 = 0;
+        let mut v41: u32 = 0;
+        let mut v42: u32 = 0;
+        let mut v43: u64 = 0;
+        let mut v44: u64 = 0;
+        let mut v45: u64 = 0;
+        let mut v46: u64 = 0;
+        let mut v47: u32 = 0;
+        let mut v48: u32 = 0;
+        let mut v49: u32 = 0;
+        let mut v50: u64 = 0;
+        let mut v51: u64 = 0;
+        let mut v52: u64 = 0;
+        let mut v53: u64 = 0;
+        let mut v54: u32 = 0;
+        let mut v55: u32 = 0;
+        let mut v56: u32 = 0;
+        let mut v57: u64 = 0;
+        let mut v58: u64 = 0;
+        let mut v59: u64 = 0;
+        let mut v60: u64 = 0;
+        let mut v61: u32 = 0;
+        let mut v62: u32 = 0;
+        let mut v63: u32 = 0;
+        let mut v64: u32 = 0;
+        let mut v65: u32 = 0;
+        let mut v66: u32 = 0;
+        let mut v67: u32 = 0;
+        let mut v68: u64 = 0;
+        let mut v69: u64 = 0;
+        let mut v70: u64 = 0;
+        let mut v71: u64 = 0;
+        let mut v72: u32 = 0;
+        let mut v73: u64 = 0;
+        let mut v74: u64 = 0;
+        let mut v75: u64 = 0;
+        let mut v76: u64 = 0;
+        let mut v77: u64 = 0;
+        let mut v78: u64 = 0;
+        let mut v79: u64 = 0;
+        let mut v80: u64 = 0;
+        let mut v81: u64 = 0;
+        let mut v82: u64 = 0;
+        let mut v83: u64 = 0;
+        let mut v84: u8 = 0;
+        let mut v85: u32 = 0;
+        let mut v86: u32 = 0;
+        let mut v87: u32 = 0;
+        v0 = a0;
+        v1 = a1;
+        v2 = a2;
+        let mut d: u32 = 0;
+    'm9: {
+    v3 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v4 = 0i64 as u32;
+    v5 = v3 as u64;
+    v6 = v4 as u64;
+    v7 = v0.wrapping_add(v5);
+    v8 = v7.wrapping_add(v6);
+    v9 = ld::<u32>(v0, len, (v8 as usize)) as u32;
+    v10 = ((v9 as u32) == ((0i64 as u32) as u32)) as u8;
+    if v10 != 0 { v12 = 0i64 as u32;
+    { v11 = v12; break 'm9; }
+     } else { 'm5: {
+    v13 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v14 = 4i64 as u32;
+    v15 = v13 as u64;
+    v16 = v14 as u64;
+    v17 = v0.wrapping_add(v15);
+    v18 = v17.wrapping_add(v16);
+    v19 = ld::<u32>(v0, len, (v18 as usize)) as u32;
+    v20 = v2.wrapping_shr(v19 as u32);
+    v21 = 1i64 as u32;
+    v22 = v21.wrapping_shl(v19 as u32);
+    v23 = v22.wrapping_add(-1i64 as u32);
+    v24 = v2 & v23;
+    v25 = v24 as u64;
+    v26 = 0i64 as u32;
+    v27 = ((v20 as u32) == ((0i64 as u32) as u32)) as u8;
+    if v27 != 0 { v29 = 0i64 as u32;
+    { v28 = v29; break 'm5; }
+     } else { v30 = v20.wrapping_add(-1i64 as u32);
+    v31 = unsafe { f15(len, v0, v1, v26, v30) };
+    v32 = v31.wrapping_sub(v30);
+    { v28 = v32; break 'm5; }
+     }
+    }
+    v33 = unsafe { f15(len, v0, v1, v26, v20) };
+    v34 = v33.wrapping_sub(v20);
+    { let t = (v28, v34); v35 = t.0; v36 = t.1; 'b6: loop {
+    v38 = ((v35 as u32) < (v36 as u32)) as u8;
+    if v38 != 0 { v39 = v35.wrapping_add(v36);
+    v40 = v39.wrapping_shr(1);
+    v41 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v42 = 8i64 as u32;
+    v43 = v41 as u64;
+    v44 = v42 as u64;
+    v45 = v0.wrapping_add(v43);
+    v46 = v45.wrapping_add(v44);
+    v47 = ld::<u32>(v0, len, (v46 as usize)) as u32;
+    v48 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v49 = 12i64 as u32;
+    v50 = v48 as u64;
+    v51 = v49 as u64;
+    v52 = v0.wrapping_add(v50);
+    v53 = v52.wrapping_add(v51);
+    v54 = ld::<u32>(v0, len, (v53 as usize)) as u32;
+    v55 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v56 = 16i64 as u32;
+    v57 = v55 as u64;
+    v58 = v56 as u64;
+    v59 = v0.wrapping_add(v57);
+    v60 = v59.wrapping_add(v58);
+    v61 = ld::<u32>(v0, len, (v60 as usize)) as u32;
+    v62 = v47.wrapping_add(v54);
+    v63 = v62.wrapping_add(v61);
+    v64 = v63.wrapping_mul(8i64 as u32);
+    v65 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v66 = v65.wrapping_add(v64);
+    v67 = v66.wrapping_add(20i64 as u32);
+    v68 = v40 as u64;
+    v69 = v19 as u64;
+    v70 = v68.wrapping_mul(v69);
+    v71 = v70.wrapping_shr(3);
+    v72 = v71 as u32;
+    v73 = v67 as u64;
+    v74 = v72 as u64;
+    v75 = v0.wrapping_add(v73);
+    v76 = v75.wrapping_add(v74);
+    v77 = ld::<u64>(v0, len, (v76 as usize)) as u64;
+    v78 = v70 & (7i64 as u64);
+    v79 = v77.wrapping_shr(v78 as u32);
+    v80 = 1i64 as u64;
+    v81 = v80.wrapping_shl(v69 as u32);
+    v82 = v81.wrapping_add(-1i64 as u64);
+    v83 = v79 & v82;
+    v84 = ((v83 as u64) < (v25 as u64)) as u8;
+    v85 = v40.wrapping_add(1i64 as u32);
+    v86 = if v84 != 0 { v85 } else { v35 };
+    v87 = if v84 != 0 { v36 } else { v40 };
+    { let t = (v86, v87); v35 = t.0; v36 = t.1; continue 'b6; }
+     } else { v37 = v35; { v11 = v37; break 'm9; }
+     }
+    }
+     }
+     }
+    }
+    return v11;
+    }
+
+    #[inline(always)]
+    unsafe fn f17(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+        let mut v0: u64 = 0;
+        let mut v1: u64 = 0;
+        let mut v2: u32 = 0;
+        let mut v3: u8 = 0;
+        let mut v4: u32 = 0;
+        let mut v5: u32 = 0;
+        let mut v6: u32 = 0;
+        let mut v7: u32 = 0;
+        let mut v8: u32 = 0;
+        let mut v9: u32 = 0;
+        let mut v10: u32 = 0;
+        let mut v11: u32 = 0;
+        let mut v12: u64 = 0;
+        let mut v13: u64 = 0;
+        let mut v14: u64 = 0;
+        let mut v15: u64 = 0;
+        let mut v16: u32 = 0;
+        let mut v17: u32 = 0;
+        let mut v18: u32 = 0;
+        let mut v19: u32 = 0;
+        let mut v20: u64 = 0;
+        let mut v21: u64 = 0;
+        let mut v22: u64 = 0;
+        let mut v23: u64 = 0;
+        let mut v24: u32 = 0;
+        let mut v25: u32 = 0;
+        let mut v26: u32 = 0;
+        let mut v27: u64 = 0;
+        let mut v28: u64 = 0;
+        let mut v29: u64 = 0;
+        let mut v30: u64 = 0;
+        let mut v31: u32 = 0;
+        let mut v32: u32 = 0;
+        let mut v33: u32 = 0;
+        let mut v34: u64 = 0;
+        let mut v35: u64 = 0;
+        let mut v36: u64 = 0;
+        let mut v37: u64 = 0;
+        let mut v38: u32 = 0;
+        let mut v39: u32 = 0;
+        let mut v40: u32 = 0;
+        let mut v41: u32 = 0;
+        let mut v42: u32 = 0;
+        let mut v43: u32 = 0;
+        let mut v44: u32 = 0;
+        let mut v45: u64 = 0;
+        let mut v46: u64 = 0;
+        let mut v47: u64 = 0;
+        let mut v48: u64 = 0;
+        let mut v49: u32 = 0;
+        let mut v50: u64 = 0;
+        let mut v51: u64 = 0;
+        let mut v52: u64 = 0;
+        let mut v53: u64 = 0;
+        let mut v54: u64 = 0;
+        let mut v55: u64 = 0;
+        let mut v56: u64 = 0;
+        let mut v57: u64 = 0;
+        let mut v58: u64 = 0;
+        let mut v59: u64 = 0;
+        let mut v60: u64 = 0;
+        let mut v61: u32 = 0;
+        let mut v62: u32 = 0;
+        let mut v63: u32 = 0;
+        v0 = a0;
+        v1 = a1;
+        v2 = a2;
+        let mut d: u32 = 0;
+    'm3: {
+    v3 = ((v2 as u32) == ((0i64 as u32) as u32)) as u8;
+    if v3 != 0 { v5 = 0i64 as u32;
+    { v4 = v5; break 'm3; }
+     } else { v6 = v2.wrapping_add(-1i64 as u32);
+    v7 = 1i64 as u32;
+    v8 = unsafe { f15(len, v0, v1, v7, v6) };
+    v9 = v8.wrapping_sub(v6);
+    v10 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v11 = 4i64 as u32;
+    v12 = v10 as u64;
+    v13 = v11 as u64;
+    v14 = v0.wrapping_add(v12);
+    v15 = v14.wrapping_add(v13);
+    v16 = ld::<u32>(v0, len, (v15 as usize)) as u32;
+    v17 = v9.wrapping_shl(v16 as u32);
+    v18 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v19 = 8i64 as u32;
+    v20 = v18 as u64;
+    v21 = v19 as u64;
+    v22 = v0.wrapping_add(v20);
+    v23 = v22.wrapping_add(v21);
+    v24 = ld::<u32>(v0, len, (v23 as usize)) as u32;
+    v25 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v26 = 12i64 as u32;
+    v27 = v25 as u64;
+    v28 = v26 as u64;
+    v29 = v0.wrapping_add(v27);
+    v30 = v29.wrapping_add(v28);
+    v31 = ld::<u32>(v0, len, (v30 as usize)) as u32;
+    v32 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v33 = 16i64 as u32;
+    v34 = v32 as u64;
+    v35 = v33 as u64;
+    v36 = v0.wrapping_add(v34);
+    v37 = v36.wrapping_add(v35);
+    v38 = ld::<u32>(v0, len, (v37 as usize)) as u32;
+    v39 = v24.wrapping_add(v31);
+    v40 = v39.wrapping_add(v38);
+    v41 = v40.wrapping_mul(8i64 as u32);
+    v42 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v43 = v42.wrapping_add(v41);
+    v44 = v43.wrapping_add(20i64 as u32);
+    v45 = v6 as u64;
+    v46 = v16 as u64;
+    v47 = v45.wrapping_mul(v46);
+    v48 = v47.wrapping_shr(3);
+    v49 = v48 as u32;
+    v50 = v44 as u64;
+    v51 = v49 as u64;
+    v52 = v0.wrapping_add(v50);
+    v53 = v52.wrapping_add(v51);
+    v54 = ld::<u64>(v0, len, (v53 as usize)) as u64;
+    v55 = v47 & (7i64 as u64);
+    v56 = v54.wrapping_shr(v55 as u32);
+    v57 = 1i64 as u64;
+    v58 = v57.wrapping_shl(v46 as u32);
+    v59 = v58.wrapping_add(-1i64 as u64);
+    v60 = v56 & v59;
+    v61 = v60 as u32;
+    v62 = v17 | v61;
+    v63 = v62.wrapping_add(1i64 as u32);
+    { v4 = v63; break 'm3; }
+     }
+    }
+    return v4;
+    }
+
     /// The read `tape_size` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_size(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
@@ -1215,6 +1800,20 @@ pub mod f16 {
     pub fn tape_slot(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u64 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
         unsafe { f14(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+    }
+
+    /// The read `tape_line` of the tape in `tape`, whose `view`'s offsets count from its first byte.
+    #[inline(always)]
+    pub fn tape_line(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
+        // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
+        unsafe { f16(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+    }
+
+    /// The read `tape_line_start` of the tape in `tape`, whose `view`'s offsets count from its first byte.
+    #[inline(always)]
+    pub fn tape_line_start(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
+        // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
+        unsafe { f17(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
 }
@@ -1730,6 +2329,86 @@ pub mod f15 {
 
     }
 
+    #[inline(always)]
+    unsafe fn f16(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+        let mut v0: u64 = 0;
+        let mut v1: u64 = 0;
+        let mut v2: u32 = 0;
+        let mut v3: u32 = 0;
+        let mut v4: u32 = 0;
+        let mut v5: u32 = 0;
+        let mut v6: u32 = 0;
+        let mut v7: u32 = 0;
+        let mut v8: u32 = 0;
+        let mut v9: u8 = 0;
+        let mut v10: u32 = 0;
+        let mut v11: u32 = 0;
+        let mut v12: u32 = 0;
+        let mut v13: u64 = 0;
+        let mut v14: u64 = 0;
+        let mut v15: u64 = 0;
+        let mut v16: u64 = 0;
+        let mut v17: u32 = 0;
+        let mut v18: u8 = 0;
+        let mut v19: u32 = 0;
+        let mut v20: u32 = 0;
+        let mut v21: u32 = 0;
+        let mut v22: u32 = 0;
+        v0 = a0;
+        v1 = a1;
+        v2 = a2;
+        let mut d: u32 = 0;
+    v3 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v4 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(96isize as usize)) as *const u32) };
+    v8 = 1i64 as u32;
+    { let t = (v8, v4); v5 = t.0; v6 = t.1; 'b1: loop {
+    v9 = ((v5 as u32) < (v6 as u32)) as u8;
+    if v9 != 0 { v10 = v5.wrapping_add(v6);
+    v11 = v10.wrapping_shr(1);
+    v12 = v11.wrapping_mul(4i64 as u32);
+    v13 = v3 as u64;
+    v14 = v12 as u64;
+    v15 = v0.wrapping_add(v13);
+    v16 = v15.wrapping_add(v14);
+    v17 = ld::<u32>(v0, len, (v16 as usize)) as u32;
+    v18 = ((v17 as u32) > (v2 as u32)) as u8;
+    v19 = v11.wrapping_add(1i64 as u32);
+    v20 = if v18 != 0 { v5 } else { v19 };
+    v21 = if v18 != 0 { v11 } else { v6 };
+    { let t = (v20, v21); v5 = t.0; v6 = t.1; continue 'b1; }
+     } else { v7 = v5; v22 = v7.wrapping_add(-1i64 as u32);
+    return v22;
+     }
+    }
+     }
+    }
+
+    #[inline(always)]
+    unsafe fn f17(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+        let mut v0: u64 = 0;
+        let mut v1: u64 = 0;
+        let mut v2: u32 = 0;
+        let mut v3: u32 = 0;
+        let mut v4: u32 = 0;
+        let mut v5: u64 = 0;
+        let mut v6: u64 = 0;
+        let mut v7: u64 = 0;
+        let mut v8: u64 = 0;
+        let mut v9: u32 = 0;
+        v0 = a0;
+        v1 = a1;
+        v2 = a2;
+        let mut d: u32 = 0;
+    v3 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v4 = v2.wrapping_mul(4i64 as u32);
+    v5 = v3 as u64;
+    v6 = v4 as u64;
+    v7 = v0.wrapping_add(v5);
+    v8 = v7.wrapping_add(v6);
+    v9 = ld::<u32>(v0, len, (v8 as usize)) as u32;
+    return v9;
+    }
+
     /// The read `tape_size` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_size(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
@@ -1821,7 +2500,21 @@ pub mod f15 {
         unsafe { f13(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2, a3) }
     }
 
+    /// The read `tape_line` of the tape in `tape`, whose `view`'s offsets count from its first byte.
+    #[inline(always)]
+    pub fn tape_line(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
+        // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
+        unsafe { f16(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+    }
+
+    /// The read `tape_line_start` of the tape in `tape`, whose `view`'s offsets count from its first byte.
+    #[inline(always)]
+    pub fn tape_line_start(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
+        // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
+        unsafe { f17(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+    }
+
 }
 
 /// This source's fingerprint (`rust::fingerprint` of what comes before).
-pub const SOURCE: u64 = 0x46f9aef89f3958e7;
+pub const SOURCE: u64 = 0x4f775f9c93c9b8d6;

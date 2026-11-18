@@ -184,6 +184,7 @@ impl<'v> Body<'v> {
             (TermRef::Var(a), TermRef::Var(b)) => self.var(a) == o.var(b),
             (TermRef::Wild, TermRef::Wild) | (TermRef::Top, TermRef::Top) => true,
             (TermRef::Int(a), TermRef::Int(b)) => a == b,
+            (TermRef::Branded(a), TermRef::Branded(b)) => a == b,
             (TermRef::Str(a), TermRef::Str(b)) => self.v.text(a) == o.v.text(b),
             (TermRef::Call(f, xs), TermRef::Call(g, ys)) => {
                 self.v.text(f) == o.v.text(g) && xs.clone().count() == ys.clone().count() && xs.zip(ys).all(|(x, y)| self.same_term(x, o, y))
@@ -207,14 +208,68 @@ impl<'v> Body<'v> {
     pub fn read_count(&self) -> usize {
         self.lits.iter().filter(|l| l.atom().is_some()).count()
     }
-    /// The demand of a demand-restricted aggregate (`rr_demand_agg_…`, a positive atom), which drives its rule.
+    /// The demand that drives its rule whatever the statistics say: a demand-restricted aggregate's
+    /// (`rr_demand_agg_…`, a positive atom), whose witnesses are enumerated from its requested keys.
     pub fn demand_first(&self) -> Option<usize> {
         (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).contains("rr_demand_agg_")))
     }
-    /// Whether literal `i` assigns rather than filters: an equality or an aggregate (the search halves rows by every
-    /// other filter).
-    pub fn assigns(&self, i: usize) -> bool {
-        matches!(self.view(i), Lit::Cmp { op: CmpOp::Eq, .. } | Lit::Agg { .. })
+    /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads.
+    pub fn own_demand(&self) -> Option<usize> {
+        let head = self.rel(self.head());
+        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).strip_prefix("demand_").is_some_and(|r| r == head)))
+    }
+    /// Whether an order led by literal `lead` keeps a demanded relation's rule to what its demand bounds (Q59): led
+    /// by the demand, or by an atom a constant restricts (a column a constant names, or a variable an equality binds
+    /// to one: `kind($i, #k1139)` reads one kind's nodes). An unrestricted atom first (`col(v, c)`) scans the corpus
+    /// per chunk: 29 M rows, not 34 k, on PostHog. Forcing the demand first always cost 66x on a restricted lead
+    /// (`not_name` on 50 files of B-now: a 42 k-row demand against a kind of 498 nodes).
+    pub fn demand_bounds_lead(&self, lead: usize) -> bool {
+        let Some(d) = self.own_demand() else { return true };
+        if lead == d {
+            return true;
+        }
+        let Some(a) = self.plain_atom(lead) else { return false };
+        if a.neg() {
+            return false;
+        }
+        let bound: Vec<_> = (0..self.len())
+            .filter_map(|l| match self.view(l) {
+                Lit::Cmp { l: x, op: CmpOp::Eq, r: y } => match (x, y) {
+                    (TermRef::Var(v), t) | (t, TermRef::Var(v)) if self.constant(t).is_some() => Some(v),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        self.args(lead).iter().any(|&t| self.constant(t).is_some() || t.var().is_some_and(|v| bound.contains(&v)))
+    }
+    /// The share of rows filter `i` passes on (decision 0297): measured by kind of filter, rows weighted, over the
+    /// 300-file bench's 317 rules (`profile`'s `native.tsv`, each step's rows in and out). An equality that binds a
+    /// variable no join of the body binds passes every row; one that tests passes as a test of its kind does.
+    pub fn filter_pass(&self, i: usize) -> f64 {
+        match self.view(i) {
+            Lit::Atom(a) if a.neg() => 0.95,
+            Lit::Cmp { l, op, r } => {
+                let joined = |t: TermRef<'_>| t.var().is_some_and(|v| (0..self.len()).any(|j| self.is_join(j) && self.vars(j).contains(v)));
+                let free = |t: TermRef<'_>| t.var().is_some() && !joined(t);
+                let call = matches!(l, TermRef::Call(..)) || matches!(r, TermRef::Call(..));
+                // A kind, field or name is branded (decision 0270): a constant like any other.
+                let constant = |t: TermRef<'_>| matches!(t, TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_));
+                match op {
+                    CmpOp::Eq if free(l) || free(r) => 1.0,
+                    CmpOp::Eq if call => 0.4,
+                    CmpOp::Eq if constant(l) || constant(r) => 0.6,
+                    CmpOp::Eq => 0.9,
+                    CmpOp::Ne => 0.97,
+                    // A bound of an id's range (`$n < 6917529027641081856`, `$d < 1610612736`), as lowering writes
+                    // it: every row of the right kind of id passes.
+                    _ if [l, r].iter().any(|t| matches!(t, TermRef::Int(c) if c.unsigned_abs() >= 1 << 30)) => 0.98,
+                    _ if constant(l) || constant(r) => 0.7,
+                    _ => 1.0 / 3.0,
+                }
+            }
+            _ => 1.0,
+        }
     }
     /// Whether literals `i` and `j` read equal atoms (`front::Atom`'s equality: relation, flags and arguments).
     pub fn same_atom(&self, i: usize, j: usize) -> bool {
@@ -295,6 +350,7 @@ impl<'v> Body<'v> {
     pub fn constant(&self, t: TermRef<'_>) -> Option<Constant> {
         match t {
             TermRef::Int(i) => Some(Constant::Int(i)),
+            TermRef::Branded(a) => Some(Constant::Int(a.value())),
             TermRef::Str(a) => Some(Constant::Str(self.v.text(a).to_owned())),
             _ => None,
         }
@@ -380,6 +436,11 @@ impl<'v> Body<'v> {
             TermRef::Int(i) => {
                 d.u64(2);
                 d.u64(i as u64);
+            }
+            TermRef::Branded(b) => {
+                d.u64(6);
+                d.u64(b.class as u64);
+                d.u64(u64::from(b.atom));
             }
             TermRef::Str(a) => {
                 d.u64(3);
@@ -482,7 +543,7 @@ pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &Var
     let TermRef::Var(y) = r else { return None };
     let ready = match l {
         TermRef::Var(x) => bound.contains(x),
-        TermRef::Int(_) | TermRef::Str(_) => true,
+        TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => true,
         _ => false,
     };
     (ready && !bound.contains(y)).then_some(y)
@@ -738,9 +799,15 @@ impl Placed {
     }
     /// Its components, dependencies first, in the tree's order (`front::components_of`), its maintained program's
     /// sets run together.
-    pub fn components(&self) -> Result<Vec<std::collections::BTreeSet<String>>> {
+    pub fn components(&self) -> Result<Arc<super::super::program_image::analyses::Components>> {
+        use super::super::program_image::analyses::Components;
         let f = super::fields::Fields::of(self).ok_or_else(|| Error::Plan("the components of a version of rules alone".into()))?;
-        Ok(super::super::program_image::analyses::components_by_name(f.v, f.about, &self.together())?)
+        let together = self.together();
+        if together.is_empty() {
+            // Held by the version (decision 0281 §2): computed once however many readers and `Placed`s ask.
+            return super::super::program_image::manager::analysis::<Components>(&self.v).map_err(Error::Plan);
+        }
+        Ok(Arc::new(Components(super::super::program_image::analyses::components_by_name(f.v, f.about, &together)?)))
     }
     /// The sets its maintained program runs as one component (`Program::together`, `Maint`), by name.
     pub fn together(&self) -> Vec<std::collections::BTreeSet<String>> {
@@ -784,6 +851,14 @@ impl Placed {
         match &self.ids {
             Some(ids) => ids.to_vec(),
             None => self.v.rules().map(|r| r.id()).collect(),
+        }
+    }
+    /// The program's rules, in its order: its version's (whose ids are ranges where it is a view, not `0..len`), or
+    /// those `ids` names.
+    pub fn rules(&self) -> Box<dyn Iterator<Item = RuleRef<'_>> + '_> {
+        match &self.ids {
+            None => self.v.rules(),
+            Some(ids) => Box::new(ids.iter().map(|&id| self.v.rule(id).expect("a rule of its version"))),
         }
     }
     /// The program's rule `k`.

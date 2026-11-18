@@ -81,6 +81,18 @@ pub const KIND_STRIDE: u32 = 1024;
 /// Tree-sitter's ERROR symbol, past every grammar's kinds and so past the stride.
 const ERROR_SYMBOL: u16 = u16::MAX;
 
+/// The codes a test of a document reads, as its table holds them.
+#[derive(Clone, Copy)]
+enum Codes {
+    /// A kind's (by its code): the table's codes of it with no ERROR flag; ERROR's slot also every ERROR code and
+    /// kind 0's.
+    Kind(u16),
+    /// A class's.
+    Class(u16),
+    /// The ERROR and MISSING codes.
+    Faults,
+}
+
 /// The atom of kind `code` in the dialect whose tape tag is `tag`. ERROR's atom takes code 0, the grammar's end
 /// symbol, which never labels a node (the tape's own `ERROR_CODE`), so every atom of a dialect stays in its stride:
 /// `tag * 1024 + 0xffff` would read as another dialect's kind.
@@ -120,9 +132,20 @@ pub struct Facts {
     grammar: Option<Arc<crate::code_rule_dsl::tape::Grammar>>,
     /// The ERROR and MISSING nodes, ascending, found on first ask (a scan of the codes): few, and most files have none.
     errors: std::sync::OnceLock<Vec<u32>>,
+    /// The codes the document holds, ascending, found on the first kind or class test (a scan of the codes): a
+    /// summary of the document, not of its nodes. On format 16 the table is the language's, so a test of a kind the
+    /// document lacks is answered here without a scan, as format 15's table of the document's own codes answers it.
+    held: std::sync::OnceLock<Held>,
     /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape. `Err`: `ast.parse`
     /// raises another exception than `SyntaxError` (`facts::vtab::syntax::python_syntax`).
     pub python_syntax: std::sync::OnceLock<Result<Option<(u32, String)>, String>>,
+}
+
+/// What a document holds, ascending: its codes, the kinds of those with no ERROR flag, and their classes.
+struct Held {
+    codes: Box<[u32]>,
+    kinds: Box<[u16]>,
+    classes: Box<[u16]>,
 }
 
 /// An anonymous child: a token the tape stores ([`Facts::tokens`]).
@@ -200,22 +223,18 @@ fn queued_tape(source: &[u8; 32], tag: i64, gv: i64, fv: i64) -> crate::content_
     crate::content_store::write_back::Key::of(&[b"tape", source, &tag.to_le_bytes(), &gv.to_le_bytes(), &fv.to_le_bytes()])
 }
 
-/// The sources a run's tape writes store, filled by the store's writer as it writes them: the run's manifest, queued
-/// after them, names them.
-pub(crate) type Stored = std::sync::Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>;
-
 /// [`build`] in a run's waves (decision 0104): no SQL is read or written. The tape is `found` (read before the
 /// first wave), or one still queued by this process, else the file is parsed and its source and tape are handed to
-/// the store's writer, behind the run (the id it stores the source under goes to `stored`). `digest` is the source's
+/// the store's writer, behind the run (`named`: the run's manifest names the source it stores, decision 0306). `digest` is the source's
 /// SHA-256, when the caller has it.
 pub fn build_in_wave(
     file: &dyn SourceFile,
     cache: &crate::content_store::ContentStore,
     digest: Option<[u8; 32]>,
     found: Option<&crate::content_store::TapeFrame>,
-    stored: Option<&Stored>,
+    named: bool,
 ) -> Result<Built, String> {
-    build_in_wave_with_tape(file, cache, digest, found, stored, false).map(|(built, _)| built)
+    build_in_wave_with_tape(file, cache, digest, found, named, false).map(|(built, _)| built)
 }
 
 /// [`build_in_wave`], with the tape the facts were read off where `keep` (a program's matchers run over it, decision
@@ -225,7 +244,7 @@ pub fn build_in_wave_with_tape(
     cache: &crate::content_store::ContentStore,
     digest: Option<[u8; 32]>,
     found: Option<&crate::content_store::TapeFrame>,
-    stored: Option<&Stored>,
+    named: bool,
     keep: bool,
 ) -> Result<(Built, Option<TapeDoc>), String> {
     use crate::code_rule_dsl::lines::Terminators;
@@ -246,16 +265,14 @@ pub fn build_in_wave_with_tape(
     };
     let key = queued_tape(&digest, tag, gv, fv);
     let grammar = Arc::new(tape::Grammar::new(language)?);
-    let kept: Option<std::sync::Arc<Vec<u8>>> = match found {
+    let kept: Option<crate::content_store::ObjectBytes> = match found {
+        // Stored: read in its segment, or (an older row) decompressed.
         Some(frame) => {
             let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decompress".into());
-            Some(std::sync::Arc::new(frame.bytes().map_err(|e| e.to_string())?))
+            Some(frame.bytes().map_err(|e| e.to_string())?)
         }
-        // Still queued for the writer: its compressed frame, decompressed.
-        None => match cache.pending::<crate::content_store::SourceAndTapeFrames>(&key) {
-            Some(frames) => Some(std::sync::Arc::new(frames.tape_bytes().map_err(|e| e.to_string())?)),
-            None => None,
-        },
+        // Still queued for the writer: read where it is (gathered, placed, or a compressed frame).
+        None => cache.queued_tape(&key).transpose().map_err(|e| e.to_string())?,
     };
     let primary = match kept {
         Some(stored) => {
@@ -274,26 +291,11 @@ pub fn build_in_wave_with_tape(
             drop(parse);
             let tape = std::sync::Arc::new(image.primary.to_bytes()?);
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, tape.len() as u64);
-            // Compressed here, on the parse's worker; the store's one writer only inserts the frames. The queue holds
-            // the frames and the tape (read from memory until written), not the source.
+            // The run's gather takes the source and tape as they are (no copy), placed in a segment of the store's
+            // when it is full or the wave ends, and read there until written (decision 0295 step 5). No wave waits for
+            // the writer (decision 0104).
             let canonical = HashKey::from_sha256_digest(digest);
-            let frames = std::sync::Arc::new(cache.source_and_tape_frames(bytes, canonical, &tape).map_err(|e| e.to_string())?);
-            let (held, stored) = (std::sync::Arc::clone(&frames), stored.cloned());
-            // A cache's write: where the writer's queue is full it is dropped, not waited for, and the next run parses
-            // the file again (decision 0104: no wave waits for the writer).
-            cache.write_back_unless_full(
-                crate::content_store::write_back::Syms::None,
-                "a tape and its source",
-                frames.bytes(),
-                vec![(key, Some(frames as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
-                Box::new(move |store| {
-                    let (id, _) = store.put_source_and_tape_framed(canonical, tag, gv, fv, &held)?;
-                    if let Some(stored) = &stored {
-                        stored.lock().expect("the stored sources").push(id);
-                    }
-                    Ok(())
-                }),
-            );
+            cache.queue_source_and_tape(key, canonical, tag, gv, fv, file.source(), tape, named).map_err(|e| e.to_string())?;
             image.primary
         }
     };
@@ -334,8 +336,8 @@ pub(crate) fn build_cached_with_tape(
     {
         use sha2::Digest as _;
         let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
-        if let Some(frames) = cache.pending::<crate::content_store::SourceAndTapeFrames>(&queued_tape(&digest, tag, gv, fv)) {
-            let held = frames.tape_bytes().map_err(|e| e.to_string())?;
+        if let Some(held) = cache.queued_tape(&queued_tape(&digest, tag, gv, fv)) {
+            let held = held.map_err(|e| e.to_string())?;
             let grammar = Arc::new(tape::Grammar::new(language)?);
             let primary = TapeImage::from_bytes(&held, &grammar)?;
             let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
@@ -380,19 +382,9 @@ pub(crate) fn build_cached_with_tape(
             // (`pending`, above): the source's id is the writer's, so none is returned for a source not stored yet.
             use sha2::Digest as _;
             let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
-            // Compressed here, on the parse's worker; the writer only inserts (as above).
+            // Queued as `build_in_wave` queues it: gathered in a run's waves, else compressed here and queued alone.
             let canonical = HashKey::from_sha256_digest(digest);
-            let frames = std::sync::Arc::new(cache.source_and_tape_frames(bytes, canonical, &tape).map_err(|e| e.to_string())?);
-            let held = std::sync::Arc::clone(&frames);
-            // A cache's write: where the writer's queue is full it is dropped, not waited for, and the next run parses
-            // the file again (decision 0104: no wave waits for the writer).
-            cache.write_back_unless_full(
-                crate::content_store::write_back::Syms::None,
-                "a tape and its source",
-                frames.bytes(),
-                vec![(queued_tape(&digest, tag, gv, fv), Some(frames as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
-                Box::new(move |store| store.put_source_and_tape_framed(canonical, tag, gv, fv, &held).map(|_| ())),
-            );
+            cache.queue_source_and_tape(queued_tape(&digest, tag, gv, fv), canonical, tag, gv, fv, file.source(), tape, false).map_err(|e| e.to_string())?;
             image.primary
         }
     };
@@ -415,6 +407,7 @@ pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> 
         tape: Some(Arc::clone(doc.doc_tape())),
         grammar: Some(Arc::clone(doc.grammar())),
         errors: Default::default(),
+        held: Default::default(),
         python_syntax: Default::default(),
     })
 }
@@ -427,12 +420,12 @@ pub fn from_image(source: Arc<String>, grammar: &Arc<crate::code_rule_dsl::tape:
     let check = crate::code_rule_dsl::logic::profile::span(|| "tape check".into());
     crate::code_rule_dsl::tape::validated::visit(&source, grammar, &image, &|| false, |_, _| {})?;
     drop(check);
-    Ok(holding(Arc::new(crate::code_rule_dsl::tape::formats::DocTape::new(Arc::new(image))), source, grammar, tag, lines))
+    Ok(holding(Arc::new(crate::code_rule_dsl::tape::formats::DocTape::new(Arc::new(image), Arc::clone(&source))), source, grammar, tag, lines))
 }
 
 /// The facts of `tape` (checked), of `source` in `grammar`'s dialect.
 fn holding(tape: Arc<crate::code_rule_dsl::tape::formats::DocTape>, source: Arc<String>, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>, tag: u8, lines: Arc<LineTable>) -> Facts {
-    Facts { tag, source, lines, tape: Some(tape), grammar: Some(Arc::clone(grammar)), errors: Default::default(), python_syntax: Default::default() }
+    Facts { tag, source, lines, tape: Some(tape), grammar: Some(Arc::clone(grammar)), errors: Default::default(), held: Default::default(), python_syntax: Default::default() }
 }
 
 /// The tape tag of a text-only document's facts (`text`): no dialect has it.
@@ -442,7 +435,7 @@ pub const TEXT: u8 = u8::MAX;
 /// for a file with no grammar (`Terminators::Eslint`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
 pub fn text(source: Arc<String>) -> Facts {
     let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Eslint));
-    Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(Vec::new()), python_syntax: Default::default() }
+    Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(Vec::new()), held: Default::default(), python_syntax: Default::default() }
 }
 
 /// Counts a read of the facts' `$part` of node `$node` (E17, `tape::reads`); nothing without `tape-reads`.
@@ -550,6 +543,10 @@ impl Facts {
     pub fn children(&self, id: u32) -> Vec<u32> {
         on_tape!(self, |t| rerail_tape_format::tape::children(&t, id as usize).map(|c| c as u32).collect())
     }
+    /// `id`'s children in order, each handed to `f`, read off the tape with no list made (a probe's).
+    pub fn each_child(&self, id: u32, mut f: impl FnMut(u32)) {
+        on_tape!(self, |t| rerail_tape_format::tape::children(&t, id as usize).for_each(|c| f(c as u32)))
+    }
     /// Whether `id` has no children.
     pub fn is_leaf(&self, id: u32) -> bool {
         on_tape!(self, |t| t.subtree_end(id as usize) == id as usize + 1)
@@ -570,15 +567,64 @@ impl Facts {
     pub fn token_text(&self, token: &Token) -> &str {
         &self.source[token.start as usize..token.end as usize]
     }
-    /// The nodes whose code is one `keep` takes, by id: a scan of the codes, 64 nodes at a time.
-    fn matching(&self, keep: impl Fn(&rerail_tape_format::tape::Entry) -> bool) -> Vec<u32> {
+    /// The nodes whose code is in the set `codes` makes of the tape's table, by id: a scan of the codes, 64 nodes at
+    /// a time. The set is a kind's or a class's numbers from the table's index (`CodeTable::of_kind`), not a test of
+    /// every entry: on format 16 the table is the language's (decision 0336 §7).
+    fn matching(&self, codes: Codes) -> Vec<u32> {
+        use rerail_tape_format::tape::CodeSet;
         if self.is_empty() {
             return Vec::new();
         }
         on_tape!(self, |t| {
-            let set = t.table().set(&keep);
+            let table = t.table();
+            // A kind's or a class's set is the table's own, borrowed (decision 0336 §7: on format 16 the table is the
+            // language's, so a set made per document would cost a table's index per probe).
+            let made;
+            let set: &CodeSet = match codes {
+                Codes::Kind(code) if code == ERROR_SYMBOL => {
+                    let numbers = |s: &CodeSet| s.numbers().unwrap_or_default().to_vec();
+                    made = CodeSet::of_numbers([table.of_kind(code), table.errors(), table.of_kind(0)].into_iter().flat_map(numbers));
+                    &made
+                }
+                Codes::Kind(code) => table.of_kind(code),
+                Codes::Class(code) => table.of_class(code),
+                Codes::Faults => table.faults(),
+            };
+            if set.is_empty() {
+                return Vec::new();
+            }
+            let held = self.held.get_or_init(|| {
+                let mut codes: Vec<u32> = (0..t.len()).map(|i| t.code(i)).collect();
+                codes.sort_unstable();
+                codes.dedup();
+                let (mut kinds, mut classes) = (Vec::new(), Vec::new());
+                for &c in &codes {
+                    let e = table.entry(c);
+                    if e.flags & rerail_tape_format::CODE_ERROR == 0 {
+                        kinds.push(e.kind);
+                    }
+                    classes.extend_from_slice(&e.classes);
+                }
+                for v in [&mut kinds, &mut classes] {
+                    v.sort_unstable();
+                    v.dedup();
+                }
+                Held { codes: codes.into_boxed_slice(), kinds: kinds.into_boxed_slice(), classes: classes.into_boxed_slice() }
+            });
+            let meets = match codes {
+                Codes::Kind(code) if code != ERROR_SYMBOL => held.kinds.binary_search(&code).is_ok(),
+                Codes::Class(code) => held.classes.binary_search(&code).is_ok(),
+                // From the smaller side: the set's numbers searched among the held, or each held code tested.
+                _ => match set.numbers() {
+                    Some(numbers) if numbers.len() < held.codes.len() => numbers.iter().any(|n| held.codes.binary_search(n).is_ok()),
+                    _ => held.codes.iter().any(|&c| set.contains(c)),
+                },
+            };
+            if !meets {
+                return Vec::new();
+            }
             let mut out = Vec::new();
-            t.match_groups(&set, |base, mut m| {
+            t.match_groups(set, |base, mut m| {
                 while m != 0 {
                     out.push((base + m.trailing_zeros() as usize) as u32);
                     m &= m - 1;
@@ -592,15 +638,16 @@ impl Facts {
         if kind_tag(kind) != self.tag {
             return Vec::new();
         }
-        self.matching(|e| self.atom(e) == kind)
+        // `atom`'s inverse: the codes of the kind with no ERROR flag; for slot 0 (ERROR's atom, which kind 0's shares)
+        // also every ERROR code and kind 0's.
+        self.matching(Codes::Kind(kind_code(kind)))
     }
     /// Nodes of the abstract class `class` (a supertype's kind atom), by id.
     pub fn of_class(&self, class: u32) -> Vec<u32> {
         if kind_tag(class) != self.tag {
             return Vec::new();
         }
-        let code = kind_code(class);
-        self.matching(|e| e.classes.contains(&code))
+        self.matching(Codes::Class(kind_code(class)))
     }
     /// Each kind atom the document holds and its nodes, and each class atom and its nodes, each sorted by atom.
     pub fn histogram(&self) -> (Vec<(u32, u32)>, Vec<(u32, u32)>) {
@@ -608,13 +655,15 @@ impl Facts {
             return (Vec::new(), Vec::new());
         }
         on_tape!(self, |t| {
-            let mut count = vec![0u32; t.table().len()];
+            // Counted by the codes the document holds, not a counter per code of the table: on format 16 the table is
+            // the language's (decision 0336 §7).
+            let mut count: rustc_hash::FxHashMap<u32, u32> = rustc_hash::FxHashMap::default();
             for i in 0..t.len() {
-                count[t.code(i) as usize] += 1;
+                *count.entry(t.code(i)).or_insert(0) += 1;
             }
             let (mut kinds, mut classes) = (std::collections::BTreeMap::new(), std::collections::BTreeMap::new());
-            for (code, &n) in count.iter().enumerate().filter(|(_, n)| **n > 0) {
-                let e = t.table().entry(code as u32);
+            for (&code, &n) in &count {
+                let e = t.table().entry(code);
                 *kinds.entry(self.atom(e)).or_insert(0u32) += n;
                 for &class in &e.classes {
                     *classes.entry(kind_atom(self.tag, class)).or_insert(0u32) += n;
@@ -629,8 +678,7 @@ impl Facts {
     }
     /// The ERROR and MISSING nodes, ascending.
     pub fn errors(&self) -> &[u32] {
-        use rerail_tape_format::{CODE_ERROR, CODE_MISSING};
-        self.errors.get_or_init(|| self.matching(|e| e.flags & (CODE_ERROR | CODE_MISSING) != 0))
+        self.errors.get_or_init(|| self.matching(Codes::Faults))
     }
     /// Whether a node is an ERROR or MISSING.
     pub fn syntax_errors(&self) -> bool {
@@ -676,6 +724,11 @@ impl Facts {
         })
     }
     /// The node's parent, `NONE` for the root.
+    /// `id`'s parent, `a` an ancestor of it the caller knows (`Tape::parent_within`: on format 15 the search starts
+    /// there).
+    pub fn parent_within(&self, id: u32, a: u32) -> Option<u32> {
+        on_tape!(self, |t| t.parent_within(id as usize, a as usize).map(|p| p as u32))
+    }
     pub fn parent_or_none(&self, id: u32) -> u32 {
         self.parent(id).unwrap_or(NONE)
     }
@@ -707,8 +760,8 @@ pub fn digest(f: &Facts) -> [u8; 32] {
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-/// The relations `core.rr` declares (the engine's names, decision 0141), as the rule language reads them;
-/// registered at load (`install_core_names`). Empty without one.
+/// The relations a program in `core.rr`'s shape declares (the engine's names, decision 0141, less those decision
+/// 0174's rewrite adds), as the rule language reads them; registered at load (`install_core_names`). Empty without one.
 pub(crate) fn core_names() -> &'static std::collections::BTreeSet<String> {
     static EMPTY: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     CORE_NAMES.get().map_or(&EMPTY, |names| names())

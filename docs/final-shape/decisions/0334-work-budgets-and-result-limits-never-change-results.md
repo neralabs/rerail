@@ -1,7 +1,7 @@
 # 0334. Work budgets and result limits never change results
 
 Status: decided (2026-11-17); the replanning is built (packed batches, the label sweep, the wave's root walks, the
-memory restart); `replan` as the default is what remains (Progress). After 0324 (the grid retired). The user, on Q19: "Allow a mode where we let the kernels run over. The goal
+memory restart); `replan` as the default is what remains (Progress). After 0324 (the grid retired). The user, on Q49: "Allow a mode where we let the kernels run over. The goal
 of stopping them is for a horribly misplanned kernel to not spend minutes or hours churning when replanning could
 make it fast (we need planning to be very fast, so we will not be able to always do it right). We need to re-plan
 over-long jobs, not just re-run them elsewhere. We still need to be able to do that. Help me think through the
@@ -15,7 +15,7 @@ paths, captures, results). The ABI says so: "Workspace estimate only. Runtime ta
 independent." But the Metal kernel read that field as the task's work limit, so a task stopped (`WorkLimit`) at
 its estimate. The CPU charges every task against `MAX_WORK_PER_TASK` (2^26) and every path against
 `MAX_STEPS_PER_PATH` (2^20). So a small root with a long text test passed on the CPU and failed on the device
-(Q19: the D416 clause).
+(Q49: the D416 clause).
 
 The fixtures that 0324 moved onto the packed JIT showed a second conflation: a *result limit* (a witness limit, at
 most N results an evaluation) was applied as the evaluation's result capacity. Past the limit, a result could not be
@@ -89,7 +89,7 @@ replanned, not just rerun elsewhere.
 9. **Memory is mispredicted the same way, and handled the same way.** The workspace estimate (subtree × words ×
    4,096) was a step count, made large so that it rarely stopped a task. As the size of every task's states (up to
    65,536 a kind, times the lanes), it sizes for the worst case: three three-word programs over 128 three-line
-   files planned a 471 MB Metal workspace, which the buffer pool refuses (`BackendCapacity`, Q22's 15 refusals;
+   files planned a 471 MB Metal workspace, which the buffer pool refuses (`BackendCapacity`, Q64's 15 refusals;
    the CPU JIT allocates host memory and never refuses). Instead, the plan sizes a task's states from what it
    expects, and a task that outgrows them ends "unfinished" (as an overrun, §3): its evaluation restarts with
    twice the states, up to the ceiling. Same restart, same bound on the waste.
@@ -103,7 +103,7 @@ The user's answers (2026-11-17, the recommendations taken):
 ## Progress
 
 Done (2026-11-17):
-- §1 to §5 of the decision (Q19's cause).
+- §1 to §5 of the decision (Q49's cause).
 - **Packed batches** (the CPU JIT's and Metal's, `execute_planned`): `WorkBudget::Replan { slack, doublings }`
   (`RERAIL_DEVICE_BUDGET=replan`). A task stopped below the ceiling is `Error::OverBudget`, its evaluation
   unfinished; at the ceiling it stays `WorkLimit`. The CPU JIT holds tasks, paths and values to the same budget
@@ -121,8 +121,8 @@ Done (2026-11-17):
 - **Memory** (§9): a task's states are sized from its size (4 a unit, at least 512), not from the step count. A
   task whose states run out below the worst case is `Error::StatesOutgrown`, and its evaluation restarts through
   the same mechanism with twice its states (per task, `StateGrowth`). Metal's workspace halves its lanes where the
-  buffer pool refuses it. Q22's 15 capacity refusals: 12 pass; the 3 left differ in results on Metal at any state
-  size (Metal semantics, Q22). Test: `outgrown_states_restart_and_give_the_worst_cases_results`.
+  buffer pool refuses it. Q64's 15 capacity refusals: 12 pass; the 3 left differ in results on Metal at any state
+  size (Metal semantics, Q64). Test: `outgrown_states_restart_and_give_the_worst_cases_results`.
 - **The label sweep** (`assign_resident`): under `replan` an evaluation's budget per node is its predicted steps
   per node times the slack, within [256, 2^26] a task. A task stopped below the ceiling reports its own status, and
   the host runs the sweep again with twice the budget (`Outcome::replanned`). Test:
@@ -157,11 +157,11 @@ Done (2026-11-17):
 - **The prefilter's plan** (§5): at a root walk's overrun the program's micro walk, where it is one with text tests,
   is weighed with W and the transducer again (`predict_walk`: the interpreter's prior without the text, plus one
   pass of the text layer a slot). The walk reads every text test as bits, from the term index's row where the tape
-  has it (`R[tid]`, `Micro::slot`), never a test per node: Q19's shape (a long string's regex at every node). A walk
+  has it (`R[tid]`, `Micro::slot`), never a test per node: Q49's shape (a long string's regex at every node). A walk
   that outgrows its bound leaves the rest to the transducer and W, by cost.
 
 - **`replan` is the default** (2026-11-17; `RERAIL_DEVICE_BUDGET=full` for the CPU's limits). The check, in
-  place of a corpus run (a run from this checkout stops under strict SQL, work queue Q17, whatever the budget):
+  place of a corpus run (a run from this checkout stops under strict SQL, work queue Q21, whatever the budget):
   every lowered Python clause of the pack (491), in waves, over corpus0's files, with `full` and with `replan`
   from an empty cost store; a clause left to the transducer finds `full`'s roots, one given to W has W's matcher
   find them at its candidates (`replan_finds_the_full_budgets_roots_on_the_pack`, CPU and Metal). On 10 files:

@@ -92,31 +92,38 @@ pub(in crate::code_rule_dsl) fn views_on() -> bool {
 /// each run, as itself and as its old rows (`kind__sup0` and `kind__sup0__old` each a scan of `node`'s 243,092
 /// rows, 0.8 s of an O125 step for four such views). Kept and maintained as other relations, a view costs its
 /// delta, and its rows' memory (about 10 MB each there).
-pub(in crate::code_rule_dsl) fn input_views(prog: &front::Program) -> BTreeMap<String, Rule> {
+///
+/// Read from the program's version by its handles: each such relation, with the input its rule reads.
+pub(in crate::code_rule_dsl) fn input_views(p: &Placed) -> Result<BTreeMap<String, String>> {
     if !views_on() {
-        return BTreeMap::new();
+        return Ok(BTreeMap::new());
     }
-    let mut by: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
-    for r in &prog.rules {
-        by.entry(r.head.rel.as_str()).or_default().push(r);
+    let (v, f) = (&p.v, p.fields()?);
+    let mut by: BTreeMap<&str, Vec<RuleRef<'_>>> = BTreeMap::new();
+    for r in v.rules() {
+        by.entry(v.rel_name(r.head().rel())).or_default().push(r);
     }
-    by.into_iter()
+    Ok(by
+        .into_iter()
         .filter_map(|(rel, rules)| {
             let [rule] = rules.as_slice() else { return None };
-            let [Literal::Atom(a)] = rule.body.as_slice() else { return None };
-            if a.neg || a.gated || !prog.inputs.iter().any(|x| x == &a.rel) || prog.lattice.contains_key(rel) || prog.natives.contains_key(rel) || prog.facts.contains_key(rel) || prog.outputs.iter().any(|o| o == rel) {
+            let mut body = rule.body();
+            let (Some(l), None) = (body.next(), body.next()) else { return None };
+            let PLit::Atom(a) = l.view() else { return None };
+            let input = v.rel_name(a.rel());
+            if a.neg() || a.gated() || !f.is_input(input) || f.lattice(rel) || f.native(rel).is_some() || f.facts(rel).is_some() || f.is_output(rel) {
                 return None;
             }
-            let head: BTreeSet<&str> = rule.head.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None }).collect();
-            let terms_ok = rule.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_)));
-            let one_to_one = a.args.iter().all(|t| match t {
-                Term::Var(v) => head.contains(v.as_str()),
-                Term::Int(_) | Term::Str(_) => true,
+            let head: BTreeSet<_> = rule.head().args().filter_map(|t| t.var()).collect();
+            let terms_ok = rule.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_)));
+            let one_to_one = a.args().all(|t| match t {
+                TermRef::Var(s) => head.contains(&s),
+                TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => true,
                 _ => false,
             });
-            (terms_ok && one_to_one).then(|| (rel.to_owned(), (*rule).clone()))
+            (terms_ok && one_to_one).then(|| (rel.to_owned(), input.to_owned()))
         })
-        .collect()
+        .collect())
 }
 
 fn named(rel: &str, suffix: &str) -> String {
@@ -158,74 +165,58 @@ pub(in crate::code_rule_dsl) struct One<'m> {
 
 /// `rewrite`'s `sccs`: `cross`'s strata, computed once by the caller (as `retain::cut` was given them).
 pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, sccs: &[BTreeSet<String>], given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>) -> Result<Maintained> {
-    let part = cut.program(cross);
-    // The cut program's version where it has one (a part of the cross part's, decision 0244), else its image.
-    // Read from it, its tree is decoded by no reader here (`lower::Tree`).
-    let of_version = part.version.as_ref().filter(|_| !part.tree_maintained());
-    let p = match of_version {
-        Some(v) => Placed::new(v.clone(), v.rules().map(|r| r.id()).collect(), true),
-        None => Placed::of_program(&part.program)?,
-    };
+    let part = cut.program(cross)?;
+    // The cut program's version (a part of the cross part's, decision 0244).
+    let cut_v = &part.version;
+    let p = Placed::new(cut_v.clone(), cut_v.rules().map(|r| r.id()).collect(), true);
     let f = Fields::of(&p).ok_or_else(|| Error::Plan("the cut program has no image".into()))?;
-    let gates = match &cross.version {
-        Some(v) if !cross.tree_maintained() => crate::code_rule_dsl::logic::program_image::About::of(v).gates > 0,
-        _ => !cross.program.gates.is_empty(),
-    };
-    let src = match of_version {
-        Some(_) => {
-            let mut answers: BTreeMap<String, Vec<String>> = BTreeMap::new();
-            for &(q, by) in f.answers() {
-                answers.entry(f.rel_name(q).to_owned()).or_default().push(f.rel_name(by).to_owned());
-            }
-            Part {
-                p: &p,
-                f,
-                rules: (0..p.v.rules().count()).collect(),
-                inputs: f.inputs().map(str::to_owned).collect(),
-                outputs: f.outputs().map(str::to_owned).collect(),
-                gates,
-                natives: f.natives().iter().map(|n| (f.rel_name(n.rel).to_owned(), n.reads.iter().map(|r| f.rel_name(*r).to_owned()).collect())).collect(),
-                answers: answers.into_iter().collect(),
-                domains: part.domains.clone(),
-            }
+    let cross_placed = cross.placed()?;
+    let gates = !cross_placed.fields()?.gates().is_empty();
+    let src = {
+        let mut answers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for &(q, by) in f.answers() {
+            answers.entry(f.rel_name(q).to_owned()).or_default().push(f.rel_name(by).to_owned());
         }
-        None => Part {
+        Part {
             p: &p,
             f,
-            rules: (0..part.program.rules.len()).collect(),
-            inputs: part.program.inputs.clone(),
-            outputs: part.program.outputs.clone(),
+            rules: (0..p.v.rules().count()).collect(),
+            inputs: f.inputs().map(str::to_owned).collect(),
+            outputs: f.outputs().map(str::to_owned).collect(),
             gates,
-            natives: part.program.natives.iter().map(|(r, n)| (r.clone(), n.reads().into_iter().map(str::to_owned).collect())).collect(),
-            answers: part.program.answers.iter().map(|(q, by)| (q.clone(), by.clone())).collect(),
+            natives: f.natives().iter().map(|n| (f.rel_name(n.rel).to_owned(), n.reads.iter().map(|r| f.rel_name(*r).to_owned()).collect())).collect(),
+            answers: answers.into_iter().collect(),
             domains: part.domains.clone(),
-        },
+        }
     };
-    let mut over = rewrite_over(&src, Builder::derive(&p.v), cut, kept, sccs, given, None)?;
+    let mut over = rewrite_over(&src, Builder::derive(&p.v), cut, kept.map(|k| k as &dyn Olds), sccs, given, None)?;
+    if let Some(k) = kept {
+        bind_olds(&mut over, k);
+    }
     over.b.set_inputs(&over.inputs);
     let (v, _) = over.b.finish().map_err(Error::Plan)?;
-    // The run reads `v` and its `Maint`; a reader of the tree decodes it (`lower::Tree`), none on the run path.
+    // The run reads `v` and its `Maint`.
     let maint = match over.groups.is_empty() && over.together.is_empty() {
         true => None,
         false => Some(Arc::new(Maint::written(&v, &p.v, &over.groups, &over.together)?)),
     };
-    let program = lower::Tree::maintained(v.clone(), maint.clone());
     if let Ok(show) = std::env::var("O125_RULES") {
-        for r in program.rules.iter().filter(|r| r.head.rel.starts_with(show.as_str())) {
-            eprintln!("O125_RULES {r}");
+        for r in v.rules().filter(|r| v.rel_name(r.head().rel()).starts_with(show.as_str())) {
+            eprintln!("O125_RULES {}", v.show_rule(r));
         }
-        for r in cross.program.rules.iter().filter(|r| r.head.rel == show) {
-            eprintln!("O125_RULES given {r}");
+        let given = &cross_placed.v;
+        for r in given.rules().filter(|r| given.rel_name(r.head().rel()) == show) {
+            eprintln!("O125_RULES given {}", given.show_rule(r));
         }
     }
     // The views of one input (`input_views`), over the whole program: where the part is maintained, those whose
     // input's old rows are kept.
     let views = match kept.filter(|_| !gates) {
         _ if !views_on() => BTreeSet::new(),
-        None => input_views(&cross.program).into_keys().collect(),
-        Some(k) => input_views(&cross.program).into_iter().filter(|(_, r)| r.body[0].atom().is_some_and(|a| k.has_old(&a.rel))).map(|(rel, _)| rel).collect(),
+        None => input_views(&cross_placed)?.into_keys().collect(),
+        Some(k) => input_views(&cross_placed)?.into_iter().filter(|(_, input)| k.has_old(input)).map(|(rel, _)| rel).collect(),
     };
-    Ok(Maintained { program: lower::Lowered { program, version: Some(v), maint, domains: over.domains, ops: part.ops, dialect: part.dialect }, sources: over.sources, maintained: over.maintained, derived_again: over.derived_again, recursive: over.recursive, again: over.again, views })
+    Ok(Maintained { program: lower::Lowered { version: v, maint, domains: over.domains, ops: part.ops, dialect: part.dialect }, sources: over.sources, maintained: over.maintained, derived_again: over.derived_again, recursive: over.recursive, again: over.again, views })
 }
 
 // -- The rewrite over a version (decision 0241) --
@@ -268,11 +259,45 @@ pub(in crate::code_rule_dsl) struct Over<'b> {
     /// The relations the rules written derive.
     pub(in crate::code_rule_dsl) heads: BTreeSet<String>,
     pub(in crate::code_rule_dsl) sources: Vec<(String, Arc<dyn Source>, Option<Arc<crate::code_rule_dsl::logic::native::component::InRel>>)>,
+    /// The relations whose old rows (`r__old`) the rules read and the caller binds (`bind_olds`).
+    pub(in crate::code_rule_dsl) old_reads: Vec<String>,
     pub(in crate::code_rule_dsl) maintained: usize,
     pub(in crate::code_rule_dsl) derived_again: usize,
     pub(in crate::code_rule_dsl) recursive: usize,
+    pub(in crate::code_rule_dsl) by_levels: usize,
     pub(in crate::code_rule_dsl) again: Vec<(String, &'static str)>,
     pub(in crate::code_rule_dsl) views: BTreeSet<String>,
+}
+
+/// What a form reads of a run's kept part (decision 0298): so it is written without one, its old rows bound after.
+pub(in crate::code_rule_dsl) trait Olds {
+    /// Whether `rel`'s rows as the last run had them are kept.
+    fn has_old(&self, rel: &str) -> bool;
+    /// Whether `rel`'s kept rows hold their levels (decision 0090), and their shape; `None` where it is not kept.
+    fn levels(&self, rel: &str) -> Option<(bool, (usize, usize, bool))>;
+}
+
+impl Olds for Retained {
+    fn has_old(&self, rel: &str) -> bool {
+        Retained::has_old(self, rel)
+    }
+    fn levels(&self, rel: &str) -> Option<(bool, (usize, usize, bool))> {
+        self.kept(rel).map(|(h, _)| (h.has_levels(), h.levels_shape()))
+    }
+}
+
+/// Binds the old rows `over` reads (`Over::old_reads`) from the kept part, beside its other sources.
+fn bind_olds(over: &mut Over<'_>, kept: &Retained) {
+    bind_old_rows(&mut over.sources, std::mem::take(&mut over.old_reads), kept);
+}
+
+/// Each of `rels`' old rows (`r__old`) from the kept part, as a source, after `sources`.
+#[allow(clippy::type_complexity)]
+pub(in crate::code_rule_dsl) fn bind_old_rows(sources: &mut Vec<(String, Arc<dyn Source>, Option<Arc<crate::code_rule_dsl::logic::native::component::InRel>>)>, rels: Vec<String>, kept: &Retained) {
+    for rel in rels {
+        let (source, held) = kept.old_source(&rel, &named(&rel, "old")).expect("a maintained read's old rows");
+        sources.push((named(&rel, "old"), source, held));
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -351,7 +376,7 @@ impl<'v> Named<'v> {
     }
     /// Whether its (named) head is of variables and constants only.
     fn plain_head(&self) -> bool {
-        self.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_) | TermRef::Call(..)))
+        self.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) | TermRef::Call(..)))
     }
 }
 
@@ -362,6 +387,7 @@ fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
         TermRef::Wild => T::Wild,
         TermRef::Top => T::Top,
         TermRef::Int(i) => T::Int(i),
+        TermRef::Branded(b) => T::Branded(b),
         TermRef::Str(a) => T::StrAtom(a),
         TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| t_of(v, r, a)).collect()),
     }
@@ -504,7 +530,7 @@ fn head_ir(src: &Part<'_>, ir: &Ir) -> String {
 /// rule unguarded.
 fn insert_ir(rules: &mut Vec<Ir>, n: &Named<'_>, k: usize, h: &str, body: Vec<L>, gone: &str) {
     let head = H::Named(named(h, "ins"));
-    if !n.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_) | TermRef::Call(..))) {
+    if !n.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) | TermRef::Call(..))) {
         rules.push(Ir::Rule { src: Some(k), head, body });
         return;
     }
@@ -561,10 +587,10 @@ fn input_views_over(src: &Part<'_>) -> BTreeMap<String, usize> {
                 return None;
             }
             let head: BTreeSet<_> = n.r.head().args().filter_map(|t| t.var()).collect();
-            let terms_ok = n.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_)));
+            let terms_ok = n.r.head().args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_)));
             let one_to_one = a.args().all(|t| match t {
                 TermRef::Var(s) => head.contains(&s),
-                TermRef::Int(_) | TermRef::Str(_) => true,
+                TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => true,
                 _ => false,
             });
             (terms_ok && one_to_one).then(|| (rel.to_owned(), *k))
@@ -624,7 +650,7 @@ fn tree_named(src: &Part<'_>, k: usize) -> Rule {
 /// (decision 0241): its rules and the parts it adds (declarations, nullary relations, gates) written into `b`, a
 /// builder under `src`'s ids that holds the part's other parts as the caller stated them. Its inputs, and what the
 /// caller binds and counts, are returned beside it.
-pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<'b>, cut: &Cut, kept: Option<&Retained>, sccs: &[BTreeSet<String>], given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>, one: Option<&One>) -> Result<Over<'b>> {
+pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<'b>, cut: &Cut, kept: Option<&dyn Olds>, sccs: &[BTreeSet<String>], given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>, one: Option<&One>) -> Result<Over<'b>> {
     let f = src.f;
     let dirty: Vec<&BTreeSet<String>> = sccs.iter().filter(|scc| scc.iter().all(|r| !cut.clean.contains(r))).collect();
     let why = if kept.is_none() { "nothing kept" } else { "the program has gates" };
@@ -636,7 +662,7 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
             heads.insert(head_ir(src, &Ir::Copy(k)));
             write_ir(&mut b, src, &Ir::Copy(k)).map_err(Error::Plan)?;
         }
-        return Ok(Over { b, inputs: src.inputs.clone(), domains: src.domains.clone(), groups: Vec::new(), together: Vec::new(), heads, sources: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0, again, views });
+        return Ok(Over { b, inputs: src.inputs.clone(), domains: src.domains.clone(), groups: Vec::new(), together: Vec::new(), heads, sources: Vec::new(), old_reads: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0, by_levels: 0, again, views });
     };
     let views: BTreeMap<String, usize> = input_views_over(src).into_iter().filter(|(_, k)| src.named(*k).atom(0).is_some_and(|a| kept.has_old(src.named(*k).rel(a)))).collect();
     let view_input = |rel: &str| -> Option<String> { views.get(rel).and_then(|&k| { let n = src.named(k); n.atom(0).map(|a| n.rel(a).to_owned()) }) };
@@ -645,7 +671,7 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
     let mut rules: Vec<Ir> = Vec::new();
     let mut olds: BTreeSet<String> = BTreeSet::new();
     let mut deltas: BTreeSet<String> = BTreeSet::new();
-    let (mut maintained, mut derived_again, mut recursive) = (0, 0, 0);
+    let (mut maintained, mut derived_again, mut recursive, mut by_levels) = (0, 0, 0, 0);
     let mut again: Vec<(String, &'static str)> = Vec::new();
     let mut fresh: Vec<(String, String)> = Vec::new();
     let mut maint: BTreeSet<String> = BTreeSet::new();
@@ -740,15 +766,16 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
             recursive += 1;
         }
         let joins = |r: &Named<'_>| r.lits.iter().all(|l| matches!(l.view(), PLit::Atom(_) | PLit::Cmp { .. }));
-        let lv = is_recursive && levels_wanted() && mine.iter().all(joins) && scc.iter().all(|r| kept.kept(r).is_some_and(|(h, _)| h.has_levels()));
+        let lv = is_recursive && levels_wanted() && mine.iter().all(joins) && scc.iter().all(|r| kept.levels(r).is_some_and(|(has, _)| has));
         if lv {
+            by_levels += 1;
             BY_LEVELS.with(|n| n.set(n.get() + 1));
         }
         if is_recursive && levels_wanted() && std::env::var_os("RERAIL_LEVELS_WHY").is_some() {
             let trees: Vec<Rule> = at.iter().map(|&k| tree_named(src, k)).collect();
             let not_join = trees.iter().filter(|r| !r.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. }))).count();
-            let no_levels: Vec<(&String, (usize, usize, bool))> = scc.iter().filter_map(|r| kept.kept(r).filter(|(h, _)| !h.has_levels()).map(|(h, _)| (r, h.levels_shape()))).take(4).collect();
-            let unkept: Vec<&String> = scc.iter().filter(|r| kept.kept(r).is_none()).take(4).collect();
+            let no_levels: Vec<(&String, (usize, usize, bool))> = scc.iter().filter_map(|r| kept.levels(r).filter(|(has, _)| !has).map(|(_, shape)| (r, shape))).take(4).collect();
+            let unkept: Vec<&String> = scc.iter().filter(|r| kept.levels(r).is_none()).take(4).collect();
             eprintln!("RERAIL_LEVELS_WHY {:?} ({} relations): levels {lv}; rules not joins {not_join}; without levels {no_levels:?}; not kept {unkept:?}", scc.iter().next(), scc.len());
             let kind = |l: &Literal| match l {
                 Literal::Atom(_) | Literal::Cmp { .. } => None,
@@ -941,6 +968,8 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
         }
     }
     let mut sources = Vec::new();
+    // The old rows the form reads that the caller binds (`bind_olds`): a form is written without a run (decision 0298).
+    let mut old_reads: Vec<String> = Vec::new();
     let view_deltas: Vec<String> = deltas.iter().filter_map(|r| view_input(r)).collect();
     let view_inputs: BTreeSet<String> = view_deltas.iter().cloned().collect();
     deltas.extend(view_deltas);
@@ -1013,8 +1042,7 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
             continue;
         }
         if !one.is_some_and(|o| (o.has_old)(rel)) {
-            let (source, held) = kept.old_source(rel, &named(rel, "old")).expect("a maintained read's old rows");
-            sources.push((named(rel, "old"), source, held));
+            old_reads.push(rel.clone());
         }
         fresh.push((rel.clone(), named(rel, "old")));
         inputs.push(named(rel, "old"));
@@ -1042,7 +1070,7 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
         .map(|(scc, owned, given, deltas, reads, olds)| Group { scc: scc.into_iter().collect(), owned: owned.into_iter().collect(), given: given.iter().map(|&k| src.p.id(src.rules[k])).collect(), deltas, reads, olds })
         .collect();
     let views = views.into_keys().collect();
-    Ok(Over { b, inputs, domains, groups, together, heads, sources, maintained, derived_again, recursive, again, views })
+    Ok(Over { b, inputs, domains, groups, together, heads, sources, old_reads, maintained, derived_again, recursive, by_levels, again, views })
 }
 
 thread_local! {
@@ -1275,9 +1303,13 @@ fn together_ir(src: &Part<'_>, b: &mut Builder<'_>, rules: &mut Vec<Ir>, groups:
 pub(in crate::code_rule_dsl) struct Form {
     pub(in crate::code_rule_dsl) placed: Placed,
     pub(in crate::code_rule_dsl) sources: Vec<(String, Arc<dyn Source>, Option<Arc<crate::code_rule_dsl::logic::native::component::InRel>>)>,
+    /// The relations whose old rows the form reads and the caller binds (`bind_olds`).
+    pub(in crate::code_rule_dsl) old_reads: Vec<String>,
     pub(in crate::code_rule_dsl) maintained: usize,
     pub(in crate::code_rule_dsl) derived_again: usize,
     pub(in crate::code_rule_dsl) recursive: usize,
+    /// Of those recursive, strata maintained by levels (decision 0090).
+    pub(in crate::code_rule_dsl) by_levels: usize,
     pub(in crate::code_rule_dsl) again: Vec<(String, &'static str)>,
 }
 
@@ -1306,7 +1338,7 @@ const STRATUM_ABOUT: [&str; 14] = [
 /// facts, and every kind set), rewritten (`rewrite_over`). Its inputs are those `run_input` holds and the old rows.
 /// It is written as an overlay of `atoms`, `v0`'s atoms and relations alone (`Builder::under`), made once per run:
 /// a form's cost is its size.
-pub(in crate::code_rule_dsl) fn form(atoms: &Arc<Version>, v0: &Placed, rules: &[usize], scc: &BTreeSet<String>, moved: &BTreeSet<String>, domains: &lower::Domains, kept: &Retained, one: &One, run_input: &dyn Fn(&str) -> bool) -> Result<Form> {
+pub(in crate::code_rule_dsl) fn form(atoms: &Arc<Version>, v0: &Placed, rules: &[usize], scc: &BTreeSet<String>, moved: &BTreeSet<String>, domains: &lower::Domains, kept: &dyn Olds, one: &One, run_input: &dyn Fn(&str) -> bool) -> Result<Form> {
     let f = Fields::of(v0).ok_or_else(|| Error::Plan("the run's version holds its rules alone".into()))?;
     let v: &Version = &v0.v;
     // The stratum alone: its rules, and every relation they read declared as an input of it.
@@ -1397,5 +1429,232 @@ pub(in crate::code_rule_dsl) fn form(atoms: &Arc<Version>, v0: &Placed, rules: &
     over.b.set_inputs(&inputs);
     let fv = over.b.finish_overlay().map_err(Error::Plan)?;
     let maint = if over.groups.is_empty() && over.together.is_empty() { None } else { Some(Arc::new(Maint::written(&fv, v, &over.groups, &over.together)?)) };
-    Ok(Form { placed: Placed::derived(fv, maint), sources: over.sources, maintained: over.maintained, derived_again: over.derived_again, recursive: over.recursive, again: over.again })
+    Ok(Form { placed: Placed::derived(fv, maint), sources: over.sources, old_reads: over.old_reads, maintained: over.maintained, derived_again: over.derived_again, recursive: over.recursive, by_levels: over.by_levels, again: over.again })
+}
+
+// -- General forms (decision 0298) --
+
+/// A stratum's general form (decision 0298): its form with every read whose old rows are kept taken as changed, no
+/// old rows bound (`Form::old_reads` lists every one it reads), and the read each rule is driven by.
+pub(in crate::code_rule_dsl) struct General {
+    pub(in crate::code_rule_dsl) form: Form,
+    /// The reads the form maintains: the stratum's reads whose old rows are kept.
+    pub(in crate::code_rule_dsl) reads: BTreeSet<String>,
+    /// Per rule of the form's version, in order: the read whose delta it is driven by, or `None` for a rule every
+    /// selection keeps (`selected`).
+    pub(in crate::code_rule_dsl) drivers: Vec<Option<String>>,
+    /// The form's inputs and outputs, and per rule the inputs it reads (places in `inputs`): what a selection states
+    /// of its part, read without the form's fields.
+    pub(in crate::code_rule_dsl) inputs: Vec<String>,
+    pub(in crate::code_rule_dsl) outputs: Vec<String>,
+    pub(in crate::code_rule_dsl) rule_inputs: Vec<Vec<u32>>,
+}
+
+/// Stratum `scc`'s general form (decision 0298), its rules `rules` (places among `v0`'s rules): `form` with the
+/// reads whose old rows `olds` keeps as the reads that moved, each with a delta, and no old rows bound.
+pub(in crate::code_rule_dsl) fn general(atoms: &Arc<Version>, v0: &Placed, rules: &[usize], scc: &BTreeSet<String>, domains: &lower::Domains, olds: &dyn Olds, run_input: &dyn Fn(&str) -> bool) -> Result<General> {
+    let v: &Version = &v0.v;
+    let reads: BTreeSet<String> = rules
+        .iter()
+        .flat_map(|&k| v0.rule(k).body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()).collect::<Vec<_>>())
+        .filter(|r| !scc.contains(r) && olds.has_old(r))
+        .collect();
+    let (all, none) = (|_: &str| true, |_: &str| false);
+    let one = One { has_delta: &all, has_old: &none };
+    let form = form(atoms, v0, rules, scc, &reads, domains, olds, &one, run_input)?;
+    let drivers = drivers(&form.placed, scc, &reads);
+    let p = &form.placed;
+    let f = Fields::of(p).ok_or_else(|| Error::Plan("a general form holds its rules alone".into()))?;
+    let inputs: Vec<String> = f.inputs().map(str::to_owned).collect();
+    let outputs: Vec<String> = f.outputs().map(str::to_owned).collect();
+    let at: HashMap<&str, u32> = inputs.iter().enumerate().map(|(i, r)| (r.as_str(), i as u32)).collect();
+    let rule_inputs = (0..p.len())
+        .map(|k| {
+            let mut read: Vec<u32> = p.rule(k).body().filter_map(|l| l.atom()).filter_map(|a| at.get(p.v.rel_name(a.rel())).copied()).collect();
+            read.sort_unstable();
+            read.dedup();
+            read
+        })
+        .collect();
+    Ok(General { form, reads, drivers, inputs, outputs, rule_inputs })
+}
+
+/// The read each of `p`'s rules is driven by: one that reads a read's delta (`r__minus`, `r__plus`) as a positive
+/// atom, or an aggregate's group of one (`h__grp…`, every rule of which is driven by the read). Every other rule
+/// (survivors, `redo`, a stratum's own deltas, its pieces' gates) is `None`: kept by every selection.
+fn drivers(p: &Placed, scc: &BTreeSet<String>, reads: &BTreeSet<String>) -> Vec<Option<String>> {
+    let v: &Version = &p.v;
+    let n = v.size();
+    let delta_of = |name: &str| -> Option<String> { name.strip_suffix("__minus").or_else(|| name.strip_suffix("__plus")).filter(|r| reads.contains(*r) && !scc.contains(*r)).map(str::to_owned) };
+    let positive = |i: usize| -> Vec<String> { p.rule(i).body().filter_map(|l| match l.view() { PLit::Atom(a) if !a.neg() => Some(v.rel_name(a.rel()).to_owned()), _ => None }).collect() };
+    let heads: Vec<String> = (0..n).map(|i| v.rel_name(p.rule(i).head().rel()).to_owned()).collect();
+    let mut out: Vec<Option<String>> = (0..n).map(|i| positive(i).iter().find_map(|r| delta_of(r))).collect();
+    // A group of an aggregate's keys is fed by one read's deltas alone; a rule reading it is driven by that read.
+    let mut groups: BTreeMap<&str, Option<Option<String>>> = BTreeMap::new();
+    for (i, h) in heads.iter().enumerate().filter(|(_, h)| h.contains("__grp")) {
+        let e = groups.entry(h.as_str()).or_insert_with(|| Some(out[i].clone()));
+        if e.as_ref().is_some_and(|d| *d != out[i]) {
+            *e = None;
+        }
+    }
+    for i in 0..n {
+        if out[i].is_none() {
+            out[i] = positive(i).iter().find_map(|r| groups.get(r.as_str()).cloned().flatten().flatten());
+        }
+    }
+    out
+}
+
+/// Every stratum's general form of a maintained cross-file part (decision 0298), written once for the part, over its
+/// version: by stratum (its relations, joined by `,`). A stratum made natively (but a text test) has none.
+pub(in crate::code_rule_dsl) struct GeneralForms {
+    pub(in crate::code_rule_dsl) by_stratum: HashMap<String, General>,
+    /// A recursive stratum's general form by levels (decision 0090), for kept rows that have them; where its form
+    /// cannot be by levels (a rule not a join), none, and `by_stratum`'s stands for every kept part.
+    pub(in crate::code_rule_dsl) by_levels: HashMap<String, General>,
+}
+
+/// The signature of the old rows `olds` takes as kept among `part`'s relations: general forms written for one are
+/// those of every kept part with the same.
+pub(in crate::code_rule_dsl) fn olds_signature(part: &Placed, olds: &dyn Olds) -> Result<u64> {
+    use std::hash::{Hash, Hasher};
+    let f = Fields::of(part).ok_or_else(|| Error::Plan("a maintained part holds its rules alone".into()))?;
+    let v: &Version = &part.v;
+    let mut rels: BTreeSet<&str> = f.inputs().collect();
+    rels.extend((0..part.len()).map(|i| v.rel_name(part.rule(i).head().rel())));
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    rels.into_iter().filter(|r| olds.has_old(r)).for_each(|r| r.hash(&mut h));
+    Ok(h.finish())
+}
+
+/// The key of stratum `scc` in `GeneralForms`.
+pub(in crate::code_rule_dsl) fn stratum_key(scc: &BTreeSet<String>) -> String {
+    scc.iter().map(String::as_str).collect::<Vec<_>>().join(",")
+}
+
+/// What a part's general forms take as kept (decision 0298): the old rows the kept part holds, read or not yet
+/// (`Retained::holds_old`); with levels or not (`.1`). Whether kept rows have levels is known when they are read,
+/// so a recursive stratum has a general form for each, and a run takes the one its kept rows match.
+pub(in crate::code_rule_dsl) struct Holds<'k>(pub(in crate::code_rule_dsl) &'k Retained, pub(in crate::code_rule_dsl) bool);
+
+impl Olds for Holds<'_> {
+    fn has_old(&self, rel: &str) -> bool {
+        self.0.holds_old(rel)
+    }
+    fn levels(&self, rel: &str) -> Option<(bool, (usize, usize, bool))> {
+        // Only whether there are levels chooses a form; their shape is for diagnostics.
+        self.0.holds_old(rel).then_some((self.1, (0, 0, false)))
+    }
+}
+
+/// The general forms of `part`, a maintained cross-file part (decision 0298): each stratum's, once, for the old rows
+/// `kept` holds; a recursive stratum's also by levels, where its form can be.
+pub(in crate::code_rule_dsl) fn general_forms(part: &Placed, domains: &lower::Domains, kept: &Retained) -> Result<GeneralForms> {
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "the general forms (decision 0298)".into());
+    let f = Fields::of(part).ok_or_else(|| Error::Plan("a maintained part holds its rules alone".into()))?;
+    let v: &Version = &part.v;
+    let mut by_head: HashMap<&str, Vec<usize>> = HashMap::new();
+    for i in 0..part.len() {
+        by_head.entry(v.rel_name(part.rule(i).head().rel())).or_default().push(i);
+    }
+    let atoms = Builder::under(v).finish().map_err(Error::Plan)?.0;
+    let (plain, levels) = (Holds(kept, false), Holds(kept, true));
+    let (mut by_stratum, mut by_levels) = (HashMap::new(), HashMap::new());
+    for scc in part.components()?.iter() {
+        if scc.iter().any(|r| f.native(r).is_some_and(|n| !matches!(n.spec, NativeSpec::TextTest { .. }))) {
+            continue;
+        }
+        let rules: Vec<usize> = scc.iter().flat_map(|r| by_head.get(r.as_str()).into_iter().flatten().copied()).collect();
+        if rules.is_empty() {
+            continue;
+        }
+        let g = general(&atoms, part, &rules, scc, domains, &plain, &|_| true)?;
+        if g.form.recursive > 0 && levels_wanted() {
+            let l = general(&atoms, part, &rules, scc, domains, &levels, &|_| true)?;
+            if l.form.by_levels > 0 {
+                by_levels.insert(stratum_key(scc), l);
+            }
+        }
+        by_stratum.insert(stratum_key(scc), g);
+    }
+    Ok(GeneralForms { by_stratum, by_levels })
+}
+
+/// The places of `g`'s rules a stratum whose reads `moved` changed runs (decision 0298): those driven by a read in
+/// `moved`, and those every selection keeps. `None` where the general form does not cover `moved`.
+pub(in crate::code_rule_dsl) fn selected(g: &General, moved: &BTreeSet<String>) -> Option<Vec<usize>> {
+    moved.iter().all(|r| g.reads.contains(r)).then(|| g.drivers.iter().enumerate().filter(|(_, d)| d.as_ref().is_none_or(|r| moved.contains(r))).map(|(i, _)| i).collect())
+}
+
+#[cfg(test)]
+mod general_tests {
+    use super::*;
+
+    struct AllKept;
+    impl Olds for AllKept {
+        fn has_old(&self, _: &str) -> bool {
+            true
+        }
+        fn levels(&self, _: &str) -> Option<(bool, (usize, usize, bool))> {
+            None
+        }
+    }
+
+    /// The rules of `p` at places `at`, printed, with each of `unmoved`'s old rows read as its rows (`x__old` as `x`),
+    /// sorted.
+    fn shown(p: &Placed, at: impl Iterator<Item = usize>, unmoved: &[&str]) -> Vec<String> {
+        let mut out: Vec<String> = at
+            .map(|i| {
+                let mut s = p.v.show_rule(p.rule(i));
+                for x in unmoved {
+                    s = s.replace(&format!("{x}__old("), &format!("{x}("));
+                }
+                s
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Decision 0298: the rules a stratum runs, selected from its general form for the reads that moved, are the
+    /// rules its form for those reads alone is written with, but that a read that did not move is read as its old
+    /// rows, which are its rows.
+    #[test]
+    fn a_general_forms_selection_is_the_form_of_the_reads_that_moved() {
+        let text = r#"
+.decl a(x: number, y: number)
+.decl b(y: number, z: number)
+.decl c(x: number)
+.decl h(x: number, z: number)
+.input a
+.input b
+.input c
+h(x, z) :- a(x, y), b(y, z), !c(x).
+h(x, n) :- c(x), n = count : { b(x, _) }.
+.output h
+"#;
+        let prog = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).unwrap().finish().unwrap();
+        let v0 = Placed::whole(v);
+        let atoms = Builder::under(&v0.v).finish().unwrap().0;
+        let scc: BTreeSet<String> = ["h".to_owned()].into();
+        let rules: Vec<usize> = (0..v0.v.size()).filter(|&i| v0.v.rel_name(v0.rule(i).head().rel()) == "h").collect();
+        let input = |r: &str| ["a", "b", "c"].iter().any(|i| r == *i || r == format!("{i}__minus") || r == format!("{i}__plus"));
+        let domains = lower::Domains::default();
+        let g = general(&atoms, &v0, &rules, &scc, &domains, &AllKept, &input).unwrap();
+        assert_eq!(g.reads, ["a", "b", "c"].iter().map(|s| (*s).to_owned()).collect());
+        assert_eq!((g.form.maintained, g.form.derived_again), (1, 0), "the stratum is maintained");
+        let heads: Vec<&str> = (0..g.form.placed.v.size()).map(|i| g.form.placed.v.rel_name(g.form.placed.rule(i).head().rel())).collect();
+        assert!(heads.iter().any(|h| h.contains("__grp")), "the aggregate's groups: {heads:?}");
+        assert!(g.drivers.iter().any(Option::is_none) && g.drivers.iter().any(|d| d.as_deref() == Some("b")));
+        let (all, none) = (|_: &str| true, |_: &str| false);
+        let one = One { has_delta: &all, has_old: &none };
+        for moved in [vec!["a"], vec!["c"], vec!["a", "b"], vec!["a", "b", "c"]] {
+            let m: BTreeSet<String> = moved.iter().map(|s| (*s).to_owned()).collect();
+            let narrow = form(&atoms, &v0, &rules, &scc, &m, &domains, &AllKept, &one, &input).unwrap();
+            let at = selected(&g, &m).expect("covered");
+            let unmoved: Vec<&str> = ["a", "b", "c"].into_iter().filter(|r| !m.contains(*r)).collect();
+            assert_eq!(shown(&g.form.placed, at.into_iter(), &unmoved), shown(&narrow.placed, 0..narrow.placed.v.size(), &[]), "moved {moved:?}");
+        }
+    }
 }

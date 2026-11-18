@@ -81,7 +81,7 @@ impl Emitted {
 /// `counts` are a previous run's `rows.<relation>`; `batch` maps the inputs a wave reads from its
 /// chunk's batch to their source and row estimate (`Inputs::batch`).
 pub fn emit(
-    lowered: &lower::Lowered,
+    lowered: &lower::Given,
     db: &Connection,
     stats: &str,
     name: &str,
@@ -97,6 +97,7 @@ pub fn emit(
         given: None,
         kept: BTreeSet::new(),
     };
+    // The SQL emitter reads a tree: a program as `lower::lower_tree` gives it, never a version's.
     let mut emitted = emit_inputs(&lowered.program,db,name,counts,inputs)?;
     // Lowering distinguishes grammar IDs from interned names even when both
     // columns were declared symbolic. Retain that domain after integer lowering.
@@ -184,6 +185,7 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
                     .iter()
                     .map(|v| match v {
                         Value::Int(i) => i.to_string(),
+                        Value::Branded(b) => b.value().to_string(),
                         Value::Str(s) => format!("'{}'", s.replace('\'', "''")),
                     })
                     .collect::<Vec<_>>()
@@ -247,7 +249,7 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
     let lattices = prog.lattice.iter().filter(|(rel, _)| derived(rel)).map(|(rel, l)| (rel.clone(), l.keys, super::super::native::TOP)).collect();
     Ok(Emitted {
         constant_rows: std::sync::Arc::new(prog.facts.iter().filter(|(rel,rows)|derived(rel) && !rows.is_empty())
-            .filter_map(|(rel,rows)|rows.iter().map(|row|row.iter().map(|v|if let Value::Int(n)=v {Some(*n)}else{None}).collect::<Option<Vec<_>>>()).collect::<Option<Vec<_>>>().map(|rows|(rel.clone(),rows))).collect()),
+            .filter_map(|(rel,rows)|rows.iter().map(|row|row.iter().map(Value::integer).collect::<Option<Vec<_>>>()).collect::<Option<Vec<_>>>().map(|rows|(rel.clone(),rows))).collect()),
         value_types: std::sync::Arc::new(prog.decls.iter().map(|(r,c)|(r.to_string(),c.iter().map(|(_,t)|t.clone()).map(String::from).collect())).collect()),
         analysis: model.analysis(prog),
         program: schedule::Program { name: name.to_owned(), column_types:relations.iter().map(|(rel,_)|(rel.clone(),prog.decls[rel.as_str()].iter().map(|(_,ty)|if !atoms && ty=="sym" {"TEXT".into()} else {"INTEGER".into()}).collect())).collect(), relations, steps, file_local: false, partitions: Vec::new(), lattices, lattice_operations:BTreeMap::new() },
@@ -276,7 +278,7 @@ pub fn emit_program(
     batch: &HashMap<String, (Source, f64)>,
     intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>,
 ) -> Result<Emitted> {
-    let lowered = lower::lower(prog, crate::code_rule_dsl::language::GrammarDialect::Python, intern)?;
+    let lowered = lower::lower_tree(prog, crate::code_rule_dsl::language::GrammarDialect::Python, intern)?;
     emit(&lowered, &Connection::open_in_memory()?, "main", name, None, batch)
 }
 
@@ -380,8 +382,10 @@ pub fn outputs(
     lowered: &lower::Lowered,
     db: &Connection,
 ) -> Result<(BTreeMap<String, Vec<Vec<String>>>, BTreeMap<String, Vec<usize>>)> {
-    let prog = &lowered.program;
-    let outputs: Vec<&str> = prog.outputs.iter().map(String::as_str).collect();
-    let (outputs, nodes) = decoded_outputs(&outputs, &|r| prog.inputs.iter().any(|i| i == r), &|r| prog.decls.get(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "main.", true, &BTreeSet::new(), &BTreeSet::new())?;
+    // Read from the program's version (its fields), as the run reads it.
+    let placed = lowered.placed()?;
+    let f = placed.fields()?;
+    let outputs: Vec<&str> = f.outputs().collect();
+    let (outputs, nodes) = decoded_outputs(&outputs, &|r| f.is_input(r), &|r| f.columns(r).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()), db, Some(lowered.lowering()), "main.", true, &BTreeSet::new(), &BTreeSet::new())?;
     Ok((outputs.into_iter().map(|(rel, rows)| (rel, rows.shown())).collect(), nodes))
 }

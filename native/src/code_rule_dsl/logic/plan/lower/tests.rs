@@ -21,7 +21,7 @@ fn kinds_flow_through_derived_columns_and_facts() {
     let python = dialect_by_label("python").unwrap();
     let mut next = 100;
     let mut interned = Vec::new();
-    let l = lower(&p, python, &mut |s| {
+    let l = super::lower_tree(&p, python, &mut |s| {
         interned.extend(s.iter().map(|s| (*s).to_owned()));
         Ok(s.iter().map(|_| {
             next += 1;
@@ -31,13 +31,13 @@ fn kinds_flow_through_derived_columns_and_facts() {
     })
     .unwrap();
     let tag = tape_tag(python).unwrap();
-    let integer = i64::from(kind_atom(tag, python.kinds().kind_id("integer")));
-    assert_eq!(l.program.facts["lit"][0][0], Value::Int(integer));
-    assert!(matches!(l.program.facts["lit"][0][1], Value::Int(n) if n > 100));
+    let integer = kind_atom(tag, python.kinds().kind_id("integer"));
+    assert_eq!(l.program.facts["lit"][0][0], Value::Branded(Branded { class: Class::Kind, atom: integer }));
+    assert!(matches!(l.program.facts["lit"][0][1], Value::Branded(Branded { class: Class::Name, atom }) if atom > 100));
     let body = &l.program.rules.iter().find(|r| r.head.rel == "typed").unwrap().body;
     let Literal::Atom(field) = &body[2] else { panic!() };
-    let left = i64::from(field_atom(tag, python.kinds().field_id("left").unwrap()));
-    assert_eq!(field.args[1], Term::Int(left));
+    let left = field_atom(tag, python.kinds().field_id("left").unwrap());
+    assert_eq!(field.args[1], Term::Branded(Branded { class: Class::Field, atom: left }));
     assert!(interned.contains(&"x".to_owned()) && interned.contains(&"+".to_owned()));
 }
 
@@ -61,7 +61,7 @@ fn a_kind_membership_compares_kind_atoms() {
     .unwrap();
     let python = dialect_by_label("python").unwrap();
     let mut next = 100;
-    let l = lower(&p, python, &mut |s| {
+    let l = super::lower_tree(&p, python, &mut |s| {
         Ok(s.iter()
             .map(|_| {
                 next += 1;
@@ -71,11 +71,50 @@ fn a_kind_membership_compares_kind_atoms() {
     })
     .unwrap();
     let tag = tape_tag(python).unwrap();
-    let atom = |k: &str| Term::Int(i64::from(kind_atom(tag, python.kinds().kind_id(k))));
+    let atom = |k: &str| Term::Branded(Branded { class: Class::Kind, atom: kind_atom(tag, python.kinds().kind_id(k)) });
     let cmp = |op, k: &str| Literal::Cmp { l: Term::Var("k".into()), op, r: atom(k) };
     let bodies = |rel: &str| l.program.rules.iter().filter(|r| r.head.rel == rel).map(|r| r.body[1..].to_vec()).collect::<Vec<_>>();
     assert_eq!(bodies("r"), [vec![cmp("=", "call")], vec![cmp("=", "attribute")]]);
     assert_eq!(bodies("s"), [vec![cmp("!=", "call"), cmp("!=", "attribute")]]);
+}
+
+/// Lowered for two stores that number their atoms apart, a program differs only in its branded names, and moving the
+/// first's to the second's atoms (`relocate`, decision 0270) gives the second: every name is found, kinds, fields and
+/// integers stay. Its image keeps each atom's brand.
+#[test]
+fn a_program_lowered_for_one_store_moves_to_another() {
+    let p = parse(&format!(
+        "{BASE}.decl kind(n: node, k: symbol)\n.decl lit(k: symbol, t: symbol)\n.decl typed(n: node, t: symbol, i: number)\n.output typed\n\
+         kind(n, k) :- node(_, n, k, _, _).\nlit(\"integer\", \"int\").\n\
+         typed(n, t, 3) :- kind(n, k), lit(k, t), field(p, \"left\", n), text(p, \"x\"), t != \"str\".\n"
+    ))
+    .unwrap();
+    let python = dialect_by_label("python").unwrap();
+    let lowered = |base: u32| {
+        let mut names = Vec::new();
+        let l = lower_tree(&p, python, &mut |s| {
+            names.extend(s.iter().map(|s| (*s).to_owned()));
+            Ok((0..s.len() as u32).map(|i| base + 3 * i).collect())
+        })
+        .unwrap();
+        (l.program, names)
+    };
+    let (mut here, names) = lowered(7);
+    let (there, again) = lowered(1000);
+    assert_eq!(names, again);
+    assert_ne!(format!("{:?}", here.rules), format!("{:?}", there.rules));
+    let to: HashMap<u32, u32> = (0..names.len() as u32).map(|i| (7 + 3 * i, 1000 + 3 * i)).collect();
+    assert!(relocate(&mut here, &to));
+    assert_eq!(format!("{:?}", here.rules), format!("{:?}", there.rules));
+    assert_eq!(here.facts, there.facts);
+    // A name no intern call made is not moved: the caller prepares again.
+    let (mut short, _) = lowered(7);
+    assert!(!relocate(&mut short, &HashMap::default()));
+    // The image keeps the brands: read back, the program is the one written.
+    let bytes = crate::code_rule_dsl::logic::program_image::encode(&there).unwrap();
+    let back = crate::code_rule_dsl::logic::program_image::decode(&bytes, &Default::default()).unwrap();
+    assert_eq!(format!("{:?}", back.rules), format!("{:?}", there.rules));
+    assert_eq!(back.facts, there.facts);
 }
 
 /// Outside the run (a memo entry, a session's frames) a column of kind or field atoms is no store atom: they are
@@ -98,4 +137,32 @@ fn kind_and_field_columns_are_not_stored_as_atoms() {
     assert_eq!(atom_columns(&p, &d, "text"), [false, true]);
     assert_eq!(atom_columns(&p, &d, "kind"), [false, false], "a derived kind column");
     assert_eq!(atom_columns(&p, &d, "named"), [false, false, true], "a derived field column, and a name");
+}
+
+/// The domains read from a program's version (`domains_of`) are the tree's (`domains`): kinds through derived
+/// columns and facts, functors, comparisons, aggregates and a refused conflict.
+#[test]
+fn the_domains_of_a_version_are_the_trees() {
+    let texts = [
+        format!(
+            "{BASE}.decl kind(n: node, k: symbol)\n.decl lit(k: symbol, t: symbol)\n.decl typed(n: node, t: symbol)\n.output typed\n\
+             kind(n, k) :- node(_, n, k, _, _).\nlit(\"integer\", \"int\").\n\
+             typed(n, t) :- kind(n, k), lit(k, t), field(p, \"left\", n), text(p, \"x\").\n"
+        ),
+        format!(
+            "{BASE}.decl named(n: node, s: symbol, l: number)\n.decl eq(a: symbol, b: symbol)\n.decl many(k: symbol, c: number)\n.output named, many\n\
+             named(n, s, l) :- text(n, t), s = cat(t, \"!\"), l = strlen(s).\neq(a, b) :- node(_, _, a, _, _), b = a.\n\
+             many(k, c) :- eq(k, _), c = count : {{ node(_, _, k, _, _) }}.\n"
+        ),
+        format!("{BASE}.decl bad(n: node)\n.output bad\nbad(n) :- node(_, n, k, _, _), text(n, k).\n"),
+    ];
+    for text in texts {
+        let p = parse(&text).unwrap();
+        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+        match (domains(&p), domains_of(&v)) {
+            (Ok(t), Ok(o)) => assert_eq!(o, t, "{text}"),
+            (Err(t), Err(o)) => assert_eq!(o.to_string(), t.to_string(), "{text}"),
+            (t, o) => panic!("the tree's {t:?}, the version's {o:?}: {text}"),
+        }
+    }
 }

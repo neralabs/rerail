@@ -282,10 +282,20 @@ impl Drop for MetalWorkspaceLease {
 
 const BATCH_ENTRY: &str = include_str!("metal_batch_runtime.metal");
 /// The tape's reads and readers (decision 0310), before the runtime: every batch reads its documents in the
-/// slabs through them (decision 0032), with no node records.
-const TAPE_PREFIX: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape_reads.metal"), include_str!("metal_tape.metal"));
+/// batch's chunk block through the tape view (decision 0032), with no node records: the document table's entry as
+/// generated (`slabs::msl`, decision 0289 §4), the reads written once (decision 0310), then the readers.
+static TAPE_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| prefix(""));
 /// The interpreter of resident label batches: tasks from roots, not records (decision 0033).
-const RESIDENT_PREFIX: &str = concat!("#define RERAIL_RESIDENT 1\n#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape_reads.metal"), include_str!("metal_tape.metal"));
+static RESIDENT_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| prefix("#define RERAIL_RESIDENT 1\n"));
+
+fn prefix(defines: &str) -> String {
+    format!(
+        "{defines}#include <metal_stdlib>\nusing namespace metal;\n{}{}{}",
+        crate::code_rule_dsl::residency::slabs::msl(),
+        include_str!("metal_tape_reads.metal"),
+        include_str!("metal_tape.metal")
+    )
+}
 
 #[derive(Clone, Eq, PartialEq)]
 pub(super) struct ProgramBufferKey {
@@ -579,7 +589,7 @@ fn jit_kernel_source(programs: &[Program]) -> Result<String, Error> {
         ));
     }
     dispatch.push_str("default:status.error=5u;return;}");
-    Ok(format!("{TAPE_PREFIX}{}", kernel_source("", Some(&dispatch), &jit_support(&bodies, programs)?, JIT_CONTEXT, JIT_OUTPUT_CONTEXT)))
+    Ok(format!("{}{}", *TAPE_PREFIX, kernel_source("", Some(&dispatch), &jit_support(&bodies, programs)?, JIT_CONTEXT, JIT_OUTPUT_CONTEXT)))
 }
 
 const INTERPRETER_FETCH: &str =
@@ -593,7 +603,7 @@ pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
     if let Some(engine) = &*cached {
         return Ok(engine.clone());
     }
-    let source = format!("{RESIDENT_PREFIX}{}", kernel_source(INTERPRETER_FETCH, None, "", "", ""));
+    let source = format!("{}{}", *RESIDENT_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", ""));
     let engine = Engine::Interpreter { pipeline: pipeline_named(&source, "run_batch")?, buffers: Arc::new(Mutex::new(None)) };
     *cached = Some(engine.clone());
     Ok(engine)
@@ -601,7 +611,7 @@ pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
 
 pub fn compile_interpreter() -> Result<Engine, Error> {
     Ok(Engine::Interpreter {
-        pipeline: pipeline_named(&format!("{TAPE_PREFIX}{}", kernel_source(INTERPRETER_FETCH, None, "", "", "")), "run_batch")?,
+        pipeline: pipeline_named(&format!("{}{}", *TAPE_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", "")), "run_batch")?,
         buffers: Arc::new(Mutex::new(None)),
     })
 }
@@ -616,7 +626,7 @@ pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<ComputePipeline
         return Ok(pipeline.clone());
     }
     // The label passes' sweep, over resident tapes as their interpreter.
-    let source = format!("{RESIDENT_PREFIX}{}", kernel_source(INTERPRETER_FETCH, None, "", "", ""));
+    let source = format!("{}{}", *RESIDENT_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", ""));
     let edit = |source: String, from: &str, to: &str| {
         assert_eq!(source.matches(from).count(), 1, "the runtime has one {from}");
         source.replacen(from, to, 1)
@@ -818,16 +828,16 @@ fn execute_packed_once(
     let program_buffers = engine.program_buffers(device, &batch)?;
     let task_buffer = MappedBuffer::from_slice(device, &batch.tasks)?;
     let header_buffer = MappedBuffer::from_slice(device, &[batch.header])?;
-    // The documents in the slabs, in the batch's numbering: their views where the files were, and the slabs
-    // where the node records, children, source and line starts were (the last repeated). A batch over
-    // `MAX_SLABS` slabs is over capacity.
+    // The documents resident, gathered into one block (decision 0289 §4), in the batch's numbering: their views
+    // where the files were, and the block where the node records were. The kernel reads nothing from the
+    // children, source and line start slots; the block stands in for them.
     let table = crate::code_rule_dsl::residency::slabs::admit_docs(files)?;
-    let table = crate::code_rule_dsl::residency::slabs::DocTable::new(table).ok_or(Error::BackendCapacity)?;
+    let table = crate::code_rule_dsl::residency::slabs::DocTable::one_block(table).ok_or(Error::BackendCapacity)?;
     if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
         return Err(Error::BackendFailure);
     }
     let file_buffer = MappedBuffer::from_slice(device, &table.views)?;
-    let slab = |slot: usize| &table.slabs.get(slot).or(table.slabs.last()).expect("a batch with tasks has a document").buffer;
+    let block = table.block.as_ref().ok_or(Error::BackendFailure)?.buffer();
     // The derived classes alone (`has_supertype`): the classes are the codes', read on the tape.
     let supertypes = batch.metal_supertypes();
     let supertype_buffer = MappedBuffer::from_slice(device, &supertypes)?;
@@ -880,42 +890,42 @@ fn execute_packed_once(
     encoder.set_label("Tempo packed transducer kernel");
     encoder.set_compute_pipeline_state(engine.pipeline());
     for (index, buffer) in [
-        &task_buffer,
-        &header_buffer,
-        &file_buffer,
-        slab(0),
-        &program_buffers.programs,
-        &program_buffers.words,
-        &program_buffers.longs,
-        slab(1),
-        &supertype_buffer,
-        pending_buffer,
-        capture_buffer,
-        cursor_buffer,
-        repeat_buffer,
-        scheduler_buffer,
-        result_buffer,
-        status_buffer,
-        &program_buffers.values,
-        &program_buffers.strings,
-        &program_buffers.nfa_states,
-        &program_buffers.nfa_data,
-        &program_buffers.nfa_ranges,
-        &program_buffers.lua_instructions,
-        &program_buffers.lua_members,
-        &program_buffers.assertions,
-        &program_buffers.assertion_data,
-        &program_buffers.string_bytes,
-        slab(2),
-        value_state_buffer,
-        slab(3),
-        final_capture_buffer,
-        output_storage_buffer,
+        &task_buffer.buffer,
+        &header_buffer.buffer,
+        &file_buffer.buffer,
+        block,
+        &program_buffers.programs.buffer,
+        &program_buffers.words.buffer,
+        &program_buffers.longs.buffer,
+        block,
+        &supertype_buffer.buffer,
+        &pending_buffer.buffer,
+        &capture_buffer.buffer,
+        &cursor_buffer.buffer,
+        &repeat_buffer.buffer,
+        &scheduler_buffer.buffer,
+        &result_buffer.buffer,
+        &status_buffer.buffer,
+        &program_buffers.values.buffer,
+        &program_buffers.strings.buffer,
+        &program_buffers.nfa_states.buffer,
+        &program_buffers.nfa_data.buffer,
+        &program_buffers.nfa_ranges.buffer,
+        &program_buffers.lua_instructions.buffer,
+        &program_buffers.lua_members.buffer,
+        &program_buffers.assertions.buffer,
+        &program_buffers.assertion_data.buffer,
+        &program_buffers.string_bytes.buffer,
+        block,
+        &value_state_buffer.buffer,
+        block,
+        &final_capture_buffer.buffer,
+        &output_storage_buffer.buffer,
     ]
     .into_iter()
     .enumerate()
     {
-        encoder.set_buffer(index as u64, Some(&buffer.buffer), 0);
+        encoder.set_buffer(index as u64, Some(buffer), 0);
     }
     let width = engine.pipeline().thread_execution_width().max(1);
     encoder.checked_dispatch_threads(

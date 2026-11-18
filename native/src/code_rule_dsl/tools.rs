@@ -438,7 +438,7 @@ fn policy_groups(texts: &[String], root: &std::path::Path, options: &serde_json:
     use super::logic::{plan::corpus, rr};
     let mut groups: Vec<(&'static str, PolicyGroup)> = Vec::new();
     for (k, text) in texts.iter().enumerate() {
-        let own = rr::read_text(text).and_then(rr::Text::header).ok();
+        let own = rr::text_header(text).ok();
         let joined = own.and_then(|own| {
             let named = own.settings.iter().find(|(k, _)| k == "language").map(|(_, v)| v.trim().trim_matches('"').to_owned());
             let one_dialect = named.as_deref().is_none_or(|name| {
@@ -717,6 +717,7 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
     }
     // Retired instructions and cycles of the whole process: steadier than CPU time on a loaded machine, so a change
     // is compared by them (macOS; nothing elsewhere).
+    timeline_mark("report");
     if let Some((instructions, cycles)) = process_counters() {
         text += &format!("  process {:.2} G instructions, {:.2} G cycles\n", instructions as f64 / 1e9, cycles as f64 / 1e9);
         for (phase, n) in &report.phase_instructions {
@@ -797,16 +798,14 @@ pub fn cli(args: &[String]) -> Result<String, String> {
     crate::code_rule_dsl::logic::profile::command_begins();
     let out = cli_in(args, &mut Default::default());
     let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
-    match (out, after) {
-        (Ok(mut text), Some(c)) => {
-            text += &format!(
-                "  after the run {:.2} s wall: the command's thread {:.2} s own, {:.2} s off a core; the other threads {:.2} s; ready with no core {:.2} s\n  before the command: {age:.2} s since the process started\n",
-                c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
-            );
-            Ok(text)
-        }
-        (out, _) => out,
+    // On stderr: a command's output is its own (`run-rr`'s, `sql`'s: JSON), and a line after it made that unreadable.
+    if let (Ok(_), Some(c)) = (&out, after) {
+        eprint!(
+            "  after the run {:.2} s wall: the command's thread {:.2} s own, {:.2} s off a core; the other threads {:.2} s; ready with no core {:.2} s\n  before the command: {age:.2} s since the process started\n",
+            c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
+        );
     }
+    out
 }
 
 /// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
@@ -1062,7 +1061,10 @@ fn translate_json_command(args: &[String]) -> Result<String, String> {
     Ok(format!("{} translated, {failed} failed", files.len() - failed))
 }
 
+use crate::code_rule_dsl::logic::profile::timeline_mark;
+
 fn logic_command(args: &[String]) -> Result<String, String> {
+    timeline_mark("cli start");
     let (mut positional, mut modes, mut metal, mut chunk) = (Vec::new(), None, false, 1_usize << 18);
     let (mut sql, mut env, mut full) = (false, Vec::new(), false);
     let mut args = args.iter();
@@ -1121,7 +1123,10 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             })
             .collect();
         files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
-        crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?
+        timeline_mark("the program files listed");
+        let texts = crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?;
+        timeline_mark("the program texts read");
+        texts
     } else {
         vec![crate::tools::program_text(Path::new(program.as_str()))?]
     };

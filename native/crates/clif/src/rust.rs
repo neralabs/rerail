@@ -13,6 +13,14 @@
 use cranelift_codegen::ir::{self, InstructionData, Opcode, condcodes::IntCC, types};
 use std::fmt::Write;
 
+/// A cold block's first line. `cold_path` makes the branch to it unlikely; the empty `asm!`
+/// (no instruction, no memory, flags kept) keeps it a branch. Without it LLVM folded small
+/// cold arms into `csel`s, so the hot way waited on the cold way's inputs: the refill's next
+/// block on the block's last token's end, every block's loads after its token chain (0177,
+/// "The next block waits on no token"), where the compiler's IR has a branch the core predicts.
+const COLD: &str = "core::hint::cold_path(); unsafe { core::arch::asm!(\"\", options(nomem, nostack, preserves_flags)) };\n";
+
+
 /// A fingerprint of a text (FNV-1a). The generated source carries its own (`SOURCE`): the
 /// ahead-of-time build runs only where the JIT's program translates to it again.
 pub fn fingerprint(clif: &str) -> u64 {
@@ -35,6 +43,7 @@ fn local(t: ir::Type) -> Result<(&'static str, &'static str), String> {
     Ok(match t {
         types::I8X16 => ("uint8x16_t", "unsafe { core::mem::zeroed() }"),
         types::I64X2 => ("uint64x2_t", "unsafe { core::mem::zeroed() }"),
+        types::I16X8 => ("uint16x8_t", "unsafe { core::mem::zeroed() }"),
         t => (ty(t)?.0, "0"),
     })
 }
@@ -60,7 +69,7 @@ fn read_style(id: u32) -> Option<&'static str> {
 /// tape's bytes, as the slices a hand-written reader indexes: a corrupt tape panics where it is read. Each
 /// function takes the bytes' length first, where the parser's take the pinned register. No addresses, no
 /// vectors: plain Rust for every target.
-pub fn translate_reads(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &str)]) -> Result<String, String> {
+pub fn translate_reads(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &str)], family: crate::reads::Family) -> Result<String, String> {
     READS.with(|r| *r.borrow_mut() = Some(funcs.iter().map(|(id, _, hot)| (*id, *hot)).collect()));
     ADDRESSES.with(|a| a.borrow_mut().clear());
     let result = (|| {
@@ -87,6 +96,26 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &st
         for &(entry, n) in entries {
             let f = &funcs.iter().find(|(id, ..)| *id == entry).ok_or("no entry")?.1;
             let types: Vec<&str> = f.signature.params.iter().map(|p| ty(p.value_type).map(|t| t.0)).collect::<Result<_, _>>()?;
+            if family == crate::reads::Family::Relation {
+                // A relation's read: its descriptor's address, every load an aligned word of its block (`ld`'s
+                // check is the tape's alone).
+                if types.first() != Some(&"u64") {
+                    return Err(format!("{n}: a relation's read takes its descriptor first"));
+                }
+                let params: Vec<String> = types.iter().enumerate().skip(1).map(|(i, t)| format!("a{i}: {t}")).collect();
+                let args: Vec<String> = (1..types.len()).map(|i| format!(", a{i}")).collect();
+                let [ret] = f.signature.returns.as_slice() else { return Err(format!("{n}: a read returns one value")) };
+                let ret = ty(ret.value_type)?.0;
+                writeln!(
+                    out,
+                    "/// The read `{n}` of the relation (or rows) whose descriptor is at `desc`.\n///\n/// # Safety\n/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.\n#[inline(always)]\npub unsafe fn {n}(desc: *const u8{}{}) -> {ret} {{\n    // SAFETY: the caller's.\n    unsafe {{ f{entry}(u64::MAX, desc as u64{}) }}\n}}\n",
+                    if params.is_empty() { "" } else { ", " },
+                    params.join(", "),
+                    args.concat()
+                )
+                .unwrap();
+                continue;
+            }
             if types.get(..2) != Some(&["u64", "u64"][..]) {
                 return Err(format!("{n}: a read takes the tape and its view first"));
             }
@@ -174,13 +203,14 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
             out.push_str("    let mut pin = pin;\n");
         }
     }
+    let absorbed = absorbed(f);
     // Every value a local, declared once.
     let mut declared = std::collections::BTreeMap::new();
     for b in f.layout.blocks() {
         for &v in dfg.block_params(b) {
             declared.insert(v.as_u32(), local(dfg.value_type(v))?);
         }
-        for inst in f.layout.block_insts(b) {
+        for inst in f.layout.block_insts(b).filter(|i| !absorbed.contains(i)) {
             for &v in dfg.inst_results(inst) {
                 declared.insert(v.as_u32(), local(dfg.value_type(v))?);
             }
@@ -206,11 +236,11 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
             let mut s = String::new();
             // A cold block (`set_cold_block`) says so to rustc, as Cranelift lays it out: the
             // branch to it unlikely, its code out of the hot path, and no register kept for it
-            // where the hot path wants one.
+            // where the hot path wants one (`COLD`).
             if f.layout.is_cold(blocks[node]) {
-                s.push_str("core::hint::cold_path();\n");
+                s.push_str(COLD);
             }
-            for inst in f.layout.block_insts(blocks[node]) {
+            for inst in f.layout.block_insts(blocks[node]).filter(|i| !absorbed.contains(i)) {
                 s.push_str(&instruction(f, inst, &name, &|k, _| jump(k))?);
                 s.push('\n');
             }
@@ -226,9 +256,10 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
     for blk in f.layout.blocks() {
         writeln!(out, "            {} => {{", blk.as_u32()).unwrap();
         if f.layout.is_cold(blk) {
-            out.push_str("                core::hint::cold_path();\n");
+            out.push_str("                ");
+            out.push_str(COLD);
         }
-        for inst in f.layout.block_insts(blk) {
+        for inst in f.layout.block_insts(blk).filter(|i| !absorbed.contains(i)) {
             let s = instruction(f, inst, &name, &|_, to: ir::Block| Ok(format!("b = {}; continue;", to.as_u32())))?;
             for line in s.lines() {
                 writeln!(out, "                {line}").unwrap();
@@ -435,8 +466,8 @@ impl Shape {
             for part in parts {
                 let inside: std::collections::HashSet<usize> = part.iter().copied().collect();
                 let mut entries: Vec<usize> = Vec::new();
-                for u in 0..succ.len() {
-                    for &t in &succ[u] {
+                for (u, next) in succ.iter().enumerate() {
+                    for &t in next {
                         if inside.contains(&t) && !inside.contains(&u) && !entries.contains(&t) {
                             entries.push(t);
                         }
@@ -453,11 +484,11 @@ impl Shape {
                     return None;
                 }
                 let d = block.len();
-                for u in 0..succ.len() {
-                    for k in 0..succ[u].len() {
-                        if let Some(j) = entries.iter().position(|&e| e == succ[u][k]) {
+                for (u, next) in succ.iter_mut().enumerate() {
+                    for (k, t) in next.iter_mut().enumerate() {
+                        if let Some(j) = entries.iter().position(|&e| e == *t) {
                             label.insert((u, k), j);
-                            succ[u][k] = d;
+                            *t = d;
                         }
                     }
                 }
@@ -794,19 +825,154 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             format!("if {} != 0 {} else {}", args[0], goto(f, &blocks[0], 0, name, jump)?, goto(f, &blocks[1], 1, name, jump)?)
         }
         // A jump table: a `match`, its arms the table's (successors 1 on), the rest the default
-        // (successor 0), as `successors` lists them; rustc makes it a table again.
+        // (successor 0), as `successors` lists them; rustc makes it a table, or compares, again.
+        // Entries that go to the same place one arm, its patterns their ranges, as a lexer's
+        // `b'0'..=b'9' =>`; those that are the default's, the default's.
         Opcode::BrTable => {
             let InstructionData::BranchTable { table, .. } = data else { return Err("a jump table of nothing".into()) };
             let jt = &f.dfg.jump_tables[*table];
-            let mut s = format!("match {} {{ ", args[0]);
+            let default = goto(f, &jt.default_block(), 0, name, jump)?;
+            let mut arms: Vec<(String, Vec<(usize, usize)>)> = Vec::new();
             for (i, call) in jt.as_slice().iter().enumerate() {
-                write!(s, "{i} => {} ", goto(f, call, i + 1, name, jump)?).unwrap();
+                let to = goto(f, call, i + 1, name, jump)?;
+                if to == default {
+                    continue;
+                }
+                match arms.iter_mut().find(|a| a.0 == to) {
+                    Some(a) => match a.1.last_mut() {
+                        Some(r) if r.1 + 1 == i => r.1 = i,
+                        _ => a.1.push((i, i)),
+                    },
+                    None => arms.push((to, vec![(i, i)])),
+                }
             }
-            write!(s, "_ => {} }}", goto(f, &jt.default_block(), 0, name, jump)?).unwrap();
+            let mut s = format!("match {} {{ ", args[0]);
+            for (to, ranges) in &arms {
+                let pats: Vec<String> = ranges.iter().map(|&(a, b)| if a == b { format!("{a}") } else { format!("{a}..={b}") }).collect();
+                write!(s, "{} => {to} ", pats.join(" | ")).unwrap();
+            }
+            write!(s, "_ => {default} }}").unwrap();
             s
         }
         op => return Err(format!("the opcode {op}")),
     })
+}
+
+/// The `band`s each read only by compares that print as a bit test (`tested_bits`): the
+/// test is the `and` too, so they are not printed.
+fn absorbed(f: &ir::Function) -> std::collections::HashSet<ir::Inst> {
+    let dfg = &f.dfg;
+    let insts: Vec<ir::Inst> = f.layout.blocks().flat_map(|b| f.layout.block_insts(b)).collect();
+    let mut tested = std::collections::HashSet::new();
+    let mut other = std::collections::HashSet::new();
+    for &inst in &insts {
+        let in_test = matches!(dfg.insts[inst], ir::InstructionData::IntCompare { cond: IntCC::NotEqual, .. }) && dfg.value_type(dfg.inst_results(inst)[0]).is_vector() && tested_bits(f, inst).is_some();
+        let mut reads: Vec<ir::Value> = dfg.inst_args(inst).iter().map(|&v| dfg.resolve_aliases(v)).collect();
+        for c in dfg.insts[inst].branch_destination(&dfg.jump_tables, &dfg.exception_tables) {
+            reads.extend(c.args(&dfg.value_lists).filter_map(|a| a.as_value()).map(|v| dfg.resolve_aliases(v)));
+        }
+        for v in reads {
+            let ir::ValueDef::Result(d, _) = dfg.value_def(v) else { continue };
+            if !matches!(dfg.insts[d], ir::InstructionData::Binary { opcode: Opcode::Band, .. }) {
+                continue;
+            }
+            if in_test { tested.insert(d) } else { other.insert(d) };
+        }
+    }
+    tested.retain(|d| !other.contains(d));
+    // A narrowing shift's steps (`shrn`): written as one, where each is read by the next alone.
+    let mut uses: std::collections::HashMap<ir::Inst, usize> = std::collections::HashMap::new();
+    for &inst in &insts {
+        for &v in dfg.inst_args(inst) {
+            if let ir::ValueDef::Result(d, _) = dfg.value_def(dfg.resolve_aliases(v)) {
+                *uses.entry(d).or_default() += 1;
+            }
+        }
+        for c in dfg.insts[inst].branch_destination(&dfg.jump_tables, &dfg.exception_tables) {
+            for v in c.args(&dfg.value_lists).filter_map(|a| a.as_value()) {
+                if let ir::ValueDef::Result(d, _) = dfg.value_def(dfg.resolve_aliases(v)) {
+                    *uses.entry(d).or_default() += 1;
+                }
+            }
+        }
+    }
+    for &inst in &insts {
+        if let Some((_, steps)) = narrowing_shift(f, inst) {
+            // The `and`'s two reads by the narrowing (both its halves), the others one.
+            let alone = steps.iter().enumerate().all(|(k, d)| uses.get(d).copied().unwrap_or(0) <= if k == 0 { 2 } else { 1 });
+            if alone {
+                tested.extend(steps);
+            }
+        }
+    }
+    tested
+}
+
+/// `uunarrow(k, k)` with `k = band(ushr_imm(bitcast.i16x8(v), 4), splat(0xff))`: NEON's
+/// narrowing shift of `v`'s 16-bit halves by four (`shrn`, `native_cpu_block::short_mask`),
+/// its halves both the result's. `v`, and the steps (`and`, shift, cast) it is written over.
+fn narrowing_shift(f: &ir::Function, inst: ir::Inst) -> Option<(ir::Value, Vec<ir::Inst>)> {
+    let dfg = &f.dfg;
+    let def = |v: ir::Value| match dfg.value_def(dfg.resolve_aliases(v)) {
+        ir::ValueDef::Result(i, _) => Some(i),
+        _ => None,
+    };
+    let ir::InstructionData::Binary { opcode: Opcode::Uunarrow, args: [a, b] } = dfg.insts[inst] else { return None };
+    if dfg.resolve_aliases(a) != dfg.resolve_aliases(b) {
+        return None;
+    }
+    let band = def(a)?;
+    let ir::InstructionData::Binary { opcode: Opcode::Band, args: [x, y] } = dfg.insts[band] else { return None };
+    // The splat of 0xff and its constant.
+    let is_ff = |v: ir::Value| -> Option<(ir::Inst, ir::Inst)> {
+        let sp = def(v)?;
+        let ir::InstructionData::Unary { opcode: Opcode::Splat, arg } = dfg.insts[sp] else { return None };
+        let c = def(arg)?;
+        matches!(dfg.insts[c], ir::InstructionData::UnaryImm { opcode: Opcode::Iconst, imm } if imm.bits() & 0xffff == 0xff).then_some((sp, c))
+    };
+    let (shifted, (sp, c)) = match (is_ff(y), is_ff(x)) {
+        (Some(k), _) => (x, k),
+        (_, Some(k)) => (y, k),
+        _ => return None,
+    };
+    let shift = def(shifted)?;
+    let ir::InstructionData::BinaryImm64 { opcode: Opcode::UshrImm, arg, imm } = dfg.insts[shift] else { return None };
+    if imm.bits() != 4 {
+        return None;
+    }
+    let cast = def(arg)?;
+    let ir::InstructionData::LoadNoOffset { opcode: Opcode::Bitcast, arg: v, .. } = dfg.insts[cast] else { return None };
+    if dfg.value_type(v) != types::I8X16 {
+        return None;
+    }
+    Some((dfg.resolve_aliases(v), vec![band, shift, cast, sp, c]))
+}
+
+/// A vector compare `band(x, y) != 0` (either side the zero): `x` and `y`, for NEON's `vtst`.
+fn tested_bits(f: &ir::Function, inst: ir::Inst) -> Option<(ir::Value, ir::Value)> {
+    let dfg = &f.dfg;
+    let def = |v: ir::Value| match dfg.value_def(dfg.resolve_aliases(v)) {
+        ir::ValueDef::Result(i, _) => Some(i),
+        _ => None,
+    };
+    let zero = |v: ir::Value| -> bool {
+        let Some(i) = def(v) else { return false };
+        match dfg.insts[i] {
+            ir::InstructionData::Unary { opcode: Opcode::Splat, arg } => def(arg).is_some_and(|c| matches!(dfg.insts[c], ir::InstructionData::UnaryImm { opcode: Opcode::Iconst, imm } if imm.bits() == 0)),
+            ir::InstructionData::UnaryConst { opcode: Opcode::Vconst, constant_handle } => f.dfg.constants.get(constant_handle).as_slice().iter().all(|&b| b == 0),
+            _ => false,
+        }
+    };
+    let args = dfg.inst_args(inst);
+    let (and, other) = (args[0], args[1]);
+    let (and, other) = if zero(other) { (and, other) } else { (other, and) };
+    if !zero(other) {
+        return None;
+    }
+    match dfg.insts[def(and)?] {
+        ir::InstructionData::Binary { opcode: Opcode::Band, args: [x, y] } => Some((dfg.resolve_aliases(x), dfg.resolve_aliases(y))),
+        _ => None,
+    }
 }
 
 /// An instruction on vectors: NEON's intrinsic for it (`uint8x16_t` for `i8x16`).
@@ -836,7 +1002,11 @@ fn vector_instruction(f: &ir::Function, inst: ir::Inst, op: Opcode, args: &[Stri
             let sg = |x: &str| format!("vreinterpretq_s8_u8({x})");
             u(match data.cond_code().ok_or("a compare with no condition")? {
                 IntCC::Equal => format!("vceqq_u8({a}, {b})"),
-                IntCC::NotEqual => format!("vmvnq_u8(vceqq_u8({a}, {b}))"),
+                // Bits of an `and` against zero: NEON's bit test, one instruction.
+                IntCC::NotEqual => match tested_bits(f, inst) {
+                    Some((x, y)) => format!("vtstq_u8(v{}, v{})", x.as_u32(), y.as_u32()),
+                    None => format!("vmvnq_u8(vceqq_u8({a}, {b}))"),
+                },
                 IntCC::UnsignedGreaterThan => format!("vcgtq_u8({a}, {b})"),
                 IntCC::UnsignedGreaterThanOrEqual => format!("vcgeq_u8({a}, {b})"),
                 IntCC::UnsignedLessThan => format!("vcltq_u8({a}, {b})"),
@@ -858,7 +1028,12 @@ fn vector_instruction(f: &ir::Function, inst: ir::Inst, op: Opcode, args: &[Stri
         Opcode::Shuffle if is(rt, types::I8X16) => {
             let InstructionData::Shuffle { imm, .. } = data else { return Err("a shuffle with no mask".into()) };
             let mask = dfg.immediates.get(*imm).ok_or("a shuffle's mask")?.as_slice();
-            u(format!("vqtbl2q_u8(uint8x16x2_t({}, {}), {})", args[0], args[1], bytes16(mask)?))
+            // Sixteen bytes in a row of the pair, from byte `n`: an `ext`, one instruction
+            // and no table (as the lean lexer's `vextq_u8::<1>` makes a block's next bytes).
+            match mask.first().filter(|&&n| n < 16 && mask.iter().enumerate().all(|(k, &m)| usize::from(m) == usize::from(n) + k)) {
+                Some(&n) => u(format!("vextq_u8::<{n}>({}, {})", args[0], args[1])),
+                None => u(format!("vqtbl2q_u8(uint8x16x2_t({}, {}), {})", args[0], args[1], bytes16(mask)?)),
+            }
         }
         Opcode::Splat if is(rt, types::I8X16) => u(format!("vdupq_n_u8({} as u8)", args[0])),
         Opcode::Vconst if is(rt, types::I8X16) => {
@@ -869,6 +1044,23 @@ fn vector_instruction(f: &ir::Function, inst: ir::Inst, op: Opcode, args: &[Stri
         Opcode::Store if is(at, types::I8X16) => format!("unsafe {{ vst1q_u8({} as *mut u8, {}) }};", addr(&args[1]), args[0]),
         Opcode::Bitcast if is(rt, types::I64X2) && is(at, types::I8X16) => u(format!("vreinterpretq_u64_u8({})", args[0])),
         Opcode::Bitcast if is(rt, types::I8X16) && is(at, types::I64X2) => u(format!("vreinterpretq_u8_u64({})", args[0])),
+        Opcode::Bitcast if is(rt, types::I16X8) && is(at, types::I8X16) => u(format!("vreinterpretq_u16_u8({})", args[0])),
+        Opcode::Bitcast if is(rt, types::I8X16) && is(at, types::I16X8) => u(format!("vreinterpretq_u8_u16({})", args[0])),
+        Opcode::Band if is(rt, types::I16X8) => u(format!("vandq_u16({}, {})", args[0], args[1])),
+        Opcode::Splat if is(rt, types::I16X8) => u(format!("vdupq_n_u16({} as u16)", args[0])),
+        Opcode::UshrImm if is(rt, types::I16X8) => {
+            let InstructionData::BinaryImm64 { imm, .. } = data else { return Err("a shift by nothing".into()) };
+            match imm.bits() & 15 {
+                0 => set(args[0].clone()),
+                n => u(format!("vshrq_n_u16::<{n}>({})", args[0])),
+            }
+        }
+        // A narrowing shift (`narrowing_shift`): `shrn`, one instruction; else each half
+        // narrowed.
+        Opcode::Uunarrow if is(rt, types::I8X16) => match narrowing_shift(f, inst) {
+            Some((v, _)) => u(format!("{{ let d = vshrn_n_u16::<4>(vreinterpretq_u16_u8(v{})); vcombine_u8(d, d) }}", v.as_u32())),
+            None => u(format!("vcombine_u8(vqmovn_u16({}), vqmovn_u16({}))", args[0], args[1])),
+        },
         Opcode::Extractlane if is(at, types::I64X2) => {
             let InstructionData::BinaryImm8 { imm, .. } = data else { return Err("a lane of nothing".into()) };
             u(format!("vgetq_lane_u64::<{imm}>({})", args[0]))
@@ -931,5 +1123,71 @@ mod tests {
         assert!(src.contains("STRUCTURED: (usize, usize) = (1, 1)"), "{src}");
         assert!(!src.contains("match b {"), "no loop over the blocks: {src}");
         assert!(src.contains("loop {"), "{src}");
+    }
+
+    /// A call whose results are returned as they are is the return's (`returned_call`):
+    /// `return f(…)`, so rustc hands its caller's result on, a tail call, where a copy through
+    /// a temporary kept the caller's frame. (Moved from `rr_aot`'s generated source, where no
+    /// function returns a call since the short forms are the loop's arms.)
+    #[test]
+    fn a_returned_call_is_the_return() {
+        let callee = two_entries();
+        let mut sig = Signature::new(CallConv::Tail);
+        sig.params.push(AbiParam::new(I64));
+        sig.returns.push(AbiParam::new(I64));
+        let mut f = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, 1), sig.clone());
+        let mut ctx = FunctionBuilderContext::new();
+        let mut b = FunctionBuilder::new(&mut f, &mut ctx);
+        let entry = b.create_block();
+        b.append_block_params_for_function_params(entry);
+        b.switch_to_block(entry);
+        let n = b.block_params(entry)[0];
+        let name = b.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, 0));
+        let signature = b.import_signature(sig);
+        let r = b.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
+        let call = b.ins().call(r, &[n]);
+        let got = b.inst_results(call).to_vec();
+        b.ins().return_(&got);
+        b.seal_all_blocks();
+        b.finalize();
+        let src = super::translate(&[(0, callee), (1, f)], &[(1, "outer")], &[]).expect("translates");
+        assert!(src.contains("return unsafe { f0("), "no call returned as it is: {src}");
+        assert!(!src.contains("let t = unsafe { f0("), "a call's results copied into a return: {src}");
+    }
+
+    /// A vector's bits against a mask, compared with zero for any set (`(x & m) != 0`), is
+    /// one bit test (`vtstq_u8`), either operand order, and its `and` is not printed besides;
+    /// a compare with zero for none is not.
+    #[test]
+    fn bits_against_zero_are_one_test() {
+        use cranelift_codegen::ir::condcodes::IntCC;
+        use cranelift_codegen::ir::types::{I8, I8X16};
+        for (cc, zero_first) in [(IntCC::NotEqual, false), (IntCC::NotEqual, true), (IntCC::Equal, false)] {
+            let mut sig = Signature::new(CallConv::Tail);
+            sig.params.push(AbiParam::new(I64));
+            sig.returns.push(AbiParam::new(I64));
+            let mut f = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, 0), sig);
+            let mut ctx = FunctionBuilderContext::new();
+            let mut b = FunctionBuilder::new(&mut f, &mut ctx);
+            let entry = b.create_block();
+            b.append_block_params_for_function_params(entry);
+            b.switch_to_block(entry);
+            let p = b.block_params(entry)[0];
+            let x = b.ins().load(I8X16, cranelift_codegen::ir::MemFlags::trusted(), p, 0);
+            let m = b.ins().iconst(I8, 6);
+            let m = b.ins().splat(I8X16, m);
+            let z = b.ins().iconst(I8, 0);
+            let z = b.ins().splat(I8X16, z);
+            let and = b.ins().band(x, m);
+            let t = if zero_first { b.ins().icmp(cc, z, and) } else { b.ins().icmp(cc, and, z) };
+            b.ins().store(cranelift_codegen::ir::MemFlags::trusted(), t, p, 0);
+            b.ins().return_(&[p]);
+            b.seal_all_blocks();
+            b.finalize();
+            let src = super::translate(&[(0, f)], &[(0, "entry")], &[]).expect("translates");
+            assert_eq!(src.contains("vtstq_u8"), cc == IntCC::NotEqual, "{cc:?}, zero first {zero_first}: {src}");
+            // The test is the `and` too: it is not printed besides.
+            assert_eq!(src.contains("vandq_u8"), cc != IntCC::NotEqual, "{cc:?}, zero first {zero_first}: {src}");
+        }
     }
 }

@@ -465,7 +465,10 @@ def connect():
         except OSError:
             s.close()
         if attempt == 0:
-            subprocess.Popen(["nice", "-n", "5", sys.executable, os.path.join(farm.SHARE, "mirror.py")], start_new_session=True,
+            # The system's Python, whatever started this one: macOS's Local Network privacy keeps
+            # another (Homebrew's) from connecting to the hosts ("No route to host").
+            python = "/usr/bin/python3" if os.path.exists("/usr/bin/python3") else sys.executable
+            subprocess.Popen(["nice", "-n", "5", python, os.path.join(farm.SHARE, "mirror.py")], start_new_session=True,
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(0.05)
     return None

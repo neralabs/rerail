@@ -68,8 +68,7 @@ impl Tree {
         }
         let f = &*p.facts;
         let fields = [dialect.operator, dialect.operators];
-        for (local, &id) in p.core.iter().enumerate() {
-            let n = p.global(local as u32);
+        for (_, id, n) in p.node_ids() {
             let kids = f.children(id);
             let operators = kids.iter().filter(|&&c| f.field(c) != 0 && fields.contains(&Some(f.field(c))));
             for (i, &c) in operators.enumerate() {
@@ -84,11 +83,10 @@ impl Tree {
         let Some(dialect) = dialect else { return };
         self.operators(p, dialect, string);
         if self.token_parts {
-            for (local, &id) in p.core.iter().enumerate() {
-                let n = p.global(local as u32);
+            for (_, id, n) in p.node_ids() {
                 for (i, &c) in f.children(id).iter().enumerate() {
                     let (a, b) = (i64::from(f.start(c)), i64::from(f.end(c)));
-                    let at = p.local[c as usize];
+                    let at = p.local_of_node(c as u32);
                     if f.named(c) && at != NONE {
                         self.named_tokens.push([n, i as i64, p.global(at), a, b]);
                     } else {
@@ -100,8 +98,7 @@ impl Tree {
             }
         }
         if self.prev_token || self.token {
-            for (local, &id) in p.core.iter().enumerate() {
-                let n = p.global(local as u32);
+            for (_, id, n) in p.node_ids() {
                 let children = f.children(id);
                 // An anonymous token's text is its kind.
                 let text = |c: u32| if f.named(c) { f.text(c) } else { dialect.name(f, c) };
@@ -112,7 +109,7 @@ impl Tree {
                 }
                 if self.prev_token {
                     for pair in children.windows(2) {
-                        let after = p.local[pair[1] as usize];
+                        let after = p.local_of_node(pair[1] as u32);
                         if after != NONE {
                             self.prev_tokens.push([p.global(after), string(text(pair[0])) as i64]);
                         }
@@ -120,7 +117,7 @@ impl Tree {
                 }
             }
         }
-        if self.visit_index && python && let Some(&root) = p.core.first() {
+        if self.visit_index && python && let Some(&root) = p.nodes().next().map(|(_, x)| x).as_ref() {
             Order { f, dialect, p, next: 0, out: &mut self.visit_indexes }.run(root);
         }
     }
@@ -189,7 +186,7 @@ impl Order<'_> {
                 Step::Visit(id, decorators) => (id, Some(decorators)),
                 Step::Number(id) => (id, None),
             };
-            let local = self.p.local[id as usize];
+            let local = self.p.local_of_node(id as u32);
             if local != NONE {
                 self.out.push([self.p.global(local), self.next]);
                 self.next += 1;

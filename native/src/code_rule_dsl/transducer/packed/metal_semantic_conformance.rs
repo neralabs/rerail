@@ -4071,7 +4071,7 @@ fn mispredict(program: &Program) {
     evaluation_costs::install([(program.plain_digest().to_owned(), Rate { steps_per_unit: 1e-6, samples: 1 })].into_iter().collect());
 }
 
-/// Decision 0334: a badly predicted evaluation (a long string's regex, as Q19's clause, under a rate of almost
+/// Decision 0334: a badly predicted evaluation (a long string's regex, as Q49's clause, under a rate of almost
 /// nothing) stops over its step budget, is restarted with twice the budget until it finishes, and gives the worst
 /// case's results, on the CPU JIT and on Metal. Its runs are observed for the cost store: the over-budget run as a
 /// misprediction (predicted below what the finished run took), the finished one with its steps. (Each run reprices

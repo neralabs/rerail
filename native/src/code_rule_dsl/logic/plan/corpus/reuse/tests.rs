@@ -64,6 +64,44 @@
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A phase program the record found among the engine's own is checked where it was looked for first, as a file that must
+    /// still be missing: one written into the run's `phase_dir` is read instead, so the record's rule files differ
+    /// (decision 0275: the check compares the record's include graphs, not the rule files listed again).
+    #[test]
+    fn a_phase_program_appearing_where_it_was_looked_for_first_differs() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("reuse-phase");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let options = serde_json::json!({ "phase_dir": dir.to_string_lossy() });
+        let text = "#include \"core.rr\"\n.decl values__x(s: symbol)\n";
+        let rules = || super::rule_files(&super::super::Texts::of(&[text]).unwrap(), &options).unwrap();
+        let shadow = dir.join("values.rr");
+        let entry = |rules: &[(String, String, String)]| rules.iter().find(|r| r.1 == shadow.to_string_lossy()).cloned();
+        let before = rules();
+        assert_eq!(entry(&before).map(|r| r.2), Some(String::new()), "looked for there first, and missing: {before:?}");
+        assert!(before.iter().any(|r| r.1.ends_with("typing/programs/values.rr") && !r.2.is_empty()), "the engine's own, read: {before:?}");
+        std::fs::write(&shadow, "#include \"core.rr\"\n.decl y(s: symbol)\n").unwrap();
+        // The check compares each `rule` line's digest with the file's now: an empty one with a file there differs.
+        let now = rules();
+        assert!(entry(&now).is_some_and(|r| !r.2.is_empty()), "the file there is read now: {now:?}");
+        assert!(!now.iter().any(|r| r.1.ends_with("typing/programs/values.rr")), "and the engine's own is not: {now:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Read off phase 0's graph (no `phase_dir`), a phase program a text names and the engine does not have is listed
+    /// where it was looked for, with no digest, as `listed` lists it (decision 0275): one written there differs.
+    #[test]
+    fn a_phase_program_the_graph_did_not_find_is_listed_as_missing() {
+        let text = "#include \"core.rr\"\n.decl nosuchphase__x(s: symbol)\n";
+        let texts = [text];
+        let given = super::super::Texts::of(&texts).unwrap();
+        assert!(given.graphs.iter().all(Option::is_some), "the text has its graph");
+        let rules = super::rule_files(&given, &serde_json::json!({})).unwrap();
+        let missing: Vec<_> = rules.iter().filter(|r| r.1.ends_with("typing/programs/nosuchphase.rr")).collect();
+        assert_eq!(missing.len(), 1, "{rules:?}");
+        assert!(missing[0].2.is_empty(), "no digest: {rules:?}");
+    }
+
     #[test]
     fn unchanged_cross_file_outputs_skip_derivation_and_changed_members_invalidate() {
         let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cross-reuse");

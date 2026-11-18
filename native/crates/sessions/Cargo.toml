@@ -8,13 +8,16 @@ publish = false
 description = "The SQL executor's sessions."
 
 [features]
-default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
-all-languages = ["lang-blade", "lang-csharp", "lang-css", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue", "rerail-facts/all-languages", "rerail-lang/all-languages", "rerail-logic/all-languages", "rerail-rr/all-languages"]
+default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-facts/default", "rerail-lang/default", "rerail-logic/default", "rerail-rr/default"]
+all-languages = ["lang-blade", "lang-c", "lang-cpp", "lang-csharp", "lang-css", "lang-go", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue", "rerail-facts/all-languages", "rerail-lang/all-languages", "rerail-logic/all-languages", "rerail-rr/all-languages"]
 lang-blade = ["rerail-facts/lang-blade", "rerail-lang/lang-blade", "rerail-logic/lang-blade", "rerail-rr/lang-blade"]
 lang-csharp = ["ast-grep-language/tree-sitter-c-sharp", "rerail-facts/lang-csharp", "rerail-lang/lang-csharp", "rerail-logic/lang-csharp", "rerail-rr/lang-csharp"]
 lang-css = ["ast-grep-language/tree-sitter-css", "rerail-facts/lang-css", "rerail-lang/lang-css", "rerail-logic/lang-css", "rerail-rr/lang-css"]
 lang-html = ["ast-grep-language/tree-sitter-html", "rerail-facts/lang-html", "rerail-lang/lang-html", "rerail-logic/lang-html", "rerail-rr/lang-html"]
 lang-java = ["ast-grep-language/tree-sitter-java", "rerail-facts/lang-java", "rerail-lang/lang-java", "rerail-logic/lang-java", "rerail-rr/lang-java"]
+lang-go = ["ast-grep-language/tree-sitter-go", "rerail-facts/lang-go", "rerail-lang/lang-go", "rerail-logic/lang-go", "rerail-rr/lang-go"]
+lang-c = ["ast-grep-language/tree-sitter-c", "rerail-facts/lang-c", "rerail-lang/lang-c", "rerail-logic/lang-c", "rerail-rr/lang-c"]
+lang-cpp = ["ast-grep-language/tree-sitter-cpp", "rerail-facts/lang-cpp", "rerail-lang/lang-cpp", "rerail-logic/lang-cpp", "rerail-rr/lang-cpp"]
 lang-javascript = ["rerail-facts/lang-javascript", "rerail-lang/lang-javascript", "rerail-logic/lang-javascript", "rerail-rr/lang-javascript"]
 lang-json = ["ast-grep-language/tree-sitter-json", "rerail-facts/lang-json", "rerail-lang/lang-json", "rerail-logic/lang-json", "rerail-rr/lang-json"]
 lang-markdown = ["rerail-facts/lang-markdown", "rerail-lang/lang-markdown", "rerail-logic/lang-markdown", "rerail-rr/lang-markdown"]
@@ -33,7 +36,7 @@ system-allocator = ["rerail-facts/system-allocator", "rerail-lang/system-allocat
 code-rule-profile = ["rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-logic/code-rule-profile", "rerail-rr/code-rule-profile"]
 p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-logic/p-anchor-corpus", "rerail-rr/p-anchor-corpus"]
 metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests", "rerail-logic/metal-tests", "rerail-rr/metal-tests"]
-test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "dep:tempfile"]
+test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks"]
 
 [dependencies]
 base64 = "=0.22.1"

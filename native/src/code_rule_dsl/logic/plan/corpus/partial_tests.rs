@@ -76,6 +76,38 @@ fn an_edited_rule_body_reads_partial_hits_as_a_full_run_would() {
     let _ = std::fs::remove_dir_all(&fresh);
 }
 
+/// Q20: an edit of one file reads the others for their outputs alone (decision 0117 step 1), their export and
+/// base rows the kept inputs'. Each such hit decodes none of those rows: since memo entries are images (decision
+/// 0240 §4) a hit was decoded whole, and its rows were then taken for the changed files' and hashed again.
+#[test]
+fn a_hit_read_for_its_outputs_alone_decodes_no_export_or_base_rows() {
+    let marker = format!("{:?}", std::time::SystemTime::now());
+    let dir = corpus("outputs-alone", &marker, FILES);
+    let program = program("try_statement");
+    // Past the stat index's racy window (git's rule), so every run finds the unchanged files by their stat.
+    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 200_000_000));
+    let _ = run(&dir, &program, OUTPUTS);
+    let mut kept = 0;
+    let mut edits = Vec::new();
+    for (k, tail) in ["\nhelper(4)\n", "\nhelper(5)\n", "\nhelper(6)\n"].into_iter().enumerate() {
+        std::fs::write(dir.join("c.py"), format!("# {marker}\n{}{tail}", FILES[2].1)).unwrap();
+        let (edited, rows) = run(&dir, &program, OUTPUTS);
+        assert_eq!(edited.memo_kept.1, 0, "edit {k}: {} hits read for their outputs alone decoded export or base rows", edited.memo_kept.0);
+        kept += edited.memo_kept.0;
+        edits.push((tail, rows));
+    }
+    // Each edit's rows are a full run's, each over a corpus of its own.
+    for (k, (tail, rows)) in edits.into_iter().enumerate() {
+        let c = format!("{}{tail}", FILES[2].1);
+        let fresh = corpus(&format!("outputs-alone-fresh-{k}"), &format!("{marker} fresh {k}"), &[FILES[0], FILES[1], ("c.py", &c)]);
+        let (_, expected) = run(&fresh, &program, OUTPUTS);
+        let _ = std::fs::remove_dir_all(&fresh);
+        assert_eq!(rows, expected, "edit {k}: the rows of a full run");
+    }
+    assert_eq!(kept, 3 * 2, "each edit reads both unchanged files for their outputs alone");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 const COMMENTED: &[(&str, &str)] = &[
     ("a.py", "def helper(x):\n    assert x\n    return x\n\ndef other(y):\n    while y:\n        assert y\n    return y\n"),
     ("b.py", "from a import helper\n\n# helper\ndef main():\n    assert True  # other\n    return helper(1)\n\nhelper\n"),
@@ -174,11 +206,38 @@ fn an_unchanged_directory_listing_is_no_change_of_the_cross_part() {
     listing_is_no_change(r#"s = cat("su", "b"), dir_entry(s, n, 0)"#);
 }
 
-/// A constant directory lowers to a request fact (`rr_dir_req("sub")`). The first run answers it (`world::asks`);
-/// the next fails: "rr_dir_req: kept as clean, but its rows are not kept" (work queue: a constant world request in
-/// the kept cross part).
+/// A constant directory lowers to a request fact (`rr_dir_req("sub")`), which no stratum derives: the stratum of
+/// its answers is not replayed from kept rows (none are kept of a fact) but runs, and the cross part's inputs are as
+/// they were.
 #[test]
-#[ignore = "a constant world request is not kept by the cross part (work queue)"]
 fn an_unchanged_constant_directory_listing_is_no_change_of_the_cross_part() {
     listing_is_no_change(r#"dir_entry("sub", n, 0)"#);
+}
+
+/// An edit of a file-local rule (`flagged`'s body) changes no input of the cross-file part, which reads a directory's
+/// entries (an input neither exported by the files nor a base relation of theirs): each input's kept frame is found
+/// again, under the cross part's own program, not the whole program's texts.
+#[test]
+fn a_file_local_edit_finds_the_cross_parts_inputs_kept() {
+    let marker = format!("{:?}", std::time::SystemTime::now());
+    let root = corpus("listing-edit", &marker, &[]);
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    for (path, source) in LISTED {
+        std::fs::write(root.join(path), format!("# {marker}\n{source}")).unwrap();
+    }
+    let program = |kind: &str| {
+        format!(
+            "{}\n.decl flagged(n: node)\nflagged(n) :- kind(n, \"function_definition\"), !kind(n, \"{kind}\").\n.output flagged\n",
+            listing_program(r#"s = cat("su", "b"), dir_entry(s, n, 0)"#)
+        )
+    };
+    let (_, first) = run(&root, &program("try_statement"), &["listed"]);
+    assert_eq!(first[0].len(), 4, "two entries of sub, two functions: {first:?}");
+    for (k, kind) in ["while_statement", "for_statement"].into_iter().enumerate() {
+        let (edited, rows) = run(&root, &program(kind), &["listed"]);
+        assert_eq!(rows, first, "edit {k}: the cross-file rows are as before");
+        assert!(edited.cross_kept.is_some(), "edit {k}: the cross-file part is kept");
+        assert!(edited.cross_changed.is_empty(), "edit {k}: no input of the cross part changed: {:?}", edited.cross_changed);
+    }
+    let _ = std::fs::remove_dir_all(&root);
 }

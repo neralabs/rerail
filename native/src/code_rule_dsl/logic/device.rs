@@ -9,6 +9,7 @@ use std::sync::{Arc, OnceLock};
 
 use super::native::setfix::{Fresh, InRel, Interner, JoinRule, Store};
 
+pub mod caps;
 pub mod lattice;
 pub mod nearest;
 pub use crate::code_rule_dsl::logic::profile::{Report};
@@ -29,7 +30,9 @@ pub trait SolverDevice: Send + Sync {
     /// Whether the device's join stages can run here (a device is present and has their pipelines).
     fn join_available(&self) -> bool;
     /// A seed join's plan on the device, or why it takes none (`spec`: the join's text, which keys its history).
-    fn compile_join(&self, join: &JoinRule, spec: &str) -> Result<JoinPlan, String>;
+    /// `own_texts`: the component's own (relation, column) pairs whose values are texts its rounds make into one arena
+    /// (decision 0307: a `shortlex_min` relation's value).
+    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<JoinPlan, String>;
     /// Notes that the device refused the stratum being opened or run: it runs on the CPU, and the profile names why.
     fn refuse(&self, why: String);
     /// The seed joins `rules` (plan, rule, head relation) in one batch, their rows into `fresh`: per rule, the rows

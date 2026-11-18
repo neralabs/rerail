@@ -220,7 +220,28 @@ thread_local! {
     static LEARNED_COPY: std::cell::RefCell<(u64, Vec<(String, Lane, f64)>)> = const { std::cell::RefCell::new((0, Vec::new())) };
 }
 
+/// What a price waits for first: the stored statistics, which the engine reads once a run has work to price
+/// ([`before_first_price`]). `true` once they are in place (or there are none): later prices skip it.
+static FIRST_PRICE: std::sync::OnceLock<fn() -> bool> = std::sync::OnceLock::new();
+static PRICED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Sets what the first price waits for (the engine's `costs::ready`): a process that prices nothing reads nothing.
+pub fn before_first_price(ready: fn() -> bool) {
+    let _ = FIRST_PRICE.set(ready);
+}
+
+/// Waits, before the first price, for what [`before_first_price`] names.
+pub fn first_price() {
+    if PRICED.load(std::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    if FIRST_PRICE.get().is_none_or(|ready| ready()) {
+        PRICED.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+
 fn learned(name: &str, lane: Lane) -> Option<f64> {
+    first_price();
     let version = LEARNED_VERSION.load(std::sync::atomic::Ordering::Acquire);
     if version == 0 {
         return None;

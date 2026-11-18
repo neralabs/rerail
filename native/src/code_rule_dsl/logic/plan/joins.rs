@@ -318,8 +318,18 @@ pub(super) fn raise(key: Option<PlanKey>, rel: &str, c: usize) -> bool {
 }
 
 /// Whether column `c` of `rel` keeps its heavy values.
+#[cfg(test)]
 pub(super) fn raised(rel: &str, c: usize) -> bool {
     RAISED.load(Relaxed) && MEMO.read().raised.contains(&(rel.to_owned(), c))
+}
+
+/// The columns that keep their heavy values, read once (`Run::heavy_for` checks every shared column of every rule
+/// of a stratum, in every chunk: a read of the memo's lock and a key allocated for each was 0.4 s of a cold run).
+pub(super) fn raised_all() -> Vec<(String, usize)> {
+    if !RAISED.load(Relaxed) {
+        return Vec::new();
+    }
+    MEMO.read().raised.iter().cloned().collect()
 }
 
 pub(super) fn any_raised() -> bool {
@@ -499,6 +509,11 @@ pub(super) fn propose(key: PlanKey, mut orders: Vec<(Vec<StoredStep>, f64)>, wal
 pub(in crate::code_rule_dsl) struct SearchCx {
     pub wide: bool,
     pub runners_up: Vec<(Vec<Step>, f64)>,
+    /// An order to try first (decision 0258): taken where it runs, is led by the delta and prices under a search's
+    /// cost, before greedy-first and the search.
+    pub start: Option<Vec<Step>>,
+    /// Whether `start` was taken.
+    pub started: bool,
 }
 
 /// The greedy bound of a search, `wide` or not.

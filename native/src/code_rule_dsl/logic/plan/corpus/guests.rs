@@ -183,9 +183,9 @@ fn string_text(label: &str, kind: &str, text: &str, start: u32, node: [u32; 2]) 
 
 /// The text of host node `local` to parse, and where it stands: a string's normalized text (decision 0058 §3; a
 /// concatenation's parts joined), any other node's text, copied.
-fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option<(String, Placement)> {
+fn host_text(host: &Document, ids: &syntax::Numbering, local: u32) -> Option<(String, Placement)> {
     let f = &*host.facts;
-    let &(id, kind) = ids.get(local as usize)?;
+    let (id, kind) = ids.node(local)?;
     let (start, end) = (f.start(id), f.end(id));
     let node = [start, end];
     let tag = core::facts_tag(f);
@@ -202,7 +202,7 @@ fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option
         let mut pieces = Vec::new();
         let mut tail = i64::from(end);
         for c in f.children(id) {
-            let Some(&(_, k)) = ids.iter().find(|&&(i, _)| i == c) else { continue };
+            let Some(k) = ids.kind_of(c) else { continue };
             if !is_string(k) {
                 continue;
             }
@@ -361,10 +361,9 @@ impl Guests {
         let ids = self.numbering(host)?;
         // A node id's low bits are its local id only under preorder ids (`syntax::Numbering`).
         let Some(local) = ids.local((at & 0xffff_ffff) as u32) else { return Ok(None) };
-        let ids = &ids.nodes;
         let placed = match text {
             Some(text) => {
-                let Some(&(id, _)) = ids.get(local as usize) else { return Ok(None) };
+                let Some((id, _)) = ids.node(local) else { return Ok(None) };
                 Some((text, Placement::At([host.facts.start(id), host.facts.end(id)])))
             }
             None => host_text(host, ids, local),
@@ -529,7 +528,7 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&Conte
     let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(key.2.clone()) };
     // A guest is made in a wave, so no SQL is read or written for it (decision 0104): its tape is one this process
     // queued, else it is parsed and its source and tape are the store's writer's, behind the run.
-    let built = match cache.map(|cache| core::build_in_wave(&file, cache, None, None, None)) {
+    let built = match cache.map(|cache| core::build_in_wave(&file, cache, None, None, false)) {
         Some(Ok(built)) => Ok(built),
         Some(Err(_)) => {
             crate::code_rule_dsl::prof::count("guests.cache_failed", 1);
@@ -560,7 +559,7 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&Conte
 /// memoised: a host embeds one program, and a file's tape is the store's.
 fn taped(path: &str, label: &str, text: String, cache: Option<&ContentStore>) -> Result<Option<(Parsed, Tape)>, String> {
     let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(text) };
-    let built = match cache.map(|cache| core::build_in_wave_with_tape(&file, cache, None, None, None, true)) {
+    let built = match cache.map(|cache| core::build_in_wave_with_tape(&file, cache, None, None, false, true)) {
         Some(Ok(built)) => Ok(built),
         Some(Err(_)) => {
             crate::code_rule_dsl::prof::count("guests.cache_failed", 1);

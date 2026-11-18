@@ -49,7 +49,7 @@ impl Val<'_> {
     fn known(&self, slots: &Slots) -> bool {
         match self {
             Val::T(TermRef::Var(v)) => slots.has(Key::Var(*v)),
-            Val::T(TermRef::Int(_) | TermRef::Str(_)) | Val::Made(_) | Val::Str(_) => true,
+            Val::T(TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_)) | Val::Made(_) | Val::Str(_) => true,
             Val::T(_) => false,
         }
     }
@@ -59,6 +59,7 @@ impl Val<'_> {
 fn const_tok(b: &Body<'_>, t: TermRef<'_>) -> Option<Tok> {
     match t {
         TermRef::Int(i) => Some(Tok::Int(i)),
+        TermRef::Branded(a) => Some(Tok::Int(a.value())),
         TermRef::Str(s) => Some(Tok::Sym(b.v.text(s).to_owned())),
         _ => None,
     }
@@ -84,7 +85,7 @@ fn var_tok(s: Slot, slots: &mut Slots) -> Tok {
 }
 
 fn is_const(t: TermRef<'_>) -> bool {
-    matches!(t, TermRef::Int(_) | TermRef::Str(_))
+    matches!(t, TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_))
 }
 
 /// The native function of call `f` with `n` arguments (`@concat` is `str_concat`).
@@ -124,7 +125,7 @@ fn expr<'v>(b: &Body<'v>, v: &Val<'v>, idx: usize, slots: &mut Slots, lines: &mu
     };
     match t {
         TermRef::Var(s) => slots.has(Key::Var(s)).then(|| v.clone()),
-        TermRef::Int(_) | TermRef::Str(_) => Some(v.clone()),
+        TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => Some(v.clone()),
         TermRef::Call(f, args) => {
             let f = b.v.text(f);
             let args: Vec<TermRef<'v>> = args.collect();
@@ -298,7 +299,8 @@ impl<'a> Run<'a, '_> {
         // number. A variable equal to another (`$m = $a`, a capture's alias) has the other's type.
         let typ = |t: TermRef<'_>| -> Option<String> {
             match t {
-                TermRef::Int(_) => Some("int".to_owned()),
+                // An atom is an integer to the run, as a symbol column of atoms holds it.
+                TermRef::Int(_) | TermRef::Branded(_) => Some("int".to_owned()),
                 TermRef::Str(_) => Some("sym".to_owned()),
                 TermRef::Var(n) => {
                     let mut same: Vec<Slot> = vec![n];
@@ -331,7 +333,7 @@ impl<'a> Run<'a, '_> {
                                 .and_then(|c| pf.column_type(b.rel(a), c).map(str::to_owned)),
                             Lit::Cmp { l: TermRef::Var(v), op: CmpOp::Eq, r: r @ TermRef::Call(..) } if v == n && numeric_call(b, r) => Some("int".to_owned()),
                             // A variable equal to a constant (`0 = $r`, an inlined `fneed(f, 0)`) has the constant's type.
-                            Lit::Cmp { l: TermRef::Var(v), op: CmpOp::Eq, r: TermRef::Int(_) } | Lit::Cmp { l: TermRef::Int(_), op: CmpOp::Eq, r: TermRef::Var(v) }
+                            Lit::Cmp { l: TermRef::Var(v), op: CmpOp::Eq, r: TermRef::Int(_) | TermRef::Branded(_) } | Lit::Cmp { l: TermRef::Int(_) | TermRef::Branded(_), op: CmpOp::Eq, r: TermRef::Var(v) }
                                 if v == n =>
                             {
                                 Some("int".to_owned())
@@ -379,6 +381,7 @@ impl<'a> Run<'a, '_> {
             for (c, &t) in args.iter().enumerate() {
                 let value = match t {
                     TermRef::Int(i) => super::integer(i),
+                    TermRef::Branded(a) => super::integer(a.value()),
                     TermRef::Str(s) => super::string(b.v.text(s)),
                     _ => continue,
                 };
@@ -410,7 +413,11 @@ impl<'a> Run<'a, '_> {
         let kinds = |kset| pf.kindset(b.v.text(kset)).unwrap_or_else(|| panic!("no kind set {}", b.v.text(kset))).iter().map(|&k| pf.text(k)).collect::<Vec<_>>().join(",");
         let call_of = |t: TermRef<'_>, f: &str| matches!(t, TermRef::Call(g, _) if b.v.text(g) == f);
         let mut lines = Vec::new();
+        // Per item, the plan step it was made for (`JoinSpec::from`).
+        let mut from: Vec<u32> = Vec::new();
         for (idx, s) in steps.iter().enumerate() {
+            // The items the step before made are its (a literal can make several: `$k = @sub(@strlen($d), 1)`).
+            from.resize(lines.len(), idx.saturating_sub(1) as u32);
             match b.view(s.at) {
                 Lit::Atom(l) => {
                     if s.mode == Some(Mode::Range) {
@@ -422,7 +429,7 @@ impl<'a> Run<'a, '_> {
                 Lit::Cmp { l: TermRef::Call(fl, xl), op: op @ (CmpOp::Eq | CmpOp::Ne), r: TermRef::Call(fr, xr) }
                     if b.v.text(fl) == "doc" && b.v.text(fr) == "doc" && xl.clone().count() == 1 && xr.clone().count() == 1 =>
                 {
-                    // `@doc($a) = @doc($b)` (cross_rounds' hops): both nodes bound.
+                    // `@doc($a) = @doc($b)` (the split's same-document join): both nodes bound.
                     let (x, y) = (xl.clone().next().expect("one"), xr.clone().next().expect("one"));
                     if !slots.bound(x) || !slots.bound(y) {
                         return None;
@@ -444,7 +451,7 @@ impl<'a> Run<'a, '_> {
                         && (f == "in" || f == "equals" || strings::is_test(f))
                         && let [x, set @ TermRef::Call(_, members)] = args.collect::<Vec<_>>()[..]
                         && call_of(set, strings::SET)
-                        && members.clone().all(|m| matches!(m, TermRef::Int(_)))
+                        && members.clone().all(|m| matches!(m, TermRef::Int(_) | TermRef::Branded(_)))
                         && slots.bound(x) =>
                 {
                     let members: Vec<Tok> = members.map(|m| t_tok(b, m, &mut slots)).collect::<Option<_>>()?;
@@ -626,6 +633,8 @@ impl<'a> Run<'a, '_> {
                 _ => return None,
             }
         }
+        // Each item's plan step, the last one's after the loop; then the head's computed terms' (`JoinSpec::from`).
+        from.resize(lines.len(), steps.len().saturating_sub(1) as u32);
         let mut head = Vec::new();
         let head_args: Vec<TermRef<'_>> = if bare { Vec::new() } else { b.head().args().collect() };
         for (k, t) in head_args.into_iter().enumerate() {
@@ -656,7 +665,8 @@ impl<'a> Run<'a, '_> {
                 _ => head.push(HeadTok::Tok(t_tok(b, t, &mut slots)?)),
             }
         }
+        from.resize(lines.len(), steps.len() as u32);
         lines.push(JoinItem::Head(head));
-        Some(JoinSpec { items: lines })
+        Some(JoinSpec { items: lines, from, plan_steps: steps.len() as u32 })
     }
 }

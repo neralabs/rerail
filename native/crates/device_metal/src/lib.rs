@@ -259,8 +259,6 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::logic::rr::WORLD;
                 #[allow(unused_imports)]
-                use crate::code_rule_dsl::typing::cross_rounds;
-                #[allow(unused_imports)]
                 pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::plan::corpus::hiding::qualified;
                 #[allow(unused_imports)]
                 pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::plan::corpus::inputs::parameters as input_parameters;
@@ -655,3 +653,17 @@ pub use rerail_w::git_ignore;
 pub use rerail_w::panic_boundary;
 pub use rerail_logic::threads;
 // cratify: mounts end
+
+/// The language packs this crate's tests read through the load-time registry (`language::base`), registered once:
+/// the engine registers them as it loads (`install_languages`), and a test of this crate runs without it (work
+/// queue Q23). The first registration holds, so a test may call it at any point.
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) fn test_languages() {
+    use crate::code_rule_dsl::language::{self, Family, adapter::pack::{Pack, register}};
+    use rerail_lang_python::code_rule_dsl::language::adapter::python::Python;
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        register(Family::Python, &Pack::<Python>::NEW);
+        language::register_base(Family::Python, &Pack::<Python>::NEW);
+    });
+}

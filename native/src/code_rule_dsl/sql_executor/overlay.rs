@@ -48,6 +48,9 @@ impl Source for Overlay {
             .estimated_matches(c, batch)
             .saturating_add(self.deleted.estimated_matches(c, batch))
     }
+    fn lookup_cost(&self, c: usize) -> f64 {
+        self.current.lookup_cost(c)
+    }
     fn indexed(&self, c: usize) -> bool {
         self.current.indexed(c)
     }

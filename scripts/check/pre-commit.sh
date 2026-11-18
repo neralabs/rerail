@@ -23,3 +23,8 @@ fi
 # `codeRuleDefineSchema` and `codeRuleQuerySchema.ast`, and `codeRuleParseSchema`'s `filePath`, not in zod).
 # Run them by hand: `npm run check`, `npm run check:reference`.
 npm run --silent check:ui-tokens
+# The engine's `test-hooks` feature carries what its dev-dependencies turn on, so the CLI and the tests build
+# their dependencies once (native/Cargo.toml).
+python3 scripts/check/check-dev-features.py
+# Blocks are never copied into another data structure (decision 0353): a commit that adds a copy is refused.
+python3 scripts/check/check-no-block-copies.py

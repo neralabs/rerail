@@ -617,3 +617,35 @@ The file is now its original lines plus one probe line, whose value an edit chan
 | An edit | 12–26 s wall | 15–27 s wall (load 27–30) | 7.6–9.0 s wall, 13–14.6 s CPU, 171–197 G |
 | Cold | 3,090 G | 3,084 G | 2,107 G |
 | Unchanged | | | 1.1–1.8 s wall, 11.4 G |
+
+### An outputs-only hit read its whole entry again (found 2026-11-16)
+
+On the release Python pack (300 files, M3 Max), each full-shape edit took 10–11.5 s CPU and 9–10 s wall. Before
+the hub merge 069ab7dac it took 6–7.6 s and 4.4–5.6 s.
+
+**Cause.** Decision 0240 §4 (2e55129f1) made a memo entry one image. The entry's outputs moved inside it, and the
+second frame of outputs (`local_out`) that step 1 read went away. `found_outputs_all` became `found_all`, and its
+comment says the caller projects the entry. The kept route's caller still called `Found::entry`, which decodes every
+relation. So each unchanged file's hit carried its export and base rows again. The replay then handed them on as
+this run's rows. Step 2 (`patch_owners`) took every document they name as evaluated: 27,373 documents (the 300
+files and their 27,073 annotation documents) where one file and its 145 changed. It read, digest-checked, sorted
+and compared every owner's kept rows: 820,187 owners, 819,817 of them unchanged, and 20.5 M rows. That is 4.1 s of
+its own CPU and 9.4 GB allocated, in `stats`.
+
+**Fix.** The kept route projects a hit to its `own:` rows (tree counts, documents, the identities covered). That
+is the set step 1's outputs frame held. Its outputs are decoded with any projection.
+
+**Why it looked random.** After a cold run under load (other jobs on the host), the next edit took the kept route.
+After a cold run on a quiet machine it did not: it made no kept-inputs decision at all, decoded its hits whole, and
+spent about 1 s more in the cross part. Profiling switches looked like the cause only because they changed timing.
+Which condition closes the route after a quiet cold run is still open (O-kept-route-after-quiet-cold).
+
+**Measured** (one cold run under load kept as a store; the same edit from it, 4 threads):
+
+| | Before | After |
+|---|---|---|
+| Edit | 10.9 s CPU, 10.2 s wall, `stats` 4.9 s | 6.44 s CPU, 5.09 s wall, `stats` 0.71 s |
+| Patch reads | 27,373 documents, 820,187 owners, 20.5 M rows | 146 documents, 4,894 owners, 103 K rows |
+
+The edit's outputs equal a from-scratch run of the edited corpus (660 relations, 30,453 rows, none differing).
+`RERAIL_STATS_KEEP_TRACE` now prints what the patch read, by input.

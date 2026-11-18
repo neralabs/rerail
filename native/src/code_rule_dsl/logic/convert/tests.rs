@@ -2019,8 +2019,9 @@ fn measure_converted_rules() {
         // The relations the cross-file part derives, and the base relations it reads.
         let mut parsed = crate::code_rule_dsl::logic::rr::parse(&program).unwrap();
         crate::code_rule_dsl::logic::strings::as_relations(&mut parsed).unwrap();
-        let split = crate::code_rule_dsl::typing::file_local::programs(&parsed);
-        let cross: BTreeSet<&str> = split.cross.rules.iter().map(|r| r.head.rel.as_str()).collect();
+        let split = crate::code_rule_dsl::typing::file_local::programs(&parsed).unwrap();
+        let cv = &split.versions.cross;
+        let cross: BTreeSet<&str> = cv.rules().map(|r| cv.rel_name(r.head().rel())).collect();
         let local = crate::code_rule_dsl::typing::file_local::split(&parsed);
         let not_local: BTreeSet<&str> = parsed.rules.iter().map(|r| r.head.rel.as_str()).filter(|r| !local.contains(*r)).collect();
         println!("CROSS {id}: derives {cross:?}, not file-local {not_local:?}, reads base {:?}", split.base);

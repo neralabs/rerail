@@ -87,7 +87,7 @@ impl Py {
     /// Document `p`'s imports' screen, made on its first read.
     pub(crate) fn imports(&self, batch: &Batch, p: &Projected) -> &crate::code_rule_dsl::facts::producers::python::import_screen::Imports {
         self.imports[Self::at(batch, p)].get_or_init(|| {
-            crate::code_rule_dsl::facts::producers::python::import_screen::Imports::from_core(&p.facts, &batch.dialects[&p.tag].catalog, p.module.as_ref())
+            crate::code_rule_dsl::facts::producers::python::import_screen::Imports::from_core(&p.facts, &batch.dialects[p.tag].catalog, p.module.as_ref())
         })
     }
 }
@@ -121,7 +121,7 @@ impl Py {
                     if core == NONE {
                         return Some(-1);
                     }
-                    let local = p.local[core as usize];
+                    let local = p.local_of_node(core as u32);
                     (local != NONE).then(|| p.global(local))
                 };
                 let mut push = |family: usize, row: Option<Vec<i64>>| match row {
@@ -158,7 +158,7 @@ impl Py {
             let mut out=Relation::new(PY_COLUMNS[3]);
             for p in batch.docs.iter().filter(|p|p.tag==py.grammar.tag()) {
                 let rows=py::rows(&py.grammar,&p.facts);
-                let id=|n:u32| if n==NONE {Some(-1)}else{p.local.get(n as usize).copied().filter(|&l|l!=NONE).map(|l|p.global(l))};
+                let id=|n:u32| if n==NONE {Some(-1)}else{Some(p.local_of_node(n)).filter(|&l|l!=NONE).map(|l|p.global(l))};
                 for [c,a,i,k,s,v] in rows.arg {
                     if let (Some(c),Some(a),Some(k),Some(v))=(id(c),id(a),id(k),id(v)) {out.push(&[p.key as i64,c,a,i as i64,k,py.spreads[s as usize],v]);}
                 }

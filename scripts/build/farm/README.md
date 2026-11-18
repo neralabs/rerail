@@ -136,27 +136,52 @@ the farm's protocol or to what a host keeps raises `VERSION`.
 Rerail's worktrees together write terabytes of builds a day: each edit of a workspace crate leaves
 the previous build, its debug objects and its incremental state behind, and cargo never removes
 them. So the wrapper starts `scripts/dev/clean-target --wait` (installed beside it) on a build's
-target directory, at most once an hour per directory, detached and at nice 19. It waits for that
+target directory, at most once every 15 minutes per directory, detached and at nice 19. It waits for that
 build to end (cargo's lock on the profile directory), then removes what no build can use any more:
 another rustc's artifacts, builds that none of the current builds was made from (a mark and sweep
 over cargo's own dependency records, an hour's grace), debug objects no binary names, incremental
-state of crates no longer built or untouched for a day. Each target
+state of crates no longer built or untouched for 2 hours, and Relax run dirs no run has used for
+6 hours (a worktree's own `target/relax`, another share's, never the most recently used shared one
+nor one a Relax process runs in: scripts/dev/relax/README.md). Each target
 directory's runs are logged in `~/Library/Caches/rerail-farm/tidy/<key>.log`.
 `RERAIL_FARM_NO_TIDY=1` keeps a build from starting one.
+
+A host's target directories (`test-remote` and `live-test-remote` build there) are
+cleaned the same way: when a command ends, the host's agent runs the cleaner on its target directory
+(its text goes with the job), detached at nice 19, at most once every 15 minutes per directory, and
+logs it in that directory's `.cleaned.log`. A profile directory another command builds in is skipped
+and cleaned when that command ends. Its only Relax home is the farm's own, under the root. Before
+farm 17 nothing did this: one host's target directories reached 207 GB, 195 GB of it leftovers, and
+the host fell under `min_free_gb` (2026-11-16).
+
+The root is pruned too, after a command ends, at most hourly, logged in `root.log` beside it: what
+no run has read or written for 3 days goes (a directory none of whose files was used goes whole; in
+a directory still in use, only the copies the mirror sent, which it sends again when a run needs
+them; a file a command wrote stays while its directory is in use). While the host has less than
+`min_free_gb` + 40 GB free, the same goes at 1 day idle, then 6 hours. The farm's Relax home is left
+to the cleaner. A compile that misses a pruned copy fails once, runs on the build machine, and the
+host is asked what it holds. Before farm 18 the root kept every copy and run output (95 GB on one
+host).
 
 ## Told at the build
 
 What an agent does wrong is printed in its own build output, not left for someone to find. At the
 first compile of each cargo command the wrapper prints, as `warning: rerail-farm:` lines: a nice
-value under 19, a rustc other than the checkout pins, and the checkout's latest `diagnose --brief`
+value under 19, a rustc other than the checkout pins, a development build of the engine's CLI without
+`--features test-hooks` (it compiles every dependency crate apart from the tests' build of it:
+native/Cargo.toml), a workspace crate compiled with other features than a build of the same target
+and profile in the last 2 hours did (a second variant, compiled at each edit with every crate above
+it and with its own incremental state; said once per command and difference, with the crates, the
+features and the earlier command, and repeated at the checkout's builds for 3 hours; the records are
+in `~/Library/Caches/rerail-farm/variants/`), and the checkout's latest `diagnose --brief`
 findings (another toolchain or cargo configuration than the active worktrees, profile settings that
 differ, scripts that set the variables builds share), each with what to do. A cargo command that
-runs a whole test tier here (`cargo test` or `cargo nextest run` with no filter, or the gate
-profile) while a test host has 4 cores or more to spare is told the `test-remote` command that runs
-it there (`RERAIL_FARM_TESTS_HERE=1` when it must run here). The hourly job writes
-those findings after the cleaner (`~/Library/Caches/rerail-farm/findings/<key>`). A build that
+runs tests here (`cargo test` or `cargo nextest run`, filtered or not) while a test host has a free
+test slot is told the `test-remote` command that runs it there (`RERAIL_FARM_TESTS_HERE=1` when it must run here). After a cleaner run, at most hourly per checkout, the job writes
+those findings (`~/Library/Caches/rerail-farm/findings/<key>`). A build that
 turns the wrapper off (`RUSTC_WRAPPER=`) is stopped by `native/build.rs` instead, with the fix in
-its message. A variable builds must share (CC, CXX, SOURCE_DATE_EPOCH, JEMALLOC_OVERRIDE) stops the
+its message.
+A variable builds must share (CC, CXX, SOURCE_DATE_EPOCH, JEMALLOC_OVERRIDE) stops the
 build at the first compile. `RERAIL_FARM_QUIET=1` silences the warnings.
 
 ## Configuration
@@ -167,18 +192,21 @@ hosts, and everything compiles and tests here, as without the farm.
 
 | Key | Meaning |
 |---|---|
-| `hosts` | the hosts: `{"name", "cores", "enabled", "tests", "link"}` |
+| `hosts` | the hosts: `{"name", "cores", "enabled", "tests", "link", "unattended"}` |
 | `name` | what ssh connects to (a `Host` entry of `~/.ssh/config`) |
 | `enabled` | `false` leaves a host out (default `true`) |
 | `tests` | whether `scripts/dev/test-remote` runs there (default `true`) |
+| `test_slots` | how many `test-remote` commands the host runs at once (default: a third of its cores). One at a time left a 16-core host mostly idle while commands queued for 25 minutes; a command waits only when every slot of every host is taken, and goes to whichever frees first. A checkout's second command goes to another host when one has a slot (its commands on one host share a target directory, which cargo builds in one at a time) |
 | `link` | the host's network interface the farm's traffic must arrive on (its fast link); unset: any |
 | `min_free_gb` | free disk a host needs (default 40) |
 | `max_rtt_ms` | the slowest round trip a host may have (default 150), for a host without `link` |
-| `min_mbps` | the least throughput to it, MB/s (default 8), for a host without `link`: with one, the link check catches a fall back to WiFi, and both are only reported. Both are measured through ssh, so they fall when either Mac is busy (an ssh round trip of 34 ms and 2 MB/s on a link that pings at 0.3 ms): a low figure is no proof of a slow link |
+| `min_mbps` | the least throughput to it, MB/s (default 8), for a host without `link`: with one, the link check catches a fall back to WiFi, and both are only reported. Both are measured through ssh: the round trip is the least of three (each starts an ssh process, which a loaded Mac delays), and the throughput is 32 MB written through a plain pipe (Python's `run(input=)` writes 512 bytes at a time and read 57 MB/s on a Thunderbolt link that does 270 through ssh and 800 raw). They still fall when either Mac is busy: a low figure is no proof of a slow link |
 | `tcp` | `false` keeps the live mirror's data on ssh (default `true`; also `RERAIL_FARM_TCP=0`) |
 
 A host takes a compile per core while nobody has touched its keyboard or mouse for 5 minutes, and
-half as many otherwise (`HIDIdleTime`). Compiles take slots in turn across the hosts (each host's
+half as many otherwise (`HIDIdleTime`). A host nobody sits at whose
+trackpad reports touches on its own (one did, every 0.1–4 s, on 2026-11-15) is marked
+`"unattended": true`: then its input counts for nothing. Compiles take slots in turn across the hosts (each host's
 first slot, then each one's second), so every host works, not only the first listed. Not its load average: macOS's background analysis (Photos,
 Spotlight) keeps that high on an idle Mac, at a priority every compile preempts.
 
@@ -231,6 +259,12 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
   interface the connection arrived on, its free disk, its idle time and its mounts; the round
   trip is timed, and every 10 minutes (or while it is slow) a 4 MB transfer measures the
   throughput. A host short of disk or past the limits is not used.
+- **Blocked here, not down.** macOS's Local Network privacy can deny the application the agents
+  run under (and every program it starts: ssh, nc, ping) any connection to a local address, as
+  "No route to host", while the hosts answer everyone else; it happened to every host at once on
+  2026-11-16. When a host cannot be reached, the probe tries it again from a job launchd starts:
+  if that reaches it, the reason names the application and the setting (System Settings, Privacy
+  & Security, Local Network), and the host is probed again every 30 s rather than backed off.
 - **Off its link: recovered.** A host's name (often an mDNS `.local` name) resolves to whichever
   of its addresses answers first, so ssh can reach it over WiFi while its fast link is up. When
   a probe arrives on another interface than `link`, the farm asks the host, over the connection
@@ -251,11 +285,22 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
   forgets: an agent is asked what it holds when it starts, a compile that read a stale file clears
   what was sent, and `test-remote` asks the host again for every file of the checkout before it runs.
   Nothing but the farm writes under the root, so nothing else makes what the mirror remembers wrong.
-- **Disk.** `test-remote`'s target directories (one per checkout, by a hash of its path) go after
-  14 unused days, and the least recently used go while the host has less than `min_free_gb` free.
+- **Disk.** `test-remote`'s target directories (one per checkout, by a hash of its path) are
+  cleaned after each command (above), go after 3 unused days, and the least recently used go while
+  the host has less than `min_free_gb` + 40 GB free: pruning only to `min_free_gb` left the host
+  just above it, and the next build took it under.
 
 `scripts/build/farm/status` probes every host now and prints whether it is usable and why not,
 with its round trip, throughput and free disk (`--json` for scripts; exit 1 when none is usable).
+
+## No benchmark leases
+
+Farm 9 to 19 had `scripts/dev/quiet-run`: a lease on a machine for a benchmark, with fair turns, a
+drain of the farm's work, a 10-minute cap and warnings to checkouts that loaded a leased machine.
+Removed in farm 20 (2026-11-16): the turns, drains and refusals stalled every agent's work, and
+nothing waits on a lease any more. `quiet-run` now runs its COMMAND at once, through `test-remote`
+(or here with `--here`), so existing scripts still work. A benchmark is an ordinary command; its
+result says how loaded the machine was.
 
 ## No shared volume, no copy mode
 

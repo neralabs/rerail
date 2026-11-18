@@ -63,3 +63,26 @@ The Python pack, one file, a fresh project store, release, one thread, M3 Max. T
 Every output relation is the same in all three. With the bundle, combining is a read. Preparing is not yet shipped:
 the prepared program holds atoms of the store that prepared it (`prepared_interned`, checked by `holds`), and a new
 project's store numbers its atoms in its own order.
+
+## The text tests' automata ship too (2026-11-15)
+
+With the prepared programs shipped (0270), compiling the text tests was half of what preparing still cost: 0.14 s
+of 0.27 s on the Python pack's first run in a project. Each of its three groups of automata (decision 0075) was
+determinized again, because a group was kept in the project's store alone.
+
+A group is now an image of the engine's build (`rr::ImageDfas`): read from the bundle, else the build's image store,
+and kept there by the store's writer (`keep_image`, with its lease), so a run exporting the bundle exports the groups
+too. A group's DFA is regex-automata's bytes in the build's byte order, which is the build's as every image is. The
+project store's copy (fact schema 103) goes, and the schema is retired, so the collector sweeps its rows.
+
+Measured, the Python pack, one file, release, one thread, M3 Max, fresh stores:
+
+| Run | Prepare | Whole run |
+|---|---|---|
+| The bundle, automata determinized | 4.48 G | 26.08 G |
+| The bundle with the automata | 1.71 G | 23.44 G |
+
+No bundle and the build's store: unchanged (9.83 G, 40.27 G) and lower (7.06 G, 33.64 G: the export run kept the
+groups there). Every output relation matches the baseline. What preparing costs with the bundle now (0.145 s): the
+memo's program and the components' plan 0.048 s, folding the guests' copies 0.024 s, reading the prepared program
+0.014 s, the projection 0.013 s, statistics 0.012 s, the split's parts 0.011 s.

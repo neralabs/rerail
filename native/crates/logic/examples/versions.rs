@@ -107,6 +107,8 @@ const FACT: u8 = 14;
 const INPUT: u8 = 15;
 const OUTPUT: u8 = 16;
 const PAIR: u8 = 17;
+/// A branded atom (decision 0270), its atom the value. Its class is left out: the simulation measures operations.
+const BRANDED: u8 = 18;
 
 #[derive(Default)]
 struct Atoms(HashMap<String, u32>);
@@ -146,6 +148,7 @@ impl Enc<'_> {
             Term::Wild => self.leaf(WILD, 0),
             Term::Top => self.leaf(TOP, 0),
             Term::Int(i) => self.leaf(INT, *i as u32),
+            Term::Branded(b) => self.leaf(BRANDED, b.atom),
             Term::Str(s) => {
                 let a = self.atoms.id(s);
                 self.leaf(STR, a)

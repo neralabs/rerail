@@ -7,13 +7,15 @@ description = "Code written once in Cranelift's IR for several backends (decisio
 
 [features]
 default = ["ir"]
-# The reads and the pass, in Cranelift's IR. Without it, the view alone (the tape crate's).
-ir = ["dep:cranelift-codegen", "dep:cranelift-frontend", "dep:cranelift-module"]
-# A test's JIT of every read, to run against a hand-written reader.
-jit = ["ir", "dep:cranelift-jit"]
+# The reads and the pass, in Cranelift's IR, and a JIT of every read (tests run it against a hand-written reader).
+# Without it, the view alone (the tape crate's). The JIT is no feature of its own: the compiler links cranelift-jit
+# into every engine anyway, and a second variant of this crate for tests would compile it twice (AGENTS.md).
+ir = ["dep:cranelift-codegen", "dep:cranelift-frontend", "dep:cranelift-module", "dep:cranelift-jit", "dep:rerail-blocks"]
 
 [dependencies]
 cranelift-codegen = { version = "=0.125.4", optional = true }
 cranelift-frontend = { version = "=0.125.4", optional = true }
 cranelift-module = { version = "=0.125.4", optional = true }
 cranelift-jit = { version = "=0.125.4", optional = true }
+# The layout a relation's reads follow (`relation`, decision 0325).
+rerail-blocks = { path = "../blocks", optional = true }

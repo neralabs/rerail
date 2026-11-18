@@ -25,7 +25,7 @@ pub use name::{List, Lists, Name, Stacks};
 pub mod cycles;
 pub mod template;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
-pub use ast::{AXIS, Again, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, shape_base, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
+pub use ast::{AXIS, Again, AggOp, Atom, Branded, Class, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, shape_base, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
 
 /// A token and the byte offset where it starts.
 #[derive(Clone, Debug, PartialEq)]
@@ -468,18 +468,9 @@ impl Parser<'_> {
                     prog.demand.extend(names);
                 }
             }
-            // `.pragma "cross-rounds" "k"`, as `.rr` writes it (decision 0056).
+            // `.pragma "cross-rounds" "k"` (decision 0056) is refused: bounded cross-file rounds are retired: a program's cross-file part is one fixpoint (decisions 0065, 0276 §9).
             "pragma" => {
-                let (Tok::Str(key), Tok::Str(k)) = (self.peek().clone(), self.peek_at(1).clone()) else {
-                    return self.fail("a pragma's two strings");
-                };
-                self.i += 2;
-                if key != PRAGMA || k.parse::<usize>().is_err() {
-                    self.i -= 2;
-                    return self.fail("`.pragma \"cross-rounds\" \"k\"`");
-                } else {
-                    prog.settings.push(setting(&k));
-                }
+                return self.fail("no `.pragma`: bounded cross-file rounds are retired: a program's cross-file part is one fixpoint (decisions 0065, 0276 §9)");
             }
             "kindset" => {
                 let name = self.id()?;
@@ -1210,16 +1201,8 @@ pub mod data_layer_census_tests;
 // cratify: `data_layer_tests` is rerail-logic's (it mounts it)
 pub mod yaml;
 
-/// The pragma by which a program asks for bounded rounds (decision 0056): `.pragma "cross-rounds" "4"`. A typing
-/// program declares it: its cross-file recursion is over interface summaries, cut at `k` file crossings, with the
-/// pending round when it also declares `unconverged`. A program that does not declare it (a rule) has its
-/// cross-file part run as one fixpoint, which no chain length cuts.
+/// The pragma by which a program asked for bounded rounds (decision 0056), refused: bounded cross-file rounds are retired: a program's cross-file part is one fixpoint (decisions 0065, 0276 §9).
 pub const PRAGMA: &str = "cross-rounds";
-
-/// The program setting `.pragma "cross-rounds" "k"` lowers to (from `.rr`, or the `.rdl` copies' same line).
-pub(crate) fn setting(k: &str) -> (String, String) {
-    ("pragma".to_owned(), format!("\"{PRAGMA}\" \"{k}\""))
-}
 
 /// A base relation's document column, including raw text views.
 pub fn document_column(relation: &str) -> Option<usize> {

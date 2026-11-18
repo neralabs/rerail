@@ -45,6 +45,7 @@ pub mod navigation;
 pub use index::IndexImage;
 pub mod wire;
 pub mod tokens;
+mod token_automata;
 // tokens_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 // cratify: `token_readers` is rerail-w's (it mounts it)
 pub mod resident;
@@ -60,6 +61,10 @@ pub mod ecma_lean;
 pub mod rust_lean;
 /// Java's tape from the lean parser (`rerail_java_lean`).
 pub mod java_lean;
+/// Go's tape from the lean parser (`rerail_go_lean`).
+pub mod go_lean;
+/// C's and C++'s tapes from the lean parser (`rerail_c_lean`).
+pub mod c_lean;
 /// C#'s tape from the lean parser (`rerail_csharp_lean`).
 pub mod csharp_lean;
 /// PHP's tape from the lean parser (`rerail_php_lean`).
@@ -677,16 +682,16 @@ impl FileImage {
             image.derived.push(DerivedImage::encode(via, program, 0, grammar, source, &budget)?);
         }
         // Each document in the format the run stores (decision 0293 §4), once the embedders have read the host.
-        Ok(image.in_format(formats::Format::of_run()))
+        Ok(image.in_format(formats::Format::of_run(), source))
     }
 
     /// The documents of a file that derives none, in the format the run stores (decision 0293 §4).
-    pub fn single(primary: TapeImage) -> Self {
+    pub fn single(primary: TapeImage, source: &str) -> Self {
         Self {
             primary,
             derived: Vec::new(),
         }
-        .in_format(formats::Format::of_run())
+        .in_format(formats::Format::of_run(), source)
     }
 
     /// The documents the store keeps for a file: its tape `primary` in `grammar`'s dialect and
@@ -835,7 +840,8 @@ impl Documents for FileImage {
 #[cfg(any(test, feature = "test-hooks"))]
 impl Documents for TapeImage {
     fn file_image(&self) -> Cow<'_, FileImage> {
-        Cow::Owned(FileImage::single(self.clone()))
+        // No source: the image is kept in the format it is held in.
+        Cow::Owned(FileImage { primary: self.clone(), derived: Vec::new() })
     }
 }
 
@@ -1361,7 +1367,7 @@ impl TapeImage {
         }
         // A `.rr` file: the rule engine's own parser builds its tree (decision 0061).
         if grammar.lang == GrammarDialect::Rr {
-            return Some(Self::encode_rr(grammar, source, budget).map(FileImage::single));
+            return Some(Self::encode_rr(grammar, source, budget).map(|image| FileImage::single(image, source)));
         }
         let mut parser = tree_sitter::Parser::new();
         if let Err(error) = parser.set_language(&grammar.lang.get_ts_language()) {
@@ -2381,7 +2387,9 @@ impl TapeDoc {
         let (digest, _) = validated::visit(&source, &grammar, image, budget, |_, _| {})?;
         checked(budget)?;
         let image = Arc::new(image.clone());
+        let held = Arc::new(formats::DocTape::new(Arc::clone(&image), Arc::clone(&source)));
         Ok(Self {
+            held,
             source_digest: digest,
             points: Arc::new(Points {
                 source: Arc::clone(&source),
@@ -2394,7 +2402,7 @@ impl TapeDoc {
             texts: Arc::default(),
             guests: Guests::Owned(Arc::new(Vec::new())),
             host: None,
-            held: Arc::new(formats::DocTape::new(Arc::clone(&image))),
+
             image,
             digest: Arc::default(),
             path: None,
@@ -2546,6 +2554,17 @@ impl TapeDoc {
         Ok(*self.digest.get_or_init(|| digest))
     }
 
+    /// `tape_digest`, and the image as stored when computing it serialized the image (the digest
+    /// not known yet): admission copies those bytes, not a second serialization.
+    pub fn tape_digest_and_image(&self) -> Result<([u8; 32], Option<Vec<u8>>), String> {
+        if let Some(digest) = self.digest.get() {
+            return Ok((*digest, None));
+        }
+        let image = self.image.to_bytes()?;
+        let digest = tape_identity(&self.source_digest, &image);
+        Ok((*self.digest.get_or_init(|| digest), Some(image)))
+    }
+
     /// The SHA-256 of this document's source.
     pub fn source_digest(&self) -> &[u8; 32] {
         &self.source_digest
@@ -2563,9 +2582,14 @@ impl TapeDoc {
         self.tape_digest()
     }
 
-    /// This document's image as stored, its source and its grammar: what residency admits.
-    pub fn resident_parts(&self) -> Result<(Vec<u8>, &str, &Arc<Grammar>), String> {
-        Ok((self.image.to_bytes()?, self.source.as_str(), &self.grammar))
+    /// This document's image as stored (`image`, when the caller has it already), its source and
+    /// its grammar: what residency admits.
+    pub fn resident_parts(&self, image: Option<Vec<u8>>) -> Result<(Vec<u8>, &str, &Arc<Grammar>), String> {
+        let image = match image {
+            Some(image) => image,
+            None => self.image.to_bytes()?,
+        };
+        Ok((image, self.source.as_str(), &self.grammar))
     }
 
     pub fn transducer_kind(&self, node: u32) -> u16 {

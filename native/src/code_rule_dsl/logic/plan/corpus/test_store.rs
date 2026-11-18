@@ -34,6 +34,12 @@ thread_local! {
     static FILLING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Whether this thread fills the template (`make`). What its runs keep for the process (phase 0's graphs) the process's
+/// own runs would find made, and skip the work a test of them compares (`phase0::graphs`).
+pub(super) fn filling() -> bool {
+    FILLING.with(std::cell::Cell::get)
+}
+
 /// The template made, before a test's thread takes the switches (`switches::reading`, `switches::set`): no thread waits
 /// for it while it holds them, so its runs never wait behind a thread that waits for it. Off a test's thread (`own`:
 /// a pool's, or a process the tests start) nothing reads the template, so nothing makes it.
@@ -108,7 +114,7 @@ fn make(path: &Path) {
 fn fill(store: &Path) -> std::result::Result<(), String> {
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
     let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
-    let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rr".to_owned())] }];
+    let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rr".to_owned())], phases: Vec::new() }];
     let mut modules = Vec::new();
     rule_files(&lib, &mut modules);
     modules.sort();
@@ -208,12 +214,14 @@ thread_local! {
 /// started it, not the process's.
 pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
     let named = std::thread::current().name().is_some_and(|n| n.contains("::"));
-    // The store this thread's runs use: the one its test names (`TEST_TAPE_CACHE`), else the one it was handed, else
-    // its own.
+    // The store this thread's runs use (`tape_cache_path`'s order): the one its test names (`TEST_TAPE_CACHE`), else
+    // the one it was handed, else the process's when it names one (`RERAIL_TAPE_CACHE`, `use_store`: the job's runs
+    // find it themselves), else its own. Handed its own over the process's, a job wrote a fresh copy where the test's
+    // runs read the named store.
     let mine = super::TEST_TAPE_CACHE
         .with(|p| p.borrow().clone())
         .or_else(|| handed())
-        .or_else(|| named.then(|| OWN.with(|own| own.get_or_init(copy).path.clone())));
+        .or_else(|| (named && !super::names_its_store()).then(|| OWN.with(|own| own.get_or_init(copy).path.clone())));
     c.part(&["OWN", "HANDED"], crate::code_rule_dsl::logic::run_state::Shared(mine, hand));
 }
 

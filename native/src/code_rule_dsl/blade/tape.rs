@@ -185,7 +185,7 @@ pub(in crate::code_rule_dsl) fn encode_blade(
     })?;
     let mut nodes = Vec::<Pending>::new();
     encode_blade_tree(&mut nodes, tree, &read.syntax_errors, budget)?;
-    let image = FileImage::single(TapeImage::finish(nodes, Vec::new(), grammar, source, budget)?);
+    let image = FileImage::single(TapeImage::finish(nodes, Vec::new(), grammar, source, budget)?, source);
     with_compiled_view(image, read.view, grammar, source, budget)
 }
 

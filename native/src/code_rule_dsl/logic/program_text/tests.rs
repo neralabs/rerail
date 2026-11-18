@@ -67,6 +67,7 @@ fn pack_programs_read_back_from_their_text() {
     let mut files: Vec<_> = std::fs::read_dir(&packs).unwrap().flatten().filter(|d| d.path().is_dir()).flat_map(|d| std::fs::read_dir(d.path()).unwrap().flatten().map(|f| f.path())).filter(|p| p.extension().is_some_and(|e| e == "rr")).collect();
     files.sort();
     let mut read_back = 0;
+    crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(files.iter().step_by(7));
     for path in files.iter().step_by(7) {
         let Ok(prog) = crate::code_rule_dsl::logic::rr::parse_file(path) else { continue };
         let text = print(&prog).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
@@ -122,8 +123,8 @@ fn a_runs_programs_share_their_lists() {
     same(&one, &read(&text(false)).unwrap());
 }
 
-/// A stored program is kept as its text and its image (decision 0173), and read from its image; one kept as text
-/// alone reads from its text.
+/// A stored program is kept as its image alone (decisions 0173, 0246 §6), and read from it; one kept as text alone
+/// (a store written before images) reads from its text.
 #[test]
 fn a_stored_program_is_read_from_its_image() {
     use crate::content_store::{ContentStore, HashKey};
@@ -136,13 +137,16 @@ fn a_stored_program_is_read_from_its_image() {
     prog.outputs = vec!["p".into()];
     prog.facts.insert("e".into(), vec![[Value::Int(1)].into()]);
     prog.rules.push(Rule { head: atom("p", vec![v("x")]), body: vec![Literal::Atom(atom("e", vec![v("x")])), Literal::Cmp { l: v("x"), op: "<", r: Term::Int(3) }].into() });
-    let (digest, sources) = super::store(&store, &prog).unwrap().expect("kept");
-    assert_eq!(sources.len(), 2, "its text and its image");
+    let encoded = super::encode(&prog).expect("kept");
+    assert!(encoded.image, "an image");
+    let digest = encoded.digest;
+    let sources = super::store_encoded(&store, &digest, encoded.image, &encoded.bytes).unwrap();
+    assert_eq!(sources.len(), 1, "its image alone");
     assert!(store.source_by_alias(super::image_key(&digest)).unwrap().is_some());
     let found = super::texts(&store, &[digest]).unwrap();
     let (stored, ids) = &found[&digest];
     assert!(matches!(stored, super::Stored::Image(_)), "read from its image");
-    assert_eq!(ids.len(), 2);
+    assert_eq!(ids, &sources, "the image's source");
     same(&super::read_stored(stored, &Default::default()).unwrap(), &prog);
     same(&super::load(&store, &digest, &Default::default()).unwrap().expect("loads").0, &prog);
     // Kept as text alone (a store written before images): read from its text.

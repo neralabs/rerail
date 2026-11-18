@@ -25,6 +25,11 @@ pub enum Format {
     F16Z,
 }
 
+/// Format 16's and 16z's stored layout: 3 since decision 0336 §6 (a newline index after the side lists, its count
+/// in the header; 16z holds it raw after the checkpoints). Layout 2 (0336: region starts in the header; 16z's blocks
+/// one piece an array, raw, LZ4 or a repeat) had keys 216 and 1216; layout 1, 16 and 1016.
+const F16_LAYOUT: u32 = 3;
+
 impl Format {
     pub const ALL: [Format; 3] = [Format::F15, Format::F16, Format::F16Z];
 
@@ -46,12 +51,13 @@ impl Format {
 
     /// The tape format version the store keys a tape by when a run stores this format: a store holds each
     /// document once per format, and a run finds only its own. (A language that keeps format 15 in a run of
-    /// format 16 is stored under 16, as format 15's bytes: the bytes say what they hold.)
+    /// format 16 is stored under 16, as format 15's bytes: the bytes say what they hold.) Format 16's and 16z's
+    /// carry their layout (`F16_LAYOUT`): a store built before a layout changed reads cold, not wrong.
     pub fn store_version(self) -> u32 {
         match self {
             Format::F15 => super::TAPE_FORMAT_VERSION,
-            Format::F16 => 16,
-            Format::F16Z => 1016,
+            Format::F16 => 16 + 100 * F16_LAYOUT,
+            Format::F16Z => 1016 + 100 * F16_LAYOUT,
         }
     }
 
@@ -178,7 +184,7 @@ pub fn lean<'a>(
                     };
                     match codes.iter().map(|c| lang.number(&c.entry())).collect::<Option<Vec<u32>>>() {
                         None => keeps_15(language, tag, "a code its format 16 table lacks"),
-                        Some(numbers) => match w.finish_16(lang, &numbers, source.len() as u64, tag, format == Format::F16Z)? {
+                        Some(numbers) => match w.finish_16(lang, &numbers, source.as_bytes(), tag, format == Format::F16Z)? {
                             Ok(written) => return Ok(TapeImage::written_16(written, language, source, budget)),
                             Err(e) => keeps_15(language, tag, &e),
                         },
@@ -197,8 +203,10 @@ impl TapeImage {
     /// 15, and format 16 is written from it where a file's documents are made). A tape already held in another
     /// format is kept as it is; one whose language has no format 16 table, or whose code the table lacks, keeps
     /// format 15, and the run says so once a language.
-    pub fn in_format(self, format: Format) -> Self {
+    /// `source` is its document's: format 16 holds its newline index.
+    pub fn in_format(self, format: Format, source: &[u8]) -> Self {
         let Held::F15(c) = &self.held else { return self };
+        debug_assert_eq!(source.len(), self.source_len, "a tape's source");
         if format == Format::F15 {
             return self;
         }
@@ -216,7 +224,7 @@ impl TapeImage {
             }
         };
         // One pass over format 15's columns, to format 16 or straight to 16z's blocks.
-        let held = match f16::write_from(lang, &F15::over(c.laid_out().0, c.view(), table), &number, self.source_len as u64, tag, format == Format::F16Z) {
+        let held = match f16::write_from(lang, &F15::over(c.laid_out().0, c.view(), table), &number, source, tag, format == Format::F16Z) {
             Ok(f16::Written::F16(t)) => Held::F16(Arc::new(t)),
             Ok(f16::Written::F16Z(t)) => Held::F16Z(Arc::new(t)),
             Err(e) => {
@@ -274,7 +282,7 @@ impl rerail_tape_format::Finish for Rr<'_> {
                     };
                     match w.code_keys().iter().map(|&k| lang.number(&entry(k))).collect::<Option<Vec<u32>>>() {
                         None => keeps_15(GrammarDialect::Rr, tag, "a code its format 16 table lacks"),
-                        Some(numbers) => match w.finish_16(lang, &numbers, self.0.len() as u64, tag, format == Format::F16Z)? {
+                        Some(numbers) => match w.finish_16(lang, &numbers, self.0.as_bytes(), tag, format == Format::F16Z)? {
                             Ok(written) => return Ok(RrTape::Written(written)),
                             Err(e) => keeps_15(GrammarDialect::Rr, tag, &e),
                         },
@@ -292,11 +300,12 @@ pub(super) fn rr_tape(source: &str) -> RrTape {
 }
 
 impl FileImage {
-    /// Every document's tape in `format` (`TapeImage::in_format`).
-    pub fn in_format(self, format: Format) -> Self {
+    /// Every document's tape in `format` (`TapeImage::in_format`): the primary's of `source`, a derived one's of its
+    /// text.
+    pub fn in_format(self, format: Format, source: &str) -> Self {
         FileImage {
-            primary: self.primary.in_format(format),
-            derived: self.derived.into_iter().map(|d| super::DerivedImage { tape: d.tape.in_format(format), ..d }).collect(),
+            primary: self.primary.in_format(format, source.as_bytes()),
+            derived: self.derived.into_iter().map(|d| super::DerivedImage { tape: d.tape.in_format(format, d.text.as_bytes()), ..d }).collect(),
         }
     }
 }
@@ -307,6 +316,8 @@ pub struct DocTape {
     /// The image's reader, made once (`reader`). It borrows `image`, so it is declared first: dropped before it.
     reader: AnyTape<'static>,
     image: Arc<TapeImage>,
+    /// The document's source, which another format's tape is written over (`tape_in`: format 16 holds its newlines).
+    source: Arc<String>,
     other: [OnceLock<TapeImage>; 3],
     /// A 16z tape laid out as the format 16 tape it is the blocks of, once, for the readers that read format 16's
     /// arrays in place (`in_place`), as the device's slab lays it out.
@@ -314,13 +325,13 @@ pub struct DocTape {
 }
 
 impl DocTape {
-    pub fn new(image: Arc<TapeImage>) -> Self {
+    pub fn new(image: Arc<TapeImage>, source: Arc<String>) -> Self {
         let reader = image.tape();
         // SAFETY: the reader borrows the image's bytes and code table, and the language tables (static). The image
         // is in the `Arc`'s allocation, which does not move, and is never changed once held; this holds the `Arc`
         // for as long as the reader, and `reader` lends it at the borrow of `self` only.
         let reader = unsafe { std::mem::transmute::<AnyTape<'_>, AnyTape<'static>>(reader) };
-        DocTape { reader, image, other: Default::default(), laid: OnceLock::new() }
+        DocTape { reader, image, source, other: Default::default(), laid: OnceLock::new() }
     }
 
     /// The tape's reader, made once: a node's reads dispatch on the format, and nothing is built a read.
@@ -354,8 +365,8 @@ impl DocTape {
             Held::F16(t) => sixteen(t, lang),
             Held::F16Z(z) => {
                 let laid = self.laid.get_or_init(|| {
-                    let mut bytes = vec![0; z.unblocked_len()];
-                    z.unblock_into(&mut bytes)?;
+                    let mut bytes = vec![0; z.decoded_len()];
+                    z.decode_into(&mut bytes)?;
                     f16::Tape16::from_bytes(bytes)
                 });
                 sixteen(laid.as_ref().map_err(Clone::clone)?, lang)
@@ -374,7 +385,7 @@ impl DocTape {
             return self.image.tape();
         }
         let slot = Format::ALL.iter().position(|&f| f == format).expect("a format");
-        self.other[slot].get_or_init(|| (*self.image).clone().in_format(format)).tape()
+        self.other[slot].get_or_init(|| (*self.image).clone().in_format(format, self.source.as_bytes())).tape()
     }
 }
 

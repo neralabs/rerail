@@ -77,6 +77,11 @@ pub fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
            cold INTEGER, ok INTEGER, load REAL);
          CREATE INDEX IF NOT EXISTS samples_by_machine ON samples(machine, at);
          CREATE INDEX IF NOT EXISTS samples_by_form ON samples(machine, lane, forms, at);
+         -- The priced samples (units > 0), which alone are read (`read_samples`). Binaries from before jobs with no
+         -- units kept none still write them to the shared file: 488,666 of its 500,356 (2026-11-15), so a read down
+         -- the indexes above stepped through all of them, a third of a 1-file run's CPU (decision 0285).
+         CREATE INDEX IF NOT EXISTS samples_priced ON samples(machine, at) WHERE units > 0;
+         CREATE INDEX IF NOT EXISTS samples_priced_by_form ON samples(machine, lane, forms, at) WHERE units > 0;
          CREATE TABLE IF NOT EXISTS models(machine TEXT PRIMARY KEY, at REAL, trained_on INTEGER, comparison TEXT, model BLOB);
          CREATE TABLE IF NOT EXISTS program_steps(
            program TEXT PRIMARY KEY, steps REAL, size REAL, evaluations INTEGER, overruns INTEGER, last_at REAL);
@@ -98,6 +103,14 @@ fn read_program_rates(db: &rusqlite::Connection) -> rusqlite::Result<Vec<(String
     Ok(rows.filter_map(Result::ok).map(|(program, steps, size, evaluations)| (program, steps, size, evaluations as u64)).collect())
 }
 
+/// While it lives, this thread's writes to the statistics' file are not faults of the warm check: they are one of
+/// the writes a warm run may make (`profile::WARM_WRITES_ALLOWED`).
+fn writing() -> crate::code_rule_dsl::logic::profile::WarmScope {
+    let scope = crate::code_rule_dsl::logic::profile::warm_scope();
+    crate::code_rule_dsl::logic::profile::warm_job("the cost statistics");
+    scope
+}
+
 /// The writer's store, once opened.
 static WRITER: Mutex<Option<rusqlite::Connection>> = Mutex::new(None);
 
@@ -115,6 +128,10 @@ fn write() {
     if samples.is_empty() && plans.is_empty() && forms.is_empty() && evaluations.is_empty() {
         return;
     }
+    // What the stored statistics say first (the samples since the model, its age): a run that measured something
+    // read them, or reads them now.
+    ready();
+    let _warm = writing();
     if w.is_none() {
         *w = open(&path).ok();
         // Past `KEPT`, the oldest of this machine's samples go.
@@ -216,23 +233,23 @@ fn write() {
 /// of each), oldest first.
 pub fn read_samples(db: &rusqlite::Connection, limit: i64, per_form: i64) -> rusqlite::Result<Vec<rerail_accel::score::Sample>> {
     let machine = machine();
-    // The newest overall, then each lane and form's newest (an index search each: `samples_by_form`). A job with
+    // The newest overall, then each lane and form's newest (an index search each: `samples_priced_by_form`). A job with
     // no units (a stream's, as `strata`) prices nothing, so none is read: stored by binaries from before they were
     // left out (`score`), they were 489k of the newest 500k.
     let mut ids: std::collections::BTreeSet<i64> = db
         .prepare("SELECT rowid FROM samples WHERE machine = ?1 AND units > 0 ORDER BY at DESC LIMIT ?2")?
         .query_map(rusqlite::params![machine, limit], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
-    // The lanes and forms, by a seek each down `samples_by_form` (a skip scan): `DISTINCT` read every one of the
+    // The lanes and forms with priced samples, by a seek each down `samples_priced_by_form` (a skip scan): `DISTINCT` read every one of the
     // machine's index entries, half a million, 0.03-0.2 s of a process's first run.
     let groups: Vec<(String, String)> = db
         .prepare(
             "WITH RECURSIVE g(id) AS (
-                 SELECT (SELECT rowid FROM samples WHERE machine = ?1 ORDER BY lane, forms LIMIT 1)
+                 SELECT (SELECT rowid FROM samples WHERE machine = ?1 AND units > 0 ORDER BY lane, forms LIMIT 1)
                  UNION ALL
                  SELECT (SELECT coalesce(
-                     (SELECT s.rowid FROM samples s WHERE s.machine = ?1 AND s.lane = p.lane AND s.forms > p.forms ORDER BY s.forms LIMIT 1),
-                     (SELECT s.rowid FROM samples s WHERE s.machine = ?1 AND s.lane > p.lane ORDER BY s.lane, s.forms LIMIT 1))
+                     (SELECT s.rowid FROM samples s WHERE s.machine = ?1 AND s.units > 0 AND s.lane = p.lane AND s.forms > p.forms ORDER BY s.forms LIMIT 1),
+                     (SELECT s.rowid FROM samples s WHERE s.machine = ?1 AND s.units > 0 AND s.lane > p.lane ORDER BY s.lane, s.forms LIMIT 1))
                    FROM samples p WHERE p.rowid = g.id)
                  FROM g WHERE g.id IS NOT NULL)
              SELECT lane, forms FROM g JOIN samples ON samples.rowid = g.id",
@@ -508,6 +525,7 @@ impl rerail_accel::upkeep::Job for Retrain {
 /// Saves the model for this machine, or takes the saved one out when there is none.
 #[cfg(target_os = "macos")]
 fn save(path: &PathBuf, model: Option<&rerail_accel::cost_model::CostModel>, comparison: &rerail_accel::cost_model::Comparison) -> rusqlite::Result<()> {
+    let _warm = writing();
     let db = open(path)?;
     match model {
         Some(m) => {
@@ -532,58 +550,92 @@ static READ_DONE: (Mutex<bool>, std::sync::Condvar) = (Mutex::new(false), std::s
 /// `start` ran: before it, there is nothing to wait for.
 static STARTED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Starts the statistics, once: the executor keeps its samples, a thread writes them, and a thread reads the stored
-/// ones and fits the prices, beside the run's preparation; what reads them waits for it (`ready`). Without a store
-/// (`RERAIL_COSTS=off`, or in tests) nothing is kept.
+/// Starts the statistics, once: the executor keeps its samples and a thread writes them. The stored ones are read,
+/// and the prices fitted, when the run first has work to price ([`begin_read`], beside it) or an executor is made
+/// ([`ready`]): a run that evaluates nothing (a warm run with no change) reads none of them. Building the read took
+/// 40 ms of CPU and the machine's name a Metal device, 11 ms of the main thread, in every process (decision 0285).
+/// Without a store (`RERAIL_COSTS=off`) there is nothing to read.
 pub fn start() {
     static STARTED: OnceLock<()> = OnceLock::new();
     STARTED.get_or_init(|| {
-        STARTED_ONCE.store(true, std::sync::atomic::Ordering::Release);
-        let done = || {
-            *READ_DONE.0.lock().unwrap_or_else(|p| p.into_inner()) = true;
-            READ_DONE.1.notify_all();
-        };
         if path().is_none() {
-            done();
             return;
         }
+        STARTED_ONCE.store(true, std::sync::atomic::Ordering::Release);
         sql_plans::enable();
         rerail_accel::score::keep_samples(true);
         program_steps::keep(true);
+        // The first price asked waits for the read, which it begins if the run did not (`ready`).
+        rerail_accel::price::before_first_price(ready);
         let _ = rerail_accel::exec::service("rerail-costs", None, || {
             crate::code_rule_dsl::logic::profile::behind_the_run();
-            ready();
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 write();
             }
         });
-        // Read beside the run (its preparation reads none of it): a tenth of a second of a cold batch's first run.
-        let spawned = rerail_accel::exec::service("rerail-costs read", None, move || {
-            crate::code_rule_dsl::logic::profile::behind_the_run();
-            let _ = std::panic::catch_unwind(read);
-            done();
-        });
-        if spawned.is_err() {
-            let _ = std::panic::catch_unwind(read);
-            done();
+        // The statistics' store is rerail's own: outside the file observer (decision 0284).
+        if let Some(p) = path() {
+            crate::content_store::observe::own(&p);
         }
-        // The upkeep of the statistics' store, and the model's retraining, for the process's life (decision 0190).
-        std::mem::forget(upkeep_jobs());
-        rerail_accel::upkeep::start();
     });
 }
 
-/// Waits until the stored statistics are read, if `start` began reading them: the executors' prices and the SQL
-/// plans' observations are read from here on, before the first wave (decision 0104).
-pub fn ready() {
-    let mut done = READ_DONE.0.lock().unwrap_or_else(|p| p.into_inner());
-    if *done || !STARTED_ONCE.load(std::sync::atomic::Ordering::Acquire) {
+/// Reads the stored statistics on a thread of their own, once, if `start` ran: called where the run first knows it
+/// has work the prices are for (a chunk to evaluate, a stratum to run), so the read runs beside that work. The
+/// upkeep of their store and the model's retraining begin with it, for the process's life (decision 0190).
+pub fn begin_read() {
+    static BEGUN: OnceLock<()> = OnceLock::new();
+    if !STARTED_ONCE.load(std::sync::atomic::Ordering::Acquire) {
         return;
     }
+    BEGUN.get_or_init(|| {
+        let done = || {
+            *READ_DONE.0.lock().unwrap_or_else(|p| p.into_inner()) = true;
+            READ_DONE.1.notify_all();
+        };
+        let spawned = rerail_accel::exec::service("rerail-costs read", None, move || {
+            crate::code_rule_dsl::logic::profile::behind_the_run();
+            READING.with(|r| r.set(true));
+            let _ = std::panic::catch_unwind(read);
+            done();
+            std::mem::forget(upkeep_jobs());
+            rerail_accel::upkeep::start();
+        });
+        if spawned.is_err() {
+            READING.with(|r| r.set(true));
+            let _ = std::panic::catch_unwind(read);
+            READING.with(|r| r.set(false));
+            done();
+            std::mem::forget(upkeep_jobs());
+            rerail_accel::upkeep::start();
+        }
+    });
+}
+
+/// Waits until the stored statistics are read, if `start` ran, beginning the read if nothing began it
+/// ([`begin_read`]): the executors' prices and the SQL plans' observations are read from here on, before the first
+/// wave (decision 0104).
+/// `true` once they are read, or when there is nothing to read; `false` on the read's own thread, which may ask the
+/// model it is putting in place (its warming, its training) and never waits for itself.
+pub fn ready() -> bool {
+    if !STARTED_ONCE.load(std::sync::atomic::Ordering::Acquire) {
+        return true;
+    }
+    if READING.with(std::cell::Cell::get) {
+        return false;
+    }
+    begin_read();
+    let mut done = READ_DONE.0.lock().unwrap_or_else(|p| p.into_inner());
     while !*done {
         done = READ_DONE.1.wait(done).unwrap_or_else(|p| p.into_inner());
     }
+    true
+}
+
+thread_local! {
+    /// This thread is the read's (`begin_read`).
+    static READING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// The statistics' upkeep jobs (decision 0190), registered: their store's SQLite file, and the model's
@@ -732,5 +784,108 @@ pub mod tests {
         assert_eq!(job.due(), Due::No, "trained: not due");
         let saved: i64 = super::open(&path).unwrap().query_row("SELECT count(*) FROM models", [], |r| r.get(0)).unwrap();
         assert_eq!(saved as usize, rerail_accel::cost_model::current().is_some() as usize, "saved when it won");
+    }
+
+    /// The read steps through priced samples alone: a store of mostly unpriced ones (no units, as older binaries
+    /// still write) is read down the partial indexes, and gives the priced ones, each lane and form's included.
+    #[test]
+    fn the_samples_read_are_found_by_the_priced_indexes() {
+        let dir = std::env::temp_dir().join(format!("rerail-costs-priced-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("costs.sqlite");
+        let db = super::open(&path).unwrap();
+        let machine = super::machine();
+        let mut ins = db.prepare("INSERT INTO samples VALUES (?1, ?2, 1, 'cpu', ?3, 1, ?4, 0, 0, 0, 0, 0, '', 0, 1, 1)").unwrap();
+        for i in 0..1000 {
+            ins.execute(rusqlite::params![i as f64, machine, "strata", 0.0]).unwrap();
+        }
+        for (i, form) in ["a", "b", "a"].iter().enumerate() {
+            ins.execute(rusqlite::params![2000.0 + i as f64, machine, form, 5.0]).unwrap();
+        }
+        drop(ins);
+        let samples = super::read_samples(&db, 2, 10).unwrap();
+        let forms: Vec<&str> = samples.iter().map(|s| s.forms.as_str()).collect();
+        assert_eq!(forms, ["a", "b", "a"], "the priced samples, oldest first; the newest two and each form's");
+        let plan = |sql: &str| -> String {
+            db.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap().query_map([&machine], |r| r.get::<_, String>(3)).unwrap().map(Result::unwrap).collect::<Vec<_>>().join("; ")
+        };
+        let newest = plan("SELECT rowid FROM samples WHERE machine = ?1 AND units > 0 ORDER BY at DESC LIMIT 2");
+        assert!(newest.contains("samples_priced "), "{newest}");
+        let first = plan("SELECT rowid FROM samples WHERE machine = ?1 AND units > 0 ORDER BY lane, forms LIMIT 1");
+        assert!(first.contains("samples_priced_by_form"), "{first}");
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A warm run may write its cost statistics (`profile::WARM_WRITES_ALLOWED`, approved 2026-11-15): a child
+    /// process under `RERAIL_WARM=list` creates the file and writes a form's record, and exits with no fault.
+    #[test]
+    fn a_warm_run_writes_its_cost_statistics() {
+        if std::env::var_os("RERAIL_COSTS_WARM_CHILD").is_some() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("rerail-costs-warm-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("costs.sqlite");
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "code_rule_dsl::logic::costs::tests::a_warm_runs_cost_statistics_child", "--nocapture", "--test-threads=1"])
+            .env("RERAIL_COSTS_WARM_CHILD", "1")
+            .env("RERAIL_WARM", "list")
+            .env("RERAIL_COSTS", &path)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success() && !stderr.contains("in a warm run"), "{:?}\n{stderr}", out.status);
+        let n: i64 = super::open(&path).unwrap().query_row("SELECT count(*) FROM kernel_forms", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1, "the record written");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The child of `a_warm_run_writes_its_cost_statistics`.
+    #[test]
+    #[ignore = "run by a_warm_run_writes_its_cost_statistics"]
+    fn a_warm_runs_cost_statistics_child() {
+        if std::env::var_os("RERAIL_COSTS_WARM_CHILD").is_none() {
+            return;
+        }
+        rerail_accel::forms::interpreted("test", "a key", "a form", 1);
+        super::write();
+    }
+
+    /// A run that evaluates nothing reads no stored statistics (decision 0285): `start` keeps and writes samples
+    /// only, and the read runs once the run has work (`begin_read`) or an executor waits for it (`ready`). A child
+    /// process, as the statistics' state is the process's.
+    #[test]
+    fn a_run_with_no_work_reads_no_cost_statistics() {
+        if std::env::var_os("RERAIL_COSTS_READ_CHILD").is_some() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("rerail-costs-read-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("costs.sqlite");
+        drop(super::open(&path).unwrap());
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "code_rule_dsl::logic::costs::tests::a_run_with_no_work_reads_no_cost_statistics_child", "--nocapture", "--test-threads=1"])
+            .env("RERAIL_COSTS_READ_CHILD", "1")
+            .env("RERAIL_COSTS", &path)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{:?}\n{}\n{stderr}", out.status, String::from_utf8_lossy(&out.stdout));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The child of `a_run_with_no_work_reads_no_cost_statistics`.
+    #[test]
+    #[ignore = "run by a_run_with_no_work_reads_no_cost_statistics"]
+    fn a_run_with_no_work_reads_no_cost_statistics_child() {
+        if std::env::var_os("RERAIL_COSTS_READ_CHILD").is_none() {
+            return;
+        }
+        super::start();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(super::FITTED.lock().unwrap().is_none(), "read with no work to price");
+        super::ready();
+        assert_eq!(*super::FITTED.lock().unwrap(), Some((0, 0)), "read once an executor waits");
     }
 }

@@ -14,18 +14,28 @@ import json
 import os
 import re
 import shlex
+import socket
 import subprocess
 import sys
+import threading
 import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 8
+VERSION = 20
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
 STATE = os.path.join(HOME, "Library/Caches/rerail-farm")
 SCCACHE = os.path.join(SHARE, "bin/sccache")
+
+# Farm 20 removed benchmark leases. A checkout whose branch predates it has the old
+# scripts/dev/quiet-run, which imports this module and would queue, drain and wait (or stop, finding
+# no leases here): it is handed to the pass-through (scripts/dev/quiet-run, installed beside this),
+# which runs its command at once. The pass-through never imports this module.
+if sys.argv and os.path.basename(sys.argv[0]) == "quiet-run" and os.path.isfile(os.path.join(SHARE, "quiet-run")):
+    os.environ["RERAIL_QUIET_RUN_CHECKOUT"] = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), "../.."))
+    os.execv(os.path.join(SHARE, "quiet-run"), [os.path.join(SHARE, "quiet-run")] + sys.argv[1:])
 SCCACHE_CONF = os.path.join(CONFIG, "sccache.toml")
 HOSTS = os.path.join(CONFIG, "hosts.json")
 PORT = "4227"
@@ -285,7 +295,9 @@ def same_in_every_checkout(args, out_dir, crate):
     return out
 
 
-TIDY_SECONDS = 3600
+TIDY_SECONDS = 15 * 60
+# `diagnose --brief` after a clean runs at most this often per checkout: its findings change slowly.
+DIAGNOSE_SECONDS = 3600
 
 
 def target_of(out_dir):
@@ -299,10 +311,10 @@ def target_of(out_dir):
 
 
 def tidy(target, checkout):
-    """Starts `clean-target --wait` on `target`, at most once an hour per target directory:
+    """Starts `clean-target --wait` on `target`, at most once every 15 minutes per target directory:
     Rerail's worktrees together write terabytes of builds a day, and what the next build cannot use
-    goes after the build ends (it waits for cargo's lock). Then `diagnose --brief` on the checkout,
-    whose findings `advise` prints at the next builds. Detached, at nice 19."""
+    goes after the build ends (it waits for cargo's lock). Then, at most hourly, `diagnose --brief` on
+    the checkout, whose findings `advise` prints at the next builds. Detached, at nice 19."""
     if os.environ.get("RERAIL_FARM_NO_TIDY"):
         return
     script = os.path.join(SHARE, "clean-target")
@@ -314,7 +326,7 @@ def tidy(target, checkout):
             return
     except OSError:
         pass
-    # One starter per hour: whoever creates the claim starts it.
+    # One starter per period: whoever creates the claim starts it.
     claim = stamp + f".{int(time.time() // TIDY_SECONDS)}"
     try:
         os.close(os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
@@ -331,8 +343,10 @@ def tidy(target, checkout):
     findings = findings_path(checkout)
     with open(stamp + ".log", "a") as out:
         subprocess.Popen(["nice", "-n", "19", "/bin/sh", "-c",
-                          '"$0" --wait "$1"; "$2" --brief "$3" > "$4.tmp" 2>/dev/null && mv "$4.tmp" "$4"',
-                          script, target, os.path.join(SHARE, "diagnose"), checkout, findings],
+                          '"$0" --wait "$1"; [ -n "$(find "$4" -mmin -"$5" 2>/dev/null)" ] || '
+                          '{ "$2" --brief "$3" > "$4.tmp" 2>/dev/null && mv "$4.tmp" "$4"; }',
+                          script, target, os.path.join(SHARE, "diagnose"), checkout, findings,
+                          str(DIAGNOSE_SECONDS // 60)],
                          stdin=subprocess.DEVNULL, stdout=out, stderr=out, start_new_session=True, close_fds=True)
 
 
@@ -349,9 +363,168 @@ VALUED = {"-p", "--package", "--profile", "--features", "-F", "-j", "--jobs", "-
           "--message-format", "--partition", "--test-threads", "--retries", "--archive-file", "--cargo-profile"}
 
 
-def whole_tier(pid):
+# A workspace crate compiled in a second variant (another feature set) within this long of the first
+# is told: both stay current, each compiled per edit, each with 1-3 GB of incremental state (the
+# cleaner keeps unused incremental state as long: scripts/dev/clean-target).
+VARIANT_SECONDS = 2 * 3600
+# ... and the checkout's builds repeat it this long.
+VARIANT_ADVICE_SECONDS = 3 * 3600
+# The engine's own variants are the tests' (cfg(test), without its `test-hooks`) and the CLI's: they
+# are inherent, and no crate is built above it.
+VARIANT_EXEMPT = {"rerail_engine"}
+
+
+def features_of(args):
+    return sorted(v[len('feature="'):-1] for v in values(args, "--cfg") if v.startswith('feature="') and v.endswith('"'))
+
+
+def variant_hint(plus, minus):
+    """What to do about a variant whose features differ by `plus` and `minus` from the earlier one."""
+    changed = set(plus) | set(minus)
+    if "test-hooks" in changed:
+        return ("build the CLI with the tests' features: `nice -n 19 cargo build --bin rerail-engine --features "
+                "test-hooks` (AGENTS.md)")
+    if "default" in changed:
+        return ("a crate's `default` differs from what the engine gives it: scripts/check/check-dev-features.py names "
+                "the manifest to fix")
+    return (f"a build with other features ({', '.join(sorted(changed))}) compiles every crate below again: run it on "
+            "a farm host (scripts/dev/test-remote), not in this worktree's target directory")
+
+
+def note_variant(checkout, args, out_dir, crate):
+    """Records the variant (feature set) this compile of a workspace crate builds, and when a recent
+    compile of the same crate in the same target and profile built another, says so on stderr and in
+    the checkout's next builds (`variant_advice`). Cascades (the same features over another
+    dependency graph, as after a Cargo.toml change) are not told: the crate whose features differ is."""
+    if crate in VARIANT_EXEMPT or not out_dir:
+        return
+    src = next((a for a in args if a.endswith(".rs") and not a.startswith("-")), None)
+    if src is None or (os.path.isabs(src) and not src.startswith(checkout + os.sep)):
+        return  # a registry or git dependency: its features follow the workspace's
+    meta = codegen(args, "metadata")
+    if not meta:
+        return
+    # Every package's build script is crate `build_script_build`: the package tells them apart.
+    package = os.environ.get("CARGO_PKG_NAME")
+    if package and package.replace("-", "_") != crate:
+        crate = f"{package} ({crate})"
+    kind = "test" if "--test" in args else ",".join(sorted(set(",".join(values(args, "--crate-type")).split(",")))) or "lib"
+    features = features_of(args)
+    now = time.time()
+    path = state("variants", key(os.path.dirname(os.path.realpath(out_dir))), key(crate) + ".json")
+    seen = [e for e in read_json(path, []) if now - e.get("at", 0) < VARIANT_SECONDS]
+    same = [e for e in seen if e["meta"] == meta]
+    if same:
+        for e in same:
+            e["at"] = now
+        write_json(path, seen)
+        return
+    try:
+        cmd = subprocess.run(["ps", "-o", "args=", "-p", str(os.getppid())], capture_output=True, text=True,
+                             timeout=5).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        cmd = ""
+    alike = [e for e in seen if e["kind"] == kind]
+    other = [e for e in alike if e["features"] != features]
+    seen.append({"meta": meta, "kind": kind, "features": features, "at": now, "cmd": cmd[:300]})
+    write_json(path, seen)
+    # A feature set seen before is a cascade (another dependency graph) or a known variant, told already.
+    if not other or any(e["features"] == features for e in alike):
+        return
+    # The nearest earlier feature set: the difference is then what this build changed.
+    prev = min(other, key=lambda e: (len(set(e["features"]) ^ set(features)), -e["at"]))
+    plus = [f for f in features if f not in prev["features"]]
+    minus = [f for f in prev["features"] if f not in features]
+    diff = ", ".join([f"+{f}" for f in plus] + [f"-{f}" for f in minus])
+    # One message per cargo command and difference, however many crates it varies: the record keeps
+    # them all, and the checkout's next builds say it with the crates named.
+    advice = state("variants", key(checkout) + ".advice.json")
+    entries = [e for e in read_json(advice, []) if now - e.get("at", 0) < VARIANT_ADVICE_SECONDS]
+    mine = next((e for e in entries if e["diff"] == diff and e.get("cargo") == os.getppid()), None)
+    if mine:
+        mine["crates"] = sorted(set(mine["crates"]) | {crate})
+        mine["at"] = now
+    else:
+        entries = [e for e in entries if e["diff"] != diff]
+        mine = {"at": now, "diff": diff, "crates": [crate], "cargo": os.getppid(), "prev_at": prev["at"],
+                "prev_cmd": short_cargo(prev.get("cmd", "")), "hint": variant_hint(plus, minus)}
+        entries.append(mine)
+        sys.stderr.write(f"warning: rerail-farm: {variant_text(mine)}\n")
+        sys.stderr.flush()
+    write_json(advice, entries)
+
+
+def variant_text(e):
+    crates = ", ".join(e["crates"][:6]) + (f" and {len(e['crates']) - 6} more" if len(e["crates"]) > 6 else "")
+    hint = e["hint"][:1].upper() + e["hint"][1:]
+    return (f"this checkout's builds compile {crates} a second way, with features {e['diff']} against the build of "
+            f"{time.strftime('%H:%M', time.localtime(e['prev_at']))} (`{e['prev_cmd']}`). Each variant is compiled at "
+            f"every edit, with every crate above it, and keeps 1-3 GB of incremental state. {hint}")
+
+
+def short_cargo(cmd):
+    """`cmd` from its `cargo` word on, for a message."""
+    words = cmd.split()
+    for i, w in enumerate(words):
+        if os.path.basename(w) == "cargo":
+            return " ".join(words[i:])[:160]
+    return cmd[:160]
+
+
+def variant_advice(checkout):
+    """The variant warnings `advise` repeats at `checkout`'s builds, the latest few."""
+    now = time.time()
+    entries = [e for e in read_json(state("variants", key(checkout) + ".advice.json"), [])
+               if now - e.get("at", 0) < VARIANT_ADVICE_SECONDS]
+    return [variant_text(e) for e in sorted(entries, key=lambda e: -e["at"])[:3]]
+
+
+def cli_without_hooks(pid, checkout):
+    """True when cargo process `pid` builds the engine's CLI for development without `test-hooks`:
+    `cargo build` or `cargo run` of `rerail-engine` (by `--bin` or `-p`, or with no package named, from
+    `native/`) on the dev or debugging profile, for this machine. Such a build compiles every
+    dependency crate apart from the tests' build, and keeps a second set of incremental state
+    (native/Cargo.toml, `test-hooks`)."""
+    try:
+        words = subprocess.run(["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True,
+                               timeout=5).stdout.split()
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    for i, w in enumerate(words):
+        if w in ("build", "run", "b", "r"):
+            rest = words[i + 1:]
+            break
+    else:
+        return False
+    if "--" in rest:
+        rest = rest[:rest.index("--")]
+    if any("test-hooks" in r or r == "--all-features" or r == "--no-default-features" for r in rest):
+        return False
+    if any(r in ("--release", "-r") or r.startswith("--target") for r in rest):
+        return False
+    for j, r in enumerate(rest):
+        prof = r.split("=", 1)[1] if r.startswith("--profile=") else (rest[j + 1] if r == "--profile" and j + 1 < len(rest) else None)
+        if prof is not None and prof not in ("dev", "debugging"):
+            return False
+    named = [r.split("=", 1)[1] if "=" in r else (rest[j + 1] if j + 1 < len(rest) else "")
+             for j, r in enumerate(rest) if r.split("=", 1)[0] in ("--bin", "-p", "--package")]
+    if named:
+        return "rerail-engine" in named
+    if any(r in ("--lib", "--bins", "--examples", "--workspace", "--all-targets") for r in rest):
+        return False
+    try:
+        out = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], capture_output=True, text=True,
+                             timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    cwd = next((l[1:] for l in out.splitlines() if l.startswith("n")), "")
+    return bool(checkout) and os.path.realpath(cwd) == os.path.realpath(os.path.join(checkout, "native"))
+
+
+def whole_tier(pid, filtered=False):
     """The command line of cargo process `pid` when it runs a whole test tier here (`cargo test` or
-    `cargo nextest run` with no filter, or nextest's gate profile), else None."""
+    `cargo nextest run` with no filter, or nextest's gate profile), else None; with `filtered`, any
+    test run's."""
     def ps(pid):
         try:
             out = subprocess.run(["ps", "-o", "ppid=,args=", "-p", str(pid)], capture_output=True, text=True,
@@ -377,12 +550,12 @@ def whole_tier(pid):
     while j < len(rest):
         r = rest[j]
         if r == "--" or r in ("-E", "--filterset", "--filter-expr") or r.startswith(("-E=", "--filterset=")):
-            return None  # a filter (after `--`, or an expression)
+            return " ".join(words) if filtered else None  # a filter (after `--`, or an expression)
         if r in VALUED:
             j += 2
             continue
         if not r.startswith("-"):
-            return None  # a test name filter
+            return " ".join(words) if filtered else None  # a test name filter
         j += 1
     return " ".join(words)
 
@@ -390,8 +563,8 @@ def whole_tier(pid):
 def advise(checkout, rustc):
     """At the first compile of each cargo command (once per cargo process): what this build does
     that it should not, on stderr, where the agent running it reads it. Its own nice value, a rustc
-    other than the checkout pins, and the checkout's latest `diagnose --brief` findings (the hourly
-    job writes them). RERAIL_FARM_QUIET=1 keeps it quiet."""
+    other than the checkout pins, and the checkout's latest `diagnose --brief` findings (the cleaning
+    job writes them, at most hourly). RERAIL_FARM_QUIET=1 keeps it quiet."""
     if os.environ.get("RERAIL_FARM_QUIET"):
         return
     cargo = os.getppid()
@@ -426,16 +599,22 @@ def advise(checkout, rustc):
         lines.append(f"this build runs rustc {m.group(1)}, but the checkout pins {pinned.group(1)}: its crates are cached "
                      "apart from every other worktree's. Use rustup's cargo (`which cargo` is ~/.cargo/bin/cargo), "
                      "without `cargo +VERSION` or RUSTUP_TOOLCHAIN")
-    tier = whole_tier(cargo)
+    tier = whole_tier(cargo, filtered=True)
     if tier and not os.environ.get("RERAIL_FARM_TESTS_HERE"):
-        free = [h for h in usable("tests") if spare(h) >= 4]
+        free = [h for h in usable("tests") if free_test_slots(h)]
         if free:
-            lines.append(f"this command runs a whole test tier here while {free[0]['name']} has "
-                         f"{spare(free[0]):.0f} cores to spare: `scripts/dev/test-remote -- {tier.split(' ', 1)[-1]}` "
-                         "runs it there (RERAIL_FARM_TESTS_HERE=1 says it must run here)")
+            lines.append(f"this command builds and runs tests here while {free[0]['name']} has a free test slot: "
+                         f"`scripts/dev/test-remote -- {tier.split(' ', 1)[-1]}` runs it there, in a warm target "
+                         "directory of this checkout's, and leaves this machine to the edit loop "
+                         "(RERAIL_FARM_TESTS_HERE=1 says it must run here)")
+    if cli_without_hooks(cargo, checkout):
+        lines.append("this builds the engine's CLI without `--features test-hooks`, so every dependency crate is compiled "
+                     "apart from the tests' build of it, and keeps a second set of incremental state: "
+                     "`nice -n 19 cargo build --bin rerail-engine --features test-hooks` (AGENTS.md)")
+    lines += variant_advice(checkout)
     try:
         f = findings_path(checkout)
-        if time.time() - os.stat(f).st_mtime < 2 * TIDY_SECONDS:
+        if time.time() - os.stat(f).st_mtime < 2 * DIAGNOSE_SECONDS:
             lines += [l.rstrip() for l in open(f) if l.strip()]
     except OSError:
         pass
@@ -471,6 +650,10 @@ def wrapper(rustc, args):
     if target and crate != "___":
         tidy(target, checkout)
         advise(checkout, rustc)
+        try:
+            note_variant(checkout, args, out_dir, crate)
+        except (OSError, ValueError, KeyError):
+            pass  # never fail a compile over its bookkeeping
     args = args + same_in_every_checkout(args, out_dir, crate)
     stripped, inc = without_incremental(args)
     if inc is not None:
@@ -557,7 +740,7 @@ DOWN_SECONDS = (30, 1800)
 OFF_LINK_SECONDS = 60
 # The throughput probe's size, and how often it is sent (it is the slowest part of the probe). The
 # round trip is taken off its time: at 4 MB a session's start alone halved the rate seen.
-PROBE_BYTES = 16 << 20
+PROBE_BYTES = 32 << 20
 PROBE_SECONDS = 600
 
 
@@ -645,7 +828,8 @@ def probe(host, cfg, fell_back=False, recovered=False):
             # is down): back to what its name resolves to.
             set_route(name, None)
             return probe(host, cfg, fell_back=True, recovered=recovered)
-        h["why"] = "unreachable (off, asleep, or off the network)"
+        blocked = local_network_blocked(name)
+        h["why"] = blocked or "unreachable (off, asleep, or off the network)"
         return h
     lines = out.stdout.splitlines()
     client = h["client"] = (lines[0].split() or [""])[0]
@@ -661,20 +845,36 @@ def probe(host, cfg, fell_back=False, recovered=False):
     except (ValueError, IndexError):
         h["load"] = None
     h["mounts"] = [m for m in lines[5:] if m]
-    started = time.time()
-    try:
-        subprocess.run(ssh(name, "true", "health"), capture_output=True, timeout=5)
-        h["rtt_ms"] = round((time.time() - started) * 1000)
-    except subprocess.TimeoutExpired:
-        h["rtt_ms"] = 5000
-    link = link_of(host)
-    if time.time() - h["mbps_at"] > PROBE_SECONDS or (h["mbps"] or 0) < cfg["min_mbps"]:
+    # The round trip is the least of three: each starts an ssh process here, which a loaded Mac
+    # delays by up to a few hundred ms, and that is not the link.
+    rtts = []
+    for _ in range(3):
         started = time.time()
         try:
-            subprocess.run(ssh(name, "cat >/dev/null", "health"), input=os.urandom(PROBE_BYTES), capture_output=True, timeout=10)
-            h["mbps"] = round(PROBE_BYTES / (1 << 20) / max(time.time() - started - h["rtt_ms"] / 1000, 0.01), 1)
+            subprocess.run(ssh(name, "true", "health"), capture_output=True, timeout=5)
+            rtts.append(round((time.time() - started) * 1000))
         except subprocess.TimeoutExpired:
-            h["mbps"] = 0
+            rtts.append(5000)
+            break
+    h["rtt_ms"] = min(rtts)
+    link = link_of(host)
+    if time.time() - h["mbps_at"] > PROBE_SECONDS or (h["mbps"] or 0) < cfg["min_mbps"]:
+        data = os.urandom(PROBE_BYTES)  # made before the clock starts: 70 ms on a loaded Mac
+        # A plain pipe: `run(input=, capture_output=True)` writes stdin 512 bytes at a time while
+        # it reads, and measured itself (57 MB/s where the pipe does 270).
+        proc = subprocess.Popen(ssh(name, "cat >/dev/null", "health"), stdin=subprocess.PIPE,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        timer = threading.Timer(10, proc.kill)
+        timer.start()
+        started = time.time()
+        try:
+            proc.stdin.write(data)
+            proc.stdin.close()
+        except OSError:
+            pass
+        killed = proc.wait() != 0 and not timer.is_alive()
+        timer.cancel()
+        h["mbps"] = 0 if killed else round(PROBE_BYTES / (1 << 20) / max(time.time() - started - h["rtt_ms"] / 1000, 0.01), 1)
         h["mbps_at"] = time.time()
     if link and arrival != link and not recovered and recover(host, arrival):
         return probe(host, cfg, fell_back=fell_back, recovered=True)
@@ -717,6 +917,9 @@ def health(host, fresh=False):
         h = probe(host, config())
         if not h["ok"] and h["why"].startswith("not on its link"):
             h["down_until"] = now + OFF_LINK_SECONDS
+        elif not h["ok"] and "Local Network privacy" in h["why"]:
+            # Not the host: it is back the moment the permission is given, so no growing back-off.
+            h["down_until"] = now + DOWN_SECONDS[0]
         elif not h["ok"]:
             h["failures"] = h.get("failures", 0) + 1
             h["down_until"] = now + min(DOWN_SECONDS[0] * 2 ** (h["failures"] - 1), DOWN_SECONDS[1])
@@ -747,6 +950,30 @@ def usable(kind=None):
     return sorted(out, key=lambda h: -spare(h))
 
 
+def test_slots(host):
+    """How many test commands `host` runs at once (`test-remote`): `test_slots` in the configuration,
+    else a third of its cores. A targeted test run is mostly one big crate's compile, a few cores: one
+    command at a time left a 16-core host mostly idle while others queued behind it for 25 minutes
+    (2026-11-16)."""
+    return max(1, int(host.get("test_slots") or host.get("cores", 3) // 3))
+
+
+def free_test_slots(host):
+    """How many of `host`'s test slots are free now."""
+    n = 0
+    for path in test_slot_paths(host["name"], host):
+        lock = Lock(path, blocking=False)
+        n += lock.held
+        lock.release()
+    return n
+
+
+def test_slot_paths(name, host=None):
+    """The lock files of `name`'s test slots."""
+    host = host or next((h for h in hosts() if h["name"] == name), {"name": name})
+    return [state("tests", f"{name}.{i}.lock") for i in range(test_slots(host))]
+
+
 def capacity(host):
     """How many compiles `host` takes now: none while it is not usable (`health`); one per core while
     nobody has used it for 5 minutes, half as many while someone does. Not its load average: macOS's
@@ -755,7 +982,16 @@ def capacity(host):
     h = health(host)
     if not h.get("ok"):
         return 0
-    return host["cores"] if h.get("idle_s", 0) > USER_IDLE_SECONDS else host["cores"] // 2
+    return host["cores"] if not attended(host, h) else host["cores"] // 2
+
+
+def attended(host, h=None):
+    """Whether a person uses `host` now: input in the last USER_IDLE_SECONDS. Never for a host the
+    configuration marks `unattended` (a machine nobody sits at, whose input device reports
+    touches on its own)."""
+    if host.get("unattended"):
+        return False
+    return (h or health(host)).get("idle_s", 0) <= USER_IDLE_SECONDS
 
 
 # The ssh connection a compile's calls go over: one master per slot, since sshd serves only so many
@@ -783,6 +1019,60 @@ def set_route(host, address, alias=None):
             pass
     close_masters(host)
     log(f"{host}: route {'over ' + address if address else 'by name'}")
+
+
+def local_network_blocked(host):
+    """Why `host` cannot be reached from this process when the network is not the cause, or None.
+    macOS's Local Network privacy refuses an app's processes (and every program they start: ssh,
+    nc) any connection to a local address, as "No route to host", while the host answers everyone
+    else. So a connection that fails here so but succeeds when launchd starts it names the app."""
+    g = dict(line.split(" ", 1) for line in subprocess.run(["ssh", "-G", host], capture_output=True, text=True)
+             .stdout.splitlines() if " " in line)
+    try:
+        info = socket.getaddrinfo(g.get("hostname", host), 22, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return None
+    for family, _, _, _, sa in info[:4]:
+        addr = f"{sa[0]}%{socket.if_indextoname(sa[3])}" if family == socket.AF_INET6 and sa[3] else sa[0]
+        nc = ["/usr/bin/nc", "-v", "-z", "-G", "2", addr, str(g.get("port", 22))]
+        try:
+            here = subprocess.run(nc, capture_output=True, text=True, timeout=5)
+        except subprocess.TimeoutExpired:
+            continue
+        if here.returncode == 0 or "No route to host" not in here.stderr:
+            continue
+        out = state("lnprobe", f"{os.getpid()}.txt")
+        label = f"rerail-farm.lnprobe.{os.getpid()}"
+        subprocess.run(["launchctl", "submit", "-l", label, "-o", out, "-e", out, "--"] + nc, capture_output=True)
+        time.sleep(3)
+        subprocess.run(["launchctl", "remove", label], capture_output=True)
+        try:
+            text = open(out).read()
+            os.remove(out)
+        except OSError:
+            text = ""
+        if "succeeded" in text:
+            return (f"macOS's Local Network privacy blocks {responsible_app()} from local addresses (launchd reaches "
+                    f"{host}): allow it in System Settings, Privacy & Security, Local Network")
+    return None
+
+
+def responsible_app():
+    """The application this process runs under, for messages: the outermost .app among its
+    ancestors (an interpreter's own bundle, Xcode's Python, is inside it)."""
+    pid, found = os.getppid(), None
+    for _ in range(40):
+        out = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+        if not out:
+            break
+        ppid, comm = out.split(None, 1)
+        m = re.search(r"/Applications/([^/]+)\.app/", comm)
+        if m:
+            found = m.group(1)
+        pid = int(ppid)
+        if pid <= 1:
+            break
+    return found or "this terminal's application"
 
 
 def close_masters(host):
@@ -864,12 +1154,28 @@ def on_host(script):
     return "exec /usr/bin/python3 -u -c " + shlex.quote(open(here).read())
 
 
+def agent_exec(job):
+    """The command that runs `job` with farm-agent on a host (test-remote, live-test-remote,
+    quiet-run). The cleaner's text goes with it: once the command ends, the agent cleans the job's
+    target directory with it (farm-agent, `clean`)."""
+    here = os.path.dirname(os.path.realpath(__file__))
+    for c in (os.path.join(here, "clean-target"), os.path.join(here, "../../dev/clean-target")):
+        if os.path.isfile(c):
+            job = dict(job, cleaner=open(c).read())
+            break
+    return on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
+
+
 def remote_slot():
     """A free compile slot on a host, and its lock. Slots are taken in turn across the hosts (each
     one's first, then each one's second, ...), so every host works, not only the first listed."""
     if os.environ.get("RERAIL_FARM_LOCAL"):
         return None, None
-    open_hosts = [(h, capacity(h)) for h in hosts() if h.get("enabled", True)]
+    open_hosts = []
+    for h in hosts():
+        if not h.get("enabled", True):
+            continue
+        open_hosts.append((h, capacity(h)))
     for i in range(max((c for _, c in open_hosts), default=0)):
         for host, cap in open_hosts:
             if i >= cap:

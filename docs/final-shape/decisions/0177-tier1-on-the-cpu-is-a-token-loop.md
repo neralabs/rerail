@@ -874,8 +874,9 @@ let (ws, couts) = bw.words_carried(f, &file, &[a.closer], at, &cins, heads);
 ```
 
 A first form made every test mask in the loop, for every string. It
-lost: tier 1 AOT went from 155 to 159 instructions a node. Short
-strings had skipped those masks before.
+was dropped on a count (155 to 159 instructions a node), which is not
+how a step is judged. It was lean's shape, and it is back: see "A
+string's tests in its read loop" below.
 
 Tier 1 AOT 155 to 147 instructions a node, JIT 239 to 222. The string
 reader is 153 lines of machine code, down from 460, and saves two
@@ -917,7 +918,9 @@ The JIT went 222 to 217 a node. The common tokens (90% of the corpus)
 are nearer the lean lexer's. A rare token pays one call: about 30
 instructions of prologue, argument moves and a four-value return
 through memory. Packing the return into two registers was costed and
-dropped: the unpacking costs what the memory round trip does.
+dropped then. That was a count's decision. A lexer's function returns
+its token in registers, so the packed return was taken later ("A
+spent block is read once; a rule returns two words").
 
 Open: numbers are 379 a token against 107. Their run's word is a
 window function's call at each token, and their tests' gate is the
@@ -1007,9 +1010,9 @@ Strings and numbers pay for the put-back on the rules' general tail.
 ## The word hash's multiplier, kept (2026-11-15)
 
 **The problem.** The lean lexer keeps its word hash's multiplier in a
-register. In the generated Rust, rustc made the 64-bit literal again
-at each word's lookup: a `mov` and three `movk`. It takes a literal
-to be as cheap to make as to keep.
+register. The generated Rust used the 64-bit literal at each word's
+lookup, so it was made there each time: a `mov` and three `movk`.
+The source had a literal where lean's has a value kept.
 
 **Tried and dropped.** Multipliers of two or three 16-bit parts (two
 or three instructions to make). No such multiplier parts rr's words.
@@ -1280,6 +1283,9 @@ n     = ((lo64(lanes) + hi64(lanes)) * 0x0101..01) >> 56
 `a_floats_dots_are_its_bytes` checks that the number's counts are
 exact and a string's are not.
 
+The count by a multiply is gone where a test asks only one or two
+(see "A count test asks what it asks" below).
+
 | A token | Before | After | Lean |
 |---|---|---|---|
 | Numbers | 197 | 183 | 107 |
@@ -1320,12 +1326,11 @@ The short function still saves two registers. The rules return four
 values through memory, so its long case can't hand its caller's
 result slot straight on.
 
-**Tried and dropped.** Returning two registers (the last, and the
-hits with the refusal as their sign bit) made the long case a plain
-tail call: numbers 163. But it changed how rustc allocated the main
-loop's registers around the call. Words rose 3, punctuation and mixed
-code about 2, so the realistic mix got worse. It waits on the main
-loop's register pressure.
+**Tried and dropped then.** Returning two registers (the last, and
+the hits with the refusal as their sign bit) made the long case a
+plain tail call. It was dropped on the other kinds' counts, which is
+not how a step is judged. It is lean's shape, and was taken later ("A
+spent block is read once; a rule returns two words").
 
 | A token | Before | After | Lean |
 |---|---|---|---|
@@ -1511,11 +1516,9 @@ most. `tier1_by_kind` takes `RR_LINE` to count a line of one's own.
 Tried and dropped along the way:
 
 - The two-register return again (`(last+1) | (tag+1) << 32`, and
-  the hits with the refusal as their sign bit). Numbers 168→167,
-  strings and comments −5, but words, punctuation and mixed code +3
-  each. The results come back in `x0`/`x1`, where the loop kept its
-  constants (the tables' address). Those now cost an `adrp` a token,
-  and more of the loop's values spill.
+  the hits with the refusal as their sign bit), dropped on the
+  common kinds' counts. Taken in the next section, as lean's
+  function returns its token in registers.
 - Not marking the rule calls cold. rustc's code did not change.
 
 ## A spent block is read once; a rule returns two words
@@ -1679,3 +1682,1940 @@ Counts, reported (before, after; lean):
 | Strings | 293.2 | 282.9 | 240.6 |
 | Numbers | 172.0 | 162.8 | 107.3 |
 | Comments | 270.6 | 261.2 | 193.2 |
+
+## A block's starts are runs, split at its rare ones
+
+**Intro.** The lean lexer's loop inside a window is two loops. The
+outer one splits the window's starts at the first rare one (a
+string's, a comment's, a number's first byte: `w.rare`); the inner
+one, `while run != 0`, takes the starts before it. Only words and
+punctuation are in the inner loop, and it calls nothing but the
+rare `word_of`. The rare token's calls are in the outer loop.
+
+Ours had one loop over a block's starts. Every token went through
+the same body, which branched to every rule, so the body held the
+rules' calls (five rule functions and the word across a block).
+What a call must keep was kept on every token's path: the hash
+multiplier, the pair mask and the bytes' address had no register.
+
+**The change.** The rare first bytes are those of no fused rule (no
+`TOKEN_FUSED_*` bit), as nibble tables (`set_nibbles`); the refill
+makes the block's rare word from its bytes (`set_word`), as the
+lean lexer's window its `rare`. A loop over the block's runs
+(`mid`) takes `rare = cand & rare_w` and
+`run = cand & (rare - 1) & !rare`:
+
+- a run: its first start, in the inner loop, with the run alone;
+- else a rare start: a token of the rules' general tail;
+- else the refill.
+
+A fused token goes on in the run; the run done, back to `mid` with
+the starts after it. Every other token goes back to `mid`, with the
+starts left of the run and after it (a word across its block, too).
+
+The inner loop calls nothing (`the_run_loop_calls_nothing`).
+The token path, stepped by instruction (lean's in brackets):
+
+- A plain word: 42 [67]. No stack access (lean: two loads). The
+  pair and word masks, the tables and the bytes are registers.
+- A word that may be a keyword: 78. The multiplier is a register
+  (`x19`), as lean's. One load is left: the pair mask's register is
+  taken by the constant 8 in the second word's cut.
+- A string: 185, of which 104 are its rule's function. After the
+  call, `mid` reloads the block's words (ten stack accesses), as
+  the lean lexer's outer loop reads its window's. The token after a
+  rare one goes through `mid`: 65 for a comma.
+
+Counts, reported (before, after; lean):
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Words | 107.7 | 107.8 | 97.9 |
+| Punctuation | 57.5 | 54.5 | 53.5 |
+| Mixed | 59.9 | 57.6 | 63.1 |
+| Strings | 282.9 | 321.5 | 240.6 |
+| Numbers | 162.8 | 187.8 | 107.3 |
+| Comments | 261.2 | 301.3 | 193.2 |
+
+The rare kinds rose by about 40 a token: `mid`'s split and the
+reloads after each call. Open: their paths against lean's, and the
+second word's compare (12 instructions; lean's ninth byte, 3).
+
+## A rare start has its own head
+
+**Intro.** The lean lexer's rare token never runs its run loop's
+code. It takes `pos = base + rare.trailing_zeros()`, reads the byte
+and `match`es on it. Ours entered the same token block as the run
+loop's tokens: the entry, the pair bit, the fused rules' test, then
+the rules' jump table. The run loop's head held the `match`, and
+the rare path's work could be moved into it.
+
+**The change.** The token's body is made once per head (`Side`):
+
+- the run loop's (`Side::Fused`): the fused rules alone. A token
+  not of them is the run rule's past its block, whose block it
+  takes alone (`RuleMode::Only`), as lean's `word_end`;
+- the rare starts' (`Side::Rare`): no fused rule, the rules' jump
+  table, as lean's `match`.
+
+`mid`'s rare start goes to the rare head (`rare_word`), with the
+state and the block's words as the run loop's.
+
+The run loop has neither a call nor a `match`
+(`the_run_loop_calls_nothing`). Stepped by instruction, a string
+and the comma after it: 231 (lean 223). Its rule function is 104
+(lean's `string_end`, 124); the loop's part is 127 (lean's, 99).
+The rare head is 17 instructions to its call (lean's, 14).
+
+Counts, reported (before, after; lean):
+
+| A token | Before | After | Lean |
+|---|---|---|---|
+| Words | 107.8 | 106.0 | 97.9 |
+| Punctuation | 54.5 | 53.4 | 53.5 |
+| Mixed | 57.6 | 56.4 | 63.1 |
+| Strings | 321.5 | 306.9 | 240.7 |
+| Numbers | 187.8 | 173.7 | 107.3 |
+| Comments | 301.3 | 285.6 | 193.2 |
+
+Not taken: sending the run's end straight to the rare start `mid`
+had found, with one shared token head. Lean's run loop and its rare
+`match` are apart, each with its own head, and a shared head puts
+the rare path's checks into the common tokens' code. The heads stay
+apart (below).
+
+## The run's end takes the rare start found
+
+**Intro.** The lean lexer finds `rare` before its run. When the run
+ends, it takes `rare`'s lowest bit at once (`ldr`, `cbz`, `rbit`,
+`clz`). Ours went back to `mid`, which found `rare` and `run` again
+from the starts after the run (four loads), found no run, then the
+rare start.
+
+**The change.** The run's end (`run_done`) is a block of `mid`'s,
+which `mid` comes to with no run: the rare start `mid` found, else
+the refill. A fused token whose run is done goes there with the
+starts after the run.
+
+Stepped: the run's end is `ldr`, `cbnz`, `rbit`, `clz` into the
+rare head, as lean's. A string and its comma: 224 (lean 223).
+Counts, reported: words 105.8, punctuation 53.3, mixed 56.2,
+strings 305.5, numbers 173.0, comments 285.1.
+
+## A rare token that ends plainly puts no start back
+
+**Intro.** The lean lexer leaves some bytes out of its starts: a
+word's inner bytes, and a pair's second byte. After a rare token it
+only does `starts &= bits(cursor - base)`. It never puts a start
+back, because each `match` arm knows what it read: a string ends at
+a quote, and the number arm reads the word after it itself.
+
+Ours put a start back after every rare token. That means the bit
+after the token where it is a word's inner byte or a pair's second,
+plus the reread flag for chained pairs. About 15 instructions, and
+the values it needs stayed live across the reader's call.
+
+**What the compiler knows.** Whether a rule's tokens need a start
+put back follows from the grammar. A token needs none when:
+
+- its last byte is no word byte and no pair's first byte, or
+- the byte after it is no word byte and no pair's second.
+
+`plain_end` decides this per rule, from the outputs' exact bytes at
+an offset (`native_cpu_bytes::output_byte_at`):
+
+- a reader: each arm at its closer, and its `other` rule;
+- a last: its output at the token's end;
+- a pair rule: its first byte where no second follows, and each
+  second.
+
+For `.rr`, the string, the comment and the backtick literal end
+plainly. A digit, `#`, a word byte and `(` do not.
+
+```
+// The comment's reader, from the grammar:
+//   line  = line_open .. lf outside   -> the byte after is `\n`
+//   block = block_open .. block_end   -> its last byte is `/`
+//   else  `/` alone (a pair rule)     -> `/` is no pair's first
+```
+
+**The change.** The rule's fact is a bit of its first byte's entry
+(`TOKEN_PLAIN_END`). A rare start's token body branches on it once,
+after the entry's load, as the lean lexer's `match` picks an arm.
+Each class (`Side::Rare(Some(plain))`) gets its own rule table,
+holding only its rules, and its own tail. The plain class's tail
+has no put-back.
+
+Not taken: one tail, with a branch on the bit after the join. In
+that source both tails' work meets in one block and is picked by a
+select, so every rare token does both. Lean's arms each end their
+own token. The decision comes before the join, as lean's does.
+
+Also dropped: the rare tail ORed the run's `rest` into its starts.
+A rare start's starts are `rest` already (`run_done`'s). The OR
+only kept `rest` live across the call.
+
+Stepped, a string and its comma: 216 (lean 223). The starts left
+after the string are `lsr; lsl; ldr; cmp; csel` (lean: `cmp; b`,
+then the mask). Counts, reported: words 105.8, punctuation 53.2,
+mixed 56.2, strings 297.3, numbers 173.0, comments 271.9.
+
+Around the call, the reloads after it (three loads, two constants,
+the table's address) are about lean's: its `starts`, its window's
+words and the reader's result are in memory too.
+
+## A number puts back a run byte alone
+
+**Intro.** Lean's number arm asks one question after the digits:
+is the next byte a word byte (`CLASS[b[end]] & IDENT`)? If so, it
+reads that word. Ours still put back both kinds of left-out start
+after a number, a run byte and a pair's second, and checked for a
+run of pairs across the token's end. That is 14 instructions, with
+two words loaded from the stack.
+
+A pair's second is left out only after a pair's first byte. A
+number never ends with one: its last byte is a digit.
+
+**What the compiler knows.** A rule's tokens' last bytes
+(`last_bytes`), from the grammar:
+
+- a reader's closers at their offset, its opener's bytes where none
+  closes, and the rule it goes on to;
+- a run's first byte, and the bytes the run can end with;
+- a pair's first byte and its seconds.
+
+The bytes a run can end with (`run_last_bytes`) leave out an `Or`
+term whose next byte is surely in the run. In `.rr`'s number:
+
+```
+mask num_run = digit | (dot & prev(digit) & next(digit))
+// a dot has a digit after it: it never ends the run.
+// The number's last bytes: digits.
+```
+
+Where no last byte is a pair's first (`word_end`), the rule's tokens
+take a third form, `TokenEnd::Word`. Its tail puts back the byte
+after the token where it is a run byte (`w & bit`), with no reread.
+After a last byte that is no run byte, that bit is a start already,
+so it changes nothing. The form is the entry's `TOKEN_WORD_END`.
+That bit is free on a rare byte, which has no punctuation code. The
+rare body branches on it after the plain bit.
+
+For `.rr`, the number and the `#` word take it.
+
+Stepped, a number and its comma: 193 → 187 (lean about 128; the
+number's reader is 69 of ours, lean's digit loop is inline). The
+tail after the number is 9 instructions: the mask (2), the run byte
+put back (4), the block (3). Counts, reported: words 105.8,
+punctuation 53.2, mixed 56.2, strings 297.5, numbers 166.6,
+comments 272.2.
+
+## A rare start's rule by its first byte
+
+**Intro.** Lean's rare tokens are a `match` on the first byte, and
+each arm has its own tail. Ours had three steps:
+
+- load the entry, its index with the pair bit (`TOKEN[c | pair << 8]`);
+- test the class bits (plain, word);
+- switch on the rule, a second time, inside the class.
+
+**The change.** The rare side's rules are one `rule_last`, with an
+exit per class (`TokenEnd`). Each rule's arms go to its class's
+exit, and each exit gets its own tail. The rule's block comes from
+a table on the first byte, and only rare bytes are in it: no other
+byte comes to the rare head (`mid`'s rare word). `clif_rust` writes
+a table as a `match` whose entries for one target are one arm, with
+ranges:
+
+```
+match v968 { 34 => … 35 => … 47 => … 48..=57 => … 96 => … _ => … }
+```
+
+A rule's class holds for every first byte that reaches it, so a
+reader's `other` rule takes its readers' first bytes too. The class
+bits in the entry are gone. A rare byte's entry is the same with or
+without the pair bit, so the rare side loads it by its byte alone
+(`RecordTables::rare_unpaired`).
+
+Not taken: a table over all 256 bytes, each to its own rule. Lean's
+`match` on a rare start has arms for the rare bytes only, and its
+other bytes go to one default. A table of every byte would also
+send the common bytes, which the run loop has already taken, to
+their rules.
+
+Stepped, the rare head: `add …, uxtb #3; ldr` (the entry), then
+`cmp #0x2e; b.gt; cmp #0x2f; b.eq; cmp #0x60; …; sub #0x30;
+cmp #0xa` to the number's call (lean: `cmp #0x2e; b.gt; cmp #0x22;
+b.eq`). Counts, reported: words 105.8, punctuation 53.2, mixed 56.2,
+strings 289.6, numbers 166.6, comments 268.2.
+
+## A tagging reader's exit apart
+
+**Intro.** A comment's reader tags its token (`Reader::retag`): the
+code's kind and marks, which no first byte gives. The rare class it
+shared with the string merged the comment's tag with the string's
+"none" (`-1`), so the tail tested for a tag after the join.
+
+**The change.** A rare class is keyed by how its tokens end and by
+whether its reader tags (`Side::Rare(Some((end, tagged)))`). In a
+tagged class whose readers give one tag, and whose tests all hold at
+each token an arm reads (`TokenCheck::always`), the tag and the hits
+are the compiler's constants where the tag says an arm read it
+(`tag_known`). `.rr`'s comment is such a reader:
+
+```
+after comment when count(line_open | block_open) at least 1
+// always: the comment's first byte is its opener
+```
+
+**What is left.** The marks' merge after a comment is the grammar's:
+the mark goes to the token after it (`json_bad`), into the loop's
+`pending`. Lean has no such mark. The comment's function also reads
+`/` alone (`Reader::other`), so the two met at the tail's `coded`, and
+the constants did not reach the merge. That is undone in "Each arm
+writes its own token" below.
+
+Tried and dropped: the last and the tag as signed halves of the
+returned word, to take each out by one sign extension. A comment's
+tag has its marks in its high bits and does not fit an `i32`, so
+every rule call went back to four words through memory
+(`packs`).
+
+Counts, reported: words 105.8, punctuation 53.2, mixed 56.2,
+strings 287.6, numbers 164.6, comments 267.2.
+
+## A string's tests in its read loop
+
+**Intro.** The lean lexer's `string_end` makes its escape test in
+the scan that finds the closing quote. Each 64-byte window gives the
+quote, the escapes and the test's bits together:
+
+```rust
+// lean (micro.rs): one loop, the test ORed in a window at a time
+let (esc, out) = escaped(blk.eq(b'\\'), carry);
+let quote = blk.eq(b'"') & !esc;
+u |= esc & blk.eq(b'u') & below(quote);
+```
+
+Ours found the quote first. Then a gate read the token's bytes again
+for any byte the tests need, and a second function (`tests_fn`) read
+them a third time to count. That form was kept over the loop form
+on an instruction count. It is undone here because it is not lean's
+shape: three passes over a string's bytes where lean has one.
+
+**The change.** `read_fn` passes the tests' outputs to
+`words_carried` with the closer's, so each window makes them all.
+A window with no closer goes into the accumulators whole. The
+closer's window goes in up to the closer, `x ^ (x - 1)`. A test of
+one byte ORs its words, like lean's `u`. A test of two or more
+counts them (`popcnt`). The short reader's inline first window
+(`RuleMode::Short`) does the same, so there is no gate there either.
+
+```rust
+// generated (tier1_aot.rs, the string reader), a window:
+v73 = v72 & v21;              // the closer, unescaped
+v147 = (v93 | v145) & v21;    // the test: a control byte, or a bad escape
+if v73 != 0 {                 // the closer: its window's test bits to it
+    v157 = v11 | (v147 & (v73 ^ (v73 - 1)));
+    return (close, ((v157 != 0) as u64) << 28);
+}
+v150 = v11 | v147;            // no closer: all of it, the next window
+```
+
+**Its condition (`tests_in_read`).** The loop starts after the
+opener, so no test may hold at the opener's byte. The proof is
+`native_cpu_bytes::never_both`. Each `Or` term of the test needs a
+byte the opener never has there, or needs a value the opener
+excludes. `.rr`'s test is `control | (escaped(\) & !valid)`. Its
+opener is `" & !escaped(\)`. The byte sets alone can't show it,
+since an escaped byte can be any byte. The second term needs
+`escaped(\)`, and the opener excludes it. The token's last must also
+be the closer's (`off` 0). Otherwise the gate and `tests_fn` stay.
+
+**What is left.** The grammar's test is wider than lean's. Lean
+looks for `\u` only, one compare a block. `.rr` marks a string with
+any escape that needs unescaping, or a control byte (`After(12)`).
+That is a compare, a two-table nibble class, and one more movemask a
+window. The tape must be the engine's, so the predicate stays.
+
+Tests: `the_cpus_records_are_the_interpreters` gains a test byte
+right after the closer in its window, and the next string's `\u` in
+the same window.
+
+Counts, reported: words 105.8, punctuation 53.2, mixed 56.2,
+strings 323.3, numbers 164.6, comments 267.2.
+
+## A count test asks what it asks
+
+**Intro.** Lean's number arm asks one question about a `.`: is there
+one, with a digit after it? It never counts. rr's grammar asks two
+questions at a number: at least one `.` (a float) and at least two
+(an error). Ours answered both with one count. Each lane in the set
+was a 1, the halves were added, and a multiply summed their bytes.
+Then came a compare with each threshold. That form was kept over a
+bitmask form because the two cost the same, which is a count's
+reason. The tests are predicates, so they are lowered as predicates.
+
+**The change.** Where a token fits one vector (`exact`), each set's
+bytes are made by what its tests ask:
+
+- at least one: any lane in the set (`needs_some`), `m != 0`;
+- at least two: the lanes' bitmask (`bitmask`), more than one bit
+  set, `m & (m - 1) != 0`;
+- more than two: the count, as before.
+
+```rust
+// generated (tier1_aot.rs, the number's rule), the dots in the token:
+v54 = movemask(dot & in_token) & 0xffff;
+v56 = v54 & v54.wrapping_sub(1);         // at least two: refused
+v60 = v27 | (((v56 != 0) as u64).wrapping_neg());
+v64 = v34 | (((v54 != 0) as u64) << 16); // at least one: a float
+```
+
+Also, a hit is a 0 or a 1 put in place. `hit_into` shifts it to its
+mark's bit, or negates it into the refusal. Before, every hit was
+made all ones (`sextend`, `ineg`) and then masked to its bit.
+`tests_fn` and the read loop already put a hit in place this way.
+
+Tests: `a_numbers_checks_are_at_its_token` and
+`chained_floats_go_to_the_engine` (`1.2.3`, `10.25.5`).
+
+Counts, reported: words 105.8, punctuation 53.2, mixed 56.2,
+strings 323.2, numbers 160.6, comments 267.2.
+
+## Each arm writes its own token
+
+**Intro.** Lean's `/` arm has three outcomes: a line comment, a
+block comment, or the `/` punctuation. Each one writes its own token,
+with its kind known in that branch. Ours had one function for the
+class (the comment's reader, and `/` alone as its `other` rule), and
+one tail after it. The comment's tag and hits were constants
+(`tag_known`), but they were passed into the tail's `coded` block
+with the `/`-alone token's run-time values. The marks' merge then
+worked on the joined values, and the `/` alone looked itself up in
+the word table.
+
+**The change.**
+
+- **A known tag's own tail (`known_tail`).** Where a tagged class's
+  tag and hits are the compiler's, its tagged tokens go to a block of
+  their own. The tail is built again for that block, with the code
+  and the hits as constants made in it. The merge's test
+  (`pending | hits`) and the extra's selects then fold.
+- **A punctuation's code by its byte, in a rare class.** The lone `/`
+  is a pair rule's token (`EndRule::Next`): its code bits are given
+  by its first byte and its length, which is how the fused pair
+  rule's tokens get theirs (`TOKEN_PUNCT`). `punct_codes` now covers a
+  byte whose rule is a pair rule, or whose reader's `other` is one.
+  In a tagged rare class whose bytes all have such codes, the token
+  that is not tagged takes them: one load and a select, no word
+  probe. The codes in the entries (`punct_in_entry`) stay the fused
+  rule's alone.
+- **No word to look up.** A rare class none of whose first bytes
+  starts a word (`TOKEN_WORDY`, by the bytes the rare table sends to
+  its rules) gives its code as the kind. That is the string class
+  (`"`, `` ` ``).
+
+```rust
+// generated (tier1_aot.rs), the `/` arm after its call:
+if tag >= 0 {                  // a comment: its own tail
+    v1365 = 2147483648;        // its code, the compiler's
+    v1366 = 268435456;         // its hits (`json_bad` after it)
+    if (pending | v1366) != 0 { /* the merge, its constants folded */ }
+} else {                       // `/` alone: its code by byte and length
+    v1307 = load(entry + punct);
+    v1310 = if len > 1 { v1307 >> 32 } else { v1307 & 0xffff_ffff };
+}
+```
+
+Tests: `the_cpus_records_are_the_interpreters` gains a `/` alone at
+a block's edges, at the file's end, and beside both comments.
+
+Counts, reported: words 105.8, punctuation 53.2, mixed 56.2,
+strings 325.2, numbers 161.0, comments 253.2.
+
+## A block's gap marks stay in its words
+
+The lean lexer keeps a window's masks for the whole window. Ours
+made a block's gap-mark word (`json_bad`'s form feed, an `eq(12)`
+mask) at the refill and then dropped it. Only a flag
+(`GAP_FLAG`) stayed.
+
+The next refill needed that word again. A form feed after the last
+token's first byte belongs to the next grammar token, so the refill
+folds the bytes from there to the block's end into the marks so far.
+It did that from the bytes: a loop that called the mask's function
+(`marks_in`'s slow path) once per block it covered. That ran on every
+refill, in files with no form feed too.
+
+**The change.**
+
+- **The words go to the refill.** The head already has a slot for
+  each of the block's words. A token that leaves the block now passes
+  its gap marks' words there, where it passed zeros before.
+- **The refill folds them.** The last token started in the block the
+  loop left. Its bits past that start are `word & (!0 << start)`,
+  taken where the start is inside that block and before the block the
+  refill reads.
+- **Only crossed blocks by the bytes.** The bytes after that block,
+  up to the one read now, are blocks a token crossed. Those alone go
+  through the slow path, and its range test skips it when there are
+  none.
+- **A wait keeps them.** A part's head carries no words, so a token
+  that waits stores the marks so far with the carried bits already
+  in them.
+
+```rust
+// generated (tier1_aot.rs), the refill:
+v250 = start & 63;
+v253 = (v250 != 0) & (start < block_q * 64);   // the start's block, passed
+v255 = gap_word & (!0 << v250);                // carried from the head
+v260 = pending | (((v255 != 0) & v253) << 12); // json_bad's bit
+// then the slow path from the next block, empty unless a token crossed
+```
+
+Tests: `the_marks_tests_are_the_masks` gains pads 61 to 63, which put
+the last start at its block's end. With the carried bits dropped, the
+test fails. No rr test makes a token wait, because each of rr's reads
+is from the bytes, so the wait's fold is not tested.
+
+Counts, reported: words 101.1, punctuation 52.9, mixed 55.1,
+strings 306.2, numbers 158.0, comments 231.2.
+
+## A word past its block reads a few bytes on
+
+When a word reaches the end of the lean lexer's window, `word_end`
+reads on a byte at a time and writes the token at once. A word rarely
+goes on past more than a few bytes of the next block.
+
+Ours read the next block's whole word mask for this. That was a call
+to the mask's function over 64 bytes, and then the refill made the
+same mask again for that block.
+
+**The change.** Where the run's output comes from the bytes, the run
+past its register word reads the next block's first 16 bytes with one
+vector (`Bytewise::short_word`), as the number rule's run already
+does. A run that is still going after those 16 bytes goes on to the
+whole words, as before. Blocks stay aligned, and the token is written
+where it ends, as lean writes it.
+
+Not done: carrying the open token to the next block's refill, which
+would finish it from that refill's own word mask. It would remove the
+16-byte read too. But it would move the token's tail out of its block,
+past the waits and the gap marks' attribution, and the lean lexer
+does not do it.
+
+```rust
+// generated (tier1_aot.rs), a word past its block:
+v726 = vld1q_u8(bytes + next);           // the next block's first 16
+v744 = movemask(word class of v726) & 0xffff;
+v747 = (!!v744).trailing_zeros();        // the run's bytes there
+if v747 < 16 { last = next + v747 - 1 }  // else the whole words
+```
+
+Tests: `the_cpus_records_are_the_interpreters` gains words that go 1,
+15, 16, 17 and more bytes past their block, and words that end the
+file. With the last byte off by one, the test fails.
+
+Counts, reported: words 96.5, punctuation 53.9, mixed 55.2,
+strings 306.1, numbers 158.0, comments 231.2.
+
+## A number's tests from its run's window
+
+The lean lexer's number arm finds its `.` while it reads its digits,
+in one pass over the bytes.
+
+Ours read a number's bytes twice. The run (`short_word`) read the
+window from the token's second byte, with the `.` lanes inside its
+own expression (`digit | (dot & prev digit & next digit)`). Then the
+count tests (at least one `.`, at least two) loaded the token's bytes
+again from its first byte, compared each for `.` again, and cut the
+vector to the token's length.
+
+**The change.**
+
+- **One window for several outputs.** `Bytewise::short_words` makes
+  several outputs' 16 bits from one window. An output that is one
+  lane's instruction is read in the first output's window, with the
+  delays' difference as its lag (`Lanes::get_lagged`), so its loads
+  and compares are the first output's.
+- **The run's window gives the tests their bits (`run_tests`).** This
+  holds for a run rule read from the bytes, and its count tests whose
+  output is a byte set at its own byte (`exact`, no delay) that none
+  of the rule's first bytes is in. The token's first byte then has
+  no bit, and the window from its second byte covers the rest.
+- **The cut is the token's length.** In `tested`, such a test's bits
+  are the window's, below `len - 1`, a scalar mask. A test that asks
+  for more than two takes the popcount.
+
+```rust
+// generated (tier1_aot.rs), the number (f38):
+v30 = vld1q_u8(bytes + s + 1);
+v39 = vceqq_u8(v30, splat(b'.'));        // the run's `dot`
+v55 = movemask(digit | (v39 & …));       // the run
+v62 = movemask(v39);                     // the tests', the same lanes
+…
+v87 = v62 & ((1 << (len - 1)) - 1);      // the token's bytes after its first
+```
+
+Tests: `the_marks_tests_are_the_masks` and
+`a_numbers_checks_are_at_its_token` pass. With the cut one byte too
+long, `the_marks_tests_are_the_masks` fails. A lag one byte off
+cannot be seen in this grammar: a number's `.` is never its first or
+last byte.
+
+Counts, reported: numbers 153.0, the others unchanged.
+
+## A reader knows its first byte
+
+The lean lexer's arms are a `match` on the token's first byte, so an
+arm asks only about the bytes after it: `b'/' if d == b'*'`.
+
+Ours chose the rule by the first byte as well (`Records::ends`, the
+entry's rule and the rare table both), and the rule's function then
+tested that byte again. The string reader checked `s == '"'`. Each
+comment arm checked `s == '/'` before its second byte.
+
+**The change.**
+
+- **A rule's first bytes (`first_bytes`).** These are the bytes whose
+  end rule is `k`, plus those of a reader whose `other` leads to `k`,
+  since a reader goes on to its `other` with the same first byte.
+- **Tests of that byte fold (`Bytewise::fold`).** The scalar reader of
+  an opener (`bit_first`) is given that set. A byte test of the first
+  byte is true where the set is inside the test's, and false where
+  the two are apart. A union of byte tests at that byte is decided by
+  its whole set. A `prev` folds where the zeros before the file give
+  its bound.
+- **No operation with a known side.** An `and` with one side known
+  true is the other side, and an `or` with one side known false is
+  the other side. A `prev` whose bound the zeros give is its operand.
+  The opener's `and` starts from its first undecided conjunct, not
+  from a constant 1.
+
+```rust
+// generated (tier1_aot.rs), the comment reader (f36), its `//` arm:
+v55 = *(bytes + s + 1);                  // the byte after the `/`
+if v55 == b'/' { /* the line's end */ }
+// the string reader (f31): no `"` test, the escape before it alone
+v79 = *(bytes + s - 1);
+if v79 == b'\\' { return f30(…) }
+```
+
+Tests: `a_first_byte_decides_its_tests` checks the fold: decided,
+undecided, another byte, and a `prev`'s bound. In rr, every reader's
+arms start with the same byte, so the rr tests cannot tell a fold
+that is too wide.
+
+Counts, reported: strings 301.1, comments 228.3, the others
+unchanged.
+
+## A rule's function takes what it reads
+
+A rare token's rule is a call, by the rule that only the main loop is
+inlined. Every rule's function took the same six arguments: the
+bytes, the file's length, its blocks, the token's first byte, its
+first eight bytes and its entry. The main loop moved all six into
+registers at each call.
+
+**The change.** The arguments are in the order the rules read them
+(`RULE_ARGS`): the bytes, the token's first byte, the length, the
+blocks, the first eight bytes, the entry. A function takes the first
+of them up to the last it reads (`rule_reads`), counted in its blocks
+reached from its entry. It is built with all six, then built again
+with those. A call passes as many as the callee's signature has
+(`rule_args`), and a short function's bail passes as many as its long
+function takes.
+
+What each takes in rr:
+
+| Function | Reads | Takes, was 6 |
+|---|---|---|
+| the string (`f31`) | bytes, first byte, length | 3 |
+| a pair rule's, a run's (`f33`, `f40`) | and the blocks | 4 |
+| the number, the comment (`f38`, `f36`) | all six | 6 |
+
+The number's function reads its first eight bytes and its entry too
+(its tests' bits by its first byte), so it keeps all six. Order is a
+prefix, not a set: rule 3 reads no bytes and no blocks, and the
+comment's long function no first eight bytes, but they take them.
+
+Not changed: the values the main loop reloads after a call. They are
+live across it, more than the callee-saved registers hold.
+
+Counts, reported: unchanged but strings 302.1 and comments 228.2.
+
+## A window's classes share one lookup
+
+The lean lexer classifies a block with one table lookup. Two
+16-byte tables, one indexed by the byte's low nibble and one by its
+high nibble, are `and`ed. Each of the eight result bits is a class,
+and one `vtst` reads a class. Whitespace, a word's bytes and a rare
+token's first bytes all come from that one lookup. simdjson's
+`classify` works the same way.
+
+Our refill made three lookups. The grammar's classes took products
+(a set of high nibbles times a set of low nibbles) in order of first
+use, eight to a table. So whitespace sat in one table, a word's bytes
+in another, and the rare set in a third table of its own. The third
+also loaded the block's bytes again.
+
+**The change.** `class_pack` packs the sets a body tests into as few
+tables as it can, by four means a hand-written lexer's tables use:
+
+- **Shared products.** The digits are one product, used by a word
+  and by a rare start.
+- **Don't-cares.** A byte the body never asks about may be in a set
+  or out of it. The rare set is only read at starts, so a skipped
+  byte's answer is free.
+- **Ranges.** A run of bytes, wrapping past 0xff, is one subtract
+  and compare. The control bytes, DEL and every byte past 0x7f are
+  one test.
+- **Complements.** A set whose complement takes fewer products is
+  tested by it.
+
+A set's products are in one table, so a set is one lookup.
+`body_pack` packs the classes a window's values read. A class whose
+table a `pair` reads keeps that table. The packing is dropped where
+it would make more lookups than the program's own tables.
+`Bytewise::words_with` makes extra sets' words in the same window.
+The refill tests the rare set that way.
+
+```text
+before: lookup A (whitespace), lookup B (word), load again,
+        lookup C (rare)
+after:  lookup 1 (whitespace), lookup 2 (word and rare, 8 bits),
+        one range compare (rare's control and high bytes)
+```
+
+rr's three sets take ten products, so they need two tables. Lean's
+take eight, because its rare set is narrower: our grammar's rare
+starts include `$`, `'`, `?`, `\` and DEL.
+
+A class is the bit test itself where the backend has one
+(`BIT_TEST`). Rust's NEON has `vtstq_u8`, and `clif_rust` prints
+`(x & m) != 0` as one. Cranelift's aarch64 lowering has none, so the
+JIT keeps the compare with zero and the free complement. The
+ahead-of-time build sets the flag (`rr_aot_gen`, and `aot()` when it
+checks the fingerprint).
+
+Tests: `class_pack`'s seven (a lexer's classes in one table, a shared
+product, a wrapping range, don't-cares merging rows, a complement,
+a second table past eight, random sets answered exactly);
+`a_windows_classes_share_one_lookup` (two program tables and an
+extra set: eight swizzles, each word its set's, on random bytes);
+`bits_against_zero_are_one_test`.
+
+Counts, reported: words 99.3, punctuation 54.3, mixed 55.9,
+strings 314.3, numbers 154.5, comments 236.5.
+
+## Chained pairs are read left to right only when they chain
+
+Two two-byte tokens can overlap: `=>=` is `=>` then `=`, not `=` and
+`>=`. The refill keeps each run of pair starts' bits an even way
+from the run's first, about fourteen word operations. It did that on
+every block. The lean lexer does it only where two pair starts are
+next to each other (`if pairs & (pairs << 1) != 0`).
+
+**The change.** The same test, a branch: the correction is in a cold
+block. Its inputs are tested by `the_cpus_records_are_the_interpreters`
+(runs of pairs, `=>=>=` at every pad across a block's edge).
+
+Counts, reported: words 99.0, punctuation 54.4, mixed 55.8,
+strings 313.4, numbers 153.3, comments 234.4.
+
+## A string's window is gated on its rare bytes
+
+Most strings have no `\` and no control byte. The lean lexer finds
+the quote first, then asks one question: is there a `\` or a control
+byte below it? If not, the string ends at the quote, with no escape
+math and no tests. Our reader always did all of it: the escape's
+run math, a movemask for each test, and the counts after.
+
+**The gate** (`Bytewise::zero_gate`). For the outputs a read makes
+(its closer first, then its tests), the compiler picks byte tests
+whose being false at every byte makes each test false and each
+escape none. A test that is a byte test is taken whole, because its
+own set is the narrowest. For an `and` it takes the cheaper side,
+for an `or` both sides, and for an escape its run. It never picks a
+test whose zero would make the closer none, and it gives up where a
+test reads a byte before the window (a `prev`). `known_if_zero` says
+what is then known.
+
+```text
+closer = '|' and not escaped('^')     gate: '^', digit, '~'
+tests  = digit, '@' then '~'          ('@' then '~': '~' alone)
+```
+
+**The paths** (`Bytewise::words_gated`). The gate's bytes are one
+set, packed with the read's classes (`class_pack`), so one test and
+one movemask cover them. The quick path makes the outputs with the
+gate's values assumed false (`Lanes::assuming`), so they become
+constants. The whole path makes them as before. The code after the
+read is built once on each path, with no join.
+
+**Prefix.** An output's bit at a byte depends only on that byte and
+those before it. A reader looks at its words only up to the closer.
+So the gate needs to hold only up to there: the closer is made
+assuming the gate's zeros, and the gate is tested at and below its
+first bit. Testing the whole window took the slow path on almost
+every string, because the bytes after a string usually include a
+newline.
+
+**Folding** (`clif_fold`). The quick path's constants still flowed
+into an `and`, a count and a compare. Neither the JIT (Cranelift
+runs without its optimizer here) nor the printed Rust folded them.
+`clif_fold::fold` runs on every function before either backend:
+
+- operations with constant operands become constants, at their
+  width;
+- an operation one constant operand decides becomes that constant
+  or the other operand (`x & 0`, `x | 0`, a `select`);
+- a branch on a constant becomes a jump;
+- blocks no longer reached and pure operations no longer read are
+  removed.
+
+Also in this step:
+
+- a range test with low byte 0 is one compare;
+- a range is compared once per chunk;
+- a set's parts in one table are one bit test;
+- `clif_rust` no longer prints the `and` that a `vtstq_u8` absorbs.
+
+Tests: `a_gate_is_the_rare_bytes_the_tests_read` (a made-up grammar,
+`|` escaped by `^`, with digit and `@`-then-`~` tests; no gate where
+a test needs the closer's byte); `the_gated_words_are_the_words`
+(JIT, random bytes, both modes: the same words and carries as
+ungated, both paths taken, no escape overflow on the quick path);
+`clif_fold`'s four (a count of none folds through its branch,
+widths, a deciding constant, effects and reached blocks kept);
+`bits_against_zero_are_one_test` (no `and` printed).
+
+Counts, reported: words 99.0, punctuation 54.4, mixed 55.8,
+strings 268.4, numbers 153.3, comments 234.4. With the gate tested
+over the whole window, strings were 344.4.
+
+## What a callee always returns, its caller knows
+
+A rule function returns two words. The first packs the token's last
+and its tag, `(last + 1) | (tag + 1) << 32`, and the caller unpacks
+both. The string's function never retags (its tag is always none, so
+its field is always 0), yet the caller shifted and subtracted it out
+on every string. The comment's hits word was ORed with a constant
+bit, so the "any hit" test was always true, and its merge block,
+marked cold, ran on every comment.
+
+**Known bits** (`clif_fold`). The fold now tracks, for each value,
+the bits known zero and the bits known one, not only whole
+constants:
+
+- the bit logic and constant shifts carry them;
+- a widened 32-bit value has its high half zero;
+- an `and` with ones wherever its operand may have a one is that
+  operand;
+- a compare for equality is decided where a known bit differs;
+- a branch is decided where a bit is known one.
+
+**Joins.** A block parameter that every branch passes the same
+value, or the same constant, becomes that value. A block whose only
+way in is its predecessor's jump is joined to that predecessor, so a
+branch that folds into a block marked cold leaves no cold block on
+the hot path.
+
+**Across calls** (`clif_fold::returns`, `fold_all`). A function's
+summary is what every `return` knows of each result. A call's results
+get the callee's summary. The block compiler defines callees before
+their callers, and it folds each function with the summaries of those
+defined before it. The stream folds its functions together until the
+summaries settle. `pack_rule` states the packing's own contract: the
+last's field is 32 bits (`ireduce`, then `uextend`). The caller then
+knows the tag's field is exactly the tag.
+
+```text
+before: r = f31(..); l = (r & 0xffffffff) - 1; tag = (r >> 32) - 1
+after:  r = f31(..); l = r - 1                  ; tag: -1, a constant
+```
+
+Two details found on the way:
+
+- a cached flow graph made before the fold is dropped before the
+  backend compiles;
+- an operation with one constant operand takes the immediate form
+  only for a 32-bit immediate, as a wide constant may be an address
+  that `clif_rust` places.
+
+Tests:
+- `a_parameter_every_branch_gives_alike_is_that_value`;
+- `known_bits_decide_an_and_and_a_shift`;
+- `a_callees_known_results_are_its_callers` (a callee whose tag is
+  none in both returns: the caller's shift is a constant and its
+  `and` is gone);
+- `a_known_bit_decides_a_test_and_its_cold_block_joins`.
+
+Counts, reported: words 101.4, punctuation 54.9, mixed 56.2,
+strings 266.4, numbers 151.3, comments 233.4.
+
+## A token's gap is tier 2's; the refill keeps its block
+
+The lean lexer has no gap marks. It asks whether a token is on a new
+line only where a statement asks (`on_line`), and it checks a JSON
+document's bytes only where it reads one.
+
+Ours still made one gap mark in tier 1: `json_bad`'s form feed (a
+form feed between tokens marks the next one). Three of the
+differences from lean came from it:
+
+- every refill compared each byte with 12 and made a movemask of
+  the result;
+- the gap's first byte was read back from the record before (one
+  past its first byte);
+- after a comment, a cold function (`f6`) read the comment's bytes
+  again for form feeds.
+
+The mark was eager only because it also has token tests (`after
+string when …`, `at number when …`). An earlier step had made the
+marks without tests lazy, and left this one.
+
+**The change.**
+
+- **A mark's tests stay in tier 1; its gap goes to tier 2.**
+  `lazy_marks` now takes marks with token tests too. `lazy_coded`
+  lists them. Their tests' hits stay in the code bit, set by the token
+  loop as before, the way a lexer flags what it reads. The gap is
+  tier 2's: the outlined test reads the token's code bit first, then
+  scans the bytes from the grammar token before. The JIT
+  (`lazy_mark`) and the printed Rust (`rust_stream`) both do this.
+  A mark with tests and an `unless after` stays the loop's, since the
+  word before also decides its tests' hits.
+- **The choice is the compiler's, by target.** Metal's tier 1 still
+  sets every mark in the codes, because the GPU makes all of a block's
+  marks at once. The CPU's loop leaves the gaps to tier 2.
+- **The refill keeps its block, as lean's `base`.** With no gap mark in
+  the loop, the state's `from` word was free. The refill now stores
+  the block after the one it read there (`spent_q`). The refill skips
+  a spent block when the cursor's block is the one it read. Before,
+  it read the last record's start back to learn the same thing.
+  The skip used to need the gap marks folded; now it also runs when
+  there are none in the loop.
+
+```rust
+// lean.rs, the window loop:
+base = cursor.max(base + 64);
+// generated (tier1_aot.rs), the refill:
+spent = state_from == (cursor >> 6) + 1;   // the block just read
+q = if spent { (cursor >> 6) + 1 } else { cursor >> 6 };
+```
+
+This reverses an earlier choice (journal 35) to read the cursor back
+rather than carry it. That choice was made on counts. Lean keeps the
+value in a register, and so do we now.
+
+Tests:
+- `the_marks_tests_are_the_masks` now checks the CPU's codes against
+  a grammar with `json_bad`'s tests alone (`ff` made `empty`). It
+  also runs the CPU's tier 2 on every case, so a form feed in a gap
+  must refuse there.
+- `the_loop_reads_no_record_back` asserts `PassShape::reads_back` is
+  zero. With the eager mark restored it fails.
+- The other code comparisons leave out the lazy marks' bits on both
+  sides.
+
+Found on the way: two corpus files of 500 KB are refused by the CPU's
+tier 2 and taken by the interpreter, with or without this change
+(open item `O-tier2-large-file-refusal`).
+
+Counts, reported: words 98.1, punctuation 53.3, mixed 55.0,
+strings 264.0, numbers 156.5, comments 229.4.
+
+## A short run is read in its arm
+
+The lean lexer reads a number inside its main loop. The number is an
+arm of the `match` on a rare token's first byte: it reads the digits
+and the `.` there, then writes the token.
+
+Ours called a function for every number. That was the run rule's
+short form (`RuleMode::Short`, f38): a 16-byte window at the token,
+then the run's end and the count tests from the same lanes, and the
+whole function only for a longer run. The loop saved and reloaded its
+live values around each call.
+
+Two shapes were weighed:
+- **Block words.** The refill makes the number's run and its tests'
+  words for every block. Lean makes no such word, so every block
+  would pay for them.
+- **The arm.** The short form's body goes in the arm, as lean's.
+
+The user chose the arm.
+
+**The change** (`rule_last`'s `arm`):
+
+- **Which rules.** In the loop's calls mode (`RuleMode::Calls`), a
+  run rule from the bytes that has a short form (its whole function,
+  `LONG_CALL`) gets that form's body in its arm. The window, the end,
+  and the tests that `run_tests` gives are as they were in f38.
+- **A long run** calls the whole function. The arm unpacks its
+  results like any call's and goes on to `done`.
+- **No short function.** None is made or declared for such a rule:
+  only the whole one is.
+- **Readers keep their call.** Lean's string calls `string_end` too.
+- **Calls mode** now also holds when the only calls are whole
+  functions (`LONG_CALL`).
+
+```rust
+// generated (tier1_aot.rs), the loop's rare `match`:
+48..=57 => { break 'm50; }          // a digit: the number's arm
+// …
+v977 = vld1q_u8(s + 1);             // its 16 bytes
+v983 = vcleq_u8(v977 - b'0', 9);    // digit
+v986 = vceqq_u8(v977, b'.');        // the run's `.`, the tests' too
+// …
+v1078 = (!run).trailing_zeros();    // the run's end
+if v1078 < 16 { /* the token, the `.` counts from v986's bits */ }
+else { /* the rule's whole function */ }
+```
+
+Three short functions are gone (24 functions to 21). `PassShape::arms`
+counts the rules read in their arm.
+
+Tests:
+- `a_short_run_is_the_loops_arm`;
+- `a_numbers_checks_are_at_its_token`, which reads the long path: a
+  number across a block's edge, and one longer than a block;
+- `the_cpus_records_are_the_interpreters`, with a word right after a
+  number (`12abc`) and `1.5x`.
+
+Counts, reported: words 99.2, punctuation 54.3, mixed 56.1,
+strings 264.0, numbers 133.5, comments 233.4.
+
+## A short window's mask is one narrowing shift
+
+simdjson's arm64 code makes a 16-byte compare into a mask with one
+narrowing shift (`shrn #4`): four bits a lane, in a 64-bit register.
+
+Ours made a 16-lane mask the way it makes a 64-lane one. It took an
+`and` with the lane weights, three pairwise adds, a lane move and an
+`and` with `0xffff`. The number's arm builds two such masks a token.
+
+**The change.**
+
+- **The nibble mask** (`short_mask`). On NEON it is a bitcast to
+  16-bit lanes, a shift right by four, an `and` with `0xff` (so the
+  narrowing never saturates) and an unsigned narrowing.
+  - The JIT compiles that sequence as it stands.
+  - `clif_rust` finds the sequence (`narrowing_shift`) and writes it
+    as one `vshrn_n_u16::<4>`. The steps it covers are not printed.
+  - On other targets the mask stays one bit a lane (a movemask):
+    `SHORT_STRIDE` is 4 on aarch64 and 1 elsewhere.
+- **Where it applies** (`short_stride`). A short window's masks are
+  nibble masks only where every output is made of lanes, their
+  lane-wise logic and `prev`s.
+  - A `prev`'s cut shifts by four bits a lane.
+  - A constant's pattern or an escape's run sums read bit positions,
+    so a window with one of those keeps one bit a lane.
+- **The consumers count in lanes.**
+  - The run's end is `lanes_set`: `ctz(!m)`, divided by the stride.
+  - The cut at the file's end and at the token's length is
+    `lanes_below`: `n` lanes, all 64 bits at 16 lanes of four.
+  - A count that asks for more than one keeps one bit a lane first
+    (`& 0x1111…`), then `m & (m - 1)` or the popcount.
+  - The vector count of a token's bytes (`needs_lanes`) is the same.
+
+Found on the way: a complement taken twice (`!!m`, where a negated
+lane value met a `bnot`). `clif_fold` now folds a complement's
+complement to its value.
+
+```rust
+// generated (tier1_aot.rs), the number's arm:
+v1005 = { let d = vshrn_n_u16::<4>(vreinterpretq_u16_u8(v999)); vcombine_u8(d, d) };
+v1007 = vgetq_lane_u64::<0>(vreinterpretq_u64_u8(v1005));   // the run, 4 bits a lane
+v1089 = (!v1007).trailing_zeros() >> 2;                      // its lanes
+```
+
+Tests:
+- `a_short_windows_lanes_are_its_words_bits` (JIT): every lane of
+  each short mask is its word's bit; a lane's four bits are alike; the
+  lanes set and the first five lanes agree. Outputs are a class, a
+  `prev`'s logic, and an escape's (one bit a lane).
+- `a_narrowing_shift_is_one_shrn`: one `vshrn_n_u16`, with no 16-bit
+  `and`, shift or pairwise add beside it.
+- `a_complements_complement_is_its_value`.
+
+Counts, reported: words 99.1, punctuation 54.4, mixed 56.1,
+strings 263.6, numbers 129.6, comments 233.1.
+
+## A token's length is its run's lanes
+
+Lean's number arm keeps one `end` and writes `end - start` where it
+needs a length.
+
+Our arm worked the length out as `(s + n) - s + 1`. Then each test
+branched on `len >= 1`, which is always true. The cut at the token's
+length multiplied by four and kept a select for "all 64 bits", though
+a token of at most 16 lanes never reaches it.
+
+**The change.**
+
+- **`clif_fold`, algebra.** `(c + x) - c` and `(x + c) - c` are `x`.
+  Two adds of constants are one add, or the value itself where they
+  cancel.
+- **`clif_fold`, ranges.** A count of bits (`ctz`, `clz`, `popcnt`)
+  has its bits above 7 known zero. An unsigned compare is decided
+  where its operands' ranges decide it (`urange`, `range_compare`). A
+  range comes from known bits, and from an add of a constant that
+  cannot wrap.
+- **`lanes_below` takes the most lanes it can be asked for.** The
+  select is made only where that many lanes reach 64 bits, and a lane's
+  bits are a shift (`<< 2`), not a multiply. `tested` passes the
+  token's bound less its first byte.
+
+```rust
+// generated (tier1_aot.rs), the number's tests, after:
+v1087 = (!run).trailing_zeros() >> 2;               // its lanes
+v1034 = dots & ((1 << (v1087 << 2)) - 1);           // its `.`s
+v1035 = v1034 & 0x1111_1111_1111_1111;              // one bit a lane
+// before: v1023 = (s + v1087) - s + 1; if v1023 >= 1 { … select(bits >= 64, !0, …) }
+```
+
+Tests: `a_sum_less_its_operand_is_the_other` and
+`a_range_decides_an_unsigned_compare`.
+
+Counts, reported: unchanged (rustc had folded them in its own pass).
+
+## A full window is not cut
+
+**Intro.** A window reads 64 bytes. Near the file's end some of them
+are past it, so its bits there are cut off. Lean's `block` pays for
+this only on the last block: it tests `i + 64 <= len` and pads the
+tail alone. Ours cut every window, with a shift and a select.
+
+**The change.** `cut64` (and `word`, which now uses it) tests
+`p + 64 <= len`. A full window keeps all its bits. The tail's mask is
+made in a cold block, joined after.
+
+```rust
+// generated (tier1_aot.rs), the line comment's first block, after:
+if p + 65 <= len { cut = !0 } else { cold_path(); cut = (1 << max(len - p, 0)) - 1 }
+// before, on every window:
+// rem = max(len - p, 0); cut = if rem >= 64 { !0 } else { (1 << rem) - 1 };
+```
+
+This is the fallback. Where a file's zero padding makes the cut
+nothing, it goes away (the next section).
+
+Test: `a_full_windows_word_is_not_cut`.
+
+Counts, reported: comments 234.0, strings 266.0.
+
+## A padded window is not cut
+
+**Intro.** simdjson asks for padded input: zeros after the text, so a
+read past the end is safe and finds nothing. The user asked for the
+same here. A window that reads past the file's end then reads zeros.
+An output that is false on a zero byte has no bits there, so it needs
+no cut at all: a line comment's `\n`, a string's unescaped quote, a
+digit class.
+
+**The change.**
+
+- **The layout.** `BACK` (256) zero bytes follow every file's last
+  byte. This covers the CPU's `Batch` and a resident source's slab
+  (`SOURCE_MARGIN`, was 64; a slab is mapped zeroed). 256 is Metal's
+  widest window (64 bits a lane, 32 lanes). Whether 64 would do is
+  open (`O-padding-width`).
+- **The compiler.** `Bytewise::padded(o)` says whether output `o` is
+  false on a zero byte at its delay (`zero_kills`). Such an output's
+  word is its mask, with no cut. A window cuts only where one of its
+  outputs, extra sets or gate needs it (`cut_for`, `zero_free`).
+- **`zero_kills`.** It now knows `a & !b` is false where `a` is, as
+  for a closer not escaped.
+
+```rust
+// generated (tier1_aot.rs), the line comment's first block, after:
+v86 = vgetq_lane_u64::<0>(…);          // the `\n`s, a movemask
+v87 = v86.trailing_zeros() as u64;
+if v86 != 0 { /* the comment's end */ } else { return f34(…) /* next block */ }
+// lean (micro::find): let s = block(b, i).eq(x); if s != 0 { return Some(i + s.trailing_zeros()) }
+```
+
+An output true on a zero byte keeps the cold cut (the section
+before).
+
+Tests: `a_padded_windows_word_is_not_cut` (the window never reads the
+file's length), and `a_full_windows_word_is_not_cut` (zeros past the
+end, then text past the padding).
+
+Counts, reported: comments 224.1, strings 261.7.
+
+## The padding is the compiler's input
+
+**Intro.** The padding is the application's promise, not the
+compiler's choice. An application may want less of it (a smaller
+copy, a file read in place) and pay a rare branch at the file's end
+instead. So the compiler takes it as an input.
+
+**The change.**
+
+- **`BlockNative::pad`.** The zero bytes after every file that the code
+  may count on. It is `BACK` (256) by default, and the application may
+  set it before compiling. Tier 1, tier 2 and the AOT build read it
+  from the same program.
+- **`pad_reach`.** The bytes past the end a window may read (start,
+  64 bytes, delays, a 16-byte over-read). `Bytewise::padded` holds only
+  where `pad` covers that reach. Otherwise every window takes the cold
+  cut of "A full window is not cut".
+- **The layout follows the program.** `CompiledBlock::pad` tells
+  `Batch` how many zeros to lay out. Metal's tier 2 asserts the slab's
+  margin covers it.
+- **`rr_parser::compile_padded`.** It compiles the grammar with a
+  given padding.
+
+Tests: `a_padded_windows_word_is_not_cut` (at `BACK`, at the reach,
+one less, and none), `a_full_windows_word_is_not_cut` (text right
+after the end, with no padding), and
+`an_unpadded_programs_tapes_are_the_padded` (the corpus, the same
+tapes).
+
+Counts, reported: unchanged (the default's source is the same).
+
+## A rare arm writes its own token
+
+**Intro.** In the lean lexer each `match` arm writes its own token,
+and its kind is a constant there. Ours sent several arms into a
+shared tail per class of ending. That tail tested a loaded table
+entry at run time: `& 255` for the kind, `& 65536` for "look the
+token up as a word", `& 262144` for a number check. So a number ran
+the word lookup's test, and `#`'s lookup sat behind a flag.
+
+**The change.**
+
+- **One arm, one tail.** A rare class is now one rule's (`RareClass`:
+  its end, its tag, its rule; `NO_RULE` for the bytes with none). Each
+  arm has its own exit and its own tail.
+- **The arm knows its entry.** `rare_bytes` gives the first bytes that
+  reach a rule: the table's, and those a reader with no opener goes on
+  from (`first_bytes`). Where they all share one entry (`rare_entry`),
+  the entry is a constant in the arm (`rule_last`) and in its tail. The
+  tail's tests of it fold.
+- **Not where a byte's pair bit is in its entry** (`by_pair`): there
+  the entry is not the byte's alone.
+
+```rust
+// generated (tier1_aot.rs), the rare match, after: each arm ends in its own
+//   continue 'b11; the hash probe is in `#`'s arm alone, unconditional;
+//   a number's tail has no word lookup.
+// before: 35 => { …; break 'm66 }  48..=57 => { …; break 'm66 }
+//   'm66: … if entry & 65536 != 0 { /* hash probe */ } …
+```
+
+Left, and right to be: the number arm's `& 262144` (`0`'s entry is
+not the other digits'), and the cold arm of bytes with no rule.
+
+Test: `a_rare_arm_knows_its_entry` (`PassShape::known_entries`).
+
+## A reader's short form is read in its arm
+
+**Intro.** The lean lexer's `b'/'` arm tests the byte after. For `//`
+it scans in place (`find` is inlined), and for `/*` it calls
+`find_pair`. Ours called a short function (`f35`) for every `/`. That
+function read one block and tail-called the whole reader. The arm
+then unpacked a (last, tag, hits) word to learn what had been read.
+
+**The change.**
+
+- **The reader's arm.** A reader rule with a short form
+  (`RuleMode::Short`, its whole function `LONG_CALL`) is built in the
+  loop's arm, as a run's has been. Its openers' tests, its first
+  window, and its tests run there. A read past the window calls the
+  whole function (`long_out`), and the results go on to the arm's
+  exit.
+- **No short functions.** The short form is built once only, to see
+  that it calls nothing but its whole function. The branch that made
+  short functions is gone.
+- **An arm's body in a block of its own.** The entry constant (the
+  section before) goes before it, since `tested` expects the rule's
+  block empty.
+
+```rust
+// generated (tier1_aot.rs), the `/` arm, after:
+47 => { if b[s+1] == b'/' { /* 64 bytes: eq '\n', movemask, ctz */
+          if m != 0 { last = s + 1 + ctz - 1 } else { cold_path(); f33(…) /* the whole reader */ } }
+        else if b[s+1] == b'*' { /* first block of `*/` */ … } … }
+// before: 47 => { cold_path(); let t = f35(…); /* unpack last, tag, hits */ … }
+```
+
+Test: `a_readers_short_form_is_the_loops_arm` (`PassShape::arms`).
+Functions 21 to 19.
+
+## A refusal leaves the loop
+
+**Intro.** A refused file goes to the fallback parser. Tier 2 never
+reads its records; the only thing anyone acts on is its refusal flag.
+The lean lexer, on a refusal, writes its `BAD` token and leaves its
+loop (`break 'read`). Ours set the file's flag and read on to the end.
+
+**The contract (the user's, 2026-11-16).** A refused file's flag is
+set. Its records are the same on every backend up to its first
+refusal; past it they are unspecified.
+
+**The CPU.** A refusal jumps out of the loop to its end (`finish`)
+with the refusal set, which sets the file's flag (`record_end`):
+
+```rust
+// in outline, the refusal (a cold block), after:
+if wrong < 0 { cold_path(); break 'loop /* to finish, refused */ }
+// before: if wrong < 0 { counts[x] |= 1 } /* and on to the next token */
+```
+
+**Metal** cannot leave a loop mid-file, but it stops what it can,
+with no wait and nothing done on the host:
+
+- **The record pass** (one file over 64 lanes) stops at the first
+  token refused. The lane that finds it publishes `~n` (the tokens
+  coded) with an atomic max, and each lane reads that word before
+  each token and stops past it. A file already refused by a mask
+  total (`serial_prefix`'s flag) codes no token. The codes read back
+  end there.
+- **The runs again.** Each check (`serial_check`) also records, per
+  file, its first segment listed and its first segment agreeing
+  with a total set, by the check's parity. A total before the first
+  listed is in a final segment, so the runs again (`lanes_again`)
+  find the file refused and run none of its segments. Later checks
+  list none of them. `SerialRun::dropped` counts them. With the
+  scans' carries exact (the default), Metal's first pass is already
+  right on this grammar and lists nothing; with them speculated
+  (`RERAIL_SERIAL_CONE=0`) the drop holds.
+
+**Tests.**
+
+- `the_cpus_records_are_the_interpreters`: on a refused file, the
+  flags agree and the CPU's records are a prefix of the
+  interpreter's.
+- `tier1_on_metal_equals_cranelift`: the same between Metal and the
+  CPU, before the first total's bit.
+- `a_refused_files_records_stop_on_metal`: refused by a mask total
+  (no code), by a token (codes to it, the CPU's), and strings over
+  many segments refused in the first (dropped, with the carries
+  speculated).
+
+## The string, `/` and number arms read like lean's
+
+**Intro.** Side by side with the lean lexer, three arms still did
+work lean's do not:
+
+- the string arm tested the byte before its quote (`b[s-1] == '\\'`)
+  and on a `\` called the escape carry's function, before its window;
+- the `/` arm, on a `/` alone, called a function for its pair test,
+  then hashed the token into the word table;
+- every rare arm's tail took `max(last, start)`.
+
+**The changes.**
+
+- **What can be before a token** (`before_start`). With the loop's
+  starts, the byte before a token's first byte is a gap byte or the
+  last byte of the token before. Each rule says what its last byte
+  can be: a run's run, a pair's second, a reader's closer at `off`
+  (`bytes_at`, the bytes at an offset of an output, through `prev`s
+  and delays). A reader whose closer starts right after its last (a
+  line comment's `\n`) is before a token only that closer's byte
+  starts. A byte with no rule refuses and leaves the loop. The first
+  byte's fold (`Bytewise::fold`) uses it: `escaped(a)` at a `"` is
+  none, since no `\` can be right before one. The opener's carry
+  folds away.
+- **A pair rule is read in its arm.** A pair rule with no tests
+  (`EndRule::Next`) gets no function of its own; the loop reads its
+  row and the next byte's bit inline, as lean's `TOKEN` table.
+- **A pair rule's class is punctuation.** Its code comes from the
+  punctuation table by length, with no word hash, as lean's
+  `tok!(SLASH)`.
+- **No `max` where the last is never below the start**
+  (`last_below_start`). Only a reader arm that ends with no closer
+  at `s - 1`, or a `Last` rule without the loop's starts, gives a
+  last below the start. A refusal leaves the loop.
+
+```rust
+// generated, the string arm's head, after:
+34 => { /* the window from s + 1, cut where past the file */ … }
+// before:
+34 => { if b[s - 1] == b'\\' { cold_path(); carry = f3(…) } if carry == 0 { /* window */ } … }
+```
+
+Tests: `a_strings_arm_reads_nothing_before_its_quote`,
+`a_slashs_arm_is_leans` (the generated Rust, `rr_aot`). Functions 19
+to 18.
+
+
+## A number's run ends as lean's
+
+**Intro.** Lean's number arm runs the digits, then asks the two
+bytes at the run's end:
+
+```rust
+// lean.rs, the number arm
+while end < n && CLASS[b[end] as usize] & DIGIT != 0 { end += 1; }
+if end + 1 < n && b[end] == b'.' && b[end + 1].is_ascii_digit() {
+    end += 2;
+    while end < n && CLASS[b[end] as usize] & DIGIT != 0 { end += 1; }
+}
+```
+
+The rule says the same thing as one run: a byte of the number is
+`digit | (. & prev(digit) & next(digit))`. Our arm computed that for
+all 16 bytes at once. It loaded three windows (the bytes from `s`,
+`s + 1` and `s + 2`) so that every byte had a `prev` and a next.
+
+**The change** (`Bytewise::run_split`). A run's output that is an
+`Or` with exactly one term that tests its own byte (the digits) is
+split:
+
+- **The term's run** comes from one window, as lean's `while digit`.
+- **The other terms** are asked only where that run ends
+  (`rest_after`), by scalar loads. The term itself is known false
+  there and is not asked. The byte before is known to be in the
+  term's set or the token's first byte, so the rest's
+  `prev(digit)` folds away. What is left is lean's
+  `b[end] == b'.' && digit(b[end + 1])`.
+- **On past it**, the term's run continues from the same window's
+  mask: one shift and one `ctz`, lean's second `while`. The rest's
+  next byte is always one of the term's (`split_before_again`), so
+  the byte before the second end is known too.
+- **A token past the window**, or a second `.`, takes the whole
+  rule's way, as before.
+- **The count tests** (the `.` count) read the same window. The
+  token's lanes cut them, as before.
+
+Two scalar helpers changed with it:
+
+- **A test of a byte range** is now a subtract and a compare, as
+  `is_ascii_digit` is. The set's word was kept before because of an
+  instruction count, not because lean's source reads that way. That
+  decision is reversed on shape.
+- **Each byte is read once** among one scalar test's terms
+  (`byte_once`).
+
+```rust
+// generated, the number arm, after: one window from s + 1
+let w = vld1q_u8(b + s + 1); let digits = mask(w - b'0' <= 9); let dots = mask(w == b'.');
+let n = ctz(!digits) / 4; let e = s + 1 + n;
+if b[e] == b'.' && b[e + 1] - b'0' <= 9 { let n2 = n + 1 + ctz(!digits >> 4 * (n + 1)) / 4; … }
+// before: three windows
+let w0 = vld1q_u8(b + s); let w1 = vld1q_u8(b + s + 1); let w2 = vld1q_u8(b + s + 2);
+let run = d(w1) | (w1 == b'.') & d(w0) & d(w2); …
+```
+
+Test: `a_numbers_arm_reads_one_window` (the generated Rust, `rr_aot`).
+
+Two older `rr_aot` tests checked the short functions' shape. Those
+functions are the loop's arms since "A reader's short form is read in
+its arm", and the tests have failed since then:
+
+- **`a_returned_call_is_the_return`** moved to `clif_rust`'s own
+  tests, on a two-function module.
+- **`a_short_tokens_function_calls_only_its_whole`** became
+  `a_short_tokens_arm_calls_only_its_whole`. It checks the string's
+  and the `/` arms instead.
+
+## A number knows its `.` by its branch
+
+**Intro.** Lean's number arm writes `FLOAT` in the branch that took
+the `.`, and `NUM` in the other. Ours took both ways into one tail.
+There it built a `.` mask over the window and counted it, to set the
+float mark and refuse a second `.`. Its leading-zero test
+(`0` then a digit) was gated on a bit of the dispatch's entry, cold.
+It loaded `b[s]` and `b[s+1]`.
+
+**The changes.**
+
+- **Counts by way** (`split_counts`). On a split run's two inline
+  ways, the token's bytes are known: the term's run, or the term's,
+  the rest's one byte and the term's again. A count whose bytes are
+  none of the term's or the first byte's has count 0 on the first
+  way. On the second way it is 1 or 0, by whether the rest's byte
+  is one of the counted bytes. Each way enters the tests' tail
+  (`tested`'s `rest`) with its refusal and marks as constants. No
+  `.` mask is made (`run_outs` is empty).
+- **Tests of the token's bytes by the run's lanes**
+  (`Bytewise::bit_on_run`). A test of the first byte that also asks
+  bytes `s + j` of exactly the term's set reads the term mask's lane
+  `j - 1`. It reads no byte past the first and needs no gate, as
+  lean's `b[pos] == b'0'` would.
+
+```rust
+// generated, after
+if b[e] == b'.' && b[e + 1] - b'0' <= 9 { …; marks = FLOAT } else { marks = 0 }
+marks |= ((b[s] == b'0') & (digits & 1)) << LEADING_ZERO;
+// before
+let dots = mask(w == b'.') & below(len - 1); if dots & (dots - 1) != 0 { refuse }
+marks = (dots != 0) << FLOAT;
+if entry & LEADING_ZERO_MAY != 0 { cold_path(); if b[s] == b'0' && digit(b[s + 1]) { … } }
+```
+
+Test: `a_numbers_arm_reads_one_window` (no `.` compare, no count,
+one cold path).
+
+## The next start is the block's, not the token's
+
+**Intro.** On short tokens, tier 1 ran lean's instruction count at a
+lower IPC. Words, punctuation and mixed code ran at IPC 2.4–3.2,
+against lean's 4.0–5.0. Long tokens did not: strings and comments
+matched lean. That pointed at a chain from token to token.
+
+The loop's next start was `(end + 1) & !63` plus the next start bit.
+So each start waited on the token before it: the byte load, the
+table entry's load, the run's `ctz`, the select of the end. Lean's
+is `base + q`, where `base` is the window's. Its tokens in one window
+are independent, and the core overlaps them.
+
+**The change.** The block's base is a block register
+(`BlockRegs::base`, the refill's `q64`). The inner loop's next start
+is `base + ctz(left)`. Starts are left only while the cursor is in
+the token's block (`left` is cut to none otherwise), so the two are
+equal wherever the loop goes on.
+
+```rust
+// generated, the run loop's tail, after
+let next = base + left.trailing_zeros();
+// before
+let next = ((end + 1) & !63) + left.trailing_zeros();
+```
+
+Measured, as information (cycles a token, AOT ÷ lean, the same
+heavily loaded machine): punctuation 1.31–1.59 → 1.11, mixed code
+1.56–1.68 → 1.11–1.18, words 1.27–1.36 → 1.18–1.23. Numbers did not
+move. Their end comes from a 16-byte load at `s + 1`, a compare, a
+narrowing shift, a lane move and a `ctz`, about 15 cycles of data
+dependency. Lean's `while digit { end += 1 }` is one add a digit,
+its branch predicted. A block-level digits mask would take the load
+off the chain. This file's "one run word a block" decision keeps
+the number's run off the block, for its rarity. That tradeoff is
+open.
+
+Test: `the_next_start_is_the_blocks` (the generated Rust).
+
+## A number's run: three forms tried
+
+**Intro.** After the next start stopped waiting on the token before
+it, numbers were still about 1.5× lean's cycles at the same
+instruction count. A number's end came from a 16-byte load at
+`s + 1`, a compare, a narrowing shift, a lane move and a `ctz`. That
+is about 15 cycles of data dependency, and the next start waits on
+it. Lean's `while digit { end += 1 }` is one add a digit: its branch
+is predicted, so the core runs ahead.
+
+The user asked for both ways to be tried: lean's byte loop, and the
+digits word made once a block. One switch chooses
+(`RERAIL_RUN_FORM`, `native_cpu_block::run_form`).
+
+- **`window`** (the default): the 16-byte vector, as before.
+- **`block`**: the split's term set is one more byte set in the
+  refill's window (`words_with`'s extras, beside `rare`), kept as a
+  block register (`BlockRegs::terms`). The run is
+  `ctz(!(word >> (sh + 1)))`, up to the block's end; a run past that
+  takes the long way. Tokens of up to 64 bytes are inline.
+- **`bytes`**: lean's two `while` loops, a byte at a time. Their
+  heads are `Step::Bytes`, the one loop the shape guard accepts that
+  steps bytes, and only in this form. The zero bytes past the file
+  end the loop, since zero is not in the set.
+
+Each form passes the CPU vs interpreter, corpus tapes, Metal vs
+Cranelift, number checks and AOT vs JIT tests.
+
+Measured, as information (cycles a token, AOT ÷ lean, two runs each,
+load average 40–65):
+
+| | window | block | bytes |
+|---|---|---|---|
+| numbers | 1.45, 1.66 | 1.00, 1.18 | 1.00, 0.97 |
+| numbers, instructions a token | 101.7 | 108.6 | 138.8 |
+| words, instructions a token | 94.2 | 96.7 | 97.9 |
+| strings, instructions a token | 232.7 | 241.1 | 228.8 |
+
+`block` adds the term's word to every block's refill, used or not:
+about 8 instructions more a string and 2.5 a word. `bytes` adds
+nothing a block, and its loop is lean's source.
+
+Metal's tier 1 has no such arm, so none of these forms changes it. A
+byte loop in a GPU lane would diverge from its neighbours; a block
+mask is what a GPU makes anyway. If Metal gets a number arm, the
+`block` form is the one to try there.
+
+The default stays `window` until the user chooses.
+
+## A number's run is lean's loop
+
+**Intro.** The user chose `bytes` as the CPU's form of a split run's
+term: the generated code is lean's `while digit { end += 1 }`, and it
+costs nothing a block. `window` and `block` stay behind the switch
+(`RERAIL_RUN_FORM=window`, `=block`); `block` is the form for a
+target whose lanes must not diverge.
+
+This narrows the rule that the compiler refuses per-byte loops. The
+one byte loop allowed is a run of bytes, and the shape guard checks
+its shape rather than trusting the name (`native_cpu_shape::run_of_bytes`):
+
+- one block, whose one parameter is the position;
+- one byte load, at the position, and no store or call;
+- a branch on that byte, back to the block at the position plus one.
+
+A loop that carries more than its position (a sum over bytes), ends
+by a count instead of its byte, or steps more than one byte is still
+refused (`Refusal::Bytes`). Every other loop must still be over a
+file, a block, a token, a region or bits.
+
+```rust
+// Allowed (lean's lexer, and the generated arm):
+while b[end].is_ascii_digit() { end += 1 }
+// Refused, named Step::Bytes or not:
+for i in 0..n { sum += b[i] }
+```
+
+The run reads any length, but the arm's tests stay those of a token
+of 16 bytes at most, as in `window`: a longer number takes the whole
+rule's call, cold, as lean's `end - pos < 19 || parse()`. Without
+that cap the 19-digit test was made inline from the block's digit
+words (a call of the block-mask function). The short form then called
+something besides its whole function, so it was no arm, and every
+number called the rule's function. That is how the `bytes` form was
+first measured.
+
+Measured, as information (one run, load average high): numbers 112.8
+instructions and 19.2 cycles a token, lean's 107.3 and 22.5. The
+other kinds are as before.
+
+The leading-zero test (`0` then a digit) was briefly a cold check
+again, gated by the entry and reading `b[s]` and `b[s + 1]`: the byte
+loop has no mask whose lane it could read. Now each way's end gives the
+tests' tail one more value, whether the first `while` ran a turn (the
+byte after the first a digit), and `bit_on_run` reads it as a mask of
+one known lane (`RunLanes::known`: the window's 16, the loop's 1). The
+test is `b[s] == b'0' & ran`, inline:
+
+```rust
+let ran = (end != pos + 1) as u64;          // the first `while` took a turn
+let lead_zero = (b[pos] == b'0') as u64 & ran;
+```
+
+Numbers then 113.3 instructions, 17.1 cycles a token (lean 107.3,
+22.7), as information.
+
+Tests: `native_cpu_shape::tests::only_a_run_of_bytes_is_a_bytes_loop`;
+`a_numbers_arm_is_leans_loop` (the generated Rust: two `loop`s, no
+vector load, one call, cold), which replaces `a_numbers_arm_reads_one_window`.
+
+## A token's end is lean's `max`
+
+**Intro.** In the run loop, lean takes a token's length as
+`words.max(n1)`: the run of word bits from its first byte (none at a
+punctuation's) and the table's length (1, or 2 for a pair). There is one
+branch, for a word that runs to the block's end. Ours branched on the
+entry's two fused-rule bits, made a pair's last and a run's last (the
+run from the byte after), branched again on "a run, past the block",
+and chose one last by a `select` on the pair bit.
+
+Where the loop's starts are lean's (`lean_starts`, `RecordTables::lean`),
+three things hold:
+
+- a run token's first byte is a run byte;
+- a pair's first byte is not;
+- the pair word's bit is set at a pair's first byte alone.
+
+Then lean's form is exact, and `rule_last` makes it:
+
+```rust
+let words = (!(word >> sh)).trailing_zeros();   // 0 at a punctuation
+let n1 = 1 + (pair >> sh & 1);                  // 2 at a pair's first byte
+if sh + words < 64 && entry_names_a_fused_rule {
+    end = s + words.max(n1);
+}
+```
+
+The common way is the branch's first target, so the emitted Rust lays
+the run-past-the-block code after the loop's, as lean's `word_end`.
+Elsewhere the old form stays.
+
+Measured, as information: instructions a token, words 98.8 → 93.7,
+punctuation 54.2 → 51.7, mixed code 55.6 → 52.9. Words' cycles are
+unchanged (20.3 against lean's 15.7): the end's dependency chain was
+not what holds words back.
+
+Test: `a_tokens_end_is_leans_max` (the generated Rust: one branch in the
+run loop before the token's end, a `ctz`, an unsigned `max`).
+
+## A word's lookup is lean's `word_code`
+
+**Intro.** Lean's `word_code` compares a token with its slot by the
+first eight bytes and the length. It compares the ninth byte only where
+the token has nine, because its one long word, `violation`, has nine.
+Ours took a 32-byte slot whenever every word fit 16 bytes. For each
+word, straight-line, it then:
+
+- loaded the token's bytes 8 to 16 from a selected address;
+- masked them to the length;
+- loaded the slot's second key;
+- compared the two.
+
+The compiler now sizes the compare by the table's longest word
+(`RecordTables::rest`, `WordRest`):
+
+| Longest word | Form | Slot | Compared past eight bytes |
+|---|---|---|---|
+| 8 bytes at most | `None` | 16 bytes | nothing |
+| 9 | `Ninth` | 16 bytes | the ninth byte, in the meta's top byte |
+| 16 at most | `Second` | 32 bytes | the second eight bytes |
+| longer | `Tails` | 16 bytes | the tail compare, out of the loop |
+
+rr's words are `Ninth`:
+
+```rust
+let (k, meta) = slot(key ^ len);
+let hit = (k == key) & (meta & 0xff == len)
+        & ((len != 9) | (b[s + 8] == (meta >> 56) as u8));
+let code = if hit { meta >> 8 & (1 << 48) - 1 } else { 0 };
+```
+
+The ninth byte is read past a shorter token, in the zeros after the
+file (`BACK`), as lean reads its window's.
+
+Measured, as information: words 93.7 → 87.6 instructions a token.
+Numbers rose 113.3 → 118.8 with their arm's Rust unchanged: rustc's
+code for the loop around it, not the arm's source.
+
+Test: `a_words_lookup_is_leans` (a 16-byte slot, no second key read,
+the ninth byte asked at nine); `the_word_multiplier_is_a_literal` now
+asserts `WordRest::Ninth`.
+
+## A token's record is written once, at its end
+
+**Intro.** Lean writes a token once it knows all of it:
+`out.add(len).write(Tok { start, end, kind, word })`. Ours stored the
+start at the token's head, the last once the rule had it, and the code
+at the tail. `write_record` now stores all three at the tail, adjacent,
+where rustc pairs them as it does lean's fields.
+
+First tried: the start and last packed into one 64-bit store
+(`l << 32 | s`). That cost the shift, mask and `or` that lean's struct
+write does not pay. Words went 87.6 → 90.8 instructions a token and
+comments 187.7 → 198.6. Plain adjacent stores left the pairing to rustc.
+
+Nothing reads the current record before its end. `after_last_start`
+reads the record before the cursor, or at the first token reads the
+cursor's and drops it by a `select`.
+
+Measured, as information (instructions a token, before → after):
+
+| Kind | Before | After |
+|---|---|---|
+| Words | 87.6 | 86.7 |
+| Punctuation | 51.3 | 50.2 |
+| Mixed code | 52.8 | 51.8 |
+| Numbers | 118.8 | 117.4 |
+
+Test: `a_tokens_record_is_written_once` (three adjacent stores in the run
+loop). `a_numbers_arm_is_leans_loop` now ends the arm where its whole
+rule's call joins it, not at the record's first store, which is past
+the tail now.
+
+## A block's bytes are classified as lean's window
+
+**Intro.** Lean classifies each 16 bytes of a block once: one lookup in
+its low-nibble and high-nibble tables gives eight bits, and SPACE, WORD
+and RARE are each a `vtst` of some of them (`micro.rs`). Its digits bit
+serves both a word and a number's first byte. Its pair mask makes the
+bytes after each 16 with `vextq_u8::<1>(x, v[k + 1])`, not a second load.
+
+Ours took two lookups a vector, the space set in a table of its own, and
+eight loads for the pair mask (`+0`, `+1`, `+16`, `+17`, …). Two causes,
+both in generic code:
+
+- **The packer (`class_pack::plan`) chose a set's range by the bytes it
+  covers,** not by the products the rest then needs. The word set's tie
+  between `A-Z` and `a-z` went to `A-Z`, which leaves four products
+  where `a-z` leaves three (`_` and `P-Z` share a row). The packer then
+  took the word set's complement, and the three sets needed nine
+  products, one more than a table holds. Now every longest run of
+  allowed bytes is tried (`ranges`), and the cover decides.
+- **Of forms adding as few products,** the packer now takes the one
+  whose new products the sets after it can share (`serves`). The word's
+  digits stay a product, not a range, so the rare set's digits reuse
+  it, as lean's `C_DIGIT`.
+
+Space 2 products, word 3 and a range, rare 3 more, the digits shared and
+a range: 8 products, one table, one lookup a vector.
+
+The pair mask (`pair_word`) loads the block's four vectors and one past
+it, and makes each next-byte vector by a `shuffle` of two of them.
+`clif_rust` emits a shuffle whose mask is sixteen bytes in a row as
+`vextq_u8::<N>`; any other is a `vqtbl2q_u8`, as before. The lanes'
+`prev` shuffles are rows too, so they become `ext` as well.
+
+Our rare set is larger than lean's. It also holds `$ ' \ ?`, the control
+bytes and `0x7f..`, as the grammar's rare starts are. Lean tests its
+non-ASCII bytes by `x >= 0xc0`; ours are in a range, and the word set
+has one too: two compares where lean has one.
+
+Measured, as information (instructions a token, before → after):
+
+| Kind | Before | After |
+|---|---|---|
+| Words | 86.7 | 85.0 |
+| Punctuation | 50.2 | 48.3 |
+| Mixed code | 51.8 | 49.9 |
+| Strings | 234.3 | 237.6 |
+| Numbers | 117.4 | 121.8 |
+| Comments | 186.9 | 189.7 |
+
+Tests: `class_pack::a_lexers_sets_are_one_table`;
+`the_refill_is_leans_window` (one table's lookups a vector, the pair's
+next bytes an `ext`, no vector load at a block's byte after).
+
+## A test of the byte after asks no bound
+
+**Intro.** Lean reads `b[pos + 1]` where the file's bytes after its end
+are zeros; it never compares with the length there. Ours tested a `-`
+not before a digit as `'-' & !(digit(b[s + 1]) & within(1))`. The
+`within(1)` at `s + 1` asks whether byte `s`, the token's own first
+byte, is in the file. It cost a reload of the length, a compare with
+it, and a guard against overflow.
+
+`native_cpu_bytes::scalar` now gives a `within` that asks about the
+anchor's own byte (`i - d` is `p`) as the constant 1. Its callers make
+this sound. `bit_first` and `rest_after` cut their bit by `p < len`,
+or `zero_kills` proves the output false at a zero `p`, and `zero_kills`
+never counts a `within`.
+
+The run loop's other leftovers from the earlier list are gone with the
+steps before. The pair bit is made once. The `mov` shuffle around the
+ninth byte's compare went with `WordRest::Ninth`. In the steady loop the
+marks reach the code by one `orr` of the test's hit. The pending marks'
+merge (`orr …, lsl #16`) is only in the loop's first, rotated copy. The
+`-` test's filter is one `tbz` on the entry's bit, as before.
+
+Measured, as information (instructions a token, before → after):
+
+| Kind | Before | After |
+|---|---|---|
+| Words | 85.0 | 86.7 |
+| Punctuation | 48.3 | 50.3 |
+| Mixed code | 49.9 | 51.8 |
+| Strings | 237.6 | 231.9 |
+| Numbers | 121.8 | 113.1 |
+| Comments | 189.7 | 185.0 |
+
+Only the `-` test's code changed. The other rows moved by rustc's code
+for `f0` as a whole, as before.
+
+Test: `a_tests_next_byte_asks_no_bound`.
+
+## The next block waits on no token
+
+**Intro.** Lean's next window is `base + 64` whatever its tokens did:
+only a rare token or a word across the block's end moves its cursor. So
+the core loads and classifies the next block while the current block's
+tokens are still being written. Ours chose the next block from the
+cursor, the end of the token before. Every refill's loads therefore
+waited for the end of the block's last token, and the token chain and
+the refill ran in series.
+
+**How it was found.** Words took 18.6 cycles a token against lean's 15.5,
+at fewer instructions.
+
+- **Not branches.** Instruments' CPU Counters (bottlenecks mode) showed
+  the same front-end and mispredict shares as lean (about 2% and 3%).
+  Ours had 48% "processing" (back-end) to lean's 34%.
+- **Per block, not per token.** On lines of exactly 64 bytes, so that
+  every block is the same, ours matched lean only where no word was
+  looked up. Lean without its lookup ran 13.1 cycles a token, ours 16.5
+  at the same instruction count: about 27 cycles a block.
+- **The cause.** In the assembly, the refill's block index was
+  `cinc x15, (end >> 6), eq`, from the last token's end, and its vector
+  loads used it.
+
+**Fix.** The IR already chose the block by a branch on `here` (the token
+ended in the block already read): `h[4]`, the spent block's next, held in
+a register, else the cursor's block. Built as a `select`, LLVM kept the
+data dependency. Built as a branch with a cold arm, LLVM folded it back
+into a `csel`: `cold_path` alone does not stop that.
+
+`clif_rust` now writes every cold block as `cold_path()` and an empty
+`asm!` (`COLD`). The `asm!` emits no instruction and touches no memory
+or flags, but LLVM does not speculate it, so the arm stays a branch, as
+the IR has it.
+
+This is what a cold block means in the compiler's IR: its work is off the
+hot way. A folded cold arm puts its inputs on the hot way. The marks'
+merge in the token tail was folded the same way, and is a branch now too.
+
+Measured, as information (cycles a token, lean in brackets):
+
+| Kind | Before | After |
+|---|---|---|
+| Words | 20.1 (15.7) | 17.8 (15.4) |
+| Punctuation | 9.1 (9.0) | 8.9 (8.8) |
+| Mixed code | 10.0 (9.0) | 9.3 (8.8) |
+| Strings | 65.4 (84.6) | 62.4 (84.0) |
+| Numbers | 17.9 (22.9) | 17.6 (22.6) |
+| Comments | 68.7 (68.8) | 64.8 (68.4) |
+
+Instructions a token fell by 1–8 (words 86.7 → 83.1). On a 64-byte line
+of words that look up nothing, ours is 14.8 against lean's 15.5.
+
+What is left of the words gap, about 2.4 cycles a token:
+
+- **The lookup.** It costs ours about 2.9 cycles a word and lean about
+  2.1. With the hash's multiply and slot load taken off the chain (an
+  experiment, wrong results), most of the difference went.
+- **The base loop.** Without lookups, ours is 14.8 cycles a token
+  against lean's 13.1.
+
+Test: `a_cold_block_stays_a_branch` (every cold block carries the
+`asm!`).
+
+## The word lookup's chain is lean's
+
+The lookup's chain, from a word's length to its hit, was two
+instructions longer than lean's. Each one was a form LLVM could not
+shorten.
+
+The key cut: `cut_to` shifted all ones down by `-(8 * n)`, mod 64.
+LLVM turns that into `(56 * n) & 56`, three instructions. Lean writes
+`u64::MAX >> (64 - 8 * len)`, which LLVM makes `lsl #3; neg`. The cut
+is now `64 - 8 * n` (`irsub_imm`), the same amount mod 64:
+
+```rust
+// before: let sh = f.ins().ineg(bits);
+let sh = f.ins().irsub_imm(bits, 64);
+```
+
+The slot's length and ninth byte were cut from the meta word after its
+load (`and #0xff`, `lsr #56`). Now each is a byte load of its own, as
+lean's `ldrb`s, ready as soon as the meta's load:
+
+```rust
+let mlen = f.ins().uload8(types::I64, ro, sa, 8);
+let want = f.ins().uload8(types::I64, ro, sa, 8 + (NINTH_SHIFT / 8) as i32);
+```
+
+Tried first and dropped: printing register shifts in 64 bits instead of
+`as u32`. The machine code stayed the same; the multiply comes from the
+negation.
+
+Measured, as information: a word's lookup costs 2.9 cycles, from
+3.1 (lean's: about 2.1). Words: 17.8 → 17.2 cycles a token (lean
+15.4–15.9). All-keyword lines: 17.7 → 16.9. Instructions a token: words
+83.1 → 82.5, the other kinds within 0.1.
+
+Test: `a_words_lookup_is_leans` (the slot's bytes loaded alone, no key
+cut by a negated shift).
+
+The base loop is still open: 14.3 cycles a token on a line of words
+that look up nothing, against lean's 13.1 without its lookup. Two
+leads were checked and are not the difference:
+
+- **The masks' reload.** The run loop's first copy reloads the
+  refill's two masks with one `ldp` from the stack. On this core, an
+  `ldp` of data just stored takes about 7 cycles from store to use, and
+  two `ldr`s about 2 (a 3-instruction asm loop: single loads are
+  forwarded almost free, pairs are not). But the next block's masks do
+  not wait on this block's, so the reload is not loop-carried, and lean
+  reloads a pair the same way.
+- **The first byte's entry.** It is two instructions and a load after
+  the token's bytes, as lean's.

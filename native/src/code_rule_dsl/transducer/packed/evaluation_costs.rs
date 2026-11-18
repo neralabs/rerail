@@ -4,7 +4,7 @@
 //! - **Steps** are the transducer's work units, the same on the CPU JIT and on Metal (each counts what it charges
 //!   against the budget, `TaskStatus::reserved`) and on every machine. So a rate is a program's, not a machine's.
 //! - **A task's size** is its subtree's nodes, and for a program that tests text, its root's bytes over eight: a
-//!   text test's steps grow with the bytes it reads (Q19's clause).
+//!   text test's steps grow with the bytes it reads (Q49's clause).
 //! - **The prediction** is the program's rate (steps per unit of size, from the store) times the task's size; a
 //!   program with no rate yet has the prior: size × words × [`PRIOR_STEPS_PER_WORD`]. Never below [`MIN_PREDICTED`].
 //! - **Observations** (an evaluation's steps, size, prediction, and whether it stopped over its budget) go to the

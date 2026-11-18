@@ -68,10 +68,17 @@ fn base_rows(f: &Fields<'_>, model: &super::super::Model, rel: &str, a: AtomRef<
         .filter_map(|(c, t)| {
             let v = match t {
                 TermRef::Int(i) => super::super::Constant::Int(i),
+                TermRef::Branded(a) => super::super::Constant::Int(a.value()),
                 _ => return None,
             };
             let name = *names.as_ref()?.get(c)?;
-            model.stats.const_freq(rel, name, &v).map(|n| n as f64)
+            // A value missing from estimated postings (`Stats::estimated`) is rare here: the demand's bar (`large`)
+            // asks whether a scan is big, and a value the counted sample lacks is not, so it counts none, as before
+            // estimates were marked. The join pricer takes such a value as unknown instead. Taken as the whole
+            // relation, or as one value's share (this model has no distinct counts for the inputs yet: the whole
+            // again), a rare field (`#f65567`, a definition's type parameters) made `tp_name` demanded, and
+            // `tp_ref`'s split made every identifier with each of its ancestors (54 M rows of a cold PostHog run).
+            model.stats.const_freq(rel, name, &v).map(|n| n as f64).or_else(|| model.stats.estimated.contains(rel).then_some(0.0))
         })
         .fold(all, f64::min)
 }
@@ -161,7 +168,7 @@ pub(super) fn candidates<'v>(f: &Fields<'v>, p: &'v Placed, model: &super::super
     for r in &rules {
         for i in 0..r.lits.len() {
             match r.lits[i].view() {
-                Lit::Atom(a) if a.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_))) => {}
+                Lit::Atom(a) if a.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_))) => {}
                 Lit::Atom(a) | Lit::Agg { atom: a, .. } => {
                     candidates.remove(r.rel(a));
                 }

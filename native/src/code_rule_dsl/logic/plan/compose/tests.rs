@@ -126,7 +126,7 @@ fn composed_queries_read_adopted_inputs_and_replace_their_versions() {
             "supplied",
             native::component::held(&db, "supplied").unwrap(),
         );
-        let mut stats = Stats::empty(&lowered.program);
+        let mut stats = Stats::empty_of_lowered(&lowered).unwrap();
         stats.measured("supplied", [("c0".into(), [1, 1, 1, 1])], []);
         let out = run_atoms_native_over(&lowered, &db, "main", stats, BTreeSet::new(), "program")
             .unwrap();

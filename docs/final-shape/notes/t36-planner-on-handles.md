@@ -807,3 +807,34 @@ ported, over the targeted tests and dl1.
     (`file_local`). Making them rewrites of the version is their own step.
   - dl1 (44 policies, profiling build): 171.0 G instructions, from 192.0 G; the findings unchanged.
   - Guard: `a_maintained_run_decodes_and_copies_no_tree` now asserts the maintained run reads no version's tree.
+
+- **The supports, the cone of requests and `locate` read no tree** (2026-11-15).
+  - `supports::supports` is made on the cross-file part's version: its strata (`Placed::components`), its fields
+    (gates, natives, lattices, nullary relations, declarations) and its rules by their handles. Each rule that keeps
+    its form is copied by its handle; each made one is written term by term (`Support::write`). A program the image
+    has no fields for keeps its form (it is maintained by delete-and-rederive). The tree path is gone. Test:
+    `each_non_recursive_rule_is_derived_through_its_support`.
+  - The cone of requests (`cone_of`) is a derivation of the part's version: `world::answers` reads the fields;
+    `answers::gate` and `answers::split` are passes on a version (the tree forms are gone, with `cone_version` and
+    `cone_parts`): the gated rules written through handles (`Out`: a literal copied, a gate's test, the negation
+    gated), the gates and answers an overlay; the split's parts views of it (`Loading::parts`). `Cone` holds the load
+    part's and the rest's versions alone, and the run reads the load part's answers, widths and inputs from its
+    fields.
+  - The cone's round program (`cone_rounds::RoundProgram::of`) is a derivation of the load part's version, made per
+    run as before but with no tree copied and no image made of one: the gates' rules left out, the gated atoms
+    ungated (`Ungated`), the file system's answers joins. Its domains are the prepared program's, which its run
+    reads (a frame's types name only which columns a forked process maps; a read checks widths); before, the frames
+    took domains inferred from the round program's tree alone.
+  - `file_local::locate` reads the split's names (`found`, `crossing`: what `assemble` computes before it makes the
+    parts), not `programs`, which imaged the whole program and made both parts to learn the file-local heads. It
+    still rewrites the prepared program's tree, as every preparation pass before the split does.
+  - What still reads a tree: the preparation's passes (`lower` through the split), on the prepared program, a tree
+    given, not a version's; the split's parts' trees beside their versions (`Tree::beside`), read by the run's other
+    paths (a run that does not maintain, the cross rounds' bounded program, the measurement aids). Deleting
+    `lower::Tree` is these readers' port.
+  - Checked: the gate's, the supports' and the split's tests (`rerail-logic`, `rerail-device-metal`), the cone and
+    loading tests, the 15 session tests, the guard. dl1 (44 policies): the same 256 output files (digest
+    `dab05eb3ae9d`) as the step before; the first run of each build 171.0 G (before) and 178.7 G (after) under a
+    load of 35–46, its spans' CPU 2.24 s and 2.14 s; four runs alternated after it, 4.6/4.5 G and 5.0/4.9 G
+    (before/after). The 7.7 G of the first run is outside every span and not seen again; not explained.
+  - Fixed on the way: `device/parity.rs`'s tests did not compile (`sym(g.pick(..))` inferred `str`).

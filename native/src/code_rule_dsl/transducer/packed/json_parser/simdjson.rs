@@ -134,7 +134,7 @@ impl TreeParser for Simdjson {
             Ok(image) => {
                 drop(span);
                 crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::SourceByte, source.len() as u64);
-                Some(image.map(FileImage::single).map_err(TemplateError::Encode))
+                Some(image.map(|image| FileImage::single(image, source)).map_err(TemplateError::Encode))
             }
             Err(why) => {
                 crate::code_rule_dsl::logic::profile::decision("JSON parse", || format!("a file simdjson refused ({why}): tree-sitter-json"));

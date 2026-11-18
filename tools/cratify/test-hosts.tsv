@@ -38,8 +38,8 @@ logic::plan::corpus::session::tests	rerail-engine
 logic::plan::corpus::tests	rerail-engine
 logic::plan::native_demand::tests::integration_tests	rerail-engine
 logic::plan::tests	rerail-engine
-logic::profile::analysis_report::tests	rerail-logic
-logic::profile::tests	rerail-logic
+logic::profile::analysis_report::tests	rerail-prof
+logic::profile::tests	rerail-prof
 logic::rr::aggregate_demand::tests	rerail-logic
 logic::rr::tape_tests	rerail-engine
 logic::rr::tape_type::tests	rerail-logic

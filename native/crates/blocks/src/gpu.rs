@@ -44,38 +44,15 @@ constant ulong NONE = 0xFFFFFFFFFFFFFFFFul;
 constant ulong SEED = 0x243F6A8885A308D3ul;
 inline ulong mix(ulong h, long v) { h ^= ulong(v); h *= 0x9E3779B97F4A7C15ul; return h ^ (h >> 29); }
 
-// A self-relative reference: the field's own address plus its offset.
-inline device char* follow(device const void* f, long off) { return (device char*)((device const char*)f + off); }
-
-// Rows: chunk k holds 2^(min_log + k) rows; row i's chunk is one clz.
-inline uint2 chunk_of(uint i, uint min_log) {
-    ulong q = (ulong(i) >> min_log) + 1ul;
-    uint k = 63u - uint(clz(q));
-    ulong first = ((1ul << k) - 1ul) << min_log;
-    return uint2(k, uint(ulong(i) - first));
-}
-inline device ColDir* rows_col(device const Rows* r, uint c) { return (device ColDir*)follow(&r->cols, r->cols.off) + c; }
-inline device char* rows_at(device const Rows* r, uint i, uint c, thread uint& w) {
-    uint2 kl = chunk_of(i, r->min_log);
-    device ColDir* d = rows_col(r, c);
-    w = d->width;
-    return follow(d, d->chunk[kl.x]) + ulong(kl.y) * ulong(w);
-}
-inline long rows_get(device const Rows* r, uint i, uint c) {
-    uint w; device char* p = rows_at(r, i, c, w);
-    return w == 4u ? long(*(device uint*)p) : *(device long*)p;
-}
+// A relation's reads are written once in CLIF (`relation_reads.metal`, generated: decision 0325); these name them as
+// the host's are. A read takes a base and the descriptor's offset from it: here the descriptor itself, at 0.
+inline device const uchar* desc(device const void* p) { return (device const uchar*)p; }
+inline long rows_get(device const Rows* r, uint i, uint c) { return long(clif_rows_get(desc(r), 0ul, i, c)); }
 inline void rows_put(device const Rows* r, uint i, uint c, long v) {
-    uint w; device char* p = rows_at(r, i, c, w);
-    if (w == 4u) { *(device uint*)p = uint(v); } else { *(device long*)p = v; }
+    device uchar* p = (device uchar*)desc(r) + clif_rows_at(desc(r), 0ul, i, c);
+    if (clif_rows_width(desc(r), 0ul, c) == 4u) { *(device uint*)p = uint(v); } else { *(device long*)p = v; }
 }
-
-inline bool dead_bit(device const Relation* r, uint id) {
-    ulong w = ulong(id >> 6);
-    if (w >= r->dead.len) return false;
-    device const ulong* d = (device const ulong*)follow(&r->dead, r->dead.off);
-    return ((d[w] >> ulong(id & 63u)) & 1ul) != 0ul;
-}
+inline bool dead_bit(device const Relation* r, uint id) { return clif_rel_dead(desc(r), 0ul, id) != 0u; }
 
 // A relation as readers see it: a base and its delta, or a full relation (base null).
 struct View { device const Relation* base; device const Relation* top; };
@@ -86,25 +63,10 @@ inline bool v_live(View v, uint id) {
     if (dead_bit(v.top, id)) return false;
     return id >= v.top->base_rows || !dead_bit(v.base, id);
 }
-inline device const Index* rel_index(device const Relation* r, uint idx) {
-    return (device const Index*)follow(&r->indexes, r->indexes.off) + idx;
-}
 // A key's group in one relation's index: (start, len) into its rows; bounded by the table's size.
 inline uint2 rel_group(device const Relation* r, uint idx, ulong h) {
-    device const Index* ix = rel_index(r, idx);
-    if (ix->buckets.len == 0ul) return uint2(0u);
-    device const Bucket* b = (device const Bucket*)follow(&ix->buckets, ix->buckets.off);
-    ulong s = h & ix->mask;
-    for (ulong n = 0ul; n <= ix->mask; n++) {
-        device const Bucket* x = b + ((s + n) & ix->mask);
-        if (x->len == 0u) return uint2(0u);
-        if (x->hash == h) return uint2(x->start, x->len);
-    }
-    return uint2(0u);
-}
-inline device const uint* rel_group_rows(device const Relation* r, uint idx) {
-    device const Index* ix = rel_index(r, idx);
-    return (device const uint*)follow(&ix->rows, ix->rows.off);
+    ulong g = clif_rel_group(desc(r), 0ul, idx, h);
+    return uint2(uint(g >> 32), uint(g));
 }
 inline View view_of(device char* b1, device char* b2, ulong base, ulong top) {
     View v;
@@ -123,9 +85,8 @@ inline uint join_row(View L, View R, constant JoinArgs& a, uint id, device const
         device const Relation* r = side == 0u ? R.base : R.top;
         if (r == nullptr) continue;
         uint2 g = rel_group(r, a.idx, h);
-        device const uint* rows = rel_group_rows(r, a.idx);
         for (uint j = 0u; j < g.y; j++) {
-            uint rid = rows[g.x + j];
+            uint rid = clif_rel_group_row(desc(r), 0ul, a.idx, g.x + j);
             if (!v_live(R, rid) || v_get(R, rid, a.rkey) != k) continue;
             long ro = v_get(R, rid, a.rout);
             if (ro == lo) continue;
@@ -168,6 +129,7 @@ pub fn source() -> String {
     let mut more = Vec::new();
     JoinArgs::deps(&mut more);
     s += &more.concat();
+    s += crate::RELATION_READS;
     s += LIB;
     s
 }
@@ -188,34 +150,30 @@ pub struct JoinRun {
 }
 
 impl Gpu {
-    pub fn new() -> Result<Gpu, String> {
-        // The process's one device and queue (decision 0100 §2): no queue of its own.
-        let shared = rerail_forest::gpu::shared::get().ok_or("no Metal device")?;
-        let device = shared.device.clone();
+    /// The join kernels on `device`, dispatched on `queue`: the process's one device and queue (decision 0100 §2,
+    /// `rerail_metal::device()`/`queue()`), which this crate, below their owner, does not make.
+    pub fn on(device: Device, queue: CommandQueue) -> Result<Gpu, String> {
         let lib = device.new_library_with_source(&source(), &CompileOptions::new())?;
         let pipe = |name: &str| -> Result<ComputePipelineState, String> {
             let f = lib.get_function(name, None)?;
             device.new_compute_pipeline_state_with_function(&f)
         };
         let (count, write) = (pipe("join_count")?, pipe("join_write")?);
-        Ok(Gpu { device, queue: shared.queue.clone(), count, write })
+        Ok(Gpu { device, queue, count, write })
     }
 
     /// The block as a no-copy shared buffer: its pages are the device's too. It covers what the block has used
     /// (rounded to 1 MiB), not its whole reservation: a command buffer's cost grows with the length of the buffers
     /// it makes resident (measured: 2 GiB wrapped cost 120 ms a join, 256 MiB 17 ms).
+    /// The block's device buffer: kept by the block, so a dispatch never pays a fresh buffer's mapping.
     pub fn wrap(&self, b: &Block) -> Buffer {
-        self.wrap_len(b, b.used())
+        b.gpu_buffer(&self.device)
     }
 
+    /// A fresh no-copy wrap of `len` bytes of the block, not kept: for measuring what keeping saves.
     pub fn wrap_len(&self, b: &Block, len: usize) -> Buffer {
         let len = len.div_ceil(1 << 20).max(1) << 20;
-        self.device.new_buffer_with_bytes_no_copy(
-            b.base_ptr() as *const c_void,
-            len.min(b.reserved()) as u64,
-            MTLResourceOptions::StorageModeShared,
-            None,
-        )
+        self.device.new_buffer_with_bytes_no_copy(b.base_ptr() as *const c_void, len.min(b.reserved()) as u64, MTLResourceOptions::StorageModeShared, None)
     }
 
     fn dispatch(&self, p: &ComputePipelineState, args: &JoinArgs, b: [&Buffer; 3], counts: &Buffer) {
@@ -267,5 +225,78 @@ impl Gpu {
         }
         run.wall_us = t.elapsed().as_micros() as u64;
         run
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block::kind;
+    use crate::relation::{RelW, Spec, freeze};
+    use std::sync::Mutex;
+
+    /// The kernels read a relation as the host does, through the reads written once (decision 0325): every row's
+    /// value in each column (a 4-byte and an 8-byte one, over many chunks), its dead bit, and its key's index group,
+    /// for a frozen base and a frozen delta of it in another block.
+    #[test]
+    fn the_device_reads_a_relation_as_the_host_does() {
+        let Some(device) = Device::system_default() else { return };
+        let spec = Spec { widths: vec![8, 4], order: vec![0], indexes: vec![vec![1]], min_log: 4 };
+        let lock = Mutex::new(());
+        let base_block = Block::anon(kind::FACTS, 16 << 20);
+        let base = Relation::create(&base_block, &spec, None);
+        let rows: Vec<i64> = (0..5_000i64).flat_map(|i| [(i * 7919) << 33 | i, i % 37]).collect();
+        RelW { block: &base_block, rel: base, lock: &lock }.extend(&rows);
+        freeze(&base_block, base, &spec, None);
+        let top_block = Block::anon(kind::FACTS, 16 << 20);
+        let top = Relation::create(&top_block, &spec, Some(base));
+        let w = RelW { block: &top_block, rel: top, lock: &lock };
+        for id in (0..base.rows.len()).step_by(13) {
+            w.kill(id);
+        }
+        w.extend(&(0..700i64).flat_map(|i| [-i - 1, 40 + i % 5]).collect::<Vec<_>>());
+        freeze(&top_block, top, &spec, Some(base));
+
+        const KERNEL: &str = r#"
+kernel void reads_probe(device const uchar* b [[buffer(0)]], constant ulong& rel [[buffer(1)]], constant uint& n [[buffer(2)]],
+                        device ulong* out [[buffer(3)]], uint id [[thread_position_in_grid]]) {
+    if (id >= n) return;
+    device ulong* o = out + id * 4u;
+    device const Relation* r = (device const Relation*)(b + rel);
+    o[0] = clif_rel_get(b, rel, r->base_rows + id, 0u);
+    o[1] = clif_rel_get(b, rel, r->base_rows + id, 1u);
+    o[2] = clif_rel_dead(b, rel, id);
+    o[3] = clif_rel_group(b, rel, 0u, mix(SEED, long(o[1])));
+}
+"#;
+        let lib = device.new_library_with_source(&(source() + KERNEL), &CompileOptions::new()).expect("the kernels compile");
+        let pipe = device.new_compute_pipeline_state_with_function(&lib.get_function("reads_probe", None).unwrap()).unwrap();
+        let queue = device.new_command_queue();
+        for (block, rel) in [(&base_block, base), (&top_block, top)] {
+            let n = rel.rows.len();
+            let at = block.offset_of(std::ptr::from_ref(rel)) as u64;
+            let out = device.new_buffer(u64::from(n) * 32, MTLResourceOptions::StorageModeShared);
+            let cmd = queue.new_command_buffer();
+            let enc = cmd.new_compute_command_encoder();
+            enc.set_compute_pipeline_state(&pipe);
+            enc.set_buffer(0, Some(&block.gpu_buffer(&device)), 0);
+            enc.set_bytes(1, 8, (&raw const at).cast());
+            enc.set_bytes(2, 4, (&raw const n).cast());
+            enc.set_buffer(3, Some(&out), 0);
+            enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(64, 1, 1));
+            enc.end_encoding();
+            cmd.commit();
+            cmd.wait_until_completed();
+            // SAFETY: the kernel wrote 4 u64s a row, and its command completed.
+            let got = unsafe { std::slice::from_raw_parts(out.contents().cast::<u64>(), n as usize * 4) };
+            for i in 0..n {
+                let id = rel.base_rows + i;
+                let key = rel.own(id, 1);
+                let group = rel.group(0, crate::key_hash(&[key]));
+                let start = if group.is_empty() { 0 } else { (group.as_ptr() as usize - rel.index(0).rows.as_slice().as_ptr() as usize) / 4 };
+                let want = [rel.own(id, 0) as u64, key as u64, u64::from(rel.dead_bit(i)), ((start as u64) << 32) | group.len() as u64];
+                assert_eq!(&got[i as usize * 4..][..4], &want, "row {id} of a relation of {n}");
+            }
+        }
     }
 }
