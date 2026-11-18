@@ -1,13 +1,18 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { loadNativeBinding } from "../../src/engine/index.js";
 import { withPacksLock } from "../../src/setup/packs-lock.js";
+import { boundWaitedWith, watchLockWaits } from "../support/processes/lock-waits.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
 import { raceForLock, raceSize, sourceModule } from "../support/processes/lock-race.js";
 
+vi.mock("../../src/engine/native/native.js", { spy: true });
+
 const homes: string[] = [];
 afterEach(() => {
+  vi.mocked(loadNativeBinding).mockReset();
   for (const home of homes.splice(0)) removeFolderSync(home);
 });
 
@@ -23,6 +28,7 @@ describe("withPacksLock", () => {
     const events: string[] = [];
     const firstHolds = Promise.withResolvers<void>();
     const firstMayEnd = Promise.withResolvers<void>();
+    const takes = watchLockWaits();
     const first = withPacksLock(home, async () => {
       events.push("first starts");
       firstHolds.resolve();
@@ -30,11 +36,14 @@ describe("withPacksLock", () => {
       events.push("first ends");
     });
     await firstHolds.promise;
-    // The second finds the lock held, or takes it once the first lets go: either way it runs after the first.
     const second = withPacksLock(home, async () => { events.push("second runs"); });
+    // The first lets go only once the second waits on the engine, so the second meets a held lock.
+    const waited = await boundWaitedWith(takes, second);
     firstMayEnd.resolve();
 
     await Promise.all([first, second]);
+    expect(waited).toBe(5 * 60_000);
+    expect(takes.asked).toEqual([5 * 60_000, 5 * 60_000]);
 
     expect(events).toEqual(["first starts", "first ends", "second runs"]);
   });
