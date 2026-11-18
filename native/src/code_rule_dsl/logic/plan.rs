@@ -7660,9 +7660,23 @@ impl<'a> Run<'a, '_> {
                     if n == 0 {
                         continue;
                     }
+                    // The group key: the aggregate atom's variables the rule's other literals share. The delta atom
+                    // that leads the line binds them, so the rest is planned from them bound.
+                    let mut key = VarSet::new();
+                    for v in body::atom_vars(a).iter() {
+                        if (0..b.len()).any(|i| i != k && b.vars(i).contains(v)) {
+                            key.insert(v);
+                        }
+                    }
                     for removing in [true, false] {
                         plan_site("the maintain mode's aggregate join");
-                        let ((order, _, _), _) = self.model.plan_rule_reused(pf, b, None)?;
+                        let order = match self.model.plan_rule_bound_by(pf, b, key.clone()) {
+                            Ok((o, _, _)) => o,
+                            Err(_) => {
+                                crate::code_rule_dsl::logic::plan::corpus::maintain::shape::driver_unled();
+                                self.model.plan_rule_reused(pf, b, None)?.0.0
+                            }
+                        };
                         self.mode_reads.clear();
                         // A changed input read in its versions, whole: what was in a removal, and in an add the
                         // aggregate's own atom now, so its columns are the delta atom's that leads the join.
