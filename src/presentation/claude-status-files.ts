@@ -35,15 +35,25 @@ const STATUS_FILE_DEPTHS: readonly TerminalEnv[] = [{ COLORTERM: "truecolor" }, 
 
 /** How often the daemon looks for a change to draw; one read of the database's change counter while there is none. */
 const CHECK_EVERY_MS = 1_000;
-/** A pass at least this often even with no change in the database: a worktree's own rule files change without one. */
+/**
+ * Every session is drawn at least this often, with or without a change in the database: a worktree's own rule files
+ * change without one, and so does what a quiet session shows (`QUIET_AFTER_MS`).
+ */
 const DRAW_ANYWAY_MS = 60_000;
 /** After a pass, the daemon waits this many times as long as it took, so drawing takes a bounded share of its time. */
 const PACE = 10;
 /**
- * How long the file of a session that ended while no daemon watched stays: the session may still run, since a daemon's
- * stop ends every open session and only the session's next event opens it again.
+ * A session with no event for this long is quiet: Claude Code runs its status line only around its own events, so its
+ * line is drawn with every session's (`DRAW_ANYWAY_MS`), not on every change. Its next event makes it active again.
  */
-const ENDED_KEPT_MS = 7 * 24 * 60 * 60 * 1_000;
+const QUIET_AFTER_MS = 30 * 60 * 1_000;
+/**
+ * A session with no event for this long gets no file: its Claude Code is taken to be gone. The database cannot say.
+ * Claude Code gives a session's end hook little time and often exits before it has run, so such a session stays open
+ * there; and a daemon's stop ends every open session, of which the ones still running open again only at their next
+ * event. A session that does go on is drawn again at that event.
+ */
+const UNREAD_AFTER_MS = 7 * 24 * 60 * 60 * 1_000;
 
 /** The text of a session's status file: its line at each depth, or nothing where it draws none (a silent footer, a repository Rerail is not on in). */
 export function statusFileText(presentation: SessionPresentation): string {
@@ -63,11 +73,14 @@ function drawnSessionIds(folder: string): string[] {
 
 /**
  * Removes from `folder` the status file of every session the database no longer records, as after `rerail reset`
- * deleted it. Returns the sessions recorded that the folder draws or that have not ended.
+ * deleted it. Returns the sessions recorded that the folder draws, and those active at or after `activeSince`; none
+ * but the folder's by default.
  */
-export function removeUnrecordedStatusFiles(folder: string, reader: Pick<SqliteSessionReader, "drawnSessions">): DrawnSession[] {
+export function removeUnrecordedStatusFiles(
+  folder: string, reader: Pick<SqliteSessionReader, "drawnSessions">, activeSince = Number.MAX_SAFE_INTEGER,
+): DrawnSession[] {
   const drawn = drawnSessionIds(folder);
-  const sessions = reader.drawnSessions(HOST, drawn);
+  const sessions = reader.drawnSessions(HOST, activeSince, drawn);
   const recorded = new Set(sessions.map(session => session.sessionId));
   for (const sessionId of drawn) if (!recorded.has(sessionId)) rmSync(join(folder, sessionId), { force: true });
   return sessions;
@@ -146,9 +159,10 @@ class StatusFileKeeper implements ClaudeStatusFiles {
       this.#queued = false;
       if (this.#stopped) return;
       const started = Date.now();
+      const everySession = started >= this.#drawAnywayAt;
       try {
         const version = this.#stores.historyVersion();
-        await this.#drawAll(started);
+        await this.#drawAll(started, everySession);
         this.#version = version;
         this.#reported = undefined;
       } catch (error) {
@@ -156,7 +170,7 @@ class StatusFileKeeper implements ClaudeStatusFiles {
       }
       const finished = Date.now();
       this.#notBefore = finished + PACE * (finished - started);
-      this.#drawAnywayAt = finished + DRAW_ANYWAY_MS;
+      if (everySession) this.#drawAnywayAt = finished + DRAW_ANYWAY_MS;
     });
     return this.#done;
   }
@@ -175,26 +189,32 @@ class StatusFileKeeper implements ClaudeStatusFiles {
     }
   }
 
-  /** One pass: a file for every session that runs, none for one that ended or is no longer recorded. */
-  async #drawAll(now: number): Promise<void> {
+  /**
+   * One pass. A session gets a file while it is open, or holds one from an earlier daemon, and had an event within
+   * `UNREAD_AFTER_MS`; one that ended while this daemon ran, or is no longer recorded, gets none. With `everySession`
+   * each of them is drawn; otherwise only the active ones (`QUIET_AFTER_MS`) and those this daemon has not drawn yet.
+   */
+  async #drawAll(now: number, everySession: boolean): Promise<void> {
     this.#sweepCutShortWrites();
-    const sessions = removeUnrecordedStatusFiles(this.#folder, this.#stores.reader);
+    const sessions = removeUnrecordedStatusFiles(this.#folder, this.#stores.reader, now - UNREAD_AFTER_MS);
     const drawn = new Set(drawnSessionIds(this.#folder));
     // A file removed behind the daemon's back is written again.
     for (const sessionId of this.#written.keys()) if (!drawn.has(sessionId)) this.#written.delete(sessionId);
     for (const session of sessions) {
-      const { sessionId, endedAt } = session;
+      const { sessionId, endedAt, lastActiveAt } = session;
       if (!STATUS_FILE_NAME.test(sessionId)) continue;
       const endedHere = endedAt !== null && this.#endedAt.has(sessionId) && this.#endedAt.get(sessionId) !== endedAt;
       this.#endedAt.set(sessionId, endedAt);
-      if (endedHere || (endedAt !== null && now - endedAt > ENDED_KEPT_MS)) {
+      if (endedHere || now - lastActiveAt > UNREAD_AFTER_MS) {
         rmSync(join(this.#folder, sessionId), { force: true });
         this.#written.delete(sessionId);
-      } else {
-        await this.#draw(session);
+        continue;
       }
+      // An ended session whose file is gone is read by nothing, unless its next event opens it again.
+      if (endedAt !== null && !drawn.has(sessionId)) continue;
+      if (everySession || !this.#written.has(sessionId) || now - lastActiveAt <= QUIET_AFTER_MS) await this.#draw(session);
     }
-    // Sessions the folder no longer draws and that are not open are no longer read.
+    // What no pass reads any more: sessions past `UNREAD_AFTER_MS` whose file is gone.
     const read = new Set(sessions.map(session => session.sessionId));
     for (const sessionId of this.#endedAt.keys()) if (!read.has(sessionId)) this.#endedAt.delete(sessionId);
   }

@@ -78,6 +78,13 @@ function recordSession(sessionId: string, cwd = workspace, rules?: number): { ho
   return session;
 }
 
+/** Records a Claude Code session whose one event was observed at `lastEventAt`, and which never ended. */
+function recordSilentSession(sessionId: string, lastEventAt: number): void {
+  const session = { host: "claude-code" as const, sessionId, cwd: workspace };
+  store.openSession(session, lastEventAt);
+  store.append({ sessionId, kind: "user-prompt", payload: {}, observedAt: lastEventAt }, session);
+}
+
 /** The session's status file as its three lines; undefined when it has none. */
 function drawn(sessionId: string): string[] | undefined {
   const path = join(folder, sessionId);
@@ -153,12 +160,12 @@ describe("the Claude Code status files the daemon keeps", () => {
 
   it("draws the file of a session an earlier daemon's stop ended, and removes the ones no session will read again", async () => {
     mkdirSync(folder, { recursive: true });
-    for (const sessionId of ["still-running", "long-ended", "reset-away"]) writeFileSync(join(folder, sessionId), "an earlier daemon's line\n");
+    for (const sessionId of ["still-running", "silent-for-days", "reset-away"]) writeFileSync(join(folder, sessionId), "an earlier daemon's line\n");
     writeFileSync(join(folder, "still-running.123.2f0e9b7a-0000-4000-8000-000000000000.tmp"), "a write cut short");
     recordSession("still-running", workspace, 3);
     store.closeSession("still-running", Date.now() - 1_000);
-    recordSession("long-ended", workspace, 3);
-    store.closeSession("long-ended", Date.now() - 8 * DAY_MS);
+    recordSilentSession("silent-for-days", Date.now() - 8 * DAY_MS);
+    store.closeSession("silent-for-days", Date.now() - 1_000);
     const kept = keeper();
     await kept.refresh();
     expect(shown(drawn("still-running")![2]!)).toBe("R E R A I L ● 3 rules");
@@ -167,6 +174,44 @@ describe("the Claude Code status files the daemon keeps", () => {
     store.closeSession("still-running");
     await kept.refresh();
     expect(readdirSync(folder)).toEqual([]);
+    // An ended session with no file gets none back on a later pass.
+    await kept.refresh();
+    expect(readdirSync(folder)).toEqual([]);
+  });
+
+  // Claude Code often exits before its end hook has run, so the database holds such a session open for good.
+  it("keeps no file for a session with no event in a week whose end never arrived, and draws it again at its next event", async () => {
+    recordSilentSession("gone", Date.now() - 8 * DAY_MS);
+    recordSilentSession("away-for-the-weekend", Date.now() - 3 * DAY_MS);
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "gone"), "the line it had\n");
+    const kept = keeper();
+    await kept.refresh();
+    expect(readdirSync(folder)).toEqual(["away-for-the-weekend"]);
+    store.append({ sessionId: "gone", kind: "user-prompt", payload: {} });
+    await kept.refresh();
+    expect(readdirSync(folder).sort()).toEqual(["away-for-the-weekend", "gone"]);
+  });
+
+  it("draws a session with no event in half an hour once a minute, not on every change", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      recordSilentSession("quiet", Date.now() - 40 * 60 * 1_000);
+      recordSession("active", workspace, 3);
+      const kept = keeper();
+      await kept.refresh();
+      const quietLine = readFileSync(join(folder, "quiet"), "utf8");
+      expect(quietLine).not.toBe("");
+      stores.preferences().upsert({ repository: realpathSync(workspace), host: "claude-code", presence: "silent" });
+      await kept.refresh();
+      expect(readFileSync(join(folder, "active"), "utf8")).toBe("");
+      expect(readFileSync(join(folder, "quiet"), "utf8")).toBe(quietLine);
+      vi.setSystemTime(Date.now() + 61_000);
+      await kept.refresh();
+      expect(readFileSync(join(folder, "quiet"), "utf8")).toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("leaves every file saying what its session shows with no daemon when the daemon stops", async () => {

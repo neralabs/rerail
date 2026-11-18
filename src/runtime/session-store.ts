@@ -42,7 +42,10 @@ export interface StoredSessionSummary {
 }
 
 /** A session as a surface drawn ahead of time reads it (`SqliteSessionReader.drawnSessions`). */
-export type DrawnSession = Pick<StoredSessionSummary, "sessionId" | "cwd" | "endedAt">;
+export interface DrawnSession extends Pick<StoredSessionSummary, "sessionId" | "cwd" | "endedAt"> {
+  /** When its latest event was observed; when it started, for a session with none. */
+  lastActiveAt: number;
+}
 
 export interface SessionEventRecord {
   sequence: number;
@@ -448,16 +451,26 @@ export class SqliteSessionReader {
   }
 
   /**
-   * The sessions of `host` that have not ended, and those among `sessionIds` whatever their state: what a surface drawn
-   * ahead of time for each session (the Claude Code status files) reads to keep them current. A daemon's stop ends
-   * every open session, and the session's next event opens it again, so an ended one may still be running.
+   * The sessions of `host` active at or after `since`, and those among `sessionIds` whatever their activity: what a
+   * surface drawn ahead of time for each session (the Claude Code status files) reads to keep them current. Ended
+   * sessions are among them: a daemon's stop ends every open session, and the session's next event opens it again, so
+   * an ended one may still be running. So may one that never ended, whose end hook did not arrive; its activity alone
+   * says whether anything still reads it.
    */
-  drawnSessions(host: AdapterSession["host"], sessionIds: readonly string[]): DrawnSession[] {
+  drawnSessions(host: AdapterSession["host"], since: number, sessionIds: readonly string[]): DrawnSession[] {
     const database = this.#database.open();
     if (database === undefined) return [];
-    return database.select({ sessionId: sessions.sessionId, cwd: sessions.cwd, endedAt: sessions.endedAt }).from(sessions)
-      .where(and(eq(sessions.host, host), or(isNull(sessions.endedAt), sessionIds.length === 0 ? undefined : inArray(sessions.sessionId, [...sessionIds]))))
-      .all();
+    const named = sessionIds.length === 0 ? sql`0` : sql`drawn.sessionId IN (${sql.join(sessionIds.map(sessionId => sql`${sessionId}`), sql`, `)})`;
+    // Each session's latest event by sequence, read from the (session, sequence) index.
+    return database.all<DrawnSession>(sql`
+      SELECT * FROM (
+        SELECT
+          session.session_id AS sessionId, session.cwd AS cwd, session.ended_at AS endedAt,
+          coalesce((SELECT event.observed_at FROM ${events} AS event WHERE event.session_id = session.session_id
+            ORDER BY event.sequence DESC LIMIT 1), session.started_at) AS lastActiveAt
+        FROM ${sessions} AS session WHERE session.host = ${host}
+      ) AS drawn WHERE drawn.lastActiveAt >= ${since} OR ${named}
+    `);
   }
 
   hud(sessionId: string): SessionHud {
