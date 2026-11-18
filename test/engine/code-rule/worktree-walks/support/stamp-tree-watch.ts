@@ -30,7 +30,7 @@ function entriesOf(root: string): Map<string, string> {
  * entries with those of the last take, through `node:fs` calls a test's counted `node:fs/promises` never sees. A test
  * makes it miss writes (`silence`), hand notices late (`hold`), lose notices (`lose`), end a watch (`end`), refuse
  * roots (`unwatchable`) or tell of a folder moved away as the system does (`movedAway`), and reads which roots it
- * watches and with which folders. `byFolder` makes it watch as Linux's
+ * watches and with which folders, and every notice it handed on (`told`). `byFolder` makes it watch as Linux's
  * watch does: only the entries of the folders a root was watched with, a folder made in one as an entry with nothing
  * under it, a folder it takes up from the moment it is given, not before, and a folder deleted or put back as another
  * let go of, with the folders under it, until a `watch` names it again.
@@ -44,6 +44,8 @@ export class StampTreeWatch implements TreeWatch {
   readonly #byFolder: boolean;
   /** Every root `unwatch` let go of, in order. */
   readonly unwatched: string[] = [];
+  /** Every notice a take handed on, in order. */
+  readonly told: TreeNotice[] = [];
   readonly #unwatchable = new Set<string>();
   readonly #lost = new Set<string>();
   readonly #ended = new Set<string>();
@@ -97,6 +99,7 @@ export class StampTreeWatch implements TreeWatch {
       const notice = this.#held.has(root) ? undefined : this.#takeRoot(root, before);
       if (notice !== undefined) notices.push(notice);
     }
+    this.told.push(...notices);
     return notices;
   }
 

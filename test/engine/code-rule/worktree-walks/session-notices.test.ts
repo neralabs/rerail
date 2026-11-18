@@ -1,4 +1,4 @@
-import type { Dir } from "node:fs";
+import { type Dir, writeFileSync } from "node:fs";
 import { link, mkdir, mkdtemp, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -365,11 +365,17 @@ describe("a shell command's result reads the session folder by its change notice
     await writeFile(join(outside, "linked.py"), "def linked():\n    return 1\n");
     const watch = platformWatch();
     const { bridge, audits } = await opened(root, watch);
+    const told = (): string[] => watch.told.flatMap(notice => [...notice.changed, ...notice.renamed]);
     await command(bridge, "shell-1", async () => await link(join(outside, "linked.py"), join(root, "src", "pkg_0", "linked.py")));
+    expect(told()).toContain("src/pkg_0/linked.py");
+    watch.told.length = 0;
+    // Written and silenced in one step, so no take of the watch can come between them and tell of the write.
     await command(bridge, "shell-2", async () => {
-      await writeFile(join(outside, "linked.py"), "eval(z)\n");
+      writeFileSync(join(outside, "linked.py"), "eval(z)\n");
       watch.silence(root);
     });
+    // No notice named the file: the pass read it as a linked file the last pass found.
+    expect(told()).not.toContain("src/pkg_0/linked.py");
     expect(listed.folders).toEqual([]);
     expect(audits.at(-1)?.edits).toEqual([expect.objectContaining({ path: "src/pkg_0/linked.py", generatedText: "eval(z)\n" })]);
   });
