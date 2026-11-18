@@ -377,6 +377,24 @@ fn strings_in_templates_are_the_lean_parsers() {
 }
 
 #[test]
+fn variance_and_accessors_are_the_lean_parsers() {
+    same(&[
+        "fun f(a: Array<out Any>) {}\n",
+        "val p: P<in T> = x\n",
+        "class A<out T>\n",
+        "class B<in T, reified out C>\n",
+        "val x = out\n",
+        "fun f(out: Int) = out\n",
+        "fun f() {\n    System.out.println(1)\n}\n",
+        "fun f() {\n    a()\n    get(i).g(o)\n}\n",
+        "fun f() {\n    set.add(1)\n}\n",
+        "fun f() {\n    get(1)\n}\n",
+        "class A {\n    val x: Int\n        get() = 1\n    var y = 2\n        set(v) {\n            field = v\n        }\n}\n",
+        "class A {\n    private val t = this::class.simpleName\n    private val m by lazy { n }\n}\n",
+    ]);
+}
+
+#[test]
 fn class_delegates_are_the_lean_parsers() {
     same(&[
         "class A(d: C) : C by d {\n}\n",
@@ -405,6 +423,7 @@ fn what_step_23_does_not_read_is_refused() {
         "fun f(w: suspend () -> T) {}\n",
         "fun f() {\n    @Suppress(\"D\")\n    if (a) b()\n}\n",
         "fun f(g: ((Int) -> Int) -> Int) {}\n",
+        "val x = when (a) {\n    B,\n    C,\n    -> d\n    else -> e\n}\n",
     ]);
 }
 
@@ -450,7 +469,6 @@ fn what_step_20_does_not_read_is_refused() {
         "val x = 0x\n",
         "class A { val x = 1 }\n",
         "val x: Int\n    get() = 1\n",
-        "fun f() {\n    get(1)\n}\n",
         "fun f(noinline: Int) {}\n",
         "fun String?.h() = 1\n",
         "fun f() {\n    loop@ for (i in a) break@loop\n}\n",

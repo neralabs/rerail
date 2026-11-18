@@ -635,6 +635,30 @@ holds in an object's header as well.
 Corpus: 391 the same (step 24: 390), 100 refused, 0 differ. The six other files the escape
 refused meet other refusals further on.
 
+## Kotlin, step 26 (`26-variance-accessors.bitlex`)
+
+```kotlin
+fun f(a: Array<out Any>) {}
+class B<in T>
+fun f() {
+    get(i).g(o)
+    set.add(1)
+}
+```
+
+- `out` is a soft keyword: a variance (`variance_modifier`) where a type projection or a type
+  parameter starts, and elsewhere a name the lean parser reads as a plain `simple_identifier`.
+  Types don't take it as a name, so `out` opens one choice only.
+- `get` or `set` at a line's start is an accessor, unless a `.` follows it, or (for `get`) an
+  argument does: then it is a call or a name, as in a function's body.
+- `class` after `::` (`this::class`) is no class's keyword. It began a class header, and
+  step 25's body mark then fell on a later `by lazy {`.
+
+Still refused: a `when` entry's trailing comma. Its `trail` mark didn't hold on the `,` before
+`->`, and the change broke a `when` entry starting with `in`; it was taken out of the step.
+
+Corpus: 397 the same (step 25: 391), 94 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
@@ -809,6 +833,14 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
     `raw_strings_are_the_lean_parsers` puts strings at those bytes.
 
 ## Found on the way
+
+- Open: the lean parser's lost block comments (26 corpus files, three escapes). After a line
+  break, before a token that goes on the line, it keeps the comment as a zero-width
+  `multiline_comment` at the next token's start, inside that token's node. Before a word with
+  `a`, `e` or `w` (`Asi::Swallow`), the comment is gone, and the statement ends at the word's
+  start. Both need tier 2 to write what the bytes don't give: a zero-width extra at a mark's
+  position, and a node that ends at a mark. A grammar step that only dropped the comment's
+  token was tried and withdrawn.
 
 - Q31: the ladder test `07-textes` was already red at the merged Parser-generators commit. It is
   theirs to fix.
