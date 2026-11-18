@@ -2325,7 +2325,8 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 general_context.set_disasm(true);
                 let regions;
                 (shape.ascii_branch, shape.gate_branches, shape.round_branches, shape.rare_branches, regions, shape.region_calls, shape.inlined_regions, shape.reads_back, shape.arms, shape.known_entries) = forward(&mut context, &mut general_context, (general_id, signature), &mut module, &name, body, stores, passes.slots, &mut hot, native.records.as_ref().zip(tables.as_ref()).filter(|_| merged && k + 1 == passes.passes.len()).map(|(r, t)| (r, t, native.outputs.len())), made)?;
-                shape.extracts = body.extracts.len();
+                // The extracts the body flattens: not those the record pass writes.
+                shape.extracts = body.extracts.iter().filter(|k| !native.records_made().contains(k)).count();
                 general_context.func.srclocs.clear();
                 let clif = general_context.func.display().to_string();
                 // The general body where the pass still calls it (none without a block loop).
@@ -2949,6 +2950,66 @@ impl FileCols {
         }
     }
 
+}
+
+/// A token's last byte by its gap (decision 0400, `records::gap_last`): the byte before the next
+/// token's start (the file's end at the last token), less the run of the skip's bits (output
+/// `gap`) before it. A word of the mask at a time, from the one holding the byte before the next
+/// start: the highest bit not in the run is the last, a count of leading zeros. A run of 64
+/// skip bytes or more takes a word a turn (`Step::Word`).
+fn gap_last(
+    f: &mut FunctionBuilder<'_>,
+    c: &FileCols,
+    outputs: usize,
+    gap: u16,
+    cur: Value,
+    s: Value,
+    heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>,
+) -> Value {
+    let fl = MemFlags::trusted();
+    let kn = c.step(f, cur);
+    let (na, no) = c.at(f, crate::records::FIELD_START, kn);
+    let next = f.ins().uload32(fl, na, no);
+    let index = c.index(f, kn);
+    let more = f.ins().icmp(IntCC::UnsignedLessThan, index, c.ns);
+    let end = f.ins().select(more, next, c.len);
+    let (head, word, done) = (f.create_block(), f.create_block(), f.create_block());
+    f.append_block_param(head, types::I64);
+    f.append_block_param(done, types::I64);
+    heads.push((head, Step::Word));
+    f.ins().jump(head, &[end.into()]);
+    f.switch_to_block(head);
+    let end = f.block_params(head)[0];
+    let s1 = f.ins().iadd_imm(s, 1);
+    let past = f.ins().icmp(IntCC::UnsignedGreaterThan, end, s1);
+    f.ins().brif(past, word, &[], done, &[s.into()]);
+    f.switch_to_block(word);
+    let at = f.ins().iadd_imm(end, -1);
+    let q = f.ins().ushr_imm(at, 6);
+    let off = f.ins().imul_imm(q, 8 * outputs as i64);
+    let row = f.ins().iadd(c.out, off);
+    let w = f.ins().load(types::I64, fl, row, 8 * i32::from(gap));
+    // The bits at and below `at`, not the gap's.
+    let r = f.ins().band_imm(at, 63);
+    let up = f.ins().irsub_imm(r, 63);
+    let ones = f.ins().iconst(types::I64, -1);
+    let below = f.ins().ushr(ones, up);
+    let m = f.ins().band_not(below, w);
+    let lz = f.ins().clz(m);
+    let base = f.ins().ishl_imm(q, 6);
+    let top = f.ins().iadd_imm(base, 63);
+    let last = f.ins().isub(top, lz);
+    let last = f.ins().umax(last, s);
+    let found = f.ins().icmp_imm(IntCC::NotEqual, m, 0);
+    let (hit, on) = (f.create_block(), f.create_block());
+    f.ins().brif(found, hit, &[], on, &[]);
+    f.switch_to_block(hit);
+    f.ins().jump(done, &[last.into()]);
+    f.switch_to_block(on);
+    f.set_cold_block(on);
+    f.ins().jump(head, &[base.into()]);
+    f.switch_to_block(done);
+    f.block_params(done)[0]
 }
 
 /// A token's record at cursor `cur`: its start and last where the loop made them, and its code,
@@ -6367,9 +6428,10 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     });
     // With end rules (decision 0177) the lasts are this pass's: as many as the starts.
     let ruled = !r.rules.is_empty();
+    let gapped = r.gap.is_some();
     let (differ, n) = if walked.is_some() {
         (zero, zero)
-    } else if ruled {
+    } else if ruled || gapped {
         (zero, c.ns)
     } else {
         let differ = f.ins().icmp(IntCC::NotEqual, c.ns, c.nl);
@@ -6974,11 +7036,14 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     } else {
         match general {
             Some((l, refuse, tag, h)) => (l, Some(refuse), Some(tag), h),
-            None => (f.ins().uload32(fl, la, lo_off), None, None, zero),
+            None => match r.gap {
+                Some(g) => (gap_last(f, c, outputs, g, k, s, heads), None, None, zero),
+                None => (f.ins().uload32(fl, la, lo_off), None, None, zero),
+            },
         }
     };
-    // The rules' last, written with the code (`write_record`).
-    let last_kept = ruled.then_some(l);
+    // The rules' last, or the gap's, written with the code (`write_record`).
+    let last_kept = (ruled || gapped).then_some(l);
     let (long, coded) = (f.create_block(), f.create_block());
     for _ in 0..STATE_WORDS + 2 {
         f.append_block_param(coded, types::I64);
@@ -7512,7 +7577,7 @@ fn record_end(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
     if walked.is_some() {
         f.ins().store(stores, n, c.counts, 8 * i32::from(r.starts));
     }
-    if ruled {
+    if ruled || r.gap.is_some() {
         f.ins().store(stores, n, c.counts, 8 * i32::from(r.lasts));
     }
     // The gap marks (decision 0177) after the others: they read the extra's mark.

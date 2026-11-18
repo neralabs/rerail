@@ -140,6 +140,41 @@ pub struct Records {
     /// The prefix (`prefix B …`, decision 0335): where the file starts with these bytes, the
     /// stream, and the loop, start after them. Empty: no prefix.
     pub prefix: Vec<u8>,
+    /// The skip's mask (decision 0400), an output: where set, a token's last byte is the byte
+    /// before the next token's start (the file's end) less the run of this mask's bytes before
+    /// it (`gap_last`), as the lasts extract's, proved. The CPU's tier 1 then makes no lasts; its
+    /// record pass makes them.
+    pub gap: Option<u16>,
+}
+
+/// A token's last byte (decision 0400, `Records::gap`): the byte before `next` (the next
+/// token's start, or the file's length), less the run of `gap`'s bits before it, found a word
+/// at a time (the leading zeros of the word's bits not in the run).
+pub fn gap_last(gap: &[u64], start: usize, next: usize) -> usize {
+    let mut end = next;
+    while end > start + 1 {
+        let (q, r) = ((end - 1) / 64, (end - 1) % 64);
+        // The bits at and below `end - 1` not in the gap: the highest is the last byte.
+        let w = !gap.get(q).copied().unwrap_or(0) & (u64::MAX >> (63 - r));
+        if w != 0 {
+            return (q * 64 + 63 - w.leading_zeros() as usize).max(start);
+        }
+        end = q * 64;
+    }
+    start
+}
+
+/// The tokens' last bytes by their gaps (`gap_last`), each before the next token's start.
+pub fn gap_lasts(gap: &[u64], starts: &[u32], len: usize) -> Vec<u32> {
+    (0..starts.len())
+        .map(|k| {
+            gap_last(
+                gap,
+                starts[k] as usize,
+                starts.get(k + 1).map_or(len, |&n| n as usize),
+            ) as u32
+        })
+        .collect()
 }
 
 /// A token test (`Records::checks`): over the tokens whose first byte's end rule is `rule`,

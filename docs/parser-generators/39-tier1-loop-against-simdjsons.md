@@ -154,7 +154,16 @@ values being words: simdjson's `prev1` is a vector `ext` with the block before's
 mechanism, the totals made one flag at the first, its edge part making them exactly, is kept
 as a patch outside the tree. It fires on no grammar here.
 
-**Item 3** (token ends without a second extract) is not done.
+**Item 3: token ends from the gaps (0400).** A token ends at the next start, less the
+whitespace between them, as this page put it; Bitlex proves it for every row of `14-json`. The
+CPU's tier 1 makes no lasts, and its record pass makes each from the next start and the skip's
+mask: one word and a count of leading zeros.
+
+| | Hot loop | Stack accesses | Tier 1's operations |
+|---|---:|---:|---:|
+| Token ends from the gaps (0400) | **616** | **5** | 123 |
+
+JSONC keeps its extract: the proof does not reach its comments (0400).
 
 ## Reproducing
 

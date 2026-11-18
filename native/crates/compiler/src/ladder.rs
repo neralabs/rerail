@@ -562,7 +562,14 @@ pub fn check_shape(name: &str, c: &Compiled) {
 /// refuse, the same but for the codes past the token that refused (decision 0177, "A refusal
 /// leaves the loop"): the compiled loop leaves there and writes no code after it (each is 0), while
 /// the interpreter goes on. The stage's outputs and positions, made before the loop, are the same.
-fn tier1_agrees(compiled: &crate::block::BlockRun, interpreted: &crate::block::BlockRun) -> bool {
+/// Outputs in `made` (`BlockNative::records_made`: the record pass makes their positions, as the
+/// lasts of decision 0400) are not compared: the CPU's tier 1 makes no mask for them.
+fn tier1_agrees(
+    compiled: &crate::block::BlockRun,
+    interpreted: &crate::block::BlockRun,
+    made: &[usize],
+) -> bool {
+    let (compiled, interpreted) = (&compiled.without(made), &interpreted.without(made));
     let refused = |r: &crate::block::BlockRun| r.totals.iter().any(|&t| t != 0);
     if compiled == interpreted {
         return true;
@@ -600,6 +607,7 @@ pub fn check_ladder(
         let (mut sentences, mut mutations) = ([0usize; 2], [0usize; 2]);
         let mut reasons: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
         let extra_ids: Vec<u16> = lang.extras.iter().map(|e| c.ids.of(e)).collect();
+        let made = crate::block_native::BlockNative::lower(&c.program.block_programs[0]).records_made();
         let (mut docs, before) = documents_with(&lang, seed(name), &|b| reference(&c, b).is_some(), alphabet);
         docs.extend(fixed.iter().map(|d| d.as_bytes().to_vec()));
         for (i, bytes) in docs.into_iter().enumerate() {
@@ -609,7 +617,7 @@ pub fn check_ladder(
             let interp = crate::stream::run(&c.program, &bytes, &run).ok().map(as_ids);
             let compiled = c.parser.parse(&bytes).ok().map(as_ids);
             let tier1 = c.parser.tier1.extract(&bytes);
-            if !tier1_agrees(&tier1, &run) {
+            if !tier1_agrees(&tier1, &run, &made) {
                 differ.push(format!("{}: tier 1 compiled differs from its interpreter", show()));
                 break;
             }

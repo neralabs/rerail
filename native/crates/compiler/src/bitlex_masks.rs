@@ -74,6 +74,7 @@
 use crate::block::{BlockOp, BlockProgram, ClassTable};
 use crate::{bitlex_prove, bitlex_tier2, grammar};
 use ::bitlex::syntax::{Arg, Expr, NExpr, Stmt, TokenElem};
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 /// A number's planes: a byte's value mod 2^32, exact for a place in a file or a distance.
@@ -581,7 +582,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                 m.0 = low.program.outputs.iter().position(|&o| o == v).ok_or("a mark's mask not an output")? as u16;
             }
             // The skip's and each end rule's likewise.
-            if let Some(k) = r.skip.as_mut() {
+            for k in r.skip.iter_mut().chain(r.gap.iter_mut()) {
                 let v = low.program.masks[usize::from(*k)];
                 *k = low.program.outputs.iter().position(|&o| o == v).ok_or("the skip's mask not an output")? as u16;
             }
@@ -2480,6 +2481,72 @@ fn merge_token_checks(a: &crate::program::LocalCheck, b: &crate::program::LocalC
     crate::program::LocalCheck { mask: 0, delay: d, ops, token: true }
 }
 
+thread_local! {
+    /// Compile with tier 1's lasts as before decision 0400, for the tests' oracle.
+    pub static NO_GAP_ENDS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether every token ends at the next token's start less the skip's bytes before it (or at
+/// the file's end less them), as simdjson's stage 2 finds a scalar's end (decision 0400):
+/// proved, the skip's value; tier 1 then makes no extract of the tokens' last bytes. With `K`
+/// the skip, `S` every row's starts, it holds when no last of a row is in `K`, and after a last
+/// of a row, and after a byte of `K`, comes a byte of `K`, a start, or the file's end.
+fn gap_ends(low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Option<Val>, String> {
+    let (Some(skip), Some(first)) = (low.skip, token_rows.first()) else {
+        return Ok(None);
+    };
+    if NO_GAP_ENDS.get() {
+        return Ok(None);
+    }
+    let settled = RefCell::new(bitlex_prove::Induction::new(
+        &low.program.rounds,
+        8,
+        100_000,
+    ));
+    let never = |low: &Lowering, x: Val| {
+        bitlex_prove::never(&low.proof_ops(), &low.program.tables, x.v, x.d)
+            || settled
+                .borrow_mut()
+                .never(&low.proof_ops(), &low.program.tables, x.v, x.d)
+    };
+    let mut starts = first.1;
+    for t in &token_rows[1..] {
+        starts = low.or(starts, t.1)?;
+    }
+    // Where the byte after is in the file, a skip byte or a start not.
+    let w0 = low.within_val(0)?;
+    let ok = low.or(skip, starts)?;
+    let bad = low.andnot(w0, ok)?;
+    let after_bad = low.next(bad, 1)?;
+    // A place the fallback refuses (an error, an escape, a byte no token holds) refuses the
+    // file, so the ends there are not read: the claims need hold only where neither the byte
+    // nor the one after it is refused.
+    let mut refused = low.leaf(BlockOp::Const(0), false);
+    for f in low.fallbacks.clone() {
+        refused = low.or(refused, f)?;
+    }
+    // Refused at or after any byte up to the one after: `fill` from a refusal on, to no end.
+    let refused_next = low.next(refused, 1)?;
+    let none = low.leaf(BlockOp::Const(0), false);
+    let refused = low.fill(refused_next, none)?;
+    let after_bad = low.andnot(after_bad, refused)?;
+    let from_skip = low.and(skip, after_bad)?;
+    let skip_starts = low.and(skip, starts)?;
+    let skip_starts = low.andnot(skip_starts, refused)?;
+    if !never(low, from_skip) || !never(low, skip_starts) {
+        return Ok(None);
+    }
+    for (_, _, l) in token_rows {
+        let in_skip = low.and(*l, skip)?;
+        let in_skip = low.andnot(in_skip, refused)?;
+        let off = low.and(*l, after_bad)?;
+        if !never(low, in_skip) || !never(low, off) {
+            return Ok(None);
+        }
+    }
+    Ok(Some(skip))
+}
+
 /// The grammar row whose tokens' last bytes hold every bit of `a`, as the prover shows it.
 fn last_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows: &[(String, Val, Val)]) -> Result<Option<usize>, String> {
     let grammar_rows: Vec<usize> = (0..rows.len()).filter(|&r| !low.extra.contains(&token_rows[r].0) && !row_kinds(&rows[r]).is_empty()).collect();
@@ -3568,7 +3635,11 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         let marks = if low.extra.contains(&token_rows[r].0) { extra_mark.map_or(0, |e| 1u32 << e) } else { 0 };
         retags.push(crate::records::Retag { o, kind: kinds[usize::from(f)], marks });
     }
-    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), check_masks: local_checks.iter().filter(|c| !c.token).map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default() };
+    let gap = match gap_ends(low, token_rows)? {
+        Some(v) => Some(mask_of_val(v, &mut mark_masks)),
+        None => None,
+    };
+    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), check_masks: local_checks.iter().filter(|c| !c.token).map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default(), gap };
     crate::records::WordTable::new(&records.words)?;
     // A mark's tests pass over an extra's token by its mark (`records::gap_marks`): the token
     // loop knows it only where the reader gives it (`Reader::retag`).
