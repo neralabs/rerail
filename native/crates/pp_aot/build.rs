@@ -8,6 +8,7 @@
 include!("../c_directives/src/expand_text.rs");
 
 /// The builds checked: C and C++ at depth 0, C++ at depth 4.
+#[cfg(feature = "generated")]
 const AOT: &[(&str, bool, usize)] = &[("pp_c_k0", false, 0), ("pp_cpp_k0", true, 0), ("pp_cpp_k4", true, 4)];
 
 fn main() {
