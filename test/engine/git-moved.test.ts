@@ -209,6 +209,37 @@ describe("the Git a process keeps, gone under it", () => {
     expect(started(spawn)).toEqual([now]);
   });
 
+  it("waits for the look only for what its first start left of the call's time limit", async () => {
+    const [kept] = await moveKeptGit();
+    started(spawn);
+    const clock = holdClock();
+    // The first start takes 7 s of the call's 10 s; the look then waits on a folder that has not answered.
+    vi.mocked(spawn).mockImplementationOnce((file, args, options) => {
+      clock.move(7_000);
+      return actual.spawn(program(file), args, options);
+    });
+    const { promise: held, resolve: answer } = Promise.withResolvers<void>();
+    const { promise: asked, resolve: reached } = Promise.withResolvers<void>();
+    vi.mocked(stat).mockImplementationOnce(async (...args) => {
+      reached();
+      await held;
+      return await actualFiles.stat(...args);
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const call = runGitAsync(repository, ["rev-parse", "HEAD"]);
+      await asked;
+      await vi.advanceTimersByTimeAsync(3_000);
+      const answered = await Promise.race([call, new Promise(done => setImmediate(done, "waiting"))]);
+      // Answered at the 3 s its first start left, as that start did; before, the call waited its whole 10 s again.
+      expect([answered === "waiting" ? answered : { status: (answered as Awaited<typeof call>).status, code: ((answered as Awaited<typeof call>).error as NodeJS.ErrnoException | undefined)?.code }, started(spawn)]).toEqual([{ status: null, code: "ENOENT" }, [kept]]);
+    } finally {
+      vi.useRealTimers();
+      clock.release();
+      answer();
+    }
+  });
+
   it("runs a Git call that does not block once more with the Git found again", async () => {
     const [kept, now] = await moveKeptGit();
     started(spawn);
