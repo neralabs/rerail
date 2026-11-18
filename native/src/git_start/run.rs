@@ -190,16 +190,45 @@ fn wait(pid: libc::pid_t) -> (Option<i32>, Option<i32>) {
 #[cfg(test)]
 mod tests {
     use super::run;
+    use std::sync::mpsc;
+    use std::time::Duration;
 
-    fn sh(script: &str, timeout_ms: Option<u32>, max_buffer: u32) -> super::GitRun {
-        run(
-            "/bin/sh",
-            &["-c".into(), script.into()],
-            &["PATH=/usr/bin:/bin".into()],
-            timeout_ms,
-            max_buffer,
-        )
-        .expect("run")
+    /// What a run answered, in fields a test thread can be sent.
+    struct Ran {
+        status: Option<i32>,
+        signal: Option<i32>,
+        stdout: Vec<u8>,
+        stderr: Vec<u8>,
+        timed_out: bool,
+        past_max_buffer: bool,
+    }
+
+    /// `script` run under /bin/sh on a thread of its own. A run that never returns fails the test after 20 s, many
+    /// times the limits the cases give, where the call would otherwise hang the test binary.
+    fn sh(script: &str, timeout_ms: Option<u32>, max_buffer: u32) -> Ran {
+        let args = ["-c".to_owned(), script.to_owned()];
+        let (send, receive) = mpsc::channel();
+        std::thread::spawn(move || {
+            let ran = run(
+                "/bin/sh",
+                &args,
+                &["PATH=/usr/bin:/bin".into()],
+                timeout_ms,
+                max_buffer,
+            );
+            let _ = send.send(ran.map(|ran| Ran {
+                status: ran.status,
+                signal: ran.signal,
+                stdout: ran.stdout.to_vec(),
+                stderr: ran.stderr.to_vec(),
+                timed_out: ran.timed_out,
+                past_max_buffer: ran.past_max_buffer,
+            }));
+        });
+        receive
+            .recv_timeout(Duration::from_secs(20))
+            .expect("the run returned within 20 s")
+            .expect("run")
     }
 
     #[test]

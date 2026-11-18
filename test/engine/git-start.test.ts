@@ -11,9 +11,10 @@ vi.mock("../../src/engine/child-process.js", { spy: true });
 
 import { spawn, spawnSync } from "../../src/engine/child-process.js";
 import { gitCrlfPaths, gitHead, gitModifiedOrUntrackedPaths, readGitBlobIds, readGitBlobs, runGit, runGitAsync } from "../../src/engine/git.js";
-import { runGitSync, startGit, startGitThroughNode, startGitWithoutCopying, type GitProcess, type GitRunLimits, type GitRunResult } from "../../src/engine/git-start.js";
+import { startGit, startGitThroughNode, startGitWithoutCopying, type GitProcess } from "../../src/engine/git-start.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+import { blockingRuns, blockingRunsThroughEngine } from "./support/blocking-git-runs.js";
 import { daemonProcess, packageRoot, until, watchedEnvironment } from "../support/processes/daemon-home.js";
 
 const LINUX = process.platform === "linux";
@@ -76,51 +77,6 @@ async function ended(child: GitProcess): Promise<{ stdout: string; code: number 
   child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
   const [code, signal] = (await once(child, "close")) as [number | null, NodeJS.Signals | null];
   return { stdout, code, signal };
-}
-
-/** The fields of a blocking run's error that `spawnSync` sets. */
-function errorOf(run: { error?: Error }): unknown {
-  const { message, code, errno, syscall, path, spawnargs } = (run.error ?? {}) as NodeJS.ErrnoException & { spawnargs?: string[] };
-  return { message, code, errno, syscall, path, spawnargs };
-}
-
-/** How a blocking run ended, without what it printed. */
-function ending(run: GitRunResult): unknown {
-  return { status: run.status, signal: run.signal, error: errorOf(run) };
-}
-
-/** What a blocking run answered, its error as {@link errorOf} reads it. */
-function answered(run: GitRunResult): unknown {
-  return { ...run, error: errorOf(run) };
-}
-
-/**
- * A blocking run of `script` under `limits`, after the script has started `sleep 10` in the background, which holds
- * stdout and stderr for as long as it runs and writes its pid to `pidFile`: what the run answered, and whether that
- * sleep still ran when the run returned. The sleep is ended either way. A run through Node and one through the engine
- * get the same `pidFile`, so their arguments are the same.
- */
-function heldRun(pidFile: string, script: string, limits: GitRunLimits): { answer: unknown; held: boolean } {
-  const run = runGitSync("/bin/sh", ["-c", `sleep 10 & echo $! > "$1"; ${script}`, "sh", pidFile], process.env, limits);
-  const holder = Number(readFileSync(pidFile, "utf8"));
-  let held = true;
-  try {
-    process.kill(holder, "SIGKILL");
-  } catch {
-    held = false;
-  }
-  return { answer: answered(run), held };
-}
-
-/**
- * A blocking run, past its 300 ms time limit, of a script that takes the SIGTERM and then writes 1 MB to its stdout:
- * what the run answered, and how that write ended, as the script writes it to `statusFile`: 141 when it met a closed
- * output (EPIPE), 124 when it filled the buffers and waited until `timeout` ended it.
- */
-function writtenAfterTerm(statusFile: string): { answer: unknown; write: string } {
-  const script = `sleep 10 & s=$!; trap 'timeout 5 head -c 1000000 /dev/zero; echo $? > "$1"; kill $s; exit 0' TERM; echo started; wait`;
-  const run = runGitSync("/bin/sh", ["-c", script, "sh", statusFile], process.env, { timeout: 300 });
-  return { answer: answered(run), write: readFileSync(statusFile, "utf8") };
 }
 
 /** The children of this process that have exited and are not reaped. */
@@ -194,34 +150,18 @@ describe.runIf(LINUX)("Git started through the engine, on Linux", () => {
     expect([zombies(), readdirSync("/proc/self/fd").length]).toEqual([0, open]);
   }, 30_000);
 
-  it("runs a blocking Git as spawnSync does: its output, its exit, and SIGTERM at its time limit or past its output limit", () => {
-    const runs = (): unknown => {
-      const late = runGitSync("/bin/sh", ["-c", "echo started; exec sleep 5"], process.env, { timeout: 200 });
-      const long = runGitSync("/bin/sh", ["-c", "head -c 3000000 /dev/zero; exec sleep 5"], process.env, { maxBuffer: 1024 * 1024 });
-      const plain = runGitSync("/bin/sh", ["-c", "read nothing || echo no-input; echo warned >&2; exit 5"], process.env);
-      // Exactly the output limit: a run may reach it and not pass it.
-      const exact = runGitSync("/bin/sh", ["-c", "head -c 1000 /dev/zero"], process.env, { maxBuffer: 1000 });
-      return { late: answered(late), long: ending(long), plain, exact: ending(exact) };
-    };
-    const throughNode = runs();
-    expect(startGitWithoutCopying(loadNativeBinding)).toBe(true);
-    const throughEngine = runs();
+  it("runs a blocking Git as spawnSync does: its output, its exit, and SIGTERM at its time limit or past its output limit", async () => {
+    const files = await folder("limits");
+    const throughNode = blockingRuns("limits", files);
+    const throughEngine = blockingRunsThroughEngine("limits", files);
     expect(throughEngine).toEqual(throughNode);
     expect(throughEngine).toMatchObject({ late: { signal: "SIGTERM", error: { code: "ETIMEDOUT" } }, long: { signal: "SIGTERM", error: { code: "ENOBUFS" } }, plain: { status: 5, stdout: "no-input\n" }, exact: { status: 0, signal: null } });
-  }, 30_000);
+  }, 60_000);
 
   it("ends a blocking Git at its time limit as spawnSync does while a process Git started still holds its output", async () => {
     const files = await folder("held");
-    const runs = (): unknown => ({
-      running: heldRun(join(files, "running.pid"), "echo started; exec sleep 10", { timeout: 300 }),
-      exited: heldRun(join(files, "exited.pid"), "echo started; exit 0", { timeout: 300 }),
-      closed: answered(runGitSync("/bin/sh", ["-c", "echo started; exec > /dev/null 2>&1; exec sleep 10"], process.env, { timeout: 300 })),
-      printing: ending(runGitSync("/bin/sh", ["-c", "while :; do printf x; done"], process.env, { timeout: 300, maxBuffer: 8 << 20 })),
-      writing: writtenAfterTerm(join(files, "writing.status")),
-    });
-    const throughNode = runs();
-    expect(startGitWithoutCopying(loadNativeBinding)).toBe(true);
-    const throughEngine = runs();
+    const throughNode = blockingRuns("time-limit-held", files);
+    const throughEngine = blockingRunsThroughEngine("time-limit-held", files);
     expect(throughEngine).toEqual(throughNode);
     const timedOut = { stdout: "started\n", error: { code: "ETIMEDOUT" } };
     expect(throughEngine).toMatchObject({
@@ -231,14 +171,12 @@ describe.runIf(LINUX)("Git started through the engine, on Linux", () => {
       printing: { status: null, signal: "SIGTERM", error: { code: "ETIMEDOUT" } },
       writing: { answer: { ...timedOut, status: 0, signal: null }, write: "141\n" },
     });
-  }, 120_000);
+  }, 60_000);
 
   it("ends a blocking Git past its output limit as spawnSync does while a process Git started still holds its output", async () => {
-    const pidFile = join(await folder("held"), "holder.pid");
-    const run = (): unknown => heldRun(pidFile, "head -c 1001 /dev/zero; exec sleep 10", { maxBuffer: 1000 });
-    const throughNode = run();
-    expect(startGitWithoutCopying(loadNativeBinding)).toBe(true);
-    const throughEngine = run();
+    const files = await folder("held");
+    const throughNode = blockingRuns("output-limit-held", files);
+    const throughEngine = blockingRunsThroughEngine("output-limit-held", files);
     expect(throughEngine).toEqual(throughNode);
     expect(throughEngine).toMatchObject({ held: true, answer: { stdout: "\0".repeat(1001), status: null, signal: "SIGTERM", error: { code: "ENOBUFS" } } });
   }, 60_000);
