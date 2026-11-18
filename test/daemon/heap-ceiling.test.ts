@@ -134,6 +134,23 @@ describe("the daemon's heap ceiling", () => {
     expect(onStopped).not.toHaveBeenCalled();
   });
 
+  // A relief that never settled, then a heap back under the ceiling: when it passes the ceiling again, what no session
+  // uses by then is freed first, as at the first pass, before any restart.
+  it("relieves again at the next pass of the ceiling once a reading found the heap back under it, though the last relief never settled", async () => {
+    vi.useFakeTimers();
+    const heldByKept = { used: 900, limit: 1_000 };
+    const relieve = vi.fn(async () => await new Promise<void>(() => undefined));
+    const onCeiling = vi.fn();
+    const stop = watchHeap({ read: () => heldByKept, collect: () => {}, relieve, ratio: 0.8, intervalMs: 1_000, graceMs: 0, onCeiling });
+    await vi.advanceTimersByTimeAsync(1_000);
+    heldByKept.used = 500;
+    await vi.advanceTimersByTimeAsync(1_000);
+    heldByKept.used = 900;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect({ reliefs: relieve.mock.calls.length, restarts: onCeiling.mock.calls.length }).toEqual({ reliefs: 2, restarts: 0 });
+    stop();
+  });
+
   it("stops reading once stopped", () => {
     vi.useFakeTimers();
     const read = vi.fn(() => ({ used: 0, limit: 1_000 }));
