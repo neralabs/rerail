@@ -70,13 +70,22 @@ function requestFailure(error: Error, request: ClientRequest, signal: AbortSigna
   return request.reusedSocket ? new KeptConnectionClosed(error) : error;
 }
 
-/** Sends `outgoing` once through `agent`; the answer as a `Response`, its body still streaming. */
-function sendOnce(send: SendRequest, agent: HttpAgent, outgoing: Outgoing): Promise<Response> {
+/**
+ * Sends `outgoing` once through `agent`; the answer as a `Response`, its body still streaming. `sent` is told once the
+ * request was handed to the OS on a new connection (its `finish`), which `fetch` never says: on a kept one, the daemon
+ * may have closed it as the request left, and the request is sent again on a new one.
+ */
+function sendOnce(send: SendRequest, agent: HttpAgent, outgoing: Outgoing, sent: (() => void) | undefined): Promise<Response> {
   const { promise, resolve, reject } = Promise.withResolvers<Response>();
   const options: RequestOptions = { method: outgoing.method, headers: outgoing.headers, agent };
   if (outgoing.signal !== undefined) options.signal = outgoing.signal;
   const request = send(outgoing.endpoint, options, response => resolve(fetchResponse(outgoing.method, response)));
   request.once("error", error => reject(requestFailure(error, request, outgoing.signal)));
+  if (sent !== undefined) {
+    request.once("finish", () => {
+      if (!request.reusedSocket) sent();
+    });
+  }
   request.end(outgoing.body);
   return promise;
 }
@@ -84,9 +93,9 @@ function sendOnce(send: SendRequest, agent: HttpAgent, outgoing: Outgoing): Prom
 /**
  * `fetch` over `agent`, for the request shapes Rerail's own clients send. Redirects are never followed, so the access
  * capability never goes to another address. A request that gives up (its signal aborts) ends its connection and nothing
- * is sent in its place.
+ * is sent in its place. `sent`, where given, is told once each request was handed to the OS on a new connection.
  */
-export function agentFetch(agent: HttpAgent, send: SendRequest): DaemonFetch {
+export function agentFetch(agent: HttpAgent, send: SendRequest, sent?: () => void): DaemonFetch {
   return async (endpoint, init) => {
     const outgoing: Outgoing = {
       endpoint,
@@ -96,11 +105,11 @@ export function agentFetch(agent: HttpAgent, send: SendRequest): DaemonFetch {
       signal: init.signal ?? undefined,
     };
     try {
-      return await sendOnce(send, agent, outgoing);
+      return await sendOnce(send, agent, outgoing, sent);
     } catch (error) {
       if (!(error instanceof KeptConnectionClosed)) throw error;
       if (!SENT_AGAIN.has(outgoing.method)) throw error.original;
-      return await sendOnce(send, agent, outgoing);
+      return await sendOnce(send, agent, outgoing, sent);
     }
   };
 }
@@ -124,3 +133,8 @@ const KEPT_CONNECTIONS = new HttpAgent({ keepAlive: true, timeout: KEPT_CONNECTI
  * empty connection, one event loop turn each, for every read that waited out its limit.
  */
 export const httpDaemonFetch: DaemonFetch = agentFetch(KEPT_CONNECTIONS, httpRequest);
+
+/** {@link httpDaemonFetch}, telling `sent` once each request was handed to the OS on a new connection. */
+export function httpDaemonFetchTelling(sent: () => void): DaemonFetch {
+  return agentFetch(KEPT_CONNECTIONS, httpRequest, sent);
+}

@@ -2,11 +2,10 @@ import type { SpawnOptions } from "node:child_process";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
-import { request as httpRequest } from "node:http";
 import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { Readable, type Duplex } from "node:stream";
+import type { Duplex } from "node:stream";
 import { connect as tlsConnect, type ConnectionOptions } from "node:tls";
 import { setTimeout as sleep } from "node:timers/promises";
 import { spawn, spawnShown } from "../engine/child-process.js";
@@ -18,7 +17,7 @@ import { withHomeLock } from "../engine/native/file-lock.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { engineCapabilityProof, type EngineProofAnswer } from "./engine-proof.js";
-import { agentFetch, httpDaemonFetch, type DaemonFetch } from "./daemon-control/transport.js";
+import { agentFetch, httpDaemonFetch, httpDaemonFetchTelling, type DaemonFetch } from "./daemon-control/transport.js";
 import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
 import { processState, type ProcessSignal } from "../engine/process-liveness.js";
 import {
@@ -156,70 +155,21 @@ class PinnedDaemonAgent extends HttpsAgent {
   }
 }
 
-/** Statuses whose response has no body, which `Response` refuses one for. */
-const NULL_BODY_STATUSES: ReadonlySet<number> = new Set([101, 103, 204, 205, 304]);
-
-function requestBody(body: RequestInit["body"]): string | Uint8Array | undefined {
-  if (body === undefined || body === null || typeof body === "string" || body instanceof Uint8Array) return body ?? undefined;
-  throw new TypeError("A request to an https Rerail daemon carries a string or bytes body");
-}
-
-/** A Node response's headers as `fetch` gives them: each value of a header that repeats appended in turn. */
-function fetchHeaders(incoming: Readonly<Record<string, string | string[] | undefined>>): Headers {
-  const headers = new Headers();
-  for (const [name, value] of Object.entries(incoming)) {
-    for (const item of [value ?? []].flat()) headers.append(name, item);
-  }
-  return headers;
-}
-
-/**
- * `fetch` over Node's own client: `send` (`http.request` or `https.request`) over `agent`, for the request shapes
- * Rerail's own clients send. Redirects are never followed. `sent` is told once the request was handed to the OS (its
- * `finish`), which `fetch` never says.
- */
-function nodeFetch(send: typeof httpsRequest | typeof httpRequest, agent: HttpsAgent | false, sent?: () => void): DaemonFetch {
-  return async (endpoint, init) => {
-    const method = (init.method ?? "GET").toUpperCase();
-    const body = requestBody(init.body);
-    const { promise, resolve: answer, reject } = Promise.withResolvers<Response>();
-    const request = send(endpoint, {
-      method,
-      headers: Object.fromEntries(new Headers(init.headers)),
-      agent,
-      ...(init.signal === undefined || init.signal === null ? {} : { signal: init.signal }),
-    }, (response) => {
-      const status = response.statusCode ?? 502;
-      const empty = method === "HEAD" || NULL_BODY_STATUSES.has(status);
-      if (empty) response.resume();
-      answer(new Response(empty ? null : Readable.toWeb(response) as unknown as ReadableStream, {
-        status, statusText: response.statusMessage ?? "", headers: fetchHeaders(response.headers),
-      }));
-    });
-    request.once("error", reject);
-    if (sent !== undefined) request.once("finish", sent);
-    request.end(body);
-    return await promise;
-  };
-}
-
 /**
  * How a Rerail process reaches the daemon `state` records: for an `http:` daemon, Node's http client over the one
  * keep-alive agent of the process (`httpDaemonFetch`); for an `https:` one, a client that pins the certificate
  * fingerprint the daemon recorded. An `https:` state without a fingerprint is refused rather than trusted. A caller that
- * gives `sent` is told once each request was handed to the OS, so its requests go through Node's own client, on a
- * connection of their own.
+ * gives `sent` is told once each request was handed to the OS on a new connection.
  */
 export function daemonFetch(state: Pick<DaemonState, "url" | "tlsFingerprint256">, sent?: () => void): DaemonFetch {
-  if (new URL(state.url).protocol !== "https:") return sent === undefined ? httpDaemonFetch : nodeFetch(httpRequest, false, sent);
+  if (new URL(state.url).protocol !== "https:") return sent === undefined ? httpDaemonFetch : httpDaemonFetchTelling(sent);
   const fingerprint = state.tlsFingerprint256;
   if (fingerprint === undefined) {
     return async () => {
       throw new Error("daemon.json names an https Rerail daemon without the certificate fingerprint to pin");
     };
   }
-  const agent = new PinnedDaemonAgent(fingerprint);
-  return sent === undefined ? agentFetch(agent, httpsRequest) : nodeFetch(httpsRequest, agent, sent);
+  return agentFetch(new PinnedDaemonAgent(fingerprint), httpsRequest, sent);
 }
 
 /** `url` on the origin a browser on this machine reaches: an unspecified bind address (`0.0.0.0`, `::`) is loopback. */

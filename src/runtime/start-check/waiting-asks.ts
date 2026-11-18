@@ -39,13 +39,7 @@ export interface StartAsk {
    * false where it is not to be asked at all.
    */
   beforeAsking(daemon: DaemonIdentity, workspace: string): boolean;
-  /**
-   * Whether this ask is to be told when its request was handed to the OS (`sent`): only one that made its folder's
-   * pending mark. Every other start check goes as before, over `fetch`, whose connection the hook's later requests to
-   * the daemon reuse, which a busy daemon would otherwise admit one more of.
-   */
-  readonly marking: boolean;
-  /** The request was handed to the OS on a connection to the daemon. */
+  /** The request was handed to the OS on a new connection to the daemon. */
   sent(): void;
 }
 
@@ -64,10 +58,6 @@ export class HookAsk implements StartAsk {
   /** Whether the hook did not ask, since a check it may repeat the answer of waits at the daemon already. */
   get unasked(): boolean {
     return this.#unasked;
-  }
-
-  get marking(): boolean {
-    return this.#asking !== undefined;
   }
 
   /**

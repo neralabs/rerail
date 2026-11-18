@@ -120,6 +120,18 @@ describe("daemonFetch over http", () => {
     expect(connections).toBe(1);
   });
 
+  it("tells a caller that gives `sent` once its request was handed to the OS on a new connection, never on a kept one, and keeps that connection for the reads after it", async () => {
+    let connections = 0;
+    const { server, url } = await httpDaemon((request, response) => response.end(JSON.stringify({ path: request.url })));
+    server.on("connection", () => { connections += 1; });
+    const told: string[] = [];
+    for (const path of ["/api/presentation", "/api/presentation", "/healthz"]) {
+      const send = path === "/healthz" ? daemonFetch({ url }) : daemonFetch({ url }, () => told.push(path));
+      expect(await (await send(new URL(path, url), { headers: ACCESS })).json()).toEqual({ path });
+    }
+    expect({ told, connections }).toEqual({ told: ["/api/presentation"], connections: 1 });
+  });
+
   it("sends a GET once more on a new connection when the daemon closed the kept one as it arrived, and never a POST", async () => {
     // The daemon answers the first request on a connection and closes the connection when a second one reaches it.
     const onData = (connection: Admitted): void => {

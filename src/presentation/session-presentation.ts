@@ -500,9 +500,9 @@ async function askedLive(daemon: VerifiedDaemon, host: RerailHost, { stop, ask }
   return { state: response.repositoryState, workspace: daemon.workspace, scope: response.scope ?? null, daemon: daemon.state };
 }
 
-/** What tells `ask` its request was handed to the OS, where it is to be told (`StartAsk.marking`). */
+/** What tells `ask` its request was handed to the OS, where the check carries one. */
 function sentOf(ask: StartAsk | undefined): (() => void) | undefined {
-  return ask?.marking === true ? () => ask.sent() : undefined;
+  return ask === undefined ? undefined : () => ask.sent();
 }
 
 /** Why no daemon answered in a started checkout: none is running, or the live one gave no answer in time. */
