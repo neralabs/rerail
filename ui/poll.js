@@ -857,16 +857,20 @@ function followChanges() {
   const each = message => { watchStall(); onMessage(message, first); first = false; };
   watchStall();
   // How it ended needs no reading here: the read after it says whether the daemon answers.
-  inStreamSlot(() => follow(changesPath(), each, controller.signal).catch(() => {})).then(() => changesEnded(controller));
+  inStreamSlot(() => follow(changesPath(), each, controller.signal)).catch(() => {}).then(() => changesEnded(controller));
 }
 
-async function changesEnded(controller) {
+/**
+ * The stream ended, or found no slot: read once, and open it again after `backoff`, which that read's outcome moves
+ * for the next time. The retry waits for no read, so a read that never answers cannot keep the stream closed.
+ */
+function changesEnded(controller) {
   if (stream !== controller) return; // ended from here: the tab hid, the scope changed, or two beats were missed
   stream = null;
   clearTimeout(stallTimer);
-  await refresh();
   clearTimeout(retryTimer);
   retryTimer = setTimeout(() => { retryTimer = null; followChanges(); }, backoff);
+  void refresh();
 }
 
 /** Stop following and reading until `followChanges` again. */
