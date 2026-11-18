@@ -3149,8 +3149,11 @@ native join it falls back to the planner's whole-rule order.
   `bound_head_order` is gone. The mode's lines report their work: `setfix::maint_step_counts` gives the removals',
   checked adds' and rechecks' step counts by plan step (the probes' are `step_counts`'), and `maintain_mode` gives
   each line's work to `Model::ran` under its key (a removal and its add, planned alike, summed under one). A
-  recursive component's drivers (a probe's join less its delta atom) report none: their order is the probe's, run
-  another way. Tests: `a_recheck_is_priced_with_its_head_bound_and_kept_apart` (plan: alone `c(y)` leads, with the
+  recursive component's drivers (a probe's join less its delta atom) report theirs too (2026-11-18): each keeps the
+  probe it is made from, `setfix::driver_step_counts` gives its counts with that probe, and `maintain_mode` adds its
+  work to that probe's key (its order is the probe's, run another way). Test:
+  `a_recursive_components_driver_reports_its_work_under_its_probe` (setfix; the driver is made from the second
+  probe, after a seed). Tests: `a_recheck_is_priced_with_its_head_bound_and_kept_apart` (plan: alone `c(y)` leads, with the
   head bound `a(x, y)` does, its kept plan taken as it is and the rule's own order untouched) and the counts in
   `a_maintained_component_kills_the_candidates_no_rule_derives_and_adds_the_new_rows` (setfix). On the farm (M3):
   those, setfix's three maintain-mode tests, the two corpus maintain-mode tests, the session tests (19) and the plan

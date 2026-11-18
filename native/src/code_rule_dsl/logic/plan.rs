@@ -8210,15 +8210,23 @@ impl<'a> Run<'a, '_> {
             live_stats(&mut self.model, r, live);
         }
         // Each line's work, under its kept plan's key, for the next run's planning budget (decision 0122): a removal
-        // and its add, planned alike, under one key, their work summed (Q145).
+        // and its add, planned alike, under one key, their work summed (Q145). A recursive component's driver (its
+        // probe's order less the delta atom, finding the rows that read a row gone) adds its work to its probe's.
         {
             let probes = super::native::component::step_counts(self.db, &name)?;
             let [removes, adds, rechecks] = super::native::component::maint_step_counts(self.db, &name)?;
+            let drivers = super::native::component::driver_step_counts(self.db, &name)?;
+            let work_of = |line: &[(i64, i64)]| super::profile::plan_work(&line.iter().map(|&(a, b)| (a as u64, b as u64)).collect::<Vec<_>>()) as f64;
             let mut lists: [std::vec::IntoIter<Vec<(i64, i64)>>; 4] = [probes.into_iter(), removes.into_iter(), adds.into_iter(), rechecks.into_iter()];
             let mut work: Vec<(PlanKey, f64)> = Vec::new();
+            let mut probe = 0;
             for (kind, key) in &mode_keys {
                 let Some(line) = lists[*kind as usize].next() else { continue };
-                let w = super::profile::plan_work(&line.iter().map(|&(a, b)| (a as u64, b as u64)).collect::<Vec<_>>()) as f64;
+                let mut w = work_of(&line);
+                if *kind == ModeLine::Probe {
+                    w += drivers.iter().filter(|(p, _)| *p == probe).map(|(_, d)| work_of(d)).sum::<f64>();
+                    probe += 1;
+                }
                 match work.iter_mut().find(|(k, _)| k == key) {
                     Some((_, at)) => *at += w,
                     None => work.push((*key, w)),

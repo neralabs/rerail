@@ -1217,8 +1217,9 @@ struct MaintMode {
     rechecks: Vec<(usize, JoinRule)>,
     /// A recursive component's (by levels, decision 0364 §2): per delta probe, the relation whose row drives it, its
     /// head, the probe's join without that atom (its slots bound), and that atom's arguments: the rows that read a
-    /// row gone, found from the row.
-    drivers: Vec<(usize, usize, JoinRule, Vec<Arg>)>,
+    /// row gone, found from the row; last, the probe it is made from (its index in `probes`), whose kept plan its
+    /// work is reported under (`driver_step_counts`).
+    drivers: Vec<(usize, usize, JoinRule, Vec<Arg>, usize)>,
     leveled: bool,
     done: bool,
     /// Candidates, those killed, and checked adds added: the run's report.
@@ -1258,8 +1259,8 @@ impl MaintMode {
 
     /// The rows of `driver`'s head that read `row` of its relation (`drivers`): its atom's slots preset from the row,
     /// where the row matches the atom's constants and repeated slots.
-    fn readers(driver: &(usize, usize, JoinRule, Vec<Arg>), row: &[i64], store: &Store, syms: &mut Interner, out: &mut Vec<i64>) -> Result<()> {
-        let (_, _, j, args) = driver;
+    fn readers(driver: &(usize, usize, JoinRule, Vec<Arg>, usize), row: &[i64], store: &Store, syms: &mut Interner, out: &mut Vec<i64>) -> Result<()> {
+        let (_, _, j, args, _) = driver;
         let mut preset: Vec<(usize, i64)> = Vec::with_capacity(args.len());
         for (a, &v) in args.iter().zip(row) {
             match a {
@@ -1893,7 +1894,13 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     // A recursive component in the maintain mode (decision 0364 §2): each delta probe is also a driver, its delta atom
     // taken out and its slots bound, to find the rows that read a row gone.
     if !maint.removes.is_empty() || !maint.adds.is_empty() {
+        // A probe's index: the lines that make probes, in spec order, as the loop above pushed them.
+        let mut probe = 0;
         for line in &spec.lines {
+            let at_probe = probe;
+            if matches!(line, Line::Probe { .. } | Line::Unplanned { .. } | Line::Seed { .. } | Line::Join { .. }) {
+                probe += 1;
+            }
             let Line::Join { head, delta, join, .. } = line else { continue };
             let Some(at) = join.items.iter().position(|i| matches!(i, JoinItem::Atom { neg: false, src: spec::Source::Delta(d), .. } if d == delta)) else { continue };
             let JoinItem::Atom { args, .. } = &join.items[at] else { unreachable!() };
@@ -1904,7 +1911,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
                 rest.from.remove(at);
             }
             let j = join_rule_bound(conn, &rest, &mut syms, true, &pre)?;
-            maint.drivers.push((*delta, *head, j, args.clone()));
+            maint.drivers.push((*delta, *head, j, args.clone(), at_probe));
         }
         maint.leveled = spec.lines.iter().any(|l| matches!(l, Line::Join { .. }));
     }
@@ -2837,6 +2844,20 @@ pub fn maint_step_counts(conn: impl Scoped, name: &str) -> Result<[Vec<Vec<(i64,
         }).collect()
     };
     Ok([of(&comp.maint.removes), of(&comp.maint.adds), of(&comp.maint.rechecks)])
+}
+
+/// The drivers of component `name`'s maintain mode (a recursive component's, decision 0364 §2): per driver, the probe
+/// it is made from (its index in `step_counts`'s list) and its steps' (in, out) binding counts by its own plan steps
+/// since the last call; the counts restart. A driver runs its probe's order less the delta atom, so its work is
+/// that probe's kept plan's, for the next run's planning budget (Q145).
+pub fn driver_step_counts(conn: impl Scoped, name: &str) -> Result<Vec<(usize, Vec<(i64, i64)>)>> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    Ok(comp.maint.drivers.iter().map(|(_, _, j, _, probe)| {
+        let c: Vec<(u64, u64)> = j.counts.iter().map(|[a, b]| (a.replace(0), b.replace(0))).collect();
+        (*probe, j.plan_counts(&c).into_iter().map(|(a, b)| (a as i64, b as i64)).collect())
+    }).collect())
 }
 
 /// Profiled: per probe of component `name`, its plan steps' CPU seconds since the last call, and last its head's

@@ -131,3 +131,35 @@ fn a_recheck_takes_no_rule_whose_head_constants_differ_from_the_candidate() {
     close(&db, "mc_h").unwrap();
     assert_eq!(unpadded(live(&held(&db, "mc_h").expect("held"))), vec![vec![1, 6], vec![2, 5]]);
 }
+
+/// A recursive component's drivers report their work (Q145's gap): `p(x, y) :- e(x, y).  p(x, z) :- p(x, y), e(y, z).`
+/// with (2, 3) gone from `e` below. The removal's candidate p(2, 3) is killed, and the driver made from the delta
+/// probe (its join less `p`) finds the rows that read it from the row: e(3, z), so p(2, 4). Its counts are given
+/// with the probe it is made from, the second (after the seed), whose kept plan its work goes to.
+#[test]
+fn a_recursive_components_driver_reports_its_work_under_its_probe() {
+    let db = connection();
+    let e0 = Arc::new(padded(&[&[1, 2], &[2, 3], &[3, 4]], b"ii"));
+    let e = Rel::based("mm_re", b"ii", &e0, Some(&rel_of(&[&[2, 3]], b"ii"))).expect("few dead");
+    adopt(&db, "mm_re", Arc::new(InRel::moved(e)));
+    adopt(&db, "mm_rp_kept", Arc::new(padded(&[&[1, 2], &[2, 3], &[3, 4], &[1, 3], &[2, 4], &[1, 4]], b"ii")));
+    let v = |ver: &str, t: &str| format!("v:{ver}:{}", hex(t));
+    let r = |t: &str| format!("r:{}", hex(t));
+    let remove = format!("pos {} v0 v1\nhead v0 v1", v("m", "mm_re"));
+    let add = format!("pos {} v0 v1\nhead v0 v1", v("p", "mm_re"));
+    let recheck_e = format!("pos {} v0 v1\nhead v0 v1", r("mm_re"));
+    let recheck_p = format!("pos c0 v0 v1\npos {} v1 v2\nhead v0 v2", r("mm_re"));
+    let probe = format!("pos d0 v0 v1\npos {} v1 v2\nhead v0 v2", r("mm_re"));
+    let spec = format!(
+        "name mm_rp\nrel mm_rp ii base {} -\nnowrite\nleveled 0\nkeptold\nremove 0 {}\nrecheck 0 {}\nrecheck 0 {}\nseed 0 {}\njoin 0 0 {}",
+        hex("mm_rp_kept"), hex(&remove), hex(&recheck_e), hex(&recheck_p), hex(&add), hex(&probe)
+    );
+    open(&db, &spec).unwrap();
+    run(&db, "mm_rp", 0).unwrap();
+    let drivers = driver_step_counts(&db, "mm_rp").unwrap();
+    let worked = |line: &Vec<(i64, i64)>| line.iter().any(|&(i, o)| i > 0 || o > 0);
+    assert_eq!(drivers.iter().map(|d| d.0).collect::<Vec<_>>(), vec![1], "one driver, made from the second probe: {drivers:?}");
+    assert!(worked(&drivers[0].1), "the driver's steps counted: {drivers:?}");
+    assert!(!driver_step_counts(&db, "mm_rp").unwrap().iter().any(|d| worked(&d.1)), "read once");
+    close(&db, "mm_rp").unwrap();
+}
