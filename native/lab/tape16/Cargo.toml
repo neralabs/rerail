@@ -22,7 +22,7 @@ rerail-tape-format = { path = "../../crates/tape_format" }
 rerail-rr-syntax = { path = "../../crates/rr_syntax", optional = true }
 
 # E25: the code table from the grammar (`tape16 gcodes`): node types generated as the build generates them.
-tree-sitter-generate = { version = "=0.27.1", default-features = false, features = ["load"], optional = true }
+tree-sitter-generate = { version = "=0.27.2", default-features = false, features = ["load"], optional = true }
 serde_json = { version = "1", optional = true }
 
 [features]

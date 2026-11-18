@@ -582,6 +582,8 @@ interface WorktreeStart {
   /** `WorktreeDiscovery.roots` as the walk began. */
   readonly worktrees: ReadonlySet<string>;
   readonly versions: ReadonlyMap<string, number>;
+  /** `ToolCallWindows.ends` as the walk began. */
+  readonly callsEnded: number;
 }
 
 /** A walk of the other worktrees as this session takes it: what changed since its snapshots, read off the lane. */
@@ -625,6 +627,22 @@ function takeGaps(worktree: string, findings: WorktreeFindings, scan: SourceScan
   for (const failed of findings.failedRoots) if (takes(failed)) scan.failedRoots.add(inWorktree(worktree, failed));
   for (const { path, readError } of findings.errors) if (takes(path)) scan.errors.push({ path: inWorktree(worktree, path), readError });
   for (const [path, unread] of findings.unread) if (takes(path)) scan.unread.set(inWorktree(worktree, path), unread);
+}
+
+/**
+ * Puts into `taken` the heads and unmerged entries a walk read of the worktree at `root` and of the checkouts inside it,
+ * and the unmerged entries of the checkouts it passed (`SourceScan.unmerged`), by physical root.
+ */
+function takeCheckouts(
+  root: string,
+  findings: WorktreeFindings,
+  taken: { readonly heads: Map<string, string>; readonly unmerged: Map<string, ReadonlyMap<string, string>>; readonly passed: SourceScan["unmerged"] },
+): void {
+  if (findings.head !== undefined) taken.heads.set(root, findings.head);
+  if (findings.unmerged !== undefined) taken.unmerged.set(root, findings.unmerged);
+  for (const [checkout, head] of findings.inner.heads) taken.heads.set(checkout, head);
+  for (const [checkout, entries] of findings.inner.unmerged) taken.unmerged.set(checkout, entries);
+  for (const [checkout, entries] of findings.inner.passed) taken.passed.set(checkout, entries);
 }
 
 /**
@@ -837,6 +855,8 @@ interface WalkStart {
   readonly versions: ReadonlyMap<string, number>;
   readonly heads: ReadonlyMap<string, string>;
   readonly unmerged: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  /** `ToolCallWindows.ends` as the walk started: a command that ended since may have been writing what the walk read. */
+  readonly callsEnded: number;
   /** Filesystem-clock reading taken as the walk started. */
   readonly observedAt: number;
 }
@@ -1192,8 +1212,6 @@ export class CodeRuleBridge {
   readonly #rewindable = new Map<string, RewindableEdit>();
   /** Command tool calls whose results must reconcile shell writes. */
   readonly #commands = new Set<string>();
-  /** Command tool calls the runtime answered while the evaluator opened (`unwatchedCall`), until their results. */
-  readonly #unwatchedCommands = new Set<string>();
   /**
    * What the session last observed of each source of its folder, and of each source elsewhere that a tool call of it
    * read; of the other worktrees, only where that differs from the snapshot `#worktreeView` holds (`#observe`).
@@ -1473,7 +1491,7 @@ export class CodeRuleBridge {
     restoredPreimages?: Readonly<Record<string, Preimage>>,
   ): Promise<Readonly<Record<string, Preimage>>> {
     const discovery = this.#requireDiscovery();
-    discovery.toolCalls.begin(toolCallId, await filesystemClock());
+    discovery.toolCalls.begin(toolCallId, await filesystemClock(), isCommandTool(toolName));
     this.refreshCodeRules();
     const paths = generatedEditPaths(toolName, input);
     this.#auditor.refreshOwners?.(paths);
@@ -1502,13 +1520,11 @@ export class CodeRuleBridge {
    * names the call's tool, none for a turn's window.
    */
   async unwatchedCall(toolCallId: string, toolName?: string): Promise<void> {
-    if (toolName !== undefined && isCommandTool(toolName)) this.#unwatchedCommands.add(toolCallId);
-    (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, await filesystemClock());
+    (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, await filesystemClock(), toolName !== undefined && isCommandTool(toolName));
   }
 
   /** Ends the window `unwatchedCall` opened for the call, at its result. */
   async unwatchedResult(toolCallId: string): Promise<void> {
-    this.#unwatchedCommands.delete(toolCallId);
     (this.#discovery?.toolCalls ?? this.#unwatched).finish(toolCallId, await filesystemClock());
   }
 
@@ -2144,7 +2160,7 @@ export class CodeRuleBridge {
       discovery.worktrees.error = errorMessage(error);
       return undefined;
     }
-    const start: WorktreeStart = { worktrees: new Set(discovery.worktrees.roots), versions: new Map(discovery.versions) };
+    const start: WorktreeStart = { worktrees: new Set(discovery.worktrees.roots), versions: new Map(discovery.versions), callsEnded: discovery.toolCalls.ends };
     const rules = { current: false };
     return {
       worktrees: new Set(worktrees),
@@ -2177,6 +2193,7 @@ export class CodeRuleBridge {
       previous: new Map(this.#observed), versions: new Map(discovery.versions),
       // Read before the walk, so a move or conflict the walk only partly saw is still one to the next.
       ...await this.#readCheckouts(discovery),
+      callsEnded: discovery.toolCalls.ends,
       observedAt: await filesystemClock(),
     };
     const scan = await this.#scanSources(discovery, walk, worktrees);
@@ -2286,16 +2303,12 @@ export class CodeRuleBridge {
       const worktree = sessionPath(discovery.root, root);
       if (!start.worktrees.has(worktree)) continue;
       snapshots.set(worktree, findings.snapshot);
-      if (findings.head !== undefined) heads.set(root, findings.head);
-      if (findings.unmerged !== undefined) unmerged.set(root, findings.unmerged);
-      for (const [checkout, head] of findings.inner.heads) heads.set(checkout, head);
-      for (const [checkout, entries] of findings.inner.unmerged) unmerged.set(checkout, entries);
-      for (const [checkout, entries] of findings.inner.passed) scan.unmerged.set(checkout, entries);
+      takeCheckouts(root, findings, { heads, unmerged, passed: scan.unmerged });
       this.#takeFindings(discovery, { root, worktree }, findings, kept.get(worktree) ?? [], { previous, scan });
     }
     const walk: WalkStart = {
       inSession: false, baseline: false, checkpoint: "edit", worktrees: new Set(snapshots.keys()), previous, versions: start.versions,
-      heads, unmerged, observedAt,
+      heads, unmerged, callsEnded: start.callsEnded, observedAt,
     };
     const views = await this.#readTakenTexts(discovery, walk, scan, found);
     // Not this take's to record: the session keeps what it saw of them (`#takeSnapshots`).
@@ -2510,9 +2523,9 @@ export class CodeRuleBridge {
    */
   #takeSnapshots(discovery: SourceDiscovery, take: WorktreeTake): void {
     for (const [worktree, snapshot] of take.snapshots) if (discovery.worktrees.roots.has(worktree)) this.#worktreeView.take(worktree, snapshot);
-    const pendingPaths = this.#pendingPaths();
+    const toolChanged = this.#toolChanges(discovery, take.walk);
     for (const path of new Set([...take.walk.previous.keys(), ...take.scan.sources.keys()])) {
-      if (this.#toolChanged(discovery, take.walk, path, pendingPaths, take.scan.sources.get(path))) this.#keepToolView(path, take.walk.previous.get(path));
+      if (toolChanged(path, take.scan.sources.get(path))) this.#keepToolView(path, take.walk.previous.get(path));
     }
     for (const [path, before] of take.views) this.#keepToolView(path, before);
   }
@@ -2682,10 +2695,10 @@ export class CodeRuleBridge {
 
   /** The changes the walk found; `uncaptured` receives the digest each changed source was observed with before. */
   #discoverEdits(discovery: SourceDiscovery, walk: WalkStart, current: ReadonlyMap<string, Source>, uncaptured: Map<string, string>): CodeRuleEdit[] {
-    const pendingPaths = this.#pendingPaths();
+    const toolChanged = this.#toolChanges(discovery, walk);
     const edits: CodeRuleEdit[] = [];
     for (const path of [...new Set([...walk.previous.keys(), ...current.keys()])].sort(compareDeterministicStrings)) {
-      if (!walkAnswersFor(discovery, walk, path) || this.#toolChanged(discovery, walk, path, pendingPaths, current.get(path))) continue;
+      if (!walkAnswersFor(discovery, walk, path) || toolChanged(path, current.get(path))) continue;
       const previous = walk.previous.get(path);
       const edit = this.#discoveredEdit(discovery, path, previous, current.get(path), walk.baseline);
       if (edit === undefined) continue;
@@ -2698,23 +2711,22 @@ export class CodeRuleBridge {
   }
 
   /**
-   * A begin/finish after scan launch wins even when its bytes happen to match the old snapshot. So does a shell command
-   * still running that may be writing a source the session has observed (`#commandWriting`): its result reports it.
+   * Whether `walk` leaves the change it found to a source, `current` as it found it, to a tool call's result. A
+   * begin/finish after scan launch wins even when its bytes happen to match the old snapshot. So does a shell command
+   * still running as the walk began, even one that ended since, if it had begun by the time the source last changed (at
+   * any time, for a source with no stamp: one gone, or one the walk failed to stat or read): it may have been part way
+   * through writing the source as the walk read it. A walk that took it would audit a half-written file as the
+   * session's edit, and the command's result would measure the rest of its change from that. That holds only of a
+   * source the session has observed; the walk at the command's result, or the next one, takes the change whole, from
+   * what the session saw before.
    */
-  #toolChanged(discovery: SourceDiscovery, walk: WalkStart, path: string, pendingPaths: ReadonlySet<string>, current: Source | undefined): boolean {
-    return discovery.versions.get(path) !== walk.versions.get(path) || pendingPaths.has(path)
-      || (walk.previous.has(path) && this.#commandWriting(discovery, current));
-  }
-
-  /**
-   * Whether a shell command of the session that still runs had begun when `current`, a source as a walk found it, last
-   * changed; for one gone, whether such a command runs at all. The command may be part way through writing it: a walk
-   * that took it now would audit a half-written file as the session's edit, and the command's result would measure the
-   * rest of its change from that. The result's walk takes the change whole, from what the session saw before.
-   */
-  #commandWriting(discovery: SourceDiscovery, current: Source | undefined): boolean {
-    const commands = [...this.#commands, ...this.#unwatchedCommands];
-    return commands.some(toolCallId => discovery.toolCalls.runsSince(toolCallId, current?.modifiedAt));
+  #toolChanges(discovery: SourceDiscovery, walk: WalkStart): (path: string, current: Source | undefined) => boolean {
+    const pendingPaths = this.#pendingPaths();
+    const commandSince = discovery.toolCalls.commandSince(walk.callsEnded);
+    const commandWriting = (current: Source | undefined) =>
+      commandSince !== undefined && (current?.modifiedAt === undefined || commandSince <= current.modifiedAt);
+    return (path, current) => discovery.versions.get(path) !== walk.versions.get(path) || pendingPaths.has(path)
+      || (walk.previous.has(path) && commandWriting(current));
   }
 
   /** The paths a tool call in progress has captured: its finish, not a walk, reports them. */
