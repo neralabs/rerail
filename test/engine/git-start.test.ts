@@ -253,6 +253,21 @@ async function selfEndings(): Promise<unknown> {
   return ends;
 }
 
+/** Scripts that end themselves by a signal Node has no name for: the first and the last real-time signal, and one between. */
+const UNNAMED_ENDINGS = [34, 40, 64].map(signal => ["-c", `kill -${signal} $$`]);
+
+/** How each of {@link UNNAMED_ENDINGS} ended: as a reader of its start sees it, and as a blocking run answers it. */
+async function unnamedEndings(): Promise<unknown> {
+  const ends: unknown[] = [];
+  for (const args of UNNAMED_ENDINGS) {
+    const child = startGit("/bin/sh", args, process.env, "ignore");
+    const { code, signal } = await ended(child);
+    const run = runGitSync("/bin/sh", args, process.env);
+    ends.push([{ code, signal, exitCode: child.exitCode, signalCode: child.signalCode }, { status: run.status, signal: run.signal }]);
+  }
+  return ends;
+}
+
 /**
  * What a reader sees of `child` once `seen` has come, the last event before which an exit could come early: whether it
  * exited before the kill that follows, whether that kill was sent, and how the child ended.
@@ -286,6 +301,18 @@ describe.runIf(LINUX)("Git started through the engine in the states where it and
     expect([vi.mocked(spawn).mock.calls.length, vi.mocked(spawnSync).mock.calls.length]).toEqual([0, 0]);
     expect(throughEngine).toEqual(throughNode);
     expect(throughEngine).toEqual([["SIGABRT", "SIGABRT"], ["SIGIO", "SIGIO"]]);
+  });
+
+  it("reports an end by a signal Node has no name for as Node does: exit code 0 to a reader, no status and an empty signal from a blocking run", async () => {
+    const throughNode = await unnamedEndings();
+    vi.mocked(spawn).mockClear();
+    vi.mocked(spawnSync).mockClear();
+    expect(startGitWithoutCopying(loadNativeBinding)).toBe(true);
+    const throughEngine = await unnamedEndings();
+    expect([vi.mocked(spawn).mock.calls.length, vi.mocked(spawnSync).mock.calls.length]).toEqual([0, 0]);
+    expect(throughEngine).toEqual(throughNode);
+    const unnamed = [{ code: 0, signal: null, exitCode: 0, signalCode: null }, { status: null, signal: "" }];
+    expect(throughEngine).toEqual([unnamed, unnamed, unnamed]);
   });
 
   it("waits for the exit of a Git whose exit pipe closed while it runs, and ends it at a kill as Node's child", async () => {

@@ -148,7 +148,8 @@ function engineGit(started: EngineStartedGit, reap: (pid: number) => EngineGitEx
 /** What a blocking Git run answers: `spawnSync`'s status, signal, output as UTF-8, and error. */
 export interface GitRunResult {
   status: number | null;
-  signal: NodeJS.Signals | null;
+  /** Empty for a signal Node has no name for, as `spawnSync` gives it, whatever its own type says. */
+  signal: NodeJS.Signals | "" | null;
   /** Null where `spawnSync` could not start the program. */
   stdout: string | null;
   stderr: string | null;
@@ -223,7 +224,7 @@ function engineTimeout(timeout: number | undefined): number | undefined | null {
 
 /** The engine's run as `spawnSync` answers it. */
 function answerOf(ran: EngineGitRun, executable: string, args: readonly string[]): GitRunResult {
-  const [status, signal] = endOf({ code: ran.status, signal: ran.signal });
+  const [status, signal] = runEndOf(ran);
   const error = runError(ran, executable, args);
   return { status, signal, stdout: ran.stdout.toString("utf8"), stderr: ran.stderr.toString("utf8"), ...(error === undefined ? {} : { error }) };
 }
@@ -258,10 +259,25 @@ function environment(env: NodeJS.ProcessEnv): string[] {
  */
 const SIGNAL_NAMES = new Map(Object.entries(constants.signals).reverse().map(([name, number]) => [number, name as NodeJS.Signals]));
 
-/** The exit code, or the signal's name, of a reaped child; both null when it was not this process's to reap. */
+/**
+ * The exit code, or the signal's name, of a reaped child, as Node's child reports them; both null when it was not this
+ * process's to reap. A signal Node has no name for (the real-time ones, 34 to 64 on Linux) leaves its child exit code
+ * 0 and no signal, since libuv reports exit status 0 for any end by a signal and Node keeps the code when the name is
+ * empty.
+ */
 function endOf({ code, signal }: EngineGitExit): [number | null, NodeJS.Signals | null] {
-  if (signal !== undefined && signal !== null) return [null, SIGNAL_NAMES.get(signal) ?? null];
-  return [code ?? null, null];
+  if (signal === undefined || signal === null) return [code ?? null, null];
+  const name = SIGNAL_NAMES.get(signal);
+  return name === undefined ? [0, null] : [null, name];
+}
+
+/**
+ * A blocking run's status and signal as `spawnSync` reports them: no status once a signal ended it, and the signal's
+ * name, empty for a signal Node has no name for.
+ */
+function runEndOf({ status, signal }: EngineGitRun): [number | null, NodeJS.Signals | "" | null] {
+  if (signal === undefined || signal === null) return [status ?? null, null];
+  return [null, SIGNAL_NAMES.get(signal) ?? ""];
 }
 
 /**
