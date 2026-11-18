@@ -344,10 +344,12 @@ Progress (2026-11-18):
   bringing a program to `finish`, agreeing, and is deleted.
 - **Step 5, first part.** Every text lowers on versions: one module written in the walk, linked through the
   lowering's tail (`rr::link_library_versions`); the tree's `lower`, `link`, `link_in`, `link_seeded` and `whole`
-  are gone. The run reads its programs as versions (`rr::parse_version`), and a program handed to it is one. Left
-  of step 5: each clause still builds a `front::Rule` that the walk encodes (`lower::Written`), the walk reads
-  `rr/from_tape.rs`'s statements, the lowerer's header is a `front::Program`, which the module images store and
-  decode, and the tail's passes keep tree twins for their tests.
+  are gone. The run reads its programs as versions (`rr::parse_version`), and a program handed to it is one.
+- **Step 5, second part.** The tail's tree twins are gone, their tests checking the version passes. A module is its
+  version, rules and header: `seed` and the link read a module's header there, `relinked` renames it there, and an
+  image is that version with its `module_*` rows (no header decoded). The lowerer's header is a builder written
+  through the fields API, and the walk writes its rules onto it. Left of step 5: each clause still builds a
+  `front::Rule` that the builder encodes (`Builder::add`), and the walk reads `rr/from_tape.rs`'s statements.
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 
