@@ -141,17 +141,16 @@ async function keptAnswer(pending: Promise<StartAnswer | null>, before: MarkBefo
  * `knownStopped`, ending `request` where it holds or throws: the hook then answers without the daemon, and a request
  * left open would keep its process alive until the daemon or the read's time limit ended it. The request stays in the
  * daemon's queue where it was sent, so `ask` marks it there (`HookAsk.abandoned`). Where `ask` may not end
- * (`HookAsk.mayEnd`), sent with no mark of this hook's, false without the check: the hook waits for the daemon, as before
- * this check existed, since a request it ended there would wait in the daemon's queue with no mark telling the hooks
- * after it, and each of them would add one more. A request the daemon answered, or one the hook goes on waiting for, is
- * left alone.
+ * (`HookAsk.mayEnd`: sent with no mark of this hook's), false though the check holds: the hook waits for the daemon, as
+ * before this check existed, since a request it ended there would wait in the daemon's queue with no mark telling the
+ * hooks after it, and each of them would add one more. A request the daemon answered, or one the hook goes on waiting
+ * for, is left alone.
  */
 function stoppedEndingRequest(workspace: string, request: AbortController, ask: HookAsk): boolean {
-  if (!ask.mayEnd) return false;
   // Stays true when the check throws, so the request ends then too.
   let stopped = true;
   try {
-    stopped = knownStopped(workspace);
+    stopped = knownStopped(workspace) && ask.mayEnd;
     return stopped;
   } finally {
     if (stopped) {

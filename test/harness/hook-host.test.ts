@@ -668,10 +668,12 @@ const foldersOfMarksTakingNone: ReadonlyArray<{ what: string; arrange: keyof typ
 ];
 
 /**
- * A hook's grace that runs out once its start check has reached the daemon, on a machine that sends it within 1.5 s, and
- * before the daemon's read gives up at 2 s, which starts after the grace does: the hook then decides on a request it sent.
+ * A hook's grace that runs out once its start check has reached the daemon, on a machine that sends it within 0.5 s, and
+ * leaves the hook's check of its kept answer and the late daemon's answer 1.5 s before the daemon's read gives up at
+ * 2 s, which starts after the grace does: the hook then decides on a request it sent, as one beside a busy daemon does
+ * where it sends within its 75 ms.
  */
-const GRACE_AFTER_THE_SEND_MS = 1_500;
+const GRACE_AFTER_THE_SEND_MS = 500;
 
 /** What is at `path`: `file`, `none`, or a folder, `empty folder` where nothing is in it. */
 function folderOfMarks(path: string): string {
@@ -2558,13 +2560,14 @@ describe("the hook start check", () => {
     }
   });
 
-  it.each(foldersOfMarksTakingNone)("waits for a busy daemon as hooks did before kept answers where $what, so its check would wait there with no mark: it ends no request at its grace, and reads the database itself once the daemon's read gives up", { timeout: 30_000 }, async ({ arrange, marks }) => {
+  it.each(foldersOfMarksTakingNone)("waits for a late daemon as hooks did before kept answers where $what, so its check would wait there with no mark: past its grace it finds the kept answer holds, ends no request and takes the daemon's answer", { timeout: 30_000 }, async ({ arrange, marks }) => {
     const root = await temporaryDirectory({ started: false });
     const app = stoppedApp(root);
     if (arrange === "writes refused") pendingMarksRefused();
     const host = await startCheckHost();
     await keptStopped(host, app, { marks });
-    const busy = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest, { marks });
+    // A daemon that would say started answers once the hook has checked its kept answer at the grace.
+    const late = await daemonAnsweringAfterProof(host, "started", { marks });
     const asks = join(dirname(keptAnswerFile(app)), "asks");
     if (arrange === "plain file") {
       removeFolderSync(asks);
@@ -2573,13 +2576,12 @@ describe("the hook start check", () => {
       removeFolderSync(asks);
     }
     try {
-      const [proofs, opened] = [host.proofs.found.length, host.opened.length];
+      host.proofs.nextCheck();
       const started = await host.hookRerailStarted("claude-code", app, undefined, GRACE_AFTER_THE_SEND_MS);
-      // No check of the kept answer at the grace, and the daemon's read ran to its limit: then the hook read the database.
-      expect({ started, proofs: host.proofs.found.slice(proofs), opened: host.opened.slice(opened), asked: busy.asked.length, asks: folderOfMarks(asks) })
-        .toEqual({ started: false, proofs: [], opened: [defaultRerailDatabasePath()], asked: 1, asks: LEFT_AS_ARRANGED[arrange] });
+      expect({ started, checked: host.proofs.found.at(-1), asked: late.asked.length, ended: late.ended(), asks: folderOfMarks(asks) })
+        .toEqual({ started: true, checked: true, asked: 1, ended: 0, asks: LEFT_AS_ARRANGED[arrange] });
     } finally {
-      await busy.close();
+      await late.close();
     }
   });
 
