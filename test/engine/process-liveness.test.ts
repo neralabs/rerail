@@ -170,12 +170,19 @@ describe("processStartedAtThroughEngine", () => {
 
   it.runIf(process.platform === "win32")("reads when this process and a later one started through the engine built here", async () => {
     const spawned = vi.mocked(childProcess.spawnSync).mock.calls.length;
+    // The order of facts decides, not how long anything took: this process was created before the case ran, and the
+    // child after the case asked for it. Windows stamps a creation with a clock that can read a timer tick (15.6 ms by
+    // default) apart from Node's, so the child's lower bound allows two ticks.
+    const asked = Date.now();
     const started = processStartedAtThroughEngine(process.pid, 2_000);
     expect(started).toBeDefined();
-    expect(Math.abs(started! - (Date.now() - process.uptime() * 1_000))).toBeLessThan(1_000);
+    expect(started!).toBeLessThanOrEqual(asked);
+    const spawning = Date.now();
     const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
     try {
-      expect(processStartedAtThroughEngine(child.pid!, 2_000)).toBeGreaterThan(started!);
+      const childStarted = processStartedAtThroughEngine(child.pid!, 2_000);
+      expect(childStarted).toBeGreaterThan(started!);
+      expect(childStarted!).toBeGreaterThanOrEqual(spawning - 32);
     } finally {
       const closed = once(child, "close");
       child.kill();
