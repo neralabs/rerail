@@ -20,6 +20,7 @@ import {
 import { defaultRerailDatabasePath, failWhileWriteLocked, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { isBusy } from "../engine/storage/sqlite-wal.js";
 import { waitForWriteLock } from "../engine/storage/write-lock-wait.js";
+import { openRecordWriter, type RecordWriter } from "../engine/storage/record-writes.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
 import { isNamedPipe } from "./engine-pipe.js";
@@ -30,7 +31,7 @@ import {
   endSuspendedSessions, failQueuedScans, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
 } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
-import { recordSteerReceipt } from "./session-store.js";
+import { steerReceiptWrite } from "./session-store.js";
 
 export interface EngineService {
   /** Where it listens: the socket path it was given, or its `pipeFallback` when another process held that pipe. */
@@ -247,6 +248,8 @@ interface EngineRoutingState {
   suspended: Map<string, SuspendedEntry>;
   /** The wait of each suspended session whose open for a scan met another process's write lock (`retryResume`). */
   resumeRetries: Map<string, AbortController>;
+  /** The service's use of each database's record writer, by path, for receipts no open runtime takes (`receiptWriter`). */
+  receiptWriters: Map<string, RecordWriter>;
   /**
    * The lock the service holds for its life beside its own database (`holdOwnerLock`), which the owner rows of its
    * runtimes over that database name (`ownerLockFor`); none where it could take none.
@@ -309,15 +312,28 @@ interface RuntimeRoute {
   runtimeOptions?: RerailRuntimeOptions;
 }
 
+/** What a request names of the session its event or receipt belongs to: its id, and its folder when it says. */
+interface RoutedSession {
+  sessionId: string;
+  cwd?: string | undefined;
+}
+
+/** The session `event` belongs to, as `resolveRuntimeRoute` routes it. */
+function eventSession(event: AdapterEvent): RoutedSession {
+  return event.kind === "session-start" ? event.session : { sessionId: event.sessionId, cwd: event.session?.cwd };
+}
+
+/**
+ * The runtime the work of `session` goes to: the one its configuration and folder name, or, for a request that names
+ * neither, the one runtime the session already uses.
+ */
 function resolveRuntimeRoute(
-  event: AdapterEvent,
+  { sessionId, cwd }: RoutedSession,
   configuration: EngineRuntimeConfiguration | undefined,
   options: EngineServiceOptions,
   state: EngineRoutingState,
 ): RuntimeRoute {
-  const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
-  const eventWorkspace = event.kind === "session-start" ? event.session.cwd : event.session?.cwd;
-  const workspaceRoot = configuration?.workspaceRoot ?? options.workspaceRoot ?? eventWorkspace;
+  const workspaceRoot = configuration?.workspaceRoot ?? options.workspaceRoot ?? cwd;
   const configurationKey = configuration === undefined
     ? undefined
     : JSON.stringify([
@@ -370,8 +386,9 @@ async function routeEngineEvent(
   options: EngineServiceOptions,
   state: EngineRoutingState,
 ): Promise<readonly AdapterDelivery[]> {
-  const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
-  const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(event, configuration, options, state);
+  const session = eventSession(event);
+  const { sessionId } = session;
+  const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(session, configuration, options, state);
   const lane = laneOf(runtimeKey, sessionId);
   keepRuntime(state, runtimeKey);
   const execution = state.lanes.run(lane, () => {
@@ -389,10 +406,11 @@ async function routeEngineEvent(
 }
 
 /**
- * Records the receipt of a steer a hook handed over (`answerReceipt`) in the runtime its session's events go to, found
- * as theirs are, on that runtime's open connection, as an OMP or Pi host's receipts are (`RerailRuntime.recordSteer`);
- * in the session's database on connections of its own when no open runtime holds the session (its runtime retired, or
- * this daemon started after the event), as the hook recorded it before. A receipt recorded twice counts once.
+ * Records the receipt of a steer a hook handed over (`answerReceipt`), never waiting for the database's write lock on
+ * this thread: in the runtime its session's events go to, found as theirs are, as an OMP or Pi host's receipts are
+ * (`RerailRuntime.recordSteer`); else, when no open runtime holds the session (its runtime retired, or this daemon
+ * started after the event), through the service's own use of the database's record writer. Either way the record
+ * writer makes it now, or keeps it until another process gives the lock back. A receipt recorded twice counts once.
  */
 function recordHandedReceipt(
   state: EngineRoutingState,
@@ -400,12 +418,21 @@ function recordHandedReceipt(
   receipt: SteerReceipt,
   configuration: EngineRuntimeConfiguration | undefined,
 ): void {
-  const { session } = receipt;
-  // Routed as the session's events are: by its id and its folder.
-  const { runtimeKey } = resolveRuntimeRoute({ kind: "session-start", eventId: receipt.receiptId, session }, configuration, options, state);
-  const runtime = state.runtimes.get(runtimeKey);
-  if (runtime?.holdsSession(session.sessionId) === true) runtime.recordSteer(session.sessionId, receipt.receiptId, receipt.ruleIds);
-  else recordSteerReceipt(resolvePath(configuration?.databasePath ?? state.databasePath), receipt);
+  const { session, receiptId, ruleIds } = receipt;
+  const { runtimeKey } = resolveRuntimeRoute(session, configuration, options, state);
+  if (state.runtimes.get(runtimeKey)?.recordSteer(session.sessionId, receiptId, ruleIds) === true) return;
+  const databasePath = resolvePath(configuration?.databasePath ?? state.databasePath);
+  receiptWriter(state, databasePath).write(steerReceiptWrite(databasePath, receipt));
+}
+
+/** The service's use of the record writer of the database at `databasePath`, opened once and closed with the service. */
+function receiptWriter(state: EngineRoutingState, databasePath: string): RecordWriter {
+  let writer = state.receiptWriters.get(databasePath);
+  if (writer === undefined) {
+    writer = openRecordWriter(databasePath);
+    state.receiptWriters.set(databasePath, writer);
+  }
+  return writer;
 }
 
 /**
@@ -979,18 +1006,14 @@ async function answerEvent(body: unknown, response: ServerResponse, service: Eng
 }
 
 /**
- * Takes the receipt of a steer a hook posted once its answer was written: the hook is answered as soon as the receipt is
- * read, so it ends then, whatever the record waits for, and then the receipt is recorded (`recordHandedReceipt`). A
- * record that fails is told in the daemon's log, since its hook has gone.
+ * Takes the receipt of a steer a hook posted once its answer was written (`recordHandedReceipt`), which never waits for
+ * the write lock, and then answers: a receipt answered is recorded, or kept until the lock is given back. A record that
+ * fails is answered with why, so the hook records the receipt itself.
  */
 function answerReceipt(body: unknown, response: ServerResponse, service: EngineAnswers): void {
   const { receipt, configuration } = ReceiptRequestSchema.parse(body);
+  service.recordReceipt(receipt, configuration);
   response.end("{}");
-  try {
-    service.recordReceipt(receipt, configuration);
-  } catch (error) {
-    process.stderr.write(`rerail: recording a steer's receipt in session ${receipt.session.sessionId} failed: ${errorMessage(error)}\n`);
-  }
 }
 
 /**
@@ -1125,6 +1148,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     runtimeOptions: new Map(),
     suspended: new Map(),
     resumeRetries: new Map(),
+    receiptWriters: new Map(),
     ownerLockId: ownerLock.id,
     databasePath,
     worktreeWalks: options.worktreeWalks ?? engineWorktreeWalks(),
@@ -1167,6 +1191,9 @@ export async function startEngineService(options: EngineServiceOptions): Promise
           stopLooking();
         }
         await disposeAll(routing.runtimes.values());
+        // After the runtimes' stores: the last use of a writer makes what still waits for the lock, within its bound.
+        for (const writer of routing.receiptWriters.values()) writer.close();
+        routing.receiptWriters.clear();
       } finally {
         // Also when the server's or a runtime's close failed: a suspended session left open would read as live with no
         // daemon. Its lock goes once its sessions have ended, and its file stays, so a later sweep ends any session a
@@ -1283,55 +1310,53 @@ export async function ingestEngineEvent(
   return result.deliveries;
 }
 
-/**
- * How long a hook waits for the daemon to take a steer's receipt before it records the receipt itself. A daemon whose
- * event loop runs reads a request on a connection already open within a few milliseconds. Past this bound it is busy
- * with other work or stopped, and the hook's own record, which takes about as long as this bound (two SQLite opens:
- * 61 ms at the median and 96 ms at the 90th percentile on a busy Windows 11 machine, 25 ms on Linux), ends the hook
- * sooner than more waiting would. So a daemon too busy to read the receipt costs a steered hook at most this bound
- * more than its own record did before receipts were handed over.
- */
-const RECEIPT_TAKEN_WITHIN_MS = 100;
+/** A post to the engine socket on a link's connection (`postEngine`). */
+type EnginePost = (path: string, body: string) => ReturnType<typeof postEngine>;
 
 /**
- * Hands `receipt` to the engine service, which records it; false when it did not take it, so the caller records it
- * itself: a daemon from before receipts were handed over answers it not found, one that is gone refuses or drops the
- * connection, and one busy with other work or stopped reads nothing within `RECEIPT_TAKEN_WITHIN_MS`.
+ * Hands `receipt` to the engine service; true once it took it, recorded or kept until the write lock is given back.
+ * False when it did not, so the caller records it itself: a daemon from before receipts were handed over answers it not
+ * found, one that is gone refuses or drops the connection, and one whose record failed says why. `signal`, the caller's
+ * end of the wait, drops the request: a daemon that reads it later still takes it.
  */
 async function handEngineReceipt(
-  endpoint: EngineEndpoint,
-  agent: Agent,
+  post: EnginePost,
   receipt: SteerReceipt,
   configuration: EngineRuntimeConfiguration | undefined,
+  signal?: AbortSignal,
 ): Promise<boolean> {
-  const { sent, answer } = postEngine(endpoint, agent, RECEIPTS_PATH, JSON.stringify(ReceiptRequestSchema.parse({ receipt, configuration })));
-  const bound = setTimeout(() => sent.destroy(new Error("The Rerail daemon took no receipt")), RECEIPT_TAKEN_WITHIN_MS);
+  const { sent, answer } = post(RECEIPTS_PATH, JSON.stringify(ReceiptRequestSchema.parse({ receipt, configuration })));
+  const drop = (): void => void sent.destroy(new Error("The hook stopped waiting for the Rerail daemon"));
+  signal?.addEventListener("abort", drop, { once: true });
   try {
     return (await answer).status === 200;
   } catch {
     return false;
   } finally {
-    clearTimeout(bound);
+    signal?.removeEventListener("abort", drop);
   }
 }
 
 /**
- * A hook's link to the engine service: its events, and then the receipt of a steer its answer carried, go over one
- * connection kept open between them, so the receipt makes no connect of its own (on Windows a connect to a pipe whose
- * instances are all taken waits up to 30 s in Node). The daemon closes a connection left idle for 5 s (Node's
- * keep-alive), so only a receipt handed later than that connects again. A connection kept open never keeps the hook's
- * process alive.
+ * A hook's link to the engine service: its events, and then the receipt of a steer its answer carried when another
+ * connection held the database's write lock, go over one connection kept open between them, so the receipt makes no
+ * connect of its own (on Windows a connect to a pipe whose instances are all taken waits up to 30 s in Node). The
+ * daemon closes a connection left idle for 5 s (Node's keep-alive), so only a receipt handed later than that connects
+ * again. A connection kept open between requests never keeps the hook's process alive.
  */
 export interface EngineLink {
   ingest(event: AdapterEvent, configuration?: EngineRuntimeConfiguration): Promise<readonly AdapterDelivery[]>;
-  /** Hands `receipt` to the service that answered the events (`handEngineReceipt`); false when it did not take it. */
-  handReceipt(receipt: SteerReceipt, configuration?: EngineRuntimeConfiguration): Promise<boolean>;
+  /**
+   * Hands `receipt` to the service that answered the events (`handEngineReceipt`); false when it did not take it.
+   * `signal` ends the wait for its answer.
+   */
+  handReceipt(receipt: SteerReceipt, configuration?: EngineRuntimeConfiguration, signal?: AbortSignal): Promise<boolean>;
 }
 
 export function engineLink(endpoint: EngineEndpoint): EngineLink {
   const agent = new Agent({ keepAlive: true });
   return {
     ingest: (event, configuration) => ingestEngineEvent(endpoint, event, configuration, agent),
-    handReceipt: (receipt, configuration) => handEngineReceipt(endpoint, agent, receipt, configuration),
+    handReceipt: (receipt, configuration, signal) => handEngineReceipt((path, body) => postEngine(endpoint, agent, path, body), receipt, configuration, signal),
   };
 }

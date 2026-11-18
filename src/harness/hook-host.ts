@@ -24,28 +24,35 @@ import {
   type SessionLock,
 } from "./hook-adapter.js";
 import type { SemanticEmbedder } from "../engine/native/semantic-types.js";
-import { recordSteerReceipt } from "../runtime/session-store.js";
+import { recordSteerReceipt, steerReceiptWrite } from "../runtime/session-store.js";
+import type { SteerReceipt } from "../runtime/event-protocol.js";
+import { openRecordWriter } from "../engine/storage/record-writes.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { rerailRunsIn } from "../engine/catalog/repository-model.js";
 
 export * from "./hook-adapter.js";
 
-/** Records the receipt of a steer the hook's answer carried in the database at `databasePath` itself. */
-function recordLocalReceipt(session: AdapterSession, databasePath: string): (receiptId: string, ruleIds: readonly string[]) => void {
-  return (receiptId, ruleIds) => recordSteerReceipt(databasePath, { session, receiptId, ruleIds: [...ruleIds] });
-}
-
 /**
- * Hands the receipt of a steer the hook's answer carried, once that answer is written, to the daemon that answered the
- * hook's event, over the event's own connection: the daemon records it on its own connection, so the hook ends without
- * opening the database or waiting for another writer's lock on it. A daemon that does not take it (one from before
- * receipts were handed over, one gone, one not reading) leaves it to the hook to record itself.
+ * Records the receipt of a steer the hook's answer carried, once that answer is written, never holding the hook on
+ * another connection's write lock longer than its own record did. While the lock is free the hook records it at once
+ * (`RecordWriter.writeNow`), as before. While another connection holds it, the hook hands the receipt to the daemon
+ * that answered the event, which keeps it until the lock is given back, and meanwhile tries the lock again as SQLite's
+ * busy wait did (`RecordWriter.writeWhenFree`): the hook ends once the daemon takes the receipt, once a try records it,
+ * or at the busy timeout. A daemon that does not take it (one from before receipts were handed over, one gone) leaves
+ * the tries to run, as the hook's own wait did.
  */
-function handReceipt(link: EngineLink, session: AdapterSession, configuration: EngineRuntimeConfiguration, databasePath: string) {
-  return async (receiptId: string, ruleIds: readonly string[]): Promise<void> => {
-    const receipt = { session, receiptId, ruleIds: [...ruleIds] };
-    if (!await link.handReceipt(receipt, configuration)) recordSteerReceipt(databasePath, receipt);
-  };
+async function recordReceipt(link: EngineLink, configuration: EngineRuntimeConfiguration, databasePath: string, receipt: SteerReceipt): Promise<void> {
+  const write = steerReceiptWrite(databasePath, receipt);
+  const writer = openRecordWriter(databasePath);
+  const stop = new AbortController();
+  try {
+    if (writer.writeNow(write)) return;
+    const written = writer.writeWhenFree(write, stop.signal);
+    await Promise.race([written, link.handReceipt(receipt, configuration, stop.signal).then(taken => taken || written)]);
+  } finally {
+    stop.abort();
+    writer.close();
+  }
 }
 
 /**
@@ -168,7 +175,7 @@ async function runHostHookOnce(
       const runtime = new RerailRuntime({ storageRoot, databasePath, workspaceRoot: workspace, embedder });
       try {
         const output = await handle(runtime, storageRoot, lock);
-        return bindSteerReceipt(output, recordLocalReceipt(session, databasePath));
+        return bindSteerReceipt(output, (receiptId, ruleIds) => recordSteerReceipt(databasePath, { session, receiptId, ruleIds: [...ruleIds] }));
       } finally {
         await runtime.dispose();
       }
@@ -200,7 +207,7 @@ async function runHostHookOnce(
         throw unreachable(error);
       });
     const output = await handle({ ingest }, storageRoot, lock);
-    return bindSteerReceipt(output, handReceipt(link, session, configuration, databasePath));
+    return bindSteerReceipt(output, (receiptId, ruleIds) => recordReceipt(link, configuration, databasePath, { session, receiptId, ruleIds: [...ruleIds] }));
   });
 }
 

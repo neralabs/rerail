@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { engineLink, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
+import { SqliteSessionStore } from "../../../src/runtime/session-store.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -11,6 +12,7 @@ import { removeFolder } from "../../support/platform/remove-folder.js";
 const roots: string[] = [];
 const services: EngineService[] = [];
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(services.splice(0).map(service => service.close()));
   await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
@@ -39,16 +41,43 @@ async function serviceOverCheckout(accessToken?: string) {
   });
   services.push(service);
   const session = (sessionId: string) => ({ host: "claude-code" as const, sessionId, cwd: checkout });
-  return { databasePath, repositoryKey, socketPath, session };
+  return { root, databasePath, repositoryKey, socketPath, session };
+}
+
+/** Another connection, in this process, holding the write lock of the database at `databasePath` until `release`. */
+function holdWriteLock(databasePath: string): () => void {
+  const holder = new Database(databasePath);
+  holder.exec("BEGIN IMMEDIATE");
+  return () => {
+    holder.exec("ROLLBACK");
+    holder.close();
+  };
+}
+
+/** Makes this process's record writes to `databasePath` still waiting for the lock: a read of what it recorded does. */
+function recordsMade(databasePath: string): void {
+  const store = new SqliteSessionStore(databasePath);
+  try {
+    store.sessions();
+  } finally {
+    store.close();
+  }
+}
+
+/** When each session's row says it started. */
+function startedAt(databasePath: string, sessionId: string): number | undefined {
+  const database = new Database(databasePath, { readonly: true });
+  try {
+    return database.prepare<[string], { startedAt: number }>("SELECT started_at AS startedAt FROM sessions WHERE session_id = ?").get(sessionId)?.startedAt;
+  } finally {
+    database.close();
+  }
 }
 
 /**
- * The steer receipts recorded in the database at `databasePath`. The service answers a receipt and then records it in
- * the same turn of its event loop, so by the time the client here, in the same process, reads the answer, the record is
- * made. A record that outlasts the client's bound on a slow machine (a disk that stalls, a session no runtime holds,
- * recorded on connections of its own) makes the client call it untaken, so these cases check the record, not the
- * client's answer: the record is what counts, and the hook's answer to a daemon that takes a receipt is checked against
- * an engine socket of the test's own (`test/harness/hook-steer-receipt.test.ts`).
+ * The steer receipts recorded in the database at `databasePath`. The service makes a receipt's record, or keeps it
+ * until the write lock is given back, before it answers, so by the time the client here, in the same process, reads
+ * the answer, a receipt made at once is on disk.
  */
 function receipts(databasePath: string): Array<{ sessionId: string; eventId: string; payloadJson: string; repositoryId: string | null }> {
   const database = new Database(databasePath, { readonly: true });
@@ -66,13 +95,52 @@ describe("the engine service's receipts", () => {
   it("records a receipt a hook hands over in its session's runtime, once however often it is handed", async () => {
     const { databasePath, repositoryKey, socketPath, session } = await serviceOverCheckout();
     const link = engineLink({ socketPath });
+    vi.useFakeTimers({ toFake: ["Date"], now: 1_000_000 });
     await link.ingest({ kind: "session-start", eventId: "a:start", session: session("a") });
+    // A reset removed the session's row: the runtime that holds the session puts it back with its own start, where a
+    // record on connections of the service's own would date the session from the receipt.
+    const reset = new Database(databasePath);
+    reset.pragma("foreign_keys = OFF");
+    reset.prepare("DELETE FROM sessions WHERE session_id = ?").run("a");
+    reset.close();
+    vi.setSystemTime(5_000_000);
     const receipt = { session: session("a"), receiptId: "receipt-1", ruleIds: ["rule:a", "rule:b"] };
-    await link.handReceipt(receipt);
-    await link.handReceipt(receipt);
+    await expect(link.handReceipt(receipt)).resolves.toBe(true);
+    await expect(link.handReceipt(receipt)).resolves.toBe(true);
     expect(receipts(databasePath)).toEqual([
       { sessionId: "a", eventId: "steering-delivered:receipt-1", payloadJson: JSON.stringify({ ruleIds: ["rule:a", "rule:b"] }), repositoryId: repositoryKey },
     ]);
+    expect(startedAt(databasePath, "a")).toBe(1_000_000);
+  });
+
+  it.each([["in its session's runtime", true], ["for a session no runtime holds", false]] as const)(
+    "takes a receipt while another connection holds the write lock, its thread never waiting, and records it once the lock is given back (%s)",
+    async (_case, started) => {
+      const { databasePath, repositoryKey, socketPath, session } = await serviceOverCheckout();
+      const link = engineLink({ socketPath });
+      if (started) await link.ingest({ kind: "session-start", eventId: "b:start", session: session("b") });
+      // Held on this thread, which also runs the service: a record that waited for the lock here could never get it.
+      const release = holdWriteLock(databasePath);
+      try {
+        await expect(link.handReceipt({ session: session("b"), receiptId: "receipt-4", ruleIds: ["rule:a"] })).resolves.toBe(true);
+        expect(receipts(databasePath)).toEqual([]);
+      } finally {
+        release();
+      }
+      recordsMade(databasePath);
+      expect(receipts(databasePath)).toEqual([
+        { sessionId: "b", eventId: "steering-delivered:receipt-4", payloadJson: JSON.stringify({ ruleIds: ["rule:a"] }), repositoryId: repositoryKey },
+      ]);
+    },
+  );
+
+  it("answers a receipt it could not record with why, so the hook records it itself", async () => {
+    const { root, databasePath, socketPath, session } = await serviceOverCheckout();
+    const notADatabase = join(root, "not-a-database.sqlite");
+    await writeFile(notADatabase, "not SQLite");
+    const configuration = { storageRoot: join(root, "state"), modelPath: join(root, "model"), databasePath: notADatabase };
+    await expect(engineLink({ socketPath }).handReceipt({ session: session("c"), receiptId: "receipt-5", ruleIds: [] }, configuration)).resolves.toBe(false);
+    expect(receipts(databasePath)).toEqual([]);
   });
 
   it("records a receipt for a session no runtime holds in the database, crediting its checkout's repository", async () => {

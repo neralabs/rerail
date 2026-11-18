@@ -9,7 +9,7 @@ import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { isWorktreePack, WORKTREE_PACK_ID, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
-import { flushRecordWrites, openRecordWriter, type RecordWriter } from "../engine/storage/record-writes.js";
+import { flushRecordWrites, openRecordWriter, type RecordWrite, type RecordWriter } from "../engine/storage/record-writes.js";
 import { listRepositoryRules, ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
@@ -286,12 +286,7 @@ export class SqliteSessionStore {
     ruleIds: readonly string[] = [],
     attribution?: SessionAttribution,
   ): void {
-    this.append({
-      sessionId: session.sessionId,
-      eventId: `steering-delivered:${receiptId}`,
-      kind: "steering-delivered",
-      payload: { ruleIds: [...ruleIds] },
-    }, session, attribution);
+    this.append(steerEvent(session, receiptId, ruleIds), session, attribution);
   }
 
   /** Marks the session's history incomplete over a stretch of events its host never delivered. */
@@ -423,6 +418,11 @@ export class SqliteSessionStore {
 type EventRow = typeof events.$inferInsert & { eventId: string; payloadJson: string; payloadV8: Buffer };
 
 /** The row `event` is stored as, its id and time taken now: a write that waits for the lock is made later. */
+/** The event a steer's receipt is recorded as: its id is the receipt's, so a receipt recorded twice counts once. */
+function steerEvent(session: AdapterSession, receiptId: string, ruleIds: readonly string[]): SessionEvent {
+  return { sessionId: session.sessionId, eventId: `steering-delivered:${receiptId}`, kind: "steering-delivered", payload: { ruleIds: [...ruleIds] } };
+}
+
 function eventRow(event: SessionEvent): EventRow {
   return {
     sessionId: event.sessionId,
@@ -729,9 +729,8 @@ function repositoryKeyOf(cwd: string, databasePath: string): string | undefined 
 
 /**
  * Records `receipt` in the database at `databasePath` on connections of its own, crediting the repository of the
- * checkout its session's folder is in: for a receipt whose daemon did not take it (`EngineLink.handReceipt`), and one
- * whose session no open runtime of the daemon holds. Each open waits up to the busy timeout for another connection's
- * write lock.
+ * checkout its session's folder is in: for a hook that runs its own runtime (tests, embedded hosts). Each open waits up
+ * to the busy timeout for another connection's write lock.
  */
 export function recordSteerReceipt(databasePath: string, { session, receiptId, ruleIds }: SteerReceipt): void {
   // Attribution matters only when a reset removed the session row and this receipt restores it.
@@ -741,5 +740,33 @@ export function recordSteerReceipt(databasePath: string, { session, receiptId, r
     store.recordSteer(session, receiptId, ruleIds, repositoryKey === undefined ? {} : { repositoryKey });
   } finally {
     store.close();
+  }
+}
+
+/**
+ * The record write of `receipt` in the database at `databasePath`, for a record writer (`openRecordWriter`): its event
+ * (`steerEvent`), and, when a reset removed its session's row, that row put back, crediting the repository of the
+ * checkout the session's folder is in. The file is opened read-only here to find that repository, which checks it is a
+ * database this build can write, as a writable open does, without taking its write lock.
+ */
+export function steerReceiptWrite(databasePath: string, { session, receiptId, ruleIds }: SteerReceipt): RecordWrite {
+  const database = openRerailDatabase(databasePath, { readonly: true });
+  let repositoryId: string | null;
+  try {
+    repositoryId = checkoutRepository(database, session.cwd);
+  } finally {
+    database.$client.close();
+  }
+  const row = eventRow(steerEvent(session, receiptId, ruleIds));
+  const restore = { ...session, repositoryId, startedAt: Date.now(), endedAt: null };
+  return target => insertEvent(target, row, restore);
+}
+
+/** The repository key of the checkout `cwd` is in; null when none is known or the lookup fails. */
+function checkoutRepository(database: RerailDatabase, cwd: string): string | null {
+  try {
+    return lookupCheckout(database, cwd)?.repositoryKey ?? null;
+  } catch {
+    return null;
   }
 }

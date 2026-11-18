@@ -85,57 +85,105 @@ function receiptRows(root: string): Array<{ eventId: string; payloadJson: string
   return sessionDatabaseQuery(root, "SELECT event_id AS eventId, payload_json AS payloadJson FROM events WHERE kind = 'steering-delivered'");
 }
 
+/** Another connection holding the database's write lock, as the daemon, a CLI command or another hook does for a while. */
+function holdWriteLock(root: string): () => void {
+  const writer = new Database(join(root, "rerail.sqlite"));
+  writer.exec("BEGIN IMMEDIATE");
+  return () => {
+    writer.exec("ROLLBACK");
+    writer.close();
+  };
+}
+
+const handed = (root: string) => [{
+  receipt: { session: { host: "claude-code", sessionId: "session-1", cwd: root }, receiptId: expect.any(String), ruleIds: ["rule:a"] },
+  configuration: expect.objectContaining({ databasePath: join(root, "rerail.sqlite"), workspaceRoot: root }),
+}];
+
 describe("a steered hook's receipt", () => {
-  it("goes to the daemon that answered the event, on the event's connection, while another connection holds the database's write lock", { timeout: 20_000 }, async () => {
+  it("is recorded by the hook itself at once while the database's write lock is free, handing the daemon nothing", { timeout: 20_000 }, async () => {
+    const root = await temporaryDirectory();
+    const daemon = await fakeDaemon(root, "take");
+    await emitHookOutput(await steeredAnswer(root, daemon), sink());
+    expect(daemon.receipts).toEqual([]);
+    const [row] = receiptRows(root);
+    expect(row?.eventId).toMatch(/^steering-delivered:/u);
+    expect(JSON.parse(row!.payloadJson)).toEqual({ ruleIds: ["rule:a"] });
+  });
+
+  it("goes to the daemon that answered the event, on the event's connection, while another connection holds the write lock", { timeout: 20_000 }, async () => {
     const root = await temporaryDirectory();
     const daemon = await fakeDaemon(root, "take");
     const output = await steeredAnswer(root, daemon);
     expect(JSON.stringify(output)).toContain("Split the function.");
-    // A writer holds the database: a hook that recorded the receipt itself waited out SQLite's 5 s busy timeout, then lost it.
-    const writer = new Database(join(root, "rerail.sqlite"));
-    writer.exec("BEGIN IMMEDIATE");
-    // The engine socket here answers in this process; held still, its bound cannot run out on a slow machine first.
+    // Before, the hook waited for the lock up to SQLite's 5 s busy timeout, then lost the receipt.
+    const release = holdWriteLock(root);
+    // The hook's own tries wait on timers held here, so only the daemon's answer can end it.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       await emitHookOutput(output, sink());
+      expect(vi.getTimerCount()).toBe(0);
     } finally {
-      writer.exec("ROLLBACK");
-      writer.close();
+      release();
     }
-    expect(daemon.receipts).toEqual([{
-      receipt: { session: { host: "claude-code", sessionId: "session-1", cwd: root }, receiptId: expect.any(String), ruleIds: ["rule:a"] },
-      configuration: expect.objectContaining({ databasePath: join(root, "rerail.sqlite"), workspaceRoot: root }),
-    }]);
+    expect(daemon.receipts).toEqual(handed(root));
     expect(daemon.connections).toBe(1);
-    // The daemon records it: the hook wrote nothing.
+    // The daemon keeps it: the hook wrote nothing.
     expect(receiptRows(root)).toEqual([]);
   });
 
-  it.each(["refuse", "drop"] as const)("is recorded by the hook itself when the daemon does not take it (%s)", { timeout: 20_000 }, async answer => {
+  it.each(["refuse", "drop"] as const)("is recorded by the hook itself once the lock is given back when the daemon does not take it (%s)", { timeout: 20_000 }, async answer => {
     const root = await temporaryDirectory();
     const daemon = await fakeDaemon(root, answer);
-    await emitHookOutput(await steeredAnswer(root, daemon), sink());
-    expect(daemon.receipts).toHaveLength(1);
-    const [row] = receiptRows(root);
-    expect(row?.eventId).toBe(`steering-delivered:${(daemon.receipts[0] as { receipt: { receiptId: string } }).receipt.receiptId}`);
-    expect(JSON.parse(row!.payloadJson)).toEqual({ ruleIds: ["rule:a"] });
+    const output = await steeredAnswer(root, daemon);
+    const release = holdWriteLock(root);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const emitted = emitHookOutput(output, sink());
+    await daemon.receiptRead;
+    expect(daemon.receipts).toEqual(handed(root));
+    release();
+    // The hook tries the lock again at SQLite's busy pauses (1, 2, 5, 10 ms), as its busy wait did.
+    await vi.advanceTimersByTimeAsync(20);
+    await emitted;
+    expect(receiptRows(root)).toHaveLength(1);
   });
 
-  it("is recorded by the hook itself when the daemon reads nothing within the bound a receipt has", { timeout: 20_000 }, async () => {
+  it("is recorded by the hook itself once the lock is given back while the daemon reads it but does not answer", { timeout: 20_000 }, async () => {
     const root = await temporaryDirectory();
     const daemon = await fakeDaemon(root, "hold");
     const output = await steeredAnswer(root, daemon);
+    const release = holdWriteLock(root);
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const emitted = emitHookOutput(output, sink());
-    // Whichever comes first: the daemon reads the receipt, or the hook ends without handing it over.
-    await Promise.race([daemon.receiptRead, emitted]);
-    expect(daemon.receipts).toHaveLength(1);
+    await daemon.receiptRead;
+    await vi.advanceTimersByTimeAsync(20);
     expect(receiptRows(root)).toEqual([]);
-    // Within what the hook's own record takes (two SQLite opens: 96 ms at the 90th percentile on a busy Windows 11
-    // machine), the hook gives up on a daemon too busy to read the receipt: no timer of the hand-over is left.
-    await vi.advanceTimersByTimeAsync(100);
-    expect(vi.getTimerCount()).toBe(0);
-    await emitted;
+    release();
+    // The daemon is busy with other work or stopped: the lock given back ends the hook's wait, as it did before.
+    await vi.advanceTimersByTimeAsync(20);
     expect(receiptRows(root)).toHaveLength(1);
+    await emitted;
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("ends at SQLite's busy timeout, the receipt left with the daemon, while neither the daemon answers nor the lock is given back", { timeout: 20_000 }, async () => {
+    const root = await temporaryDirectory();
+    const daemon = await fakeDaemon(root, "hold");
+    const output = await steeredAnswer(root, daemon);
+    const release = holdWriteLock(root);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const emitted = emitHookOutput(output, sink());
+      await daemon.receiptRead;
+      // Past SQLite's 5 s busy timeout, the bound the hook's own wait for the lock had.
+      await vi.advanceTimersByTimeAsync(5_000);
+      await emitted;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      release();
+    }
+    // Read by the daemon, which records it whenever it answers; before, the hook lost it at this bound.
+    expect(daemon.receipts).toEqual(handed(root));
+    expect(receiptRows(root)).toEqual([]);
   });
 });

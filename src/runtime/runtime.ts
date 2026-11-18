@@ -1823,13 +1823,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     };
   }
 
-  /** Whether this runtime holds `sessionId`, open or closed by it, so it can record the session's facts (`recordSteer`). */
-  holdsSession(sessionId: string): boolean {
-    return this.#sessions.has(sessionId) || this.#closedSessions.has(sessionId);
-  }
-
-  recordSteer(sessionId: string, receiptId: string, ruleIds: readonly string[] = []): void {
+  /**
+   * Records the receipt of a steer delivered in `sessionId`, crediting `ruleIds`; false, recording nothing, when this
+   * runtime holds no such session, open or closed by it.
+   */
+  recordSteer(sessionId: string, receiptId: string, ruleIds: readonly string[] = []): boolean {
+    if (!this.#sessions.has(sessionId) && !this.#closedSessions.has(sessionId)) return false;
     this.#recordSessionFact(sessionId, (store, descriptor, attribution) => store.recordSteer(descriptor, receiptId, ruleIds, attribution));
+    return true;
   }
 
   /** The host's record of session events it never delivered, so the session's history reads as incomplete. */
