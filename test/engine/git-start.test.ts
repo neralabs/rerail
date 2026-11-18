@@ -4,7 +4,6 @@ import { closeSync, constants as fsConstants, existsSync, openSync, readdirSync,
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
@@ -17,6 +16,7 @@ import {
   startGit,
   startGitThroughNode,
   startGitWithoutCopying,
+  type EngineGitExit,
   type EngineGitStarts,
   type EngineStartedGit,
   type GitProcess,
@@ -253,12 +253,15 @@ async function selfEndings(): Promise<unknown> {
   return ends;
 }
 
-/** What a reader sees of `child`: whether it exited before a kill, whether the kill was sent, and how it ended. */
-async function endedAtKill(child: GitProcess): Promise<unknown> {
+/**
+ * What a reader sees of `child` once `seen` has come, the last event before which an exit could come early: whether it
+ * exited before the kill that follows, whether that kill was sent, and how the child ended.
+ */
+async function endedAtKill(child: GitProcess, seen: Promise<unknown>): Promise<unknown> {
   const exits: unknown[] = [];
   child.on("exit", (...exit: unknown[]) => exits.push(exit));
   const closed = once(child, "close") as Promise<[number | null, NodeJS.Signals | null]>;
-  await delay(200);
+  await seen;
   const exitedFirst = exits.length > 0;
   const killed = child.kill("SIGTERM");
   const [code, signal] = await closed;
@@ -286,7 +289,8 @@ describe.runIf(LINUX)("Git started through the engine in the states where it and
   });
 
   it("waits for the exit of a Git whose exit pipe closed while it runs, and ends it at a kill as Node's child", async () => {
-    const throughNode = await endedAtKill(startGit("/bin/sh", ["-c", "read line"], process.env, "pipe"));
+    const node = startGit("/bin/sh", ["-c", "read line"], process.env, "pipe");
+    const throughNode = await endedAtKill(node, once(node, "spawn"));
     const starts = engineStarts();
     const fifo = join(await folder("exit"), "exit");
     const watched: number[] = [];
@@ -296,11 +300,21 @@ describe.runIf(LINUX)("Git started through the engine in the states where it and
       watched.push(started.exited);
       return { ...started, exited: endedPipe(fifo) };
     };
-    expect(startGitWithoutCopying(() => ({ ...starts, startGit: closesEarly }))).toBe(true);
-    const throughEngine = await endedAtKill(startGit("/bin/sh", ["-c", "read line"], process.env, "pipe"));
+    // The pipe's end read, the child is reaped: what that first reap answered is the last event before an exit could
+    // come early, in the same turn.
+    let firstReap: (exit: EngineGitExit) => void = () => undefined;
+    const reaped = new Promise<EngineGitExit>(resolve => { firstReap = resolve; });
+    const reapGit = (pid: number): EngineGitExit => {
+      const exit = starts.reapGit(pid);
+      firstReap(exit);
+      return exit;
+    };
+    expect(startGitWithoutCopying(() => ({ ...starts, startGit: closesEarly, reapGit }))).toBe(true);
+    const engine = startGit("/bin/sh", ["-c", "read line"], process.env, "pipe");
+    const throughEngine = await endedAtKill(engine, Promise.all([once(engine, "spawn"), reaped]));
     for (const fd of watched) closeSync(fd);
     expect(throughEngine).toEqual(throughNode);
-    expect(throughEngine).toEqual({ exitedFirst: false, killed: true, code: null, signal: "SIGTERM" });
+    expect([throughEngine, await reaped]).toEqual([{ exitedFirst: false, killed: true, code: null, signal: "SIGTERM" }, expect.objectContaining({ running: true })]);
     expect(zombies()).toBe(0);
   });
 
