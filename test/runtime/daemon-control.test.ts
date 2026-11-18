@@ -890,16 +890,17 @@ describe("a state file Windows left behind", () => {
     const machine: DaemonMachine = {
       ...olderEngine(OLDER_STARTED_AT - 600),
       env: { RERAIL_HOME: home },
-      kill: (_pid, signal) => {
-        if (!running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+      kill: (pid, signal) => {
+        if (pid !== DEAD_PID || !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
         if (signal !== 0) events.push(String(signal));
         if (signal === "SIGTERM") running = false;
         return true;
       },
-      // The launched daemon has the ended daemon's pid, which no process holds now: it reads as exited at once.
+      // The launched daemon's pid is one no process holds here, so it reads as exited at once, whether or not the
+      // earlier daemon still runs: the start ends without its 15 s wait, and the order of events alone decides.
       spawnDetached: () => {
         events.push("launch");
-        return { pid: DEAD_PID };
+        return { pid: DEAD_PID - 1 };
       },
     };
     await writeFile(stateFile, JSON.stringify(state));
