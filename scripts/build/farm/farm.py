@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 31
+VERSION = 32
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -118,6 +118,96 @@ def emits(args):
     for e in values(args, "--emit"):
         kinds.update(k.split("=")[0] for k in e.split(","))
     return kinds or {"link"}
+
+
+def linux_compiles(args):
+    """Whether a Linux host can compile this Mac's crate to the same bytes (`mac_compiles`, README
+    "Mac compiles on a Linux host"): its rustc cross-compiles for aarch64-apple-darwin, reading
+    every file at this Mac's path. A proc-macro it loads is a macOS library: the host builds it as
+    a Linux one from how it was compiled here (`host_builds`), so one built before that was
+    recorded keeps the compile here."""
+    externs = [e.split("=", 1)[1] for e in values(args, "--extern") if "=" in e]
+    return all(e.endswith((".rlib", ".rmeta")) or (e.endswith(".dylib") and host_builds(os.path.abspath(e))[1] is None)
+               for e in externs)
+
+
+def toolchain_of(rustc):
+    """The rustup toolchain `rustc` is of (`1.99.1`), from its path; None for another rustc."""
+    m = re.search(r"/toolchains/([^/]+)-aarch64-apple-darwin/bin/rustc$", rustc)
+    return m.group(1) if m else None
+
+
+def call_stem(out_dir, crate, extra):
+    """What names a compile's outputs, whatever their kinds: `<out-dir>/<crate><extra>`."""
+    return os.path.join(os.path.abspath(out_dir), crate + extra)
+
+
+def stem_of(path):
+    """`call_stem` of an output file (`.../libfoo-abc.rlib`, `.rmeta`, `.dylib`)."""
+    d, f = os.path.split(path)
+    return os.path.join(d, os.path.splitext(f[3:] if f.startswith("lib") else f)[0])
+
+
+def record_call(args, out_dir, crate, env):
+    """Keeps how a registry library or proc-macro was compiled here (cargo's arguments, before the
+    farm's own), under `calls/` by its outputs' stem: a Linux host builds a proc-macro a compile
+    loads from it (`host_builds`), and sccache's hits never reach farm-rustc, so the wrapper keeps
+    it. Rewritten only when it changed; a record unused for a week goes (a 1 in 200 sweep)."""
+    if not out_dir or "--test" in args or not any(os.getcwd().startswith(p + "/") for p in IN_PLACE):
+        return
+    types = set()
+    for t in values(args, "--crate-type"):
+        types.update(t.split(","))
+    if not types or not types <= {"lib", "rlib", "proc-macro"}:
+        return
+    path = state("calls", key(call_stem(out_dir, crate, codegen(args, "extra-filename") or "")))
+    rec = {"cwd": os.getcwd(), "args": args, "proc_macro": "proc-macro" in types,
+           "env": {k: v for k, v in env.items() if k.startswith("CARGO") or k in ("OUT_DIR", "RUSTFLAGS")}}
+    text = json.dumps(rec, sort_keys=True)
+    try:
+        same = open(path).read() == text
+    except OSError:
+        same = False
+    if same:
+        os.utime(path)
+    else:
+        with open(path + ".tmp", "w") as f:
+            f.write(text)
+        os.replace(path + ".tmp", path)
+    if os.urandom(1)[0] < 2:
+        cutoff = time.time() - 7 * 86400
+        d = os.path.dirname(path)
+        for n in os.listdir(d):
+            try:
+                if os.stat(os.path.join(d, n)).st_mtime < cutoff:
+                    os.unlink(os.path.join(d, n))
+            except OSError:
+                pass
+
+
+def host_builds(dylib):
+    """The recorded compiles (`record_call`) that make the proc-macro `dylib` and what it links,
+    dependencies first: a Linux host builds them as Linux libraries (farm-agent, `pm_build`).
+    (calls, None), or (None, why not)."""
+    order, seen = [], set()
+
+    def visit(path):
+        stem = stem_of(path)
+        if stem in seen:
+            return None
+        seen.add(stem)
+        rec = read_json(state("calls", key(stem)), None)
+        if rec is None:
+            return f"no record of how {os.path.basename(path)} was compiled (a build before farm 32)"
+        for e in values(rec["args"], "--extern"):
+            if "=" in e:
+                why = visit(os.path.abspath(e.split("=", 1)[1]))
+                if why:
+                    return why
+        order.append(rec)
+        return None
+    why = visit(dylib)
+    return (None, why) if why else (order, None)
 
 
 def remote_eligible(args):
@@ -658,6 +748,10 @@ def wrapper(rustc, args):
             note_variant(checkout, args, out_dir, crate)
         except (OSError, ValueError, KeyError):
             pass  # never fail a compile over its bookkeeping
+    try:
+        record_call(args, out_dir, crate, env)
+    except (OSError, ValueError):
+        pass  # never fail a compile over its bookkeeping
     args = args + same_in_every_checkout(args, out_dir, crate)
     stripped, inc = without_incremental(args)
     if inc is not None:
@@ -780,9 +874,8 @@ def hosts():
 
 def host_os(host):
     """`host`'s system: "macos" (the default) or "linux" (`os` in the configuration). A Linux host
-    runs test commands only (test-remote), as a Linux build: it takes no compile of this Mac's (a
-    proc-macro is a macOS library its rustc cannot load, and C compiles need the macOS SDK), and no
-    Relax run."""
+    runs test commands as a Linux build (test-remote), Relax runs (live-test-remote), and this Mac's
+    compiles that need no macOS library (`linux_compiles`)."""
     return host.get("os", "macos")
 
 
@@ -1304,26 +1397,36 @@ def cleaner():
     return None
 
 
-def remote_slot():
+def remote_slot(args=(), rustc=""):
     """A free compile slot on a host, and its lock. Slots are taken in turn across the hosts (each
-    one's first, then each one's second, ...), so every host works, not only the first listed."""
+    one's first, then each one's second, ...), so every host works, not only the first listed: the
+    Macs', then the Linux hosts' for a compile they can take (`linux_compiles`; `mac_compiles`
+    false in the configuration keeps a Linux host to tests). `RERAIL_FARM_HOST=NAME` takes only
+    that host's slots (scripts/build/farm/test-mac-compiles)."""
     if os.environ.get("RERAIL_FARM_LOCAL"):
         return None, None
-    open_hosts = []
+    only = os.environ.get("RERAIL_FARM_HOST")
+    linux = linux_compiles(args) and toolchain_of(rustc) is not None
+    tiers = [[], []]
     for h in hosts():
-        if not h.get("enabled", True) or host_os(h) != "macos":
+        if not h.get("enabled", True) or (only and h["name"] != only):
             continue
-        open_hosts.append((h, capacity(h)))
-    for i in range(max((c for _, c in open_hosts), default=0)):
-        for host, cap in open_hosts:
-            if i >= cap:
-                continue
-            lock = Lock(state("slots", f"{host['name']}.{i}"), blocking=False)
-            if lock.held:
-                CHANNEL[0] = str(i)
-                return host, lock
-            lock.release()
+        if host_os(h) == "macos":
+            tiers[0].append((h, capacity(h)))
+        elif host_os(h) == "linux" and linux and h.get("mac_compiles", True):
+            tiers[1].append((h, capacity(h)))
+    for open_hosts in tiers:
+        for i in range(max((c for _, c in open_hosts), default=0)):
+            for host, cap in open_hosts:
+                if i >= cap:
+                    continue
+                lock = Lock(state("slots", f"{host['name']}.{i}"), blocking=False)
+                if lock.held:
+                    CHANNEL[0] = str(i)
+                    return host, lock
+                lock.release()
     return None, None
+
 
 
 def local_slot():
@@ -1393,8 +1496,10 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up,
     # handed this machine's own path, outside the farm's root (2026-11-17).
     if any(re.search(r"/\.\.?(/|$)", a) for a in args):
         return give_up("a path in its arguments has a `..` or `.` component")
+    linux = host_os(host) == "linux"
     out = env.get("OUT_DIR")
-    if out and os.path.isdir(out) and os.listdir(out):
+    wrote_out = out and os.path.isdir(out) and os.listdir(out)
+    if wrote_out and not linux:
         return give_up("its build script wrote OUT_DIR, which a compile there would read from another path")
     roots = [[out_dir, "deps"]]
     for d in values(args, "-L"):
@@ -1406,6 +1511,16 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up,
     kinds = emits(args)
     outputs = [f"{crate}{extra}.d"] * ("dep-info" in kinds) + [f"lib{crate}{extra}.rmeta"] * ("metadata" in kinds) \
         + [f"lib{crate}{extra}.rlib"] * ("link" in kinds)
+    if linux and not toolchain_of(rustc):
+        return give_up("its rustc is no rustup toolchain's")
+    pms = []
+    if linux:
+        for e in files:
+            if e.endswith(".dylib"):
+                calls, why = host_builds(e)
+                if why:
+                    return give_up(f"it loads a proc-macro the host cannot build: {why}")
+                pms.append({"dylib": e, "calls": calls})
     run = {"cwd": cwd, "argv": [rustc] + args, "dirs": [out_dir], "inplace": [cwd],
            "outputs": [os.path.join(out_dir, o) for o in outputs],
            "depinfo": os.path.join(out_dir, f"{crate}{extra}.d") if "dep-info" in kinds else None,
@@ -1417,6 +1532,27 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up,
            # vendored crate keeps its file name across edits, so a host's older copy compiled a
            # crate against another version under this one's key (Q68: E0463 above it).
            "externs": files}
+    if linux and any(not p.startswith(HOME + "/") for p in [out_dir] + files + [r for r, _ in roots]):
+        return give_up("its outputs or dependencies are outside this machine's home, which the host's container does not hold")
+    if linux:
+        # In the host's container, at this Mac's paths, with the same toolchain's Linux rustc
+        # (farm-agent, `xc`). Every path there is this Mac's, so the crate's sources and what its
+        # build script wrote go with it (a crate is sent once a connection), and nothing is
+        # read in place.
+        run["xc"] = {"home": HOME, "toolchain": toolchain_of(rustc)}
+        run["inplace"] = []
+        roots.append([cwd, "tree"])
+        if wrote_out:
+            roots.append([os.path.abspath(out), "tree"])
+        # The proc-macros it loads, as Linux libraries: built there from their sources (farm-agent,
+        # `pm_build`), the SVH of this Mac's own put in.
+        run["pm"] = pms
+        for pm in pms:
+            for rec in pm["calls"]:
+                roots.append([rec["cwd"], "tree"])
+                o = rec["env"].get("OUT_DIR")
+                if o and os.path.isdir(o):
+                    roots.append([o, "tree"])
     reply = mirror.compile({"host": host["name"], "since": since, "roots": roots, "files": files, "run": run})
     if reply is None:
         return give_up("the mirror daemon did not answer")
@@ -1470,7 +1606,7 @@ def farm_rustc(argv0, args):
         log(f"{crate}: missed, incremental here")
         local(rustc, args + ["-C", f"incremental={inc}"])
     if remote_eligible(args):
-        host, lock = remote_slot()
+        host, lock = remote_slot(args, rustc)
         if not host:
             log(f"{crate}: no host has a free slot")
         if host:

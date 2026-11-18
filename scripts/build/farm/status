@@ -44,7 +44,9 @@ def main(argv):
             if farm.host_os(host) == "macos":
                 uses = "compiles" + (", tests" if host.get("tests", True) else "")
             else:
-                uses = f"{farm.host_os(host)}: tests only, as a {farm.host_os(host)} build" if host.get("tests", True) else "unused (no tests)"
+                parts = (["this Mac's compiles, in a container"] if host.get("mac_compiles", True) else []) + \
+                    ([f"tests as a {farm.host_os(host)} build"] if host.get("tests", True) else [])
+                uses = f"{farm.host_os(host)}: " + (", ".join(parts) or "unused")
             facts = ", ".join(f"{v} {unit}" for v, unit in ((h.get("rtt_ms"), "ms"), (h.get("mbps"), "MB/s through ssh"),
                                                             (h.get("free_gb"), "GB free"), (h.get("load"), "load")) if v is not None)
             if h.get("ok"):

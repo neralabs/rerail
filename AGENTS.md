@@ -100,7 +100,8 @@ reruns the command here at `nice -n 19`. Don't work around a host that is down. 
 `status` to see why, and go on locally. `--remote-only` exits 69 when no host can take the
 command. A host may be a Linux machine: it takes a command when every Mac slot is busy (never a
 Metal one or a `--tree` run), and the command is then a Linux build and run, as CI's; its line
-says `(Linux: ...)`, and `--os macos` keeps a command on a Mac. Both scripts run the installed farm (`~/.local/share/rerail-farm`), whatever version
+says `(Linux: ...)`, and `--os macos` keeps a command on a Mac. It also compiles this Mac's library
+crates, in a container, to the very bytes this Mac would (the farm's README, "Mac compiles on a Linux host"). Both scripts run the installed farm (`~/.local/share/rerail-farm`), whatever version
 this checkout has.
 
 On a machine with the farm, every build already goes through it: `~/.cargo/config.toml` (written
