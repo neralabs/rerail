@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 30
+VERSION = 31
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -125,7 +125,10 @@ def remote_eligible(args):
     types = set()
     for t in values(args, "--crate-type"):
         types.update(t.split(","))
-    return types <= {"lib", "rlib"} and "--test" not in args and value(args, "--out-dir") is not None
+    # A compile for another target (cargo-linux's) stays here: the Macs' toolchains have no std of it.
+    target = value(args, "--target")
+    return types <= {"lib", "rlib"} and "--test" not in args and value(args, "--out-dir") is not None \
+        and target in (None, "aarch64-apple-darwin")
 
 
 # ---- places
@@ -283,7 +286,8 @@ def same_in_every_checkout(args, out_dir, crate):
     checkout = checkout_of(os.getcwd())
     out = ["--remap-path-prefix", f"{checkout}=/rerail-farm/checkout"] if checkout else []
     out += ["--remap-path-prefix", f"{target}=/rerail-farm/target"]
-    if sys.platform == "darwin":
+    # ld64's own flags: a macOS link only (cargo-linux's links are lld's, for Linux).
+    if sys.platform == "darwin" and value(args, "--target") in (None, "aarch64-apple-darwin"):
         # The path as a link-arg of its own (`link-arg=<path>`), where sccache strips a basedir from
         # its key: in `-Wl,-oso_prefix,<path>` it would not, and each checkout would key apart.
         out += ["-C", "link-arg=-Xlinker", "-C", "link-arg=-oso_prefix", "-C", "link-arg=-Xlinker", "-C", f"link-arg={target}/"]

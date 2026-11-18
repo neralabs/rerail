@@ -48,6 +48,8 @@ instead, and only that run's output is shown.
 | `farm.py` | all of them |
 | `mirror.py` | the live mirror's daemon here, and the call a compile makes to it |
 | `farm-agent` | the live mirror's end on each host, and (`exec`) a test command there |
+| `cargo-linux` | cargo for the Linux hosts' target, from this Mac ("Building for the Linux hosts here") |
+| `linux-sysroot` | copies a Linux host's headers and libraries for `cargo-linux` |
 | `test-mirror` | a test of the mirror against an agent run here: a file the checkout deleted goes from the host's copy |
 | `status` | what the farm can use now: each host probed, and why one is not usable |
 | `host-privacy` | keeps the farm's files on the hosts out of Time Machine, and (`--spotlight`, with sudo) Spotlight |
@@ -255,6 +257,20 @@ attended. `setup` installs the pinned toolchain with the host's rustup; rustup i
 
     curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain none --profile minimal
     curl -LsSf https://get.nexte.st/<version>/linux-arm | tar zxf - -C ~/.cargo/bin
+
+### Building for the Linux hosts here
+
+`cargo-linux` is cargo for `aarch64-unknown-linux-gnu` from this Mac: Rust with the pinned
+toolchain's std for the target, C and C++ with Apple's clang for the target, every link with
+rustup's lld, against a sysroot that `linux-sysroot HOST` copies from a Linux host (its headers,
+glibc's startup objects and libraries, gcc's support directory: about 90 MB, in the farm's cache).
+A binary built here links the very glibc and libstdc++ the hosts run (checked: bundled SQLite, zstd
+and a C++ file, run on a host). It needs Homebrew's `llvm-ar` (macOS's `ar` writes no index lld
+reads). Such compiles stay here: the Macs' toolchains have no std of the target, and ld64's flags
+(`-oso_prefix`, `-install_name`) go on macOS links only.
+
+    scripts/build/farm/linux-sysroot HOST     # once, and after the host's system is upgraded
+    scripts/build/farm/cargo-linux build --release --bin rerail-engine
 
 ### The farm's root on a host
 
