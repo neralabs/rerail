@@ -86,9 +86,9 @@ static LINES: LazyLock<Mutex<HashMap<PathBuf, Weak<WriterLine>>>> = LazyLock::ne
 
 impl WriterLine {
     /// The line of the store file at `path`, shared by every `ContentStore` of this process on
-    /// that file, however the path is spelled.
+    /// that file, however its folder is spelled.
     pub(super) fn of(path: &Path) -> Arc<Self> {
-        let key = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let key = line_key(path);
         let mut lines = LINES.lock();
         if let Some(line) = lines.get(&key).and_then(Weak::upgrade) {
             return line;
@@ -109,7 +109,7 @@ impl WriterLine {
         let mut line = self.line.lock();
         #[cfg(debug_assertions)]
         assert!(
-            !(line.held && line.holder == Some(std::thread::current().id())),
+            !line.held || line.holder != Some(std::thread::current().id()),
             "a thread asked for the store's writer line it holds"
         );
         let ticket = line.arrive();
@@ -171,6 +171,20 @@ impl WriterLine {
     /// Whether a holder outlasted a waiter's bound and holds the line still.
     pub(super) fn stalled(&self) -> bool {
         self.line.lock().stalled.is_some()
+    }
+}
+
+/// The file at `path` by its resolved folder and its name. The folder exists once a store opens;
+/// the file may not (on Windows SQLite creates it at the first open), so resolving the whole path
+/// would key the first open and the later ones apart.
+fn line_key(path: &Path) -> PathBuf {
+    let folder = match path.parent() {
+        Some(folder) if !folder.as_os_str().is_empty() => folder,
+        _ => Path::new("."),
+    };
+    match (std::fs::canonicalize(folder), path.file_name()) {
+        (Ok(folder), Some(name)) => folder.join(name),
+        _ => path.to_path_buf(),
     }
 }
 
