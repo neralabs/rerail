@@ -119,21 +119,21 @@ pub mod matcher {
     use crate::code_rule_dsl::tape::TapeDoc;
     use crate::code_rule_dsl::transducer::packed::device::{Engine, MatcherDevice, Outcome, RootJobs};
     use crate::code_rule_dsl::transducer::packed::{
-        BatchOutcome, Error, ExecutionBackend, LoweredMatcher, LoweredWave, PackedExecution, Program, matcher_metal,
+        BatchOutcome, Error, ExecutionBackend, LoweredMatcher, Budget, LoweredWave, PackedExecution, Program, matcher_metal,
         metal_program_backend as programs,
     };
 
     impl MatcherDevice for super::Metal {
-        fn execute_packed(&self, engine: Engine, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>) -> Result<PackedExecution, Error> {
+        fn execute_packed(&self, engine: Engine, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>, budget: Budget) -> Result<PackedExecution, Error> {
             match engine {
                 Engine::Interpreter => {
                     let engine = programs::compile_interpreter()?;
-                    programs::execute_packed_with_result_limits(&engine, batch, files, anchors, result_limits)
+                    programs::execute_packed_budgeted(&engine, batch, files, anchors, result_limits, budget)
                 }
                 Engine::Jit => {
                     let engine = crate::code_rule_dsl::prof::time("roots.jit", || programs::compile_jit_cached(batch))?;
                     let _run = crate::code_rule_dsl::prof::Stage::start("roots.metal");
-                    programs::execute_packed_with_result_limits(&engine, batch, files, anchors, result_limits)
+                    programs::execute_packed_budgeted(&engine, batch, files, anchors, result_limits, budget)
                 }
             }
         }
@@ -173,7 +173,7 @@ pub mod matcher {
             matcher_metal::matcher_roots(matcher, tapes)
         }
 
-        fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: &[Vec<Vec<u32>>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error> {
+        fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: crate::code_rule_dsl::transducer::packed::device::ClauseRoots<'_>) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error> {
             matcher_metal::wave_roots(wave, tapes, roots)
         }
 

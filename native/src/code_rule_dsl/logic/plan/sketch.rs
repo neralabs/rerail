@@ -56,11 +56,7 @@ impl Sketch {
         // more (21–26), and its level from the rest's trailing zeros (format 2; format 1 mixed once a row and once
         // more for the bitmap, 7 mixes a value).
         let h = mix(v as u64);
-        let at = |i: usize| (((h >> (i * 7)) >> 1) % W as u64) as usize;
-        let by = |i: usize| if (h >> (i * 7)) & 1 == 1 { n } else { -n };
-        self.ams[0][at(0)] += by(0);
-        self.ams[1][at(1)] += by(1);
-        self.ams[2][at(2)] += by(2);
+        ams_add(&mut self.ams, h, n);
         let level = ((h >> 27).trailing_zeros() as usize).min(LEVELS - 1);
         let slot = ((h >> 21) % M as u64) as usize;
         let counters = self.levels[level].get_or_insert_with(|| Box::new([0; M]));
@@ -91,9 +87,7 @@ impl Sketch {
 
     /// The estimated sum of squared postings.
     pub fn sq(&self) -> f64 {
-        let mut rows: Vec<f64> = self.ams.iter().map(|r| r.iter().map(|&c| (c as f64) * (c as f64)).sum()).collect();
-        rows.sort_by(f64::total_cmp);
-        rows[D / 2]
+        ams_sq(&self.ams)
     }
 
     /// The estimated distinct values.
@@ -170,6 +164,67 @@ impl Sketch {
     }
 }
 
+/// HyperLogLog's registers (Flajolet, Fusy, Gandouet, Meunier 2007): 2^12, so a standard error of 1.6%.
+const HLL_P: u32 = 12;
+
+/// A column's moments where values are only ever added (the corpus's chunks' totals, which merge parts that share
+/// values): `sq` from the AMS sketch above, and the distinct values by HyperLogLog, which cannot take a value out
+/// but is far closer than the counting bitmap a deletable `Sketch` needs (1.6% against up to 1.7×).
+#[derive(Clone)]
+pub struct Moments {
+    ams: [[i64; W]; D],
+    regs: Box<[u8; 1 << HLL_P]>,
+}
+
+impl Default for Moments {
+    fn default() -> Self {
+        Moments { ams: [[0; W]; D], regs: Box::new([0; 1 << HLL_P]) }
+    }
+}
+
+impl Moments {
+    /// `n` rows of value `v` in (`n > 0`).
+    pub fn add(&mut self, v: i64, n: i64) {
+        let h = mix(v as u64);
+        ams_add(&mut self.ams, h, n);
+        // Another mix for the registers, so they share no bits with the AMS sketch's choices.
+        let g = mix(h ^ 0x5851_f42d_4c95_7f2d);
+        let at = (g >> (64 - HLL_P)) as usize;
+        let rank = ((g << HLL_P) | 1 << (HLL_P - 1)).leading_zeros() as u8 + 1;
+        self.regs[at] = self.regs[at].max(rank);
+    }
+
+    /// The estimated sum of squared postings.
+    pub fn sq(&self) -> f64 {
+        ams_sq(&self.ams)
+    }
+
+    /// The estimated distinct values: HyperLogLog's, by linear counting while registers are empty and it is small.
+    pub fn ndv(&self) -> f64 {
+        let m = (1u32 << HLL_P) as f64;
+        let alpha = 0.7213 / (1.0 + 1.079 / m);
+        let sum: f64 = self.regs.iter().map(|&r| (-(r as f64)).exp2()).sum();
+        let raw = alpha * m * m / sum;
+        let zeros = self.regs.iter().filter(|&&r| r == 0).count();
+        if raw <= 2.5 * m && zeros > 0 { m * (m / zeros as f64).ln() } else { raw }
+    }
+}
+
+/// `n` rows of the value hashed to `h` into the AMS counters.
+fn ams_add(ams: &mut [[i64; W]; D], h: u64, n: i64) {
+    for (i, row) in ams.iter_mut().enumerate() {
+        let at = (((h >> (i * 7)) >> 1) % W as u64) as usize;
+        row[at] += if (h >> (i * 7)) & 1 == 1 { n } else { -n };
+    }
+}
+
+/// The AMS counters' estimate of the sum of squared postings: the median row's.
+fn ams_sq(ams: &[[i64; W]; D]) -> f64 {
+    let mut rows: Vec<f64> = ams.iter().map(|r| r.iter().map(|&c| (c as f64) * (c as f64)).sum()).collect();
+    rows.sort_by(f64::total_cmp);
+    rows[D / 2]
+}
+
 /// `RERAIL_STATS_SHADOW=<file>` (a measurement aid, decision 0096): every column measured exactly is also sketched,
 /// and one line per column is appended: where, the column, its rows, exact and estimated ndv and sq, and the bytes.
 pub fn shadowing() -> bool {
@@ -195,7 +250,30 @@ pub fn shadow(at: &str, col: &str, rows: i64, ndv: i64, sq: i64, sketch: &Sketch
 
 #[cfg(test)]
 pub mod tests {
-    use super::Sketch;
+    use super::{Moments, Sketch};
+
+    /// A column's moments over parts that share values (the corpus's chunks): distinct values counted once,
+    /// whichever parts hold them, and the squared postings of each value's total, not of its parts' counts.
+    #[test]
+    fn moments_count_a_value_shared_by_parts_once() {
+        let mut m = Moments::default();
+        let mut sq = 0i64;
+        for v in 0..100_000i64 {
+            let n = 1 + v % 7;
+            sq += n * n;
+            // Each value's rows split over two parts.
+            m.add(v * 7919, n / 2);
+            m.add(v * 7919, n - n / 2);
+        }
+        let ndv = m.ndv();
+        assert!((ndv / 100_000.0 - 1.0).abs() < 0.05, "ndv {ndv} for 100,000");
+        assert!(m.sq() / sq as f64 > 1.0 / 1.5 && m.sq() / (sq as f64) < 1.5, "sq {} for {sq}", m.sq());
+        let mut few = Moments::default();
+        for v in 0..10 {
+            few.add(v, 3);
+        }
+        assert_eq!(few.ndv().round(), 10.0, "few values are counted exactly (linear counting)");
+    }
 
     /// A skewed column: value v holds about 10000 / (v + 1) rows (Zipf), over `n` distinct values.
     fn zipf(n: i64) -> Vec<(i64, i64)> {

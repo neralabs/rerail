@@ -3,8 +3,8 @@
 use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
 use crate::code_rule_dsl::fixtures::{document, temp};
-use crate::code_rule_dsl::residency::slabs::{self, ChunkTape, DocTable};
-use crate::code_rule_dsl::tape::{Grammar, TAPE_FORMAT_VERSION, TapeDoc};
+use crate::code_rule_dsl::residency::slabs::{self, DocTable, DocView};
+use crate::code_rule_dsl::tape::{Grammar, TapeDoc};
 use crate::content_store::ContentStore;
 use sha2::{Digest as _, Sha256};
 // What the backend reads through its own imports, which its facade in the engine does not re-export.
@@ -15,11 +15,11 @@ const TAPE: &str = concat!(include_str!("metal_tape_reads.metal"), include_str!(
 const FIELDS: usize = 12;
 
 const KERNEL: &str = r#"
-inline uint tape_global(ChunkTape d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
-kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device const uint* nodeDoc [[buffer(1)]],device uint* out [[buffer(2)]],device const uchar* chunk [[buffer(3)]],constant uint& count [[buffer(7)]],uint g [[thread_position_in_grid]]){
+inline uint tape_global(DocView d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
+kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device const uint* nodeDoc [[buffer(1)]],device uint* out [[buffer(2)]],device const uchar* chunk [[buffer(3)]],constant uint& count [[buffer(7)]],uint g [[thread_position_in_grid]]){
  if(g>=count)return;
  device const uchar* s=chunk;
- ChunkTape d=docs[nodeDoc[g]];
+ DocView d=docs[nodeDoc[g]];
  uint i=g-d.node_base;
  device uint* o=out+g*12u;
  o[0]=tape_kind(s,d,i);o[1]=tape_field(s,d,i);o[2]=tape_flags(s,d,i);
@@ -49,7 +49,7 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
         let (tape, _stored) = document(source, lang);
         let bytes = tape.resident_parts(None).unwrap().0;
         let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
-        store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(TAPE_FORMAT_VERSION), &bytes).unwrap();
+        store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(crate::code_rule_dsl::tape::formats::stored_version()), &bytes).unwrap();
         digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
         tapes.push(tape);
     }
@@ -57,7 +57,7 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     let table = DocTable::new(slabs::admit(&store, &digests, &grammar).unwrap()).unwrap();
     assert_eq!(tapes.iter().map(TapeDoc::transducer_len).sum::<usize>(), table.nodes);
     let node_doc = table.views.iter().enumerate().flat_map(|(doc, view)| std::iter::repeat_n(doc as u32, view.nodes as usize)).collect::<Vec<_>>();
-    let docs = MappedBuffer::from_slice::<ChunkTape>(device, &table.views).unwrap();
+    let docs = MappedBuffer::from_slice::<DocView>(device, &table.views).unwrap();
     let node_doc = MappedBuffer::from_slice(device, &node_doc).unwrap();
     let out = MappedBuffer::zeroed::<u32>(device, table.nodes * FIELDS).unwrap();
     let source = format!("#include <metal_stdlib>\nusing namespace metal;\n{}{TAPE}{KERNEL}", slabs::msl());
@@ -233,7 +233,7 @@ fn a_label_kernel_costs_footprint() {
 
 /// Every label kernel and the fact-only pattern kernel compile, for a mixed batch (0) and for each format's own
 /// (`tape_format`). A run whose kernels fail to compile falls back to the CPU and still gives the right rows, so the
-/// label tests alone would pass with MSL that does not compile (t41, Q57).
+/// label tests alone would pass with MSL that does not compile (t41, Q62).
 #[test]
 fn the_label_kernels_compile_for_every_format() {
     if METAL_DEVICE.is_none() {

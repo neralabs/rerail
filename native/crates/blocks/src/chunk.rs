@@ -90,7 +90,7 @@ pub fn hits(b: &Block) -> impl Iterator<Item = &MemoEntry> {
 /// Builds one document's memo entry in a scratch block: the rows of each kept relation, as given, frozen with
 /// the relation's spec. Returns the scratch block and the entry's range and offset in it.
 pub fn build_entry(key: u32, digest: u64, rels: &[(&Spec, Vec<i64>)]) -> (Block, usize, usize, usize) {
-    let s = Block::anon(kind::SCRATCH, 64 << 20);
+    let s = crate::alloc::host(kind::SCRATCH, 64 << 20);
     let start = s.mark(64);
     let e: *mut MemoEntry = s.alloc_t(1);
     let tbl: *mut Ptr<Relation> = s.alloc_t(rels.len());

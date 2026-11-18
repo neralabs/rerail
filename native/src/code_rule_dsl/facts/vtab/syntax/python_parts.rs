@@ -18,11 +18,11 @@ pub fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)>
     let Built::Facts(facts) = core::build(&input).unwrap() else { panic!("literal test failed to parse") };
     let dialect = Dialect::new(crate::code_rule_dsl::facts::core::facts_tag(&facts)).unwrap();
     let p = Projected::new(0, Arc::new(facts), Some(&dialect), super::Shape::Core, false, None);
-    let local = p.core.iter().position(|&id| matches!(dialect.name(&p.facts, id), "string" | "concatenated_string")).unwrap() as u32;
+    let local = p.nodes().find(|&(_, id)| matches!(dialect.name(&p.facts, id), "string" | "concatenated_string")).unwrap().0;
     from_tape(&p, &dialect, local, false).into_iter().map(|(v, at, spec, offset)| {
         // `at` is a node id: its low bits are a local id only under preorder ids.
         let at = p.local_of(at as u32).expect("a node of the document");
-        let start = p.facts.start(p.core[at as usize]);
+        let start = p.facts.start(p.node(at as u32));
         let node = positions.iter().find(|&&(s, _)| s == start).unwrap().1;
         (v, node, spec, offset)
     }).collect()
@@ -36,7 +36,7 @@ type Piece = (String, i64, u8, usize);
 
 pub(crate) fn from_tape(p: &Projected, dialect: &Dialect, local: u32, words: bool) -> Vec<Piece> {
     let mut reader = Constants { p, dialect, words, pieces: Vec::new() };
-    let id = p.core[local as usize];
+    let id = p.node(local as u32);
     let mut current = None;
     let mut formatted = false;
     let valid = if dialect.name(&p.facts, id) == "string" {
@@ -63,7 +63,7 @@ impl Constants<'_> {
     fn append(&self, current: &mut Option<Piece>, value: String, owner: u32, start: u32, spec: u8) {
         if let Some((text, _, _, _)) = current { text.push_str(&value); }
         else {
-            let at = self.p.global(self.p.local[owner as usize]);
+            let at = self.p.global(self.p.local_of_node(owner as u32));
             *current = Some((value, at, spec, (start - self.p.facts.start(owner)) as usize));
         }
     }

@@ -23,6 +23,7 @@ use std::sync::{Mutex, OnceLock};
 
 pub mod join_steps;
 pub mod sql_plans;
+use rerail_accel::program_steps;
 
 /// The samples kept per machine: older ones are deleted past this.
 const KEPT: i64 = 500_000;
@@ -83,6 +84,8 @@ pub fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
          CREATE INDEX IF NOT EXISTS samples_priced ON samples(machine, at) WHERE units > 0;
          CREATE INDEX IF NOT EXISTS samples_priced_by_form ON samples(machine, lane, forms, at) WHERE units > 0;
          CREATE TABLE IF NOT EXISTS models(machine TEXT PRIMARY KEY, at REAL, trained_on INTEGER, comparison TEXT, model BLOB);
+         CREATE TABLE IF NOT EXISTS program_steps(
+           program TEXT PRIMARY KEY, steps REAL, size REAL, evaluations INTEGER, overruns INTEGER, last_at REAL);
          CREATE TABLE IF NOT EXISTS kernel_forms(
            machine TEXT, kind TEXT, key TEXT, name TEXT, interpreted INTEGER, compiled INTEGER, compile_seconds REAL,
            failed INTEGER, missing TEXT, first_at REAL, last_at REAL, PRIMARY KEY(machine, kind, key));",
@@ -100,6 +103,16 @@ fn writing() -> crate::code_rule_dsl::logic::profile::WarmScope {
     scope
 }
 
+/// A program's sums are halved past this many evaluations: its rate follows its recent runs (decision 0334).
+const RATE_EVALUATIONS: i64 = program_steps::RATE_EVALUATIONS as i64;
+
+/// Each program's measured steps per unit of size (decision 0334), for its tasks' predictions.
+fn read_program_rates(db: &rusqlite::Connection) -> rusqlite::Result<Vec<(String, f64, f64, u64)>> {
+    let mut st = db.prepare("SELECT program, steps, size, evaluations FROM program_steps WHERE size > 0 AND evaluations > 0")?;
+    let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?, r.get::<_, f64>(2)?, r.get::<_, i64>(3)?)))?;
+    Ok(rows.filter_map(Result::ok).map(|(program, steps, size, evaluations)| (program, steps, size, evaluations as u64)).collect())
+}
+
 /// The writer's store, once opened.
 static WRITER: Mutex<Option<rusqlite::Connection>> = Mutex::new(None);
 
@@ -111,7 +124,11 @@ fn write() {
     let plans = sql_plans::take();
     let forms = rerail_accel::forms::drain();
     let steps = join_steps::take();
-    if samples.is_empty() && plans.is_empty() && forms.is_empty() && steps.is_empty() {
+    let (evaluations, evaluations_dropped) = program_steps::drain();
+    if evaluations_dropped > 0 {
+        crate::code_rule_dsl::logic::profile::decision("cost statistics", || format!("{evaluations_dropped} evaluation observations dropped: the writer fell behind"));
+    }
+    if samples.is_empty() && plans.is_empty() && forms.is_empty() && evaluations.is_empty() && steps.is_empty() {
         return;
     }
     // What the stored statistics say first (the samples since the model, its age): a run that measured something
@@ -169,6 +186,33 @@ fn write() {
             )?;
             for f in &forms {
                 up.execute(rusqlite::params![machine, f.kind, f.key, f.name, f.interpreted as i64, f.compiled as i64, f.compile_seconds, f.failed as i64, f.missing, at])?;
+            }
+        }
+        // Each program's steps and size, summed (decision 0334): its rate is their quotient. A run stopped over its
+        // budget measured only that budget, so it counts an overrun and no steps; its restart's run counts them.
+        // Past `RATE_EVALUATIONS` evaluations the sums are halved, so a program's rate follows its recent runs.
+        if !evaluations.is_empty() {
+            let mut summed: std::collections::BTreeMap<&str, (f64, f64, i64, i64)> = std::collections::BTreeMap::new();
+            for o in &evaluations {
+                let entry = summed.entry(o.program.as_str()).or_default();
+                if o.over_budget {
+                    entry.3 += 1;
+                } else {
+                    entry.0 += o.steps as f64;
+                    entry.1 += o.size as f64;
+                    entry.2 += 1;
+                }
+            }
+            let mut up = tx.prepare_cached(
+                "INSERT INTO program_steps VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(program) DO UPDATE SET
+                   steps = CASE WHEN evaluations > ?7 THEN steps / 2 ELSE steps END + excluded.steps,
+                   size = CASE WHEN evaluations > ?7 THEN size / 2 ELSE size END + excluded.size,
+                   evaluations = CASE WHEN evaluations > ?7 THEN evaluations / 2 ELSE evaluations END + excluded.evaluations,
+                   overruns = overruns + excluded.overruns, last_at = excluded.last_at",
+            )?;
+            for (program, (steps, size, count, overruns)) in summed {
+                up.execute(rusqlite::params![program, steps, size, count, overruns, at, RATE_EVALUATIONS])?;
             }
         }
         tx.commit()?;
@@ -277,6 +321,10 @@ fn read() {
         let db = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         if let Err(e) = sql_plans::read(&db, &machine(), rerail_accel::exec::threads() as i64) {
             eprintln!("rerail: SQL planning observations not read from {}: {e}", path.display());
+        }
+        // The programs' rates (decision 0334): a store from before them has no table, and no rates.
+        if let Ok(rates) = read_program_rates(&db) {
+            program_steps::install_sums(rates);
         }
         // The saved model's age, and the samples written since it was trained (no `models` table: none).
         let saved = db
@@ -537,6 +585,7 @@ pub fn start() {
         rerail_accel::score::keep_samples(true);
         // The first price asked waits for the read, which it begins if the run did not (`ready`).
         rerail_accel::price::before_first_price(ready);
+        program_steps::keep(true);
         let _ = rerail_accel::exec::service("rerail-costs", None, || {
             crate::code_rule_dsl::logic::profile::behind_the_run();
             loop {
@@ -680,7 +729,12 @@ pub fn summary() -> String {
         s.push_str(&format!("  model: {}\n", state.replace('\n', "\n  ")));
     }
     for l in rerail_accel::price::learned_rates() {
-        s.push_str(&format!("  {:<4} {:<28} {:>12.3e} s a unit  ({} samples)\n", l.lane.name(), l.name, l.per_unit, l.samples));
+        let from = if l.this_run { "this run's" } else { "stored" };
+        let reach = if l.spread { format!("to {:.1e} units", rerail_accel::price::SPREAD * l.largest) } else { "unspread".to_owned() };
+        s.push_str(&format!(
+            "  {:<4} {:<28} wall {:>9.3} ms a launch + {:>10.3e} s a unit; host CPU {:>9.3} ms + {:>10.3e} s  ({} {from} samples, largest {:.1e}: {reach})\n",
+            l.lane.name(), l.name, l.per_launch * 1e3, l.per_unit, l.host_per_launch * 1e3, l.host_per_unit, l.samples, l.largest
+        ));
     }
     s
 }

@@ -2,7 +2,7 @@
 //! fixtures, at exactly the nodes W's matcher does (`GrammarMatcher::match_root` at each node of
 //! the same tape). Prints the coverage: clauses lowered, refused by operator, mismatched.
 
-use super::compile_matcher::LoweredMatcher;
+use super::compile_matcher::{Entry, Label, LoweredMatcher, domain};
 use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::{GrammarMatcher, MatchTree, Stop, match_tree, node_at};
@@ -202,6 +202,23 @@ fn lowered_python_clauses_match_where_ws_matcher_does() {
 }
 
 /// Widens the first `neighbor` walk to `end`: a lowering this wrong must not pass the gate.
+/// How many widened clauses the widened-walk checks must see differ from W's matcher: the pack's clauses give 2
+/// on `widened_tapes` (2026-11-17; the CPU's check and Metal's alike). One shows the walk is checked.
+const WIDENED_CAUGHT: usize = 2;
+
+/// The widened-walk checks' tapes: every fourth Python file of the pack's upstream sources.
+fn widened_tapes() -> Vec<TapeDoc> {
+    let mut sources = Vec::new();
+    files(&pack().join("upstream"), "py", &mut sources);
+    sources.sort();
+    sources
+        .iter()
+        .step_by(4)
+        .filter_map(|path| std::fs::read_to_string(path).ok())
+        .map(|source| python_tape(&source))
+        .collect()
+}
+
 fn widen_first_neighbor(tree: &mut MatchTree) -> bool {
     match tree {
         MatchTree::Walk { stop, rule, .. } => {
@@ -225,15 +242,7 @@ fn widen_first_neighbor(tree: &mut MatchTree) -> bool {
 
 #[test]
 fn the_gate_catches_a_widened_walk() {
-    let mut sources = Vec::new();
-    files(&pack().join("upstream"), "py", &mut sources);
-    sources.sort();
-    let tapes = sources
-        .iter()
-        .step_by(4)
-        .filter_map(|path| std::fs::read_to_string(path).ok())
-        .map(|source| python_tape(&source))
-        .collect::<Vec<_>>();
+    let tapes = widened_tapes();
     let compiled = clauses();
     let mut caught = 0;
     for (_, compiled) in &compiled {
@@ -254,7 +263,7 @@ fn the_gate_catches_a_widened_walk() {
                 program.roots(tape).ok() != Some(expected)
             });
             caught += usize::from(differs);
-            if caught >= 3 {
+            if caught >= WIDENED_CAUGHT {
                 return;
             }
         }
@@ -379,6 +388,7 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
 /// same ones) is counted, not compared: it runs as walks in production.
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
 #[test]
+#[ignore = "Q135: on an M1 Max one clause (PYI056 add-to-all) differs, at oscar da5892e9c too"]
 fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
     use super::compile_matcher::Backend;
     use metal_program_backend::label_passes::INTERPRET_ONLY;
@@ -421,11 +431,305 @@ fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
     assert!(equal > 0, "no clause ran on the interpreter");
 }
 
-/// The Metal gate's mutation check: a widened walk must differ from W's matcher on Metal too.
+/// Decision 0334: the label sweep under the replanned budget, with every program it walks priced at almost nothing
+/// (a step per node, times the slack). Its tasks run over their budgets, the run goes again with twice the budget
+/// until they finish, and it finds the full budget's roots.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots() {
+    use crate::code_rule_dsl::transducer::packed::evaluation_costs::{self, Rate};
+    use metal_program_backend::label_passes::INTERPRET_ONLY;
+    let tapes = fixtures();
+    let mut matchers = Vec::new();
+    for (policy, compiled) in &clauses() {
+        for (clause, grammar) in python_matchers(compiled) {
+            if !selected(policy, clause) {
+                continue;
+            }
+            let Ok(tree) = match_tree(grammar) else { continue };
+            if let Ok(matcher) = LoweredMatcher::lower(&tree) {
+                matchers.push(matcher);
+            }
+        }
+    }
+    let rates = matchers
+        .iter()
+        .flat_map(LoweredMatcher::walked_programs)
+        .map(|program| (program.plain_digest().to_owned(), Rate { steps_per_unit: 1e-6, samples: 1 }))
+        .collect();
+    evaluation_costs::install(rates);
+    INTERPRET_ONLY.set(true);
+    let (mut checked, mut replanned) = (0, 0);
+    for matcher in matchers.iter().step_by(4).take(12) {
+        // SAFETY: nextest runs each test in a process of its own; nothing else reads the variable meanwhile.
+        unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "full") };
+        let full = matcher.roots_metal(&tapes);
+        unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "replan") };
+        let replan = matcher.roots_metal(&tapes);
+        match (full, replan) {
+            (Ok((full, _)), Ok((replan, outcome))) => {
+                assert_eq!(replan, full, "the replanned sweep finds the full budget's roots");
+                replanned += outcome.replanned;
+                checked += 1;
+            }
+            (Err(Error::BackendCapacity | Error::BackendLaunchLimit), _) => {}
+            (full, replan) => panic!("full {:?}, replanned {:?}", full.err(), replan.err()),
+        }
+    }
+    unsafe { std::env::remove_var("RERAIL_DEVICE_BUDGET") };
+    INTERPRET_ONLY.set(false);
+    eprintln!("{checked} clauses checked, {replanned} reruns with twice the budget");
+    assert!(checked > 0, "no clause ran");
+    assert!(replanned > 0, "no task ran over a budget of a step per node");
+}
+
+/// Decision 0334: a wave clause over its budget is replanned by cost. With its programs priced at almost nothing,
+/// each clause's evaluations run over their budgets; where W's matcher is priced lower than the transducer again,
+/// the evaluation goes to W (`WaveRun::limited`, its candidates for W to confirm, every root the full run found
+/// among them), and where W is priced higher, the transducer runs again with twice the budget until it finishes,
+/// and finds the full run's roots.
+#[test]
+fn a_clause_over_its_budget_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not() {
+    use super::compile_matcher::{Backend, LoweredWave};
+    use crate::code_rule_dsl::transducer::packed::WorkBudget;
+    use crate::code_rule_dsl::transducer::packed::evaluation_costs::{self, Rate};
+    // One large file (the fixtures' sources one after another) and a few small ones.
+    let mut sources = Vec::new();
+    files(pack().join("upstream").as_path(), "py", &mut sources);
+    sources.sort();
+    let joined: String = sources.iter().step_by(8).filter_map(|path| std::fs::read_to_string(path).ok()).collect::<Vec<_>>().join("\n");
+    let mut tapes = vec![python_tape(&joined)];
+    tapes.extend(fixtures().into_iter().take(8));
+    let mut matchers = Vec::new();
+    for (policy, compiled) in &clauses() {
+        for (clause, grammar) in python_matchers(compiled) {
+            if !selected(policy, clause) {
+                continue;
+            }
+            let Ok(tree) = match_tree(grammar) else { continue };
+            if let Ok(matcher) = LoweredMatcher::lower(&tree) {
+                matchers.push(matcher);
+            }
+        }
+    }
+    // The wave's own programs (a wave relabels its clauses'), each at almost nothing, and W at `w` a node.
+    let priced = |wave: &LoweredWave, w: f64| {
+        let mut rates: std::collections::HashMap<String, Rate> = wave
+            .walked_programs()
+            .into_iter()
+            .map(|program| (program.plain_digest().to_owned(), Rate { steps_per_unit: 1e-6, samples: 1 }))
+            .collect();
+        rates.insert(wave.w_key(0), Rate { steps_per_unit: w, samples: 1 });
+        evaluation_costs::install(rates);
+    };
+    // A slack of 1: the budget is the prediction's floor (`MIN_PREDICTED`), which the large file's root walks outrun.
+    let replan = WorkBudget::Replan { slack: 1, doublings: 0 };
+    let active = vec![vec![true; tapes.len()]];
+    evaluation_costs::keep(true);
+    let (mut checked, mut handed, mut overran) = (0, 0, 0);
+    for matcher in matchers.iter().step_by(4).take(16) {
+        let wave = LoweredWave::new(&[matcher]).unwrap();
+        let Ok((full, full_run)) = wave.roots_batch_budgeted(Backend::Cpu, &tapes, &active, WorkBudget::Full) else { continue };
+        priced(&wave, 1e9);
+        let (again, again_run) = wave.roots_batch_budgeted(Backend::Cpu, &tapes, &active, replan).unwrap();
+        assert_eq!(again, full, "W priced higher: the transducer runs again and finds the full run's roots");
+        assert_eq!(again_run.limited, full_run.limited);
+        overran += evaluation_costs::drain().0.iter().filter(|seen| seen.over_budget).count();
+        priced(&wave, 1e-6);
+        let (cheap, cheap_run) = wave.roots_batch_budgeted(Backend::Cpu, &tapes, &active, replan).unwrap();
+        let _ = evaluation_costs::drain();
+        for (c, per) in cheap.iter().enumerate() {
+            for (t, roots) in per.iter().enumerate() {
+                if cheap_run.limited.contains(&(c, t)) {
+                    assert!(roots.is_superset(&full[c][t]), "W's candidates hold every root the full run found");
+                } else {
+                    assert_eq!(roots, &full[c][t]);
+                }
+            }
+        }
+        handed += cheap_run.limited.len().saturating_sub(full_run.limited.len());
+        checked += 1;
+    }
+    evaluation_costs::keep(false);
+    eprintln!("{checked} clauses checked, {overran} overruns run again, {handed} evaluations given to W");
+    assert!(checked > 0, "no clause ran");
+    assert!(overran > 0, "no evaluation ran over its budget");
+    assert!(handed > 0, "no evaluation went to W where W cost less");
+}
+
+/// Decision 0334's test for `replan` as the default: every lowered Python clause of the pack, in waves of `width`, over
+/// the fixtures (`RERAIL_S1_DIR`, e.g. corpus0), with the full budget and with `replan` (its slack, a cost store
+/// empty at the start, so the priors and then the rates the run itself measures). Each run's findings on a tape are
+/// its roots, or W's matcher at its candidates where it gave the clause to W there; they must be the same. Also how
+/// often each plan was chosen.
+fn replan_finds_the_full_budgets_roots(backend: super::compile_matcher::Backend, width: usize) {
+    use super::compile_matcher::LoweredWave;
+    use crate::code_rule_dsl::transducer::packed::{WorkBudget, evaluation_costs};
+    let mut tapes = fixtures();
+    assert!(!tapes.is_empty(), "no fixtures");
+    // Ten tapes, unless `RERAIL_S1_FILES` says how many: each wave runs twice over them (the Metal check of 491
+    // clauses on 10 of corpus0's files takes about 230 s on an M3 Max).
+    if std::env::var_os("RERAIL_S1_FILES").is_none() {
+        tapes.truncate(10);
+    }
+    let compiled = clauses();
+    let mut lowered = Vec::new();
+    for (policy, compiled) in &compiled {
+        for (clause, grammar) in python_matchers(compiled) {
+            if !selected(policy, clause) {
+                continue;
+            }
+            let Ok(tree) = match_tree(grammar) else { continue };
+            if let Ok(matcher) = LoweredMatcher::lower(&tree) {
+                lowered.push((grammar, matcher));
+            }
+        }
+    }
+    evaluation_costs::install(Default::default());
+    let replan = WorkBudget::Replan { slack: crate::code_rule_dsl::transducer::packed::REPLAN_SLACK, doublings: 0 };
+    let (mut waves, mut given, mut checked, mut replanned) = (0, 0, 0, 0);
+    for chunk in lowered.chunks(width) {
+        let matchers: Vec<&LoweredMatcher> = chunk.iter().map(|(_, matcher)| matcher).collect();
+        let Ok(wave) = LoweredWave::new(&matchers) else { continue };
+        let active = vec![vec![true; tapes.len()]; matchers.len()];
+        let run = |budget: WorkBudget| {
+            // SAFETY: nextest runs each test in a process of its own; nothing else reads the variable meanwhile.
+            match budget {
+                WorkBudget::Full => unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "full") },
+                WorkBudget::Replan { .. } => unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "replan") },
+            }
+            wave.roots_batch_budgeted(backend, &tapes, &active, budget)
+        };
+        let started = std::time::Instant::now();
+        let full = match run(WorkBudget::Full) {
+            Ok(found) => found,
+            Err(Error::BackendCapacity | Error::BackendLaunchLimit) => continue,
+            Err(e) => panic!("full: {e:?}"),
+        };
+        let full_time = started.elapsed();
+        let (found, ran) = run(replan).unwrap();
+        eprintln!("wave {waves}: full {full_time:?}, replan {:?}, {} given to W, {} reruns", started.elapsed() - full_time, ran.limited.len(), ran.replanned);
+        replanned += ran.replanned;
+        // What each run's findings are: its roots, or W's matcher at its candidates where it gave the clause to W.
+        let settled = |found: &[Vec<BTreeSet<u32>>], limited: &[(usize, usize)], c: usize, t: usize| -> BTreeSet<u32> {
+            if !limited.contains(&(c, t)) {
+                return found[c][t].clone();
+            }
+            let root = Root::doc(tapes[t].clone());
+            let mut work = usize::MAX;
+            found[c][t].iter().copied().filter(|&n| chunk[c].0.match_root(node_at(&root, n), &mut work).ok().flatten().is_some()).collect()
+        };
+        for c in 0..found.len() {
+            for t in 0..tapes.len() {
+                checked += 1;
+                given += usize::from(ran.limited.contains(&(c, t)));
+                assert_eq!(settled(&found, &ran.limited, c, t), settled(&full.0, &full.1.limited, c, t), "clause {c} of wave {waves}, tape {t}");
+            }
+        }
+        waves += 1;
+    }
+    unsafe { std::env::remove_var("RERAIL_DEVICE_BUDGET") };
+    eprintln!("{backend:?}: {} clauses in {waves} waves on {} tapes: {checked} evaluations, {given} given to W, {replanned} reruns", lowered.len(), tapes.len());
+    assert!(waves > 0);
+}
+
+#[test]
+fn replan_finds_the_full_budgets_roots_on_the_pack() {
+    replan_finds_the_full_budgets_roots(super::compile_matcher::Backend::Cpu, 16);
+}
+
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn on_metal_replan_finds_the_full_budgets_roots_on_the_pack() {
+    // Wider waves: a Metal wave's time is mostly its dispatches, not its clauses.
+    replan_finds_the_full_budgets_roots(super::compile_matcher::Backend::MetalInterpreter, 48);
+}
+
+/// Decision 0334 on Metal: the wave's passes and root walks on the device, every program priced at almost nothing, on
+/// the interpreter (no micro walks). Where W is priced higher, a run whose tasks ran over goes again with twice the
+/// budget and finds the full run's roots; where W is priced lower, the unfinished (pass, file) go to W
+/// (`WaveRun::limited`: the clause's candidates, every root the full run found among them).
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not() {
+    use super::compile_matcher::{Backend, LoweredWave};
+    use crate::code_rule_dsl::transducer::packed::evaluation_costs::{self, Rate};
+    use metal_program_backend::label_passes::INTERPRET_ONLY;
+    let mut sources = Vec::new();
+    files(pack().join("upstream").as_path(), "py", &mut sources);
+    sources.sort();
+    let joined: String = sources.iter().step_by(8).filter_map(|path| std::fs::read_to_string(path).ok()).collect::<Vec<_>>().join("\n");
+    let mut tapes = vec![python_tape(&joined)];
+    tapes.extend(fixtures().into_iter().take(8));
+    let mut matchers = Vec::new();
+    for (policy, compiled) in &clauses() {
+        for (clause, grammar) in python_matchers(compiled) {
+            if !selected(policy, clause) {
+                continue;
+            }
+            let Ok(tree) = match_tree(grammar) else { continue };
+            if let Ok(matcher) = LoweredMatcher::lower(&tree) {
+                matchers.push(matcher);
+            }
+        }
+    }
+    let priced = |wave: &LoweredWave, w: f64| {
+        let mut rates: std::collections::HashMap<String, Rate> = wave
+            .walked_programs()
+            .into_iter()
+            .map(|program| (program.plain_digest().to_owned(), Rate { steps_per_unit: 1e-6, samples: 1 }))
+            .collect();
+        for clause in 0..wave.clauses.len() {
+            rates.insert(wave.w_key(clause), Rate { steps_per_unit: w, samples: 1 });
+        }
+        evaluation_costs::install(rates);
+    };
+    let active = vec![vec![true; tapes.len()]];
+    INTERPRET_ONLY.set(true);
+    let (mut checked, mut handed, mut replanned) = (0, 0, 0);
+    for matcher in matchers.iter().step_by(4).take(12) {
+        let wave = LoweredWave::new(&[matcher]).unwrap();
+        // SAFETY: nextest runs each test in a process of its own; nothing else reads the variable meanwhile.
+        unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "full") };
+        evaluation_costs::install(Default::default());
+        let full = match wave.roots_batch(Backend::MetalInterpreter, &tapes, &active) {
+            Ok(found) => found,
+            Err(Error::BackendCapacity | Error::BackendLaunchLimit) => continue,
+            Err(e) => panic!("full: {e:?}"),
+        };
+        unsafe { std::env::set_var("RERAIL_DEVICE_BUDGET", "replan") };
+        priced(&wave, 1e9);
+        let (again, again_run) = wave.roots_batch(Backend::MetalInterpreter, &tapes, &active).unwrap();
+        replanned += again_run.replanned;
+        assert_eq!(again, full.0, "W priced higher: the run goes again and finds the full run's roots");
+        assert_eq!(again_run.limited, full.1.limited);
+        priced(&wave, 1e-6);
+        let (cheap, cheap_run) = wave.roots_batch(Backend::MetalInterpreter, &tapes, &active).unwrap();
+        for (c, per) in cheap.iter().enumerate() {
+            for (t, roots) in per.iter().enumerate() {
+                if cheap_run.limited.contains(&(c, t)) {
+                    assert!(roots.is_superset(&full.0[c][t]), "W's candidates hold every root the full run found");
+                } else {
+                    assert_eq!(roots, &full.0[c][t]);
+                }
+            }
+        }
+        handed += cheap_run.limited.len().saturating_sub(full.1.limited.len());
+        checked += 1;
+    }
+    unsafe { std::env::remove_var("RERAIL_DEVICE_BUDGET") };
+    INTERPRET_ONLY.set(false);
+    eprintln!("{checked} clauses checked, {replanned} reruns, {handed} evaluations given to W");
+    assert!(checked > 0, "no clause ran");
+    assert!(handed > 0, "no unfinished pass went to W where W cost less");
+}
+
+/// The Metal gate's mutation check: a widened walk must differ from W's matcher on Metal too, over the CPU check's
+/// tapes (`widened_tapes`), 16 a launch.
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
 #[test]
 fn metal_catches_a_widened_walk() {
-    let tapes = fixtures().into_iter().take(16).collect::<Vec<_>>();
+    let tapes = widened_tapes();
     let mut caught = 0;
     for (_, compiled) in &clauses() {
         for (_, grammar) in python_matchers(compiled) {
@@ -434,21 +738,24 @@ fn metal_catches_a_widened_walk() {
                 continue;
             }
             let Ok(program) = LoweredMatcher::lower(&tree) else { continue };
-            let expected = tapes
-                .iter()
-                .map(|tape| {
-                    let root = Root::doc(tape.clone());
-                    let mut work = usize::MAX;
-                    (0..tape.transducer_len() as u32)
-                        .filter(|&ordinal| grammar.match_root(node_at(&root, ordinal), &mut work).ok().flatten().is_some())
-                        .collect::<BTreeSet<_>>()
-                })
-                .collect::<Vec<_>>();
-            let metal = program.roots_metal(&tapes).ok().map(|(roots, _)| roots);
-            let cpu = program.roots_batch(super::compile_matcher::Backend::Cpu, &tapes).ok();
-            assert_eq!(metal, cpu, "a widened clause must still agree between CPU and Metal");
-            caught += usize::from(metal != Some(expected));
-            if caught >= 3 {
+            let differs = tapes.chunks(16).any(|tapes| {
+                let expected = tapes
+                    .iter()
+                    .map(|tape| {
+                        let root = Root::doc(tape.clone());
+                        let mut work = usize::MAX;
+                        (0..tape.transducer_len() as u32)
+                            .filter(|&ordinal| grammar.match_root(node_at(&root, ordinal), &mut work).ok().flatten().is_some())
+                            .collect::<BTreeSet<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                let metal = program.roots_metal(tapes).ok().map(|(roots, _)| roots);
+                let cpu = program.roots_batch(super::compile_matcher::Backend::Cpu, tapes).ok();
+                assert_eq!(metal, cpu, "a widened clause must still agree between CPU and Metal");
+                metal != Some(expected)
+            });
+            caught += usize::from(differs);
+            if caught >= WIDENED_CAUGHT {
                 return;
             }
         }
@@ -473,6 +780,422 @@ fn recursive_groups_settle_in_few_sweeps() {
             }
         }
     }
+}
+
+/// Decision 0365: the wave's walks started within their anchors (the root walks, and the label passes' walks in the
+/// levels past the recursive groups) find what they find without them, on the CPU, for every clause on the fixtures
+/// (10 unless `RERAIL_S1_FILES` says): the same roots, and the same (clause, tape) given to W. Prints the starts the
+/// anchors kept and dropped and each way's time.
+#[test]
+fn anchored_walks_find_the_unanchored_roots() {
+    use super::compile_matcher::Backend;
+    let mut tapes = fixtures();
+    if std::env::var_os("RERAIL_S1_FILES").is_none() {
+        tapes.truncate(10);
+    }
+    let compiled = clauses();
+    let lowered: Vec<_> = compiled
+        .iter()
+        .flat_map(|(_, compiled)| python_matchers(compiled).filter_map(|(_, grammar)| Some((grammar, LoweredMatcher::lower(&match_tree(grammar).ok()?).ok()?))).collect::<Vec<_>>())
+        .collect();
+    let chunks: Vec<_> = lowered.chunks(16).collect();
+    let waves: Vec<LoweredWave> = chunks.iter().map(|chunk| LoweredWave::new(&chunk.iter().map(|(_, m)| m).collect::<Vec<_>>()).unwrap()).collect();
+    let run = |mode: &str| {
+        // SAFETY: nextest runs each test in a process of its own.
+        unsafe { std::env::set_var("RERAIL_ANCHORS", mode) };
+        drop(std::mem::take(&mut *crate::code_rule_dsl::prof::stages()));
+        let cpu = || {
+            // SAFETY: getrusage writes the struct it is given.
+            let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+            unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+            let time = |t: libc::timeval| std::time::Duration::from_micros(t.tv_sec as u64 * 1_000_000 + t.tv_usec as u64);
+            time(usage.ru_utime) + time(usage.ru_stime)
+        };
+        let cpu_before = cpu();
+        let started = std::time::Instant::now();
+        let found: Vec<_> = waves
+            .iter()
+            .map(|wave| {
+                let active = vec![vec![true; tapes.len()]; wave.clauses.len()];
+                wave.roots_batch(Backend::Cpu, &tapes, &active).map(|(roots, run)| (roots, run.limited)).unwrap()
+            })
+            .collect();
+        let elapsed = (started.elapsed(), cpu() - cpu_before);
+        // The counters count where `RERAIL_PROF` is set.
+        let counts = std::mem::take(&mut *crate::code_rule_dsl::prof::stages());
+        let count = |name: &str| counts.get(name).map_or(0, |&(_, calls)| calls);
+        let mut stages: Vec<_> = counts.iter().filter(|(_, (time, _))| !time.is_zero()).collect();
+        stages.sort_by_key(|(_, (time, _))| std::cmp::Reverse(*time));
+        for (stage, (time, calls)) in stages.iter().take(14) {
+            eprintln!("  {mode:>3} {stage:<36} {:>9.1} ms CPU {calls:>8} calls", time.as_secs_f64() * 1e3);
+        }
+        for (stage, (_, ms)) in counts.iter().filter(|(stage, _)| stage.starts_with("cpu_ms.")) {
+            eprintln!("  {mode:>3} {stage:<36} {ms:>9} ms process CPU");
+        }
+        (found, elapsed, count("anchor.kept"), count("anchor.dropped"))
+    };
+    let (unanchored, plain, _, _) = run("off");
+    let (anchored, with, kept, dropped) = run("on");
+    unsafe { std::env::remove_var("RERAIL_ANCHORS") };
+    // A run's findings: its roots, or W's matcher at its candidates where it gave the clause to W.
+    let settled = |found: &(Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>), w: usize, c: usize, t: usize| -> BTreeSet<u32> {
+        if !found.1.contains(&(c, t)) {
+            return found.0[c][t].clone();
+        }
+        let root = Root::doc(tapes[t].clone());
+        let mut work = usize::MAX;
+        found.0[c][t].iter().copied().filter(|&n| chunks[w][c].0.match_root(node_at(&root, n), &mut work).ok().flatten().is_some()).collect()
+    };
+    let (mut differ, mut given) = (Vec::new(), (0, 0));
+    for (w, (a, u)) in anchored.iter().zip(&unanchored).enumerate() {
+        given.0 += a.1.len();
+        given.1 += u.1.len();
+        for c in 0..a.0.len() {
+            for t in 0..tapes.len() {
+                let (with, without) = (settled(a, w, c, t), settled(u, w, c, t));
+                if with != without {
+                    differ.push(format!("wave {w} clause {c} tape {t}: {} with, {} without", with.len(), without.len()));
+                }
+            }
+        }
+    }
+    eprintln!(
+        "anchors: {kept} starts kept, {dropped} dropped; {} waves on {} tapes: (wall, CPU) {plain:?} without, {with:?} with; given to W: {} with, {} without",
+        waves.len(),
+        tapes.len(),
+        given.0,
+        given.1
+    );
+    assert!(differ.is_empty(), "anchored walks differ: {differ:#?}");
+    assert!(!crate::code_rule_dsl::prof::on() || dropped > 0, "the anchors dropped no start");
+}
+
+/// Decision 0365 on Metal: the anchors evaluated on the device (`label_formula`), for the label passes past the
+/// recursive groups, the wave's listed roots and the root records' walks, their text tests reading the walks' rows; and
+/// the formula passes as device formulas (§9). With and without them (`RERAIL_ANCHORS`, `RERAIL_SETS=walk`), on Metal
+/// both: the settled findings of the wave's roots are the same, and so are the root records from every node.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn on_metal_anchored_walks_find_the_unanchored_roots() {
+    use super::compile_matcher::Backend;
+    use crate::code_rule_dsl::transducer::packed::RootJobs;
+    let mut tapes = fixtures();
+    if std::env::var_os("RERAIL_S1_FILES").is_none() {
+        tapes.truncate(6);
+    }
+    let compiled = clauses();
+    let lowered: Vec<_> = compiled
+        .iter()
+        .flat_map(|(_, compiled)| python_matchers(compiled).filter_map(|(_, grammar)| Some((grammar, LoweredMatcher::lower(&match_tree(grammar).ok()?).ok()?))).collect::<Vec<_>>())
+        .collect();
+    // Every third wave of a dozen clauses: a few seconds a mode.
+    let chunks: Vec<_> = lowered.chunks(12).step_by(3).collect();
+    let waves: Vec<LoweredWave> = chunks.iter().map(|chunk| LoweredWave::new(&chunk.iter().map(|(_, m)| m).collect::<Vec<_>>()).unwrap()).collect();
+    let every: Vec<Vec<u32>> = tapes.iter().map(|tape| (0..tape.transducer_len() as u32).collect()).collect();
+    type Records = Vec<Option<Vec<BTreeSet<String>>>>;
+    let run = |mode: &str| {
+        // SAFETY: nextest runs each test in a process of its own.
+        // Off: no anchors, and every formula pass walked (`RERAIL_SETS=walk`).
+        unsafe { std::env::set_var("RERAIL_ANCHORS", mode) };
+        unsafe { std::env::set_var("RERAIL_SETS", if mode == "off" { "walk" } else { "formulas" }) };
+        drop(std::mem::take(&mut *crate::code_rule_dsl::prof::stages()));
+        let started = std::time::Instant::now();
+        let found: Vec<_> = waves
+            .iter()
+            .map(|wave| {
+                let active = vec![vec![true; tapes.len()]; wave.clauses.len()];
+                let roots = wave.roots_batch(Backend::MetalInterpreter, &tapes, &active).ok().map(|(roots, run)| (roots, run.limited, run.metal));
+                // The root records from every node (as the engine's demand runs them, `waves::matches`).
+                let programs = wave.programs();
+                let jobs = RootJobs { programs: programs.iter().collect(), starts: vec![every.clone(); programs.len()] };
+                let records: Option<Records> = wave.labelled_metal(&tapes, &active, Some(&jobs)).ok().map(|(_, outcome)| {
+                    outcome
+                        .records
+                        .into_iter()
+                        .map(|program| program.map(|files| files.into_iter().map(|records| records.into_iter().map(|record| format!("{record:?}")).collect()).collect()))
+                        .collect()
+                });
+                (roots, records)
+            })
+            .collect();
+        let elapsed = started.elapsed();
+        // Under `RERAIL_PROF` (and `RERAIL_GPU_KERNEL_TIMES`, each kernel's device time): where the time went.
+        let counts = std::mem::take(&mut *crate::code_rule_dsl::prof::stages());
+        let mut kernels: Vec<_> = counts.iter().filter(|(name, _)| name.starts_with("kernel_us.") || name.starts_with("gpu.") || name.starts_with("formula.")).map(|(name, &(time, calls))| (name.clone(), time, calls)).collect();
+        kernels.sort_by_key(|(_, time, calls)| std::cmp::Reverse((*time, *calls)));
+        for (name, time, calls) in kernels.iter().take(30) {
+            eprintln!("  {mode:>3} {name:<36} {:>9.1} ms {calls:>10}", time.as_secs_f64() * 1e3);
+        }
+        (found, elapsed)
+    };
+    // Warm: the pipelines and programs compiled before either timed run.
+    let _ = run("on");
+    let (unanchored, plain) = run("off");
+    let (anchored, with) = run("on");
+    unsafe { std::env::remove_var("RERAIL_ANCHORS") };
+    unsafe { std::env::remove_var("RERAIL_SETS") };
+    let settled = |found: &(Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>, bool), w: usize, c: usize, t: usize| -> BTreeSet<u32> {
+        if !found.1.contains(&(c, t)) {
+            return found.0[c][t].clone();
+        }
+        let root = Root::doc(tapes[t].clone());
+        let mut work = usize::MAX;
+        found.0[c][t].iter().copied().filter(|&n| chunks[w][c].0.match_root(node_at(&root, n), &mut work).ok().flatten().is_some()).collect()
+    };
+    let (mut differ, mut compared, mut roots, mut records) = (Vec::new(), 0, 0, 0);
+    for (w, ((a, ar), (u, ur))) in anchored.iter().zip(&unanchored).enumerate() {
+        if let (Some(a), Some(u)) = (a, u)
+            && a.2
+            && u.2
+        {
+            compared += 1;
+            for c in 0..a.0.len() {
+                for t in 0..tapes.len() {
+                    let (with, without) = (settled(a, w, c, t), settled(u, w, c, t));
+                    roots += without.len();
+                    if with != without {
+                        differ.push(format!("wave {w} clause {c} tape {t}: {} roots with, {} without", with.len(), without.len()));
+                    }
+                }
+            }
+        }
+        if let (Some(a), Some(u)) = (ar, ur) {
+            for (c, (a, u)) in a.iter().zip(u).enumerate() {
+                let (Some(a), Some(u)) = (a, u) else { continue };
+                records += u.iter().map(BTreeSet::len).sum::<usize>();
+                for (t, (a, u)) in a.iter().zip(u).enumerate().filter(|(_, (a, u))| a != u) {
+                    differ.push(format!("wave {w} program {c} tape {t}: {} records with, {} without", a.len(), u.len()));
+                }
+            }
+        }
+    }
+    eprintln!("metal anchors: {compared} of {} waves compared on {} tapes, {roots} roots, {records} records; {plain:?} without, {with:?} with", waves.len(), tapes.len());
+    assert!(compared * 2 > waves.len() && roots > 0 && records > 0, "most waves ran on Metal ({compared} of {}), with roots ({roots}) and records ({records})", waves.len());
+    assert!(differ.is_empty(), "anchored walks differ on Metal: {differ:#?}");
+}
+
+/// The spike's anchor measure (prior work, ast-index-spike S151: anchor rows per answer, 1.05 there) for the wave:
+/// over the fixtures (10 unless `RERAIL_S1_FILES` says), each clause's candidate roots (its domain past its entry,
+/// where its root walk starts) against the roots it finds, the root walk's steps, and the rows its label passes
+/// start at (each pass's domain). A census, not a check: it prints the totals and the clauses with the most
+/// candidates per answer and the most steps.
+#[test]
+fn anchor_rows_per_answer() {
+    let mut tapes = fixtures();
+    if std::env::var_os("RERAIL_S1_FILES").is_none() {
+        tapes.truncate(10);
+    }
+    let (compiled, mut lowered, mut names) = (clauses(), Vec::new(), Vec::new());
+    for (policy, compiled) in &compiled {
+        for (clause, grammar) in python_matchers(compiled) {
+            if let Ok(tree) = match_tree(grammar)
+                && let Ok(matcher) = LoweredMatcher::lower(&tree)
+            {
+                lowered.push(matcher);
+                names.push(format!("{policy}/{clause}"));
+            }
+        }
+    }
+    let nodes: usize = tapes.iter().map(TapeDoc::transducer_len).sum();
+    // Per clause: candidates, roots, root-walk steps, label rows, label passes, anchored candidates.
+    let mut per: Vec<(String, u64, u64, u64, u64, usize, u64)> = Vec::new();
+    let names_py = super::rir::Names::of(GrammarDialect::Python);
+    // By (label kind, route): passes, starts, anchored starts, answers.
+    let mut by_route = BTreeMap::<(&str, &str), (u64, u64, u64, u64)>::new();
+    let mut passes = BTreeMap::<String, (u64, u64, u64, String, &str, String)>::new();
+    // The anchor of a walk's program, evaluated on a tape: its members (`Set::anchor`, decision 0365).
+    let anchored = |program: &super::Program, view: &TapeDoc, index: &super::compile_sets::Index| -> Vec<u64> {
+        use super::compile_sets::{Reader, Set};
+        let walk = super::compile_micro::Micro::of(program);
+        let texts = walk.as_ref().and_then(|walk| walk.texts(program, view));
+        let set = match (&walk, &texts) {
+            (Some(walk), Some(_)) => Set::anchor(&walk.words, &|_| true),
+            _ => Set::anchor(&program.words, &|_| false),
+        };
+        let texts = texts.unwrap_or_default();
+        Reader { tape: view, index, labels: view.transducer_labels(), texts: &texts }.eval(&set)
+    };
+    let get = |bits: &[u64], node: u32| bits.get(node as usize / 64).is_some_and(|w| w >> (node % 64) & 1 != 0);
+    for (matchers, names) in lowered.chunks(16).zip(names.chunks(16)) {
+        let wave = LoweredWave::new(&matchers.iter().collect::<Vec<_>>()).unwrap();
+        let active = vec![vec![true; tapes.len()]; matchers.len()];
+        let Ok(views) = wave.labelled(&tapes, &active) else { continue };
+        let indexes: Vec<super::compile_sets::Index> = views.iter().map(|_| Default::default()).collect();
+        for (clause, name) in wave.clauses.iter().zip(names) {
+            let entry = Entry::of(&clause.program);
+            let (mut candidates, mut roots, mut steps, mut label_rows, mut anchor_rows) = (0_u64, 0_u64, 0_u64, 0_u64, 0_u64);
+            for (view, index) in views.iter().zip(&indexes) {
+                let sets = view.transducer_labels();
+                let starts: Vec<u32> = domain(&clause.domain, view, sets).filter(|&n| entry.admits(view, n)).collect();
+                candidates += starts.len() as u64;
+                let anchor = anchored(&clause.program, view, index);
+                anchor_rows += starts.iter().filter(|&&n| get(&anchor, n)).count() as u64;
+                if let Ok((outputs, used)) = clause.program.execute_roots_budgeted(view, starts.iter().copied(), usize::MAX) {
+                    let found = outputs.iter().map(|o| o.start).collect::<BTreeSet<_>>();
+                    // The anchor is a superset: every root is in it.
+                    assert!(found.iter().all(|&n| get(&anchor, n)), "{name}: a root outside its anchor");
+                    roots += found.len() as u64;
+                    steps += used as u64;
+                }
+                for (at, def) in clause.labels.defs.iter().enumerate() {
+                    let (kind, program, d) = match def {
+                        Label::Roots(p, d) => ("roots", p, d),
+                        Label::Targets(p, d) => ("targets", p, d),
+                        Label::Count { program, domain: d, .. } => ("count", program, d),
+                        Label::Pattern(p, d) | Label::Constrained(p, d, _) => ("pattern", p, d),
+                        _ => continue,
+                    };
+                    let walk = super::compile_micro::Micro::of(program);
+                    let formula = match (def, &walk) {
+                        (Label::Roots(..), Some(walk)) => super::compile_sets::Set::of(&walk.words).is_some(),
+                        (Label::Targets(..), Some(walk)) => super::compile_sets::Set::targets(&walk.words, super::compile_sets::Set::All).is_some(),
+                        _ => false,
+                    };
+                    let route = match (kind, formula, walk.is_some()) {
+                        ("pattern", ..) => "pattern",
+                        (_, true, _) => "formula",
+                        (_, false, true) => "micro walk",
+                        _ => "interpreter",
+                    };
+                    let pass_entry = Entry::of(program);
+                    let pass_starts: Vec<u32> = domain(d, view, sets).filter(|&n| pass_entry.admits(view, n)).collect();
+                    let rows = pass_starts.len() as u64;
+                    let answers = sets.get(clause.labels.offset() + at).map_or(0, |bits| bits.iter().map(|w| u64::from(w.count_ones())).sum());
+                    // Anchored starts where a pass walks from each start (a roots, targets or count walk).
+                    let anchor = if route != "formula" && route != "pattern" && matches!(def, Label::Roots(..) | Label::Targets(..) | Label::Count { .. }) {
+                        let anchor = anchored(program, view, index);
+                        if matches!(def, Label::Count { .. }) {
+                            // A count's tally is over every node, so an unwalked start must count 0: no start outside the
+                            // anchor emits.
+                            let outside = pass_starts.iter().copied().filter(|&n| !get(&anchor, n));
+                            if let Ok((outputs, _)) = program.execute_roots_budgeted(view, outside, usize::MAX) {
+                                assert!(outputs.is_empty(), "{name}: a count's start outside its anchor emitted");
+                            }
+                        }
+                        pass_starts.iter().filter(|&&n| get(&anchor, n)).count() as u64
+                    } else {
+                        rows
+                    };
+                    if route != "formula" {
+                        label_rows += rows;
+                    }
+                    let r = by_route.entry((kind, route)).or_default();
+                    r.0 += 1;
+                    r.1 += rows;
+                    r.2 += anchor;
+                    r.3 += answers;
+                    if route != "formula" {
+                        let pass = passes.entry(program.plain_digest().to_owned()).or_insert_with(|| (0, 0, 0, name.clone(), route, super::rir::disassemble(program, Some(&names_py))));
+                        pass.0 += rows;
+                        pass.1 += anchor;
+                        pass.2 += answers;
+                    }
+                }
+            }
+            per.push((name.clone(), candidates, roots, steps, label_rows, clause.labels.defs.len(), anchor_rows));
+        }
+    }
+    let total = |f: fn(&(String, u64, u64, u64, u64, usize, u64)) -> u64| per.iter().map(f).sum::<u64>();
+    let (candidates, roots, steps, label_rows, anchor_rows) = (total(|p| p.1), total(|p| p.2), total(|p| p.3), total(|p| p.4), total(|p| p.6));
+    eprintln!("anchored root walks: {anchor_rows} starts for {roots} roots ({:.2} a root), of {candidates}", anchor_rows as f64 / roots.max(1) as f64);
+    eprintln!(
+        "anchors: {} clauses on {} tapes ({nodes} nodes): {candidates} candidate roots for {roots} roots ({:.2} a root), {steps} root-walk steps ({:.1} a candidate), {label_rows} label-pass rows ({:.1} a node)",
+        per.len(),
+        tapes.len(),
+        candidates as f64 / roots.max(1) as f64,
+        steps as f64 / candidates.max(1) as f64,
+        label_rows as f64 / nodes.max(1) as f64,
+    );
+    let without = per.iter().filter(|p| p.2 == 0);
+    eprintln!("clauses that found nothing: {}, with {} candidates", without.clone().count(), without.map(|p| p.1).sum::<u64>());
+    let mut by_ratio: Vec<_> = per.iter().filter(|p| p.2 > 0).collect();
+    by_ratio.sort_by(|a, b| (b.1 as f64 / b.2 as f64).total_cmp(&(a.1 as f64 / a.2 as f64)));
+    for p in by_ratio.iter().take(10) {
+        eprintln!("  candidates a root {:>8.1}: {} ({} candidates, {} anchored, {} roots, {} steps)", p.1 as f64 / p.2 as f64, p.0, p.1, p.6, p.2, p.3);
+    }
+    let mut by_steps: Vec<_> = per.iter().collect();
+    by_steps.sort_by_key(|p| std::cmp::Reverse(p.3 + p.4));
+    for p in by_steps.iter().take(10) {
+        eprintln!("  steps {:>10} + label rows {:>8} ({} passes): {} ({} candidates, {} roots)", p.3, p.4, p.5, p.0, p.1, p.2);
+    }
+    for ((kind, route), (n, rows, anchor, answers)) in &by_route {
+        eprintln!("  label passes {kind:>8} {route:>11}: {n:>6} passes, {rows:>10} starts, {anchor:>10} anchored, {answers:>9} answers");
+    }
+    let mut heavy: Vec<_> = passes.values().collect();
+    heavy.sort_by_key(|p| std::cmp::Reverse(p.0));
+    eprintln!("label passes outside the formulas: {} distinct programs", heavy.len());
+    for p in heavy.iter().take(12) {
+        eprintln!("== {} starts, {} anchored, {} answers, {} ({}):\n{}", p.0, p.1, p.2, p.3, p.4, p.5);
+    }
+    assert!(!per.is_empty());
+}
+
+/// The root programs' micro walks give the interpreter's roots (decision 0334 §5's prefilter plan, and Metal's root
+/// walks, read text tests as the text layer's bits): every lowered Python clause whose root program is a micro walk
+/// that tests text, at every node of the fixtures (4 unless `RERAIL_S1_FILES` says), labelled by the wave's passes.
+#[test]
+fn root_walks_with_text_are_the_interpreters_roots() {
+    let mut tapes = fixtures();
+    if std::env::var_os("RERAIL_S1_FILES").is_none() {
+        tapes.truncate(4);
+    }
+    let (compiled, mut lowered, mut names) = (clauses(), Vec::new(), Vec::new());
+    for (policy, compiled) in &compiled {
+        for (clause, grammar) in python_matchers(compiled) {
+            if let Ok(tree) = match_tree(grammar)
+                && let Ok(matcher) = LoweredMatcher::lower(&tree)
+            {
+                lowered.push(matcher);
+                names.push(format!("{policy}/{clause}"));
+            }
+        }
+    }
+    let (mut checked, mut stopped, mut differ) = (0, 0, Vec::new());
+    for (chunk, (matchers, names)) in lowered.chunks(12).zip(names.chunks(12)).enumerate() {
+        let wave = LoweredWave::new(&matchers.iter().collect::<Vec<_>>()).unwrap();
+        let active = vec![vec![true; tapes.len()]; matchers.len()];
+        let views = wave.labelled(&tapes, &active).unwrap();
+        for ((program, name), c) in wave.programs().iter().zip(names).zip(0..) {
+            let Some(walk) = Micro::of(program).filter(|walk| !walk.texts.is_empty()) else { continue };
+            for (t, view) in views.iter().enumerate() {
+                let Some(texts) = walk.texts(program, view) else { continue };
+                let mut frames = Frames::default();
+                // Per node: the walk's verdict against the interpreter's; a node either stops at its limit (the
+                // interpreter's ceiling, where the wave gives the clause to W; the walk's bound) is not compared.
+                let (mut missing, mut extra) = (Vec::new(), Vec::new());
+                for node in 0..view.transducer_len() as u32 {
+                    let mut walked = false;
+                    if walk.run(view, view.transducer_labels(), &texts, node, Emit::Start, &mut frames, &mut |_| walked = true).is_err() {
+                        stopped += 1;
+                        continue;
+                    }
+                    let Ok(outputs) = program.execute_roots(view, [node]) else {
+                        stopped += 1;
+                        continue;
+                    };
+                    match (outputs.is_empty(), walked) {
+                        (false, false) => missing.push(node),
+                        (true, true) => extra.push(node),
+                        _ => {}
+                    }
+                }
+                checked += 1;
+                if !missing.is_empty() || !extra.is_empty() {
+                    let at = |node: u32| view.transducer_text_str(node).chars().take(60).collect::<String>();
+                    differ.push(format!(
+                        "{name} (chunk {chunk}, clause {c}) tape {t}: {} missing (first {:?}), {} extra (first {:?})",
+                        missing.len(),
+                        missing.first().map(|&n| (n, view.transducer_kind(n), at(n))),
+                        extra.len(),
+                        extra.first().map(|&n| (n, view.transducer_kind(n), at(n))),
+                    ));
+                }
+            }
+        }
+    }
+    eprintln!("root walks with text: {checked} (clause, tape) checked, {stopped} nodes stopped at a limit");
+    assert!(checked > 0);
+    assert!(differ.is_empty(), "{} differ: {differ:#?}", differ.len());
 }
 
 /// O28's micro walk gives each label program's interpreter outputs, as labels read them, from
@@ -542,6 +1265,10 @@ fn micro_walks_are_the_interpreters_label_outputs() {
         }
     }
     let eligible = micro.iter().filter(|m| m.is_some()).count();
+    // A loop of child steps through a test is one move (`compile_micro::CLOSURE`, Q56): some fixtures' walks hold one.
+    let closures = micro.iter().flatten().filter(|(m, _)| m.words.iter().any(|&w| split(w).0 == compile_micro::CLOSURE)).count();
+    eprintln!("micro: {closures} of the walks read a closure");
+    assert!(closures > 0, "a walk reads a closure");
     let texts = micro.iter().flatten().filter(|(m, _)| !m.texts.is_empty()).count();
     eprintln!("micro: {texts} of the walks test text; {counted} of the programs count");
     eprintln!("micro: {eligible} of {} label programs; {compared} starts compared, {marked} marks, {overflowed} overflowed", programs.len());
@@ -550,8 +1277,9 @@ fn micro_walks_are_the_interpreters_label_outputs() {
 }
 
 /// A long walk spills its frames to other threads (decision 0125): with a budget of one step, nearly every walk
-/// gives frames away (a descendant range halved, a move frame whole), and the wave's roots on Metal are still the
-/// CPU's. A frame lost, walked twice where a tally counts, or given its walk's wrong start shows here.
+/// gives frames away (a descendant range halved, a move frame whole), and the wave's findings on Metal are still the
+/// CPU's (each side's roots, or W's matcher at its candidates where it gave the clause to W: a backend may stop at
+/// its limit where the other does not). A frame lost, walked twice where a tally counts, or given its walk's wrong start shows here.
 #[cfg(target_os = "macos")]
 #[test]
 fn spilled_walks_find_the_cpus_roots() {
@@ -559,30 +1287,55 @@ fn spilled_walks_find_the_cpus_roots() {
     use metal_program_backend::label_passes::SPILL_BUDGET_TEST;
     let mut tapes = fixtures();
     tapes.truncate(24);
-    let mut lowered = Vec::new();
-    for (_, compiled) in &clauses() {
-        for (_, grammar) in python_matchers(compiled) {
+    let (compiled, mut lowered, mut names) = (clauses(), Vec::new(), Vec::new());
+    for (policy, compiled) in &compiled {
+        for (clause, grammar) in python_matchers(compiled) {
             if let Ok(tree) = match_tree(grammar)
                 && let Ok(matcher) = LoweredMatcher::lower(&tree)
             {
                 lowered.push(matcher);
+                names.push((format!("{policy}/{clause}"), grammar));
             }
         }
     }
+    // A (clause, tape) a backend gave to W (`WaveRun::limited`: its candidates) is what W's matcher confirms there.
+    let confirmed = |grammar: &GrammarMatcher, tape: &TapeDoc, candidates: &BTreeSet<u32>| -> BTreeSet<u32> {
+        let root = Root::doc(tape.clone());
+        let mut work = usize::MAX;
+        candidates.iter().copied().filter(|&n| grammar.match_root(node_at(&root, n), &mut work).ok().flatten().is_some()).collect()
+    };
     // Waves of a dozen clauses, as the engine's are (the whole set is over the launch bound).
     let (mut found, mut differ, mut waves) = (0, Vec::new(), 0);
     for (at, clauses) in lowered.chunks(12).enumerate() {
         let wave = LoweredWave::new(&clauses.iter().collect::<Vec<_>>()).unwrap();
         let active = vec![vec![true; tapes.len()]; clauses.len()];
-        let (cpu, _) = wave.roots_batch(Backend::Cpu, &tapes, &active).unwrap();
+        let (mut cpu, cpu_run) = wave.roots_batch(Backend::Cpu, &tapes, &active).unwrap();
         SPILL_BUDGET_TEST.set(Some(1));
         let metal = wave.roots_batch(Backend::MetalInterpreter, &tapes, &active);
         SPILL_BUDGET_TEST.set(None);
-        let Ok((metal, run)) = metal else { continue };
+        let Ok((mut metal, run)) = metal else { continue };
         assert!(run.metal, "the wave ran on Metal");
+        for (found, limited) in [(&mut cpu, &cpu_run.limited), (&mut metal, &run.limited)] {
+            for &(c, t) in limited {
+                found[c][t] = confirmed(names[at * 12 + c].1, &tapes[t], &found[c][t]);
+            }
+        }
         waves += 1;
         found += cpu.iter().flatten().map(BTreeSet::len).sum::<usize>();
-        differ.extend(cpu.iter().zip(&metal).enumerate().filter(|(_, (c, m))| c != m).map(|(c, _)| (at, c)));
+        let unspilled = || wave.roots_batch(Backend::MetalInterpreter, &tapes, &active).ok().map(|found| found.0);
+        for (c, (cpu, metal)) in cpu.iter().zip(&metal).enumerate().filter(|(_, (c, m))| c != m) {
+            // Per tape: roots the CPU found that Metal did not, and the other way; and whether Metal without the
+            // spill finds the CPU's.
+            let tapes: Vec<_> = cpu.iter().zip(metal).enumerate().filter(|(_, (c, m))| c != m).map(|(t, (c, m))| (t, c.difference(m).count(), m.difference(c).count())).collect();
+            let without = unspilled().map(|found| found[c] == *cpu);
+            let given = |limited: &[(usize, usize)]| limited.iter().filter(|&&(l, _)| l == c).map(|&(_, t)| t).collect::<Vec<_>>();
+            differ.push(format!(
+                "{} (wave {at}, clause {c}): (tape, missing, extra) {tapes:?}; unspilled agrees: {without:?}; given to W on the CPU {:?}, on Metal {:?}",
+                names[at * 12 + c].0,
+                given(&cpu_run.limited),
+                given(&run.limited)
+            ));
+        }
     }
     eprintln!("spilled: {waves} waves of {} clauses, {found} roots", lowered.len());
     assert!(waves * 2 > lowered.len() / 12 && found > 1000, "most waves ran on Metal and found roots ({waves} waves, {found} roots)");

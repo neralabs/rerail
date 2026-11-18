@@ -21,6 +21,8 @@
 
 #include "core.rr"
 #include "python/modules.rr"
+#include "c/includes.rr"
+#include "c/compile-commands.rr"
 
 .phase sources
 .export document, library
@@ -68,3 +70,34 @@ library_tape(q, t) :- library_key(q, _, _, _), loaded(f, q, "python"), doc(d, f,
 // with its module, grammar and content.
 .decl library(p: symbol, m: symbol, g: symbol, c: symbol)
 library(f, q, "python", c) :- library_key(q, _, c, _), library_tape(q, _), loaded(f, q, "python").
+
+// ---- C's and C++'s headers (decision 0327) ---------------------------------------------------------------------
+// The files the run's translation units include, to the closure's fixed point (c/includes.rr: every branch taken,
+// under each unit's configuration's search path), each loaded as a document in the run's grammar: a C run's headers
+// (`.h`, C++'s by suffix) are documents of it as its `.c` files are. A C++ run's own headers are its documents
+// already; those outside its files (a `-I` directory, the compiler's own) are loaded here.
+//
+// The units and their configurations: a build's record where the run names one (`c.compile_commands`,
+// c/compile-commands.rr), else each source file that is no header, under one configuration ("default") of the
+// run's language, GNU's 17, with a compiler profile's macros and search path where `c.profile.<lang>` names one.
+.decl c_run_grammar(g: symbol)
+c_run_grammar(g) :- observer__source_file(_, _, g, _), (g = "c" ; g = "cpp").
+.decl c_default(g: symbol)
+c_default(g) :- c_run_grammar(g), !c_cc(_).
+.decl c_header_file(p: symbol)
+c_header_file(p) :- observer__source_file(p, _, _, _), match(".*\\.(?:h|hh|hpp|hxx|h\\+\\+|inc|inl|ipp|tcc)", p).
+c_tu(p, "default") :- observer__source_file(p, _, g, _), c_default(g), !c_header_file(p).
+c_lang("default", "c", "gnu17") :- c_default("c").
+c_lang("default", "c++", "gnu++17") :- c_default("cpp").
+
+// The key: a reached file that is none of the run's own, by its content, in the run's grammar.
+.decl header_key(f: symbol, c: symbol, g: symbol, v: symbol)
+header_key(f, c, g, "tape-1") :- c_reach(_, f), !doc_module(f, _), c_run_grammar(g), file_digest(f, c).
+// Asked for as a document named by its path.
+load(f, f, g) :- header_key(f, _, g, _).
+// The result: the loaded document's tape.
+.decl header_tape(f: symbol, t: tape)
+header_tape(f, t) :- header_key(f, _, g, _), loaded(x, f, g), doc(d, x, f), tape_of(d, t).
+.cache header_tape by header_key
+// Handed on as a library document is: by its canonical path, its module its path as reached.
+library(x, f, g, c) :- header_key(f, c, g, _), header_tape(f, _), loaded(x, f, g).

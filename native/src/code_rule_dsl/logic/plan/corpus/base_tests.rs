@@ -1699,3 +1699,21 @@ pre(p) :- node(d, m, "module", _, _), doc(d, p, _), node_text(m, s), prefix("cla
     assert_eq!(got, [[["a.py"]], [["a.py"]]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `str` (a string literal's content) is answered on request (decisions 0174, 0353 step 3): a reader that binds the
+/// node by its kind asks for those nodes only, and gets the rows the eager relation has. The oracle is a reader that
+/// binds the node by nothing, which keeps `str` an input made for every node. Python's prefixes, bytes, raw, f-strings
+/// with and without interpolation, a concatenation's parts, a docstring.
+#[test]
+fn str_answered_on_request_holds_the_eager_rows() {
+    let dir = corpus("str-on-request", &[("a.py", "x = 'a'\ny = b\"by\"\nz = r'\\\\d'\nw = f'k{x}'\nv = f'plain'\nu = 'p' 'q'\nt = \"\"\"doc\"\"\"\n")]);
+    let decls = ".decl node(d: node, n: node, k: symbol, s: number, e: number)\n.decl str(n: node, s: symbol)\n.input node, str\n.decl out(s: symbol)\n.output out\n";
+    let asked = format!("{decls}out(s) :- node(_, n, \"string\", _, _), str(n, s).\n");
+    let lowered = crate::code_rule_dsl::logic::rr::parse(&asked).unwrap();
+    assert!(!lowered.inputs.iter().any(|i| i == "str") && lowered.rules.iter().any(|r| r.head.rel == "rr_str_req"), "str is answered on request");
+    let asked = run(&dir, &asked, &["out"]);
+    let eager = run(&dir, &format!("{decls}.decl all(n: node, s: symbol)\nall(n, s) :- str(n, s).\nout(s) :- all(n, s), node(_, n, \"string\", _, _).\n"), &["out"]);
+    assert_eq!(asked[0].len(), 7, "string rows: {:?}", asked[0]);
+    assert_eq!(asked, eager);
+    let _ = std::fs::remove_dir_all(&dir);
+}

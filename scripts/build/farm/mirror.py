@@ -352,6 +352,10 @@ def work(job):
         if job.get("verify"):
             for p, _ in files:
                 h.sent.pop(p, None)
+        # The `--extern` crates asked again: a compile against another version of one is wrong
+        # under this one's key, where another file's difference only costs a resend.
+        for p in job.get("files", []):
+            h.sent.pop(p, None)
         h.learn([p for p, _ in files])
         for path, st in files:
             h.put(path, st)

@@ -656,6 +656,7 @@ pub(super) fn define(
         let values = function.block_params(properties).to_vec();
         // Output operators share one budget for this complete candidate.
         // Neither a previous candidate nor its structural execution owns it.
+        super::native_cpu::fold_most_steps(&mut function, task);
         function.ins().store(
             MemFlags::trusted(),
             zero,

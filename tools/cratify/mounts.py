@@ -27,6 +27,7 @@ ENGINE = 'rerail-engine'
 DIRS = {
     'rerail-prof': 'native/crates/prof', 'rerail-rr-syntax': 'native/crates/rr_syntax', 'rerail-store': 'native/crates/store',
     'rerail-lang': 'native/crates/lang', 'rerail-facts': 'native/crates/facts', 'rerail-rr': 'native/crates/rr',
+    'rerail-program-image': 'native/crates/program_image',
     'rerail-logic': 'native/crates/logic', 'rerail-sessions': 'native/crates/sessions', 'rerail-transducer': 'native/crates/transducer',
     'rerail-w': 'native/crates/w', 'rerail-device-metal': 'native/crates/device_metal',
     'rerail-lang-python': 'native/crates/lang_python', 'rerail-lang-ecma': 'native/crates/lang_ecma', 'rerail-lang-php': 'native/crates/lang_php',

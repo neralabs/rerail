@@ -19,9 +19,22 @@ fn main() {
     let files: Vec<Vec<u8>> = list.lines().filter(|l| !l.is_empty()).filter_map(|p| std::fs::read(p).ok()).collect();
     // Only the files the parser reads: a refused file's attempt is not the tape's cost.
     let all = files.len();
-    let files: Vec<Vec<u8>> = files.into_iter().filter(|f| rerail_c_lean::tape(f, dialect).is_ok()).collect();
+    // `RERAIL_COSTS_ALL`: every file, read or not (texts made to measure one shape of token).
+    let every = std::env::var_os("RERAIL_COSTS_ALL").is_some();
+    let files: Vec<Vec<u8>> = files.into_iter().filter(|f| every || rerail_c_lean::tape(f, dialect).is_ok()).collect();
     // `RERAIL_COSTS_LEX`: the lexer alone over the same files, every token as the parser's buffer
     // lexes it.
+    // `RERAIL_COSTS_LEX=stage1`: stage 1 alone (its masks).
+    if std::env::var_os("RERAIL_COSTS_LEX").is_some_and(|v| v == "stage1") {
+        let mut nul = 0;
+        for _ in 0..passes {
+            for f in &files {
+                nul += usize::from(rerail_c_lean::stage1_only(f).is_some());
+            }
+        }
+        eprintln!("stage 1 alone: {nul} texts with a NUL, {passes} passes");
+        return;
+    }
     if std::env::var_os("RERAIL_COSTS_LEX").is_some() {
         let (mut toks, mut comments) = (0, 0);
         for _ in 0..passes {

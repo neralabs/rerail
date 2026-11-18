@@ -66,6 +66,9 @@ const FACT_STORE: &[&str] = &[
     // The kernels' forms per machine (decision 0202): each compiled or interpreted, its compile time, what it missed;
     // measurements of the machine, as `samples`, ranked for the upkeep job that compiles them.
     "kernel_forms",
+    // Each program's measured steps per unit of size, and its overruns (decision 0334): what a task's budgets are
+    // predicted from (`evaluation_costs`); measurements, as `samples`.
+    "program_steps",
     // The join steps' estimates and what they made (decision 0354, `costs::join_steps`): the learned correction's
     // data, measurements, as `samples`.
     "join_steps",

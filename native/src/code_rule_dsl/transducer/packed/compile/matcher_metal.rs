@@ -2,14 +2,14 @@
 
 use super::*;
 
-use crate::code_rule_dsl::transducer::packed::device::{Outcome, RootJobs};
+use crate::code_rule_dsl::transducer::packed::device::{ClauseRoots, Outcome, RootJobs};
 
 /// The batch's roots with every pass on Metal in one command buffer
 /// (`metal_program_backend::label_passes`), pattern leaves included (`MatcherDevice::matcher_roots`).
 pub(in crate::code_rule_dsl) fn matcher_roots(this: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error> {
     let no_labels = empty_sets(tapes, this.labels.defs.len());
     let roots = tapes.iter().zip(&no_labels).map(|(tape, sets)| domain(&this.domain, tape, sets).collect()).collect();
-    let (mut found, outcome) = metal(&[this], this.labels.defs.len(), tapes, &[roots], None, None)?;
+    let (mut found, outcome) = metal(&[this], this.labels.defs.len(), tapes, Some(ClauseRoots::Listed(&[roots])), None, None, None)?;
     Ok((found.pop().expect("one clause"), outcome))
 }
 
@@ -30,7 +30,7 @@ pub(in crate::code_rule_dsl) fn wave_labelled(
     roots: Option<&RootJobs<'_>>,
 ) -> Result<(Vec<TapeDoc>, Outcome), Error> {
     let active = this.spread(active);
-    let (_, outcome) = metal(&this.clauses.iter().collect::<Vec<_>>(), this.labels, tapes, &[], Some(&active), roots)?;
+    let (_, outcome) = metal(&this.clauses.iter().collect::<Vec<_>>(), this.labels, tapes, None, Some(&active), roots, None)?;
     crate::code_rule_dsl::prof::release();
     crate::code_rule_dsl::prof::peak("3e.before_views");
     let _views = crate::code_rule_dsl::prof::Stage::start("labels.views");
@@ -40,10 +40,14 @@ pub(in crate::code_rule_dsl) fn wave_labelled(
     Ok((views, outcome))
 }
 
-/// Each clause's matches of the batch from `roots` (per clause, per tape: the candidates its
-/// root program starts from), every clause's passes and roots in one command buffer.
-pub(in crate::code_rule_dsl) fn wave_roots(this: &LoweredWave, tapes: &[TapeDoc], roots: &[Vec<Vec<u32>>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error> {
-    metal(&this.clauses.iter().collect::<Vec<_>>(), this.labels, tapes, roots, None, None)
+/// Each clause's matches of the batch from `roots` (the candidates its root program starts from: listed, or its
+/// domain's nodes where it runs), every clause's passes and roots in one command buffer.
+///
+/// A pass or root walk left unfinished on a file (decision 0334) goes to W's matcher where that is cheaper
+/// (`LoweredWave::label_w_cost`), in `Outcome::unfinished`.
+pub(in crate::code_rule_dsl) fn wave_roots(this: &LoweredWave, tapes: &[TapeDoc], roots: ClauseRoots<'_>) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error> {
+    let w_cost = |label: u32, file: usize| tapes.get(file).map_or(0, |tape| this.label_w_cost(label, tape));
+    metal(&this.clauses.iter().collect::<Vec<_>>(), this.labels, tapes, Some(roots), None, None, Some(&w_cost))
 }
 
 /// `clauses`' matches of the batch on Metal, in one command buffer: their labels (disjoint, `labels`
@@ -58,11 +62,12 @@ fn metal<'a>(
     clauses: &[&'a LoweredMatcher],
     labels: usize,
     tapes: &[TapeDoc],
-    clause_roots: &[Vec<Vec<u32>>],
+    clause_roots: Option<ClauseRoots<'_>>,
     active: Option<&[Vec<bool>]>,
     records: Option<&metal_program_backend::label_passes::RootJobs<'_>>,
+    w_cost: Option<&(dyn Fn(u32, usize) -> u64 + Sync)>,
 ) -> Result<(Vec<Vec<BTreeSet<u32>>>, metal_program_backend::label_passes::Outcome), Error> {
-    use metal_program_backend::label_passes::{Pass, Plan, Roots, run};
+    use metal_program_backend::label_passes::{DeviceFormula, Pass, Plan, Roots, device_anchor, device_formula, run};
     let bases = tapes
         .iter()
         .scan(0_u32, |base, tape| {
@@ -98,7 +103,7 @@ fn metal<'a>(
                 Domain::Kinds(kinds) => Some(kinds),
                 Domain::Label(_) => unreachable!("a label domain is bounded by its kinds"),
             };
-            Arc::new(Roots::Codes { kinds, entry: entry.map(|entry| entry.0).unwrap_or_default(), active })
+            Arc::new(Roots::Codes { kinds, entry: entry.map(|entry| entry.0).unwrap_or_default(), active, anchor: None })
         }))
     };
     let index = |label: u16| u32::from(label - LABEL_BASE);
@@ -173,48 +178,95 @@ fn metal<'a>(
     crate::code_rule_dsl::prof::release();
     crate::code_rule_dsl::prof::peak("3a.plan");
     let all = clauses;
-    // A clause's roots: one label past every pass's (none where the roots run apart, `labelled_metal`).
-    let roots = !clause_roots.is_empty();
-    let clauses = if roots { clauses } else { &[] };
-    if roots {
-    steps.push((
-        false,
-        vec![
-            clauses
-                .iter()
-                .zip(clause_roots)
-                .enumerate()
-                .map(|(at, (clause, roots))| Pass::Program {
-                    target: (labels + at) as u32,
-                    program: &clause.program,
-                    roots: Arc::new(Roots::Listed(roots.clone())),
-                    captured: false,
-                })
-                .collect(),
-        ],
-    ));
-    chains.push((None, false));
+    // A clause's roots: one label past every pass's (none where the roots run apart, `labelled_metal`). Listed, or
+    // the clause's domain where it runs, as a rule over the codes (as `LoweredWave::starts` tests it: a label
+    // domain's roots are every node).
+    let clauses = if clause_roots.is_some() { clauses } else { &[] };
+    if let Some(clause_roots) = clause_roots {
+        let root = |at: usize, clause: &LoweredMatcher| match clause_roots {
+            ClauseRoots::Listed(listed) => Roots::Listed(listed[at].clone(), None),
+            ClauseRoots::Rule(active) => Roots::Codes {
+                kinds: match &clause.domain {
+                    Domain::Kinds(kinds) => Some(kinds.clone()),
+                    Domain::All | Domain::Label(_) => None,
+                },
+                entry: Vec::new(),
+                active: active[at].clone(),
+                anchor: None,
+            },
+        };
+        steps.push((
+            false,
+            vec![
+                clauses
+                    .iter()
+                    .enumerate()
+                    .map(|(at, clause)| Pass::Program { target: (labels + at) as u32, program: &clause.program, roots: Arc::new(root(at, clause)), captured: false })
+                    .collect(),
+            ],
+        ));
+        chains.push((None, false));
+    }
+    // Decision 0365 §9 (0036 on Metal): a roots pass past the recursive groups whose program is a node-set formula is
+    // that formula on the device (`Pass::Formula`), not a walk; `RERAIL_SETS=walk` walks it, as on the CPU.
+    if formulas_on() {
+        for (_, levels) in steps.iter_mut().filter(|(recursive, _)| !recursive) {
+            for pass in levels.iter_mut().flatten() {
+                let Pass::Program { target, program, roots, captured: false } = pass else { continue };
+                let Some(formula) = device_formula(program) else { continue };
+                *pass = Pass::Formula { target: *target, roots: Arc::clone(roots), formula };
+            }
+        }
+    }
+    // Decision 0365: a walk past the recursive groups starts within its anchor, evaluated on the device (`label_formula`).
+    if anchors_on() {
+        let _stage = crate::code_rule_dsl::prof::Stage::start("labels.plan.anchors");
+        let mut anchored = HashMap::<(usize, Arc<DeviceFormula>), Arc<Roots>>::new();
+        for (_, levels) in steps.iter_mut().filter(|(recursive, _)| !recursive) {
+            for pass in levels.iter_mut().flatten() {
+                let (Pass::Program { program, roots, .. } | Pass::Count { program, roots, .. }) = pass else { continue };
+                let Some(formula) = device_anchor(program) else { continue };
+                let key = (Arc::as_ptr(roots) as usize, formula);
+                let with = anchored.entry(key.clone()).or_insert_with(|| {
+                    let anchor = Some(key.1.clone());
+                    Arc::new(match &**roots {
+                        Roots::Codes { kinds, entry, active, .. } => Roots::Codes { kinds: kinds.clone(), entry: entry.clone(), active: active.clone(), anchor },
+                        Roots::Listed(lists, _) => Roots::Listed(lists.clone(), anchor),
+                    })
+                });
+                *roots = Arc::clone(with);
+            }
+        }
     }
     let outcome = match active {
         // The wave's labels: a recursive group that sweeps runs on the CPU's sweep, each file a
         // walk in node order, between the GPU's wide levels (O26).
-        Some(active) => apart(all, labels, slots as usize, patterns, steps, chains, tapes, active, records)?,
+        Some(active) => apart(all, labels, slots as usize, patterns, steps, chains, tapes, active, records, w_cost)?,
         None => {
-            run(&Plan { labels: labels + clauses.len(), counts: slots as usize, patterns, steps, chains, initial: Default::default(), rows: None, buffers: None, roots: records }, tapes)?
+            run(&Plan { labels: labels + clauses.len(), counts: slots as usize, patterns, steps, chains, initial: Default::default(), rows: None, buffers: None, roots: records, w_cost }, tapes)?
         }
     };
+    // Each clause's roots: its label's set bits, a word at a time, as each tape's local nodes.
     let found = (0..clauses.len())
         .map(|at| {
+            let row = &outcome.labels[(labels + at) * words..(labels + at + 1) * words];
             tapes
                 .iter()
                 .zip(&bases)
-                .map(|(tape, base)| {
-                    (0..tape.transducer_len() as u32)
-                        .filter(|node| {
-                            let global = (base + node) as usize;
-                            outcome.labels[(labels + at) * words + global / 32] >> (global % 32) & 1 != 0
-                        })
-                        .collect()
+                .map(|(tape, &base)| {
+                    let (from, to) = (base as usize, base as usize + tape.transducer_len());
+                    let mut set = BTreeSet::new();
+                    for w in from / 32..to.div_ceil(32) {
+                        let mut bits = row[w];
+                        while bits != 0 {
+                            let global = 32 * w + bits.trailing_zeros() as usize;
+                            bits &= bits - 1;
+                            if (from..to).contains(&global) {
+                                set.insert((global - from) as u32);
+                            }
+                        }
+                    }
+                    set
                 })
                 .collect()
         })
@@ -251,6 +303,7 @@ fn apart<'a>(
     tapes: &[TapeDoc],
     active: &[Vec<bool>],
     roots: Option<&metal_program_backend::label_passes::RootJobs<'_>>,
+    w_cost: Option<&(dyn Fn(u32, usize) -> u64 + Sync)>,
 ) -> Result<metal_program_backend::label_passes::Outcome, Error> {
     use metal_program_backend::label_passes::{Outcome, Plan, run};
     let (host, _) = levels(clauses, |clause, id| Ok((clause, id)))?;
@@ -316,6 +369,7 @@ fn apart<'a>(
             rows: Some(&rows),
             buffers: Some(&kept),
             roots: if last { roots } else { None },
+            w_cost,
         };
         crate::code_rule_dsl::prof::release();
         let before = crate::code_rule_dsl::prof::footprint_mb();
@@ -345,6 +399,8 @@ fn apart<'a>(
         }
         outcome.command_buffers += ran.command_buffers;
         outcome.dispatches += ran.dispatches;
+        outcome.unfinished.extend(ran.unfinished);
+        outcome.replanned += ran.replanned;
         outcome.rounds = outcome.rounds.max(ran.rounds);
         (0..3).for_each(|at| outcome.waits[at] += ran.waits[at]);
         Ok(())
@@ -381,7 +437,8 @@ fn apart<'a>(
         // A file's sweep reads and marks its own labels only, so the files sweep in parallel.
         use rayon::prelude::*;
         let _sweep = crate::code_rule_dsl::prof::Stage::start("labels.sweep");
-        tapes.par_iter().zip(sets.par_iter_mut()).enumerate().try_for_each(|(at, (tape, sets))| {
+        let budget = crate::code_rule_dsl::transducer::packed::WorkBudget::current();
+        let given = tapes.par_iter().zip(sets.par_iter_mut()).enumerate().map(|(at, (tape, sets))| {
             let levels = levels
                 .iter()
                 .map(|level| {
@@ -402,10 +459,15 @@ fn apart<'a>(
                         .map(|slot| metal_program_backend::label_passes::text_slot(Some((&rows, base)), walk, program, slot, tape))
                         .collect::<Option<Vec<_>>>()
                 };
-                sweep_with(&levels, tape, sets, &texts)?;
+                // Gone to W's matcher (decision 0334): the group's labels on this file, as far as they got.
+                if !sweep_with(&levels, tape, sets, &texts, budget, w_cost.is_some())? {
+                    return Ok(levels.iter().flatten().map(|&(_, id)| (u32::from(id - LABEL_BASE), at)).collect());
+                }
             }
-            Ok::<_, Error>(())
-        })?;
+            Ok::<_, Error>(Vec::new())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+        outcome.unfinished.extend(given.into_iter().flatten());
         drop(_sweep);
         crate::code_rule_dsl::prof::release();
         crate::code_rule_dsl::prof::peak("3d.sweep");

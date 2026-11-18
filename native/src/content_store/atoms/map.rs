@@ -738,6 +738,8 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     // The per-file memo's entries (decision 0240 §4): their symbols are strings in the pack (memo/image.rs).
     ("memo_entries", &["space", "part", "digest", "doc", "pack", "at", "len", "raw", "over_pack", "over_at", "over_len", "over_raw", "framed"]),
     ("memo_packs", &["pack"]),
+    // A guest's identity (a digest) and its key (decision 0391).
+    ("guest_keys", &["identity", "key"]),
     ("git_tree_entries", &["tree_id", "name_string_id", "mode_id", "object_kind_id", "target_hash_id"]),
     ("git_trees", &["tree_id", "tree_hash_id", "complete", "entry_count"]),
     ("hashes", &["hash_id", "algorithm_id", "lane0", "lane1", "lane2", "lane3"]),

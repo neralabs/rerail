@@ -1,7 +1,9 @@
+use super::passes::Parts as _;
 use super::version::{Made, Version};
 use super::{AtomId, Builder, CmpOp, Extents, Grouped, Image, Lit, R, RelId, RuleId, Strings, T, TermRef, Tree, decode, encode};
 use crate::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Lists, Native, Program, Rule, Term, Value};
 use std::sync::Arc;
+use crate::code_rule_dsl::logic::program_image::manager::VersionAnalyses as _;
 
 fn same(a: &Program, b: &Program) {
     assert_eq!(format!("{a:?}"), format!("{b:?}"));
@@ -342,6 +344,7 @@ fn tree_part(p: &Program, keep: &dyn Fn(&str) -> bool, inputs: &[String], output
     t.natives.retain(|rel, _| keep(rel));
     t.lattice.retain(|rel, _| keep(rel));
     t.gates.retain(|(rel, _)| keep(rel));
+    t.asked_by.retain(|rel, _| keep(rel));
     t.inputs = inputs.to_vec();
     t.outputs = outputs.to_vec();
     t
@@ -939,6 +942,7 @@ fn native_tree(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>, s: &su
         S::Components { edge, own } => Native::Components { edge: r(*edge), own: r(*own) },
         S::Reach { seed, edge } => Native::Reach { seed: r(*seed), edge: r(*edge) },
         S::ReachThrough { reach, map } => Native::ReachThrough { reach: r(*reach), map: r(*map) },
+        S::Rank { query, counted, group, op } => Native::Rank { query: r(*query), counted: r(*counted), group: *group, op: t(*op) },
     }
 }
 
@@ -1370,6 +1374,62 @@ fn a_rule_pass_run_again_visits_the_edits_rules_alone() {
     }
 }
 
+/// A pipeline's run kept in a store (decision 0333) and opened in a new process reruns on an edit there as it does
+/// in its own: the edit rebased onto the stored run's input by rule hash, each rule pass visits the edit's added
+/// rules alone, the analyses it asked for are read back from the store for the last input, not computed, and the
+/// output is a run from scratch's.
+#[test]
+fn a_stored_run_reruns_on_an_edit_in_a_new_process() {
+    use super::manager::{Pipeline, Ran, Runs, analysis, rebase};
+    use crate::code_rule_dsl::logic::program_text::StoredRuns;
+    use crate::content_store::ContentStore;
+    let v0 = managed();
+    let e = v0.rel("e").unwrap();
+    let readers: Vec<RuleId> = v0.readers(e).map(|(r, _)| r.id()).collect();
+    let r3 = v0.rules().nth(6).unwrap().id();
+    let v1 = edited(&v0, &[readers[0], r3], &[reads_e("q"), r_of_f(20)]);
+    // Each process reads its program afresh: no version of the last process's is shared.
+    let fresh = |v: &Arc<Version>| Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
+    let scratch = |v: &Arc<Version>| {
+        let mut p = Pipeline::new("scratch", v.clone());
+        p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
+        p.finish().unwrap().0
+    };
+    let path = crate::code_rule_dsl::fixtures::temp();
+    let key = [7u8; 32];
+    // The first process: a run from scratch, kept.
+    {
+        let store = ContentStore::open(&path).unwrap();
+        let mut p = Pipeline::keeping("test", fresh(&v0));
+        // An analysis of the input, kept with the run.
+        p.get::<super::analyses::Needed>().unwrap();
+        let mut pass = RenameAll { from: "e", to: "e2", needs: false, seen: 0 };
+        p.rules(&mut pass);
+        assert_eq!(pass.seen, 12);
+        StoredRuns(&store).keep(&key, &p.done().unwrap()).unwrap();
+        drop(store);
+        ContentStore::forget(&path);
+    }
+    // The next: the run opened, the edit rebased onto its input, run again.
+    let store = ContentStore::open(&path).unwrap();
+    let last = StoredRuns(&store).open(&key, "test").unwrap().expect("the run kept");
+    let input = last.input().clone();
+    let v = rebase(&input, &fresh(&v1)).unwrap().expect("an edit of the last input");
+    assert_eq!(super::manager::Delta::of(&input, &v).size(), 4, "two rules out, two in");
+    let mut p = Pipeline::again(last, v.clone());
+    let mut pass = RenameAll { from: "e", to: "e2", needs: false, seen: 0 };
+    p.rules(&mut pass);
+    assert_eq!(pass.seen, 2, "visits the edit's added rules alone");
+    let run = p.done().unwrap();
+    assert_eq!(run.stages()[0].ran, Ran::Delta);
+    analysis::<super::analyses::Needed>(&input).unwrap();
+    assert_eq!((input.analyses().loaded("needed"), input.analyses().computed("needed")), (1, 0), "the last input's analysis read back, not computed");
+    let want = scratch(&v1);
+    assert_eq!((run.output().digest(), run.output().size()), (want.digest(), want.size()), "the program a run from scratch makes");
+    drop(store);
+    ContentStore::forget(&path);
+}
+
 /// A rerun runs a step whole when it cannot run on the edit alone: a program pass, a rule pass that keeps the
 /// default `WHOLE`, and a rule pass whose analyses the edit changed. Across the edit, the analyses the last input
 /// held are carried to the new input.
@@ -1490,4 +1550,158 @@ fn a_new_process_reruns_only_the_passes_after_a_stored_step() {
     same(&out, &unkeyed(2));
     let (_, _, runs, _) = run(2, Some(&7u64.to_le_bytes()));
     assert_eq!(runs, [0, 0, 0], "found again under the same part");
+}
+
+/// `program_facts`' own tests, which read text through `rr::parse` and the planner: above the image's crate
+/// (decision 0377).
+mod program_facts_tests {
+    /// The encoding names each string by its first use and puts the table first: the bytes the two-pass writer made
+    /// (strings counted, then the rows written), and they decode to the facts.
+    #[test]
+    fn facts_encode_as_two_passes_did_and_decode_back() {
+        use crate::code_rule_dsl::logic::front::Value;
+        use crate::code_rule_dsl::logic::program_facts::Facts;
+        let mut facts = Facts::new();
+        facts.insert("b".into(), vec![vec![Value::Str("x".into()), Value::Int(-3)].into(), vec![Value::Str("b".into()), Value::Str("y".into())].into()]);
+        facts.insert("a".into(), vec![vec![Value::Str("y".into()), Value::Str("z".into()), Value::Int(7)].into()]);
+        let mut want = Vec::new();
+        let u = |out: &mut Vec<u8>, x: u64| out.extend_from_slice(&x.to_le_bytes());
+        // Strings by first use: a, y, z, b, x.
+        let table = ["a", "y", "z", "b", "x"];
+        u(&mut want, 5);
+        for x in table {
+            u(&mut want, x.len() as u64);
+            want.extend_from_slice(x.as_bytes());
+        }
+        u(&mut want, 2);
+        let id = |x: &str| table.iter().position(|t| *t == x).unwrap() as u64;
+        for (rel, rows) in &facts {
+            u(&mut want, id(rel));
+            u(&mut want, rows.len() as u64);
+            for row in rows {
+                u(&mut want, row.len() as u64);
+                for v in row {
+                    match v {
+                        Value::Int(i) => {
+                            want.push(0);
+                            want.extend_from_slice(&i.to_le_bytes());
+                        }
+                        Value::Branded(b) => {
+                            want.push(2 + b.class as u8);
+                            want.extend_from_slice(&u64::from(b.atom).to_le_bytes());
+                        }
+                        Value::Str(x) => {
+                            want.push(1);
+                            u(&mut want, id(x));
+                        }
+                    }
+                }
+            }
+        }
+        let got = crate::code_rule_dsl::logic::program_facts::encode(&facts);
+        assert_eq!(got, want);
+        assert_eq!(crate::code_rule_dsl::logic::program_facts::decode(&got).unwrap(), facts);
+    }
+
+    /// A program reads back the same off its facts decoded: in any order of rows, and with ids that are not dense (a
+    /// map, not a vector, indexes them).
+    #[test]
+    fn a_program_reads_back_the_same_in_any_order() {
+        use crate::code_rule_dsl::logic::front::Value;
+        use crate::code_rule_dsl::logic::program_facts::Facts;
+        let prog = crate::code_rule_dsl::logic::rr::parse(
+            ".decl e(a:number, b:number)\n.input e\n.decl p(a:number, b:number)\n.output p\n\
+             p(x, y) :- e(x, y).\np(x, z) :- p(x, y), e(y, z), !e(z, x), z != @add(x, 1).\n.decl c(n:number)\nc(n) :- n = count : { e(_, _) }.\n",
+        )
+        .unwrap();
+        let mut facts = Facts::new();
+        crate::code_rule_dsl::logic::program_facts::write(&mut facts, "q", &prog);
+        let owned = crate::code_rule_dsl::logic::program_facts::program(&facts, "q").unwrap();
+        let bytes = crate::code_rule_dsl::logic::program_facts::encode(&facts);
+        assert_eq!(format!("{owned:?}"), format!("{:?}", crate::code_rule_dsl::logic::program_facts::program(&crate::code_rule_dsl::logic::program_facts::decode(&bytes).unwrap(), "q").unwrap()));
+        // Ids spread out (each times 1000) and rows reversed: read back the same.
+        let spread = |v: &Value| match v { Value::Int(i) => Value::Int(i * 1000), v => v.clone() };
+        let mut far = Facts::new();
+        for (rel, rows) in &facts {
+            // The columns that are ids (a term's, atom's, literal's or rule's), not values.
+            let ids: &[usize] = match rel.as_str() {
+                "term" | "atom" => &[1],
+                "arg" | "call_arg" | "body" => &[1, 3],
+                "rule" | "lit_atom" => &[1, 2],
+                "lit_cmp" => &[1, 2, 4],
+                "lit_agg" => &[1, 4],
+                _ => &[],
+            };
+            let mut rows: Vec<Vec<Value>> = rows.iter().map(|r| r.iter().enumerate().map(|(c, v)| if ids.contains(&c) { spread(v) } else { v.clone() }).collect()).collect();
+            rows.reverse();
+            far.insert(rel.clone(), rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
+        }
+        let bytes = crate::code_rule_dsl::logic::program_facts::encode(&far);
+        assert_eq!(format!("{:?}", crate::code_rule_dsl::logic::program_facts::program(&crate::code_rule_dsl::logic::program_facts::decode(&bytes).unwrap(), "q").unwrap()), format!("{owned:?}"));
+    }
+
+    /// The documents a program reads (`doc_scopes`) survive its facts: a stored program read back reads the same
+    /// documents, not all of them.
+    #[test]
+    fn document_scopes_read_back_as_written() {
+        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(n: node)\n.output a\n").unwrap();
+        for scopes in [None, Some(vec![(vec!["impl/**".to_owned(), "api/**".to_owned()], vec!["**/tests/**".to_owned()]), (vec![], vec![])])] {
+            prog.doc_scopes = scopes.clone();
+            prog.text_globs = if scopes.is_some() { vec!["**/*.md".to_owned(), "docs/*.rst".to_owned()] } else { Vec::new() };
+            let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
+            crate::code_rule_dsl::logic::program_facts::write(&mut facts, "p", &prog);
+            let back = crate::code_rule_dsl::logic::program_facts::program(&facts, "p").unwrap();
+            assert_eq!(back.doc_scopes, scopes);
+            assert_eq!(back.text_globs, prog.text_globs);
+        }
+    }
+
+    /// A relation the program has facts of but no rows (a constant folded to nothing) reads back as one: a stored
+    /// program is the program prepared, and its file-local part has the same memo key (`memo::program_digest`).
+    #[test]
+    fn a_relation_of_no_facts_reads_back_as_one() {
+        let mut prog = crate::code_rule_dsl::logic::front::Program::default();
+        prog.facts.insert("none".into(), Vec::new());
+        prog.facts.insert("one".into(), vec![vec![crate::code_rule_dsl::logic::front::Value::Int(1)].into()]);
+        let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
+        crate::code_rule_dsl::logic::program_facts::write(&mut facts, "p", &prog);
+        assert_eq!(crate::code_rule_dsl::logic::program_facts::program(&facts, "p").unwrap().facts, prog.facts);
+    }
+
+    /// The AST patterns a program matches survive its facts: a stored program read back (a prepared program,
+    /// O-stored-patterns) still asks the batch for `ast_match` rows. Without them, a run that reuses it finds no
+    /// pattern matches.
+    #[test]
+    fn ast_patterns_read_back_as_written() {
+        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(n: node)\n.output a\n").unwrap();
+        prog.ast_patterns = ["$O[:-$K]".to_owned(), "print($$$A)".to_owned()].into();
+        let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
+        crate::code_rule_dsl::logic::program_facts::write(&mut facts, "p", &prog);
+        assert_eq!(crate::code_rule_dsl::logic::program_facts::program(&facts, "p").unwrap().ast_patterns, prog.ast_patterns);
+    }
+}
+
+
+/// `Builder::rewrite` renames an aggregate's result variable through `Rewrite::var`, as it renames the variable's
+/// other occurrences: before, the result kept its name, so a rule whose variables were renamed (a library module's
+/// helpers renumbered at its link, decision 0377) read `$rr_agg17 = count { … }, 0 = $rr_agg21`.
+#[test]
+fn a_rewrite_renames_an_aggregates_result_too() {
+    use super::{Rewrite, Slot};
+    let p = crate::code_rule_dsl::logic::rr::parse(".decl e(x: number)\n.input e\n.decl out(n: number)\nout(n) :- n = count : { e(_) }, n > 1.\n.output out\n").unwrap();
+    let v = Builder::of_program(&p).unwrap().finish().unwrap().0;
+    let r = v.rules().find(|r| v.rel_name(r.head().rel()) == "out").expect("out's rule");
+    let n = r.vars().position(|a| v.text(a) == "n").expect("its variable n");
+    let mut b = Builder::base();
+    let m = b.atom("m");
+    struct Renamed(Slot, AtomId);
+    impl Rewrite for Renamed {
+        fn var(&mut self, s: Slot) -> Option<AtomId> {
+            (s == self.0).then_some(self.1)
+        }
+    }
+    b.rewrite(&v, r, &mut Renamed(Slot(n as u32), m)).finish().unwrap();
+    let w = b.finish().unwrap().0;
+    let shown = w.show();
+    assert!(shown.contains("$m = count") && !shown.contains("$n"), "{shown}");
 }

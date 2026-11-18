@@ -87,6 +87,7 @@ pub mod connection;
 pub use rerail_facts::code_rule_dsl::logic::plan::sketch;
 pub mod statkeep;
 pub mod lower;
+pub mod text_demand;
 pub mod joins;
 pub mod table;
 pub mod output;
@@ -491,6 +492,12 @@ pub struct Stats {
     /// Exact postings of the program's constants: table → (column, value) → n. By table first: a relation's are
     /// read without a pass over every table's (`of_relation`, once per input of a session's run).
     pub memo: HashMap<String, HashMap<(String, Constant), i64>>,
+    /// The relations whose constants' postings in `memo` are estimates: counted over a sample of one chunk of a mix
+    /// and scaled to the others (`corpus::Own`). A constant missing from them is unknown, not absent: the chunk
+    /// measured may lack a value every other chunk holds. Priced as absent (one row), `#f65561` (a comprehension's
+    /// field) led `pre_115`'s plan in every chunk of a cold PostHog run: 14.5 M rows into three anti-joins, and 47
+    /// slow-plan checks measuring exact pair statistics that the kept plan never used.
+    pub estimated: BTreeSet<String>,
     steps_cache: StepsCache,
     kindsets: std::sync::Arc<BTreeMap<String, Vec<String>>>,
     /// (relation, column) → a lookup's CPU as a multiple of a derived relation's, where its source says it is not
@@ -607,6 +614,7 @@ impl Stats {
             indexes: Default::default(),
             docs: None,
             memo: HashMap::new(),
+            estimated: BTreeSet::new(),
             steps_cache: StepsCache::default(),
             kindsets: Arc::new(kindsets),
             lookup: Default::default(),
@@ -812,6 +820,7 @@ impl Stats {
             solving_digest: 0,
             indexes: Default::default(),
             docs: meta.get("docs").copied(),
+            estimated: BTreeSet::new(),
             memo: of("val").filter_map(|r| Some((text(&r[0]), (text(&r[1]), sql_constant(&r[3])?), int(&r[2])))).fold(HashMap::new(), |mut m, (t, k, n)| {
                 m.entry(t).or_insert_with(HashMap::new).insert(k, n);
                 m
@@ -825,10 +834,14 @@ impl Stats {
         })
     }
 
-    /// Exact postings for a constant probe on an input column; `None` if the column has no statistics.
+    /// Exact postings for a constant probe on an input column; `None` if the column has no statistics, or the value
+    /// is missing from postings that are estimates (`estimated`).
     pub fn const_freq(&self, rel: &str, cname: &str, v: &Constant) -> Option<i64> {
         if let Some(&n) = self.memo.get(rel).and_then(|m| m.get(&(cname.to_owned(), v.clone()))) {
             return Some(n);
+        }
+        if self.estimated.contains(rel) {
+            return None;
         }
         self.col.of(rel).is_some_and(|c| c.contains_key(cname)).then_some(0)
     }
@@ -974,6 +987,7 @@ impl Model {
             indexes: st.indexes.clone(),
             docs: st.docs,
             memo: HashMap::default(),
+            estimated: rels.iter().filter(|r| st.estimated.contains(*r)).cloned().collect(),
             steps_cache: StepsCache::default(),
             kindsets: st.kindsets.clone(),
             lookup: st.lookup.clone(),
@@ -1479,8 +1493,48 @@ impl Entry {
     }
 }
 
-/// The run's plans by key, as published (`RunPlans::kept`).
-type Plans = rustc_hash::FxHashMap<PlanKey, Arc<Entry>>;
+/// The run's plans by key, as published (`RunPlans::kept`): in shards by the key's hash, each shared, so a
+/// publication copies the shards its plans fall in, not every plan (a run publishes on every stratum's entry that
+/// planned anew: on 50 files of 317 programs, copying the whole map each time was the run's largest cost).
+#[derive(Clone)]
+struct Plans {
+    shards: [Arc<rustc_hash::FxHashMap<PlanKey, Arc<Entry>>>; PLAN_SHARDS],
+}
+
+const PLAN_SHARDS: usize = 64;
+
+impl Default for Plans {
+    fn default() -> Self {
+        Plans { shards: std::array::from_fn(|_| Arc::default()) }
+    }
+}
+
+impl Plans {
+    fn shard(key: &PlanKey) -> usize {
+        use std::hash::BuildHasher;
+        (rustc_hash::FxBuildHasher.hash_one(key) % PLAN_SHARDS as u64) as usize
+    }
+    fn get(&self, key: &PlanKey) -> Option<&Arc<Entry>> {
+        self.shards[Self::shard(key)].get(key)
+    }
+    fn iter(&self) -> impl Iterator<Item = (&PlanKey, &Arc<Entry>)> {
+        self.shards.iter().flat_map(|m| m.iter())
+    }
+    /// Adds `entries`, copying each shard they fall in once (while an earlier map shares it).
+    fn extend(&mut self, entries: impl IntoIterator<Item = (PlanKey, Arc<Entry>)>) {
+        for (k, e) in entries {
+            Arc::make_mut(&mut self.shards[Self::shard(&k)]).insert(k, e);
+        }
+    }
+}
+
+impl FromIterator<(PlanKey, Arc<Entry>)> for Plans {
+    fn from_iter<I: IntoIterator<Item = (PlanKey, Arc<Entry>)>>(entries: I) -> Self {
+        let mut plans = Plans::default();
+        plans.extend(entries);
+        plans
+    }
+}
 
 /// Publications of new plans and of new orders (decision 0301), and the entries they carried: for the profile.
 static PUBLISHED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
@@ -2136,7 +2190,7 @@ impl Model {
         if self.stats.solving.contains(rel) { return None; }
         let col = self.col(rel, c);
         let [rows, ndv, _, _] = *self.stats.col.get(&(rel.to_owned(), col.clone()))?;
-        if ndv > 64 { return None; }
+        if ndv > SMALL_NDV { return None; }
         let values: Vec<_> = self.stats.memo.get(rel)?.iter().filter(|((name, _), n)| *name == col && **n > 0).collect();
         if values.len() as i64 != ndv || values.iter().map(|(_, n)| **n).sum::<i64>() != rows { return None; }
         Some(values.into_iter().map(|((_, v), _)| v).collect())
@@ -2795,8 +2849,12 @@ impl Model {
                 .unwrap_or_else(|| if small_batches(dr) { 0.0 } else { self.card(dr) })
     }
 
-    fn valid_live_driver(&self, order: &[Step], b: &Body<'_>, first: Option<usize>) -> bool {
-        first.is_none_or(|f| order.first().is_some_and(|s| s.at == f || self.smaller_change(b, f, s.at)))
+    /// Whether `order` starts from the line's driver: its delta (or a smaller connected change), else a
+    /// demand-restricted aggregate's demand (`Body::demand_first`); and a demanded relation's rule from a lead its
+    /// demand bounds (`Body::demand_bounds_lead`), so a kept order led by a scan is searched again (Q59).
+    pub fn valid_live_driver(&self, order: &[Step], b: &Body<'_>, first: Option<usize>) -> bool {
+        let driven = first.or_else(|| b.demand_first()).is_none_or(|f| order.first().is_some_and(|s| s.at == f || self.smaller_change(b, f, s.at)));
+        driven && (first.is_some() || order.first().is_none_or(|s| b.demand_bounds_lead(s.at)))
     }
 
     /// Records the work a rule's line did in the engine (`plan_work`, every order it ran in) on its kept plan, for
@@ -3242,7 +3300,17 @@ impl Model {
         // delta, when supplied, remains the driver. The prefix is reserved by RR lowering.
         let first = first.or_else(|| b.demand_first());
         if skew_setting().is_none() {
-            return self.plan_search(pf, b, first, fixed, explain, cx);
+            let got = self.plan_search(pf, b, first, fixed, explain, cx)?;
+            // A demanded relation's rule led by a scan its demand does not bound is searched again from the demand
+            // (Q59; `Body::demand_bounds_lead`).
+            if first.is_none()
+                && fixed.is_none()
+                && let Some(d) = b.own_demand()
+                && got.0.0.first().is_some_and(|s| !b.demand_bounds_lead(s.at))
+            {
+                return self.plan_search(pf, b, Some(d), None, explain, cx);
+            }
+            return Ok(got);
         }
         SKEWING.with(|s| s.set(true));
         let got = self.plan_search(pf, b, first, fixed, explain, cx);
@@ -5255,6 +5323,10 @@ pub struct Run<'a, 'b> {
     keyless: HashSet<String>,
     /// Relations held only by the native set engine (`program`) until `materialize`.
     native_rels: BTreeSet<String>,
+    /// The inputs this run's strata placed on the device read (decision 0325 step 6): the views the device made of
+    /// them stay resident on this thread for the run's later strata, which placement then prices as found, not made.
+    /// A strand's run is on another thread, with residency of its own: it starts with none.
+    device_views: HashSet<String>,
     /// Immutable unary demand snapshots, shared only within this run.
     demands: native_demand::Demands,
     /// Why the native engine declined the last stratum it was offered (EXPLAIN's `why`).
@@ -5765,6 +5837,7 @@ impl<'a> Run<'a, '_> {
         let was: Vec<(String, Option<f64>)> = sizes.into_iter().map(|(r, n)| (r.clone(), self.model.stats.card.insert(r, n.max(1.0)))).collect();
         // The form's rules are planned as the run's are, read by their handles.
         // A local copy: the run's versions are not grown by a pricing.
+        let placing = super::profile::span(|| "derive again or maintain: the forms placed".into());
         let mut vs = (*self.versions).clone();
         let keys = |vs: &mut body::Versions, deltas: bool| -> Vec<RuleKey> {
             let n = if deltas { again.deltas.len() } else { again.rules.len() };
@@ -5789,8 +5862,15 @@ impl<'a> Run<'a, '_> {
             let calls = rules.iter().map(|&r| vs.head_at(r)).collect::<BTreeSet<_>>().len();
             Some(total + CALL * calls as f64)
         };
-        let again_cost = price(&again_rules, false);
-        let kept = price(&kept_rules, true);
+        drop(placing);
+        let again_cost = {
+            let _s = super::profile::span(|| format!("derive again or maintain: derived again planned ({} rules)", again_rules.len()));
+            price(&again_rules, false)
+        };
+        let kept = {
+            let _s = super::profile::span(|| format!("derive again or maintain: maintained planned ({} rules)", kept_rules.len()));
+            price(&kept_rules, true)
+        };
         for (r, n) in was {
             match n {
                 Some(n) => self.model.stats.card.insert(r, n),
@@ -5831,6 +5911,7 @@ impl<'a> Run<'a, '_> {
                 return self.text_test(rel, f.rel_name(*input), *column, f.text(*op), &patterns);
             }
             NativeSpec::Components { edge, own } => return self.components(rel, f.rel_name(*edge), f.rel_name(*own)),
+            NativeSpec::Rank { query, counted, group, op } => return self.rank_rows(rel, f.rel_name(*query), f.rel_name(*counted), *group, f.text(*op)),
             NativeSpec::Reach { .. } | NativeSpec::ReachThrough { .. } => return self.reach_rows(rel, &native.spec),
             NativeSpec::Python { kind, input, targets } => return self.python_relation(rel, f.text(*kind), f.rel_name(*input), targets.map(|t| f.rel_name(t))),
             NativeSpec::PythonCandidates { input, targets, .. } => return self.python_relation(rel, "candidates", f.rel_name(*input), Some(f.rel_name(*targets))),
@@ -6092,6 +6173,31 @@ impl<'a> Run<'a, '_> {
         Ok(Some(source.len()))
     }
 
+    /// A view of `node`'s columns `cols` (`input_view`) held in place (decision 0329, `hold_view_in_place`), where `src`
+    /// is a batch's: its statistics each column's exact ones, counted from the batch without reading its rows
+    /// (`syntax::node_column_counts`), as a copy's sketches gave them (`live_of`). `None`: `src` is not a batch's, and
+    /// the view is read into flat rows (`hold_view`).
+    fn hold_view_in_place(&mut self, rel: &str, src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: &[usize], types: Vec<u8>) -> Option<LiveRel> {
+        if src.columns().len() != 5 {
+            return None;
+        }
+        let batch = src.python_batch()?;
+        let n = src.len() as i64;
+        let mut ndv = Vec::new();
+        let mut sq = Vec::new();
+        let mut freq: Vec<(usize, HashMap<Constant, i64>)> = Vec::new();
+        for (j, &c) in cols.iter().enumerate() {
+            let (d, s, counts) = crate::code_rule_dsl::facts::vtab::syntax::node_column_counts(&batch, c)?;
+            ndv.push(d);
+            sq.push(s);
+            if let Some(counts) = counts {
+                freq.push((j, counts.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect()));
+            }
+        }
+        super::native::component::hold_view_in_place(self.db, rel, Arc::clone(src), cols.to_vec(), types);
+        Some(LiveRel { n, delta: n, ndv, sq, freq })
+    }
+
     /// The reach index (decision 0119, `front::Native::Reach` and `ReachThrough`) over relations the engine holds:
     /// held as the index, read in place by its readers, no row made. `None`: an input is not held natively (the rows
     /// are then made by `reach_rows`).
@@ -6248,6 +6354,58 @@ impl<'a> Run<'a, '_> {
         let before = self.db.total_changes();
         insert_many(&self.db, &format!("INSERT OR IGNORE INTO {}", ident(rel)), values)?;
         Ok((self.db.total_changes() - before) as usize)
+    }
+
+    /// `Native::Rank` over the tables of its two relations: each asked tuple's count below its bound
+    /// (`native::rank`).
+    fn rank_rows(&mut self, rel: &str, query: &str, counted: &str, group: usize, op: &str) -> Result<usize> {
+        let op = super::native::rank::Op::parse(op).ok_or_else(|| Error::Plan(format!("{rel}: a rank by {op}")))?;
+        let read = |r: &str| -> Result<Vec<Vec<i64>>> {
+            let w = self.fields().width(r);
+            let cols: Vec<String> = (0..w).map(|c| self.model.col(r, c)).collect();
+            let mut st = self.db.prepare(&format!("SELECT DISTINCT {} FROM {}", cols.join(", "), crate::code_rule_dsl::logic::sql::ident(r)))?;
+            let rows = st.query_map([], |row| (0..w).map(|i| row.get::<_, i64>(i)).collect::<rusqlite::Result<Vec<i64>>>())?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
+        };
+        let rows = super::native::rank::rank(&read(query)?, &read(counted)?, group, op);
+        let values = rows.into_iter().map(|r| r.into_iter().map(SqlValue::Integer).collect()).collect();
+        let before = self.db.total_changes();
+        insert_many(&self.db, &format!("INSERT OR IGNORE INTO {}", crate::code_rule_dsl::logic::sql::ident(rel)), values)?;
+        Ok((self.db.total_changes() - before) as usize)
+    }
+
+    /// `Native::Rank` on the native engine: its two relations read where the engine holds them, the result retained
+    /// as its own relation, no table read or written. `None` when either is held only as a table.
+    fn native_rank(&mut self, rel: &str, query: &str, counted: &str, group: usize, op: &str) -> Result<Option<usize>> {
+        use super::native::component;
+        let Some(op) = super::native::rank::Op::parse(op) else { return Ok(None) };
+        let held = |this: &Self, r: &str| -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+            if this.native_rels.contains(r) {
+                component::derived(this.db, r)
+            } else if this.fields().is_input(r) {
+                crate::code_rule_dsl::facts::vtab::bound_source(this.db, r)
+            } else {
+                None
+            }
+        };
+        let (Some(q), Some(c)) = (held(self, query), held(self, counted)) else { return Ok(None) };
+        let rows = |s: &dyn crate::code_rule_dsl::facts::vtab::Source| -> Vec<Vec<i64>> {
+            let w = s.columns().len();
+            (0..s.len()).map(|r| (0..w).map(|k| s.value(r, k)).collect()).collect()
+        };
+        let values = super::native::rank::rank(&rows(q.as_ref()), &rows(c.as_ref()), group, op);
+        component::retain(self.db, rel, values, vec![b'i'; self.fields().width(rel)])?;
+        self.native_rels.insert(rel.to_owned());
+        let source = component::derived(self.db, rel).expect("just retained");
+        let stats = source.statistics().expect("retained relations own their statistics");
+        live_stats(&mut self.model, rel, LiveRel {
+            n: source.len() as i64,
+            delta: source.len() as i64,
+            ndv: stats.iter().map(|s| s.2).collect(),
+            sq: stats.iter().map(|s| s.3).collect(),
+            freq: Vec::new(),
+        });
+        Ok(Some(source.len()))
     }
 
     fn components(&mut self, rel: &str, edge: &str, own: &str) -> Result<usize> {
@@ -6729,6 +6887,43 @@ fn stratum_label(scc: &BTreeSet<String>) -> String {
     if key.len() > 80 { format!("{}…({} relations)", &key[..key.floor_char_boundary(80)], scc.len()) } else { key }
 }
 
+/// A reach index made again (decision 0119) against its old rows kept in memory (decision 0331): its delta held as
+/// `rel__minus` and `rel__plus`, the rows of each sorted and compared, so its readers are maintained rather than
+/// derived again. Returns whether it changed.
+fn reach_delta(db: &Connection, rel: &str, old: &Arc<super::native::component::InRel>, native_rels: &mut BTreeSet<String>) -> Result<bool> {
+    let _span = super::profile::span(|| format!("{rel}: the reach index's delta"));
+    let types = old.types().to_vec();
+    let k = types.len();
+    let new = super::native::component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel}: the reach index made is not held")))?;
+    let rows = |s: &dyn crate::code_rule_dsl::facts::vtab::Source| -> Vec<Vec<i64>> {
+        let cols: Vec<usize> = (0..k).collect();
+        let mut v: Vec<Vec<i64>> = (0..s.len()).map(|r| { let mut row = vec![0i64; k]; s.row_at(r, &cols, &mut row); row }).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    };
+    let (was, now) = (rows(old.source((0..k).map(|c| sql_col(rel, c)).collect()).as_ref()), rows(new.as_ref()));
+    let (mut minus, mut plus) = (Vec::new(), Vec::new());
+    let (mut i, mut j) = (0, 0);
+    while i < was.len() || j < now.len() {
+        match (was.get(i), now.get(j)) {
+            (Some(a), Some(b)) if a == b => (i, j) = (i + 1, j + 1),
+            (Some(a), Some(b)) if a < b => { minus.extend_from_slice(a); i += 1; }
+            (Some(_), Some(b)) | (None, Some(b)) => { plus.extend_from_slice(b); j += 1; }
+            (Some(a), None) => { minus.extend_from_slice(a); i += 1; }
+            (None, None) => unreachable!(),
+        }
+    }
+    let changed = !minus.is_empty() || !plus.is_empty();
+    for (suffix, flat) in [("minus", minus), ("plus", plus)] {
+        let name = format!("{rel}__{suffix}");
+        let n = flat.len() / k.max(1);
+        super::native::component::hold_rows(db, &name, types.clone(), flat, n);
+        native_rels.insert(name);
+    }
+    Ok(changed)
+}
+
 fn stratum_key(scc: &BTreeSet<String>) -> String {
     let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
     if key.len() > 80 { format!("{}…({} relations)", &key[..key.floor_char_boundary(80)], scc.len()) } else { key }
@@ -7034,6 +7229,9 @@ impl<'a> Run<'a, '_> {
         if rules.iter().any(|&r| self.versions.rule_at(r).1.body().any(|l| matches!(l.view(), Lit::Ast { .. }))) {
             return Err("an Ast literal");
         }
+        if self.input_view_stratum(scc, rules).is_some() {
+            return Err("a view of an input's columns, held on the run's thread");
+        }
         let mut reads: BTreeSet<String> = scc.clone();
         for &r in rules {
             let (v, rule) = self.versions.rule_at(r);
@@ -7069,6 +7267,7 @@ impl<'a> Run<'a, '_> {
             model,
             views: Arc::clone(&self.views),
             made: HashSet::new(),
+            device_views: HashSet::new(),
             orders: HashMap::new(),
             keyless: HashSet::new(),
             native_rels: reads.iter().filter(|r| self.native_rels.contains(*r)).cloned().collect(),
@@ -7107,6 +7306,7 @@ impl<'a> Run<'a, '_> {
             model,
             views: Arc::clone(&self.views),
             made: HashSet::new(),
+            device_views: HashSet::new(),
             orders: HashMap::new(),
             keyless: HashSet::new(),
             native_rels: reads.iter().filter(|r| self.native_rels.contains(*r)).cloned().collect(),
@@ -7934,14 +8134,20 @@ impl<'a> Run<'a, '_> {
             && based.is_empty() && gates.is_empty() && levels.is_empty() && !asks && !facts
             && let Some((base, src, cols)) = self.input_view(*r)
         {
-            // Its statistics are a copy's (`hold_view`): its readers plan as they did when a stratum copied it.
-            let l = {
-                let _span = super::profile::span(|| "a view of an input's columns: its rows".into());
-                super::native::component::hold_view(self.db, rel, src, cols.clone(), types(rel).into_bytes())
+            // Held in place where the source answers the view's probes and counts its columns itself (a batch's
+            // `node`, decision 0329): no row read. Else read once into flat rows (`hold_view`). Either way its
+            // statistics are a copy's, exact or sketched: its readers plan as they did when a stratum copied it.
+            let (form, live) = match self.hold_view_in_place(rel, &src, &cols, types(rel).into_bytes()) {
+                Some(live) => ("held in place", live),
+                None => {
+                    let _span = super::profile::span(|| "a view of an input's columns: its rows".into());
+                    let l = super::native::component::hold_view(self.db, rel, src, cols.clone(), types(rel).into_bytes());
+                    ("read into flat rows", LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect() })
+                }
             };
-            live_stats(&mut self.model, rel, LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect() });
+            live_stats(&mut self.model, rel, live);
             INPUT_VIEWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            super::profile::stratum(&stratum_key(scc), "native set engine", || format!("a view of {base}'s columns {cols:?}: held in place, no component opened"));
+            super::profile::stratum(&stratum_key(scc), "native set engine", || format!("a view of {base}'s columns {cols:?}: {form}, no component opened"));
             self.native_rels.extend(scc.iter().cloned());
             return Ok(Native::Ran);
         }
@@ -8112,7 +8318,7 @@ impl<'a> Run<'a, '_> {
             shape.add(Order::new(b, &order), work, false, false);
             shape.seeded(head, rows);
             if let Some(x) = &x {
-                shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col));
+                shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col), |rel| !self.model.derived.contains(rel));
             }
             let Some(spec) = self.whole_join_spec(b, &order, None, &ri, scc, &native_rels) else {
                 if answering {
@@ -8165,6 +8371,12 @@ impl<'a> Run<'a, '_> {
                 return Ok(Native::Declined);
             }
             rel_lines.push(SpecLine::Lattice { rel: ri[*r], keys: l.keys, name: f.text(l.lattice).to_owned(), widen: l.widen });
+        }
+        // The relations the run keeps past it (a chunk's exports): in blocks of their own, so a reader that holds
+        // them where they lie does not keep the run's other relations' blocks.
+        let kept_rows: Vec<usize> = rels.iter().filter(|r| self.model.inputs.kept.contains(r.as_str())).map(|r| ri[*r]).collect();
+        if !kept_rows.is_empty() {
+            rel_lines.push(SpecLine::KeptRows(kept_rows));
         }
         lines.splice(rel_at..rel_at, rel_lines);
         let nseeds = orders.len();
@@ -8239,7 +8451,7 @@ impl<'a> Run<'a, '_> {
                 shape.add(Order::new(b, &order), 0.0, true, pf.lattice_name(head) == Some("shortlex_min"));
                 shape.probe(a, work, rows, delta);
                 if let Some(x) = &x {
-                    shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col));
+                    shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col), |rel| !self.model.derived.contains(rel));
                 }
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
                 let Some(spec) = self.whole_join_spec(b, &order, Some(at), &ri, scc, &native_rels) else {
@@ -8326,7 +8538,14 @@ impl<'a> Run<'a, '_> {
         // (`device::fixpoint`), unless the device refuses one of them, which the profile then names. Gates and
         // requests are forms the device lacks.
         shape.close_rounds();
+        // An input whose view a device stratum of this run made already is found resident: no view made for it.
+        for r in &mut shape.reads {
+            r.3 &= !self.device_views.contains(&r.0);
+        }
         let placed = placement::place(&shape);
+        if placed.gpu {
+            self.device_views.extend(shape.reads.iter().filter(|r| r.3).map(|r| r.0.clone()));
+        }
         // Placed there but a shape the device's run does not take: named, as a refusal.
         let not_taken = if !placed.gpu {
             None
@@ -9889,8 +10108,8 @@ pub fn run_atoms_native_over(
 #[derive(Default)]
 pub struct Hooks<'a> {
     /// A kept relation no later stratum reads: the caller writes it where it goes, and the run drops it
-    /// (`Outcome::handed`).
-    pub hand_off: Option<&'a mut dyn FnMut(&str) -> Result<()>>,
+    /// (`Outcome::handed`); one the caller does not take (`false`) is held to the run's end as before.
+    pub hand_off: Option<&'a mut dyn FnMut(&str) -> Result<bool>>,
     /// Inputs a stratum is about to read for the first time: the caller binds their rows now.
     pub load: Option<&'a mut dyn FnMut(&[String]) -> Result<()>>,
     /// Inputs no later stratum reads: the caller may drop their rows (the run has dropped its views of them).
@@ -9932,6 +10151,8 @@ pub trait Maintain {
     fn has_delta(&self, rel: &str) -> bool;
     /// `rel` changed and has no deltas (derived again, and its old rows not kept): its readers derive again.
     fn no_delta(&mut self, rel: &str);
+    /// `rel`'s delta was made by the run itself (`reach_delta`): its readers read `rel__minus` and `rel__plus`.
+    fn delta_made(&mut self, rel: &str);
     /// The run's end: how many strata were reached, of those the driver walked.
     fn walked(&mut self, reached: usize, quiet: usize, of: usize);
     /// The inputs that changed with a delta not empty, or with none: the walk's first moved reads.
@@ -10349,6 +10570,26 @@ impl<'a> Cells<'a> {
         self.sum_one(rows)
     }
 
+    /// `rows_digest` of `n` rows read a batch at a time where they lie (`batches(lo, hi, f)`: the rows of ids
+    /// `lo..hi` of `ids`, `f` per batch), with no copy of them all: many ids are summed in parts at once.
+    pub fn digest_batches(&self, ids: usize, n: usize, batches: &(dyn Fn(usize, usize, &mut dyn FnMut(&[i64])) + Sync)) -> u64 {
+        const PART: usize = 1 << 15;
+        let part = |lo: usize| {
+            let mut s = 0u64;
+            batches(lo, (lo + PART).min(ids), &mut |rows| s = s.wrapping_add(self.sum_one(rows)));
+            s
+        };
+        let sum = if self.width == 0 {
+            0
+        } else if ids >= 2 * PART {
+            use rayon::prelude::*;
+            (0..ids).into_par_iter().step_by(PART).map(part).reduce(|| 0, u64::wrapping_add)
+        } else {
+            part(0)
+        };
+        sum ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
+    }
+
     /// `sum` on this thread.
     fn sum_one(&self, rows: &[i64]) -> u64 {
         let w = self.width;
@@ -10387,6 +10628,10 @@ impl<'a> Cells<'a> {
         r.chunks_exact(w).map(row_digest).collect()
     }
 }
+
+/// The most distinct values a column may have for its whole value set to be read from the statistics
+/// (`Model::small_values`): the corpus's totals keep every value of such a column, and of others only those tested.
+pub const SMALL_NDV: i64 = 64;
 
 /// An order-independent digest of rows (a set) of their content (`Cells`), as `corpus::retain::digest` takes a
 /// source's.
@@ -10961,6 +11206,8 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     // The maintained run's driver (decision 0117 step 3).
     let mut maintaining = hooks.maintain.take();
     let mut moved_rels: HashSet<String> = maintaining.as_deref_mut().map(|m| m.seeds().into_iter().collect()).unwrap_or_default();
+    // Reach indexes made again whose old rows are kept in memory: their deltas made once they are (`reach_delta`).
+    let mut reach_olds: HashMap<String, Arc<super::native::component::InRel>> = HashMap::new();
     let (mut reached, mut quiet_slots) = (0usize, 0usize);
     // Each stratum as its level's start placed it (decision 0117 step 3), the strata placed so far, and the forms issued
     // as jobs and the pieces they ran.
@@ -10972,7 +11219,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     // What each issued form's job did, from its component's retire to its own slot.
     let mut form_ran: HashMap<usize, (usize, Option<Result<(Option<String>, Option<String>)>>)> = HashMap::new();
     let projections0: HashMap<String, Vec<(usize, i64)>> = super::program_image::analyses::projections(&p0.v).into_iter().map(|(r, eqs)| (p0.v.rel_name(r).to_owned(), eqs)).collect();
-    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
+    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, device_views: HashSet::new(), demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
     // A native run makes no views: a projection of an input is a stratum like any, run from the input where it is
     // held (decision 0104: no SQL in the run's waves). A SQL run reads its inputs through views in place.
     let planned_views = if atoms && !native.is_empty() { Vec::new() } else { plan_views(f0, &Arc::clone(&run.versions), &mut run.model, &rules_by)? };
@@ -11181,12 +11428,16 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     }
     // What stays, and what the views among it read (through views): SQL reads a view's inputs once the run ends.
     let mut pinned: BTreeSet<String> = stays.clone();
+    // Of them, the relations a view that stays reads (through views), kept ones too: not handed off (`hand_off`), as
+    // the view is read after the run.
+    let mut view_read: BTreeSet<String> = BTreeSet::new();
     loop {
-        let more: Vec<String> = body::Versions::keys(0, p0.len())
+        let reads: Vec<String> = body::Versions::keys(0, p0.len())
             .filter(|&r| pinned.contains(run.versions.head_at(r)) && run.views.contains(run.versions.head_at(r)))
             .flat_map(|r| reads_of(&run.versions, r).map(str::to_owned).collect::<Vec<_>>())
-            .filter(|r| !pinned.contains(r.as_str()))
             .collect();
+        view_read.extend(reads.iter().cloned());
+        let more: Vec<String> = reads.into_iter().filter(|r| !pinned.contains(r.as_str())).collect();
         if more.is_empty() {
             break;
         }
@@ -11430,9 +11681,11 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             }
         }
         if let Some(hand) = hooks.hand_off.as_deref_mut() {
-            let give: Vec<String> = read_out.iter().filter(|r| run.model.inputs.kept.contains(*r) && !gated.contains(*r)).cloned().collect();
-            for r in &give {
-                hand(r)?;
+            let mut give: Vec<String> = Vec::new();
+            for r in read_out.iter().filter(|r| run.model.inputs.kept.contains(*r) && !gated.contains(*r) && !view_read.contains(*r)) {
+                if hand(r)? {
+                    give.push(r.clone());
+                }
             }
             if !give.is_empty() {
                 super::native::component::release(db, &give);
@@ -11507,13 +11760,19 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                     }
                     // A native operator's stratum (the reach index, decision 0119) has no maintained form: it is made again
                     // from its reads as they are now, as the base program makes it, and its readers derive again. A text
-                    // test's has (`maintain`: only the new strings tested).
+                    // test's has (`maintain`: only the new strings tested). A reach index whose old rows are kept in
+                    // memory (a chunk's guest rounds, decision 0331) is made the same way, and its delta is then made
+                    // against them (`reach_delta`), so its readers are maintained.
                     if scc.iter().any(|r| f0.native(r).is_some_and(|n| !matches!(n.spec, super::program_image::NativeSpec::TextTest { .. }))) {
                         need.extend(reads.iter().filter(|r| !scc.contains(*r)).cloned());
                         base_strata.push(j);
                         for r in scc {
-                            m.no_delta(r);
-                            moved_rels.insert(r.clone());
+                            if let Some(old) = m.kept(r).filter(|_| matches!(f0.native(r).map(|n| &n.spec), Some(super::program_image::NativeSpec::Reach { .. } | super::program_image::NativeSpec::ReachThrough { .. }))) {
+                                reach_olds.insert(r.clone(), old);
+                            } else {
+                                m.no_delta(r);
+                                moved_rels.insert(r.clone());
+                            }
                         }
                         continue;
                     }
@@ -11524,8 +11783,18 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                 // What the level's strata read of what is kept, read now in one batch, and held where unread.
                 let need: Vec<String> = need.into_iter().collect();
                 m.need(&need, &mut run.model)?;
-                for r in need.iter().filter(|r| unread.contains(*r)) {
-                    let Some(o) = m.kept(r) else { return Err(Error::Plan(format!("{r}: its kept rows were not read"))) };
+                // A kept relation that is no stratum of this program (an earlier round's, decision 0331) is held too:
+                // a stratum derived again reads it as it was. Only the program's own quiet strata were held (`unread`),
+                // so `chain_below`'s reach, derived again in a later guest round, found `chain_step` and its seed read
+                // but not held, and declined to SQL whenever the round chose to derive it again.
+                let hold: Vec<&String> = need.iter().filter(|r| unread.contains(*r) || (!stratum_of.contains_key(r.as_str()) && !run.native_rels.contains(*r) && !f0.is_input(r))).collect();
+                for r in hold {
+                    let Some(o) = m.kept(r) else {
+                        if unread.contains(r) {
+                            return Err(Error::Plan(format!("{r}: its kept rows were not read")));
+                        }
+                        continue;
+                    };
                     hold_quiet(&mut run, f0, db, r, o);
                 }
                 unread.retain(|r| !need.contains(r));
@@ -12124,7 +12393,24 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             super::profile::stratum(&skey, "reach index over held relations (decision 0119)", || why);
             super::profile::note(format!("{rel} rows"), || n.to_string());
             outcome.native.insert(key);
+            if let Some(old) = reach_olds.remove(rel.as_str())
+                && let Some(m) = maintaining.as_deref_mut()
+            {
+                if reach_delta(db, rel, &old, &mut run.native_rels)? {
+                    m.delta_made(rel);
+                    moved_rels.insert((*rel).clone());
+                } else {
+                    outcome.unchanged.insert((*rel).clone());
+                }
+            }
             continue;
+        }
+        // A reach index not made in place (`reach_rows`) has no delta: its readers derive again.
+        if let Some(m) = maintaining.as_deref_mut() {
+            for r in scc.iter().filter(|r| reach_olds.remove(r.as_str()).is_some()) {
+                m.no_delta(r);
+                moved_rels.insert(r.clone());
+            }
         }
         // A text test over strings the run answered, from the rows the engine holds: no table read or written. With
         // the device on, its rule runs as placed (the device's text-test form, `native_stratum_`), never on the host
@@ -12146,6 +12432,16 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             && let Some(n) = run.native_components(rel, f0.rel_name(*edge), f0.rel_name(*own))?
         {
             super::profile::stratum(&skey, "native fact operator over held relations", String::new);
+            super::profile::note(format!("{rel} rows"), || n.to_string());
+            outcome.native.insert(key);
+            continue;
+        }
+        // A count below a bound (`rank_form`) from the rows the engine holds, likewise.
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(NativeSpec::Rank { query, counted, group, op }) = f0.native(rel).map(|n| &n.spec)
+            && let Some(n) = run.native_rank(rel, f0.rel_name(*query), f0.rel_name(*counted), *group, f0.text(*op))?
+        {
+            super::profile::stratum(&skey, "count below a bound over held relations (decision 0361 step 7)", String::new);
             super::profile::note(format!("{rel} rows"), || n.to_string());
             outcome.native.insert(key);
             continue;

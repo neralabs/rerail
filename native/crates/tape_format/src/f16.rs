@@ -718,24 +718,67 @@ pub fn numbers(lang: &Lang, table: &CodeTable) -> Result<Vec<u32>, String> {
 /// One group of up to 64 nodes from `base` of a run whose code bytes are `codes`: those whose code is in the set
 /// (`byte` below the cutoff, `tail` when the set holds a number past it; `number` a node's code past it).
 #[inline(always)]
-fn group(codes: &[u8], cut: usize, set: &CodeSet, byte: &[bool; 256], tail: bool, base: usize, number: impl Fn(usize) -> u32) -> u64 {
-    let mut m = 0u64;
-    for j in 0..64.min(codes.len() - base) {
-        let b = codes[base + j] as usize;
-        let hit = if b < cut { byte[b] } else { tail && set.contains(number(base + j)) };
-        m |= u64::from(hit) << j;
+/// The groups of up to `PART` nodes from `codes` (a part's code bytes) into `out`: bit j of group g set when node
+/// `64 g + j` is in `set`. A byte below the cutoff is looked up; one past it is the prefix of a number whose low
+/// part is in the part's entries of side list 0, so when the set holds a number past the cutoff the entries are
+/// walked in order (`part_codes`), each once, rather than searched for a node at a time.
+fn part_groups(codes: &[u8], lang: &Lang, set: &CodeSet, byte: &[bool; 256], tail: Option<(&[u8], &TapeView, usize)>, out: &mut [u64; PART / 64]) -> usize {
+    let groups = codes.len().div_ceil(64);
+    for (g, chunk) in codes.chunks(64).enumerate() {
+        let mut m = 0u64;
+        for (j, &b) in chunk.iter().enumerate() {
+            m |= u64::from(byte[b as usize]) << j;
+        }
+        out[g] = m;
     }
-    m
+    if let Some((bytes, view, part)) = tail {
+        let cut = lang.cut;
+        part_codes(bytes, view, part, |local, low| {
+            let number = cut + (u32::from(codes[local]) - cut) * lang.per + low;
+            out[local / 64] |= u64::from(set.contains(number)) << (local % 64);
+        });
+    }
+    groups
+}
+
+/// Each entry of part `part` of side list 0 (codes' low parts) of the tape in `bytes` read by `view`, in node
+/// order: `f(node within the part, low part)`. The layout `f16_side` reads: the part's blocks' running entry
+/// counts (u16 each), each entry's node's low byte, then the values; a part with none is empty.
+fn part_codes(bytes: &[u8], view: &TapeView, part: usize, mut f: impl FnMut(usize, u32)) {
+    let side = view.side[0] as usize;
+    let (from, to) = (u32_at(bytes, view.parts[0] as usize + 4 * part), u32_at(bytes, view.parts[0] as usize + 4 * part + 4));
+    // A part with no entries is no bytes (`part_into`).
+    if from == to {
+        return;
+    }
+    let start = side + from as usize;
+    let blocks = (view.nodes as usize).div_ceil(BLOCK);
+    let sub = PART / BLOCK;
+    let nsub = sub.min(blocks - part * sub);
+    let u16_at = |at: usize| usize::from(u16::from_le_bytes([bytes[at], bytes[at + 1]]));
+    let offsets = start + 2 * nsub;
+    let values = offsets + u16_at(start + 2 * (nsub - 1));
+    let vw = ((view.widths >> 16) & 15) as usize;
+    let mask = if vw >= 4 { u32::MAX } else { (1u32 << (8 * vw)) - 1 };
+    let mut lo = 0;
+    for j in 0..nsub {
+        let hi = u16_at(start + 2 * j);
+        for e in lo..hi {
+            let at = values + e * vw;
+            let mut w = [0u8; 4];
+            w[..vw.min(4)].copy_from_slice(&bytes[at..at + vw.min(4)]);
+            f(j * BLOCK + usize::from(bytes[offsets + e]), u32::from_le_bytes(w) & mask);
+        }
+        lo = hi;
+    }
 }
 
 /// A set's test a code byte at a time: membership of each number below the cutoff, and whether it holds any past.
 fn byte_table(lang: &Lang, set: &CodeSet) -> ([bool; 256], bool) {
     let cut = lang.cut as usize;
     let mut byte = [false; 256];
-    for (b, m) in byte.iter_mut().enumerate().take(cut) {
-        *m = set.contains(b as u32);
-    }
-    (byte, set.by_number().iter().skip(cut).any(|&m| m))
+    set.mark_below(cut, &mut byte);
+    (byte, set.any_from(cut))
 }
 
 /// A format 16 tape read in place with its language's choices, through the tape's reads (decision 0310's Rust
@@ -811,8 +854,12 @@ impl Tape for F16<'_> {
     fn match_groups(&self, set: &CodeSet, mut f: impl FnMut(usize, u64)) {
         let (byte, tail) = byte_table(self.lang, set);
         let codes = self.codes();
-        for base in (0..codes.len()).step_by(64) {
-            f(base, group(codes, self.lang.cut as usize, set, &byte, tail, base, |i| self.code(i)));
+        let mut groups = [0u64; PART / 64];
+        for (part, chunk) in codes.chunks(PART).enumerate() {
+            let count = part_groups(chunk, self.lang, set, &byte, tail.then_some((self.bytes, &self.view, part)), &mut groups);
+            for (g, &m) in groups[..count].iter().enumerate() {
+                f(part * PART + 64 * g, m);
+            }
         }
     }
 }
@@ -931,6 +978,16 @@ pub struct Tape16Z {
     payload: usize,
 }
 
+/// One 16z piece's decode (`Tape16Z::piece_jobs`): its stored bytes (in the tape as stored), LZ4 or raw, decoding
+/// to `fixed` (its array's bytes for its block's nodes) then `side` (its side list's part), in the format 16 tape.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PieceJob {
+    pub src: std::ops::Range<usize>,
+    pub lz4: bool,
+    pub fixed: std::ops::Range<usize>,
+    pub side: std::ops::Range<usize>,
+}
+
 /// Where a 16z tape's piece index, its kinds and its payload begin, and the number of pieces, from the placement of
 /// the tape it decodes to: past the head (up to the first region), the checkpoints and the newline index.
 fn index_at(p: &Placement) -> (usize, usize, usize, usize) {
@@ -1047,6 +1104,18 @@ impl Tape16Z {
     fn decoded(&self, j: usize) -> usize {
         let (fixed, side) = self.dest(j / PIECES, j % PIECES);
         fixed.len() + side.len()
+    }
+
+    /// Every piece's decode as a device kernel takes it (decision 0336 §8), in order: where its stored bytes lie in
+    /// `as_bytes` (a repeat's, the earlier piece's), whether they are LZ4, and where they decode to in the format 16
+    /// tape. With `decode_head_into`, the pieces make the tape.
+    pub fn piece_jobs(&self) -> impl Iterator<Item = PieceJob> + '_ {
+        let start = |j: usize| self.payload + u32_at(&self.buf, self.ix + 4 * j) as usize;
+        (0..PIECES * self.p.n.div_ceil(Z)).map(move |j| {
+            let k = if self.buf[self.kinds + j] == REPEAT { u32_at(&self.buf, start(j)) as usize } else { j };
+            let (fixed, side) = self.dest(j / PIECES, j % PIECES);
+            PieceJob { src: start(k)..start(k + 1), lz4: self.buf[self.kinds + k] == LZ4, fixed, side }
+        })
     }
 
     /// Piece `j`'s kind and its stored bytes.
@@ -1265,16 +1334,12 @@ impl Tape for F16Z<'_> {
     /// before `f` is called, so `f` may read the tape.
     fn match_groups(&self, set: &CodeSet, mut f: impl FnMut(usize, u64)) {
         let (byte, tail) = byte_table(self.lang, set);
-        let cut = self.lang.cut as usize;
         let mut groups = [0u64; Z / 64];
         for b in 0..self.t.p.n.div_ceil(Z) {
+            // A block is one part, its side lists' part 0.
             let count = self.with(b, |r, v| {
                 let at = v.columns[0] as usize;
-                let codes = &r[at..at + v.nodes as usize];
-                for (g, base) in groups.iter_mut().zip((0..codes.len()).step_by(64)) {
-                    *g = group(codes, cut, set, &byte, tail, base, |j| reads::tape_number(r, v, j as u32));
-                }
-                codes.len().div_ceil(64)
+                part_groups(&r[at..at + v.nodes as usize], self.lang, set, &byte, tail.then_some((r, v, 0)), &mut groups)
             });
             for (g, &m) in groups[..count].iter().enumerate() {
                 f(b * Z + 64 * g, m);
@@ -1331,6 +1396,17 @@ mod tests {
             z.decode_block_into(b, &mut by_block, &mut scratch).unwrap();
         }
         assert_eq!(by_block, plain.as_bytes(), "16z's blocks decode in place");
+        // The pieces as a device decodes them: the head, then each piece from its stored bytes alone.
+        let mut by_job = vec![0u8; z.decoded_len()];
+        z.decode_head_into(&mut by_job).unwrap();
+        for job in z.piece_jobs() {
+            let stored = &z.as_bytes()[job.src.clone()];
+            let mut out = vec![0u8; job.fixed.len() + job.side.len()];
+            if job.lz4 { lz4::decompress(stored, &mut out).unwrap() } else { out.copy_from_slice(stored) }
+            by_job[job.fixed.clone()].copy_from_slice(&out[..job.fixed.len()]);
+            by_job[job.side.clone()].copy_from_slice(&out[job.fixed.len()..]);
+        }
+        assert_eq!(by_job, plain.as_bytes(), "16z's piece jobs decode to format 16's bytes");
         let p = placement(plain.as_bytes()).unwrap();
         assert_eq!(p, plain.p, "the placement is the reader's");
         // The header holds each region's start: the placement is read, not summed.
@@ -1454,6 +1530,20 @@ mod tests {
         let mut c = Vec::new();
         z.reader(&lang).unwrap().match_groups(&set, |base, m| c.push((base, m)));
         assert_eq!(a, c, "a set past the cutoff, in blocks");
+        // A part whose codes are all below the cutoff has no entries in side list 0 (no bytes): its groups come from
+        // its bytes alone, in format 16 and in blocks.
+        let mut low = nodes.clone();
+        for node in &mut low[PART..2 * PART] {
+            node.0 %= 200;
+        }
+        let plain_low = Plain(&low, &table);
+        let t_low = sixteen(&lang, &plain_low, &number, pos + 2);
+        assert_eq!(t_low.part_start(0, 1), t_low.part_start(0, 2), "the second part lists no codes");
+        let (mut a, mut b, mut c) = (Vec::new(), Vec::new(), Vec::new());
+        plain_low.match_groups(&set, |base, m| a.push((base, m)));
+        t_low.reader(&lang).unwrap().match_groups(&set, |base, m| b.push((base, m)));
+        Tape16Z::from_bytes(t_low.blocks().into_bytes()).unwrap().reader(&lang).unwrap().match_groups(&set, |base, m| c.push((base, m)));
+        assert_eq!((&a, &a), (&b, &c), "a part with no codes past the cutoff");
         // A bulk answer that reads the tape inside the matches' callback.
         let (mut near, mut near_z) = (Vec::new(), Vec::new());
         crate::tape::nearest_all(&t.reader(&lang).unwrap(), &set, |_| true, &mut near);

@@ -190,7 +190,11 @@ fn a_column_pushed_in_order_answers_as_its_sorted_index_does() {
         };
         for v in [-1, 0, 7, 50, 99, 100, 200] {
             assert_eq!(r.lookup(column, &[v]).unwrap(), sorted(v, v), "column {column}, {v}");
+            // A probe's slice (no list made) holds the same rows: the ids of an ordered column's run, or the index's.
+            let slice: Vec<usize> = r.sorted_rows(column, v).unwrap().iter().map(|&i| i as usize).collect();
+            assert_eq!(slice, sorted(v, v), "sorted_rows, column {column}, {v}");
         }
+        assert!(r.sorts_rows(column));
         assert_eq!(r.lookup(column, &[3, 9]).unwrap(), [sorted(3, 3), sorted(9, 9)].concat());
         assert_eq!(r.range_lookup(column, Some((10, true)), Some((20, false))).unwrap(), sorted(10, 19));
     }
