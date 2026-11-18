@@ -2419,3 +2419,5 @@ and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q82, 0
   frame. The documents frame should record its rows' total where the keeper writes it (`write_frames`), a frame
   format change. Admitting all 64 granules of each input instead would be 64k keys.
 - **Done when**: a rule edit decodes no documents frame, and `kept_inputs` on ep2 is the stats parts' admission.
+- **Done** (2026-11-17, decision 0378): the documents frame records its granules; layouts and documents are made
+  where first asked. ep2's edit: `kept_inputs` 0.077 s → 0.021 s, no documents frame decoded, rows as h1.
