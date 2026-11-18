@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import type { FSWatcher, watch as watchFolder } from "node:fs";
-import { realpathSync } from "node:fs";
+import { appendFileSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,6 +56,18 @@ function messagesOf(response: Response): { next: () => Promise<Message>; stop: (
     return message;
   };
   return { next, stop: () => reader.cancel() };
+}
+
+/**
+ * The token of the first message, of a beat's and the one its read of the checkout's files may add, that differs from
+ * `token`; undefined when neither does. A beat says the daemon is alive at once and reads the checkout's files after.
+ */
+async function movedFrom(stream: ReturnType<typeof messagesOf>, token: string): Promise<string | undefined> {
+  for (let message = 0; message < 2; message += 1) {
+    const { data } = await stream.next();
+    if (data !== token) return data;
+  }
+  return undefined;
 }
 
 describe("the daemon's change stream (GET /api/changes)", () => {
@@ -238,7 +250,67 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"], { cwd: checkout });
     await vi.advanceTimersByTimeAsync(BEAT_MS);
 
-    expect((await stream.next()).data).not.toBe(first.data);
+    expect(await movedFrom(stream, first.data)).toBeDefined();
+    await stream.stop();
+  });
+
+  it("sends a new token at the beat after a branch Merge Assist tries for the base first exists, as after a first fetch", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const checkout = gitRepository(join(realpathSync(root), "web"));
+    recordCheckout(database, checkout);
+    const stream = await open(`?${new URLSearchParams({ checkout })}`);
+    const first = await stream.next();
+
+    execFileSync("git", ["update-ref", "refs/remotes/origin/main", "HEAD"], { cwd: checkout });
+    await vi.advanceTimersByTimeAsync(BEAT_MS);
+
+    expect(await movedFrom(stream, first.data)).toBeDefined();
+    await stream.stop();
+  });
+
+  it("sends a new token at the beat after the branch origin/HEAD names first exists, though it is no usual base name", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const checkout = gitRepository(join(realpathSync(root), "web"));
+    execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"], { cwd: checkout });
+    recordCheckout(database, checkout);
+    const stream = await open(`?${new URLSearchParams({ checkout })}`);
+    const first = await stream.next();
+
+    execFileSync("git", ["update-ref", "refs/remotes/origin/trunk", "HEAD"], { cwd: checkout });
+    await vi.advanceTimersByTimeAsync(BEAT_MS);
+
+    expect(await movedFrom(stream, first.data)).toBeDefined();
+    await stream.stop();
+  });
+
+  it("sends a new token at the beat after packed-refs gains a base branch with no loose ref, as a clone or a fetch writes it", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const checkout = gitRepository(join(realpathSync(root), "web"));
+    execFileSync("git", ["pack-refs", "--all"], { cwd: checkout });
+    recordCheckout(database, checkout);
+    const stream = await open(`?${new URLSearchParams({ checkout })}`);
+    const first = await stream.next();
+
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: checkout, encoding: "utf8" }).trim();
+    appendFileSync(join(checkout, ".git", "packed-refs"), `${head} refs/remotes/origin/main\n`);
+    await vi.advanceTimersByTimeAsync(BEAT_MS);
+
+    expect(await movedFrom(stream, first.data)).toBeDefined();
+    await stream.stop();
+  });
+
+  it("sends a new token at the beat after a rule file is added to the checkout's own rules, which its catalog reads", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const checkout = gitRepository(join(realpathSync(root), "web"));
+    mkdirSync(join(checkout, ".rerail", "rules"), { recursive: true });
+    recordCheckout(database, checkout);
+    const stream = await open(`?${new URLSearchParams({ checkout })}`);
+    const first = await stream.next();
+
+    writeFileSync(join(checkout, ".rerail", "rules", "local.json"), "{}\n");
+    await vi.advanceTimersByTimeAsync(BEAT_MS);
+
+    expect(await movedFrom(stream, first.data)).toBeDefined();
     await stream.stop();
   });
 
@@ -252,7 +324,7 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     execFileSync("git", ["switch", "-q", "-c", "feature"], { cwd: checkout });
     await vi.advanceTimersByTimeAsync(BEAT_MS);
 
-    expect((await stream.next()).data).not.toBe(first.data);
+    expect(await movedFrom(stream, first.data)).toBeDefined();
     await stream.stop();
   });
 

@@ -4,8 +4,8 @@
  * here blocks the daemon: every call goes through `runGitAsync`, so a repository's own config cannot run hooks or an
  * fsmonitor either; nothing here writes a ref or the index.
  */
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { runGitAsync, type RunGitOptions } from "../git.js";
 
 /**
@@ -51,6 +51,40 @@ export async function baseBranchAsync(root: string): Promise<{ ref: string; name
   const ref = refs.find(name => commits.has(name));
   if (ref === undefined) return null;
   return { ref, name: ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref.slice("refs/remotes/".length) };
+}
+
+/** A file's text, or empty when it cannot be read. */
+const textOr = (path: string): Promise<string> => readFile(path, "utf8").catch(() => "");
+
+/** The checkout's own Git folder (a linked worktree's `.git` file names it) and the common one; undefined when unreadable. */
+async function gitFolders(root: string): Promise<{ own: string; common: string } | undefined> {
+  const dotGit = join(root, ".git");
+  const folder = await stat(dotGit).then(info => info.isDirectory(), () => undefined);
+  if (folder === undefined) return undefined;
+  // A `.git` file holds `gitdir: <path>`, relative to the checkout or absolute.
+  const named = folder ? dotGit : /^gitdir: (.+)/u.exec(await textOr(dotGit))?.[1]?.trim();
+  if (named === undefined) return undefined;
+  const own = resolve(root, named);
+  return { own, common: resolve(own, (await textOr(join(own, "commondir"))).trim() || ".") };
+}
+
+/**
+ * What {@link currentBranchAsync} and {@link baseBranchAsync} answer from, as Git's files say it, read without blocking
+ * and with no Git process: `HEAD`'s text, `origin/HEAD`'s, whether the ref it names and each of the candidates exist as
+ * loose refs, and `packed-refs`' time and size (a clone, a fetch or `git pack-refs` rewrites it). Git writes these with
+ * nothing Rerail hears, so a caller that keeps this stamp learns when to ask those two again. Empty when the checkout's
+ * Git folder cannot be read.
+ */
+export async function branchFilesStamp(root: string): Promise<string> {
+  const folders = await gitFolders(root);
+  if (folders === undefined) return "";
+  const { own, common } = folders;
+  const originHead = await textOr(join(common, "refs", "remotes", "origin", "HEAD"));
+  const target = /^ref: (refs\/remotes\/\S+)/u.exec(originHead)?.[1];
+  const refs = [...(target === undefined ? [] : [target]), ...BASE_CANDIDATES];
+  const present = await Promise.all(refs.map(ref => stat(join(common, ref)).then(() => ref, () => "")));
+  const packed = await stat(join(common, "packed-refs")).then(info => `${info.mtimeMs}:${info.size}`, () => "");
+  return [await textOr(join(own, "HEAD")), originHead, ...present, packed].join("\0");
 }
 
 const firstLine = (output: string | undefined): string | null => output?.trim().split("\n")[0] || null;

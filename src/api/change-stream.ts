@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import type { CheckoutContext, RuleCatalog } from "../engine/catalog/repository-model.js";
-import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
+import { worktreeRulesStamp } from "../engine/catalog/worktree-pack.js";
+import { branchFilesStamp } from "../engine/merge-assist/branch-git.js";
 import type { ChangeFeed, ChangeNotice } from "./change-feed.js";
 import type { RerailApiStores } from "./operation.js";
 import { checkoutAt } from "./repository-operations.js";
@@ -21,72 +20,49 @@ function recordedCheckout(stores: RerailApiStores, path: string | undefined): Ch
   }
 }
 
-/** The checkout's own Git folder (a worktree's `.git` is a file naming it), or none when it cannot be read. */
-function gitFolderOf(checkout: CheckoutContext): string | undefined {
-  const dotGit = join(checkout.checkoutPath, ".git");
-  const named = statSync(dotGit).isDirectory() ? dotGit : /^gitdir: (.+)/u.exec(readFileSync(dotGit, "utf8"))?.[1]?.trim();
-  return named === undefined ? undefined : resolve(checkout.checkoutPath, named);
-}
-
-/** A file's text, or empty when it cannot be read. */
-function textOf(path: string): string {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return "";
-  }
-}
-
-/** The refs Merge Assist tries for the base branch after `origin/HEAD`'s target (`baseBranchAsync`). */
-const BASE_REFS = ["refs/remotes/origin/main", "refs/remotes/origin/master", "refs/heads/main", "refs/heads/master"];
-
 /**
- * What the branches Merge Assist's status names depend on, as files say it: the checkout's `HEAD` (its branch), and
- * for the base branch `origin/HEAD`'s target, which of the candidate refs exist as files, and the packed refs (a fetch
- * or a pack of refs rewrites them). Git writes them with no commit to the database. Anything unreadable is empty.
+ * What the checkout's own files say that no commit tells: its rules in `.rerail/rules`, as the catalog reads them, and
+ * what its branches depend on, as Merge Assist reads them (`branchFilesStamp`). Read without holding the daemon's thread.
  */
-function branchFiles(checkout: CheckoutContext | undefined): string {
+async function checkoutFiles(stores: RerailApiStores, path: string | undefined): Promise<string> {
+  const checkout = recordedCheckout(stores, path);
   if (checkout === undefined) return "";
-  try {
-    const git = gitFolderOf(checkout);
-    if (git === undefined) return "";
-    const common = resolve(git, textOf(join(git, "commondir")).trim() || ".");
-    const packed = statSync(join(common, "packed-refs"), { throwIfNoEntry: false });
-    const refs = BASE_REFS.map(ref => (existsSync(join(common, ref)) ? ref : ""));
-    return [textOf(join(git, "HEAD")), textOf(join(common, "refs", "remotes", "origin", "HEAD")), ...refs, `${packed?.mtimeMs}:${packed?.size}`].join("\u0000");
-  } catch {
-    return "";
-  }
+  const [rules, branches] = await Promise.all([worktreeRulesStamp(checkout.checkoutPath), branchFilesStamp(checkout.checkoutPath)]);
+  return `${rules}\u0000${branches}`;
+}
+
+/** The token of one stream: `now` says it, `refresh` reads the checkout's files again and says whether they moved. */
+interface StreamToken {
+  now(notice: ChangeNotice | "start"): string;
+  refresh(): Promise<boolean>;
 }
 
 /**
- * What files say for a page scoped to `path`, as one digest: the rule catalog it reads (the installed packs, and the
- * checkout's own rules in `.rerail/rules`) and its branches (`branchFiles`). The installed catalog is read again only
- * at a `files` notice, its folders being watched; the checkout's files at each beat, since a watch inside a person's
- * checkout or its Git folder holds that folder open on Windows, where it can make Git's removal of a worktree or a
- * person's switch of branches fail.
+ * The token a page compares, for one stream scoped to `checkout`: it moves when the database commits (`historyVersion`,
+ * which creates no database), the installed packs' catalog changes (read again only at a `files` notice: their folders
+ * are watched) or the checkout's own files change (`checkoutFiles`, read again by `refresh`, one read at a time, at each
+ * beat). `salt` is the daemon's, so a restarted daemon never repeats a token.
  */
-function filesStamp(stores: RerailApiStores, path: string | undefined): (notice: ChangeNotice | "start") => string {
+function streamToken(stores: RerailApiStores, salt: string, checkout: string | undefined): StreamToken {
   let installed: RuleCatalog | undefined;
-  let stamp = "";
-  return notice => {
-    if (installed === undefined || notice === "files") installed = stores.ruleCatalog();
-    if (notice === "data" || notice === "conflicts") return stamp;
-    const checkout = recordedCheckout(stores, path);
-    const catalog = checkout === undefined ? installed : worktreeRuleCatalog(installed, checkout.checkoutPath);
-    stamp = createHash("sha256").update(catalog.digest).update("\u0000").update(branchFiles(checkout)).digest("hex").slice(0, 32);
-    return stamp;
+  let files = "";
+  let reading: Promise<boolean> | undefined;
+  const read = async (): Promise<boolean> => {
+    const before = files;
+    files = await checkoutFiles(stores, checkout);
+    return files !== before;
   };
-}
-
-/**
- * The token a page compares, for one stream: it moves when the database commits (`historyVersion`, which creates no
- * database) or what files say for the scope changes (`filesStamp`). `salt` is the daemon's, so a restarted daemon
- * never repeats a token.
- */
-function streamToken(stores: RerailApiStores, salt: string, checkout: string | undefined): (notice: ChangeNotice | "start") => string {
-  const files = filesStamp(stores, checkout);
-  return notice => `${salt}.${stores.historyVersion() ?? "none"}.${files(notice)}`;
+  return {
+    now(notice) {
+      if (installed === undefined || notice === "files") installed = stores.ruleCatalog();
+      const digest = createHash("sha256").update(installed.digest).update("\u0000").update(files).digest("hex").slice(0, 32);
+      return `${salt}.${stores.historyVersion() ?? "none"}.${digest}`;
+    },
+    refresh() {
+      reading ??= read().finally(() => { reading = undefined; });
+      return reading;
+    },
+  };
 }
 
 /** The message a notice sends: the feed tells `data` only once a commit shows, and a beat says the daemon is alive. */
@@ -104,26 +80,35 @@ function closeQuietly(controller: ReadableStreamDefaultController<Uint8Array>): 
 }
 
 /**
- * The held response of `GET /api/changes`, as server-sent events: the token at once, then the token again at each
- * commit the change feed tells and at each beat, and a `conflicts` message on each Merge Assist conflict event. It ends only
+ * The held response of `GET /api/changes`, as server-sent events: the token once the checkout's files are read, then
+ * the token again at each commit the change feed tells and at each beat, a `conflicts` message on each Merge Assist
+ * conflict event, and the token once more when a beat's read of the checkout's files finds them moved. It ends only
  * when the client leaves (the body is cancelled, and the stream stops listening) or the daemon closes its connections
  * at stop, which the page reads as the daemon gone. A token it cannot read (the database closing) ends it too.
  */
-function changeStream(feed: ChangeFeed, token: (notice: ChangeNotice | "start") => string): Response {
+function changeStream(feed: ChangeFeed, token: StreamToken): Response {
   let stop = (): void => {};
+  let cancelled = false;
   const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(encoder.encode(`data: ${token("start")}\n\n`));
-      stop = feed.listen(notice => {
+    async start(controller) {
+      const send = (text: () => string): void => {
         try {
-          controller.enqueue(encoder.encode(message(notice, token(notice))));
+          controller.enqueue(encoder.encode(text()));
         } catch {
           stop();
           closeQuietly(controller);
         }
+      };
+      await token.refresh();
+      if (cancelled) return;
+      send(() => `data: ${token.now("start")}\n\n`);
+      stop = feed.listen(notice => {
+        send(() => message(notice, token.now(notice)));
+        if (notice === "beat") void token.refresh().then(moved => { if (moved) send(() => `data: ${token.now("beat")}\n\n`); });
       });
     },
     cancel() {
+      cancelled = true;
       stop();
     },
   });
