@@ -2543,3 +2543,17 @@ and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q82, 0
   new build still reads the old build's keeper, though `memo_whole` is now under `plan_digest`. ffbb65b15 (a stopped
   run marks itself under way of its program) came after the test's commit 5627413cd and changed those marks.
 - **Done when**: a new build's first edit counts every file in, and the test passes.
+
+- **Update** (2026-11-18, porting 0276 §3): the warm run now fails on new manifests (9 and 8 sources), a SQLite
+  commit and 3 recomputations, not on the observer's store. It fails the same at `874e176cb` (the merge before
+  0276's steps), `7d1444a93` and `d09fd417f`, each tested alone on a farm host, so 0276's ports did not cause it.
+
+### Q103. Two rerail-logic corpus tests fail apart from 0276 §3
+
+- **Found** (2026-11-18, running the link's port at 60b53342b):
+  `cache_architecture::every_stored_table_is_a_relations_the_stores_own_or_a_cache_not_yet_moved` names
+  `content_store/schema.rs: guest_keys` as a stored table outside decision 0103; `corpus::tests::
+  git_seeing_no_file_under_the_root_is_kept` panics where its own `git commit` fails on the farm host.
+  Neither reads the code 0276 §3 changed.
+- **Done when**: `guest_keys` is a relation the stores own or a listed cache not yet moved (its check passes), and
+  the git test makes its commit on any host (or says why it cannot), and both pass.
