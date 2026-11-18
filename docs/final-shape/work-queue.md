@@ -2333,6 +2333,14 @@ submitted" now hold device memory at once.
 - **Measured** (2026-11-18, the full shape cold on Metal, t41 beside t54 at load 86-91): t41 0 refusals, 7 chunks,
   548.6 G instructions, 33.1 s wall; t54 111 refusals (28 in another run), 10 chunks, 596.9 G instructions
   (+8.8%), 47.1 s wall. Each refused stratum runs on the CPU. This is the Metal side's backslide since t41.
+- **Cause** (t54's Metal profile, profm41-side/t54.txt): the refused are binding tables of 0.5-1.4 M rows (8 slots)
+  past the budget, while 430-445 MB of the 512 MB is leased: the chunks' row blocks (a run's 23, 1023 MB written of
+  1472 MB) take slabs inside it. Since t41 (9a9b270ce) the hub put the device's relations in blocks (0325 steps 4-6),
+  made every block through one policy that gives a `Device::May` block a slab while half the budget is spare (0342,
+  9e08ed961), and kept each job's device work apart (0386). The budget is the user's (half the memory limit, row
+  blocks inside it); the bench lifts `RERAIL_RUN_MB`, the chunks' line, not `RERAIL_MEMORY_MB`, which sets it.
+  Options for the user: the Metal allowance follows the lifted line; `May` blocks leave the device's half alone
+  when a wave is under way; or a refused stratum waits for the wave's leases to come back before it runs on the CPU.
 - **Record**: —
 
 ### Q181. The requests narrowed on the version differ from the tree's on the bench's 317 rules (debug builds)
