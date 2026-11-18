@@ -966,6 +966,12 @@
       "group": "Bandit"
     },
     {
+      "id": "bandit-b105-hardcoded-password-string",
+      "document": "rules/bandit-b105-hardcoded-password-string.json",
+      "title": "Bandit B105: Hardcoded password string",
+      "group": "Bandit"
+    },
+    {
       "id": "ruff-air001-airflow-variable-name-task-id-mismatch",
       "document": "rules/ruff-air001-airflow-variable-name-task-id-mismatch.json",
       "title": "Ruff AIR001: Airflow variable name task id mismatch",
