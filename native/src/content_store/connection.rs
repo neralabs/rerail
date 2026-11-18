@@ -586,6 +586,12 @@ impl ContentStore {
         self.connection.line.stalled()
     }
 
+    /// Returns once every write whose `LINE_WAIT_HOOK` ran waits for its turn (`WriterLine::sync`).
+    #[cfg(test)]
+    pub(crate) fn sync_writer_line(&self) {
+        self.connection.line.sync();
+    }
+
     /// Returns once `count` writes wait in this store's writer line.
     #[cfg(test)]
     pub(crate) fn wait_for_line_waiters(&self, count: usize) {

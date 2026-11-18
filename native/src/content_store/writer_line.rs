@@ -164,10 +164,12 @@ impl WriterLine {
         if line.is_turn(ticket) {
             return (Ok(self.hold(&mut line, ticket)), None);
         }
+        // The hook runs with the line held, which the writer gives up only inside its wait, so a test
+        // that takes the line after the hook acts while the writer waits (`sync`).
         #[cfg(test)]
         {
             self.turn.notify_all();
-            MutexGuard::unlocked(&mut line, run_wait_hook);
+            run_wait_hook();
         }
         let started = Instant::now();
         let ended = self.wait_for_turn(&mut line, ticket, started + wait.bound, wait.cancelled);
@@ -234,6 +236,13 @@ impl WriterLine {
     /// Whether a holder outlasted a waiter's whole deadline and holds the line still.
     pub(super) fn stalled(&self) -> bool {
         self.line.lock().stalled.is_some()
+    }
+
+    /// Returns once every writer whose `LINE_WAIT_HOOK` ran is inside its wait: each holds the line
+    /// from its hook until its wait gives the line up.
+    #[cfg(test)]
+    pub(super) fn sync(&self) {
+        drop(self.line.lock());
     }
 
     /// Returns once `count` writers wait in the line, so a test acts while they wait.

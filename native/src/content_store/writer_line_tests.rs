@@ -276,8 +276,9 @@ fn a_write_with_part_of_the_deadline_left_does_not_mark_the_holder_stalled() {
 }
 
 /// A wait in the line ends when its owner cancels it (`end_waits`), with the holder still holding:
-/// the write fails as interrupted, not as busy, and marks no stall. A cancel that did not end the
-/// wait would leave it to its 10 s deadline, which ends as busy and marks the holder stalled.
+/// the write fails as interrupted, not as busy, and marks no stall. The cancel lands while the
+/// writer is inside its wait, so it must wake the writer: a cancel that did not would leave the
+/// wait to its 10 s deadline, which ends as busy and marks the holder stalled.
 #[test]
 fn a_wait_in_the_line_ends_when_its_owner_cancels_it() {
     let (_path, store) = store("cancelled");
@@ -296,6 +297,8 @@ fn a_wait_in_the_line_ends_when_its_owner_cancels_it() {
         })
     };
     waits.recv().unwrap();
+    // The waiter is inside its wait, so only the cancel's wake can end it before its deadline.
+    store.sync_writer_line();
     end_waits(&cancel);
     let written = waiter.join().unwrap();
     assert!(
