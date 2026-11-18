@@ -1,3 +1,4 @@
+import * as childProcess from "node:child_process";
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { connect, createServer, type AddressInfo, type Socket } from "node:net";
@@ -28,6 +29,7 @@ import {
   dashboardAccessLink,
   daemonUsesPackageRoot,
   findRunningDaemon,
+  HOOK_DAEMON_WAIT_MS,
   isUsableEngineSocketPath,
   keepAutostartClaim,
   launchDetached,
@@ -46,7 +48,7 @@ import {
   stopFoundDaemon,
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
-import { LOCKS_DIR } from "../../src/engine/index.js";
+import { LOCKS_DIR, processStartedAt } from "../../src/engine/index.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
 import { engineCapabilityProof } from "../../src/runtime/engine-proof.js";
 import { DEAD_PID, olderDaemon, until } from "../support/processes/daemon-home.js";
@@ -54,6 +56,9 @@ import { type ProbeLaunch, type StartedProbe, runConsoleProbe } from "../support
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 import { removeFolder, runningIn } from "../support/platform/remove-folder.js";
+
+// Spies that call through, so a test can stand a program in for Windows PowerShell.
+vi.mock("node:child_process", { spy: true });
 
 const originalRerailHome = process.env.RERAIL_HOME;
 
@@ -1178,6 +1183,30 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(await stopFoundDaemon(home, found, machine)).toBe("stopped");
     expect(signals).toEqual([]);
   });
+
+  // A PowerShell that never answers stands in for the start's read on Windows, and the proof is silent at once, so the
+  // read has every millisecond of each lookup's limit.
+  it("answers a hook within its wait for a busy daemon, the record kept, while the start's read never answers", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
+    const bounds: unknown[] = [];
+    const neverAnswers = ((_program: string, _args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+      bounds.push(options.timeout);
+      return runSync(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], options);
+    }) as unknown as typeof childProcess.spawnSync;
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce(neverAnswers).mockImplementationOnce(neverAnswers);
+    await writeFile(stateFile, JSON.stringify(state("win32")));
+    const machine: DaemonMachine = { ...machineWith("win32", signals, () => undefined), processStartedAt: (pid, timeoutMs) => processStartedAt(pid, timeoutMs, "win32") };
+    const arrived = Date.now();
+    expect(await runningDaemonEngineEndpoint(arrived + HOOK_DAEMON_WAIT_MS, machine)).toEqual({ status: "unresponsive", state: state("win32") });
+    expect(Date.now() - arrived).toBeLessThan(HOOK_DAEMON_WAIT_MS + 1_000);
+    // The first lookup's 2 s, then what is left of the hook's wait.
+    expect(bounds).toHaveLength(2);
+    expect(Number(bounds[0])).toBeLessThanOrEqual(2_000);
+    expect(existsSync(stateFile)).toBe(true);
+    expect(signals).toEqual([]);
+  }, 30_000);
 
   // The stop waits its 10 s for the pid to end, as for any daemon that does not end at its SIGTERM.
   it("sends no SIGKILL to a pid the daemon it stopped let go of, whoever has it now", { timeout: 20_000 }, async () => {

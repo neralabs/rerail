@@ -542,8 +542,11 @@ export interface DaemonMachine {
    * lock cannot be asked.
    */
   homeDaemonLockHeld(home: string): boolean | undefined;
-  /** When the process holding `pid` started, in epoch ms, or undefined where it cannot be read (`processStartedAt`). */
-  processStartedAt(pid: number): number | undefined;
+  /**
+   * When the process holding `pid` started, in epoch ms, or undefined where it cannot be read within `timeoutMs`
+   * (`processStartedAt`).
+   */
+  processStartedAt(pid: number, timeoutMs: number): number | undefined;
   /** The Node binary Rerail's own processes run under ({@link nodeExecutable}). */
   nodeExecutable(): string;
   /** Windows: starts a process through the native module's spawn ({@link launchDetached} says why). */
@@ -571,7 +574,7 @@ const THIS_MACHINE: DaemonMachine = {
   forgetMainInstanceHolder: pid => forgetMainInstanceHolder(pid),
   mainInstanceLockHeld: directory => mainInstanceLockHeld(directory),
   homeDaemonLockHeld: home => homeDaemonLockHeld(home),
-  processStartedAt: pid => processStartedAt(pid),
+  processStartedAt: (pid, timeoutMs) => processStartedAt(pid, timeoutMs),
   nodeExecutable: () => nodeExecutable(),
   spawnDetached: nativeSpawnDetached,
   spawn: (command, args, options) => spawn(command, args, options),
@@ -687,12 +690,12 @@ const START_CLOCK_SLACK_MS = 10_000;
 
 /**
  * {@link RecordedProcess} for the process daemon.json in `home` names (`state`). The home's lock answers first
- * ({@link lockVerdict}); only where it cannot is the start time read ({@link startVerdict}), which costs a process on
- * Windows.
+ * ({@link lockVerdict}); only where it cannot is the start time read by `deadline` (epoch ms, {@link startVerdict}),
+ * since the read costs a process on Windows.
  */
-function recordedProcess(home: string, state: DaemonState, machine: DaemonMachine): RecordedProcess {
+function recordedProcess(home: string, state: DaemonState, machine: DaemonMachine, deadline: number): RecordedProcess {
   const byLock = lockVerdict(home, state.pid, machine);
-  return byLock === "unknown" ? startVerdict(state, machine) : byLock;
+  return byLock === "unknown" ? startVerdict(state, machine, deadline) : byLock;
 }
 
 /**
@@ -705,9 +708,9 @@ function lockVerdict(home: string, pid: number, machine: DaemonMachine): Recorde
   return holder === pid ? "ours" : "not-ours";
 }
 
-/** {@link RecordedProcess} from when the process `state.pid` started, against the record's `startedAt`. */
-function startVerdict(state: DaemonState, machine: DaemonMachine): RecordedProcess {
-  const started = machine.processStartedAt(state.pid);
+/** {@link RecordedProcess} from when the process `state.pid` started, read by `deadline`, against the record's `startedAt`. */
+function startVerdict(state: DaemonState, machine: DaemonMachine, deadline: number): RecordedProcess {
+  const started = machine.processStartedAt(state.pid, deadline - Date.now());
   if (started === undefined) return "unknown";
   if (started <= state.startedAt) return "ours";
   return started > state.startedAt + START_CLOCK_SLACK_MS ? "not-ours" : "unknown";
@@ -716,8 +719,9 @@ function startVerdict(state: DaemonState, machine: DaemonMachine): RecordedProce
 /**
  * What the state file in `home` says, checked against the machine. `probeTimeoutMs` bounds the engine's proof and the
  * health probe together; a hook waiting out a busy daemon passes more (`patientLookup`). A live pid whose daemon did not
- * answer as itself is kept unless it is proven not to be the daemon that wrote the record ({@link recordedProcess}):
- * a busy daemon is kept, and a process that took a dead daemon's pid is not.
+ * answer as itself is kept unless it is proven not to be the daemon that wrote the record ({@link recordedProcess}),
+ * within what is left of that limit: a busy daemon is kept, and a process that took a dead daemon's pid is not. A start
+ * time not read by then proves nothing, and the record is kept.
  */
 export async function lookupDaemon(
   home: string,
@@ -727,8 +731,9 @@ export async function lookupDaemon(
   const stateFile = join(home, DAEMON_STATE_FILE);
   const state = await readDaemonState(stateFile, machine.platform);
   if (state === undefined) return { status: "absent" };
+  const deadline = Date.now() + probeTimeoutMs;
   const found = await checkedLookup(stateFile, state, machine, probeTimeoutMs);
-  if (found.status === "running" || found.status === "absent" || recordedProcess(home, state, machine) !== "not-ours") return found;
+  if (found.status === "running" || found.status === "absent" || recordedProcess(home, state, machine, deadline) !== "not-ours") return found;
   await rm(stateFile, { force: true });
   return { status: "absent", notDaemon: state.pid };
 }
@@ -1500,8 +1505,9 @@ function signalCheck(home: string, found: FoundDaemon, machine: DaemonMachine): 
     const holdsHome = (): boolean => lockVerdict(home, pid, machine) === "ours";
     return holdsHome() ? holdsHome : () => processAlive(pid, machine.kill);
   }
-  const verdict = recordedProcess(home, found.state, machine);
-  return verdict === "ours" ? () => recordedProcess(home, found.state, machine) === "ours" : verdict;
+  // Each read of a start time is bounded by the stop's own wait.
+  const verdict = recordedProcess(home, found.state, machine, Date.now() + STOP_TIMEOUT_MS);
+  return verdict === "ours" ? () => recordedProcess(home, found.state, machine, Date.now() + STOP_TIMEOUT_MS) === "ours" : verdict;
 }
 
 /**
