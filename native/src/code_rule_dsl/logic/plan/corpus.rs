@@ -2874,10 +2874,6 @@ const MIN_CHUNK_NODES: usize = 8_192;
 const CHUNK_FLOOR_MB: f64 = 64.0;
 /// A chunk's growth that sizes the next (Q74): a smaller one is within the pages freed before it, which it reused.
 const CHUNK_CREDIBLE_MB: usize = 16;
-/// What a node is taken to add before a chunk's growth is credible (Q183): the most measured on the bench's 300
-/// files (7–22 KB a node, 47785e475). It counts the probe-sized chunks at once, never sizes one: sized by it, the
-/// full shape made 26 chunks of 18,000 nodes where 6–9 were made, 20 s more CPU and no less wall (t49).
-const PRIOR_BYTES_A_NODE: f64 = 22_528.0;
 
 #[allow(clippy::too_many_arguments)]
 pub fn run_with_options(
@@ -6305,15 +6301,7 @@ fn run_observed(
     // How many may be in flight now (Q74): one until a chunk's measured growth sizes the rest, then as many as share
     // the run's headroom at `CHUNK_FLOOR_MB` or more each (the chunk-size decision sets it). The chunks in flight
     // together stay within it: 8 chunks each sized to the whole headroom took a cold run at 300 files to 2.3 GB.
-    // Until one is, as many probe-sized chunks as the headroom holds at `PRIOR_BYTES_A_NODE` (Q183): with freed pages
-    // reused, 5 of t48's 7 chunks grew under 16 MB, and the run went one chunk at a time.
-    let probe_at_once = |start_mb: usize| {
-        let run_mb = std::env::var("RERAIL_RUN_MB").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(RUN_MB);
-        let headroom = (run_mb - start_mb as f64).max(0.0) * 0.75;
-        let probe_mb = chunk_nodes.min(PROBE_NODES) as f64 * PRIOR_BYTES_A_NODE / 1048576.0;
-        ((headroom / probe_mb).floor() as usize).clamp(1, chunks_at_once)
-    };
-    let at_once_allowed = std::sync::atomic::AtomicUsize::new(probe_at_once(crate::code_rule_dsl::prof::footprint_mb()));
+    let at_once_allowed = std::sync::atomic::AtomicUsize::new(1);
     // The most a node was measured to add this run: a chunk whose growth the pages freed before it hid (22 bytes a
     // node, beside 9 KB measured next) sizes no chunk.
     let per_node_most = std::cell::Cell::new(0.0f64);
@@ -7002,7 +6990,7 @@ fn run_observed(
             // Three quarters of what is left of the run's budget, shared by the chunks in flight together.
             let headroom = (env("RERAIL_RUN_MB", RUN_MB) - start_mb as f64).max(0.0) * 0.75;
             let chunk = env("RERAIL_CHUNK_MB", CHUNK_MB);
-            let allowed = if per_node > 0.0 { ((headroom / env("RERAIL_CHUNK_FLOOR_MB", CHUNK_FLOOR_MB)).floor() as usize).clamp(1, chunks_at_once) } else { probe_at_once(start_mb) };
+            let allowed = if per_node > 0.0 { ((headroom / env("RERAIL_CHUNK_FLOOR_MB", CHUNK_FLOOR_MB)).floor() as usize).clamp(1, chunks_at_once) } else { 1 };
             let budget = chunk.min(headroom / allowed as f64).round();
             let next = if per_node > 0.0 { ((budget * 1048576.0 / per_node) as usize).clamp(MIN_CHUNK_NODES.min(chunk_nodes), chunk_nodes) } else { chunk_nodes.min(PROBE_NODES) };
             chunk_target.store(next, std::sync::atomic::Ordering::Relaxed);

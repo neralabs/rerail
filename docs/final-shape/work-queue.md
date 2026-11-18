@@ -2372,9 +2372,11 @@ with the default line takes the slow pass.
   CPU, 20.1 s wall (load 56) against 65–69 s, 17–18 s (load 30); Metal 62.6 s, 17.8 s. Each chunk's fixed work, paid
   three times as often, cost more than running them at once saved. Open: t48's chunks that grew under 16 MB keep
   the run one chunk at a time (17–18 s of wall against t41's 12.8 at the same CPU); the count, not the size, is
-  what to lift before a credible measurement. Then built: the probe-sized chunks counted at once
-  by the prior (as many as the headroom holds at 22 KB a node; 1 at the default line, up to 8 lifted), sized as
-  before; not yet measured.
+  what to lift before a credible measurement. Then the count alone (89f4abfec: probe-sized chunks, as many
+  at once as the headroom holds at 22 KB a node), taken out again: t50 made 7 chunks, 86.4 s CPU, 17.1 s wall at
+  load 9, against t48's 65–69 s, 17–18 s at load 30. Neither the chunks' size nor their count before a credible
+  measurement is what costs t41's wall: what else the hub changed in the cold run's wall (t48's profile: the wait
+  phase 10.2 s wall, others 49.9 s CPU at load 50–69) is the next to read, with a profile at a load under 10.
 
 ### Q184. A warm run waits on the journal's cookies far longer than a `stat` of what it trusts would take
 
@@ -2391,7 +2393,8 @@ gigabytes into its tree. Waiting for the journal is planning, and it cost 100 to
   on any, so roots wait once, not in turn.
 - **Done when**: a warm run's wall is within a few ms of `RERAIL_JOURNAL=off`'s on a busy host, and the journal
   still saves the `stat`s where they cost more than its wait (a 9,010-file tree).
-- **Record**: built, not yet measured on the bench. `journal::since_within` waits at most the caller's bound; a
+- **Record**: fixed (89f4abfec): t50's full shape warm 0.13 and 0.12 s wall (0.11 s CPU), against t48's 0.54 and t41's 0.17.
+  Built: `journal::since_within` waits at most the caller's bound; a
   slower journal answers `Lost` with the latest id the stream was told (every change before it has come, in id
   order) and keeps the stream. The observer bounds each root by its kept answers at `STAT_NS` (4 µs), at least
   `JOURNAL_WAIT_LEAST_NS` (2 ms). Tests: rerail-store's journal and observer tests 27/27 (the bound folded into the
@@ -2426,6 +2429,21 @@ kept). Find which run's epoch the second run's questions carried when it asked f
 reuses another's sync.
 
 - **Done when**: the test passes 20 of 20 on a host at load, or names why a run cannot answer.
+- **Record**: —
+
+### Q187. The full shape's cold run on Metal hangs, now and then: the main thread waits on the builder's bell, the pool idle
+
+Seen 2026-11-18 on the M3 (t48 once, t50 twice, of 13 cold Metal runs of the full shape; `RERAIL_RUN_MB` lifted):
+the run is killed by the 600 s cap, or past 150 s by `hang50.sh`. Its stacks (`sample`, 5 s): every `rerail-cpu`
+thread idle in `wait_until_cold`, the GPU and ANE workers idle in their queues' `recv`, and the main thread in a
+timed condvar wait inside `run_observed`'s chunk loop: `Builder::main_wait` (`Bell::wait_as`), for either
+`builder.next` or `file_front`. Nothing will ring it: a chunk the builder holds back, or a slot no job fills.
+The run's log before it: only device-budget refusals (Q180). Not reproduced with an empty kernel store (2 of 2
+fine) or in 8 runs after; the CPU path never hung (11 runs).
+
+- `hang50.sh` now signals the run (`SIGUSR1`, `RERAIL_DUMP`) before killing it: the dump's open spans and
+  `main_doing` say which wait, and the builder's `Cut` which chunk it holds.
+- **Done when**: the wait is named, its missing ring or slot found, and 20 cold Metal runs end.
 - **Record**: —
 
 ## Questions for the user
