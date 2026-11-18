@@ -1562,6 +1562,9 @@ span's bytes), with the spans' eager rows as `rr_text_span`. It ran the core cas
   it is cheaper than eager there and on the data-layer pack; else record why `text` stays eager in 0353.
 - **Done when**: `text` is answered on request at or under eager's cost, or 0353 records with the measurement that
   it stays eager.
+- **Deferred** (user, 2026-11-17): `text` stays eager within its narrowing for now, and this stays open; steps 3 and
+  4 go first. The data then: on hogql the narrowed rows visit 0.84 M nodes (`node rows` 0.28–0.30 s a run, after
+  the literal fix), and rules look `text` up for 663 K rows.
 
 ### Q122. An edited include keeps its old hash in `read_file`'s file list
 

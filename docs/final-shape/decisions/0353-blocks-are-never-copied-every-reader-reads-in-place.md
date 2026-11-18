@@ -253,7 +253,8 @@ rules read every node's `text` (no kind narrows them, `text_nodes` is none), so 
 `text` on request is open (work queue Q121). A first build (a node's whole text answered by `@rr_text`, the spans'
 rows eager as `rr_text_span`) broke the widened copies' termination, the converter's printing and a demand test, and
 0174 §4 measured that a request a node costs more than eager `text` within the bound. It is kept as a patch until it
-is measured against eager on hogql.
+is measured against eager on hogql. Deferred (2026-11-17): `text` stays eager within its narrowing until steps 3 and 4 are done; after the literal
+fix below its rows visit 0.84 M of hogql's 2.27 M nodes, and rules look it up for 663 K rows.
 
 Found on the way and fixed: the image's merge (`preparation::merge`) merged two requests of one body
 (`rr_str_req`, `rr_node_text_req`), which the tree's keeps by name (`simplify::request`, the debug check "the
