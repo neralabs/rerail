@@ -11395,12 +11395,12 @@ pub mod tests {
     #[test]
     fn branded_constants_have_their_postings_counted() {
         use super::*;
-        let p = front::prune(crate::code_rule_dsl::logic::rr::parse(".decl left_name(l: node)\n.output left_name\nleft_name(l) :- field(l, \"left\", t), kind(t, \"identifier\").\n").unwrap());
+        let p = super::preparation::pruned(crate::code_rule_dsl::logic::rr::parse_version(".decl left_name(l: node)\n.output left_name\nleft_name(l) :- field(l, \"left\", t), kind(t, \"identifier\").\n").unwrap()).unwrap();
         // Lowered for its dialect, as the run's prepared program is (`Own::constants_of(&prepared_placed.v)`): the
         // names are branded by lowering (0281 step 6b), not by the parse.
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let mut atoms: HashMap<String, u32> = HashMap::new();
-        let lowered = crate::code_rule_dsl::logic::plan::lower::lower(&p, python, &mut |s| {
+        let lowered = crate::code_rule_dsl::logic::plan::lower::lowered(p, python, &mut |s| {
             Ok(s.iter().map(|s| { let n = atoms.len() as u32 + 1; *atoms.entry((*s).to_owned()).or_insert(n) }).collect())
         })
         .unwrap();

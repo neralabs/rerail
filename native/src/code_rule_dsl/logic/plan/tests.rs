@@ -1,6 +1,6 @@
 use super::*;
 use crate::code_rule_dsl::logic::front::prune;
-use crate::code_rule_dsl::logic::rr::parse;
+use crate::code_rule_dsl::logic::rr::{parse, parse_version};
 use crate::code_rule_dsl::logic::magic::{Options, magic_adorn, magic_sets};
 use crate::content_store::ContentStore;
 
@@ -84,13 +84,13 @@ INSERT INTO node_order VALUES(100,0),(101,1),(102,262144),(103,262145),(104,5242
 
 #[test]
 fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters() {
-    let p=parse(".decl event(k:number,id:number,g:number,v:number)\nevent(9,0,1,7).\nevent(9,1,1,7).\nevent(9,2,1,3).\nevent(8,3,1,90).\nevent(9,4,2,-2).\nevent(9,5,4,9223372036854775807).\nevent(9,6,4,1).\nevent(9,7,4,-1).\n.decl owner(g:number,v:number)\nowner(1,99).\nowner(2,99).\nowner(3,99).\nowner(4,99).\n.decl result(g:number,v:number,n:number,s:number,lo:number,hi:number)\nresult(g,v,n,s,lo,hi) :- owner(g,v), n=count : {event(9,_,g,_)}, s=sum v : {event(9,_,g,v)}, lo=min x : {event(9,_,g,x)}, hi=max y : {event(9,_,g,y)}, dead=sum z : {event(_,_,_,z)}, unused=dead.\n.decl repeated(g:number,s:number)\nrepeated(g,s) :- owner(g,_), s=sum x : {event(x,_,g,x)}.\n.output result,repeated\n").unwrap();
+    let p = parse_version(".decl event(k:number,id:number,g:number,v:number)\nevent(9,0,1,7).\nevent(9,1,1,7).\nevent(9,2,1,3).\nevent(8,3,1,90).\nevent(9,4,2,-2).\nevent(9,5,4,9223372036854775807).\nevent(9,6,4,1).\nevent(9,7,4,-1).\n.decl owner(g:number,v:number)\nowner(1,99).\nowner(2,99).\nowner(3,99).\nowner(4,99).\n.decl result(g:number,v:number,n:number,s:number,lo:number,hi:number)\nresult(g,v,n,s,lo,hi) :- owner(g,v), n=count : {event(9,_,g,_)}, s=sum v : {event(9,_,g,v)}, lo=min x : {event(9,_,g,x)}, hi=max y : {event(9,_,g,y)}, dead=sum z : {event(_,_,_,z)}, unused=dead.\n.decl repeated(g:number,s:number)\nrepeated(g,s) :- owner(g,_), s=sum x : {event(x,_,g,x)}.\n.output result,repeated\n").unwrap();
     let mut outputs=Vec::new();
     for modes in ["","program"] {
         let path=crate::code_rule_dsl::fixtures::temp();
         let store=ContentStore::open(&path).unwrap();
         let python=crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-        let lowered=lower::lower(&p,python,&mut |s|store.intern_atoms(s).map_err(|e|Error::Plan(e.to_string()))).unwrap();
+        let lowered=lower::lowered(p.clone(),python,&mut |s|store.intern_atoms(s).map_err(|e|Error::Plan(e.to_string()))).unwrap();
         let db=Connection::open(&path).unwrap();
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();
@@ -108,12 +108,12 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
 /// head, so neither head loses the rows the first wave derives.
 #[test]
 fn rules_of_one_body_and_two_heads_both_run_their_whole_plan() {
-    let p=parse(".decl seed(x:number)\nseed(1).\n.decl e(x:number,y:number)\ne(1,2).\ne(2,3).\ne(3,4).\n.decl a(x:number)\n.decl b(x:number)\na(x) :- seed(x).\na(y) :- a(x), e(x,y).\nb(y) :- a(x), e(x,y).\na(x) :- b(x).\n.output a,b\n").unwrap();
+    let p = parse_version(".decl seed(x:number)\nseed(1).\n.decl e(x:number,y:number)\ne(1,2).\ne(2,3).\ne(3,4).\n.decl a(x:number)\n.decl b(x:number)\na(x) :- seed(x).\na(y) :- a(x), e(x,y).\nb(y) :- a(x), e(x,y).\na(x) :- b(x).\n.output a,b\n").unwrap();
     for modes in ["","program"] {
         let path=crate::code_rule_dsl::fixtures::temp();
         let store=ContentStore::open(&path).unwrap();
         let python=crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-        let lowered=lower::lower(&p,python,&mut |s|store.intern_atoms(s).map_err(|e|Error::Plan(e.to_string()))).unwrap();
+        let lowered=lower::lowered(p.clone(),python,&mut |s|store.intern_atoms(s).map_err(|e|Error::Plan(e.to_string()))).unwrap();
         let db=Connection::open(&path).unwrap();
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();
@@ -139,13 +139,13 @@ fn t_numbering(test: &str) -> bool {
 /// SQLite, a wait on SQL tables between waves that are otherwise in memory.
 #[test]
 fn a_head_that_qualifies_by_a_constant_scope_runs_natively() {
-    let p = parse(".decl p(e: number, x: symbol)\np(1, \"a\").\np(2, \"b\").\n.decl q(e: number, s: symbol)\nq(e, @dot(\"m\", x)) :- p(e, x).\n.output q\n").unwrap();
+    let p = parse_version(".decl p(e: number, x: symbol)\np(1, \"a\").\np(2, \"b\").\n.decl q(e: number, s: symbol)\nq(e, @dot(\"m\", x)) :- p(e, x).\n.output q\n").unwrap();
     let mut outputs = Vec::new();
     for modes in ["", "program"] {
         let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
         let db = Connection::open(&path).unwrap();
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();
@@ -174,13 +174,13 @@ fn closures_of_one_level_launch_in_one_wave() {
         src += &format!(".decl r{k}(a: number, b: number)\nr{k}(a, b) :- e{k}(a, b).\nr{k}(a, c) :- r{k}(a, b), e{k}(b, c).\n");
     }
     src += ".decl o(k: number, a: number, b: number)\no(1, a, b) :- r1(a, b).\no(2, a, b) :- r2(a, b).\no(3, a, b) :- r3(a, b).\n.output o\n";
-    let p = parse(&src).unwrap();
+    let p = parse_version(&src).unwrap();
     let mut outputs = Vec::new();
     for modes in ["", "program"] {
         let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
         let db = Connection::open(&path).unwrap();
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();
@@ -221,13 +221,13 @@ fn closures_of_a_level_wider_than_a_component_launch_in_one_wave() {
         src += &format!("o({k}, a, b) :- r{k}(a, b).\n");
     }
     src += ".output o\n";
-    let p = parse(&src).unwrap();
+    let p = parse_version(&src).unwrap();
     let mut outputs = Vec::new();
     for modes in ["", "program"] {
         let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
         let db = Connection::open(&path).unwrap();
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();
@@ -259,14 +259,14 @@ fn a_probe_is_planned_when_its_delta_first_has_rows() {
                r(a, b) :- e(a, b).\nr(a, c) :- r(a, b), e(b, c).\nr(a, c) :- s(a, b), e(b, c).\nr(a, b) :- t(b, a).\n\
                s(a, b) :- r(a, b), g(a).\nt(a, b) :- r(a, b), h(b).\n\
                .decl o(k: number, a: number, b: number)\no(1, a, b) :- r(a, b).\no(2, a, b) :- t(a, b).\n.output o\n";
-    let p = parse(src).unwrap();
+    let p = parse_version(src).unwrap();
     let mut outputs = Vec::new();
     for modes in ["", "program"] {
         let _plans = KeepPlans::start(None);
         let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
         let db = Connection::open(&path).unwrap();
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();

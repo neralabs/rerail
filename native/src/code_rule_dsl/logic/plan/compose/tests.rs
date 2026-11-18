@@ -107,9 +107,9 @@ fn composed_queries_read_adopted_inputs_and_replace_their_versions() {
     let db = Connection::open(&path).unwrap();
     native::register(&db).unwrap();
     native::register_symbols(&db).unwrap();
-    let p=super::super::super::rr::parse(".decl supplied(x:number)\n.input supplied\n.decl result(x:number)\nresult(x) :- supplied(x).\n.output result\n").unwrap();
-    let lowered = lower::lower(
-        &p,
+    let p=super::super::super::rr::parse_version(".decl supplied(x:number)\n.input supplied\n.decl result(x:number)\nresult(x) :- supplied(x).\n.output result\n").unwrap();
+    let lowered = lower::lowered(
+        p,
         crate::code_rule_dsl::language::dialect_by_label("python").unwrap(),
         &mut |s| {
             store

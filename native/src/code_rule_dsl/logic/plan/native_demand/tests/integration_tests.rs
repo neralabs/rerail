@@ -18,7 +18,7 @@
 
     #[test]
     fn retained_semantic_results_support_sql_outputs_and_isolate_targets_and_runs() {
-        let p = rr::parse(
+        let p = rr::parse_version(
             r#"
 #include "core.rr"
 .decl py_call_site(d:number,report:node,call:node,ref:node)
@@ -46,8 +46,8 @@ posts(n,q) :- python_qualified(n,q,wanted,post_target).
         native::register(&db).unwrap();
         native::register_symbols(&db).unwrap();
         let modules = Modules::default();
-        let lowered = lower::lower(
-            &p,
+        let lowered = lower::lowered(
+            p.clone(),
             crate::code_rule_dsl::language::dialect_by_label("python").unwrap(),
             &mut |s| {
                 store

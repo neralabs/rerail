@@ -326,7 +326,7 @@ fn pyflakes_outer_binding_existence_keeps_load_and_nearest_scope_demands() {
 #[test]
 fn nested_zero_counts_preserve_outer_groups_in_sql_and_native_execution() {
     use crate::code_rule_dsl::logic::{native, plan};
-    let p = rr::parse(r#"
+    let p = rr::parse_version(r#"
 .decl ident(x:symbol)
 ident("a"). ident("b").
 .decl fn(f:number)
@@ -342,7 +342,7 @@ hit(f) :- fn(f), count : { ident(x), count : { ref(n,f,x) } = 0 } > 0.
         let store = crate::content_store::ContentStore::open(&path).unwrap();
         let db = rusqlite::Connection::open(&path).unwrap();
         native::register(&db).unwrap();
-        let lowered = plan::lower::lower(&p, crate::code_rule_dsl::language::GrammarDialect::Python,
+        let lowered = plan::lower::lowered(p.clone(), crate::code_rule_dsl::language::GrammarDialect::Python,
             &mut |s| store.intern_atoms(s).map_err(|e| plan::Error::Plan(e.to_string()))).unwrap();
         let result = plan::run_atoms_native_over(&lowered, &db, "main", plan::Stats::empty_of_lowered(&lowered).unwrap(),
             BTreeSet::new(), modes).unwrap();
