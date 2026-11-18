@@ -11,7 +11,13 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { spawn, spawnShown } from "../engine/child-process.js";
 import { programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding } from "../engine/native/native.js";
-import { forgetHomeDaemonHolder, homeDaemonHolder, homeDaemonLockHeld } from "../engine/native/home-daemon-lock.js";
+import {
+  forgetHomeDaemonHolder,
+  homeDaemonHolder,
+  homeDaemonHolderFile,
+  homeDaemonHolderWrittenAt,
+  homeDaemonLockHeld,
+} from "../engine/native/home-daemon-lock.js";
 import { forgetMainInstanceHolder, mainInstanceLockHeld } from "../engine/native/main-instance.js";
 import { withHomeLock } from "../engine/native/file-lock.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
@@ -674,10 +680,12 @@ export async function recordedDaemonAlive(state: DaemonState, machine: DaemonMac
  * the record ({@link recordedProcess}):
  * - `ours`: it is that daemon: it holds the home's lock and is the holder recorded beside it, or it started no later
  *   than the record's `startedAt` (a process keeps its pid for life, so the one that ran with that pid then wrote it).
- * - `not-ours`: it cannot be: another process holds the home's lock as its recorded holder, or it started after
- *   `startedAt` by more than {@link START_CLOCK_SLACK_MS}, as a process that took a dead daemon's pid did.
- * - `unknown`: nothing decides: no lock held, no holder record, a lock that cannot be asked, and a start time that cannot
- *   be read or falls within the slack; a daemon of a release before the home's lock holds none.
+ * - `not-ours`: it cannot be: another process holds the home's lock as its recorded holder and is shown to have
+ *   written that record ({@link holderWroteRecord}), or it started after `startedAt` by more than
+ *   {@link START_CLOCK_SLACK_MS}, as a process that took a dead daemon's pid did.
+ * - `unknown`: nothing decides: no lock held, no holder record, a lock that cannot be asked, a holder not shown to hold
+ *   it, and a start time that cannot be read or falls within the slack; a daemon of a release before the home's lock
+ *   holds none.
  */
 type RecordedProcess = "ours" | "not-ours" | "unknown";
 
@@ -689,13 +697,31 @@ type RecordedProcess = "ours" | "not-ours" | "unknown";
 const START_CLOCK_SLACK_MS = 10_000;
 
 /**
- * {@link RecordedProcess} for the process daemon.json in `home` names (`state`). The home's lock answers first
- * ({@link lockVerdict}); only where it cannot is the start time read by `deadline` (epoch ms, {@link startVerdict}),
- * since the read costs a process on Windows.
+ * {@link RecordedProcess} for the process daemon.json in `home` names (`state`), its start times read by `deadline`
+ * (epoch ms), since each read costs a process on Windows. The home's lock as this pid's answers first
+ * ({@link lockVerdict}); otherwise the pid's start decides, and a start no later than the record overrules a lock another
+ * holder's record names: the record beside the lock can outlive the holder that wrote it, when it could neither be
+ * replaced nor removed. That lock says not ours alone only while its holder is shown to have written its record.
  */
 function recordedProcess(home: string, state: DaemonState, machine: DaemonMachine, deadline: number): RecordedProcess {
   const byLock = lockVerdict(home, state.pid, machine);
-  return byLock === "unknown" ? startVerdict(state, machine, deadline) : byLock;
+  if (byLock === "ours") return "ours";
+  const byStart = startVerdict(state, machine, deadline);
+  if (byStart !== "unknown" || byLock === "unknown") return byStart;
+  return holderWroteRecord(home, machine, deadline) ? "not-ours" : "unknown";
+}
+
+/**
+ * Whether the live process the holder record in `home` names wrote that record, read by `deadline`: it started no later
+ * than the record was written. A daemon takes the home's lock before it records itself and holds it for life, so that
+ * process holds the lock; a process that took a dead holder's pid since started after the record.
+ */
+function holderWroteRecord(home: string, machine: DaemonMachine, deadline: number): boolean {
+  const holder = homeDaemonHolder(home);
+  const written = homeDaemonHolderWrittenAt(home);
+  if (holder === undefined || written === undefined) return false;
+  const started = machine.processStartedAt(holder, deadline - Date.now());
+  return started !== undefined && started <= written;
 }
 
 /**
@@ -887,16 +913,26 @@ async function lookupHomeDaemon(home: string, machine: DaemonMachine): Promise<D
   for (;;) {
     const lookup = await lookupDaemon(home, machine);
     if (lookup.status !== "absent" || !homeDaemonRuns(home, machine)) return lookup;
-    if (Date.now() >= deadline) throw new Error(unrecordedDaemonProblem(home));
+    if (Date.now() >= deadline) throw new Error(unrecordedDaemonProblem(home, machine));
     await sleep(POLL_INTERVAL_MS);
   }
 }
 
-/** What to tell the person when a daemon holds `home` and never records itself: which process to end. */
-function unrecordedDaemonProblem(home: string): string {
+/**
+ * What to tell the person when a daemon holds `home` and never records itself: which process to end. The pid the holder
+ * record names is given as that process only when it is shown to have written the record ({@link holderWroteRecord}),
+ * read within the lookup's limit; otherwise the record can be one a holder left that another process's pid now matches,
+ * and the person is told how to check it first.
+ */
+function unrecordedDaemonProblem(home: string, machine: DaemonMachine): string {
   const pid = homeDaemonHolder(home);
-  return `A Rerail daemon${pid === undefined ? "" : ` (pid ${pid})`} holds ${home} but has not written ${DAEMON_STATE_FILE} `
-    + `within ${START_TIMEOUT_MS / 1_000}s; end that process, then run rerail daemon start.`;
+  const unrecorded = `holds ${home} but has not written ${DAEMON_STATE_FILE} within ${START_TIMEOUT_MS / 1_000}s`;
+  if (pid !== undefined && !holderWroteRecord(home, machine, Date.now() + PROBE_TIMEOUT_MS)) {
+    return `A Rerail daemon ${unrecorded}. ${homeDaemonHolderFile(home)} names pid ${pid}, which Rerail could `
+      + `not show is that daemon: see its command line with ${commandLineCheck(pid, machine.platform)}, and end it only if `
+      + "it runs Rerail's daemon-entry.js for this home. Then run rerail daemon start.";
+  }
+  return `A Rerail daemon${pid === undefined ? "" : ` (pid ${pid})`} ${unrecorded}; end that process, then run rerail daemon start.`;
 }
 
 export async function startDaemon(
@@ -1516,12 +1552,16 @@ function signalCheck(home: string, found: FoundDaemon, machine: DaemonMachine): 
  */
 function unprovenDaemonMessage(home: string, pid: number, platform: NodeJS.Platform = process.platform): string {
   const record = join(home, DAEMON_STATE_FILE);
-  const check = platform === "win32"
+  return `Rerail could not prove that pid ${pid}, which ${record} names, is this home's daemon, so it ended nothing. `
+    + `See its command line with ${commandLineCheck(pid, platform)}: if it runs Rerail's daemon-entry.js for this home, `
+    + `end it; if not, delete ${record}. Then run rerail daemon start.`;
+}
+
+/** The command that shows the command line of the process holding `pid` on `platform`. */
+function commandLineCheck(pid: number, platform: NodeJS.Platform): string {
+  return platform === "win32"
     ? `powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine"`
     : `ps -p ${pid} -o command=`;
-  return `Rerail could not prove that pid ${pid}, which ${record} names, is this home's daemon, so it ended nothing. `
-    + `See its command line with ${check}: if it runs Rerail's daemon-entry.js for this home, end it; if not, delete ${record}. `
-    + "Then run rerail daemon start.";
 }
 
 /**

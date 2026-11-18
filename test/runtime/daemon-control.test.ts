@@ -2,7 +2,7 @@ import * as childProcess from "node:child_process";
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { connect, createServer, type AddressInfo, type Socket } from "node:net";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -1037,12 +1037,69 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(await stopDaemon(home, machineWith(platform, signals, () => false, anHourLater))).toBe("not-daemon");
     expect(signals).toEqual([]);
     expect(existsSync(stateFile)).toBe(false);
-    // Another daemon holds the home and recorded itself: the pid daemon.json names is not it, whenever it started.
+  });
+
+  // The home's daemon holds its lock and is busy, beside a holder record an earlier holder left that it could neither
+  // replace nor remove, whose pid another live process has now: here the daemon of a second home.
+  it.each(["linux", "win32"] as const)("keeps a busy daemon that started before its record beside a holder record naming another live process, and its stop ends only it (%s)", async platform => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    const sent: Array<[number, string | number | undefined]> = [];
     await holdHome(home, OTHER_PID);
     await writeFile(stateFile, JSON.stringify(state(platform)));
-    expect(await lookupDaemon(home, machineWith(platform, signals, () => true, () => STARTED_AT - 500))).toEqual({ status: "absent", notDaemon: LIVE_PID });
-    expect(signals).toEqual([]);
+    const machine = (): DaemonMachine => {
+      const base = machineWith(platform, signals, () => true, () => STARTED_AT - 500);
+      return { ...base, kill: (pid, signal) => {
+        if (signal !== 0) sent.push([pid, signal]);
+        return base.kill(pid, signal);
+      } };
+    };
+    expect(await lookupDaemon(home, machine())).toEqual({ status: "unresponsive", state: state(platform) });
+    expect(existsSync(stateFile)).toBe(true);
+    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }, machine())).rejects.toThrow(/alive but not answering/u);
+    expect(await stopDaemon(home, machine())).toBe("stopped");
+    expect(sent).toEqual([[LIVE_PID, "SIGTERM"]]);
+    expect(existsSync(stateFile)).toBe(false);
   });
+
+  /** A machine as {@link machineWith}'s where `OTHER_PID`, which the holder record names, started at `otherStarted`. */
+  const withHolderStarted = (machine: DaemonMachine, otherStarted: number): DaemonMachine => ({
+    ...machine,
+    processStartedAt: (pid, timeoutMs) => (pid === OTHER_PID ? otherStarted : machine.processStartedAt(pid, timeoutMs)),
+  });
+  const holderRecordWritten = (): number => statSync(join(home, LOCKS_DIR, "daemon.json")).mtimeMs;
+
+  // The pid's own start cannot be read, so the lock decides alone.
+  it.each(["linux", "win32"] as const)("removes the record when another live process wrote the home's holder record and the lock is held, and keeps it when that process started after the record (%s)", async platform => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    await holdHome(home, OTHER_PID);
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    const machine = (otherStarted: number): DaemonMachine => withHolderStarted(machineWith(platform, signals, () => true), otherStarted);
+    expect(await lookupDaemon(home, machine(holderRecordWritten() - 1_000))).toEqual({ status: "absent", notDaemon: LIVE_PID });
+    expect(existsSync(stateFile)).toBe(false);
+    // The holder record's pid belongs to a process started after the record: nothing shows that process holds the lock.
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    const later = machine(holderRecordWritten() + 3_600_000);
+    expect(await lookupDaemon(home, later)).toEqual({ status: "unresponsive", state: state(platform) });
+    await expect(stopDaemon(home, later)).rejects.toThrow(new RegExp(`could not prove that pid ${LIVE_PID}`, "u"));
+    expect(signals).toEqual([]);
+    expect(existsSync(stateFile)).toBe(true);
+  });
+
+  // The home's lock is held and its holder never writes daemon.json: a start or a stop waits its 15 s, then says which
+  // process to end.
+  it.each([
+    ["names the holder as the process to end when it started before its record", -1_000, `A Rerail daemon \\(pid ${OTHER_PID}\\) holds .* end that process`],
+    ["names no process to end when the holder record's pid started after the record", 3_600_000,
+      `A Rerail daemon holds .* names pid ${OTHER_PID}, which Rerail could not show is that daemon: see its command line with ps -p ${OTHER_PID} -o command=, and end it only if`],
+  ] as const)("%s", async (_case, startedAfterRecord, message) => {
+    const signals: Array<string | number | undefined> = [];
+    await holdHome(home, OTHER_PID);
+    const machine = withHolderStarted(machineWith("linux", signals, () => true), holderRecordWritten() + startedAfterRecord);
+    await expect(stopDaemon(home, machine)).rejects.toThrow(new RegExp(message, "u"));
+    expect(signals).toEqual([]);
+  }, 25_000);
 
   // A daemon of a release before the home's lock holds none; one whose lock file did not open holds none either; one
   // that could not write its holder record holds the lock unrecorded, beside the record an earlier holder left when it
