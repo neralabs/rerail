@@ -111,3 +111,28 @@ Step 36 (load 27–33): tier 1 ahead of time 524M instructions, 146M cycles, 43.
 instructions and 267 cycles a node); tier 2 ahead of time 376M instructions, 93M cycles,
 28.7 ms; tiers 1 and 2 ahead of time 436 cycles a node, the JIT's 563; the lean parser's whole
 parse 296M instructions, 64.5M cycles, 19.2 ms (118 cycles a node).
+
+## Stages 3 and 4: where the operations are (2026-11-18)
+
+After Q222 to Q225 (step 36, the corpus 431 / 60 / 0), tier 1 is one forward pass of 2,460
+operations a block. `kotlin_parser`'s `tier1_cones` counts them by the statement that made each
+(`Compiled::origin`) and by the outputs that need them:
+
+| What | Operations |
+|---|---|
+| Two token rows that can start at one byte, each pair tested at every byte for the fallback | 600 (355 pairs) |
+| The other escapes and errors (the fallback's other outputs) | about 400 |
+| The marks' masks (`vis_w`, `head_stop`, `jat`, `two_start`, `hdr_line`, `ctor_w`, …) | about 900 |
+| The regions, the token rows' starts and lasts | about 500 |
+
+The lean lexer asks none of the first kind: its state picks one reader, so two kinds never start
+at one byte. Here the compiler asks it of each pair whose first bytes meet, and keeps the test
+where it cannot prove the pair apart. It asked the plain search only; the fixed points' prover
+(`Induction`, as the other row questions use) proves 210 of the 355 apart: a row in a region
+against one outside it. Tier 1: 2,014 operations a block, from 2,460; the corpus and the
+generated Rust's tapes unchanged.
+
+The 145 pairs left are two string regions' rows (a string's content and a raw string's, a
+template tail's, a character's). The walk makes a byte one region's at most; the prover does not
+know it. Next: that fact given to the prover, then the marks and escapes at the token
+(stages 3 and 4).

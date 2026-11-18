@@ -3130,15 +3130,25 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // file to tree-sitter, as the evaluator's "both start at byte" does. A pair whose starts
     // are apart, proved (`never`: `inside` and `~inside`, say), costs nothing.
     let shares = |a: usize, b: usize| (0..4).any(|i| rows[a].first[i] & rows[b].first[i] != 0);
+    let ops_before = low.program.ops.len();
+    let mut pairs = Vec::new();
+    // The fixed points' equations prove most apart: one row's tokens in a region, the other's
+    // outside it (a string's content and a comment's opener).
+    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
     for a in 0..rows.len() {
         for b in a + 1..rows.len() {
             if shares(a, b) {
                 let both = low.and(token_rows[a].1, token_rows[b].1)?;
-                if !low.never(both) {
+                if !low.either_never(&mut settled, both) {
                     low.fallbacks.push(both);
+                    pairs.push((a, b));
                 }
             }
         }
+    }
+    if std::env::var_os("RERAIL_TIER2_SIZES").is_some() {
+        let names: Vec<String> = pairs.iter().map(|&(a, b)| format!("{a}{}/{b}{}", token_rows[a].0, token_rows[b].0)).collect();
+        eprintln!("rows that share a first byte: {} pairs to the fallback, {} operations: {}", pairs.len(), low.program.ops.len() - ops_before, names.join(" "));
     }
     // The extras (grammar::with_extras): taken in the token step (`TOKEN_EXTRAS`), as the lean
     // parser places comments, where the records' codes have a mark's bit for them: one bit

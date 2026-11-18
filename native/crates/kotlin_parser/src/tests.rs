@@ -937,3 +937,87 @@ fn tier1_records() {
     }
 }
 
+
+/// Tier 1's operations by output: each output's cone (the operations its value needs) and the
+/// operations only it needs, most first. A tool for 0405's stages 3 and 4.
+#[test]
+#[ignore = "a tool: run by name"]
+fn tier1_cones() {
+    use rerail_compiler::bitlex_masks as bitlex_compile;
+    let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
+    let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
+    let kind = |name: &str| {
+        crate::lean_kind(name).or_else(|| {
+            let mut own = own.borrow_mut();
+            let next = crate::OWN_IDS + own.len() as u16;
+            Some(*own.entry(name.to_owned()).or_insert(next))
+        })
+    };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &crate::field };
+    let c = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, Default::default()).expect("compiles");
+    let b = &c.program;
+    let n = b.ops.len();
+    let cone = |v: u16| {
+        let mut seen = vec![false; n];
+        let mut stack = vec![v];
+        while let Some(x) = stack.pop() {
+            if std::mem::replace(&mut seen[usize::from(x)], true) {
+                continue;
+            }
+            stack.extend(b.ops[usize::from(x)].operands());
+        }
+        seen
+    };
+    let cones: Vec<Vec<bool>> = b.outputs.iter().map(|&v| cone(v)).collect();
+    let users: Vec<usize> = (0..n).map(|i| cones.iter().filter(|c| c[i]).count()).collect();
+    let mut rows: Vec<(usize, usize, String)> = Vec::new();
+    for (k, cn) in cones.iter().enumerate() {
+        let label = c.labels.iter().filter(|l| usize::from(l.1) == k).map(|l| l.0.as_str()).collect::<Vec<_>>().join(", ");
+        let size = cn.iter().filter(|&&x| x).count();
+        let only = (0..n).filter(|&i| cn[i] && users[i] == 1).count();
+        rows.push((only, size, label));
+    }
+    // Each operation's statement (`Compiled::origin`): the operations each made, most first.
+    let mut by: std::collections::HashMap<&str, usize> = Default::default();
+    for o in &c.origin {
+        *by.entry(o.as_str()).or_default() += 1;
+    }
+    let mut by: Vec<_> = by.into_iter().collect();
+    by.sort_by(|a, b| b.1.cmp(&a.1));
+    for (o, k) in &by {
+        eprintln!("  {k:5} made by {o}");
+    }
+    // The biggest group's operations by kind, and the outputs whose cones they are in.
+    if let Some((big, _)) = by.first() {
+        let mut kinds: std::collections::BTreeMap<String, usize> = Default::default();
+        for (i, o) in c.origin.iter().enumerate() {
+            if o == big {
+                let name = format!("{:?}", b.ops[i]);
+                let name = name.split(['(', ' ', '{']).next().unwrap_or("").to_string();
+                let name = if name == "Prev" { format!("{:?}", b.ops[i]) .split(',').nth(1).map_or(name.clone(), |k| format!("Prev by{}", k.trim_end_matches(')'))) } else { name };
+                *kinds.entry(name).or_default() += 1;
+            }
+        }
+        eprintln!("{big}: {kinds:?}");
+        let mut outs = vec![0usize; b.outputs.len()];
+        for (i, o) in c.origin.iter().enumerate() {
+            if o == big {
+                for (k, cn) in cones.iter().enumerate() {
+                    if cn[i] && users[i] == 1 {
+                        outs[k] += 1;
+                    }
+                }
+            }
+        }
+        for (k, n) in outs.iter().enumerate().filter(|x| *x.1 > 0) {
+            let label = c.labels.iter().filter(|l| usize::from(l.1) == k).map(|l| l.0.as_str()).collect::<Vec<_>>().join(", ");
+            eprintln!("  output {k} ({label}, delay {}): {n} of them its own", b.output_delays[k]);
+        }
+    }
+    rows.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+    let shared = (0..n).filter(|&i| users[i] > 1).count();
+    eprintln!("{n} operations, {} outputs; {shared} shared by two or more", b.outputs.len());
+    for (only, size, label) in rows {
+        eprintln!("  {only:5} own {size:5} cone  {label}");
+    }
+}

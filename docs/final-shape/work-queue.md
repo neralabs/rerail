@@ -1890,6 +1890,14 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   parser's tapes (`annotated_expressions_are_the_lean_parsers`); corpus 431 / 60 / 0 (was 429 /
   62); `a_run_ends_on_a_token` on every executor; `aot_tapes_are_the_jits`. Reviewer not yet run.
 
+### Q226. Metal's step 13 differs from the interpreter (`every_step_on_metal_equals_the_interpreter`)
+
+- **What**: `parser_tests`' `every_step_on_metal_equals_the_interpreter` fails: 48 files of the
+  compiler ladder's step 13 (block comments) differ on Metal. Seen 2026-11-18 at 9e3876507 and
+  without the overlap change after it, so it predates both; since 0422 step 13 is the compiler
+  ladder's first step, which every test reads.
+- **Done when**: the cause is named and Metal's records equal the interpreter's on step 13.
+
 ### Q224. `deprecated back_fill` leaves the language
 
 - **What**: Kotlin's step 36 has no back fill (0406). Kotlin's step 35, the `.rr` ladder's steps 15
