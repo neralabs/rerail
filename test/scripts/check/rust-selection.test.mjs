@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, sep } from "node:path";
 import { afterAll, expect, it } from "vitest";
-import { moduleFiles, outputs, select } from "../../../scripts/check/ci/rust-selection.mjs";
+import { cargoInputs, dataMentions, moduleFiles, outputs, select } from "../../../scripts/check/ci/rust-selection.mjs";
 import { removeFolderSync } from "../../support/platform/remove-folder.ts";
 
 const root = mkdtempSync(join(tmpdir(), "rust-selection-"));
@@ -97,10 +97,48 @@ it("a change selects the crates compiling it and every crate above them", () => 
 
 it("the build's inputs and unclaimed engine files select everything", () => {
   const meta = metadata();
-  for (const path of ["Cargo.lock", ".cargo/config.toml", "native/vendor/x/src/lib.rs", "languages/python.json", "fixtures/a/b.json", ".github/workflows/ci.yml"]) {
+  for (const path of ["Cargo.lock", ".cargo/config.toml", "native/vendor/x/src/lib.rs", "package.json", ".github/workflows/ci.yml"]) {
     expect(select(root, meta, [path]).all, path).toBe(true);
   }
   expect(select(root, meta, ["native/src/data.json"]).all).toBe(true);
+});
+
+it("data names: path literals under a data root, the fixtures' macros, prose left out", () => {
+  const found = dataMentions(
+    [
+      'let a = root.join("packs/python/rules");',
+      'let b = repository().join("packs");',
+      'let c = Path::new(fixtures_dir!()).join("php/scope/x.php");',
+      'let d = oracle!("rust/calls/lib.rs");',
+      'let e = fixtures_dir!();',
+      'panic!("check out the repository\'s languages/ directory");',
+      'let f = r"..\\conformance\\t1";',
+    ].join("\n"),
+  );
+  expect(Object.fromEntries(Object.entries(found).map(([root, subs]) => [root, [...subs].sort()]))).toEqual({
+    packs: ["*", "python"],
+    fixtures: ["*", "php", "rust"],
+    conformance: ["t1"],
+  });
+});
+
+it("a data file selects the crates naming it, its directory or its root, and every crate above them", () => {
+  const meta = metadata();
+  write({
+    "native/crates/low/src/lib.rs": 'const P: &str = "packs/python/rules";\n',
+    "native/crates/other/src/lib.rs": 'fn f() { Path::new(fixtures_dir!()).join(name); }\n',
+  });
+  expect(select(root, meta, ["packs/python/rules/x.rerail"]).packages).toEqual(["low", "mid", "rerail-engine"]);
+  expect(select(root, meta, ["packs/rust/rules/x.rerail"]).packages).toEqual([]);
+  expect(select(root, meta, ["packs/README.md"]).packages).toEqual(["low", "mid", "rerail-engine"]);
+  expect(select(root, meta, ["fixtures/php/a.php"]).packages).toEqual(["other"]);
+  write({ "native/crates/low/src/lib.rs": "", "native/crates/other/src/lib.rs": "" });
+});
+
+it("package.json reaches the crates through napi's configuration and the scripts that run cargo", () => {
+  const json = (scripts, extra = {}) => JSON.stringify({ scripts, dependencies: extra, napi: { binaryName: "e" } });
+  expect(cargoInputs(json({ "test:native": "cargo test", lint: "eslint" }, { a: "1" }))).toBe(cargoInputs(json({ "test:native": "cargo test", lint: "biome" }, { a: "2" })));
+  expect(cargoInputs(json({ "test:native": "cargo test" }))).not.toBe(cargoInputs(json({ "test:native": "cargo test --workspace" })));
 });
 
 it("outputs: cargo arguments and a nextest filter, everything as --workspace", () => {

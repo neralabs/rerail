@@ -370,15 +370,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
           FILES: ${{ github.event.pull_request.changed_files || 0 }}
           RUSTUP_TOOLCHAIN: stable
+        # The base's package.json, when the pull request changes it: only the scripts that run cargo reach the crates.
         run: |
+          base=()
           if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$FILES" -lt 3000 ]; then
             gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/changed.txt"
+            if grep -qx package.json "$RUNNER_TEMP/changed.txt" \
+              && gh api "repos/$GITHUB_REPOSITORY/contents/package.json?ref=$BASE" -H 'Accept: application/vnd.github.raw' > "$RUNNER_TEMP/base-package.json"; then
+              base=(--base-package-json "$RUNNER_TEMP/base-package.json")
+            fi
           else
             echo Cargo.lock > "$RUNNER_TEMP/changed.txt"
           fi
-          node scripts/check/ci/rust-selection.mjs "$RUNNER_TEMP/changed.txt" --github >> "$GITHUB_OUTPUT"
+          node scripts/check/ci/rust-selection.mjs "$RUNNER_TEMP/changed.txt" "${base[@]}" --github >> "$GITHUB_OUTPUT"
 
   # Uploads, as this run's artifacts, every set of archives the jobs below download (.github/actions/pack-test-data,
   # `fetch: "true"`): every tool-pack's archives for the unit jobs (Linux and Windows) and the conformance jobs, and the

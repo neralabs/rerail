@@ -5,19 +5,26 @@
 // or a file in its directory, and then every package that depends on a selected one, of any kind (normal, dev, build),
 // transitively: their tests compile and run the changed code too.
 //
+// A changed data file the tests read at run time or compile in (DATA_ROOTS: the fixtures, the packs, the conformance
+// suites, the language registry, the rule syntax's library and examples, the data-layer gate) selects the packages
+// whose sources name it (`dataMentions`), and every package above them: a string literal that names the root and the
+// file's first directory under it (`packs/python/...` for packs/python/rules/x.rerail; `fixtures_dir!().join("php/..")`
+// or `oracle!("php/..")` for fixtures/php/...), or names the root alone (a loader that joins the rest at run time),
+// which counts for every file under it. A literal with whitespace in it is prose (a message), not a path.
+//
 // Everything is selected (`all`) when the change reaches every package, or when this cannot tell:
 //   - the build's own inputs: the lockfile, the workspace manifest, the toolchain, cargo's configuration, the patched
 //     dependencies under native/vendor/, this workflow and its actions, package.json (it holds the cargo commands), the
-//     LFS attributes (the engine embeds LFS objects), this script;
-//   - what the engine's build script and tests read at run time from outside the crates: the language registry
-//     (languages/), the fixtures, the conformance suites, the packs and their rules (FORCE_ALL);
+//     LFS attributes (the engine embeds LFS objects), this script, the language registry's generated module;
 //   - a file under native/ that no package's module tree claims and that is not in a package's own directory: the
 //     engine's sources are mounted by many crates (tools/cratify), so who reads such a file cannot be told;
 //   - a failure of any kind.
-// A file outside every package that FORCE_ALL does not name (TypeScript, docs) selects nothing.
+// A file outside every package that neither FORCE_ALL nor DATA_ROOTS names (TypeScript, docs) selects nothing.
 //
 //   node scripts/check/ci/rust-selection.mjs <changed-files.txt>              JSON to stdout
 //   node scripts/check/ci/rust-selection.mjs <changed-files.txt> --github     `name=value` lines for $GITHUB_OUTPUT
+//   ... --base-package-json <file>   the base's package.json: package.json then selects every package only when what
+//                                    the Rust builds read of it changed (`cargoInputs`)
 //
 // The files list holds one repository-relative path per line (a rename lists both names).
 import { spawnSync } from "node:child_process";
@@ -37,14 +44,11 @@ export const FORCE_ALL = [
   "package.json",
   ".gitattributes",
   "scripts/check/ci/rust-selection.mjs",
-  "languages/**",
-  "fixtures/**",
-  "conformance/**",
-  "packs/**",
-  "docs/rule-syntax/**",
-  "gate/data-layer/**",
   "src/engine/code-rule/code-rule-language-registry.generated.ts",
 ];
+
+/** Data the packages' tests and build scripts read from outside their sources, selected by `dataMentions`. */
+export const DATA_ROOTS = ["fixtures", "packs", "conformance", "languages", "docs/rule-syntax", "gate/data-layer"];
 
 /** Where a file outside every package's own directory and module trees still cannot be told apart. */
 const UNCLAIMED_ALL = ["native/**"];
@@ -170,6 +174,40 @@ export function declarations(text) {
   return { mods, includes };
 }
 
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+const ROOT_PATTERNS = DATA_ROOTS.map((root) => [root, new RegExp(`(?:^|[^A-Za-z0-9_.-])${escapeRegExp(root)}(?=$|[^A-Za-z0-9_.-])(?:/([^/{}]+))?`, "gu")]);
+const firstSegment = (path) => path.replace(/^\/+/u, "").split("/")[0];
+
+/**
+ * Which data under DATA_ROOTS a source file names: `{ <root>: Set of first directories, or "*" for the root alone }`.
+ * Paths are its string literals without whitespace, and the fixtures' macros: `fixtures_dir!()` followed by
+ * `.join("<dir>/...")` or `, "/<dir>/..."` names `<dir>`, followed by anything else the whole of fixtures/;
+ * `oracle!("<dir>/...")` names `<dir>`.
+ */
+export function dataMentions(text) {
+  const t = tokens(text);
+  const found = {};
+  const add = (root, sub) => (found[root] ??= new Set()).add(sub === undefined || sub === "" ? "*" : sub);
+  for (let i = 0; i < t.length; i++) {
+    const { string, ident } = t[i];
+    if (string !== undefined && !/\s/u.test(string)) {
+      const path = string.replaceAll("\\", "/");
+      for (const [root, pattern] of ROOT_PATTERNS) {
+        for (const match of path.matchAll(pattern)) add(root, match[1]);
+      }
+    } else if (ident === "fixtures_dir" && t[i + 1]?.punct === "!" && t[i + 2]?.punct === "(" && t[i + 3]?.punct === ")") {
+      let j = i + 4;
+      while (t[j]?.punct === ")") j++;
+      const next =
+        t[j]?.punct === "." && t[j + 1]?.ident === "join" && t[j + 2]?.punct === "(" ? t[j + 3]?.string : t[j]?.punct === "," ? t[j + 1]?.string : undefined;
+      add("fixtures", next === undefined ? undefined : firstSegment(next));
+    } else if (ident === "oracle" && t[i + 1]?.punct === "!" && t[i + 2]?.punct === "(" && t[i + 3]?.string !== undefined) {
+      add("fixtures", firstSegment(t[i + 3].string));
+    }
+  }
+  return found;
+}
+
 /**
  * Every file a target whose root is `root` (absolute) compiles: its module tree as rustc resolves it, and the files
  * it includes. Files that do not exist (a `#[cfg]`'d module of another platform still resolves to one that does;
@@ -247,6 +285,8 @@ export function select(root, metadata, changed) {
   const dependents = new Map(); // node -> packages that depend on it
   const cache = new Map();
   const claimed = new Map(); // file (relative) -> packages compiling it
+  const mentionCache = new Map(); // source file (absolute) -> dataMentions
+  const readers = {}; // data root -> package -> first directories it names ("*": the root alone)
   for (const pkg of metadata.packages) {
     dirs.set(rel(dirname(pkg.manifest_path)), pkg.name);
     for (const dep of pkg.dependencies) {
@@ -261,9 +301,23 @@ export function select(root, metadata, changed) {
         const key = rel(file);
         if (!claimed.has(key)) claimed.set(key, new Set());
         claimed.get(key).add(pkg.name);
+        if (!file.endsWith(".rs")) continue;
+        let found = mentionCache.get(file);
+        if (found === undefined) mentionCache.set(file, (found = dataMentions(readFileSync(file, "utf8"))));
+        for (const [root, subs] of Object.entries(found)) {
+          const byPackage = (readers[root] ??= new Map());
+          if (!byPackage.has(pkg.name)) byPackage.set(pkg.name, new Set());
+          for (const sub of subs) byPackage.get(pkg.name).add(sub);
+        }
       }
     }
   }
+  // The packages whose sources name the data file `path` under `root`: the root alone, or its first directory.
+  const dataReaders = (root, path) => {
+    const sub = path.slice(root.length + 1).split("/");
+    const first = sub.length > 1 ? sub[0] : undefined;
+    return [...(readers[root] ?? new Map())].filter(([, subs]) => subs.has("*") || first === undefined || subs.has(first)).map(([name]) => name);
+  };
   const owner = (path) => {
     let best;
     for (const [dir, node] of dirs) {
@@ -278,6 +332,13 @@ export function select(root, metadata, changed) {
     const compiling = claimed.get(path);
     if (compiling !== undefined) {
       for (const name of compiling) seeds.add(name);
+      continue;
+    }
+    const root = DATA_ROOTS.find((data) => path.startsWith(`${data}/`));
+    if (root !== undefined) {
+      const readBy = dataReaders(root, path);
+      for (const name of readBy) seeds.add(name);
+      if (readBy.length > 0) reasons.push(`${path} is read by ${readBy.join(", ")}`);
       continue;
     }
     const own = owner(path);
@@ -297,7 +358,7 @@ export function select(root, metadata, changed) {
     for (const dependent of dependents.get(node) ?? []) queue.push(dependent);
   }
   const packages = names.filter((name) => selected.has(name));
-  for (const seed of [...seeds].sort()) reasons.push(`${seed} changed`);
+  for (const seed of [...seeds].sort()) reasons.push(`${seed} selected`);
   return { all: packages.length === names.length, packages, reasons };
 }
 
@@ -312,12 +373,29 @@ export function outputs({ all, packages }) {
   };
 }
 
+/**
+ * What of package.json the Rust builds and tests read: napi's configuration and the scripts that run cargo, napi or
+ * the engine's checks. A pull request that changes only the rest (dependencies, the TypeScript scripts) leaves them.
+ */
+export function cargoInputs(packageJson) {
+  const { napi, scripts = {} } = JSON.parse(packageJson);
+  return JSON.stringify({ napi, scripts: Object.entries(scripts).filter(([, command]) => /cargo|napi|native|rust/u.test(command)) });
+}
+
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const [list, flag] = process.argv.slice(2);
+  const args = process.argv.slice(2);
+  const flag = args.includes("--github") ? "--github" : undefined;
+  const base = args.indexOf("--base-package-json");
+  const [list] = args.filter((arg, i) => !arg.startsWith("--") && i !== base + 1);
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
   let selection;
   try {
-    const changed = readFileSync(list, "utf8").split("\n").map((line) => line.trim()).filter(Boolean);
+    let changed = readFileSync(list, "utf8").split("\n").map((line) => line.trim()).filter(Boolean);
+    // package.json reaches every package only when what cargo reads of it changed (`cargoInputs`).
+    if (base >= 0 && changed.includes("package.json")) {
+      const same = cargoInputs(readFileSync(args[base + 1], "utf8")) === cargoInputs(readFileSync(join(root, "package.json"), "utf8"));
+      if (same) changed = changed.filter((path) => path !== "package.json");
+    }
     selection = select(root, workspaceMetadata(root), changed);
   } catch (error) {
     // Fail open: every package's tests run.
