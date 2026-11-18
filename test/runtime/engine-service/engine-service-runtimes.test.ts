@@ -875,10 +875,14 @@ describe("the engine service's idle close", () => {
       });
       expect(ended("a")).toBe(quietAt);
       expect(scans).toEqual([]);
-      // The runtime the scan's ask kept is unused, and the minute's sweep closes it once its look finds the checkout gone.
+      // The runtime the scan's ask kept is unused, and the minute's sweep closes it once it has been kept 15 minutes, as
+      // every runtime no session used was, and its look finds the checkout gone.
       expect(service.openRuntimes()).toBe(1);
       await service.closeIdleSessions();
-      await vi.waitFor(() => expect(service.openRuntimes()).toBe(0));
+      expect(service.openRuntimes()).toBe(1);
+      clock.now += 15 * MINUTE;
+      await service.closeIdleSessions();
+      expect(service.openRuntimes()).toBe(0);
     } finally {
       controls.close();
     }
