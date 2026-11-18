@@ -44,6 +44,10 @@ Local edits, staged changes, untracked files, and checkout filters do not affect
 The scan uses the selected tree's `.rerailignore` and the built-in exclusions.
 It does not expand symlinks or submodules.
 Snapshot runs reuse content and parsed-source caches. Their whole-run cache keys include the selected object ID.
+If the durable cache fails, the revision commands can run in memory.
+They keep the selected Git view and the policy inputs already read.
+If cache publication fails after evaluation, the command keeps its results and reports a cache warning.
+Git read errors remain evaluation errors.
 
 For a commit, `git_rev("head", sha)` names the selected commit.
 `git_rev("tree", sha)` names its root tree.
