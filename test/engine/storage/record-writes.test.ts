@@ -344,7 +344,7 @@ describe("a write that is made now or not at all", () => {
     database.$client.prepare("INSERT INTO events (session_id, event_id, kind, observed_at, payload_json, payload_v8) VALUES (?, ?, 'call', 1, '{}', x'')")
       .run(session.sessionId, eventId);
   };
-  const eventIds = (path: string) => rows(path, "SELECT event_id AS eventId FROM events WHERE kind = 'call' ORDER BY sequence");
+  const eventIds = (path: string) => rows(path, "SELECT event_id FROM events WHERE kind = 'call' ORDER BY sequence");
 
   it("says the lock is held, keeping nothing, where a write would wait for it", async () => {
     const { path, sessions } = await stores();
@@ -358,7 +358,7 @@ describe("a write that is made now or not at all", () => {
     await writer.settled();
     expect(writer.writeNow(eventWrite("free"))).toBe(true);
 
-    expect(eventIds(path)).toEqual([{ eventId: "free" }]);
+    expect(eventIds(path)).toEqual([["free"]]);
   });
 
   it("is made once the holder gives the lock back, trying between the thread's turns, never holding it", async () => {
@@ -378,7 +378,7 @@ describe("a write that is made now or not at all", () => {
     await vi.advanceTimersByTimeAsync(10);
 
     await expect(made).resolves.toBe(true);
-    expect(eventIds(path)).toEqual([{ eventId: "late" }]);
+    expect(eventIds(path)).toEqual([["late"]]);
   });
 
   it("is not made, and keeps nothing, once the tries reach the busy timeout or its caller stops them", async () => {
