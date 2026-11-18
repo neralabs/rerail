@@ -4629,6 +4629,7 @@ dependencies = [
  "lz4-sys",
  "memchr",
  "rerail-clif",
+ "rerail-simd8",
  "sha2 0.10.9",
 ]
 

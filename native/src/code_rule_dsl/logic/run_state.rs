@@ -156,6 +156,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/matcher/each.rs", "EXCLUDED", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/matcher/each.rs", "GENERATION", Call, "the state of one call in progress on this thread"),
     ("src/code_rule_dsl/matcher/each.rs", "HOSTS", Call, "the state of one call in progress on this thread, set and read within it"),
+    ("src/code_rule_dsl/matcher/gap.rs", "TAPE_GAPS", Call, "one tape's parents' gaps while its facts are found on this thread (`fact_rows`, `GapScope`); outside a scope each test makes its own"),
     ("src/code_rule_dsl/matcher/embedded/mod.rs", "HOOKS", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/matcher/memo.rs", "MEMO", Call, "the matches of the file being matched on this thread"),
     ("src/code_rule_dsl/matcher/mod.rs", "CLAUSES_BEGUN", Thread, "a count of this thread's work, read by tests and the profile"),

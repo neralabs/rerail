@@ -1863,8 +1863,59 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   A long scan's spill halves its range at a node both halves reach. A `desc` or closure followed by
   `capture; emit` marks its range in place, 32 nodes a word op. At s1000, the time was one closure pass's single
   136,902-node scan, whose spills ran one after another. `label_micro_8` + `label_micro` went from 265–340 ms to
-  93–120 ms, with the same findings. Open: the longest walk is 4,106 counted steps in the loop tier and 2,149 in
-  t0, not under 100, and a spilled piece walks a frame at a time.
+  93–120 ms, with the same findings.
+- **Progress** (2026-11-17, 0380 item 3): such a scan is a segmented pass over 64-node windows. Its pieces are halved
+  into the queue before it starts, and a frame taken from the queue scans the same way. The longest closure or
+  `desc` walk went from 4,106 steps to 63, and the loop tier's steps from 7.1 M to 4.0 M. The longest walk of any
+  kind is now 509, a `following` scan (Q182).
+
+### Q182. (Q65 on final-rerail-shape until 2026-11-18) A `following` scan for a kind hops one sibling at a time
+
+- **Found** (2026-11-17, 0380): `save0 after kind=238 load0 capture emit0` (877,007 walks, 12.6 steps on average,
+  the longest 509) is s1000's longest walk. It scans the start's following siblings for one of kind 238. Each hop
+  over a sibling's subtree reads its size, so each read waits on the one before. A block of n statements makes n
+  such scans, n² hops in all.
+- **Done when**: the longest walk at s1000 is under 100 steps (Q56's bound), with nothing precomputed: for
+  example, the siblings' scan as one pass over the parent's children, its answer shared by every start among them.
+- **Progress** (2026-11-17, 0380 item 3, "Q182"): `child` and `after` scan by their tail's shape: hops within windows
+  of slots, stopping at the first output where one output makes every mark. The longest walk went from 509 to 290
+  steps, at s1000 too, with `label_micro_8` at 43.5–46.8 ms and `label_micro` at 24.6–33.1 ms (load 13–14). Halving
+  the scan wanted once brought it to 74 steps but cost 40–60 ms in the short tier's queue. That was measured four
+  ways, and it is not kept. Left: the n² hops of a block's starts. Sharing them needs a pass over the parent's
+  children, which a per-start walk is not.
+- **Done** (2026-11-17, 0380 "one pass over a parent's children"): `sibling_pass` matches the shape generically:
+  - an `after` that is the walk's first move straight from its start;
+  - a tail that marks the start alone.
+
+  The parent's first child answers for every sibling in one pass, and the others leave the scan to it. The spill
+  test checks the shape in 9 fixture walks on Metal. At s1000 the pack's steps fell by 5.4% (10.12 M to 9.57 M),
+  with the same findings: the n² hops were a small part there. The longest walk is a leader's 288 steps, its two
+  passes serial.
+- **Done** (2026-11-17, 0390 item 1): the 288 steps were the scan started at nodes nothing reads. A label made in
+  an `all` now starts from the kinds its conjuncts allow. At s1000 the longest walk is 63 (internal_dead_code) and
+  78 (public_api_triples), under Q56's bound.
+
+### Q142. Three relations of internal_dead_code have 0 rows unless an unread copy of their rule exists
+
+- **Found** (2026-11-17, 0390): `raw_base`, `raw_parameter` and `raw_decorator` have 0 rows at s1000, natively and
+  on Metal. `sg scan` over the policy's 339 files finds 913, 14,717 and 2,272. Add an identical rule into a new
+  relation that nothing reads (`twin_raw_base(c, b, name) :- <the same body>`), and both relations get the rows
+  (913, 14,717, 2,271). A copy with no capture, or with `text` only, finds 913 as well. So the matching and
+  captures are right. Adding `.output` alone changes nothing.
+- What the three share: each is read by rules that bind its first column, a capture rather than the matched
+  node (`base_name(…) :- raw_base(c, r, name), declarations(id, c, …)`). `raw_class`, keyed by its matched
+  node, is right (1,083). The suspect is the demand of the readers (`waves/policies.rs` `demand_program`,
+  `magic::magic_sets`) restricting the atom by a capture column.
+- **Done when**: the three relations' rows match ast-grep's on the 339 files without a twin (the decorator's one
+  row apart explained), with a test of a relation read through a captured column.
+- Side note: decorator 2,271 against ast-grep's 2,272 with the twin.
+
+### Q143. execution_authority_bypass aborts at s1000
+
+- **Found** (2026-11-17, 0390's runs): the program aborts (rc=134) on Metal, with and without 0390's narrowing.
+  `RERAIL_SQL_STRICT` stops it: "stratum site_context: the native engine declined: rule #0025: `$q =
+  @qualname($f)` has no native step; function @qualname". Without strict it would fall back to SQLite.
+- **Done when**: `@qualname` has a native step, and the program runs strict at s1000.
 
 ### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
 
@@ -1959,6 +2010,24 @@ Their siblings, found later the same day (0310 steps 4 and 5):
 - `rerail_tape_format::f16::group`: it matches a format 16 code group's bytes a byte at a time
   (`match_groups`).
 - `metal_tape.metal`'s `f16_word` is gone with the hand port (step 4): the generated reads load words.
+
+- **Done** (2026-11-17, sync-integration-hub-tape):
+  - the CPU JIT's `text_equal` compares 8 bytes a step, then at most one each of 4, 2 and 1;
+  - its `same_line` takes both starts' lines from the task's line starts (`line_for`, a search, as the JIT's line
+    properties read them), not a scan between them. Not `tape_line`: format 15's own view has no lines (the
+    device's come from the batch's block, `slabs.rs`), so the read answered 0 for every byte there;
+  - `metal_batch_runtime.metal`'s `text_equal` and its sibling `string_equal` compare a word at a time
+    (`bytes_equal`, aligned words of the block and of the strings' bytes);
+  - format 16's `match_groups` tests 64 code bytes a step by nibble tables (`ByteSet`, simdjson's lookups in
+    `rerail-simd8`), not a table lookup a byte.
+- **Done** (2026-11-18, the user: "please do this"): a contains test (`CaptureProgram::Contains`) is a row of the
+  batch's, past its derived classes (`packed_batch::contains_rows`), which the text layer makes (decision 0042,
+  `text::scan::Batch`: one literal pass over each file's text for every needle of the batch, a node's bit from the
+  matches its span holds). Metal's `evaluate_assertion` (the interpreter and the JIT's generated MSL) reads the
+  node's bit (`batch_row`, the record's `second` its first row), and so does the CPU JIT (`contains_bit`, the
+  task's `contains_start`). No substring search at a node is left on either. The CPU interpreter, which tests the
+  few nodes a predicate captured, searches each one's text with memchr's SIMD `memmem`, not a window a byte. The
+  label passes' batches have no contains test (W's matchers have no capture predicates; asserted).
 
 
 ### Q60. (Q53 at 8e2b232ad) On the device, a group of 64 nodes' roots run serially in one thread, and a parent is a search (oscar's to take)
@@ -2151,8 +2220,19 @@ too, not as walks from every start.
 
 - **Done** (0365 §8): the device evaluates the anchors (`label_leaves`, `label_formula`) for the label passes past the
   recursive groups, the wave's listed roots and the root records. Then (§8, §9) text tests read the walks' rows, and
-  0036's roots formula passes are device formulas (`Pass::Formula`); the count anchors are measured. Left: targets
-  passes as device formulas, and a fused pack's text (0365, Not yet).
+  0036's roots formula passes are device formulas (`Pass::Formula`); the count anchors are measured. Then (§10)
+  targets passes are their images on the device, and a fused pack's anchor keeps its members' text tests.
+- **Done** (2026-11-18, decision 0396): the recursive groups' walks start within anchors that read the group's own
+  labels as every node, evaluated once before the group's sweeps or rounds, on the CPU and on Metal. On ten files:
+  the groups' starts 20.9% of before, the CPU sweeps −21%, Metal's device time −36%. 0390's narrowing has nothing
+  to narrow on a recursive utility (every read is under a move), and semi-naive rounds would save at most two thirds
+  of the walks left, against an anchor evaluation per round: neither is built.
+- **Left**: the CPU's anchor evaluation costs about half of what it saves in the sweeps (0396, "Not yet").
+- **Measured** (2026-11-18, `anchor_rows_per_answer`, 10 of corpus0's files, M1 Max, debug): the groups' roots
+  passes start at 5,736,730 nodes a round (6,770 formula passes, which Metal walks in the groups, and 120 micro
+  walks). Within the group anchors: 1,281,802 (22%); within anchors reading the settled labels, the best a per-round
+  anchor could do: 501,045 (9%); answers 453,974. The groups' targets passes (50, 1,083 starts) keep every start. No
+  start outside a group anchor emits with the settled labels (the census asserts it on every tape).
 
 ### Q134. (Q24 on oscar) The wave's labelling: about 80 s of 93 s process CPU outside its stages
 
@@ -2160,6 +2240,57 @@ Found 2026-11-17 (measuring 0365, `anchored_walks_find_the_unanchored_roots`, 31
 debug build): `labels.wave.labelled` took 93 s process CPU without anchors and 85 s with, while its stages (formulas
 8.9 s, fallback 1.8 s, packed walks 1.8 s) and the sweeps (about 3 s thread CPU) account for a small part. Find
 where the rest goes (a sample of the run), before reading the wave's CPU totals as the walks'.
+
+- **Found** (2026-11-17, a 15 s sample of the CPU run on the M1 Max, 25 s in): 90% of the busy samples are the facts'
+  rows (`fact_rows`: the facts that are not node sets, W's matcher at every node of each fact's domain, a tape a
+  rayon task). `labels.facts` timed only the calling thread, so the pool's work was in no stage. It is
+  `fact_rows.tape` now, each tape on the thread that runs it: 81.8 s CPU of the labelling's 100.5 s process CPU
+  without anchors, 83.8 of 102.9 with (300 calls: 30 waves on 10 tapes; the same run, M1 Max, debug build).
+- Inside it, 55% is `tokens::stored_gaps`: the gap test (`matcher/gap.rs`, t31) rebuilds a node's parent's children,
+  fields and automaton gaps for every node it tests, so a parent of n children costs n² (a module's statements
+  each walk all of them). Fixing it needs each parent's gaps once per file. t31 says "nothing is cached or
+  indexed", so this waits for the user: per-file gaps through `file_index` (as the suppression indexes are kept),
+  or the gaps as a derived fact.
+- **Spiked** (2026-11-18, the user: "spike on both"; `matcher::gap::GapScope`, `RERAIL_GAPS`): a parent's stored
+  children (ids, extras) and gaps made once (`ParentGaps`), the test reading them by the child's id (a binary search,
+  not a scan). `scratch`: made when a tape's facts first ask, kept for that tape's call (`fact_rows` installs it, as
+  `FileScopeSlot`). `fact`: every parent's, made once a tape before its facts, by node id. On the M3 Max (loaded),
+  debug, `anchored_walks_find_the_unanchored_roots` on 4 of corpus0's files (30 waves, 120 tape calls), the same
+  anchors and labels in all three:
+
+  | | `fact_rows.tape` CPU | the labelling's process CPU |
+  |---|---|---|
+  | each (t31) | 7.09 s | 10.7 s |
+  | scratch | 3.06 s | 6.7 s |
+  | fact | 2.78 s (0.27 s of it the fact: 2.2 ms a tape) | 6.3 s |
+
+  Both end the quadratic part. The fact reads by index where the scratch hashes; it is made per wave here, as the
+  scratch is, so kept with the document it would cost its 2.2 ms a tape once. Still in both: `Earlier` and `Later`
+  test each token of the gaps before (after) the node, linear in the siblings for each.
+- **Done** (2026-11-18, the user: "please do scratch, including fixing the lookup cost"): the scratch stays, the
+  other two and `RERAIL_GAPS` are gone. `GapScope::install(nodes)` (in `fact_rows`) holds a tape's parents' gaps in a
+  vector by the parent's node id, made the first time a test asks, per dialect that made them (a guest's tape is its
+  host's grammar's); no hash. A child is found by a binary search of its parent's ascending ids. An `Earlier` or
+  `Later` test reads, per parent and test, the first and the last gap holding a token it matches, found once
+  (`ParentGaps::matching`): a comparison with the child's position, not a pass over its siblings' gaps. On the same
+  run (M3 Max, load 19): `fact_rows.tape` 2.53 s CPU (scratch was 3.06 s, the fact 2.78 s), the labelling's 5.25 s,
+  the same anchors (143,274 kept, 301,004 dropped). Tests: the gap and token rules' tests, `a_gap_under_embedded`.
+- **Prior art** (found 2026-11-18): Tim's e1e0209ae on `tbelanger/final-rerail-shape-integration` (not on the hub)
+  keeps a parent's gaps in W's file memo (`memo::parent_gaps`, an `FxHashMap` by grammar and node id) and runs
+  `fact_rows` under `with_file_memo`, which memoizes the utilities' verdicts and counted siblings for the facts too.
+  Where both meet, one mechanism stays: this scratch's shape (by node id, the `Earlier`/`Later` bounds) inside
+  whichever scope the merge keeps.
+
+### Q181. (Q136 on oscar until 2026-11-18; Q25 on sync-integration-hub-tape) The label pipelines compile cold for 110 s
+
+Found 2026-11-17 (the merge of the hub at 3206e1736, M3 Max, debug): `lowered_clauses_find_the_same_roots_on_metal`
+took 113 s on Metal the first time after the kernel sources changed, and 4.4 s on the next run (5.7 s before the
+merge). Device time was 2.7 s in both. The rest of the first run is the label pipelines' compile: one pipeline per
+kernel and tape format, through function constants, with nothing yet in Metal's shader cache.
+`the_label_kernels_compile_for_every_format` (16 kernels and the pattern kernel, 3 formats) takes 56 s in the same
+way. A user's first run after an engine update pays the same cost. Find what the compile spends: the size of the
+generated MSL, the number of pipelines, and whether each format must be its own pipeline. Then cut it, or
+precompile the libraries (a `.metallib` built with the engine).
 
 ### Q69. The `.rr` ladder's field ids lose 64 in the interpreters and the compiled parser
 

@@ -2759,8 +2759,8 @@ impl Program {
                             let text = tape.transducer_text(node);
                             strings.iter().map(move |string| {
                                 let needle = &self.strings[usize::from(*string)];
-                                needle.is_empty()
-                                    || text.windows(needle.len()).any(|window| window == needle)
+                                // A few captured nodes' texts: memchr's SIMD search of each (Q54), not a window a byte.
+                                memchr::memmem::find(text, needle).is_some()
                             })
                         })
                         .collect();
@@ -2930,11 +2930,7 @@ impl Program {
                             let text = node.text();
                             strings.iter().map(move |string| {
                                 let needle = &self.strings[usize::from(*string)];
-                                needle.is_empty()
-                                    || text
-                                        .as_bytes()
-                                        .windows(needle.len())
-                                        .any(|window| window == needle)
+                                memchr::memmem::find(text.as_bytes(), needle).is_some()
                             })
                         })
                         .collect();

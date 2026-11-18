@@ -831,10 +831,10 @@ fn anchored_walks_find_the_unanchored_roots() {
         for (stage, (_, ms)) in counts.iter().filter(|(stage, _)| stage.starts_with("cpu_ms.")) {
             eprintln!("  {mode:>3} {stage:<36} {ms:>9} ms process CPU");
         }
-        (found, elapsed, count("anchor.kept"), count("anchor.dropped"))
+        (found, elapsed, count("anchor.kept"), count("anchor.dropped"), count("sweep.anchor_dropped"))
     };
-    let (unanchored, plain, _, _) = run("off");
-    let (anchored, with, kept, dropped) = run("on");
+    let (unanchored, plain, _, _, _) = run("off");
+    let (anchored, with, kept, dropped, swept) = run("on");
     unsafe { std::env::remove_var("RERAIL_ANCHORS") };
     // A run's findings: its roots, or W's matcher at its candidates where it gave the clause to W.
     let settled = |found: &(Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>), w: usize, c: usize, t: usize| -> BTreeSet<u32> {
@@ -867,6 +867,9 @@ fn anchored_walks_find_the_unanchored_roots() {
     );
     assert!(differ.is_empty(), "anchored walks differ: {differ:#?}");
     assert!(!crate::code_rule_dsl::prof::on() || dropped > 0, "the anchors dropped no start");
+    // A recursive group's sweep starts within its passes' anchors, the group's own labels read as every node (Q133).
+    eprintln!("the recursive groups' sweeps: {swept} starts outside their anchors");
+    assert!(!crate::code_rule_dsl::prof::on() || swept > 0, "the recursive groups' anchors dropped no start");
 }
 
 /// Decision 0365 on Metal: the anchors evaluated on the device (`label_formula`), for the label passes past the
@@ -978,6 +981,24 @@ fn on_metal_anchored_walks_find_the_unanchored_roots() {
 /// where its root walk starts) against the roots it finds, the root walk's steps, and the rows its label passes
 /// start at (each pass's domain). A census, not a check: it prints the totals and the clauses with the most
 /// candidates per answer and the most steps.
+/// The reads of recursive utilities in `tree` (`Recur`), and those not under a move (`Walk`, `Count`, a fact's slot or
+/// a constraint, each tested at another node): `counts`' two halves.
+fn unmoved_recurs(tree: &crate::code_rule_dsl::matcher::lower::MatchTree, moved: bool, counts: &mut (usize, usize)) {
+    use crate::code_rule_dsl::matcher::lower::MatchTree as T;
+    match tree {
+        T::Recur(_) => {
+            counts.0 += 1;
+            counts.1 += usize::from(!moved);
+        }
+        T::All(trees) | T::Any(trees) => trees.iter().for_each(|tree| unmoved_recurs(tree, moved, counts)),
+        T::Not(tree) | T::Recursive(_, tree) => unmoved_recurs(tree, moved, counts),
+        T::Walk { rule, .. } | T::Count { rule, .. } => unmoved_recurs(rule, true, counts),
+        T::Constrained(_, constraints) => constraints.iter().for_each(|(_, tree)| unmoved_recurs(tree, true, counts)),
+        T::Fact(fact) => fact.slots.iter().for_each(|tree| unmoved_recurs(tree, true, counts)),
+        T::Kind(_) | T::Supertype(..) | T::Pattern(_) | T::Regex(_) | T::Never => {}
+    }
+}
+
 #[test]
 fn anchor_rows_per_answer() {
     let mut tapes = fixtures();
@@ -985,16 +1006,21 @@ fn anchor_rows_per_answer() {
         tapes.truncate(10);
     }
     let (compiled, mut lowered, mut names) = (clauses(), Vec::new(), Vec::new());
+    let mut recursions = (0_usize, 0_usize);
     for (policy, compiled) in &compiled {
         for (clause, grammar) in python_matchers(compiled) {
             if let Ok(tree) = match_tree(grammar)
                 && let Ok(matcher) = LoweredMatcher::lower(&tree)
             {
+                unmoved_recurs(&tree, false, &mut recursions);
                 lowered.push(matcher);
                 names.push(format!("{policy}/{clause}"));
             }
         }
     }
+    // Q133 (a): a recursive utility's label narrowed by the kinds wanted where it is read (0390) is narrowed only where
+    // no read of it is under a move (a move wants every kind at the node it reaches).
+    eprintln!("recursions: {} reads, {} of them not under a move", recursions.0, recursions.1);
     let nodes: usize = tapes.iter().map(TapeDoc::transducer_len).sum();
     // Per clause: candidates, roots, root-walk steps, label rows, label passes, anchored candidates.
     let mut per: Vec<(String, u64, u64, u64, u64, usize, u64)> = Vec::new();
@@ -1003,17 +1029,21 @@ fn anchor_rows_per_answer() {
     let mut by_route = BTreeMap::<(&str, &str), (u64, u64, u64, u64)>::new();
     let mut passes = BTreeMap::<String, (u64, u64, u64, String, &str, String)>::new();
     // The anchor of a walk's program, evaluated on a tape: its members (`Set::anchor`, decision 0365).
-    let anchored = |program: &super::Program, view: &TapeDoc, index: &super::compile_sets::Index| -> Vec<u64> {
+    // A recursive group's pass reads its group's labels as every node (`unknown`): its anchor holds whatever they
+    // settle to, so one evaluation before the group's rounds serves every round.
+    let anchored_with = |program: &super::Program, view: &TapeDoc, index: &super::compile_sets::Index, unknown: &dyn Fn(u16) -> bool| -> Vec<u64> {
         use super::compile_sets::{Reader, Set};
         let walk = super::compile_micro::Micro::of(program);
         let texts = walk.as_ref().and_then(|walk| walk.texts(program, view));
         let set = match (&walk, &texts) {
             (Some(walk), Some(_)) => Set::anchor(&walk.words, &|_| true),
             _ => Set::anchor(&program.words, &|_| false),
-        };
+        }
+        .labels_unknown(unknown);
         let texts = texts.unwrap_or_default();
         Reader { tape: view, index, labels: view.transducer_labels(), texts: &texts }.eval(&set)
     };
+    let anchored = |program: &super::Program, view: &TapeDoc, index: &super::compile_sets::Index| anchored_with(program, view, index, &|_| false);
     let get = |bits: &[u64], node: u32| bits.get(node as usize / 64).is_some_and(|w| w >> (node % 64) & 1 != 0);
     for (matchers, names) in lowered.chunks(16).zip(names.chunks(16)) {
         let wave = LoweredWave::new(&matchers.iter().collect::<Vec<_>>()).unwrap();
@@ -1037,6 +1067,9 @@ fn anchor_rows_per_answer() {
                     steps += used as u64;
                 }
                 for (at, def) in clause.labels.defs.iter().enumerate() {
+                    // The recursive group the label is in, if any: its step of the clause's labels.
+                    let id = (crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as usize + clause.labels.offset() + at) as u16;
+                    let group = clause.labels.group_of(id);
                     let (kind, program, d) = match def {
                         Label::Roots(p, d) => ("roots", p, d),
                         Label::Targets(p, d) => ("targets", p, d),
@@ -1050,10 +1083,13 @@ fn anchor_rows_per_answer() {
                         (Label::Targets(..), Some(walk)) => super::compile_sets::Set::targets(&walk.words, super::compile_sets::Set::All).is_some(),
                         _ => false,
                     };
-                    let route = match (kind, formula, walk.is_some()) {
+                    let route = match (kind, formula, walk.is_some(), group.is_some()) {
                         ("pattern", ..) => "pattern",
-                        (_, true, _) => "formula",
-                        (_, false, true) => "micro walk",
+                        (_, true, _, true) => "group, formula",
+                        (.., true) if walk.is_some() => "group, micro walk",
+                        (.., true) => "group, interpreter",
+                        (_, true, ..) => "formula",
+                        (_, false, true, _) => "micro walk",
                         _ => "interpreter",
                     };
                     let pass_entry = Entry::of(program);
@@ -1061,7 +1097,24 @@ fn anchor_rows_per_answer() {
                     let rows = pass_starts.len() as u64;
                     let answers = sets.get(clause.labels.offset() + at).map_or(0, |bits| bits.iter().map(|w| u64::from(w.count_ones())).sum());
                     // Anchored starts where a pass walks from each start (a roots, targets or count walk).
-                    let anchor = if route != "formula" && route != "pattern" && matches!(def, Label::Roots(..) | Label::Targets(..) | Label::Count { .. }) {
+                    let anchor = if let Some(group) = group.filter(|_| matches!(def, Label::Roots(..) | Label::Targets(..) | Label::Count { .. })) {
+                        // The group's anchor (its labels unknown): no start outside it emits with the labels settled,
+                        // nor in any round before (it reads none of them).
+                        let anchor = anchored_with(program, view, index, &|label| group.contains(&((crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as usize + usize::from(label)) as u16)));
+                        let outside: Vec<u32> = pass_starts.iter().copied().filter(|&n| !get(&anchor, n)).collect();
+                        if let Ok((outputs, _)) = program.execute_roots_budgeted(view, outside.iter().copied(), usize::MAX) {
+                            assert!(outputs.is_empty(), "{name}: a recursive group's start outside its anchor emitted");
+                        }
+                        // The same pass's anchor reading its group's settled labels: what a per-round anchor could
+                        // drop at best.
+                        let settled = anchored(program, view, index);
+                        let r = by_route.entry((kind, "group, settled labels")).or_default();
+                        r.0 += 1;
+                        r.1 += rows;
+                        r.2 += pass_starts.iter().filter(|&&n| get(&settled, n)).count() as u64;
+                        r.3 += answers;
+                        pass_starts.iter().filter(|&&n| get(&anchor, n)).count() as u64
+                    } else if route != "formula" && route != "pattern" && matches!(def, Label::Roots(..) | Label::Targets(..) | Label::Count { .. }) {
                         let anchor = anchored(program, view, index);
                         if matches!(def, Label::Count { .. }) {
                             // A count's tally is over every node, so an unwalked start must count 0: no start outside the
@@ -1275,6 +1328,39 @@ fn micro_walks_are_the_interpreters_label_outputs() {
     assert!(compared > 100_000 && overflowed * 100 < compared);
 }
 
+/// Whether a walk's first move, reached from its start through saves, forks and jumps only, is `after` with a tail
+/// that marks the start alone (tests, a `load` and its tests, a capture, the emit): the shape the device answers once
+/// for a parent's children (`metal_label_passes.metal`'s `sibling_pass`, work queue Q182).
+fn sibling_shape(words: &[u32]) -> bool {
+    let (mut pc, mut seen) = (0, 0);
+    while pc < words.len() && seen <= words.len() {
+        seen += 1;
+        let (op, _, arg) = split(words[pc]);
+        match op {
+            0x15 | 0x30 => pc += 1,
+            0x31 => pc = arg as usize,
+            0x14 => break,
+            _ => return false,
+        }
+    }
+    let test = |op: u8| matches!(op, 0x01 | 0x02 | 0x03 | 0x04 | 0x0a);
+    let mut at = pc + 1;
+    while at < words.len() && test(split(words[at]).0) {
+        at += 1;
+    }
+    if at >= words.len() || split(words[at]).0 != 0x16 {
+        return at < words.len() && split(words[at]).0 == 0x40;
+    }
+    at += 1;
+    while at < words.len() && test(split(words[at]).0) {
+        at += 1;
+    }
+    if at < words.len() && split(words[at]).0 == 0x20 {
+        at += 1;
+    }
+    at < words.len() && split(words[at]).0 == 0x40
+}
+
 /// A long walk spills its frames to other threads (decision 0125): with a budget of one step, nearly every walk
 /// gives frames away (a descendant range halved, a move frame whole), and the wave's findings on Metal are still the
 /// CPU's (each side's roots, or W's matcher at its candidates where it gave the clause to W: a backend may stop at
@@ -1304,9 +1390,10 @@ fn spilled_walks_find_the_cpus_roots() {
         candidates.iter().copied().filter(|&n| grammar.match_root(node_at(&root, n), &mut work).ok().flatten().is_some()).collect()
     };
     // Waves of a dozen clauses, as the engine's are (the whole set is over the launch bound).
-    let (mut found, mut differ, mut waves) = (0, Vec::new(), 0);
+    let (mut found, mut differ, mut waves, mut shared) = (0, Vec::new(), 0, 0);
     for (at, clauses) in lowered.chunks(12).enumerate() {
         let wave = LoweredWave::new(&clauses.iter().collect::<Vec<_>>()).unwrap();
+        shared += wave.label_programs().iter().filter_map(|(program, _)| Micro::of(program)).filter(|walk| sibling_shape(&walk.words)).count();
         let active = vec![vec![true; tapes.len()]; clauses.len()];
         let (mut cpu, cpu_run) = wave.roots_batch(Backend::Cpu, &tapes, &active).unwrap();
         SPILL_BUDGET_TEST.set(Some(1));
@@ -1336,7 +1423,8 @@ fn spilled_walks_find_the_cpus_roots() {
             ));
         }
     }
-    eprintln!("spilled: {waves} waves of {} clauses, {found} roots", lowered.len());
+    eprintln!("spilled: {waves} waves of {} clauses, {found} roots, {shared} walks of a shared sibling scan", lowered.len());
+    assert!(shared > 0, "some walk's sibling scan is shared (the device's `sibling_pass`)");
     assert!(waves * 2 > lowered.len() / 12 && found > 1000, "most waves ran on Metal and found roots ({waves} waves, {found} roots)");
     assert!(differ.is_empty(), "{} clauses differ on Metal with every walk spilling: {differ:?}", differ.len());
 }

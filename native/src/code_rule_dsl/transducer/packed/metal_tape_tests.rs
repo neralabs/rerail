@@ -232,8 +232,9 @@ fn a_label_kernel_costs_footprint() {
 }
 
 /// Every label kernel and the fact-only pattern kernel compile, for a mixed batch (0) and for each format's own
-/// (`tape_format`). A run whose kernels fail to compile falls back to the CPU and still gives the right rows, so the
-/// label tests alone would pass with MSL that does not compile (t41, Q62).
+/// (`tape_format`). A kernel that does not compile is fatal (decision 0382; before it, a run fell back to the CPU and
+/// gave the right rows, so the label tests alone passed with MSL that did not compile: t41, Q62); this compiles every
+/// format's kernels whether or not a run reaches them.
 #[test]
 fn the_label_kernels_compile_for_every_format() {
     if METAL_DEVICE.is_none() {
@@ -241,6 +242,7 @@ fn the_label_kernels_compile_for_every_format() {
     }
     for format in [0, 15, 16] {
         let compiled = super::label_passes::compile_label_kernels(format).unwrap_or_else(|_| panic!("the label kernels for format {format}"));
-        assert_eq!(compiled, (14, 1), "format {format}: the label kernels, then the pattern kernel");
+        // 16: decision 0365 added `label_formula` and `label_leaves`.
+        assert_eq!(compiled, (16, 1), "format {format}: the label kernels, then the pattern kernel");
     }
 }

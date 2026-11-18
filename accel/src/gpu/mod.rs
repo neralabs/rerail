@@ -79,11 +79,12 @@ impl Gpu {
             // The device and queue every relational submission shares (decision 0100 §2).
             let shared = shared::get().ok_or("no Metal device")?;
             let device = shared.device.clone();
-            let library = device.new_library_with_source(SOURCE, &CompileOptions::new()).map_err(|e| format!("gpu lane: compiling the kernels: {e}"))?;
+            // A kernel that does not compile is fatal (decision 0382), not a lane the CPU takes over.
+            let library = device.new_library_with_source(SOURCE, &CompileOptions::new()).unwrap_or_else(|e| join::compile_failed("gpu lane", "library", e));
             let mut pipes = Vec::with_capacity(PIPES.len());
             for name in PIPES {
-                let f = library.get_function(name, None).map_err(|e| format!("gpu lane: {name}: {e}"))?;
-                let p = device.new_compute_pipeline_state_with_function(&f).map_err(|e| format!("gpu lane: {name}: {e}"))?;
+                let f = library.get_function(name, None).unwrap_or_else(|e| join::compile_failed(name, "function", e));
+                let p = device.new_compute_pipeline_state_with_function(&f).unwrap_or_else(|e| join::compile_failed(name, "pipeline", e));
                 if p.max_total_threads_per_threadgroup() < TG {
                     return Err(format!("gpu lane: {name} runs {} threads a threadgroup, not {TG}", p.max_total_threads_per_threadgroup()));
                 }
