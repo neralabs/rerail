@@ -40,9 +40,11 @@ import {
   openDashboard,
   START_LOCK_DIR,
   startDaemon,
+  STOP_ANSWERS,
   stopDaemon,
   type DaemonMachine,
   type DaemonState,
+  type StopDaemonResult,
 } from "../runtime/daemon-control.js";
 import { DAEMON_PORT_FILE, DEFAULT_DAEMON_PORT, parseArguments, parsePort } from "../daemon/daemon.js";
 import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
@@ -192,6 +194,16 @@ const BACKED_UP_DATABASES = ["", "-wal", "-shm"].map(suffix => `${RERAIL_DATABAS
 const LOCKED_MOVE_MS = 10_000;
 
 /**
+ * What the uninstall says of its stop of the daemon before it backs up or deletes the data: whether it stopped one, else
+ * that none was running, unless daemon.json changed under the stop, which then ended nothing and may name a daemon that
+ * runs: that gets the stop's own answer ({@link STOP_ANSWERS}).
+ */
+function stopLine(result: StopDaemonResult): string {
+  if (result === "stopped") return "Stopped the Rerail daemon.\n";
+  return result === "record-changed" ? STOP_ANSWERS[result] : "The Rerail daemon was not running.\n";
+}
+
+/**
  * After the coding agents are disconnected, nothing reopens the database: stop the daemon, then
  * move rules and history aside so a later install starts clean and can restore them. The files are
  * listed only after the stop: closing the daemon's last connection checkpoints the WAL and deletes
@@ -206,7 +218,7 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
     process.stdout.write(`Would stop the Rerail daemon${moves}.\n`);
     return;
   }
-  process.stdout.write(await stopDaemon(home) === "stopped" ? "Stopped the Rerail daemon.\n" : "The Rerail daemon was not running.\n");
+  process.stdout.write(stopLine(await stopDaemon(home)));
   const listed = present();
   if (listed.length === 0) {
     process.stdout.write("No rules or history to back up.\n");
@@ -352,7 +364,7 @@ function heldCacheCleanup(path: string): string {
  */
 async function deleteRulesAndHistory(home: string, dryRun: boolean, machine: DaemonMachine | undefined): Promise<ReadonlySet<string>> {
   if (dryRun) process.stdout.write("Would stop the Rerail daemon.\n");
-  else process.stdout.write(await stopDaemon(home) === "stopped" ? "Stopped the Rerail daemon.\n" : "The Rerail daemon was not running.\n");
+  else process.stdout.write(stopLine(await stopDaemon(home)));
   const deletion = planDataDeletion(home, machine);
   if (dryRun) {
     for (const { path, what } of deletion.remove) process.stdout.write(`Would delete ${path} (${what}).\n`);
