@@ -4,8 +4,9 @@
 // through npm scripts transitively (`npm run X`, `npm test`, `npm --prefix <dir> …` for the package in
 // <dir>, `cd <dir>` within a script). From those commands the gate collects what executes:
 //   - `vitest [run] [--dir D] [--config C] [filters…]` in package P runs P's `*.test.*`/`*.spec.*` files under
-//     D (else under C's directory, else all of P) whose path contains a filter (when given), minus the
-//     string globs in P's `vitest.config.*` `exclude` array;
+//     D (else under C's directory, else all of P) whose path contains a filter (when given; a filter the shell
+//     expands, `$X`, may be none, so every file), minus the string globs in P's `vitest.config.*` `exclude` array;
+//     `node_modules/.bin/vitest` runs as `vitest` does;
 //   - `node --test files…` runs those files; `pytest paths…` runs the test files under those paths;
 //   - `playwright test` in package P runs the test files under its config's `testDir` (`--config C`, else
 //     P's `playwright.config.*`; the config's directory when it names none);
@@ -75,6 +76,8 @@ export function analyse(repo) {
     let [program, ...args] = tokens;
     if (program === "npx" || program === "exec") [program, ...args] = args;
     if (program?.startsWith("/") && INTERPRETERS.has(basename(program))) program = basename(program);
+    // The package's own bin (`node_modules/.bin/vitest`) runs as its name does.
+    if (program?.startsWith("node_modules/.bin/")) program = basename(program);
     return program === undefined ? [] : runProgram(cwd, program, args, stack);
   }
 
@@ -154,6 +157,11 @@ export function analyse(repo) {
         if (flag === "--config" || flag === "-c") record.config = join(cwd, value);
       } else if (arg === "run" || arg === "watch" || arg.startsWith("-")) {
         continue;
+      } else if (arg.includes("$")) {
+        // A filter the step chooses as it runs (a change's selected tests: scripts/check/ci/test-selection.mjs) may be
+        // none, which runs every file.
+        record.filters = null;
+        break;
       } else {
         record.filters.push(arg);
       }
@@ -212,7 +220,7 @@ export function filesRun(repo, record, testFiles) {
     const relative = record.pkg === "" ? path : path.slice(record.pkg.length + 1);
     if (record.pkg !== "" && !path.startsWith(`${record.pkg}/`)) return false;
     if (excludes.some((exclude) => exclude.test(relative))) return false;
-    return record.filters.length === 0 || record.filters.some((filter) => relative.includes(filter));
+    return record.filters === null || record.filters.length === 0 || record.filters.some((filter) => relative.includes(filter));
   });
 }
 

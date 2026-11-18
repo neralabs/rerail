@@ -370,15 +370,65 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
           FILES: ${{ github.event.pull_request.changed_files || 0 }}
           RUSTUP_TOOLCHAIN: stable
+        # The base's package.json, when the pull request changes it: only the scripts that run cargo reach the crates.
+        run: |
+          base=()
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$FILES" -lt 3000 ]; then
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/changed.txt"
+            if grep -qx package.json "$RUNNER_TEMP/changed.txt" \
+              && gh api "repos/$GITHUB_REPOSITORY/contents/package.json?ref=$BASE" -H 'Accept: application/vnd.github.raw' > "$RUNNER_TEMP/base-package.json"; then
+              base=(--base-package-json "$RUNNER_TEMP/base-package.json")
+            fi
+          else
+            echo Cargo.lock > "$RUNNER_TEMP/changed.txt"
+          fi
+          node scripts/check/ci/rust-selection.mjs "$RUNNER_TEMP/changed.txt" "${base[@]}" --github >> "$GITHUB_OUTPUT"
+
+  # Which unit test files a pull request can affect (scripts/check/ci/test-selection.mjs): those whose import closure, or
+  # the paths its files name, hold a changed file. The unit jobs run only those, on as many shards as their share needs
+  # (`unit-shards`, `windows-shards`), or none ('[]': their jobs and the Windows engine's build skip). Everything off pull
+  # requests, past 3000 files, and when the step fails: `unit` 'all', `unit-tests` empty, every shard. Its own job, so
+  # the `npm ci` it needs is off the path of the jobs that need `changes` alone.
+  select-tests:
+    name: Select the unit tests
+    needs: changes
+    if: needs.changes.outputs.release-pr != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      unit: ${{ steps.select.outputs.unit || 'all' }}
+      unit-tests: ${{ steps.select.outputs.unit == 'some' && steps.select.outputs.unit-tests || '' }}
+      unit-shards: ${{ steps.select.outputs.unit-shards || '[1, 2]' }}
+      windows-shards: ${{ steps.select.outputs.windows-shards || '[1, 2, 3, 4, 5]' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/node-deps
+
+      - id: select
+        name: Select the unit tests to run
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          FILES: ${{ github.event.pull_request.changed_files || 0 }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$FILES" -lt 3000 ]; then
             gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/changed.txt"
           else
-            echo Cargo.lock > "$RUNNER_TEMP/changed.txt"
+            echo package-lock.json > "$RUNNER_TEMP/changed.txt"
           fi
-          node scripts/check/ci/rust-selection.mjs "$RUNNER_TEMP/changed.txt" --github >> "$GITHUB_OUTPUT"
+          node scripts/check/ci/test-selection.mjs "$RUNNER_TEMP/changed.txt" --github >> "$GITHUB_OUTPUT"
 
   # Uploads, as this run's artifacts, every set of archives the jobs below download (.github/actions/pack-test-data,
   # `fetch: "true"`): every tool-pack's archives for the unit jobs (Linux and Windows) and the conformance jobs, and the
@@ -955,14 +1005,18 @@ jobs:
           retention-days: 1
 
   # Both shards read every pack's test data (packs.test.ts, complexity-rules.test.ts and the native tests share them),
-  # restored from what the test-data job saved.
+  # restored from what the test-data job saved. Runs the test files select-tests chose (all of them, or `unit-tests`),
+  # on its `unit-shards`; none when it chose none.
   unit:
-    name: Unit tests (${{ matrix.shard }}/2)
-    needs: [build, test-data]
+    name: Unit tests (${{ matrix.shard }}/${{ strategy.job-total }})
+    needs: [build, test-data, select-tests]
     if: >-
       ${{
-        github.event_name != 'pull_request' ||
-        (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        needs.select-tests.outputs.unit != 'none' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
       }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -971,7 +1025,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: ${{ fromJSON(needs.select-tests.outputs.unit-shards) }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -992,10 +1046,14 @@ jobs:
       # The pack validation's check 4 leaves scoring the fixtures to the conformance check (the conformance and tools jobs
       # below), which scores the same fixtures through the same runner and fails on the same failures, so they are scored
       # once (test/engine/catalog/packs.test.ts). The pack publish gate (release-packs.yml) still scores them itself.
+      # TESTS: the selected files' paths, read into words (none holds a space); empty runs every file.
       - name: Unit tests
         env:
           RERAIL_PACK_FIXTURES_IN_CONFORMANCE: "1"
-        run: npm test -- --shard=${{ matrix.shard }}/2
+          TESTS: ${{ needs.select-tests.outputs.unit-tests }}
+        run: |
+          read -ra tests <<< "$TESTS"
+          npm test -- --passWithNoTests --shard=${{ matrix.shard }}/${{ strategy.job-total }} "${tests[@]}"
 
       # Every statement, branch and function of reading a repository's own lint config is run by its tests, file by
       # file (package.json `test:coverage:lint-config`). Once, on the first shard.
@@ -1008,10 +1066,10 @@ jobs:
   # last run uploaded (main uploads its own). Gated as the shards are.
   build-windows:
     name: Build (Windows)
-    needs: changes
+    needs: [changes, select-tests]
     if: >-
       ${{
-        needs.changes.outputs.release-pr != 'true' &&
+        needs.changes.outputs.release-pr != 'true' && needs.select-tests.outputs.windows-shards != '[]' &&
         (
           github.event_name != 'pull_request' ||
           (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
@@ -1161,11 +1219,14 @@ jobs:
   # build-windows' artifact; the package is built here, which takes seconds.
   unit-windows:
     name: Unit tests (Windows, ${{ matrix.shard }}/${{ strategy.job-total }})
-    needs: [test-data, build-windows]
+    needs: [test-data, build-windows, select-tests]
     if: >-
       ${{
-        github.event_name != 'pull_request' ||
-        (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        needs.select-tests.outputs.windows-shards != '[]' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
       }}
     runs-on: windows-2025
     # A shard took 4 to 9 minutes with the engine downloaded (44363497802).
@@ -1175,7 +1236,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
+        shard: ${{ fromJSON(needs.select-tests.outputs.windows-shards) }}
     defaults:
       run:
         shell: bash
@@ -1212,12 +1273,19 @@ jobs:
       # As in the unit job, with TEMP and TMP at runner.temp, a long path. The runner's TEMP is an 8.3 short path
       # (C:\Users\RUNNER~1\...), and Rerail's tests compare long paths: Rerail records a checkout by its long path, and
       # the tests expect the temporary folder's path as given, so 42 of them fail on the spelling alone.
+      # The test files select-tests chose (TESTS: their paths, read into words; empty runs every file), or none when it
+      # chose only the hook test below. vitest's own shim, from bash, starts node directly: npm's cmd.exe would cut the list
+      # at 8,191 characters, CreateProcess takes 32,767.
       - name: Unit tests
+        if: needs.select-tests.outputs.unit != 'none'
         env:
           RERAIL_PACK_FIXTURES_IN_CONFORMANCE: "1"
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
-        run: npm test -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+          TESTS: ${{ needs.select-tests.outputs.unit-tests }}
+        run: |
+          read -ra tests <<< "$TESTS"
+          node_modules/.bin/vitest run --dir test --passWithNoTests --shard=${{ matrix.shard }}/${{ strategy.job-total }} "${tests[@]}"
 
       # The integration job runs on Linux only. This file replays a Claude Code session through the built hook as
       # Claude Code runs it on Windows (dist/harness/hook-launcher.js), against a daemon of this build, including a
@@ -1808,6 +1876,7 @@ jobs:
       - lint
       - audit
       - changes
+      - select-tests
       - test-data
       - test-data-in-s3
       - rust-clippy
