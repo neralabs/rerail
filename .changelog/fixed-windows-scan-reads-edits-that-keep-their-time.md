@@ -1,0 +1,1 @@
+On Windows, a repository scan now reads a file whose text changed while its size and modification time stayed the same (a copy or extraction that keeps times, `touch -r`), instead of keeping the results of its committed text. Files nothing changed are still restored without being read.
