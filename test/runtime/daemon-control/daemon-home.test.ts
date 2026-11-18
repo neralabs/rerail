@@ -33,6 +33,7 @@ import {
   recordedPid,
   until,
   watchedEnvironment,
+  watchedExits,
 } from "../../support/processes/daemon-home.js";
 import { removeFolder, runningIn } from "../../support/platform/remove-folder.js";
 
@@ -286,6 +287,58 @@ describe("the daemons of a Rerail home", () => {
     await until(() => !existsSync(`${busy}.held`));
     expect((await findRunningDaemon(home))?.state).toMatchObject({ pid: first.pid, port });
     expect(liveDaemons(home)).toEqual([first.pid]);
+  }, 60_000);
+
+  /** A daemon process of this checkout's build, once daemon.json names it. */
+  async function recordedDaemon(): Promise<ChildProcess> {
+    const daemon = daemonProcess(home, env, ["--port", "0"]);
+    others.push(daemon);
+    await until(async () => {
+      if (daemon.exitCode !== null) throw new Error(`the daemon stopped: ${await exitMessage(daemon)}`);
+      return await recordedPid(home) === daemon.pid;
+    }, 30_000, "daemon.json naming the daemon");
+    return daemon;
+  }
+
+  it("leaves the home to the next daemon once a stopped daemon's close is done, however long its process takes to exit", async () => {
+    const exits = watchedExits(home, env, true);
+    env = exits.env;
+    const first = await recordedDaemon();
+    // `rerail daemon stop` waits longer for the process to end than this test takes; the test ends it.
+    void cli(["stop"]);
+    await until(() => exits.exiting(first.pid!), 30_000, "the first daemon closed and exiting");
+    const next = await recordedDaemon();
+    expect(processAlive(first.pid!)).toBe(true);
+    expect(liveDaemons(home)).toEqual([next.pid]);
+  }, 90_000);
+
+  it("stops a daemon started beside a running one on the running one's answer, before its wait for the lock ends", async () => {
+    const exits = watchedExits(home, env);
+    env = exits.env;
+    const first = await recordedDaemon();
+    const second = daemonProcess(home, env, ["--port", "0"]);
+    others.push(second);
+    const [code] = await once(second, "exit") as [number | null];
+    expect(code).not.toBe(0);
+    expect(await exitMessage(second)).toContain(`rerail daemon: Another Rerail daemon (pid ${first.pid}) runs in ${home}`);
+    expect(exits.lockWaitAtExit(second.pid!)).toBe("waiting");
+  }, 60_000);
+
+  it("gives a daemon started beside a holder that is not the running daemon its whole wait for the lock", async () => {
+    const exits = watchedExits(home, env);
+    env = exits.env;
+    await recordedDaemon();
+    // The record beside the lock names another process that runs, which the running daemon's answer does not name.
+    const other = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e9)"], { stdio: "ignore", windowsHide: true });
+    others.push(other);
+    await once(other, "spawn");
+    await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: other.pid }));
+    const second = daemonProcess(home, env, ["--port", "0"]);
+    others.push(second);
+    const [code] = await once(second, "exit") as [number | null];
+    expect(code).not.toBe(0);
+    expect(await exitMessage(second)).toContain(`rerail daemon: Another Rerail daemon (pid ${other.pid}) runs in ${home}`);
+    expect(exits.lockWaitAtExit(second.pid!)).toBe("ended");
   }, 60_000);
 
   /** What a test writes over the running daemon's daemon.json: the record as something other than the daemon left it. */

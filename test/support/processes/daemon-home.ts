@@ -100,6 +100,71 @@ if (daemon && slowStart !== null) {
   return { ...process.env, RERAIL_HOME: home, NODE_OPTIONS: [process.env.NODE_OPTIONS, preload].filter(Boolean).join(" ") };
 }
 
+const EXIT_WATCH_FILE = "exit-watch.cjs";
+/** How long the exit of a daemon {@link watchedExits} holds waits before the daemon's own exit steps: past a test's end. */
+const HELD_EXIT_MS = 60_000;
+
+/** What the daemons started with {@link watchedExits}'s environment show a test as their processes end. */
+export interface WatchedExits {
+  readonly env: NodeJS.ProcessEnv;
+  /** Whether daemon `pid` has begun to exit, its close done: its exit is held from then on. */
+  exiting(pid: number): boolean;
+  /**
+   * Whether the engine still waited for the home's daemon lock as daemon `pid` exited ("waiting"), so something else
+   * than the end of that wait stopped it, or had ended that wait ("ended"); undefined when the daemon did not ask for
+   * the lock or has not exited.
+   */
+  lockWaitAtExit(pid: number): "waiting" | "ended" | undefined;
+}
+
+/**
+ * `env`, made by {@link watchedEnvironment} for `home`, with one more preload in each daemon it starts, through which a
+ * test sees how the daemon's process ends. It wraps the engine's `lockExclusive` as the engine loads, to see whether
+ * the wait for the home's daemon lock had ended when the daemon exited. With `holdExit`, a daemon's exit, which begins
+ * once its close is done, marks itself and then waits {@link HELD_EXIT_MS} before the daemon's own exit steps run, as a
+ * process slow to exit after its close; the test ends it.
+ */
+export function watchedExits(home: string, env: NodeJS.ProcessEnv, holdExit = false): WatchedExits {
+  const script = join(home, EXIT_WATCH_FILE);
+  const mark = (name: string, pid: number): string => join(home, `${name}.${pid}`);
+  writeFileSync(script, `const fs = require("node:fs");
+const Module = require("node:module");
+const mark = name => require("node:path").join(${JSON.stringify(home)}, name + "." + process.pid);
+if (/[\\\\/]daemon-entry\\.js$/u.test(process.argv[1] ?? "")) {
+  let lockWait;
+  const loadAddon = Module._extensions[".node"];
+  Module._extensions[".node"] = function (module, filename) {
+    loadAddon.call(this, module, filename);
+    const engine = module.exports;
+    if (typeof engine.lockExclusive !== "function") return;
+    module.exports = Object.create(engine, { lockExclusive: { enumerable: true, value: (path, waitMs) => {
+      const taking = engine.lockExclusive(path, waitMs);
+      if (/[\\\\/]daemon\\.lock$/u.test(path)) {
+        lockWait = "waiting";
+        taking.then(() => { lockWait = "ended"; }, () => { lockWait = "ended"; });
+      }
+      return taking;
+    } } });
+  };
+  process.on("exit", () => {
+    if (lockWait !== undefined) fs.writeFileSync(mark("lock-wait"), lockWait);
+    if (!${String(holdExit)}) return;
+    fs.writeFileSync(mark("exiting"), "");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${HELD_EXIT_MS});
+  });
+}
+`);
+  const preload = `--require ${JSON.stringify(script.replaceAll("\\", "/"))}`;
+  return {
+    env: { ...env, NODE_OPTIONS: [env.NODE_OPTIONS, preload].filter(Boolean).join(" ") },
+    exiting: pid => existsSync(mark("exiting", pid)),
+    lockWaitAtExit: pid => {
+      const answer = existsSync(mark("lock-wait", pid)) ? readFileSync(mark("lock-wait", pid), "utf8") : undefined;
+      return answer === "waiting" || answer === "ended" ? answer : undefined;
+    },
+  };
+}
+
 /**
  * Holds the event loop of the daemon started with `busy` ({@link watchedEnvironment}) for {@link BUSY_MS}, as a long
  * check holds a busy daemon's; resolves once it is held. Its socket and port stay bound meanwhile.
