@@ -1,15 +1,18 @@
 /**
  * Waits off the calling thread for another process's write lock on a Rerail database to be given back. SQLite tells a
- * waiter in another process nothing when a holder commits: the only notice is its busy handler, which sleeps and tries
- * again until the lock is free. That handler runs here on a worker thread of its own, so the thread that answers hooks
- * never sleeps in it (`record-writes.ts`, and a quiet session's reopen in `engine-service.ts`).
+ * waiter in another process nothing when a holder commits: the only notice is trying again, as its busy handler does
+ * by sleeping between tries. That runs here on a worker thread of its own, so the thread that answers hooks never
+ * sleeps in it (`record-writes.ts`, and a quiet session's reopen in `engine-service.ts`).
  */
 import { Worker } from "node:worker_threads";
 
 /** What the thread `waitForWriteLock` starts reads (`write-lock-wait-worker.ts`). */
 export interface WriteLockWaitData {
   readonly path: string;
-  /** Set to 1 by the starting thread to stop the wait before the lock frees; the thread reads it between tries. */
+  /**
+   * Set to 1 and notified (`Atomics.notify`) by the starting thread to stop the wait before the lock frees: the thread
+   * sleeps between tries on this word, so the stop wakes it at once.
+   */
   readonly stop: Int32Array;
 }
 
@@ -18,7 +21,8 @@ export const WRITE_LOCK_FREE = "write-lock-free";
 
 /**
  * Resolves to true once the write lock of the database at `path` was free (taken and given back at once on a
- * connection of the worker's own), or to false once `signal` aborts first. The worker never keeps the process alive.
+ * connection of the worker's own), or to false once `signal` aborted first and the thread ended. The worker never keeps
+ * the process alive, and its stop never waits for a try in progress: a try does not wait for the lock.
  */
 export function waitForWriteLock(path: string, signal?: AbortSignal): Promise<boolean> {
   const stop = new Int32Array(new SharedArrayBuffer(4));
@@ -28,7 +32,7 @@ export function waitForWriteLock(path: string, signal?: AbortSignal): Promise<bo
     worker.unref();
     const onAbort = (): void => {
       Atomics.store(stop, 0, 1);
-      resolve(false);
+      Atomics.notify(stop, 0);
     };
     if (signal?.aborted === true) onAbort();
     signal?.addEventListener("abort", onAbort, { once: true });
