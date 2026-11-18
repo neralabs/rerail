@@ -186,7 +186,7 @@ describe("the look for a kept runtime's removed checkout", () => {
       expect(await folderRemoved(root)).toBe(false);
       expect(await folderRemoved(join(root, "gone"))).toBe(true);
       expect(await folderRemoved(join(root, "gone", "deeper"))).toBe(true);
-      expect(await folderRemoved(`${root}\0`)).toBe(false);
+      expect(await folderRemoved(root + "\0")).toBe(false);
     } finally {
       await removeFolder(root);
     }
