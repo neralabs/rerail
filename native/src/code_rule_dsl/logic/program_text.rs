@@ -699,6 +699,27 @@ fn store_run(store: &ContentStore, key: &[u8; 32], images: &[&[u8]], facts: &[u8
     Ok(ids)
 }
 
+/// The sources a pipeline run kept under `key` lives in (`store_run`'s): its versions' images and its facts. `None`
+/// when the store does not hold it whole. A run that finds its prepared program names a kept run's sources by these,
+/// as the run that kept it named them (decision 0333).
+pub fn run_sources(store: &ContentStore, key: &[u8; 32]) -> Result<Option<Vec<SourceId>>, String> {
+    let e = |e: crate::content_store::StoreError| e.to_string();
+    let Some(id) = store.source_by_alias(run_alias(key)).map_err(e)? else { return Ok(None) };
+    let facts = program_facts::decode(&store.get_source(id).map_err(e)?)?;
+    let mut ids = Vec::new();
+    for r in facts.get("pipeline_run_version").into_iter().flatten() {
+        let (Some(Value::Int(kind)), Some(Value::Str(image))) = (r.get(1), r.get(3)) else { return Err(bad("a stored run's version is not one")) };
+        if !matches!(kind, 0 | 1) {
+            continue;
+        }
+        let image = unhex32(image).ok_or_else(|| bad("a stored run's image is not a digest"))?;
+        let Some(image_id) = store.source_by_alias(image_key(&image)).map_err(e)? else { return Ok(None) };
+        ids.push(image_id);
+    }
+    ids.push(id);
+    Ok(Some(ids))
+}
+
 /// One run of `record_runs`' item: its key, and its images' and facts' lengths in the item's byte area.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct RecordedRun {

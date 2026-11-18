@@ -1194,7 +1194,6 @@ fn a_runs_output_directory_is_rerails_own() {
 /// cross part whose every stratum was kept, a program of no rules, kept planning choices of its own. Each run is a
 /// process of its own, as the CLI's are: this test binary again, running `one_corpus_run_for_a_parent`.
 #[test]
-#[ignore = "work queue Q101: the warm run records two manifests, commits to the store and recomputes 3"]
 fn the_run_after_a_cold_one_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.

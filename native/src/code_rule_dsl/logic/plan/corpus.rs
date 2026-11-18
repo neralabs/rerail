@@ -3975,6 +3975,19 @@ fn run_observed(
                 keep_prepared(prepared_key, Arc::clone(&p));
             }
             crate::code_rule_dsl::logic::profile::reused(if from == "store" { "store" } else { "memory" }, &p.decided);
+            // The pipelines' runs the run that prepared it kept (decision 0333): this run prepares nothing, so it names
+            // the last runs of its lane, as that run's manifest named them. Named by the preparing run alone, they made
+            // the next run's record differ (Q101), and a manifest recorded without them lost them to the run after.
+            if durable.is_some() {
+                let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+                for d in store.corpus_lane_also(&root.to_string_lossy(), &lane).map_err(|e| Error::Plan(e.to_string()))? {
+                    let sources = |name: &'static str| crate::code_rule_dsl::logic::program_text::run_sources(store, &preparation::run_key(name, &d)).map_err(Error::Plan);
+                    if let (Some(front), Some(prepared)) = (sources(preparation::FRONT)?, sources(preparation::PREPARATION)?) {
+                        kept_runs.lock().expect("the kept runs").push(d);
+                        program_sources.extend(front.into_iter().chain(prepared));
+                    }
+                }
+            }
             p
         }
         None => {

@@ -3281,7 +3281,7 @@ where the tree names `num_text`, `num_source`, `rr_agg75` and the annotation cop
   Farm (M1 Max): the test passes, with 98 others (sessions, frames, hiding, preparation, program images, the request
   record's tests, file_local, `str_answered_on_request_holds_the_eager_rows`).
 
-### Q101. `corpus::tests::the_run_after_a_cold_one_writes_nothing` fails its warm run's strict check
+### Q101. (Done) `corpus::tests::the_run_after_a_cold_one_writes_nothing` fails its warm run's strict check
 
 - **Found** (2026-11-17, while linking library modules on versions, decision 0377): the test's second run exits 3:
   `RERAIL_WARM: the observer's store not asked inside the waves in a warm run (…/src: its answers unknown, read
@@ -3305,6 +3305,21 @@ where the tree names `num_text`, `num_source`, `rr_agg75` and the annotation cop
   none of their sources. The second lane differs the other way too: 14 plans warm against 10 cold. To do: a run
   that reuses the prepared program keeps the last runs it found (`last_named`), naming their keys and sources (the
   run's facts' images by `image_key`); then find the second lane's 4 extra plans, the COMMIT and the 3 recomputations.
+
+- **Done** (2026-11-18): two asymmetries, each a run that derived something naming other things than the run that
+  found it kept.
+  - **The pipelines' kept runs** (0333): a run that finds its prepared program prepares nothing and kept no runs, so
+    its manifest named none of the 17 sources and the plan the preparing run's named. It now names the last runs of
+    its own lane (`ContentStore::corpus_lane_also`; the root's newest manifest of any lane, which an edit's
+    preparation reads, would give another lane's), their images and facts found by `program_text::run_sources`.
+    Named by the preparing run alone, a manifest recorded without them also lost them to the run after.
+  - **Phase 0's graph images**: Q150 made the image keep the bootstrap run's plans, so the run that reads it names
+    them; f7e047997, from before that, cleared them in the run that kept the image. Together the cold run named none
+    and the warm run the image's (the second lane's 5 extra plans). The clear is gone (Q150's form: both name them,
+    and what the graph came from stays live).
+  The COMMIT and the recomputations were those two faults' writes (`RERAIL_WARM` counts its faults). Farm (M1 Max):
+  the test passes with 75 others (phase 0, graphs, manifests, corpus runs, world, racy, reuse, the second run in one
+  process, Q102's and Q169's tests). The ignore is gone.
 
 ### Q102. `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` fails at final-rerail-shape-rr-align's f7c563513
 
