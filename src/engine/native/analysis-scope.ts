@@ -137,14 +137,16 @@ export function settleAnalysisScopeReleases(databasePath: string, limit = 32): v
       const routes = new Set(registered.filter(row => withinCheckout(root, row.directory)).map(row => row.path));
       let acknowledged = true;
       for (const store of new Set([...routes, ...fallback])) {
-        const registeredRoute = routes.has(store);
-        if (!registeredRoute && !canOpenContentStore(store)) continue;
+        let deliveryTarget = routes.has(store);
+        if (!deliveryTarget && !canOpenContentStore(store)) continue;
         try {
-          if (registeredRoute) {
+          if (deliveryTarget) {
             assertContentStoreOwner(store);
           } else {
             if (!binding.existingDirectoryAnalysisOwnership(store, root, home)) continue;
+            deliveryTarget = true;
             registerDirectoryAnalysisStore(databasePath, root, store);
+            registered.push({ directory: root, path: store });
           }
           if (failed.has(store)) {
             acknowledged = false;
@@ -153,6 +155,7 @@ export function settleAnalysisScopeReleases(databasePath: string, limit = 32): v
           if (!existsSync(store)) throw new Error("The registered store is unavailable");
           binding.deleteAnalysisScope(store, directory, true, id);
         } catch (error) {
+          if (!deliveryTarget) continue;
           failed.set(store, error);
           acknowledged = false;
         }

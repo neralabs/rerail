@@ -97,6 +97,7 @@ The stop remains pending until each store for the directory accepts its release.
 For a store from before directory registration, the stop first checks for matching ownership rows.
 A store can hold these rows for one directory and have registrations for other directories.
 A legacy candidate outside the current process's store access does not delay a stop.
+The stop skips a legacy candidate if its ownership query fails before it finds a matching row.
 A store with a directory registration remains a release target while it is unavailable.
 The daemon handles due releases in order of their next attempt time.
 If a store is unavailable, the daemon saves a later attempt time for that release.

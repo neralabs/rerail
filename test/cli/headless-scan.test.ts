@@ -696,6 +696,33 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     }
   });
 
+  it("does not wait for a legacy store when its ownership query fails", async () => {
+    const root = checkout();
+    const home = `${root}-home`;
+    const databasePath = join(home, "rerail.sqlite");
+    const legacy = join(home, "legacy.sqlite");
+    mkdirSync(home);
+    writeFileSync(legacy, "");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", legacy);
+    const binding = loadNativeBinding();
+    const lookup = binding.existingDirectoryAnalysisOwnership;
+    const probe = vi.spyOn(binding, "existingDirectoryAnalysisOwnership").mockImplementation((store, ...args) => {
+      if (store === legacy) throw new Error("disk I/O error during ownership check");
+      return lookup(store, ...args);
+    });
+    const database = openRerailDatabase(databasePath);
+    try {
+      setCheckoutStarted(database, recordCheckout(database, root), false);
+      settleAnalysisScopeReleases(databasePath);
+      expect(probe).toHaveBeenCalledWith(legacy, root, analysisScopeHome(databasePath));
+      expect(database.$client.prepare("SELECT count(*) FROM analysis_scope_releases").pluck().get()).toBe(0);
+    } finally {
+      database.$client.close();
+      probe.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("services later stops while a full batch of releases waits for an unavailable store", async () => {
     const root = checkout();
     const home = `${root}-home`;
