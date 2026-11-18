@@ -2438,11 +2438,12 @@ export class CodeRuleBridge {
   /**
    * The sources the walk is the first to show the session, in a worktree new to it or under a subtree it could not read
    * before, that the Git of the checkout owning them lists as modified or untracked. The walk listed them once for every
-   * session first taking the worktree (`WorktreeFindings.listed`); a worktree the session had not asked it to list is
-   * listed here. One the session had not taken is added to `scan.sources` from the snapshot, so its text is checked
-   * against the digest observed. A checkout whose Git ran past its time limit lists none: what the walk shows the
-   * session first there goes in `scan.lateListings`, for a listing asked again once the walk is applied
-   * (`#listLateAgain`), as for the session folder's walk (`#firstSeenModifiedOrUntracked`).
+   * session first taking the worktree (`WorktreeFindings.listed`); a worktree it did not list for this session is listed
+   * here: one the session had not named as the walk began, or one an earlier walk it was still taking then showed it
+   * first, where that take did not end its first sight. One the session had not taken is added to `scan.sources` from
+   * the snapshot, so its text is checked against the digest observed. A checkout whose Git ran past its time limit lists
+   * none: what the walk shows the session first there goes in `scan.lateListings`, for a listing asked again once the
+   * walk is applied (`#listLateAgain`), as for the session folder's walk (`#firstSeenModifiedOrUntracked`).
    */
   async #firstSeenInWorktrees(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan, found: ReadonlyMap<string, WorktreeFindings>): Promise<string[]> {
     const listed: string[] = [];
