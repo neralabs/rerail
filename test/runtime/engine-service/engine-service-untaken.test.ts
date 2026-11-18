@@ -249,6 +249,20 @@ describe("an engine service beside the events hooks left while its daemon did no
     expect(checkedEdits(held, "a.py").filter(read => read.generatedText === left).map(read => read.previousText)).toEqual([live]);
   });
 
+  it("reads an Edit left untaken of a file the session's walk saw changed against what the walk saw", async () => {
+    const held = await serviceWithUntaken();
+    await firstView(held);
+    // A person changes the file, and the walk at the turn's end keeps what it saw: another writer's text.
+    const seen = "def a():\n    print(1)\n    return 2\n";
+    writeFileSync(join(held.root, "a.py"), seen);
+    await held.send({ kind: "turn-end", eventId: "seen", sessionId: SESSION, text: "" });
+    writeFileSync(join(held.root, "a.py"), "def a():\n    print(1)\n    print(2)\n    return 2\n");
+    await leftCall(held, "left", "Edit", { file_path: "a.py", old_string: "    return 2", new_string: "    print(2)\n    return 2" }, Date.now());
+    await held.service.untaken.taken();
+    expect((await held.send(prompt("next"))).filter(steer => steer.startsWith("print in a.py"))).toEqual([printSteer("a.py", 3)]);
+    expect(checkedEdits(held, "a.py").map(read => read.previousText)).toEqual([seen]);
+  });
+
   it("takes what a shell command left untaken wrote as the session's own, from when its hooks met it", async () => {
     const held = await serviceWithUntaken();
     const tool = { sessionId: SESSION, toolCallId: "shell-1", toolName: "Bash" } as const;
