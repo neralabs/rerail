@@ -1,12 +1,12 @@
 import { dirname, join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { eq, lte, sql } from "drizzle-orm";
-import { analysisScopeGeneration, analysisScopeReleases } from "../storage/schema.js";
+import { and, eq, lte, sql } from "drizzle-orm";
+import { analysisScopeGeneration, analysisScopeReleaseProbes, analysisScopeReleases } from "../storage/schema.js";
 import { openRerailDatabase, openSqliteDatabase, type RerailDatabase } from "../storage/database.js";
 import { loadNativeBinding } from "./native.js";
 import { contentStoreOverride, contentStorePath } from "./rerail-build.js";
-import { assertContentStoreOwner, canOpenContentStore } from "./main-instance.js";
+import { assertContentStoreOwner } from "./main-instance.js";
 import { storedPath, withinCheckout } from "../catalog/checkout-control.js";
 
 export function scanContentStore(databasePath: string): string {
@@ -110,27 +110,52 @@ export async function collectAnalysisCaches(databasePath: string): Promise<void>
   if (failures.length > 0) throw new Error(failures.join("\n"));
 }
 
+function settleAnalysisScopeReleaseProbes(database: RerailDatabase, home: string, limit: number): void {
+  const binding = loadNativeBinding();
+  const probes = database.select().from(analysisScopeReleaseProbes)
+    .where(limit < 0 ? undefined : lte(analysisScopeReleaseProbes.nextAttemptAt, Date.now()))
+    .orderBy(analysisScopeReleaseProbes.nextAttemptAt, analysisScopeReleaseProbes.releaseId, analysisScopeReleaseProbes.store)
+    .limit(limit).all();
+  for (const { releaseId, directory, store } of probes) {
+    const row = and(eq(analysisScopeReleaseProbes.releaseId, releaseId), eq(analysisScopeReleaseProbes.store, store));
+    try {
+      assertContentStoreOwner(store);
+      if (!existsSync(store)) throw new Error("The legacy store is unavailable");
+      if (binding.existingDirectoryAnalysisOwnership(store, directory, home)) {
+        registerDirectoryAnalysisStore(database.$client.name, directory, store);
+        binding.deleteAnalysisScope(store, directory, true, releaseId);
+      }
+    } catch {
+      database.update(analysisScopeReleaseProbes).set({ nextAttemptAt: Date.now() + RELEASE_RETRY_DELAY_MS }).where(row).run();
+      continue;
+    }
+    database.delete(analysisScopeReleaseProbes).where(row).run();
+  }
+}
+
 /** The daemon owns the content store even if the checkout has no active session. */
 export function settleAnalysisScopeReleases(databasePath: string, limit = 32): void {
   if (!existsSync(databasePath)) return;
   const reader = openSqliteDatabase(databasePath, { readonly: true });
   const queued = (() => {
     try {
-      return reader.$client.prepare("SELECT 1 FROM sqlite_schema WHERE name = 'analysis_scope_releases'").get()
-        && reader.select({ id: analysisScopeReleases.id }).from(analysisScopeReleases).limit(1).get();
+      const tables = reader.$client.prepare("SELECT name FROM sqlite_schema WHERE name IN ('analysis_scope_releases', 'analysis_scope_release_probes')").pluck().all();
+      return (tables.includes("analysis_scope_releases") && reader.select({ id: analysisScopeReleases.id }).from(analysisScopeReleases).limit(1).get())
+        || (tables.includes("analysis_scope_release_probes") && reader.select({ id: analysisScopeReleaseProbes.releaseId }).from(analysisScopeReleaseProbes).limit(1).get());
     }
     finally { reader.$client.close(); }
   })();
   if (!queued) return;
   const database = openRerailDatabase(databasePath);
   try {
+    const home = analysisScopeHome(databasePath);
+    settleAnalysisScopeReleaseProbes(database, home, limit);
     const pending = database.select().from(analysisScopeReleases)
       .where(limit < 0 ? undefined : lte(analysisScopeReleases.nextAttemptAt, Date.now()))
       .orderBy(analysisScopeReleases.nextAttemptAt, analysisScopeReleases.id).limit(limit).all();
     if (pending.length === 0) return;
     const { fallback, registered } = analysisStores(databasePath);
     const binding = loadNativeBinding();
-    const home = analysisScopeHome(databasePath);
     const failed = new Map<string, unknown>();
     for (const { id, directory } of pending) {
       const root = storedPath(directory);
@@ -138,11 +163,10 @@ export function settleAnalysisScopeReleases(databasePath: string, limit = 32): v
       let acknowledged = true;
       for (const store of new Set([...routes, ...fallback])) {
         let deliveryTarget = routes.has(store);
-        if (!deliveryTarget && !canOpenContentStore(store)) continue;
         try {
-          if (deliveryTarget) {
-            assertContentStoreOwner(store);
-          } else {
+          assertContentStoreOwner(store);
+          if (!deliveryTarget) {
+            if (!existsSync(store)) throw new Error("The legacy store is unavailable");
             if (!binding.existingDirectoryAnalysisOwnership(store, root, home)) continue;
             deliveryTarget = true;
             registerDirectoryAnalysisStore(databasePath, root, store);
@@ -155,7 +179,12 @@ export function settleAnalysisScopeReleases(databasePath: string, limit = 32): v
           if (!existsSync(store)) throw new Error("The registered store is unavailable");
           binding.deleteAnalysisScope(store, directory, true, id);
         } catch (error) {
-          if (!deliveryTarget) continue;
+          if (!deliveryTarget) {
+            database.insert(analysisScopeReleaseProbes).values({
+              releaseId: id, directory: root, store, nextAttemptAt: Date.now() + RELEASE_RETRY_DELAY_MS,
+            }).onConflictDoNothing().run();
+            continue;
+          }
           failed.set(store, error);
           acknowledged = false;
         }

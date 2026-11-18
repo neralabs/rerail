@@ -53,6 +53,8 @@ export const RERAIL_SCHEMA_STATEMENTS: readonly string[] = [
   "CREATE INDEX IF NOT EXISTS `checkouts_repository` ON `checkouts` (`repository_key`)",
   "CREATE TABLE IF NOT EXISTS `analysis_scope_releases` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`directory` text NOT NULL,\n\t`next_attempt_at` integer DEFAULT 0 NOT NULL\n)",
   "CREATE INDEX IF NOT EXISTS `analysis_scope_releases_due` ON `analysis_scope_releases` (`next_attempt_at`,`id`)",
+  "CREATE TABLE IF NOT EXISTS `analysis_scope_release_probes` (\n\t`release_id` text NOT NULL,\n\t`directory` text NOT NULL,\n\t`store` text NOT NULL,\n\t`next_attempt_at` integer NOT NULL,\n\tPRIMARY KEY(`release_id`, `store`)\n)",
+  "CREATE INDEX IF NOT EXISTS `analysis_scope_release_probes_due` ON `analysis_scope_release_probes` (`next_attempt_at`,`release_id`,`store`)",
   "CREATE TABLE IF NOT EXISTS `analysis_scope_generation` (\n\t`singleton` integer PRIMARY KEY NOT NULL,\n\t`generation` integer NOT NULL\n)",
   "CREATE TABLE IF NOT EXISTS `setup_reviews` (\n\t`repository_key` text PRIMARY KEY NOT NULL,\n\t`offered_at` integer NOT NULL,\n\tFOREIGN KEY (`repository_key`) REFERENCES `repositories`(`repository_key`) ON UPDATE cascade ON DELETE cascade\n)",
   "CREATE TABLE IF NOT EXISTS `rule_attachments` (\n\t`repository_key` text NOT NULL,\n\t`folder` text DEFAULT '' NOT NULL,\n\t`source_kind` text NOT NULL,\n\t`source_id` text NOT NULL,\n\t`created_at` integer NOT NULL,\n\tPRIMARY KEY(`repository_key`, `folder`, `source_kind`, `source_id`),\n\tFOREIGN KEY (`repository_key`) REFERENCES `repositories`(`repository_key`) ON UPDATE cascade ON DELETE cascade,\n\tCONSTRAINT \"rule_attachments_source_kind\" CHECK(\"rule_attachments\".\"source_kind\" IN ('pack', 'rerail_rule', 'library_rule'))\n)",

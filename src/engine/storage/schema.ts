@@ -199,6 +199,17 @@ export const analysisScopeReleases = sqliteTable("analysis_scope_releases", {
   nextAttemptAt: integer("next_attempt_at").notNull().default(0),
 }, table => [index("analysis_scope_releases_due").on(table.nextAttemptAt, table.id)]);
 
+/** An unproven store can receive a release later, without holding up the stop. */
+export const analysisScopeReleaseProbes = sqliteTable("analysis_scope_release_probes", {
+  releaseId: text("release_id").notNull(),
+  directory: text("directory").notNull(),
+  store: text("store").notNull(),
+  nextAttemptAt: integer("next_attempt_at").notNull(),
+}, table => [
+  primaryKey({ columns: [table.releaseId, table.store] }),
+  index("analysis_scope_release_probes_due").on(table.nextAttemptAt, table.releaseId, table.store),
+]);
+
 export const analysisScopeGeneration = sqliteTable("analysis_scope_generation", {
   singleton: integer("singleton").primaryKey(),
   generation: integer("generation").notNull(),

@@ -815,6 +815,47 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     }
   });
 
+  it("releases legacy ownership after a failed probe and preserves a new generation", async () => {
+    const root = checkout();
+    const databasePath = join(`${root}-home`, "rerail.sqlite");
+    const legacy = join(`${root}-home`, "legacy.sqlite");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", legacy);
+    const binding = loadNativeBinding();
+    const lookup = binding.existingDirectoryAnalysisOwnership;
+    try {
+      expect((await scan(root, { databasePath })).status).toBe("completed");
+      expect(directoryOwnerCount(legacy)).toBe(1);
+      const registry = new Database(`${databasePath}.analysis-stores.sqlite`);
+      try {
+        registry.exec("CREATE TABLE analysis_store (path TEXT PRIMARY KEY); DELETE FROM analysis_directory_store");
+        registry.prepare("INSERT INTO analysis_store VALUES (?)").run(legacy);
+      } finally { registry.close(); }
+      const database = openRerailDatabase(databasePath);
+      try {
+        database.transaction(tx => queueAnalysisScopeReleases(tx, [root], databasePath));
+        const probe = vi.spyOn(binding, "existingDirectoryAnalysisOwnership").mockImplementation((store, ...args) => {
+          if (store === legacy) throw new Error("temporary I/O error during ownership check");
+          return lookup(store, ...args);
+        });
+        try {
+          settleAnalysisScopeReleases(databasePath);
+          expect(database.$client.prepare("SELECT count(*) FROM analysis_scope_releases").pluck().get()).toBe(0);
+          expect(database.$client.prepare("SELECT store FROM analysis_scope_release_probes").pluck().all()).toEqual([legacy]);
+          expect(directoryOwnerCount(legacy)).toBe(1);
+        } finally { probe.mockRestore(); }
+
+        const subdirectory = join(root, "src");
+        mkdirSync(subdirectory);
+        expect((await scan(subdirectory, { databasePath })).status).toBe("completed");
+        expect(directoryOwnerCount(legacy)).toBe(2);
+        vi.unstubAllEnvs();
+        settleAnalysisScopeReleases(databasePath, -1);
+        expect(database.$client.prepare("SELECT count(*) FROM analysis_scope_release_probes").pluck().get()).toBe(0);
+        expect(directoryOwnerCount(legacy)).toBe(1);
+      } finally { database.$client.close(); }
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it("services later stops while a full batch of releases waits for an unavailable store", async () => {
     const root = checkout();
     const home = `${root}-home`;
