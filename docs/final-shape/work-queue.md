@@ -2382,7 +2382,11 @@ with the default line takes the slow pass.
   program's version in scope: its image, or lowered", in `combine`; cold48's second run reused the images at the
   same wall). The wall is the `wait` phase (the main thread waiting for chunks evaluated). A low-load profile of t41
   beside t48 needs t41's library (the hub's `core.rr` no longer lets `load` be extended): rebuild it from t41's
-  commit's `docs/rule-syntax` and profile both at one load.
+  commit's `docs/rule-syntax` and profile both at one load. Tried (`pair41.sh`): with baec290d3's library t41 still
+  stops, as it reads the typing programs from the checkout by its build's `CARGO_MANIFEST_DIR` (the hub's
+  `sources.rr` includes `c/includes.rr`). The pair needs t41 built from a worktree at its own commit, its own
+  target (no shared target across worktrees), or a t48 built with the hub's chunk changes taken out one at a time
+  (47785e475 first).
 
 ### Q184. A warm run waits on the journal's cookies far longer than a `stat` of what it trusts would take
 
