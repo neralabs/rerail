@@ -2312,7 +2312,13 @@ missed edit is a wrong answer for the step that missed it.
 
 - **Done when**: a test edits a file at once after a run (no sleep) and the next run reads it, many times over;
   the bench's full shape shows every edit step's components.
-- **Record**: —
+- **Record**: fixed (6c7467af5). Traced on the M3 (t47, `RERAIL_JOURNAL_TRACE` lists each event against the cursor):
+  the missed edit's event was absent after the cursor in both runs asked from it, and the edit before it on the
+  same file had an id just before that cursor (…392974 against …393028). FSEvents' history merges a path's events
+  within a window, under the first one's id. An answer recorded within `JOURNAL_SETTLE_NS` (120 s) is now checked
+  by its `stat` though the journal names nothing; the same stat keeps it with no read and no write. A test moves
+  the cursor past an edit's event: missed with no window, read with it. Not covered: `changed_since`'s records
+  (the cone rounds', Git's file list), which read no answer.
 
 ### Q180. (Q55 at baec290d3) Device-budget refusals are reported as `BackendFailure`
 
@@ -2324,6 +2330,60 @@ submitted" now hold device memory at once.
 
 - **Done when**: a budget refusal says so, with its numbers, in the profile's refusals (an error kind of its own);
   the 512 MB budget's refusals measured against the strata a wave holds at once.
+- **Record**: —
+
+### Q181. The requests narrowed on the version differ from the tree's on the bench's 317 rules (debug builds)
+
+Seen 2026-11-18 (the hub at 723617075, merged here): a debug build of the engine stops at `corpus.rs`'s
+`requests_where_documents_are` check, "the requests narrowed on the version are the tree's", on
+`bench-shapes.sh one-file` (the B-now rules). The two images have one size (5930) and differ only in the "about
+asked" record's numbering (`#1 rr_node_text_req` against `#1 rr_str_req`, and so on): the order the request
+sites are recorded in. Release builds skip the check, and their findings are right (463 cold, 464 after each
+edit). Typing-support's area (0281 step 7b; the hub's Q169 made the record follow the tree's through hide, fold
+and prune): a further pass orders it otherwise.
+
+- **Done when**: a debug build runs the bench's full shape through.
+- **Record**: —
+
+### Q182. A root spelled with `/./` is told nothing by the journal
+
+Seen 2026-11-18 (a local repro run as `bash repro.sh`, the corpus root `…/q179/./work/r3/corpus-dl`): the journal's
+answer for the root named 0 paths after an edit, where the same run with the root spelled plainly named 1. The
+events come by real path, and `since` matches them against `canonicalize(root)`; the root was recorded and asked as
+given. The run read the edit by another path. Watch a root by its plain absolute form (`Path::components`), or
+refuse trust for one that is not plain.
+
+- **Done when**: a test watches a root through `/./` and is told an edit under it.
+- **Record**: —
+
+### Q183. The default memory line cuts most chunks of the bench's full shape since the hub's Q55
+
+Seen 2026-11-18 (t46, 300 files, 317 rules, `RERAIL_RUN_MB` unset, so 1024 MB): 16 of 21 chunks were cut by the
+memory line ("under a quarter of 384 MB left"), most to about 8,192 nodes one at a time; cold 75.9 s CPU, 24.7 s
+wall against 64.8 / 12.8 at t41, which made 7 chunks and was cut by nothing. The hub's 47785e475 ("the chunks in
+flight share the run's headroom") divides the headroom by the chunks at once. The bench now lifts the line (the
+user, 2026-11-17: the line is a last resort; the fast path's memory is the number to bring down). A product run
+with the default line takes the slow pass.
+
+- **Done when**: the full shape at the default line makes chunks of the fast path's size, or the line's default
+  is set from the machine; its peak footprint measured against the lifted run's.
+- **Record**: —
+
+### Q184. A warm run waits on the journal's cookies far longer than a `stat` of what it trusts would take
+
+Measured 2026-11-18 on the M3 (t48, the one-rule shape's 300 files, load 58; `warm48.sh`): with the journal, warm
+runs took 3.2, 6.2, 4.3 and 2.3 s of wall (0.01–0.03 s CPU), each root's sync 0.2–2.0 s (2.0 s is `WAIT`, after which
+the root is lost anyway), the roots one after another; with `RERAIL_JOURNAL=off`, 0.03 s, every answer checked by
+its `stat`. On this machine the cookies took 10 ms. The hub changed neither the journal nor the observer since t41
+(whose warm runs took 0.17–0.21 s): it is how long `fseventsd` takes to tell a cookie on a host whose farm writes
+gigabytes into its tree. Waiting for the journal is planning, and it cost 100 to 1,000 times the naive check
+(0122: planning costs no more than running).
+
+- Bound the wait by what the `stat`s would cost (the answers kept under the root, a few µs each), then check by
+  `stat` without settling the root as lost (no write, no warm fault); write every stream's cookie before waiting
+  on any, so roots wait once, not in turn.
+- **Done when**: a warm run's wall is within a few ms of `RERAIL_JOURNAL=off`'s on a busy host, and the journal
+  still saves the `stat`s where they cost more than its wait (a 9,010-file tree).
 - **Record**: —
 
 ## Questions for the user
