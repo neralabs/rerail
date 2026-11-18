@@ -15,11 +15,8 @@ const REPOSITORY: &str = "git_repository";
 const TREE: &str = "git_source_tree";
 const COMMIT: &str = "git_source_commit";
 const SELECTION: &str = "git_inventory_selection";
-const HOST_REGISTRY: &str = "git_inventory_host_registry";
-const HOST_SUFFIX: &str = "git_inventory_host_suffix";
-const HOST_NAME: &str = "git_inventory_host_name";
 const SOURCE_BLOB: &str = "git_selected_source_blob";
-pub(super) const INPUTS: [&str; 9] = [ROOT, REPOSITORY, TREE, COMMIT, SELECTION, HOST_REGISTRY, HOST_SUFFIX, HOST_NAME, SOURCE_BLOB];
+pub(super) const INPUTS: [&str; 6] = [ROOT, REPOSITORY, TREE, COMMIT, SELECTION, SOURCE_BLOB];
 
 #[derive(Default)]
 pub(super) struct Git {
@@ -282,20 +279,6 @@ pub(super) fn inputs(program: &Program, root: &Path, options: &serde_json::Value
             Some(vec![Value::Str(path.into()), Value::Str(oid.to_string().into())])
         }));
     }
-    if inputs.contains_key(HOST_REGISTRY)
-        && let Some(registry) = crate::git_workspace::snapshot::source_languages(root)
-    {
-        use sha2::Digest as _;
-        let version = hex(&sha2::Sha256::digest(serde_json::to_vec(&registry).expect("language registry")));
-        inputs.get_mut(HOST_REGISTRY).unwrap().push(vec![Value::Str(version.clone().into())]);
-        for (rel, labels) in [(HOST_SUFFIX, registry.suffixes), (HOST_NAME, registry.names)] {
-            if let Some(rows) = inputs.get_mut(rel) {
-                for (selector, language) in labels {
-                    rows.push(vec![Value::Str(version.clone().into()), Value::Str(selector.into()), Value::Str(language.into())]);
-                }
-            }
-        }
-    }
     if let Some((key, repo)) = &source.repository {
         if let Some(rows) = inputs.get_mut(SELECTION)
             && let Some(selection) = crate::git_workspace::snapshot::inventory_selection(root)
@@ -432,6 +415,7 @@ pub(super) fn metadata_only(program: &Program) -> bool {
             && (heads.contains(rel.as_str())
                 || program.facts.contains_key(rel.as_str())
                 || INPUTS.contains(&rel.as_str())
+                || super::source_languages::is_input(rel)
                 // A declared relation with no producers is empty, unless a phase can supply it.
                 || (program.decls.contains_key(rel.as_str()) && !rel.contains("__") && !program.inputs.contains(rel))
                 || matches!(rel.as_str(), "git_revision_of" | "git_object_of" | "git_inventory_child_of" | "git_inventory_trail_of"))

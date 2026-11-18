@@ -67,6 +67,8 @@ connects a scope to each corpus run manifest. Existing manifest facts connect
 the run to its sources and plans. `analysis_scope_snapshot(scope, snapshot_id)`
 connects a named scope to each of its audit snapshots. A directory scope keeps
 the latest snapshot for each workspace in `analysis_scope_workspace_snapshot`.
+If an index restores a file's results, the current snapshot names its saved source and compatible tape.
+This ownership protects the tape when collection removes an older snapshot.
 
 The collector retains data reachable from any live owner. Deleting a scope
 deletes its ownership rows. Shared sources, tapes, and cache frames remain

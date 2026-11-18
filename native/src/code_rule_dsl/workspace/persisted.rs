@@ -828,13 +828,15 @@ pub(super) fn persist_files(
     let clean_paths = prepared
         .iter()
         .filter(|(_, _, _, _, aliases, _)| !aliases.is_empty())
-        .map(|(file, _, _, _, _, _)| file.input.path.as_str())
+        .map(|(file, _, _, grammar, _, _)| (file.input.path.as_str(), *grammar))
         .collect::<Vec<_>>();
     let mut busy_during = busy_store(
         storage.store.promote_overlay_files_to_snapshot(
             storage.workspace_id,
             storage.snapshot_id,
             &clean_paths,
+            grammar_version(),
+            i64::from(tape::formats::stored_version()),
         ),
         "while sharing results with the snapshot",
     )?;

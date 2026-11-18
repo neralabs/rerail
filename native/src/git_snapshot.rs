@@ -95,7 +95,7 @@ struct ObservedTree {
     entries: Arc<[RawTreeEntry]>,
 }
 
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct SourceLanguages {
     pub suffixes: std::collections::BTreeMap<String, String>,
     pub names: std::collections::BTreeMap<String, String>,
@@ -361,7 +361,11 @@ impl Snapshot {
 
     pub fn host_language(&self, path: &str) -> Option<Option<String>> {
         self.view.host_languages.get()?;
-        Some(self.view.inventory.get()?.languages.get(path).cloned())
+        Some(self.view.saved_inventory()?.1.languages.get(path).cloned())
+    }
+
+    pub fn uses_source_languages(&self, languages: &SourceLanguages) -> bool {
+        self.view.host_languages.get() == Some(languages)
     }
 
     pub fn restrict_paths(&self, paths: Vec<String>) {

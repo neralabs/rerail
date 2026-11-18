@@ -31,16 +31,29 @@ use napi::{Env, Result, Task};
 use napi_derive::napi;
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::path::Path;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 /// Files one index chunk reads at most.
 const INDEX_BATCH_FILES: usize = 32;
+/// Names submitted to one language classification phase.
+const LANGUAGE_BATCH_FILES: usize = 4096;
 /// Source bytes after which an index chunk stops reading.
 const INDEX_BATCH_BYTES: usize = 1024 * 1024;
 /// How much of an oversized unlisted file is checked for a NUL byte (Git's binary test), as it is
 /// never read whole.
 const BINARY_PREFIX_BYTES: u64 = 8000;
+
+type SourceClassifier = fn(
+    &Path, &Path, Option<crate::content_store::analysis_scope::AnalysisOwner>,
+    &[String], &git_workspace::snapshot::SourceLanguages,
+) -> std::result::Result<HashMap<String, String>, String>;
+static SOURCE_CLASSIFIER: OnceLock<SourceClassifier> = OnceLock::new();
+
+pub fn install_source_classifier(classify: SourceClassifier) {
+    let _ = SOURCE_CLASSIFIER.set(classify);
+}
 
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
@@ -301,27 +314,11 @@ impl WorkspaceIndexTask {
             .map_err(|error| close_poisoned(error.into_inner(), &self.state, &self.closed))
     }
 
-    /// The host's file label for `path`: its whole name where the host lists it (`.npmignore`),
-    /// else its longest extension the host lists (`.blade.php` before `.php`) with a nonempty
-    /// name before it, as the host's `sourceLanguageOfPath` reads it: a file named only `.php`
-    /// has no extension, and `.blade.php` is a `.php` file named `.blade`.
-    pub fn source_language(&self, path: &str) -> Option<String> {
-        let name = std::path::Path::new(path)
-            .file_name()?
-            .to_str()?
-            .to_ascii_lowercase();
-        if let Some(label) = self
-            .options
-            .source_names
-            .as_ref()
-            .and_then(|names| names.get(&name))
-        {
-            return Some(label.clone());
+    fn source_languages(&self) -> git_workspace::snapshot::SourceLanguages {
+        git_workspace::snapshot::SourceLanguages {
+            suffixes: self.options.source_languages.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            names: self.options.source_names.iter().flatten().map(|(k, v)| (k.clone(), v.clone())).collect(),
         }
-        name.match_indices('.')
-            .filter(|&(at, _)| at > 0)
-            .find_map(|(at, _)| self.options.source_languages.get(&name[at..]))
-            .cloned()
     }
 
     /// The workspace's scoped sources as the host's walk selects them: every regular file below
@@ -338,6 +335,7 @@ impl WorkspaceIndexTask {
     /// files exceed `max_files`, in which case it stops listing.
     fn walk(
         &self,
+        storage: &StorageContext,
         repository: &git_workspace::GitWorkspace,
         prefix: &str,
         scoped: impl Fn(&str, bool) -> bool,
@@ -350,7 +348,53 @@ impl WorkspaceIndexTask {
             .iter()
             .map(String::as_str)
             .collect::<HashSet<_>>();
-        if let Some(snapshot) = &repository.snapshot {
+        let registry = self.source_languages();
+        let snapshot = repository.snapshot.as_deref().filter(|snapshot| snapshot.uses_source_languages(&registry));
+        let owner = self.lock()?.pending_analysis.as_ref().map(|(owner, _)| owner.clone());
+        let max_files = self.options.max_files as usize;
+        let batch_size = max_files.saturating_add(1).clamp(1, LANGUAGE_BATCH_FILES);
+        let mut pending = Vec::new();
+        let mut git_ignore = if repository.snapshot.is_none() && self.options.follow_gitignore {
+            crate::git_ignore::GitIgnore::open(&repository.worktree_root).map_err(invalid)?
+        } else {
+            None
+        };
+        let append = |pending: &mut Vec<String>, files: &mut Vec<PendingFile>, git_ignore: &mut Option<crate::git_ignore::GitIgnore>, failures: &mut Vec<Value>| -> Result<bool> {
+            if pending.is_empty() {
+                return Ok(false);
+            }
+            let mut labels = if let Some(snapshot) = snapshot {
+                pending.iter().filter_map(|path| {
+                    Some((path.clone(), snapshot.host_language(&format!("{prefix}{path}"))??))
+                }).collect()
+            } else {
+                let classify = SOURCE_CLASSIFIER.get().ok_or_else(|| invalid("source language classifier is unavailable"))?;
+                classify(
+                    &repository.worktree_root, storage.store.database_path(), owner.clone(), pending, &registry,
+                ).map_err(invalid)?
+            };
+            for path in pending.drain(..) {
+                let (language, unlisted) = match labels.remove(&path) {
+                    Some(language) if scoped(&path, false) => (language, false),
+                    None if !secret(&path) && scoped(&path, true) => ("text".to_owned(), true),
+                    _ => continue,
+                };
+                let repository_path = format!("{prefix}{path}");
+                if let Some(matcher) = git_ignore {
+                    match matcher.ignored(&repository_path, false) {
+                        Ok(true) => continue,
+                        Ok(false) => {}
+                        Err(message) => failures.push(read_failure(&path, "source-incomplete", &message)),
+                    }
+                }
+                if files.len() == max_files {
+                    return Ok(true);
+                }
+                files.push(PendingFile { repository_path, path, language, unlisted });
+            }
+            Ok(false)
+        };
+        if repository.snapshot.is_some() {
             let mut files = Vec::new();
             for entry in &repository.base_files {
                 check_closed(&self.closed)?;
@@ -363,18 +407,16 @@ impl WorkspaceIndexTask {
                 })) {
                     continue;
                 }
-                let language = snapshot.host_language(&entry.path).unwrap_or_else(|| self.source_language(path));
-                let (language, unlisted) = match language {
-                    Some(language) if scoped(path, false) => (language, false),
-                    None if !secret(path) && scoped(path, true) => ("text".to_owned(), true),
-                    _ => continue,
-                };
-                if files.len() == self.options.max_files as usize {
+                if !scoped(path, false) && !scoped(path, true) {
+                    continue;
+                }
+                pending.push(path.to_owned());
+                if pending.len() == batch_size && append(&mut pending, &mut files, &mut git_ignore, failures)? {
                     return Ok((files, Vec::new(), true));
                 }
-                files.push(PendingFile { repository_path: entry.path.clone(), path: path.to_owned(), language, unlisted });
             }
-            return Ok((files, Vec::new(), false));
+            let over_budget = append(&mut pending, &mut files, &mut git_ignore, failures)?;
+            return Ok((files, Vec::new(), over_budget));
         }
         let pruned = self
             .options
@@ -382,12 +424,6 @@ impl WorkspaceIndexTask {
             .iter()
             .map(String::as_str)
             .collect::<HashSet<_>>();
-        let max_files = self.options.max_files as usize;
-        let mut git_ignore = if self.options.follow_gitignore {
-            crate::git_ignore::GitIgnore::open(&repository.worktree_root).map_err(invalid)?
-        } else {
-            None
-        };
         let mut files = Vec::new();
         let mut nested_checkouts = BTreeSet::new();
         let mut over_budget = false;
@@ -423,23 +459,12 @@ impl WorkspaceIndexTask {
                     "" => name.to_string_lossy().into_owned(),
                     relative => format!("{relative}/{}", name.to_string_lossy()),
                 };
-                // A directory has no language; symlinks and other kinds are never followed.
-                let language = if kind.is_dir() {
-                    if ignored.contains(name.to_string_lossy().as_ref()) {
-                        continue;
-                    }
-                    None
-                } else if kind.is_file() {
-                    match self.source_language(&path) {
-                        Some(language) if scoped(&path, false) => Some((language, false)),
-                        // Named like a secret: no source, never read, as a binary is not.
-                        None if secret(&path) => continue,
-                        None if scoped(&path, true) => Some(("text".to_owned(), true)),
-                        _ => continue,
-                    }
-                } else {
+                if !(kind.is_dir() || kind.is_file()) || (kind.is_dir() && ignored.contains(name.to_string_lossy().as_ref())) {
                     continue;
-                };
+                }
+                if kind.is_file() && !scoped(&path, false) && !scoped(&path, true) {
+                    continue;
+                }
                 if name.to_str().is_none() {
                     // The host's walk cannot open a path it decoded lossily either.
                     failures.push(read_failure(
@@ -449,13 +474,21 @@ impl WorkspaceIndexTask {
                     ));
                     continue;
                 }
-                if language.is_none() && pruned.contains(path.as_str()) {
+                if kind.is_file() {
+                    pending.push(path);
+                    if pending.len() == batch_size && append(&mut pending, &mut files, &mut git_ignore, failures)? {
+                        over_budget = true;
+                        break 'walk;
+                    }
+                    continue;
+                }
+                if pruned.contains(path.as_str()) {
                     // A nested checkout follows its own repository's ignores, not this one's.
                     nested_checkouts.insert(path);
                     continue;
                 }
                 if let Some(git_ignore) = git_ignore.as_mut() {
-                    match git_ignore.ignored(&format!("{prefix}{path}"), language.is_none()) {
+                    match git_ignore.ignored(&format!("{prefix}{path}"), true) {
                         Ok(true) => continue,
                         Ok(false) => {}
                         // Walked as if not ignored: an unreadable `.gitignore` never hides files.
@@ -464,21 +497,10 @@ impl WorkspaceIndexTask {
                         }
                     }
                 }
-                match language {
-                    None => directories.push((entry.path(), path)),
-                    Some(_) if files.len() == max_files => {
-                        over_budget = true;
-                        break 'walk;
-                    }
-                    Some((language, unlisted)) => files.push(PendingFile {
-                        repository_path: format!("{prefix}{path}"),
-                        path,
-                        language,
-                        unlisted,
-                    }),
-                }
+                directories.push((entry.path(), path));
             }
         }
+        over_budget |= append(&mut pending, &mut files, &mut git_ignore, failures)?;
         files.sort_unstable_by(|left, right| left.path.cmp(&right.path));
         Ok((files, nested_checkouts.into_iter().collect(), over_budget))
     }
@@ -496,6 +518,7 @@ impl WorkspaceIndexTask {
         let prefix = storage.repository_prefix.as_str();
         let mut failures = Vec::new();
         let (accepted, nested_checkouts, over_budget) = self.walk(
+            storage,
             repository,
             prefix,
             |path, text| {
@@ -635,10 +658,29 @@ impl WorkspaceIndexTask {
             .collect::<Vec<_>>();
         let mut state = self.lock()?;
         let mut restored = HashSet::new();
+        let mut retained = Vec::new();
         for (input, stored, results) in verified {
             let path = input.path.clone();
+            let grammar = crate::code_rule_dsl::eval::file_language(&input).map(super::persisted::grammar_id);
             if restore_prepared_file(&mut state, input, stored.clone(), results)? {
+                if !storage.withholds(&path) {
+                    retained.push((path.clone(), stored.source_hash, grammar));
+                }
                 restored.insert(path);
+            }
+        }
+        let owner = state.pending_analysis.as_ref().map(|(owner, _)| owner.clone());
+        drop(state);
+        let entries: Vec<_> = retained.iter().map(|(path, hash, grammar)| (path.as_str(), *hash, *grammar)).collect();
+        if let Err(error) = storage.store.retain_snapshot_files(
+            storage.snapshot_id,
+            &entries,
+            super::persisted::grammar_version(),
+            i64::from(crate::code_rule_dsl::tape::formats::stored_version()),
+        ) {
+            let message = format!("Cannot retain restored snapshot files. {error}");
+            if !owner.is_some_and(|owner| owner.warn(message.clone())) {
+                return Err(invalid(message));
             }
         }
         Ok(restored)
@@ -841,49 +883,5 @@ impl Task for WorkspaceIndexTask {
     fn resolve(&mut self, _env: Env, output: String) -> Result<String> {
         check_closed(&self.closed)?;
         Ok(output)
-    }
-}
-
-#[cfg(test)]
-pub mod tests {
-    use super::*;
-
-    /// The index routes a name as the host's `sourceLanguageOfPath` does: a listed whole name,
-    /// else the longest listed extension with a nonempty name before it, case-insensitively.
-    #[test]
-    fn source_language_routes_php_and_blade_as_the_host_does() {
-        let mut task = WorkspaceIndexTask::for_test(
-            Arc::new(Mutex::new(WorkspaceState::default())),
-            Arc::new(AtomicBool::new(false)),
-            u32::MAX,
-        );
-        task.options.source_languages = [(".php", "php"), (".blade.php", "blade")]
-            .into_iter()
-            .map(|(extension, label)| (extension.to_owned(), label.to_owned()))
-            .collect();
-        task.options.source_names = Some(
-            [(".npmignore".to_owned(), "text".to_owned())]
-                .into_iter()
-                .collect(),
-        );
-        for (path, expected) in [
-            ("a.php", Some("php")),
-            ("app/Http/Kernel.php", Some("php")),
-            ("A.PHP", Some("php")),
-            ("resources/views/page.blade.php", Some("blade")),
-            ("deep/nested/dir/Page.Blade.PHP", Some("blade")),
-            ("archive.v1.blade.php", Some("blade")),
-            ("blade.php", Some("php")),
-            ("x.blade.php.bak", None),
-            ("page.phtml", None),
-            (".php", None),
-            ("dir/.php", None),
-            (".blade.php", Some("php")),
-            (".npmignore", Some("text")),
-            ("pkg/.NPMIGNORE", Some("text")),
-            ("a.npmignore", None),
-        ] {
-            assert_eq!(task.source_language(path).as_deref(), expected, "{path}");
-        }
     }
 }

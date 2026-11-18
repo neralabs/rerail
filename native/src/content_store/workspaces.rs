@@ -111,7 +111,9 @@ impl ContentStore {
         &self,
         workspace_id: WorkspaceId,
         snapshot_id: SnapshotId,
-        paths: &[&str],
+        paths: &[(&str, i64)],
+        grammar_version: i64,
+        tape_format: i64,
     ) -> StoreResult<()> {
         if paths.is_empty() {
             return Ok(());
@@ -121,19 +123,21 @@ impl ContentStore {
                 "snapshot promotion batch cannot exceed {MAX_PUBLICATION_BATCH} files"
             )));
         }
-        for path in paths {
+        for (path, _) in paths {
             validate_relative_path(path)?;
         }
         self.immediate_transaction(|transaction| {
-            for path in paths {
+            for &(path, grammar) in paths {
                 let path_id = intern_path(transaction, path)?;
                 transaction.execute_cached(
                     "INSERT INTO snapshot_files(snapshot_id,path_id,source_id,tape_id) \
-                     SELECT ?1,path_id,source_id,tape_id FROM workspace_overlay \
-                     WHERE workspace_id=?2 AND path_id=?3 \
+                     SELECT ?1,o.path_id,o.source_id,coalesce(o.tape_id,t.tape_id) FROM workspace_overlay o \
+                     LEFT JOIN tape_objects t ON t.source_id=o.source_id AND t.grammar_id=?4 \
+                       AND t.grammar_version=?5 AND t.tape_format_version=?6 \
+                     WHERE o.workspace_id=?2 AND o.path_id=?3 \
                      ON CONFLICT(snapshot_id,path_id) DO UPDATE SET \
                      source_id=excluded.source_id,tape_id=excluded.tape_id",
-                    params![snapshot_id.0, workspace_id.0, path_id],
+                    params![snapshot_id.0, workspace_id.0, path_id, grammar, grammar_version, tape_format],
                 )?;
             }
             Ok(())

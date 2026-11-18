@@ -78,6 +78,7 @@ pub mod constants;
 pub mod inputs;
 pub use inputs::parameters as input_parameters;
 mod git;
+pub mod source_languages;
 
 pub fn install_git_inventory() {
     crate::git_workspace::snapshot::install_inventory_reader(git::inventory);
@@ -2877,7 +2878,9 @@ fn run_observed(
     // The texts as the run's keys read them, messages masked (`texts_digest`, decision 0225 §3), each masked once.
     let masked_texts = masked(programs);
     let masked: &[&str] = &masked_texts.iter().map(|t| t.as_ref()).collect::<Vec<_>>();
-    let metadata_without_env = if crate::git_workspace::snapshot::contains(root) {
+    let metadata_without_env = if options.get("workspaceLanguagePaths").is_some() {
+        true
+    } else if crate::git_workspace::snapshot::contains(root) {
         let (probe, _) = combine_keyed(programs, masked, &given.graphs, &added::Added::of(&[], options), read, &lists)?;
         git::metadata_only(&probe) && !front::needed(&probe, probe.outputs.clone()).contains("env")
     } else { false };
@@ -3102,6 +3105,7 @@ fn run_observed(
         phases::facts(&prog, root, out, modes, binding, chunk_nodes, typing, options)?
     };
     phased.extend(git::inputs(&prog, root, options));
+    phased.extend(source_languages::inputs(&prog, root, options));
     let reference_sources = match given.reference_inputs {
         reference_facts::Input::Sources(sources, preparation) => {
             phased.insert(reference_facts::SETTINGS.to_owned(), vec![vec![front::Value::Str(preparation.settings.into())]]);

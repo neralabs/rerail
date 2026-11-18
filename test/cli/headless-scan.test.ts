@@ -1452,6 +1452,109 @@ LanguageKey(@place(path, 1), k) :- source_language_key(path, k, _).
     }
   }, 20_000);
 
+  it("changes only the renamed file's grammar in both worktree and Git scans", async () => {
+    const root = checkout();
+    const home = `${root}-home`;
+    const databasePath = join(home, "rerail.sqlite");
+    const tapeRows = (store: string) => queryContentStore<{ tape_id: number; source_id: number; grammar_id: number }>(
+      store, "SELECT tape_id, source_id, grammar_id FROM tape_objects",
+    );
+    const rule = (language: string, kind: string) => ({
+      format: "rerail.policy/v1", id: `rename-${language}`, revision: 1, mode: "log",
+      scope: { include: ["a.py", "a.json", "b.py"], exclude: [] },
+      clauses: [{
+        id: "dictionary", violation: { code: language.toUpperCase(), anchor: "witness.span", message: language },
+        forbid: { ast: { language, rule: { kind } } },
+      }],
+    });
+    writeRule(root, "rename-python.json", rule("python", "dictionary"));
+    writeRule(root, "rename-json.json", rule("json", "object"));
+    writeFileSync(join(root, "a.py"), '{"changed_extension": 1}\n');
+    writeFileSync(join(root, "b.py"), '{"stable_extension": 2}\n');
+    git(root, "add", "a.py", "b.py");
+    git(root, "commit", "-qm", "Python files");
+    const modes = ["worktree", "git"] as const;
+    const evaluate = async (mode: typeof modes[number]) => {
+      const store = join(home, `${mode}.sqlite`);
+      vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
+      const report = await scan(root, {
+        databasePath,
+        ...(mode === "git" ? { revision: "HEAD", analysisScope: "rename" } : {}),
+      });
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      return {
+        findings: report.violations.map(finding => [finding.path, finding.message]).sort(),
+        tapes: tapeRows(store),
+      };
+    };
+    try {
+      const before = new Map<typeof modes[number], ReturnType<typeof tapeRows>>();
+      for (const mode of modes) {
+        const result = await evaluate(mode);
+        expect(result.findings).toEqual([["a.py", "python"], ["b.py", "python"]]);
+        before.set(mode, result.tapes);
+      }
+      git(root, "mv", "a.py", "a.json");
+      git(root, "commit", "-qm", "rename to JSON");
+      for (const mode of modes) {
+        const result = await evaluate(mode);
+        expect(result.findings).toEqual([["a.json", "json"], ["b.py", "python"]]);
+        const previous = before.get(mode)!;
+        const added = result.tapes.filter(tape => !previous.some(old => old.tape_id === tape.tape_id));
+        expect(added).toHaveLength(1);
+        expect(previous.some(old => old.source_id === added[0]!.source_id && old.grammar_id !== added[0]!.grammar_id)).toBe(true);
+        expect(result.tapes.some(tape => previous.some(old => old.source_id !== added[0]!.source_id && old.tape_id === tape.tape_id)),
+          JSON.stringify({ mode, previous, current: result.tapes })).toBe(true);
+      }
+    } finally { vi.unstubAllEnvs(); }
+  }, 30_000);
+
+  it("adopts a new worktree suffix while keeping tapes for the existing suffixes", () => {
+    const root = checkout();
+    const home = `${root}-home`;
+    const store = join(home, "worktree.sqlite");
+    writeRule(root, "needle.json", {
+      format: "rerail.policy/v1", id: "suffixes", revision: 1, mode: "log",
+      scope: { include: ["a.py", "b.sample"], exclude: [] },
+      clauses: [{
+        id: "call", violation: { code: "CALL", anchor: "witness.span", message: "call" },
+        forbid: { ast: { language: "python", rule: { kind: "call" } } },
+      }],
+    });
+    writeFileSync(join(root, "a.py"), "f(1)\n");
+    writeFileSync(join(root, "b.sample"), "f(2)\n");
+    git(root, "add", "a.py", "b.sample");
+    git(root, "commit", "-qm", "two source suffixes");
+    const script = `
+      import { join } from "node:path";
+      import { SOURCE_LANGUAGES } from "./src/engine/code-rule/code-rule-languages.ts";
+      const [repo, home, extended] = process.argv.slice(2);
+      if (extended === "yes") SOURCE_LANGUAGES.set(".sample", "python");
+      const { runHeadlessScan } = await import("./src/cli/headless-scan.ts");
+      console.log(JSON.stringify(await runHeadlessScan({
+        repo, databasePath: join(home, "rerail.sqlite"), scope: "repository", packs: [], version: "test",
+      })));
+    `;
+    const evaluate = (extended: string) => {
+      const report = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, home, extended], {
+        input: script, encoding: "utf8", env: { ...process.env, RERAIL_CONTENT_STORE_PATH: store },
+      })) as ScanReport;
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      return {
+        paths: report.violations.map(finding => finding.path),
+        tapes: queryContentStore<{ tape_id: number }>(store, "SELECT tape_id FROM tape_objects ORDER BY tape_id").map(row => row.tape_id),
+      };
+    };
+    const initial = evaluate("no");
+    expect(initial.paths).toEqual(["a.py"]);
+    expect(initial.tapes).toHaveLength(1);
+    expect(evaluate("no")).toEqual(initial);
+    const extended = evaluate("yes");
+    expect(extended.paths).toEqual(["a.py", "b.sample"]);
+    expect(extended.tapes).toHaveLength(2);
+    expect(extended.tapes).toContain(initial.tapes[0]);
+  }, 30_000);
+
   it("gives edited policy programs separate cache keys in the same policy set", async () => {
     const root = checkout();
     const databasePath = join(`${root}-home`, "rerail.sqlite");

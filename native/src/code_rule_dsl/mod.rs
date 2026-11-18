@@ -4803,6 +4803,10 @@ pub(crate) fn install_languages() {
     // Python's reference graph, a program's cross-file relations.
     logic::plan::corpus::install_cross_file(logic::plan::corpus::references::make);
     logic::plan::corpus::reference_facts::install(logic::plan::corpus::references::summarize_tape);
+    workspace::index::install_source_classifier(|root, store, owner, paths, registry| {
+        logic::plan::corpus::source_languages::classify(root, store, owner, paths, registry)
+            .map_err(|error| error.to_string())
+    });
     // A snapshot's files, as an SQL session binds them.
     sql_executor::documents::install_snapshot_files(|json| {
         let (snapshot, _) = eval::parse_snapshot(json, false)?;
