@@ -221,11 +221,7 @@ export class WorktreeNotices {
 
   /** Starts watching `root`, its root folder alone until a read names its folders; undefined when it cannot be watched now. */
   #open(root: string): Watched | undefined {
-    if (this.#watch === undefined) return undefined;
-    const failedAt = this.#failed.get(root);
-    if (failedAt !== undefined && this.#now() - failedAt < WATCH_RETRY_MS) return undefined;
-    const endedAt = this.#ended.get(root);
-    if (endedAt !== undefined && this.#now() - endedAt < REWATCH_MS) return undefined;
+    if (this.#watch === undefined || this.#tooSoon(root)) return undefined;
     this.#failed.delete(root);
     this.#ended.delete(root);
     // Up before the read: a change made while it runs is a notice.
@@ -236,6 +232,14 @@ export class WorktreeNotices {
     const watched: Watched = { followed: new FollowedFolders(), seen: undefined, changed: true };
     this.#watched.set(root, watched);
     return watched;
+  }
+
+  /** Whether `root` could not be watched, or its watch ended, too lately to ask for it again now. */
+  #tooSoon(root: string): boolean {
+    const failedAt = this.#failed.get(root);
+    if (failedAt !== undefined && this.#now() - failedAt < WATCH_RETRY_MS) return true;
+    const endedAt = this.#ended.get(root);
+    return endedAt !== undefined && this.#now() - endedAt < REWATCH_MS;
   }
 
   /**
