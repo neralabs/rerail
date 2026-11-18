@@ -232,8 +232,8 @@ pub struct Refused {
 }
 
 /// The standard's names the words know.
-const VA_ARGS: &[u8] = b"__VA_ARGS__";
-const VA_OPT: &[u8] = b"__VA_OPT__";
+pub(crate) const VA_ARGS: &[u8] = b"__VA_ARGS__";
+pub(crate) const VA_OPT: &[u8] = b"__VA_OPT__";
 
 /// Whether a word is a test (it runs the next word where it holds, skips it where not).
 fn is_test(opcode: u8, mode: u8) -> bool {
@@ -329,22 +329,31 @@ pub fn validate(program: &Words) -> Result<(), Error> {
     Ok(())
 }
 
+/// The tests that step a cursor where they hold (`after`: their no-step successor is the
+/// failed one alone). A backend's held branch is the step.
+pub(crate) fn steps_where_held(op: u8, mode: u8) -> bool {
+    match op {
+        // `defined` reads its operand where it holds, and nothing where it does not; a step
+        // test steps where it holds.
+        DEFINED | GLUE => true,
+        SUB => mode == 1 || mode == 7,
+        STR => mode == 1,
+        // A parameter list's token, a body token read, a use walked.
+        DEFINE => matches!(mode, 2 | 5 | 7),
+        // An operand's token, a `,`, a binary operator, a `?`.
+        EXPR => matches!(mode, 0 | 6 | 8 | 11),
+        // An `#embed`'s parameter or argument token, a byte.
+        EMBED => matches!(mode, 3 | 4 | 8),
+        _ => false,
+    }
+}
+
 /// The words that can follow `pc` with no step (`validate`).
 fn after(words: &[u32], pc: usize, memo: &mut HashMap<usize, Option<bool>>) -> Vec<usize> {
     let (op, mode, operand) = split(words[pc]);
     match op {
         READ | LINE | RETURN | ACCEPT | STOP => vec![],
-        // `defined` reads its operand where it holds, and nothing where it does not; a step
-        // test steps where it holds.
-        DEFINED | GLUE => vec![pc + 2],
-        SUB if mode == 1 || mode == 7 => vec![pc + 2],
-        STR if mode == 1 => vec![pc + 2],
-        // A parameter list's token, a body token read, a use walked.
-        DEFINE if matches!(mode, 2 | 5 | 7) => vec![pc + 2],
-        // An operand's token, a `,`, a binary operator, a `?`.
-        EXPR if matches!(mode, 0 | 6 | 8 | 11) => vec![pc + 2],
-        // An `#embed`'s parameter or argument token, a byte.
-        EMBED if matches!(mode, 3 | 4 | 8) => vec![pc + 2],
+        _ if steps_where_held(op, mode) => vec![pc + 2],
         GOTO => vec![usize::from(operand)],
         PUSH => {
             let callee = usize::from(split(words[pc + 1]).2);
@@ -384,11 +393,11 @@ fn reads(words: &[u32], entry: usize, memo: &mut HashMap<usize, Option<bool>>) -
 /// No file, definition or source.
 pub const NONE: u32 = u32::MAX;
 /// A body token's mark: no parameter.
-const NO_PARAM: u32 = 0xffff;
+pub(crate) const NO_PARAM: u32 = 0xffff;
 /// ...a `__VA_OPT__`.
-const VA_OPT_MARK: u32 = 0xfffe;
+pub(crate) const VA_OPT_MARK: u32 = 0xfffe;
 /// ...and with this bit, a paste operator.
-const PASTE_MARK: u32 = 1 << 16;
+pub(crate) const PASTE_MARK: u32 = 1 << 16;
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -591,26 +600,34 @@ struct Ex {
 }
 
 /// The `#define` being read (`DEFINE`).
-#[derive(Clone, Copy, Default)]
-struct DefState {
-    name: Tok,
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub(crate) struct DefState {
+    pub(crate) name: Tok,
     /// Its parameters: `params[p0..]`.
-    p0: u32,
-    fnlike: bool,
-    variadic: bool,
+    pub(crate) p0: u32,
+    pub(crate) fnlike: bool,
+    pub(crate) variadic: bool,
     /// A parameter list: a parameter is wanted next; it closed.
-    want: bool,
-    closed: bool,
-    /// The token after the name or the list, read already.
-    first: Option<Tok>,
+    pub(crate) want: bool,
+    pub(crate) closed: bool,
+    /// The token after the name or the list, read already (`EOF`: none).
+    pub(crate) first: Tok,
     /// The definition made so far (its body's tokens, marks).
-    d: Def,
+    pub(crate) d: Def,
     /// The walk of the uses: the range's start, its next token, its end, and an open
     /// `__VA_OPT__`'s content (the walk after it: its next token and end).
-    lo: u32,
-    i: u32,
-    hi: u32,
-    content: Option<(u32, u32)>,
+    pub(crate) lo: u32,
+    pub(crate) i: u32,
+    pub(crate) hi: u32,
+    /// `.0` `NONE`: no content open.
+    pub(crate) content: (u32, u32),
+}
+
+impl Default for DefState {
+    fn default() -> Self {
+        DefState { name: Tok::default(), p0: 0, fnlike: false, variadic: false, want: false, closed: false, first: eof(0), d: Def::default(), lo: 0, i: 0, hi: 0, content: (NONE, NONE) }
+    }
 }
 
 /// The substitution being made (`SUB`, `STR`, `GLUE`): one at a time, as a call's arguments
@@ -769,6 +786,16 @@ pub(crate) struct Ctx {
     pub nconds: u64,
     pub room_conds: u64,
     pub defs: *mut Def,
+    pub ndefs: u64,
+    pub room_defs: u64,
+    pub params: *mut Tok,
+    pub nparams: u64,
+    pub room_params: u64,
+    pub marks: *mut u32,
+    pub nmarks: u64,
+    pub room_marks: u64,
+    /// The `#define` being read (`Machine::def`).
+    pub def_state: *mut DefState,
     pub kept: *mut Tok,
     pub nkept: u64,
     pub room_kept: u64,
@@ -856,7 +883,16 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         room_conds: room(&mut m.conds, bounds.depth * 16),
         conds: m.conds.as_mut_ptr().cast(),
         nconds: m.conds.len() as u64,
+        room_defs: room(&mut m.defs, bounds.macros * 4),
         defs: m.defs.as_mut_ptr(),
+        ndefs: m.defs.len() as u64,
+        room_params: room(&mut m.params, bounds.arena),
+        params: m.params.as_mut_ptr(),
+        nparams: m.params.len() as u64,
+        room_marks: room(&mut m.marks, bounds.arena),
+        marks: m.marks.as_mut_ptr(),
+        nmarks: m.marks.len() as u64,
+        def_state: &mut m.def,
         room_kept: room(&mut m.kept, bounds.arena),
         kept: m.kept.as_mut_ptr(),
         nkept: m.kept.len() as u64,
@@ -898,6 +934,9 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         m.conds.set_len(c.nconds as usize);
         m.kept.set_len(c.nkept as usize);
         m.frames.set_len(c.nframes as usize);
+        m.defs.set_len(c.ndefs as usize);
+        m.params.set_len(c.nparams as usize);
+        m.marks.set_len(c.nmarks as usize);
         m.argv.set_len(c.nargv as usize);
         m.pres.set_len(c.npres as usize);
         m.uses.set_len(c.nuses as usize);
@@ -2680,7 +2719,7 @@ impl<'a> Machine<'a> {
                     self.def.fnlike = true;
                     true
                 } else {
-                    self.def.first = first;
+                    self.def.first = first.unwrap_or(eof(0));
                     false
                 }
             }
@@ -2699,13 +2738,13 @@ impl<'a> Machine<'a> {
                 let malformed = if v.variadic {
                     true
                 } else if v.want && t.kind == IDENT {
-                    self.params.push(t);
+                    self.push_param(t)?;
                     self.def.want = false;
                     false
                 } else if v.want && self.spelled(&t, b"...") {
                     // `__VA_ARGS__`'s spelling, made once.
                     let va = self.scratch_tok(IDENT, VA_ARGS, 0)?;
-                    self.params.push(va);
+                    self.push_param(va)?;
                     (self.def.variadic, self.def.want) = (true, false);
                     false
                 } else if !v.want && self.spelled(&t, b"...") && n > 0 {
@@ -2727,27 +2766,27 @@ impl<'a> Machine<'a> {
             }
             3 => {
                 if v.closed {
-                    self.def.first = self.line_tok()?;
+                    self.def.first = self.line_tok()?.unwrap_or(eof(0));
                 }
                 v.closed
             }
             4 => {
                 // The body: the line's tokens from `first`, a range of the file's tape.
                 let top = *self.sources.last().ok_or("a directive with no file")?;
-                let first_at = if v.first.is_some() { top.pos - 1 } else { top.pos };
+                let first_at = if v.first.kind != EOF { top.pos - 1 } else { top.pos };
                 if self.params.len() - v.p0 as usize > 0xfff0 {
                     return Err("past the parameters' bound");
                 }
                 let params = (self.params.len() - v.p0 as usize) as u16;
                 self.def.d = Def { fnlike: v.fnlike, variadic: v.variadic, params, file: top.file, first: first_at, end: first_at, marks: self.marks.len() as u32, pre: (0, 0), disabled: false, builtin: 0 };
-                if let Some(t) = v.first {
-                    self.mark_body(t);
+                if v.first.kind != EOF {
+                    self.mark_body(v.first)?;
                 }
                 return Ok(None);
             }
             5 => {
                 if let Some(t) = self.line_tok()? {
-                    self.mark_body(t);
+                    self.mark_body(t)?;
                     return Ok(Some(true));
                 }
                 // A `##` last is no paste operator.
@@ -2760,7 +2799,7 @@ impl<'a> Machine<'a> {
             6 => {
                 let u0 = self.uses.len() as u32;
                 self.def.d.pre = (u0, u0);
-                (self.def.lo, self.def.i, self.def.hi, self.def.content) = (0, 0, if v.d.fnlike { v.d.end - v.d.first } else { 0 }, None);
+                (self.def.lo, self.def.i, self.def.hi, self.def.content) = (0, 0, if v.d.fnlike { v.d.end - v.d.first } else { 0 }, (NONE, NONE));
                 return Ok(None);
             }
             7 => self.walk_use()?,
@@ -2785,7 +2824,15 @@ impl<'a> Machine<'a> {
 
     /// Body token `t` (the next of the definition being read) marked: a parameter's index,
     /// `__VA_OPT__`, and `##` (but first).
-    fn mark_body(&mut self, t: Tok) {
+    fn push_param(&mut self, t: Tok) -> R<()> {
+        if self.params.len() >= self.bounds.arena {
+            return Err("past the arena's bound");
+        }
+        self.params.push(t);
+        Ok(())
+    }
+
+    fn mark_body(&mut self, t: Tok) -> R<()> {
         let v = self.def;
         let k = v.d.end - v.d.first;
         let text = self.text(&t);
@@ -2800,8 +2847,12 @@ impl<'a> Machine<'a> {
         if t.kind == HASHHASH && k > 0 {
             m |= PASTE_MARK;
         }
+        if self.marks.len() >= self.bounds.arena {
+            return Err("past the arena's bound");
+        }
         self.marks.push(m);
         self.def.d.end += 1;
+        Ok(())
     }
 
     /// One step of the walk of the definition's argument uses, in the order substitution first
@@ -2811,15 +2862,13 @@ impl<'a> Machine<'a> {
         let def = v.d;
         if v.i >= v.hi {
             // A content's end: the walk after it.
-            return Ok(match v.content {
-                Some((i, hi)) => {
-                    (self.def.lo, self.def.i, self.def.hi, self.def.content) = (0, i, hi, None);
-                    true
-                }
-                None => false,
-            });
+            if v.content.0 == NONE {
+                return Ok(false);
+            }
+            (self.def.lo, self.def.i, self.def.hi, self.def.content) = (0, v.content.0, v.content.1, (NONE, NONE));
+            return Ok(true);
         }
-        let (i, hi, inside) = (v.i, v.hi, v.content.is_some());
+        let (i, hi, inside) = (v.i, v.hi, v.content.0 != NONE);
         let va = def.params.wrapping_sub(1);
         let bt = self.body_tok(&def, i);
         let opens = |m: &Self, k: u32| def.variadic && k < hi && m.mark(&def, k) == VA_OPT_MARK;
@@ -2842,7 +2891,7 @@ impl<'a> Machine<'a> {
             }
             self.uses.push((va, false));
             let (clo, chi, end) = self.va_opt_content(&def, k, hi);
-            (self.def.lo, self.def.i, self.def.hi, self.def.content) = (clo, clo, chi, Some((end, hi)));
+            (self.def.lo, self.def.i, self.def.hi, self.def.content) = (clo, clo, chi, (end, hi));
             return Ok(true);
         }
         if let Some(p) = self.param(&def, i) {
