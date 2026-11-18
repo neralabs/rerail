@@ -638,11 +638,7 @@ pub(crate) fn on_disk(
     config: &Config,
     overlay: Option<(&str, Option<&str>)>,
 ) -> Option<BTreeSet<String>> {
-    let directory = if folder.is_empty() {
-        root.to_path_buf()
-    } else {
-        root.join(folder)
-    };
+    let directory = package_directory(root, folder);
     let mut sources = Vec::new();
     let mut budget = MAX_GRAPH_BYTES;
     let mut entries = MAX_GRAPH_ENTRIES;
@@ -655,86 +651,10 @@ pub(crate) fn on_disk(
     ) {
         return None;
     }
-    // The cache's lock is held only to sort its hits from its misses: the misses are read and
-    // summarized once it is released, so a cold walk holds up no other caller.
-    let mut hits = Vec::with_capacity(sources.len());
-    let mut misses = Vec::new();
-    {
-        let cache = DISK_SUMMARIES.lock();
-        for (relative, absolute, metadata) in sources {
-            let path = join(folder, &relative);
-            // The overlay's text replaces this source's below; disk's is not read.
-            if overlay.is_some_and(|(overlaid, _)| overlaid == path) {
-                continue;
-            }
-            let stamp = Stamp::of(&metadata);
-            match (stamp, cache.get(&absolute)) {
-                (Some(stamp), Some((cached, summary))) if stamp == *cached => {
-                    hits.push((path, Arc::clone(summary)));
-                }
-                _ => misses.push((path, absolute, metadata.len(), stamp)),
-            }
-        }
-    }
-    let mut files = hits
-        .into_iter()
-        .map(|(path, summary)| (path, (*summary).clone()))
-        .collect::<BTreeMap<_, _>>();
-    let now = SystemTime::now();
-    let mut read = Vec::new();
-    for (path, absolute, length, stamp) in misses {
-        let source = if length > MAX_SOURCE_BYTES {
-            String::new()
-        } else {
-            match std::fs::read(&absolute) {
-                // As the host decodes a file it reads: invalid UTF-8 becomes replacement
-                // characters.
-                Ok(bytes) => String::from_utf8(bytes)
-                    .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()),
-                Err(error) if gone(&error) => continue,
-                Err(_) => return None,
-            }
-        };
-        let Some(summary) = summarize(&path, &source) else {
-            continue;
-        };
-        let settled = |stamp: &Stamp| {
-            now.duration_since(stamp.modified)
-                .is_ok_and(|age| age >= SETTLED_AFTER)
-        };
-        if let Some(stamp) = stamp.filter(settled) {
-            read.push((absolute, (stamp, Arc::new(summary.clone()))));
-        }
-        files.insert(path, summary);
-    }
-    if !read.is_empty() {
-        let mut cache = DISK_SUMMARIES.lock();
-        if cache.len() > MAX_CACHED_SUMMARIES {
-            cache.clear();
-        }
-        cache.extend(read);
-    }
+    let mut files = disk_summaries(folder, sources, overlay)?;
     let mut root_app = directory.join("app").is_dir();
-    if let Some((path, source)) = overlay {
-        files.remove(path);
-        if let Some(relative) = relative_to(folder, path)
-            && let Some(source) = source
-        {
-            // As the walk reads it: not below a folder it skips, a nested package or checkout.
-            let mut names = relative.split('/').collect::<Vec<_>>();
-            names.pop();
-            let walked = !names.iter().enumerate().any(|(depth, name)| {
-                let below = directory.join(names[..=depth].join("/"));
-                skipped_folder(name)
-                    || below.join("package.json").exists()
-                    || below.join(".git").exists()
-            });
-            // A file there makes the folder present whether or not the graph reads it as a source.
-            root_app |= relative.starts_with("app/");
-            if let Some(summary) = summarize_bounded(path, source).filter(|_| walked) {
-                files.insert(path.to_owned(), summary);
-            }
-        }
+    if let Some(overlay) = overlay {
+        root_app |= overlay_source(&directory, folder, overlay, &mut files);
     }
     // The walk read one source past the bound, so an overlay's deletion can bring the package
     // back within it; past it, the package has no graph, as a file set has none.
@@ -742,6 +662,154 @@ pub(crate) fn on_disk(
         return None;
     }
     Some(server_graph(folder, &files, config, root_app))
+}
+
+/// The folder of the package at `folder` (workspace-relative) below `root`.
+fn package_directory(root: &Path, folder: &str) -> PathBuf {
+    if folder.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(folder)
+    }
+}
+
+/// A source the disk cache holds no summary for at its `stamp`: its workspace path, absolute path
+/// and length.
+struct Miss {
+    path: String,
+    absolute: PathBuf,
+    length: u64,
+    stamp: Option<Stamp>,
+}
+
+/// The summaries of the walked `sources` by workspace path, but the overlay's source, whose text
+/// replaces disk's: each from the disk cache while its `Stamp` stands, else read from disk and
+/// cached once settled (`SETTLED_AFTER`). `None` where a source cannot be read.
+fn disk_summaries(
+    folder: &str,
+    sources: Vec<Walked>,
+    overlay: Option<(&str, Option<&str>)>,
+) -> Option<BTreeMap<String, Summary>> {
+    let (mut files, misses) = cached_summaries(folder, sources, overlay);
+    let now = SystemTime::now();
+    let mut read = Vec::new();
+    for miss in misses {
+        let Some(summary) = read_miss(&miss)? else {
+            continue;
+        };
+        if let Some(stamp) = miss.stamp.filter(|stamp| settled(stamp, now)) {
+            read.push((miss.absolute, (stamp, Arc::new(summary.clone()))));
+        }
+        files.insert(miss.path, summary);
+    }
+    remember(read);
+    Some(files)
+}
+
+/// The disk cache's summaries of `sources` whose `Stamp` stands, by workspace path, and the
+/// sources it holds none for; the overlay's source is in neither.
+fn cached_summaries(
+    folder: &str,
+    sources: Vec<Walked>,
+    overlay: Option<(&str, Option<&str>)>,
+) -> (BTreeMap<String, Summary>, Vec<Miss>) {
+    // The cache's lock is held only to sort its hits from its misses: the misses are read and
+    // summarized once it is released, so a cold walk holds up no other caller.
+    let mut hits = Vec::with_capacity(sources.len());
+    let mut misses = Vec::new();
+    {
+        let cache = DISK_SUMMARIES.lock();
+        for (relative, absolute, facts) in sources {
+            let path = join(folder, &relative);
+            if overlay.is_some_and(|(overlaid, _)| overlaid == path) {
+                continue;
+            }
+            let stamp = Stamp::of(&facts);
+            match (stamp, cache.get(&absolute)) {
+                (Some(stamp), Some((cached, summary))) if stamp == *cached => {
+                    hits.push((path, Arc::clone(summary)));
+                }
+                _ => misses.push(Miss {
+                    path,
+                    absolute,
+                    length: facts.len(),
+                    stamp,
+                }),
+            }
+        }
+    }
+    let files = hits
+        .into_iter()
+        .map(|(path, summary)| (path, (*summary).clone()))
+        .collect();
+    (files, misses)
+}
+
+/// The summary of the source `miss` names, read from disk: `Some(None)` where it is gone since its
+/// folder was listed or `summarize` leaves it out, `None` where it cannot be read.
+fn read_miss(miss: &Miss) -> Option<Option<Summary>> {
+    match source_text(&miss.absolute, miss.length) {
+        Ok(source) => Some(summarize(&miss.path, &source)),
+        Err(error) if gone(&error) => Some(None),
+        Err(_) => None,
+    }
+}
+
+/// The text of the source at `absolute`, `length` bytes long, as the host decodes a file it reads:
+/// invalid UTF-8 becomes replacement characters. A source over 1 MiB is read as empty.
+fn source_text(absolute: &Path, length: u64) -> std::io::Result<String> {
+    if length > MAX_SOURCE_BYTES {
+        return Ok(String::new());
+    }
+    std::fs::read(absolute).map(|bytes| {
+        String::from_utf8(bytes)
+            .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
+    })
+}
+
+/// Whether a source last written at `stamp.modified` is settled at `now`: a rewrite within its
+/// timestamp's tick could leave its stamp unchanged before then (`SETTLED_AFTER`).
+fn settled(stamp: &Stamp, now: SystemTime) -> bool {
+    now.duration_since(stamp.modified)
+        .is_ok_and(|age| age >= SETTLED_AFTER)
+}
+
+/// Puts `read` in the disk cache, first dropping the cache whole past `MAX_CACHED_SUMMARIES`.
+fn remember(read: Vec<(PathBuf, CachedSummary)>) {
+    if read.is_empty() {
+        return;
+    }
+    let mut cache = DISK_SUMMARIES.lock();
+    if cache.len() > MAX_CACHED_SUMMARIES {
+        cache.clear();
+    }
+    cache.extend(read);
+}
+
+/// Puts the overlay's source in `files` in place of disk's: its text (`None`: deleted) summarized
+/// where the walk below `directory` would read it, not below a folder it skips (`skips`). Whether
+/// that source makes the package's `app` folder present, which a file there does whether or not
+/// the graph reads it as a source.
+fn overlay_source(
+    directory: &Path,
+    folder: &str,
+    (path, source): (&str, Option<&str>),
+    files: &mut BTreeMap<String, Summary>,
+) -> bool {
+    files.remove(path);
+    let (Some(relative), Some(source)) = (relative_to(folder, path), source) else {
+        return false;
+    };
+    let mut names = relative.split('/').collect::<Vec<_>>();
+    names.pop();
+    let walked = !names
+        .iter()
+        .enumerate()
+        .any(|(depth, name)| skips(name, &directory.join(names[..=depth].join("/"))));
+    if let Some(summary) = summarize_bounded(path, source).filter(|_| walked) {
+        files.insert(path.to_owned(), summary);
+    }
+    relative.starts_with("app/")
 }
 
 /// The summary of the ECMA source at `path`, read as a disk walk reads it: a source over 1 MiB
