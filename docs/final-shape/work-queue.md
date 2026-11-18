@@ -2793,6 +2793,8 @@ To find: which later merge made `field`/`kind` no longer inputs here (or their c
 Q36's pricing (`field($l, "left", $t)` priced at one row a line) is lost again. Ignored (`Q138`) until then.
 
 - **Done when**: the test passes and the ignore is gone.
+- **Done** (2026-11-18, the roll-up's end): it passes on the hub at 8f11d22f4 (m3), after the later merges; the
+  ignore is removed.
 
 ### Q146. (Q49 on Typing-support) A stored program image's step sources are named by no run's manifest (Typing-support's)
 
@@ -3254,6 +3256,17 @@ and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q155, 
 - **Done** (2026-11-17, decision 0378): the documents frame records its granules; layouts and documents are made
   where first asked. ep2's edit: `kept_inputs` 0.077 s → 0.021 s, no documents frame decoded, rows as h1.
 
+### Q169. `a_parse_request_asks_only_for_the_strings_its_rule_reads`: the parts linked as versions are not the trees linked
+
+Found 2026-11-18, at the roll-up's end (after the fold fix above, Q101). A debug build's check in `combine_tail`
+("the parts linked as versions are the trees linked") fails. It fails the same at the hub's 8f11d22f4, before that fix
+(the tree at HEAD, a farm host). The version's link gives `rr_value_req` other rules than the tree's (14 against 12,
+and `rr_value_req_by_num_text_0`, which the tree has not), and readers the carry did not know (`rr_value_req` itself)
+where the tree names `num_text`, `num_source`, `rr_agg75` and the annotation copies. To find: which link step
+(`link::Versioned`, 0373's splice, the request copies) departs from the tree's. Ignored (this item) until then.
+
+- **Done when**: the test passes and the ignore is gone.
+
 ### Q101. `corpus::tests::the_run_after_a_cold_one_writes_nothing` fails its warm run's strict check
 
 - **Found** (2026-11-17, while linking library modules on versions, decision 0377): the test's second run exits 3:
@@ -3264,6 +3277,12 @@ and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q155, 
 - **At the hub's merge of Typing-support** (6ce382887, 2026-11-18): it fails there with other refusals: two new
   manifests recorded, a SQLite COMMIT to the store, and 3 recomputations in the warm run. Ignored (`#[ignore]`,
   this item) until the roll-up's end; then traced and the ignore taken off.
+- **At the roll-up's end** (2026-11-18): the cold run had a second fault in front, a debug build's check "the version is
+  lowered as the tree is" (`rr_value_req`'s request record: rules of two readers alike took each other's readers).
+  Cause: a fold renumbers rules but keeps each rule's `source` from the derivation before it, and the pipeline's
+  request carry (`AskedByRule::step`) read that as an id of the step's input. Fixed: where a rebuild leaves a
+  relation's rules as they were, in order, each place keeps its readers. The warm run's faults above remain: two
+  manifests (10 and 8 sources), a COMMIT to the store, 3 recomputations. Still ignored, this item.
 
 ### Q102. `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` fails at final-rerail-shape-rr-align's f7c563513
 

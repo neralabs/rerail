@@ -951,6 +951,19 @@ impl AskedByRule {
                 next.extend(out.heads(rel).map(|r| r.id()).zip(by.iter().cloned()));
                 continue;
             }
+            // A new base whose rules of this relation are the input's, in order (a fold: its rules renumbered, each
+            // keeping the `source` of the derivation it came from, not an id of this step's input): each place keeps
+            // its readers.
+            if delta.rebuilt {
+                let old: Vec<(RuleId, u64)> = from.rel(req).map(|o| from.heads(o).map(|r| (r.id(), r.hash())).collect()).unwrap_or_default();
+                let new: Vec<(RuleId, u64)> = out.heads(rel).map(|r| (r.id(), r.hash())).collect();
+                if old.len() == new.len() && old.iter().zip(&new).all(|(a, b)| a.1 == b.1) {
+                    for ((was, _), (now, _)) in old.iter().zip(&new) {
+                        next.insert(*now, self.by.get(was).cloned().unwrap_or_else(|| BTreeSet::from([req.clone()])));
+                    }
+                    continue;
+                }
+            }
             // The input's rules of this relation the step removed (in a derivation, those no output rule came from),
             // by content: a rule equal to one (a repeat dropped) serves its readers too.
             let sourced: std::collections::HashSet<RuleId> = if delta.rebuilt { out.heads(rel).filter_map(|r| r.source()).collect() } else { Default::default() };
