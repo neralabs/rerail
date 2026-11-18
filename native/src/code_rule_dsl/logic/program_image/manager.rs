@@ -386,6 +386,12 @@ pub struct Store {
     stored: parking_lot::Mutex<Option<StoredRows>>,
     /// How many analyses were read from `stored`, by name.
     loaded: parking_lot::Mutex<HashMap<&'static str, usize>>,
+    /// The version this one is an edit of, and the edit (decision 0380): an analysis asked for here that the other
+    /// holds or kept as rows is maintained across the edit (`Analysis::maintain`) before it is computed.
+    lineage: parking_lot::Mutex<Option<(Arc<Version>, Delta)>>,
+    /// The sha256 of this version's image (or overlay delta) as a store holds it, where it was opened from one: a
+    /// run kept again names it, and copies no bytes (decision 0380).
+    kept_image: parking_lot::Mutex<Option<[u8; 32]>>,
 }
 
 impl Store {
@@ -396,6 +402,36 @@ impl Store {
     /// How many times analysis `name` was read from a stored run's rows (decision 0333 §4).
     pub fn loaded(&self, name: &str) -> usize {
         self.loaded.lock().get(name).copied().unwrap_or(0)
+    }
+    /// Records that this store's version was opened from a store's image of sha256 `digest` (`kept_image`).
+    pub fn set_kept_image(&self, digest: [u8; 32]) {
+        *self.kept_image.lock() = Some(digest);
+    }
+    /// The sha256 of the image a store holds of this version, where it was opened from one.
+    pub fn kept_image(&self) -> Option<[u8; 32]> {
+        *self.kept_image.lock()
+    }
+    /// Records that this store's version is `delta`, an edit of `from` (`lineage`), where it is no rebuild.
+    fn set_lineage(&self, from: &Arc<Version>, delta: &Delta) {
+        if std::ptr::eq(self, from.analyses()) || delta.rebuilt {
+            return;
+        }
+        let mut l = self.lineage.lock();
+        if l.is_none() {
+            *l = Some((from.clone(), delta.clone()));
+        }
+    }
+    /// Analysis `A` of `v` (this store's version) where it is held or a stored run kept its rows: never computed.
+    fn held_or_kept<A: Analysis>(&self, v: &Version) -> Option<Arc<A>> {
+        if let Some(e) = self.of.lock().get(&TypeId::of::<A>()) {
+            return e.value.clone().downcast::<A>().ok();
+        }
+        let stored = self.stored.lock().clone()?;
+        let a = Arc::new(A::of_rows(v, &stored(A::NAME, A::VERSION)?)?);
+        *self.loaded.lock().entry(A::NAME).or_default() += 1;
+        let e = Entry { value: a.clone(), reads: A::READS, name: A::NAME, maintain: maintain_as::<A>, agrees: agrees_as::<A>, version: A::VERSION, rows: rows_as::<A> };
+        let kept = self.of.lock().entry(TypeId::of::<A>()).or_insert(e).value.clone();
+        kept.downcast::<A>().ok()
     }
     /// The rows a stored run kept of these analyses: read before computing one.
     pub fn read_stored(&self, rows: StoredRows) {
@@ -508,10 +544,23 @@ impl<'a> Cx<'a> {
                 return Err(format!("analysis {} read from a stored run is not what it computes", A::NAME));
             }
         }
+        // Maintained from the version this one is an edit of, where that one holds it (decision 0380).
+        let mut read = read.map(Arc::new);
+        if read.is_none() {
+            let lineage = self.store.lineage.lock().clone();
+            if let Some((from, delta)) = lineage
+                && let Some(was) = from.analyses().held_or_kept::<A>(&from)
+            {
+                read = if A::READS.meets(delta.touched) { was.maintain(self, &delta).map(Arc::new) } else { Some(was) };
+                if read.is_some() {
+                    *self.store.loaded.lock().entry(A::NAME).or_default() += 1;
+                }
+            }
+        }
         // Computed with no lock held: it may ask for other analyses. Two threads asking at once both compute it; the
         // first one stored is kept.
         let a = match read {
-            Some(a) => Arc::new(a),
+            Some(a) => a,
             None => {
                 let a = Arc::new(A::compute(self)?);
                 *self.store.computed.lock().entry(A::NAME).or_default() += 1;
@@ -690,6 +739,84 @@ pub trait ProgramPass {
         Vec::new()
     }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()>;
+    /// Over an edit of its last run's input (`Pipeline::again`, decision 0380): its output written onto its last
+    /// output (`w`'s input) from the edit alone, where the decisions it made over the whole are the edit's input's
+    /// too. `Ok(false)`, the default, runs it whole. A pass that writes here leaves in its last output every rule but
+    /// what came from the edit's removed rules (`Version::derived`), and writes what its added rules make.
+    fn again(&mut self, _cx: &Cx<'_>, _last: &Last<'_>, _w: &mut ProgramW<'_>) -> Result<bool> {
+        Ok(false)
+    }
+    /// What it decided over its whole input that its `again` reads back (`Last::plan`), as rows kept with its step
+    /// (decision 0380): none by default.
+    fn plan(&self) -> Vec<Row> {
+        Vec::new()
+    }
+}
+
+/// A program pass's rule part over an edit (`ProgramPass::again`, decision 0380), written onto its last output (`w`'s
+/// input): what came from each of the edit's removed rules dropped (`Version::derived`), and each added rule visited
+/// by `pass`, kept (copied with itself as its source) or replaced by what it wrote. The rules visited.
+pub fn rules_again<P: RulePass>(pass: &mut P, cx: &Cx<'_>, last: &Last<'_>, w: &mut ProgramW<'_>) -> Result<usize> {
+    let v = cx.v;
+    let b = w.on()?;
+    for id in last.delta.removed.iter() {
+        let came: Vec<RuleId> = last.output.derived(id).map(|r| r.id()).collect();
+        for c in came {
+            b.remove(c);
+        }
+    }
+    let mut visited = 0;
+    for &id in &last.delta.added {
+        let r = v.rule(id).ok_or_else(|| format!("rule {} of the edit is not its output's", id.0))?;
+        visited += 1;
+        if let Step::Keep = visit(pass, cx, v, r, b)? {
+            b.keep_into(v, r);
+        }
+    }
+    w.visited += visited;
+    Ok(visited)
+}
+
+/// Rule `r` of `of` (a pass's last input) as `out` (its last output) holds it, as itself: by its id where `out`
+/// numbers it as `of` does, else the rule of its head with its text (an output written onto an earlier output
+/// numbers its rules its own way).
+pub fn held_as(out: &Version, of: &Version, r: RuleRef<'_>) -> Option<RuleId> {
+    let same = |o: RuleRef<'_>| o.hash() == r.hash() && out.show_rule(o) == of.show_rule(r);
+    out.rule(r.id()).filter(|&o| same(o)).or_else(|| out.rel(of.rel_name(r.head().rel())).and_then(|h| out.heads(h).find(|&o| same(o)))).map(|o| o.id())
+}
+
+/// The edit itself written onto the last output (`ProgramPass::again`, decision 0380), for a pass whose output holds
+/// each rule of its input as itself and adds what its decisions make, where the edit changes none of them: each
+/// removed rule taken out, each added one copied in. `Ok(false)` where the last output does not hold a removed rule.
+pub fn edit_as_is(cx: &Cx<'_>, last: &Last<'_>, w: &mut ProgramW<'_>) -> Result<bool> {
+    let v = cx.v;
+    let mut gone = Vec::new();
+    for id in last.delta.removed.iter() {
+        let Some(r) = last.input.rule(id) else { return Ok(false) };
+        match held_as(last.output, last.input, r) {
+            Some(o) => gone.push(o),
+            None => return Ok(false),
+        }
+    }
+    let b = w.on()?;
+    for id in gone {
+        b.remove(id);
+    }
+    for &id in &last.delta.added {
+        let r = v.rule(id).ok_or_else(|| format!("rule {} of the edit is not its output's", id.0))?;
+        b.copy(v, r);
+    }
+    Ok(true)
+}
+
+/// A program pass's last run, for `ProgramPass::again`: its input and output, and the edit from that input to the
+/// one it runs over now (`cx`'s).
+pub struct Last<'a> {
+    pub input: &'a Arc<Version>,
+    pub output: &'a Arc<Version>,
+    pub delta: &'a Delta,
+    /// What it kept of its decisions (`ProgramPass::plan`).
+    pub plan: &'a [Row],
 }
 
 /// The forms a program pass's writer takes (`ProgramW`).
@@ -828,6 +955,8 @@ struct Kept {
     form: Form,
     /// A rule pass's, when its output can be run again onto (`None` reruns it whole).
     rule: Option<RuleKept>,
+    /// A program pass's plan (`ProgramPass::plan`).
+    plan: Vec<Row>,
 }
 
 struct RuleKept {
@@ -981,6 +1110,7 @@ impl<'s> Pipeline<'s> {
         }
         let cx = Cx { v: &self.v, store: self.v.analyses(), pass, decided: &self.decided, asked: None };
         self.v.analyses().carry(k.input.analyses(), &cx, &d)?;
+        self.v.analyses().set_lineage(&k.input, &d);
         Ok(Prior::Edit(k, d))
     }
 
@@ -991,9 +1121,10 @@ impl<'s> Pipeline<'s> {
         let delta = Delta::of(from, &out);
         let cx = Cx { v: &out, store: out.analyses(), pass, decided: &self.decided, asked: None };
         out.analyses().carry(from.analyses(), &cx, &delta)?;
+        out.analyses().set_lineage(from, &delta);
         self.stages.push(Stage { pass, ran, form, visited, input: (self.v.size(), self.v.digest()), output: (out.size(), out.digest()), delta: delta.size(), touched: delta.touched });
         if self.keep {
-            self.kept.push(Kept { pass: pass.into(), input: self.v.clone(), output: out.clone(), form, rule });
+            self.kept.push(Kept { pass: pass.into(), input: self.v.clone(), output: out.clone(), form, rule, plan: Vec::new() });
         }
         self.v = out;
         Ok(())
@@ -1085,15 +1216,49 @@ impl<'s> Pipeline<'s> {
     }
 
     fn program_step<P: ProgramPass>(&mut self, pass: &mut P) -> Result<()> {
-        self.prior(P::NAME)?;
+        let prior = self.prior(P::NAME)?;
         let v = self.v.clone();
+        // Over an edit of the last run's input: the pass writes the edit onto its last output where it can.
+        if let Prior::Edit(k, d) = &prior {
+            let made = {
+                let cx = Cx { v: &v, store: v.analyses(), pass: P::NAME, decided: &self.decided, asked: None };
+                let mut w = ProgramW::new(&k.output);
+                match pass.again(&cx, &Last { input: &k.input, output: &k.output, delta: d, plan: &k.plan }, &mut w)? {
+                    true => Some(w.finish()?),
+                    false => None,
+                }
+            };
+            if let Some((out, form, visited)) = made {
+                self.record(P::NAME, out, Ran::Delta, form, visited, &k.output, None)?;
+                return Ok(self.planned(pass.plan()));
+            }
+        }
         let made = {
             let cx = Cx { v: &v, store: v.analyses(), pass: P::NAME, decided: &self.decided, asked: None };
             let mut w = ProgramW::new(&v);
             pass.run(&cx, &mut w).and_then(|()| w.finish())
         };
         let (out, form, visited) = made?;
-        self.record(P::NAME, out, Ran::Whole, form, visited, &v, None)
+        // Over an edit, its output written as an edit of its last output (`rebase`, decision 0380): the steps after
+        // it are run again over an edit too, not whole.
+        if let Prior::Edit(k, _) = &prior
+            && !Delta::read_off(&k.output, &out)
+            && let Some(r) = rebase_output(&k.output, &out)?
+        {
+            self.record(P::NAME, r, Ran::Whole, Form::Overlay, visited, &k.output, None)?;
+            return Ok(self.planned(pass.plan()));
+        }
+        self.record(P::NAME, out, Ran::Whole, form, visited, &v, None)?;
+        Ok(self.planned(pass.plan()))
+    }
+
+    /// The plan of the step just recorded, kept with it.
+    fn planned(&mut self, plan: Vec<Row>) {
+        if self.keep
+            && let Some(k) = self.kept.last_mut()
+        {
+            k.plan = plan;
+        }
     }
 
     /// A keyed pipeline's next step (0281 §6): its key, chained; `Ok(None)` when the store holds it (the step is
@@ -1205,6 +1370,8 @@ pub struct StoredStep {
     pub output: usize,
     pub form: Form,
     pub rule: Option<StoredRule>,
+    /// A program pass's plan (`ProgramPass::plan`).
+    pub plan: Vec<Row>,
 }
 
 /// A rule pass's selection (its kind, 0–3 for `All`, `Heads`, `Readers` and `Rules`, and its ids), the names of the
@@ -1225,6 +1392,8 @@ pub struct RunParts<'r> {
     pub steps: Vec<StoredStep>,
     pub decided: &'r [Decided],
     pub analyses: Vec<(usize, &'static str, u32, Vec<Row>)>,
+    /// By version: the sha256 of its image as a store holds it, where it was opened from one (`Store::kept_image`).
+    pub kept: Vec<Option<[u8; 32]>>,
 }
 
 impl Form {
@@ -1301,13 +1470,14 @@ impl Run {
                 asked: rk.asked.iter().map(|a| a.name.to_owned()).chain(rk.named.iter().cloned()).collect(),
                 own_end: rk.own_end,
             });
-            steps.push(StoredStep { pass: k.pass.to_string(), input: i, output: o, form: k.form, rule });
+            steps.push(StoredStep { pass: k.pass.to_string(), input: i, output: o, form: k.form, rule, plan: k.plan.clone() });
         }
         let output = add(&self.output, &mut table, &mut versions);
         inputs.sort_unstable();
         inputs.dedup();
         let analyses = inputs.iter().flat_map(|&i| table[i].analyses().rows(table[i]).into_iter().map(move |(name, version, rows)| (i, name, version, rows))).collect();
-        RunParts { versions, input, output, steps, decided: &self.decided, analyses }
+        let kept = table.iter().map(|v| v.analyses().kept_image()).collect();
+        RunParts { versions, input, output, steps, decided: &self.decided, analyses, kept }
     }
 
     /// A run read back from a store (decision 0333 §2): `versions` its table reopened, in order, with the other
@@ -1320,7 +1490,7 @@ impl Run {
                 Some(r) => Some(RuleKept { select: Select::of_stored(&r.select).ok_or("a stored step's selection is not one")?, asked: Vec::new(), named: r.asked, own_end: r.own_end }),
                 None => None,
             };
-            kept.push(Kept { pass: s.pass.into(), input: at(s.input)?, output: at(s.output)?, form: s.form, rule });
+            kept.push(Kept { pass: s.pass.into(), input: at(s.input)?, output: at(s.output)?, form: s.form, rule, plan: s.plan });
         }
         Ok(Run { name, input: at(input)?, output: at(output)?, stages: Vec::new(), steps: kept, decided })
     }
@@ -1414,6 +1584,51 @@ pub fn rebase(last: &Arc<Version>, new: &Arc<Version>) -> Result<Option<Arc<Vers
     }
     for r in added {
         b.copy(new, r);
+    }
+    b.set_header(&was, &header);
+    b.finish_overlay().map(Some)
+}
+
+/// `rebase` for a pass's output (decision 0380): `new`, the pass's output over its input, written as an edit of
+/// `last`, its last output. A rule is kept as `last`'s only where both hold it with the same source (the rule of the
+/// pass's input it came from, `RuleRef::source`), and copied in with `new`'s source otherwise, so a later run's
+/// `again` finds what came from each removed rule (`Version::derived`).
+pub fn rebase_output(last: &Arc<Version>, new: &Arc<Version>) -> Result<Option<Arc<Version>>> {
+    if last.depth() >= REBASE_DEPTH {
+        return Ok(None);
+    }
+    let key = |r: RuleRef<'_>| (r.hash(), r.source());
+    let mut wanted: HashMap<(u64, Option<RuleId>), usize> = HashMap::new();
+    for r in new.rules() {
+        *wanted.entry(key(r)).or_default() += 1;
+    }
+    let mut removed = Vec::new();
+    for r in last.rules() {
+        match wanted.get_mut(&key(r)) {
+            Some(n) if *n > 0 => *n -= 1,
+            _ => removed.push(r.id()),
+        }
+    }
+    let mut added = Vec::new();
+    for r in new.rules() {
+        if let Some(n) = wanted.get_mut(&key(r))
+            && *n > 0
+        {
+            *n -= 1;
+            added.push(r);
+        }
+    }
+    if 2 * (removed.len() + added.len()) > last.size().max(1) {
+        return Ok(None);
+    }
+    let lists = crate::code_rule_dsl::logic::front::Lists::default();
+    let (was, header) = (last.header(&lists)?, new.header(&lists)?);
+    let mut b = Builder::on(last);
+    for id in removed {
+        b.remove(id);
+    }
+    for r in added {
+        b.copy_as_is(new, r);
     }
     b.set_header(&was, &header);
     b.finish_overlay().map(Some)

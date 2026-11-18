@@ -674,6 +674,12 @@ pass.
   hiding's rounds 0.066 s, the atoms' lease 0.052 s, stage 2's headers and interfaces 0.045 s (every part's,
   for its key), the sources on request 0.042 s, the kept inputs 0.083 s (decoding 0.020, granules 0.018, ranges
   and sources 0.042: each owner's granule now found once, batched).
+- **Built** (2026-11-17, ep2 parts on the m3, rows h1's throughout): the kept inputs laid out on first use (0378,
+  Q91): 0.077 → 0.021 s. The cross part's frame identities a stored fact (0379): 0.044 → 0.010 s. The combine's
+  tail a kept run, each pass run again over the link's edit (0380, in place of 0370's summaries): hiding 0.108 →
+  0.003 s, fact spaces 0.094 → 0.045 s, the sources on request, the narrowing and the merges over the edit alone;
+  `combine` 0.52 → 0.31 s. Left in the tail: the last run read from the store (0.04 s, every step's versions down
+  to their bases), and every ninth edit runs whole (an overlay past `REBASE_DEPTH`).
 
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 

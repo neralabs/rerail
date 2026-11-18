@@ -9,7 +9,7 @@
 
 use super::super::{ALTERNATIVES, FileLocal, UNFOLD, close_under};
 use crate::code_rule_dsl::logic::program_image::build::{Rewrite, T};
-use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
+use crate::code_rule_dsl::logic::program_image::manager::{Cx, Last, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::{AtomId, CmpOp, Lit as L, LitRef, RuleId, RuleRef, Slot, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
@@ -231,6 +231,54 @@ impl ProgramPass for RequestsFileLocal {
     const NAME: &'static str = "on request: the requests narrowed to the node's document";
     fn settings(&self) -> Vec<u8> {
         self.requests.join("\n").into_bytes()
+    }
+    /// Over an edit (decision 0380): the edit as it is, onto the last output, where no rule of it is a request and
+    /// the file-local split places every relation's documents as it did (what a request is narrowed by). Otherwise
+    /// it runs whole.
+    fn again(&mut self, cx: &Cx<'_>, last: &Last<'_>, w: &mut ProgramW<'_>) -> Result<bool, String> {
+        use crate::code_rule_dsl::logic::program_image::manager::{Reads, analysis, edit_as_is};
+        if last.delta.touched != Reads::RULES {
+            return Ok(false);
+        }
+        let v = cx.v();
+        let request = |of: &Version, r: RuleRef<'_>| self.requests.contains(&of.rel_name(r.head().rel()));
+        for id in last.delta.removed.iter() {
+            if last.input.rule(id).is_none_or(|r| request(&**last.input, r)) {
+                return Ok(false);
+            }
+        }
+        for &id in &last.delta.added {
+            if v.rule(id).is_none_or(|r| request(&**v, r)) {
+                return Ok(false);
+            }
+        }
+        let (now, then) = (cx.get::<FileLocal>()?, analysis::<FileLocal>(last.input)?);
+        if now.local != then.local || now.same_doc != then.same_doc {
+            return Ok(false);
+        }
+        // Nor does one define what a request's body unfolds (`Narrower::unfold`): what the requests read, down.
+        let mut down: BTreeSet<String> = BTreeSet::new();
+        let mut todo: Vec<String> = Vec::new();
+        for req in &self.requests {
+            let Some(id) = v.rel(req) else { continue };
+            for r in v.heads(id) {
+                todo.extend(r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()));
+            }
+        }
+        while let Some(rel) = todo.pop() {
+            if !down.insert(rel.clone()) {
+                continue;
+            }
+            let Some(id) = v.rel(&rel) else { continue };
+            for r in v.heads(id) {
+                todo.extend(r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()).filter(|x| !down.contains(x)));
+            }
+        }
+        let head_of = |of: &Version, r: RuleRef<'_>| of.rel_name(r.head().rel()).to_owned();
+        if last.delta.removed.iter().filter_map(|id| last.input.rule(id)).map(|r| head_of(&**last.input, r)).chain(last.delta.added.iter().filter_map(|&id| v.rule(id)).map(|r| head_of(&**v, r))).any(|h| down.contains(&h)) {
+            return Ok(false);
+        }
+        edit_as_is(cx, last, w)
     }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();

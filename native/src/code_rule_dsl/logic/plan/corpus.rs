@@ -816,7 +816,7 @@ fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
     if combine_link_mode() == "check" {
         let (whole, whole_tail) = crate::code_rule_dsl::logic::profile::quiet(|| combine_linked_spliced::<link::Versioned>(programs, extra, read, None, false))?;
         assert_eq!((whole.size(), whole.digest()), (v.size(), v.digest()), "the combine's splice is its whole link: {}", crate::code_rule_dsl::logic::program_image::differences(&whole, &v));
-        assert_eq!(format!("{whole_tail:?}"), format!("{tail:?}"), "the combine's splice has its whole link's tail");
+        assert_eq!(whole_tail.shape(), tail.shape(), "the combine's splice has its whole link's tail");
         crate::code_rule_dsl::logic::profile::decision("the combine's last link (decision 0373)", || "checked: the splice is the whole link (RERAIL_COMBINE_LINK=check)".into());
     }
     // The parts linked as trees beside (decision 0281's path, step 7a-2): the same program.
@@ -827,7 +827,20 @@ fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
         assert_eq!((of_tree.size(), of_tree.digest()), (v.size(), v.digest()), "the parts linked as versions are the trees linked: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &v));
         tree
     };
-    let v = tail_version(v, &tail)?;
+    let v = match &tail {
+        Tail::Many { kept: Some(kept), .. } if combine_tail_mode() != "whole" => {
+            let kept = *kept;
+            let spliced = tail_kept(v.clone(), &tail, kept)?;
+            // `RERAIL_COMBINE_TAIL=check`: the tail kept (decision 0380) against the tail run whole.
+            if combine_tail_mode() == "check" {
+                let whole = crate::code_rule_dsl::logic::profile::quiet(|| tail_version(v, &tail))?;
+                assert_eq!((whole.size(), whole.digest()), (spliced.size(), spliced.digest()), "the combine's kept tail is its whole tail: {}", crate::code_rule_dsl::logic::program_image::differences(&whole, &spliced));
+                crate::code_rule_dsl::logic::profile::decision("the combine's tail (decision 0380)", || "checked: the kept tail is the whole tail (RERAIL_COMBINE_TAIL=check)".into());
+            }
+            spliced
+        }
+        _ => tail_version(v, &tail)?,
+    };
     #[cfg(debug_assertions)]
     {
         let tree = crate::code_rule_dsl::logic::profile::quiet(|| tail_tree(tree, &tail))?;
@@ -1316,12 +1329,34 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
 #[derive(Debug)]
 enum Tail {
     One,
-    Many { hide: Option<u32>, policies: Vec<scoping::Policy> },
+    /// `kept`: the kept link's family (decision 0373), where the link is kept: the tail's run is kept under it too
+    /// (decision 0380).
+    Many { hide: Option<u32>, policies: Vec<scoping::Policy>, kept: Option<TailKept> },
+}
+
+impl Tail {
+    /// What the tail does, without where its run is kept: two tails of one shape make one program.
+    fn shape(&self) -> String {
+        match self {
+            Tail::One => "one".to_owned(),
+            Tail::Many { hide, policies, .. } => format!("{hide:?} {policies:?}"),
+        }
+    }
+}
+
+/// The family the combine's tail run is kept under (decision 0380): the kept link's (decision 0373).
+#[derive(Clone, Copy)]
+struct TailKept([u8; 32]);
+
+impl std::fmt::Debug for TailKept {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("kept")
+    }
 }
 
 /// `combine_read`'s tail on the tree (the tools', and a debug build's check of `tail_version`).
 fn tail_tree(mut all: front::Program, tail: &Tail) -> Result<front::Program> {
-    let Tail::Many { hide, policies } = tail else {
+    let Tail::Many { hide, policies, .. } = tail else {
         requests_file_local(&mut all);
         answers_where_documents_are(&mut all);
         same_relations(&mut all);
@@ -1376,10 +1411,66 @@ fn fact_spaces_decision(report: &scoping::Report) {
 
 /// `combine_read`'s tail on the version: the same passes, each on the manager.
 fn tail_version(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: &Tail) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+    let p = tail_passes(crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("combine", v), tail)?;
+    Ok(p.finish().map_err(Error::Plan)?.0)
+}
+
+/// `tail_version` as a run kept under the kept link's family (decision 0380): the last run's opened from the image
+/// store, and where the link is an edit of its input (`manager::rebase`), the passes run again over the edit
+/// (`Pipeline::again`): each step's analyses carried across it, and a pass that can (`ProgramPass::again`) writing
+/// the edit onto its last output. The run is kept again, behind the run.
+fn tail_kept(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: &Tail, kept: TailKept) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+    use crate::code_rule_dsl::logic::program_image::manager::{Delta, Pipeline, Runs as _, rebase};
+    let Some(store) = crate::code_rule_dsl::logic::rr::image_store() else { return tail_version(v, tail) };
+    let key = {
+        use sha2::Digest as _;
+        sha2::Sha256::new()
+            .chain_update(b"rerail/combine tail run v2\0")
+            .chain_update(kept.0)
+            .chain_update(crate::code_rule_dsl::build_ids::engine().as_bytes())
+            .chain_update(tail.shape().as_bytes())
+            .finalize()
+            .into()
+    };
+    let runs = crate::code_rule_dsl::logic::program_text::StoredRuns(&store);
+    let last = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the combine's last tail run, from the store (decision 0380)".into());
+        runs.open(&key, "combine").ok().flatten()
+    };
+    let rebased = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the link, as an edit of the last tail run's input (decision 0380)".into());
+        last.and_then(|last| rebase(last.input(), &v).ok().flatten().map(|r| (last, r)))
+    };
+    let p = match rebased {
+        Some((last, r)) => {
+            crate::code_rule_dsl::logic::profile::decision("the combine's tail (decision 0380)", || format!("run again over an edit of the last run's input ({} rules)", Delta::of(last.input(), &r).size()));
+            Pipeline::again(last, r)
+        }
+        None => {
+            crate::code_rule_dsl::logic::profile::decision("the combine's tail (decision 0380)", || "run whole: no last run of the link's family, or the link is no edit of its input".into());
+            Pipeline::keeping("combine", v)
+        }
+    };
+    let run = tail_passes(p, tail)?.done().map_err(Error::Plan)?;
+    for s in run.stages() {
+        crate::code_rule_dsl::logic::profile::decision("the combine's tail: a pass (decision 0380)", || format!("{}: {:?}, {:?}, {} rules visited", s.pass, s.ran, s.form, s.visited));
+    }
+    {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "keep the combine's tail run (decision 0380)".into());
+        crate::code_rule_dsl::logic::program_text::record_runs(&store, &[(key, &run)]);
+    }
+    let out = run.output().clone();
+    Ok(match out.base_bytes() {
+        Some(_) => out,
+        None => out.fold().map_err(Error::Plan)?,
+    })
+}
+
+/// The tail's passes on `p` (`tail_version`), their decisions stated.
+fn tail_passes<'s>(mut p: crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s>, tail: &Tail) -> Result<crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s>> {
     use preparation::{combining, hide, on_request, whole};
-    let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("combine", v);
     let mut spaces_report = None;
-    if let Tail::Many { hide: bound, policies } = tail {
+    if let Tail::Many { hide: bound, policies, .. } = tail {
         p.program(&mut whole::Projected);
         p.program(&mut whole::RetypeHelpers);
         for round in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST {
@@ -1389,7 +1480,7 @@ fn tail_version(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tai
         if let Some(bound) = *bound {
             let rules = p.current().map_err(Error::Plan)?.size();
             let _hiding = crate::code_rule_dsl::logic::profile::span(|| format!("bound the combined program to the documents it shows ({rules} rules; decision 0058)"));
-            p.program(&mut hide::Hide { bound });
+            p.program(&mut hide::Hide::new(bound));
         }
         let spacing = crate::code_rule_dsl::logic::profile::span(|| "fact spaces".into());
         let mut spaces = combining::FactSpaces::new(policies);
@@ -1408,7 +1499,7 @@ fn tail_version(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tai
     for d in p.decisions() {
         crate::code_rule_dsl::logic::profile::decision(&d.what, || d.detail.clone());
     }
-    Ok(p.finish().map_err(Error::Plan)?.0)
+    Ok(p)
 }
 
 /// A text's version with the library's cone it asks for (decision 0089 §3), as `rr::Text::lowered_in` makes it on
@@ -1434,9 +1525,9 @@ pub(crate) fn cone_on_version(
     Ok(p.finish()?.0)
 }
 
-/// `requests_file_local` and `answers_where_documents_are` of the version `p` holds, through its tree: neither has a
-/// pass on the manager yet (work queue Q52), so a program that answers an attribute on request is decoded, the two
-/// run on the tree, and its image made again. One that answers none is left as it is.
+/// `requests_file_local` and `answers_where_documents_are` of the version `p` holds, each a pass of `p` (a kept
+/// tail keeps them and the steps after them, decision 0380). One that answers no attribute on request is left as it
+/// is.
 fn requests_where_documents_are<'s>(mut p: crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s>) -> Result<crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s>> {
     use crate::code_rule_dsl::logic::rr::lower::ON_REQUEST;
     let v = std::sync::Arc::clone(p.current().map_err(Error::Plan)?);
@@ -1455,20 +1546,38 @@ fn requests_where_documents_are<'s>(mut p: crate::code_rule_dsl::logic::program_
             crate::code_rule_dsl::logic::profile::decision("on request: narrowed to the node's document", || format!("{req}: {how}"));
         }
     }
-    for d in p.decisions() {
-        crate::code_rule_dsl::logic::profile::decision(&d.what, || d.detail.clone());
-    }
-    let (v, _) = p.finish().map_err(Error::Plan)?;
     // The tree's narrowing beside it: the two agree.
     #[cfg(debug_assertions)]
     {
+        let v = p.current().map_err(Error::Plan)?;
         let mut tree = before.program(&front::Lists::default()).map_err(Error::Plan)?;
         requests_file_local(&mut tree);
         let (t, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
-        assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "the requests narrowed on the version are the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&t, &v));
+        assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "the requests narrowed on the version are the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&t, v));
     }
-    let v = answers_where_documents_are_version(v)?;
-    Ok(crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("combine", v))
+    // In the same pipeline (decision 0380): a kept tail keeps the steps after this one too.
+    p.program(&mut AnswersWhereDocumentsAre);
+    Ok(p)
+}
+
+/// `answers_where_documents_are_version` as a program pass: the rounds it undoes, written as one edit of its input
+/// (their headers and the heads they drop), and nothing where it undoes none.
+struct AnswersWhereDocumentsAre;
+
+impl crate::code_rule_dsl::logic::program_image::manager::ProgramPass for AnswersWhereDocumentsAre {
+    const NAME: &'static str = "answers where documents are";
+    fn run(&mut self, _cx: &crate::code_rule_dsl::logic::program_image::manager::Cx<'_>, w: &mut crate::code_rule_dsl::logic::program_image::manager::ProgramW<'_>) -> std::result::Result<(), String> {
+        let v = w.input().clone();
+        let out = answers_where_documents_are_version(v.clone()).map_err(|e| e.to_string())?;
+        if Arc::ptr_eq(&out, &v) {
+            return Ok(());
+        }
+        let (was, head) = (v.header(&front::Lists::default())?, out.header(&front::Lists::default())?);
+        let b = w.on()?;
+        b.set_header(&was, &head);
+        b.retain(|r| out.contains(r.id()));
+        Ok(())
+    }
 }
 
 /// `answers_where_documents_are` on the version (decision 0281's path, step 7b): each round whose function's answer
@@ -1503,6 +1612,12 @@ fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, rea
 /// whole beside it, and checks the two are one program with one tail.
 fn combine_link_mode() -> String {
     std::env::var("RERAIL_COMBINE_LINK").unwrap_or_default()
+}
+
+/// `RERAIL_COMBINE_TAIL`: `whole` runs the combine's tail whole each run (no kept run, decision 0380); `check` runs it
+/// kept and whole beside it, and checks the two are one program.
+fn combine_tail_mode() -> String {
+    std::env::var("RERAIL_COMBINE_TAIL").unwrap_or_default()
 }
 
 /// `combine_linked_as`, splicing into the last link where `splice` (decision 0373).
@@ -1887,11 +2002,13 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
     let (all, counts) = P::link_counted(all, rules, core)?;
     let hide = (shared && makes_guests).then_some(bounds[0]);
     // The link kept for the next run's splice (decision 0373), where the libraries are held once.
+    let mut kept = None;
     if let (Some((keys, family)), Some(store), Some(counts), Some(v), true) = (&keeping, images.as_deref(), counts, P::linked_version(&all), shared && interfaces.len() == programs.len()) {
         let slots = keys.iter().zip(&interfaces).map(|(k, f)| kept_link::Slot { key: *k, interface: *f }).collect();
         kept_link::record(store, family, v, &kept_link::Record { counts, slots, requests: first_askers, sets, bound: bounds[0], hide, policies: policies.clone() });
+        kept = Some(TailKept(*family));
     }
-    Ok((all, Tail::Many { hide, policies }))
+    Ok((all, Tail::Many { hide, policies, kept }))
 }
 
 /// `combine_linked_as` as a splice into the combine's last link (decision 0373): the programs whose image changed
@@ -1983,7 +2100,7 @@ fn combine_spliced<P: link::Part>(
         rec.counts = counts;
         kept_link::record(store, family, v, &rec);
     }
-    Ok(Some((linked, Tail::Many { hide: rec.hide, policies: rec.policies })))
+    Ok(Some((linked, Tail::Many { hide: rec.hide, policies: rec.policies, kept: Some(TailKept(*family)) })))
 }
 
 /// The requests `sources_on_request` made, narrowed where the split finds them cross-file to the asked node's own
