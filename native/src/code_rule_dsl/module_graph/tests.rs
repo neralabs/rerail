@@ -832,6 +832,70 @@ fn a_rewrite_restoring_length_and_modification_time_is_read_again() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+/// A source whose read a person denied after the walk cached its summary keeps the summary of its
+/// last write, as its modification time and length show it: the denial moves NTFS's change time
+/// alone. A write of another length or at another time has no summary until it is read.
+#[cfg(windows)]
+#[test]
+fn a_source_whose_read_is_denied_keeps_the_summary_of_its_last_write() {
+    let root = temp_root("denied");
+    write_file(&root, "package.json", NEXT_MANIFEST);
+    write_file(&root, "app/page.tsx", "import './a';\nexport default 1;\n");
+    write_file(&root, "app/b.ts", "");
+    let source = root.join("app/a.ts");
+    let write = |text: &str, modified: SystemTime| {
+        std::fs::write(&source, text).unwrap();
+        crate::git_workspace::backdate(&source, modified);
+    };
+    let settled = SystemTime::now() - Duration::from_secs(3600);
+    let server = ["app/a.ts", "app/b.ts", "app/page.tsx"];
+    write("'use server';\nimport './b';\n", settled);
+    assert_eq!(disk_graph(&root, "").unwrap(), server);
+    let denied = crate::git_workspace::ReadDenied::new(&source);
+    assert!(std::fs::read(&source).is_err(), "the read is denied");
+    assert_eq!(disk_graph(&root, "").unwrap(), server);
+    assert_eq!(disk_graph(&root, "").unwrap(), server);
+    drop(denied);
+    for (text, modified) in [
+        ("'use server';\nimport './b';\n\n", settled),
+        ("'use client';\nimport './b';\n", settled + Duration::from_secs(1)),
+    ] {
+        write(text, modified);
+        let _denied = crate::git_workspace::ReadDenied::new(&source);
+        assert_eq!(disk_graph(&root, ""), None, "{text:?}");
+    }
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// On unix a change to a source's permissions moves its status-change time as a write does, so no
+/// cached summary stands for a source that can no longer be read: the package has no graph.
+#[cfg(unix)]
+#[test]
+fn a_source_whose_read_is_denied_keeps_no_summary_on_unix() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = temp_root("denied");
+    write_file(&root, "package.json", NEXT_MANIFEST);
+    write_file(&root, "app/page.tsx", "import './a';\nexport default 1;\n");
+    write_file(&root, "app/a.ts", "'use server';\nimport './b';\n");
+    write_file(&root, "app/b.ts", "");
+    let source = root.join("app/a.ts");
+    std::fs::File::options()
+        .write(true)
+        .open(&source)
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(3600))
+        .unwrap();
+    let server = ["app/a.ts", "app/b.ts", "app/page.tsx"];
+    assert_eq!(disk_graph(&root, "").unwrap(), server);
+    std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o000)).unwrap();
+    // Permissions do not bind the superuser.
+    if std::fs::read(&source).is_err() {
+        assert_eq!(disk_graph(&root, ""), None);
+    }
+    std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 /// An `extends` base already read, one past the chain's depth and an entry past the first
 /// `MAX_EXTENDS_ENTRIES` of an array are not read.
 #[test]

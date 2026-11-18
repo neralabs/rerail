@@ -611,6 +611,23 @@ impl Stamp {
     }
 }
 
+impl Stamp {
+    /// Whether `cached` shows the same last write as this stamp: its modification time and
+    /// length. A change to the file's permissions moves NTFS's change time alone, so a source
+    /// that can no longer be read keeps the summary of that write.
+    #[cfg(windows)]
+    fn same_write(&self, cached: &Self) -> bool {
+        self.modified == cached.modified && self.length == cached.length
+    }
+
+    /// Whether `cached` shows the same last write as this stamp: the whole stamp, since a change
+    /// to the file's permissions moves the status-change time as a write does.
+    #[cfg(not(windows))]
+    fn same_write(&self, cached: &Self) -> bool {
+        self == cached
+    }
+}
+
 /// One summary read from disk, kept while the file's `Stamp` stands.
 type CachedSummary = (Stamp, Arc<Summary>);
 
@@ -628,7 +645,8 @@ const SETTLED_AFTER: Duration = Duration::from_secs(2);
 /// ones (`IGNORED_DIRECTORIES`), nested packages and nested checkouts (a folder holding `.git`).
 /// `overlay` replaces one source's text with a host's (`None`: deleted), for a source being
 /// edited that disk does not hold yet. `None` where the package has no graph rather than a
-/// partial one: a folder or source cannot be read, its walk lists more than `MAX_GRAPH_ENTRIES`
+/// partial one: a folder or source cannot be read (a source keeps the summary cached for its last
+/// write: `Stamp::same_write`), its walk lists more than `MAX_GRAPH_ENTRIES`
 /// entries, or it holds more than `MAX_GRAPH_FILES` sources or `MAX_GRAPH_BYTES` of them. The
 /// failure is not cached, so the next call reads it again. The walk is not cancellable; it lists
 /// and inspects at most `MAX_GRAPH_ENTRIES` entries and reads at most `MAX_GRAPH_BYTES`.
@@ -674,17 +692,19 @@ fn package_directory(root: &Path, folder: &str) -> PathBuf {
 }
 
 /// A source the disk cache holds no summary for at its `stamp`: its workspace path, absolute path
-/// and length.
+/// and length, and the summary cached for its last write, if any (`Stamp::same_write`).
 struct Miss {
     path: String,
     absolute: PathBuf,
     length: u64,
     stamp: Option<Stamp>,
+    kept: Option<Arc<Summary>>,
 }
 
 /// The summaries of the walked `sources` by workspace path, but the overlay's source, whose text
 /// replaces disk's: each from the disk cache while its `Stamp` stands, else read from disk and
-/// cached once settled (`SETTLED_AFTER`). `None` where a source cannot be read.
+/// cached once settled (`SETTLED_AFTER`). `None` where a source cannot be read and the cache holds
+/// no summary of its last write.
 fn disk_summaries(
     folder: &str,
     sources: Vec<Walked>,
@@ -729,7 +749,8 @@ fn cached_summaries(
                 (Some(stamp), Some((cached, summary))) if stamp == *cached => {
                     hits.push((path, Arc::clone(summary)));
                 }
-                _ => misses.push(Miss {
+                (_, cached) => misses.push(Miss {
+                    kept: kept(stamp, cached),
                     path,
                     absolute,
                     length: facts.len(),
@@ -745,13 +766,20 @@ fn cached_summaries(
     (files, misses)
 }
 
+/// The summary cached for the last write `stamp` shows (`Stamp::same_write`).
+fn kept(stamp: Option<Stamp>, cached: Option<&CachedSummary>) -> Option<Arc<Summary>> {
+    let (cached, summary) = cached?;
+    stamp?.same_write(cached).then(|| Arc::clone(summary))
+}
+
 /// The summary of the source `miss` names, read from disk: `Some(None)` where it is gone since its
-/// folder was listed or `summarize` leaves it out, `None` where it cannot be read.
+/// folder was listed or `summarize` leaves it out. Where it cannot be read, the summary cached for
+/// its last write (`Miss::kept`), else `None`.
 fn read_miss(miss: &Miss) -> Option<Option<Summary>> {
     match source_text(&miss.absolute, miss.length) {
         Ok(source) => Some(summarize(&miss.path, &source)),
         Err(error) if gone(&error) => Some(None),
-        Err(_) => None,
+        Err(_) => miss.kept.as_deref().cloned().map(Some),
     }
 }
 
