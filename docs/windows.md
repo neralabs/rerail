@@ -462,9 +462,10 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   10 s wait for a stop); one ended there, or one that cannot run, reads nothing, and the record is kept. So on a
   machine whose policy blocks `powershell.exe` itself, no start is read, and a busy daemon of 0.1.4 or earlier is not
   shown to be this home's: `rerail daemon stop` ends nothing and says how to check the process, and `rerail install
-  --remove` and `rerail update` stop with that error. The command that message gives runs PowerShell too, so there
-  open Task Manager's Details tab, show its Command line column, end the process with the pid the message names if
-  its command line runs Rerail's `daemon-entry.js` for this home, and run the command again. The proof's limit counts
+  --remove` stops with that error, having already taken Rerail out of the coding agents. The command that message
+  gives runs PowerShell too, so there open Task Manager's Details tab, show its Command line column, end the process
+  with the pid the message names if its command line runs Rerail's `daemon-entry.js` for this home, and run the
+  command again. The proof's limit counts
   from the ask and covers the connect (`engineCapabilityProof`, `src/runtime/engine-proof.ts`). It connects to the pipe
   spelled
   `\\?\pipe\<name>`: Node's wait for a free instance (`WaitNamedPipe`, up to 30 s, in a thread that keeps the asking
