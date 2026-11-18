@@ -74,7 +74,11 @@ The provider records the storage state that it checked when it read an object.
 It checks loose file metadata and the pack and index files in the repository and its alternates.
 If the storage state changes, the provider reads and checks the object's checksum before it returns successful facts.
 Failed object reads are checked again when a later run requests the object.
-Verify the selected commit or tree and any annotated tags that lead to it before opening the source view.
+Verify the selected commit or tree before opening the source view.
+The source view also verifies each annotated tag that it follows.
+Revision expressions can make gix read a tag, commit, or tree before it returns an object ID.
+Verifying the final ID cannot detect a change to an earlier object that redirected the expression.
+Revision resolution must verify each object before it uses that object's contents to find the next ID.
 A loose object's storage observation depends only on the loose copies that Git can use when no pack index lists the object.
 Use a conservative pack observation when an index cannot prove whether it contains the object.
 A source request checks the same storage observation before it uses saved content.
