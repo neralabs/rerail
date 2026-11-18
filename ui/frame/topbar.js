@@ -32,6 +32,11 @@ function updatedAgo(at) {
 
 /** When the daemon was last heard: a poll's answer, or a message of its change stream. */
 const heardAt = () => Math.max(data.updatedAt, data.heardAt);
+/**
+ * Until when the page is known to show what the daemon holds: the moment it learned of something it has not read yet,
+ * else when the daemon was last heard. A read that hangs while the daemon beats leaves the page behind from then on.
+ */
+const currentAt = () => data.behindSince || heardAt();
 
 /* Labels stay short and leave out the repo (it is in the pill); the tooltip says what is known and what to do. Any
  * failed poll that is not the repository's 404 counts as disconnected, so the words claim only that the daemon did not
@@ -51,7 +56,8 @@ function daemonStatus() {
   if (!data.disconnected) return null;
   const at = heardAt();
   if (at && Date.now() - at <= DOWN_AFTER_MS) {
-    return { cls: "warn", text: "Reconnecting…", title: `The last refresh failed. Showing data from ${updatedAgo(at)}; retrying.` };
+    const shown = data.updatedAt ? updatedAgo(data.updatedAt) : "never";
+    return { cls: "warn", text: "Reconnecting…", title: `The last refresh failed. Showing data from ${shown}; retrying.` };
   }
   const since = at ? ` since ${new Date(at).toLocaleTimeString()}` : "";
   return { cls: "down", text: "Daemon not responding",
@@ -77,9 +83,9 @@ function repoStatus() {
   return { cls: "warn", text: "Stopped", title: "No rules run here, and nothing is logged. Start it from Overview or Settings, or run /rerail-start." };
 }
 
-/** Live while the daemon was heard within two beats, else how old the data is. */
+/** Live while the page held what the daemon had within two beats, else how old the data is. */
 function freshStatus() {
-  const at = heardAt();
+  const at = currentAt();
   if (Date.now() - at < LIVE_MS) return { cls: "", text: "Live", title: `Connected to daemon${data.health ? ` ${data.health.version}` : ""} · up to date.` };
   return { cls: "", text: `Updated ${at ? updatedAgo(at) : "never"}`, title: `Last refreshed ${new Date(at).toLocaleString()}. Refreshing pauses while the tab is hidden.` };
 }
@@ -99,13 +105,13 @@ function status() {
  * message, Reconnecting turns red, an age moves to its next minute; `null` when time alone does not change it.
  */
 function untilStatusMoves(s) {
-  const at = heardAt();
-  if (!at) return null;
-  const age = Date.now() - at;
-  if (s.text === "Live") return LIVE_MS - age;
-  if (data.disconnected && s.cls === "warn") return DOWN_AFTER_MS - age;
-  return s.text.startsWith("Updated ") ? (Math.floor(age / MINUTE + 0.5) + 0.5) * MINUTE - age : null;
+  if (s.text === "Live") return LIVE_MS - (Date.now() - currentAt());
+  if (data.disconnected && s.cls === "warn") return DOWN_AFTER_MS - (Date.now() - heardAt());
+  return s.text.startsWith("Updated ") && currentAt() ? untilNextMinute(Date.now() - currentAt()) : null;
 }
+
+/** From `age` until `updatedAgo` reads another minute (it rounds to the nearest). */
+const untilNextMinute = age => (Math.floor(age / MINUTE + 0.5) + 0.5) * MINUTE - age;
 
 let statusTimer = null;
 
@@ -113,7 +119,7 @@ let statusTimer = null;
  * The status pill, drawn with each render; between renders it is drawn again once, when time alone would change it
  * (`untilStatusMoves`), since the page renders only when the daemon says something.
  */
-function renderStatus() {
+export function renderStatus() {
   const s = status(), el = $("status");
   setAttr(el, "class", `status${s.cls ? ` ${s.cls}` : ""}`);
   setAttr(el.querySelector(".dot"), "hidden", s.dot === false);

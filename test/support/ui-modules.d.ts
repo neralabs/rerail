@@ -59,7 +59,13 @@ declare module "*/ui/sessions-model.js" {
   export function violationCounts(s: SessionRow): { logged: number; steered: number };
 }
 
+declare module "*/ui/frame/topbar.js" {
+  /** Draws the status pill from the store, and draws it again once when time alone would change its words. */
+  export function renderStatus(): void;
+}
 declare module "*/ui/poll.js" {
+  /** Two missed beats of the change stream: the status stops saying Live, and the stream is opened again. */
+  export const LIVE_MS: number;
   export function titleFromPrompts(prompts: readonly string[]): string | null;
   /** What each poll loads for a repository in scope, by need name (`NEEDS` in poll.js). */
   export function setNeeds(needs: () => Iterable<string>): void;
@@ -146,7 +152,7 @@ declare module "*/ui/state.js" {
     activityAllSessions: { started: number; withViolations: number } | null;
     packs: unknown[];
     attachedPacks: Map<string, string[]>;
-    repository: { setUp: boolean; repositoryKey?: string; name?: string } | null;
+    repository: { setUp: boolean; repositoryKey?: string; name?: string; state?: string } | null;
     checkout: { checkoutPath: string; folder: string; state: string } | null;
     recommendations: Array<{ packId: string; folder?: string }> | null;
     followGitignore: boolean | null;
@@ -154,6 +160,9 @@ declare module "*/ui/state.js" {
     repositories: Array<{ repositoryKey: string; [k: string]: unknown }>;
     updatedAt: number;
     heardAt: number;
+    behindSince: number;
+    accessRequired: boolean;
+    health: { version: string; model?: { ok: boolean; message?: string } } | null;
     missing: boolean;
     disconnected: boolean;
     /** Whether a poll has answered for the scope: the sidebar's Merge Assist count waits for it. */

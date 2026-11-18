@@ -14,6 +14,8 @@ let reads: string[] = [];
 let up = true;
 /** Whether the daemon serves the change stream; one of an older Rerail answers 404. */
 let streams404 = false;
+/** Reads the daemon answers with an error (500), by path, while the daemon itself stays up. */
+let failing = new Set<string>();
 let renders: boolean[] = [];
 let visibility: (() => void)[] = [];
 const encoder = new TextEncoder();
@@ -73,6 +75,7 @@ beforeEach(async () => {
   reads = [];
   up = true;
   streams404 = false;
+  failing = new Set();
   renders = [];
   vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
   vi.stubGlobal("fetch", async (input: URL, init: { signal?: AbortSignal } = {}) => {
@@ -80,10 +83,10 @@ beforeEach(async () => {
     if (!up) throw new TypeError("fetch failed");
     if (url.pathname === "/api/changes") return streams404 ? json({ error: "not-found" }, 404) : openStream(init.signal!);
     reads.push(url.pathname);
-    return answer(url);
+    return failing.has(url.pathname) ? json({ error: "internal" }, 500) : answer(url);
   });
   setScope({ repository: "A", checkout: "/work/a" });
-  Object.assign(data, { mergeAssist: null, mergeAssistError: null, mergeAssistExperiment: null, disconnected: false, loaded: false });
+  Object.assign(data, { mergeAssist: null, mergeAssistError: null, mergeAssistExperiment: null, disconnected: false, loaded: false, behindSince: 0 });
   ui.view = "settings";
   ui.panel = null;
   setNeeds(currentNeeds);
@@ -298,5 +301,67 @@ describe("the dashboard following the daemon's change stream", () => {
     stream().send("t3", "conflicts");
     await settle();
     expect(readsOf("/api/merge-assist")).toBe(2);
+  });
+
+  it("reads again at the poll's pace after a read fails while the stream stays open, as the poll read again", async () => {
+    stream().send("t1");
+    await settle();
+    failing.add("/api/repositories");
+    stream().send("t2");
+    await settle();
+    expect(data.disconnected).toBe(true);
+    failing.clear();
+    // The daemon beats with nothing new, so no message asks for a read: the read that failed is tried again.
+    stream().send("t2");
+    await settle();
+    const before = readsOf("/api/repositories");
+
+    // The pace doubled at the failure, from 5 s to 10 s, as the poll's did.
+    await after(10_000);
+
+    expect(readsOf("/api/repositories")).toBe(before + 1);
+    expect(data.disconnected).toBe(false);
+  });
+
+  it("holds no stream without Web Locks, as on a page that is not a secure context, and reads every 5 s as before", async () => {
+    setHidden(true);
+    vi.stubGlobal("navigator", {});
+    const opened = streams.length;
+    setHidden(false);
+    await settle();
+    const before = readsOf("/api/repositories");
+
+    await after(5_000);
+    await after(5_000);
+
+    expect(streams).toHaveLength(opened);
+    expect(readsOf("/api/repositories")).toBe(before + 2);
+  });
+
+  it("counts the page behind from a new token until a read begun after it answers, whatever the beats say", async () => {
+    stream().send("t1");
+    await settle();
+    expect(data.behindSince).toBe(0);
+    const unanswered: (() => void)[] = [];
+    vi.stubGlobal("fetch", async (input: URL, init: { signal?: AbortSignal } = {}) => {
+      const url = new URL(input);
+      if (url.pathname === "/api/changes") return openStream(init.signal!);
+      reads.push(url.pathname);
+      return new Promise<Response>(resolve => unanswered.push(() => resolve(answer(url))));
+    });
+    await after(5_000);
+    stream().send("t2");
+    await settle();
+    const behind = data.behindSince;
+    expect(behind).toBeGreaterThan(0);
+
+    await after(5_000);
+    stream().send("t2");
+    await settle();
+    expect(data.behindSince).toBe(behind);
+
+    for (const reply of unanswered) reply();
+    await settle();
+    expect(data.behindSince).toBe(0);
   });
 });

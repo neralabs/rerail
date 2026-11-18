@@ -766,9 +766,20 @@ async function poll() {
  */
 export async function refresh() {
   if (inFlight) { queued = true; return inFlight; }
+  const asked = Date.now();
   inFlight = poll();
   try { await inFlight; } finally { inFlight = null; }
+  afterRead(asked);
   if (queued) { queued = false; await refresh(); }
+}
+
+/**
+ * What a read's outcome moves, whatever asked for it: one that failed is tried again at the poll's own pace (`backoff`),
+ * as the poll tried it, even while the stream stays open; one that answered holds what the daemon had when it began.
+ */
+function afterRead(asked) {
+  if (data.disconnected) retryLater();
+  else if (data.behindSince <= asked) data.behindSince = 0;
 }
 
 /** The tab is in the background: nothing is followed or read until it shows again. */
@@ -797,10 +808,15 @@ function onMessage({ event, data: next }, first) {
   data.heardAt = Date.now();
   if (event === "conflicts") mergeAssistCountDue = true;
   if (first) startOver(next);
-  else if (asksRead(event, next)) {
-    token = next;
-    readSoon();
-  } else onChange(false);
+  else if (asksRead(event, next)) readFor(next);
+  else onChange(false);
+}
+
+/** Read for a message that asked: a new token says the page is behind the daemon until a read begun after it answers. */
+function readFor(next) {
+  if (next !== token) data.behindSince ||= Date.now();
+  token = next;
+  readSoon();
 }
 
 /** Whether a message asks for a read: a new token, a conflict event, a failed count to try again. */
@@ -815,19 +831,22 @@ function startOver(next) {
   paceTimer = null;
   lastChangeRead = -Infinity;
   mergeAssistCountDue = true;
+  data.behindSince ||= Date.now();
   token = next;
   void refresh();
 }
 
 const changesPath = () => (ui.scope?.checkout === undefined ? "/api/changes" : `/api/changes?${new URLSearchParams({ checkout: ui.scope.checkout })}`);
 
-/** Runs `run` holding one of the browser's free stream slots; `false` at once, nothing run, when none is free. */
+/**
+ * Runs `run` holding one of the browser's free stream slots; `false` at once, nothing run, when none is free. Without
+ * Web Locks (a browser without them, or a page that is not a secure context, such as a daemon started with
+ * --insecure-http opened by its network address) no tab can count the others, so none holds a stream: each reads at the
+ * pace, as every tab did before, and never takes one of the six connections the browser gives the daemon's origin.
+ */
 async function inStreamSlot(run) {
   const locks = globalThis.navigator?.locks;
-  if (locks === undefined) {
-    await run();
-    return true;
-  }
+  if (locks === undefined) return false;
   for (let slot = 0; slot < STREAM_SLOTS; slot += 1) {
     const held = await locks.request(`rerail-changes-${slot}`, { ifAvailable: true }, async lock => {
       if (lock === null) return false;
@@ -868,9 +887,21 @@ function changesEnded(controller) {
   if (stream !== controller) return; // ended from here: the tab hid, the scope changed, or two beats were missed
   stream = null;
   clearTimeout(stallTimer);
-  clearTimeout(retryTimer);
-  retryTimer = setTimeout(() => { retryTimer = null; followChanges(); }, backoff);
+  retryLater();
   void refresh();
+}
+
+/**
+ * Try again after `backoff`, the poll's own pace (doubling to 30 s while reads fail): open the stream again if it is
+ * closed, else read again if the last read failed. The one retry for a stream that ended and a read that failed.
+ */
+function retryLater() {
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    if (stream === null) followChanges();
+    else if (data.disconnected) void refresh();
+  }, backoff);
 }
 
 /** Stop following and reading until `followChanges` again. */
@@ -918,7 +949,7 @@ export function changeScope(scope) {
     repository: null, checkout: null, rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
     activitySessions: null, activityAllSessions: null, findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(),
     sessionFindings: pagedList(), recentSessions: null, recommendations: null, followGitignore: null, loaded: false, missing: false,
-    mergeAssist: null, mergeAssistError: null,
+    mergeAssist: null, mergeAssistError: null, behindSince: 0,
   });
   mergeAssistRead = { at: 0, loading: null, generation: -1 };
   mergeAssistCountDue = true;

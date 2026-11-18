@@ -95,11 +95,13 @@ export const data = {
   agentsError: null,
   /**
    * Freshness: the last successful poll (views that read more after each poll key on it), the last message of the
-   * daemon's change stream (the status reads the later of the two as when the daemon was last heard), and whether the
-   * last attempt failed.
+   * daemon's change stream (the status reads the later of the two as when the daemon was last heard), since when the
+   * page knows the daemon holds something it has not read yet (0 while it holds what the daemon had: a read begun
+   * after that moment answered), and whether the last attempt failed.
    */
   updatedAt: 0,
   heardAt: 0,
+  behindSince: 0,
   disconnected: false,
   /** The daemon answered that it does not know the scoped repository or checkout. */
   missing: false,
