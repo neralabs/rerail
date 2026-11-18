@@ -107,6 +107,40 @@ fn set_written(file: &std::fs::File, when: std::time::SystemTime) {
     assert_ne!(set, 0, "{}", std::io::Error::last_os_error());
 }
 
+/// While it lives, everyone is denied the read of a file, as a person denies it with `icacls`:
+/// the denial moves the file's change time and leaves its modification time and size.
+#[cfg(all(test, windows))]
+pub(crate) struct ReadDenied(PathBuf);
+
+#[cfg(all(test, windows))]
+impl ReadDenied {
+    pub(crate) fn new(path: &Path) -> Self {
+        let output = icacls(path, &["/deny", "*S-1-1-0:(R)"]).unwrap();
+        assert!(
+            output.status.success(),
+            "icacls: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        Self(path.to_path_buf())
+    }
+}
+
+#[cfg(all(test, windows))]
+impl Drop for ReadDenied {
+    /// Takes the denial off, so the test's folder can be removed.
+    fn drop(&mut self) {
+        let _ = icacls(&self.0, &["/remove:d", "*S-1-1-0"]);
+    }
+}
+
+#[cfg(all(test, windows))]
+fn icacls(path: &Path, change: &[&str]) -> std::io::Result<std::process::Output> {
+    std::process::Command::new("icacls")
+        .arg(path)
+        .args(change)
+        .output()
+}
+
 #[cfg(test)]
 thread_local! {
     /// Runs once, inside the next discovery on this thread, after it walked the HEAD tree and
@@ -149,17 +183,24 @@ impl WorktreeStat {
     }
 
     /// One handle answers both questions, opened as `lstat` opens a file: a link is not followed.
+    /// Where the file's permissions refuse even that handle, `lstat` gives the stat alone, as Git
+    /// for Windows reads it, and nothing proves the file unchanged since its last write.
     #[cfg(windows)]
     fn read(path: &Path) -> Option<Self> {
         use std::os::windows::fs::OpenOptionsExt;
         use windows_sys::Win32::Storage::FileSystem::{
             FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
         };
-        let file = std::fs::OpenOptions::new()
+        let Ok(file) = std::fs::OpenOptions::new()
             .access_mode(FILE_READ_ATTRIBUTES)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
             .open(path)
-            .ok()?;
+        else {
+            return Some(Self {
+                metadata: gix::index::fs::Metadata::from_path_no_follow(path).ok()?,
+                unchanged_since_written: false,
+            });
+        };
         let metadata = gix::index::fs::Metadata::from_file(&file).ok()?;
         Some(Self {
             metadata,
@@ -170,9 +211,13 @@ impl WorktreeStat {
     /// Whether the file still holds the bytes Git compared with the blob when it recorded
     /// `recorded`: it has exactly that stat and nothing changed it after its last write.
     fn proves(&self, recorded: &gix::index::entry::Stat) -> bool {
-        self.unchanged_since_written
-            && gix::index::entry::Stat::from_fs(&self.metadata)
-                .is_ok_and(|current| recorded.matches(&current, RESTORE_STAT))
+        self.unchanged_since_written && self.matches(recorded)
+    }
+
+    /// Whether the stat alone equals `recorded`, as Git compares them (`RESTORE_STAT`).
+    fn matches(&self, recorded: &gix::index::entry::Stat) -> bool {
+        gix::index::entry::Stat::from_fs(&self.metadata)
+            .is_ok_and(|current| recorded.matches(&current, RESTORE_STAT))
     }
 }
 
@@ -667,7 +712,8 @@ impl GitWorkspace {
     /// are `blob_length` long, now. One `lstat` decides while the file's stat equals the stat of
     /// its index entry (`BaseFile::checkout`); otherwise the file is hashed. The file may have
     /// changed since discovery, and a checkout conversion (`core.autocrlf`, a filter driver) keeps
-    /// a file clean in Git while its bytes differ from the blob's.
+    /// a file clean in Git while its bytes differ from the blob's. A file whose permissions refuse
+    /// this process its bytes cannot be hashed: its stat alone decides, as it does for Git.
     pub fn holds_blob_bytes(&self, relative_path: &str, blob_length: u64) -> bool {
         let Ok(index) = self
             .base_files
@@ -681,14 +727,17 @@ impl GitWorkspace {
         if !current.metadata.is_file() || current.metadata.len() != blob_length {
             return false;
         }
-        if self.base_files[index]
-            .checkout
-            .is_some_and(|recorded| current.proves(&recorded))
-        {
+        let recorded = self.base_files[index].checkout;
+        if recorded.is_some_and(|recorded| current.proves(&recorded)) {
             return true;
         }
-        self.read_source(relative_path, blob_length)
-            .is_ok_and(|bytes| self.source_alias(relative_path, &bytes).is_some())
+        self.read_source(relative_path, blob_length).map_or_else(
+            |error| {
+                error.kind() == std::io::ErrorKind::PermissionDenied
+                    && recorded.is_some_and(|recorded| current.matches(&recorded))
+            },
+            |bytes| self.source_alias(relative_path, &bytes).is_some(),
+        )
     }
 
     /// Return the committed blob alias only when the evaluated bytes have that identity.
@@ -1149,6 +1198,37 @@ mod tests {
             !workspace.holds_blob_bytes("a.py", 9),
             "bytes written after Git compared the file are not its blob's"
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A clean file whose read a person denied after Git compared it cannot be hashed: its stat
+    /// alone decides, as it does for Git. The denial moves NTFS's change time, so the stronger
+    /// proof cannot decide for it.
+    #[cfg(windows)]
+    #[test]
+    fn a_clean_file_whose_read_is_denied_is_proven_by_its_stat_alone() {
+        let root = fixture_directory("stat-denied");
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("a.py");
+        std::fs::write(&path, b"print(1)\n").unwrap();
+        backdate(
+            &path,
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_577_836_800),
+        );
+        initialize_repository(&root, &[]);
+        let workspace = discover(&root).unwrap();
+        {
+            let _denied = ReadDenied::new(&path);
+            assert!(workspace.read_source("a.py", 9).is_err(), "the read is denied");
+            assert!(
+                workspace.holds_blob_bytes("a.py", 9),
+                "an unchanged file this process may not read keeps the answer of its stat"
+            );
+            assert!(
+                !workspace.holds_blob_bytes("a.py", 10),
+                "a stat of another size proves nothing"
+            );
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 

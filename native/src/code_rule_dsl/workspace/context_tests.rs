@@ -4026,6 +4026,42 @@ fn a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_before_discovery() {
     second.close();
 }
 
+/// A clean tracked file whose read a person denied while no workspace ran keeps its stored
+/// results: no hash can check bytes this process may not read, so its stat alone decides, as it
+/// does for Git, and the index completes with the file's finding.
+#[cfg(windows)]
+#[test]
+fn a_warm_index_restores_a_clean_file_whose_read_is_denied() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = backdated_repository(
+        "restore-denied",
+        &[("api/a.py", b"print(1)\n"), ("lib/b.py", b"x = 2\n")],
+    );
+    let root = directory.0.join("repo");
+    let code_rule = print_code_rule();
+    let found = vec![("api/a.py".to_owned(), "print".to_owned(), 0)];
+    let mut first = storage_workspace(&root, directory.store());
+    first.add_code_rule(&code_rule, None).unwrap();
+    index_workspace(&first);
+    assert_eq!(located(&all_pages(&first, MAXIMUM_PAGE_BYTES)), found);
+    first.completion_task().compute().unwrap();
+    first.close();
+
+    let denied = git_workspace::ReadDenied::new(&root.join("api/a.py"));
+    assert!(std::fs::read(root.join("api/a.py")).is_err(), "the read is denied");
+    let mut second = storage_workspace(&root, directory.store());
+    second.add_code_rule(&code_rule, None).unwrap();
+    let indexed = index_workspace(&second);
+    assert_eq!(
+        located(&all_pages(&second, MAXIMUM_PAGE_BYTES)),
+        found,
+        "the file's stored finding stands: {indexed}"
+    );
+    assert_eq!(indexed["restoredFiles"], json!(2), "{indexed}");
+    second.close();
+    drop(denied);
+}
+
 /// Three checkouts of one commit share a content store. `lf` checks out the committed bytes;
 /// `crlf` converts line endings (`core.autocrlf`), which changes the size; `swap` runs a
 /// size-preserving filter driver (`p`↔`q`). A blob alias the `lf` checkout stored names bytes
