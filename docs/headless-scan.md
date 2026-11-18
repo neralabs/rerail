@@ -117,6 +117,8 @@ A `.rr` policy load error fails the scan, including with `--rules-ref`.
 Explicit `--rr` scans use the registered repository identity when it exists.
 Paths, package configuration, and `.rerailignore` come from the selected tree.
 With `--path` or `--paths-from`, a directory selects its descendants.
+The path `.` selects the entire tree. The scan still applies the ignore rules.
+A JSON policy from `--rules-ref` must use valid UTF-8.
 A bare repository can supply source. Select its policy with `--rules-ref` or an installed `--pack`.
 You can also supply a local policy file using `--rr`.
 

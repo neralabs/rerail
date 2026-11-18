@@ -203,13 +203,20 @@ function rulesAtRef(root: string, ref: string, loadedRr: NativeLoadedRrPolicies)
     }
     return [{ name, path: `${WORKTREE_RULES_FOLDER}/${name}`, regular: mode === 0o100644 || mode === 0o100755, size: 0 }];
   }).sort((left, right) => compareDeterministicStrings(left.name, right.name));
-  const bytes = new Map<string, Buffer>();
+  const jsonText = new Map<string, string>();
+  const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   const json = files.filter(file => file.name.endsWith(".json")).filter(file => {
     if (!file.regular) return true;
     try {
       const contents = source.readFile(file.path, MAX_RULE_DOCUMENT_BYTES);
       if (contents == null) file.size = MAX_RULE_DOCUMENT_BYTES + 1;
-      else bytes.set(file.path, contents);
+      else {
+        try {
+          jsonText.set(file.path, utf8.decode(contents));
+        } catch (error) {
+          throw new Error("Git JSON policy has invalid UTF-8", { cause: error });
+        }
+      }
       return true;
     } catch (error) {
       unreadable(file.path, error);
@@ -220,7 +227,7 @@ function rulesAtRef(root: string, ref: string, loadedRr: NativeLoadedRrPolicies)
   const installed = loadRuleCatalog();
   const catalog = worktreeScanCatalog(installed, root, {
     json, rr,
-    readJson: path => parseJsonWithoutDuplicateKeys(bytes.get(path)!.toString("utf8"), path),
+    readJson: path => parseJsonWithoutDuplicateKeys(jsonText.get(path)!, path),
   }, path => loadedRr.load(path, source));
   const pack = catalog.packs.get(WORKTREE_PACK_ID);
   const documents = pack === undefined || !isWorktreePack(pack)
@@ -423,7 +430,8 @@ async function withScanScratch<T>(home: RerailDatabase | undefined, run: (scratc
 function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGitRevisionSource | undefined): { base: ScanReport["base"]; paths: string[] | null; failures?: ScanFailure[] } {
   if (options.paths !== undefined) {
     const failures: ScanFailure[] = [];
-    const inputs = [...new Set(options.paths.map(path => path.replace(/^\.\//u, "")).filter(path => path.length > 0))];
+    const inputs = [...new Set(options.paths.filter(path => path.length > 0).map(path => path.replace(/^(?:\.\/)+/u, "") || "."))];
+    if (inputs.includes(".")) return { base: null, paths: null };
     const paths = inputs.filter(path => {
       try {
         return source === undefined ? existsSync(join(root, path)) : source.containsPath(path);

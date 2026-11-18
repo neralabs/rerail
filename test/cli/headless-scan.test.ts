@@ -141,6 +141,41 @@ describe("headless rerail scan", () => {
     expect(report.violations).toEqual([expect.objectContaining({ path: "a.py", ruleId: "needle" })]);
   });
 
+  it("selects the whole revision when --path names the root", async () => {
+    const root = checkout();
+    const home = `${root}-home`;
+    vi.stubEnv("RERAIL_HOME", home);
+    try {
+      for (const path of [".", "./"]) {
+        let output = "";
+        const stdout = { write: (text: string) => { output += text; return true; } };
+        const result = await runAuditCommand("scan", [
+          "--repo", root, "--revision", "HEAD", "--analysis-scope", "root", "--path", path,
+          "--json", "--no-send", "--fail-on-violations",
+        ], { home, stdout });
+        expect(result).toBe(SCAN_VIOLATIONS_EXIT);
+        expect(JSON.parse(output)).toMatchObject({
+          paths: null, status: "completed", violations: [expect.objectContaining({ path: "a.py" })],
+        });
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("reports invalid UTF-8 in a JSON policy loaded from --rules-ref", async () => {
+    const root = checkout();
+    const path = ".rerail/rules/bad.json";
+    const policy = JSON.stringify(needle("bad-utf8", "NEEDLE")).replace("No NEEDLE", "No ÿ NEEDLE");
+    writeFileSync(join(root, path), Buffer.from(policy, "latin1"));
+    git(root, "add", path);
+    git(root, "commit", "-qm", "invalid policy encoding");
+    const report = await scan(root, { revision: "HEAD~1", analysisScope: "encoding", rulesRef: "HEAD" });
+    expect(report.status).toBe("failed");
+    expect(report.failures).toEqual([expect.objectContaining({ path: `HEAD:${path}`, message: "Git JSON policy has invalid UTF-8" })]);
+    expect(report.violations.map(finding => finding.ruleId)).toEqual(["needle"]);
+  });
+
   it("places a shared subtree at both paths and applies the revision's ignore rules", async () => {
     const root = checkout();
     const source = readFileSync(join(root, "a.py"));
