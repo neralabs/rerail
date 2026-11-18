@@ -64,9 +64,10 @@ pub(in crate::code_rule_dsl) enum Pass<'a> {
     /// fact case (`patterns::FACT`) tests them, so a fact settles from scratch as a pattern does.
     Fact { target: u32, rows: Vec<(u32, Vec<(u32, u32)>)> },
     Empty { target: u32 },
-    /// A roots pass whose program is a node-set formula (decision 0036 on Metal, 0365 §9): `formula` evaluated on the
-    /// device (`label_formula`) within `roots`, into the pass's scratch row, which settles as a program's does. No walk.
-    Formula { target: u32, roots: std::sync::Arc<Roots>, formula: std::sync::Arc<DeviceFormula> },
+    /// A pass whose program is a node-set formula (decision 0036 on Metal, 0365 §9, §10): `formula` evaluated on the
+    /// device (`label_formula`) into the pass's scratch row, which settles as a program's does. No walk. A roots
+    /// pass's is within `roots`; a targets pass's (`image`) is the image of its starts, which the formula holds.
+    Formula { target: u32, roots: std::sync::Arc<Roots>, formula: std::sync::Arc<DeviceFormula>, image: bool },
 }
 
 /// A formula `label_formula` evaluates (decision 0365): where its set goes (`row`, `mode`, `rule`, as `FormulaTarget`),
@@ -325,15 +326,21 @@ pub(in crate::code_rule_dsl) fn device_anchor(program: &Program) -> Option<std::
     Some(std::sync::Arc::new(formula))
 }
 
-/// A fused pack's anchor: the union of its members' anchors, their text tests dropped (each member's slots are its own);
-/// `None` where one has none.
+/// A fused pack's anchor: the union of its members' anchors, `None` where one has none. Each member's text tests are
+/// kept, its slots past the members' before it, by their keys (`DeviceFormula::texts`): the device reads the row the
+/// pack's walk (or another walk) reads for the key, every node where none does.
 fn pack_anchor(programs: &[&Program]) -> Option<std::sync::Arc<DeviceFormula>> {
-    let members = programs.iter().map(|program| {
-        let set = compile_sets::Set::anchor(&Micro::of(program)?.words, &|_| false);
-        narrowing(&set).map(|_| set)
-    });
-    let union = compile_sets::Set::Or(members.collect::<Option<Vec<_>>>()?);
-    narrowing(&union).map(std::sync::Arc::new)
+    let (mut members, mut texts) = (Vec::new(), Vec::new());
+    for program in programs {
+        let walk = Micro::of(program)?;
+        let set = compile_sets::Set::anchor(&walk.words, &|_| true);
+        narrowing(&set)?;
+        members.push(set.shift_texts(u16::try_from(texts.len()).ok()?));
+        texts.extend((0..walk.texts.len()).map(|slot| walk.slot_key(program, slot)));
+    }
+    let mut union = narrowing(&compile_sets::Set::Or(members))?;
+    union.texts = texts;
+    Some(std::sync::Arc::new(union))
 }
 
 /// A roots pass's program as a device formula (decision 0036 on Metal, 0365 §9): its micro walk's formula (`Set::of`,
@@ -342,6 +349,21 @@ pub(in crate::code_rule_dsl) fn device_formula(program: &Program) -> Option<std:
     use compile_sets::device_ops;
     let walk = Micro::of(program)?;
     let formula = compile_sets::Set::of(&walk.words)?.device()?;
+    (!formula.words.iter().any(|&word| word & 255 == device_ops::TEXT)).then(|| std::sync::Arc::new(formula))
+}
+
+/// A targets pass's program as a device formula (decision 0036 on Metal, 0365 §10): the image of its starts under its
+/// micro walk (`Set::targets`, exact where the capture is the walk's last act), the starts its rule over codes (kinds
+/// and entry tests) as tests the formula reads. No text test, as `device_formula`; listed roots are not a formula's.
+pub(in crate::code_rule_dsl) fn device_targets(program: &Program, roots: &Roots) -> Option<std::sync::Arc<DeviceFormula>> {
+    use compile_sets::{Set, device_ops};
+    let Roots::Codes { kinds, entry, anchor: None, .. } = roots else { return None };
+    let walk = Micro::of(program)?;
+    let mut starts = entry.iter().map(|&(op, arg)| if op == super::super::KIND { Set::Kind(arg) } else { Set::Class(arg) }).collect::<Vec<_>>();
+    if let Some(kinds) = kinds {
+        starts.push(Set::Or(kinds.iter().map(|&kind| Set::Kind(kind)).collect()));
+    }
+    let formula = Set::targets(&walk.words, Set::And(starts))?.device()?;
     (!formula.words.iter().any(|&word| word & 255 == device_ops::TEXT)).then(|| std::sync::Arc::new(formula))
 }
 
@@ -914,6 +936,8 @@ const FORMULA_KERNEL: usize = 14;
 const LEAVES_KERNEL: usize = 15;
 /// `label_formula`'s threads a (file, formula).
 const FORMULA_WIDTH: u64 = 128;
+/// `label_formula`'s profile words: a step kind's members by its op (to `REACH_CHAIN`), and its reads and groups (16–20).
+const FORMULA_STATS: usize = compile_sets::device_ops::REACH_CHAIN as usize + 1;
 /// `label_formula`'s scratch: the formulas of a dispatch each have their own, so a level's formulas take as many
 /// dispatches as this holds.
 const FORMULA_SCRATCH_BYTES: usize = 32 << 20;
@@ -1645,8 +1669,11 @@ fn encode(
     crate::code_rule_dsl::prof::time("gpu.flush", || runner.flush())?;
     mark("flushed");
     for stats in &runner.formula_stats {
-        let words = unsafe { std::slice::from_raw_parts(stats.buffer.contents().cast::<u32>(), 21) };
-        let names = ["", "", "", "", "", "", "", "child", "descendant", "parent", "following", "chain", "", "", "child_in", "descendant_in", "following_in"];
+        let words = unsafe { std::slice::from_raw_parts(stats.buffer.contents().cast::<u32>(), FORMULA_STATS) };
+        let mut names = [""; FORMULA_STATS];
+        for (op, name) in [(7, "child"), (8, "descendant"), (9, "parent"), (10, "following"), (11, "chain"), (14, "child_in"), (15, "descendant_in"), (16, "following_in"), (23, "reach_descendant"), (24, "reach_following"), (25, "reach_chain")] {
+            names[op] = name;
+        }
         for (op, name) in names.iter().enumerate().filter(|(_, name)| !name.is_empty()) {
             crate::code_rule_dsl::prof::count_named(format!("formula.members.{name}"), words[op] as usize);
         }
@@ -2366,11 +2393,12 @@ impl Runner<'_> {
                     let (rule, _) = self.root_table.at(roots)?;
                     list.push(FormulaJob { formula: std::sync::Arc::clone(anchor), row, mode, rule, texts: texts(anchor) });
                 }
-                Pass::Formula { roots, formula, .. } => {
-                    crate::code_rule_dsl::prof::count("gpu.formula_passes", 1);
+                Pass::Formula { roots, formula, image, .. } => {
+                    crate::code_rule_dsl::prof::count(if *image { "gpu.formula_images" } else { "gpu.formula_passes" }, 1);
                     let (rule, _) = self.root_table.at(roots)?;
                     let row = at as u32 * self.words as u32;
-                    list.push(FormulaJob { formula: std::sync::Arc::clone(formula), row, mode: 2, rule, texts: texts(formula) });
+                    let mode = if *image { 3 } else { 2 };
+                    list.push(FormulaJob { formula: std::sync::Arc::clone(formula), row, mode, rule, texts: texts(formula) });
                 }
                 _ => {}
             }
@@ -2531,7 +2559,7 @@ impl Runner<'_> {
         let rules = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
         // Profiling (`RERAIL_PROF`): each step kind's members, the parent and child reads, the (file, formula)s.
         let profile = crate::code_rule_dsl::prof::on();
-        let stats = MappedBuffer::zeroed::<u32>(self.device, if profile { 21 } else { 1 })?;
+        let stats = MappedBuffer::zeroed::<u32>(self.device, if profile { FORMULA_STATS } else { 1 })?;
         for first in (0..count).step_by(per) {
             let formulas = per.min(count - first);
             let shape = Shape { item_count: first as u32, target_count: formulas as u32, queue: stride as u32, profile: u32::from(profile), ..base };
@@ -3028,7 +3056,8 @@ impl Runner<'_> {
             let rows = (0..walk.texts.len()).map(|slot| text_row(&walk, program, slot, self.files, &bases, self.words)).collect::<Option<Vec<_>>>()?;
             Some((walk, rows))
         };
-        let mut packs = Vec::<(RootsPack, Micro, Vec<std::sync::Arc<Vec<u32>>>, bool)>::new();
+        // A pack: its walk, text rows and their keys (`Micro::slot_key`), and set mode.
+        let mut packs = Vec::<(RootsPack, Micro, Vec<std::sync::Arc<Vec<u32>>>, Vec<String>, bool)>::new();
         let mut packed = vec![false; jobs.programs.len()];
         {
             let mut by = std::collections::BTreeMap::<u32, Vec<usize>>::new();
@@ -3056,7 +3085,8 @@ impl Runner<'_> {
                         .map(|&at| jobs.starts[at].iter().map(|starts| starts.iter().enumerate().map(|(task, &start)| (start, task as u32)).collect()).collect())
                         .collect();
                     crate::code_rule_dsl::prof::count("gpu.root_packed", chunk.len());
-                    packs.push((RootsPack { members: chunk.to_vec(), emits: fused.emits, captures: fused.captures, tasks }, walk, rows, set));
+                    let keys = (0..walk.texts.len()).map(|slot| walk.slot_key(&fused.program, slot)).collect();
+                    packs.push((RootsPack { members: chunk.to_vec(), emits: fused.emits, captures: fused.captures, tasks }, walk, rows, keys, set));
                 }
             }
         }
@@ -3102,10 +3132,13 @@ impl Runner<'_> {
                 tiers[tier].extend(starts.iter().enumerate().map(|(task, &start)| [at as u32, file as u32, task as u32, bases[file] + start]));
             }
         }
-        for (index, (pack, walk, rows, set)) in packs.iter().enumerate() {
+        for (index, (pack, walk, rows, keys, set)) in packs.iter().enumerate() {
             let pass = (jobs.programs.len() + index) as u32;
             let text_start = (texts.len() / self.words) as u32;
             rows.iter().for_each(|row| texts.extend_from_slice(row));
+            for (slot, key) in keys.iter().enumerate() {
+                slot_rows.entry(key.clone()).or_insert(text_start + slot as u32);
+            }
             let pad = if *set { 1 + pack.emits.len() as u32 } else { 0 };
             // The union of its members' anchors: none where one has none.
             let members = pack.members.iter().map(|&at| jobs.programs[at]).collect::<Vec<_>>();

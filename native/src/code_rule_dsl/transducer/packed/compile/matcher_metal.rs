@@ -67,7 +67,7 @@ fn metal<'a>(
     records: Option<&metal_program_backend::label_passes::RootJobs<'_>>,
     w_cost: Option<&(dyn Fn(u32, usize) -> u64 + Sync)>,
 ) -> Result<(Vec<Vec<BTreeSet<u32>>>, metal_program_backend::label_passes::Outcome), Error> {
-    use metal_program_backend::label_passes::{DeviceFormula, Pass, Plan, Roots, device_anchor, device_formula, run};
+    use metal_program_backend::label_passes::{DeviceFormula, Pass, Plan, Roots, device_anchor, device_formula, device_targets, run};
     let bases = tapes
         .iter()
         .scan(0_u32, |base, tape| {
@@ -200,14 +200,16 @@ fn metal<'a>(
     ));
     chains.push((None, false));
     }
-    // Decision 0365 §9 (0036 on Metal): a roots pass past the recursive groups whose program is a node-set formula is
-    // that formula on the device (`Pass::Formula`), not a walk; `RERAIL_SETS=walk` walks it, as on the CPU.
+    // Decision 0365 §9, §10 (0036 on Metal): a roots or targets pass past the recursive groups whose program is a
+    // node-set formula (a targets pass's: the image of its starts) is that formula on the device (`Pass::Formula`), not
+    // a walk; `RERAIL_SETS=walk` walks it, as on the CPU.
     if formulas_on() {
         for (_, levels) in steps.iter_mut().filter(|(recursive, _)| !recursive) {
             for pass in levels.iter_mut().flatten() {
-                let Pass::Program { target, program, roots, captured: false } = pass else { continue };
-                let Some(formula) = device_formula(program) else { continue };
-                *pass = Pass::Formula { target: *target, roots: Arc::clone(roots), formula };
+                let Pass::Program { target, program, roots, captured } = pass else { continue };
+                let formula = if *captured { device_targets(program, roots) } else { device_formula(program) };
+                let Some(formula) = formula else { continue };
+                *pass = Pass::Formula { target: *target, roots: Arc::clone(roots), formula, image: *captured };
             }
         }
     }

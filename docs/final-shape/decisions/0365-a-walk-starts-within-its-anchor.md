@@ -92,8 +92,9 @@ the label passes outside the fragment.
      next sibling" or "has a next named sibling". No climb.
    - **A text test reads the walk's own row** (`TEXT`, by slot): the rows the level's walks (or the root records)
      read for that slot, keyed as they are (`Micro::slot_key`), bound to `label_formula`. So the device's anchor is
-     the CPU's (§4). Where a slot has no row (a fused pack's union, whose members' slots are their own) the test is
-     every node, a superset.
+     the CPU's (§4). A fused pack's union keeps its members' text tests, each member's slots past those before it,
+     each by its key: the row the pack's walk (or another walk) reads for the key. Where no walk reads one the test
+     is every node, a superset.
    - Identical formulas of a level (by their lowered words: leaf, label and text rows) are evaluated once and written
      to each target. An anchor that tests only kinds and grammar supertypes is not built, since the rule over codes
      and the walk's entry test already cover them.
@@ -110,7 +111,24 @@ the label passes outside the fragment.
    recursive groups whose micro walk is a node-set formula (`Set::of`, exact) with no text test is evaluated by
    `label_formula` into the pass's scratch row, within its rule over codes (`root_mask`, mode 2), and settles as a
    program's does. `RERAIL_SETS=walk` walks them, as on the CPU (now read at each level, so one process can check
-   both ways). Targets passes (`Reached`) stay walks: a targets image has no device formula yet.
+   both ways).
+
+10. **On Metal a targets pass is its image** (`Pass::Formula`, `image`), past the recursive groups, where its
+    program is one (`Set::targets`: the capture its last act; no text test; its roots a rule over codes). The
+    formula starts from its roots' rule as tests (the domain's kinds and the program's entry tests) and follows the
+    walk's steps, lowered as the device reads them:
+    - a child step is `PARENT` (the nodes whose parent is a member), a parent step `CHILD` unnamed (the nodes with
+      a member child);
+    - descendants (`REACH_DESCENDANT`): in preorder a node lies below a member where a member before it ends past
+      it. A block of words a thread takes its members' furthest end, the blocks' running maximum follows, then each
+      word is masks, its members in order. Work follows the members, a word operation each;
+    - later siblings (`REACH_FOLLOWING`): each member's next siblings, until one another member's run has set;
+    - a chain (`REACH_CHAIN`): from each member down in preorder by subtree sizes, into the nodes of `through`
+      only. A node another member's walk set is that walk's to go on from;
+    - a named step is the unnamed image within the named nodes (`FLAGS` named), a chain's `through` too.
+
+    It is written as it is (mode 3) into the pass's scratch row, which settles as the walk's captures did.
+    `RERAIL_SETS=walk` walks it.
 
 ## Evidence
 
@@ -181,13 +199,18 @@ anchors. The whole wave's process CPU was 97.7 s without and 86.5 s with; most o
   ways; Metal took 76.0 s without anchors and 6.5 s with, the CPU 6.9 s and 2.6 s. After §9 (and text): 491 of
   491, Metal 5.7 s, the CPU 2.3 s.
 - On the M1 Max the first check passes too (the same 21 roots and records).
+- With targets passes as their images (§10) and a fused pack's text kept (§8), on the M3 Max:
+  `on_metal_anchored_walks_find_the_unanchored_roots` gives the same 21 roots and records both ways (its "off"
+  walks the targets passes too), the images' steps reaching from 85,674 members (later siblings) and 3,190
+  (descendants); `lowered_clauses_find_the_same_roots_on_metal` 491 of 491 equal, Metal 4.2 s (4.4 before), 6,923
+  launches (7,059: the targets passes' walks are gone); `spilled_walks_find_the_cpus_roots` (41 waves, 1,665 roots)
+  passes; `the_label_kernels_compile_for_every_format` compiles the kernels with the new steps.
 
 ## Not yet
 
 Done since: text tests on Metal (§8), 0036's formula passes as device formulas (§9), the count passes' anchors
-measured (the census).
+measured (the census), targets passes as their images on Metal (§10), and a fused pack's anchor keeping its
+members' text tests (§8).
 
-1. **Targets passes on Metal** (`Reached`, 0036's targets formulas) are still walks within their anchors: a targets
-   image would need a device op of its own.
-2. **A fused pack's anchor drops text** (its members' slots are their own); a union of the members' rows would keep
-   it.
+1. **The recursive groups' walks** start from every root of their rule (§5): an anchor there would read the group's
+   labels as they settle. A design is with the user (the work queue, Q134).

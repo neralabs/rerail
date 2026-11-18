@@ -555,7 +555,8 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
   #define SLOT(i) (base+(i)*fw)
   // The bits of local word `w` that are nodes of the file.
   #define VALID(w) ((w)*32u+32u<=nodes?0xffffffffu:((1u<<(nodes-(w)*32u))-1u))
-  // Profiling (`shape.profile`): per step kind its members, then parent and child reads, then the (file, formula)s.
+  // Profiling (`shape.profile`): per step kind its members (`stats[op]`), then parent and child reads (16, 17), the
+  // (file, formula)s (18), and the steps within a conjunction read down or climbed (19, 20).
   bool profile=shape.profile!=0u;
   uint parents=0u,childs=0u;
   #define FORMULA_COUNT(I,N) if(profile)atomic_fetch_add_explicit(&stats[I],N,memory_order_relaxed)
@@ -662,9 +663,10 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
       for(uint w=lane;w<fw;w+=width)atomic_store_explicit(&cand[w],atomic_load_explicit(&out[w],memory_order_relaxed),memory_order_relaxed);
       top=c+1u;
     }else{
-      // An axis step: from slot `src` (a chain's through, then to) into the slot past them, then back to `src`.
+      // An axis step: from slot `src` (a chain's through, then to; a reached chain's from, then through) into the slot
+      // past them, then back to `src`.
       bool named=(arg&1u)!=0u;
-      uint src=op==11u?top-2u:top-1u,at=top;
+      uint src=op==11u||op==25u?top-2u:top-1u,at=top;
       device atomic_uint* from=SLOT(src);device atomic_uint* out=SLOT(at);
       for(uint w=lane;w<fw;w+=width){atomic_store_explicit(&out[w],0u,memory_order_relaxed);if(op==10u)atomic_store_explicit(&SLOT(at+1u)[w],0u,memory_order_relaxed);}
       threadgroup_barrier(mem_flags::mem_device);
@@ -689,6 +691,43 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
           uint last=TAPE_NONE;
           for(uint c=tape_first_child(chunk,d,p);c!=TAPE_NONE;c=tape_next(chunk,d,c)){childs++;if(formula_get(from,c)&&formula_named(t,c,named))last=c;}
           if(last!=TAPE_NONE)for(uint c=tape_first_child(chunk,d,p);c!=last;c=tape_next(chunk,d,c)){childs++;formula_set(out,c);}
+        }
+      }else if(op==23u){
+        // A targets image (0365 §10): the members' proper descendants. In preorder a node is one where a member before
+        // it ends past it: a block of words a thread, its members' furthest end, the blocks' running maximum, then
+        // each word by masks, its members in order. Work follows the members, a word op a member.
+        uint block=(fw+width-1u)/width,low=min(lane*block,fw),high=min(low+block,fw),most=0u;
+        for(uint w=low;w<high;w++)for(uint bits=atomic_load_explicit(&from[w],memory_order_relaxed);bits!=0u;bits&=bits-1u){uint n=w*32u+ctz(bits);most=max(most,n+tape_size(chunk,d,n));}
+        partials[lane]=most;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if(lane==0u){uint run=0u;for(uint k=0u;k<width;k++){uint here=partials[k];partials[k]=run;run=max(run,here);}}
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        uint reach=partials[lane];
+        for(uint w=low;w<high;w++){
+          uint b=w*32u,bits=reach>=b+32u?0xffffffffu:(reach>b?(1u<<(reach-b))-1u:0u);
+          for(uint rest=atomic_load_explicit(&from[w],memory_order_relaxed);rest!=0u;rest&=rest-1u){
+            uint k=ctz(rest),end=b+k+tape_size(chunk,d,b+k),hi=min(end,b+32u)-b;
+            if(profile)childs++;
+            bits|=(hi==32u?0xffffffffu:((1u<<hi)-1u))&~((2u<<k)-1u);
+            reach=max(reach,end);
+          }
+          atomic_store_explicit(&out[w],bits&VALID(w),memory_order_relaxed);
+        }
+      }else if(op==24u){
+        // The members' later siblings: each member's next siblings, until one another member's run has set.
+        FORMULA_EACH(from,fw,lane,width,n)for(uint c=tape_next(chunk,d,n);c!=TAPE_NONE;c=tape_next(chunk,d,c)){childs++;if(formula_set(out,c))break;}
+      }else if(op==25u){
+        // A chain's reach: from each member, its children, and on down from those in `through`, in preorder by
+        // subtree sizes (a node not gone into is skipped with its subtree). A node another member's walk set is that
+        // walk's to go on from.
+        device atomic_uint* through=SLOT(src+1u);
+        FORMULA_EACH(from,fw,lane,width,m){
+          uint end=min(m+tape_size(chunk,d,m),nodes);
+          for(uint n=m+1u;n<end;){
+            childs++;
+            bool known=formula_set(out,n);
+            n=!known&&formula_get(through,n)?n+1u:n+tape_size(chunk,d,n);
+          }
         }
       }else{
         // A chain: the parents of `to`'s members, and on up through `through`'s.
@@ -716,8 +755,9 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
   uint sh=d.node_base%32u;
   for(uint i=0u;i<formula.targetCount;i++){
     FormulaTarget target=targets[formula.targetStart+i];
-    // Modes 0 and 1 a rule's row in `roots`; 2 a formula pass's scratch row, within its rule.
-    device atomic_uint* row=(target.mode==2u?labelScratch:roots)+target.row;
+    // Modes 0 and 1 a rule's row in `roots`; 2 a formula pass's scratch row, within its rule; 3 a targets pass's
+    // scratch row, the image as it is (its starts are in the formula).
+    device atomic_uint* row=(target.mode>=2u?labelScratch:roots)+target.row;
     for(uint w=lane;w<fw;w+=width){
       uint bits=atomic_load_explicit(&anchor[w],memory_order_relaxed),valid=VALID(w),at=(d.node_base+w*32u)/32u;
       if(target.mode==2u)bits&=uint(root_mask(chunk,d,rules,target.rule,file,w/2u)>>(32u*(w%2u)));
