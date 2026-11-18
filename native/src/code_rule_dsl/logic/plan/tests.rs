@@ -2487,6 +2487,29 @@ fn priced_first_rule(model: &Model, p: &Program) -> (Vec<String>, f64) {
     (order.iter().map(|s| r.body[s.at].to_string()).collect(), work)
 }
 
+/// Work queue Q146: past the step that binds the head's last variable the walk needs one witness, and the search
+/// prices it so, as a fixed order's pricing does. `xk(v) :- m(v, n), l(n, y), c(n, z), k(v)` (a findings key: a
+/// document's nodes by `m`) starts from `k`'s 300 documents, each a row through `m`, `l` and `c`. Priced at `m`'s
+/// fanout by document (3,000), the search took `c`'s every node first: 19 M rows a step in half of PostHog's chunks.
+/// A cross product is not priced so: `k(v), c(n, z)` reads `c` until a row passes the rest, maybe all of it.
+#[test]
+fn the_search_prices_the_steps_past_a_bound_head_as_one_witness() {
+    let p = parse(".decl m(v: number, n: number)\n.decl l(n: number, y: number)\n.decl c(n: number, z: number)\n.decl k(v: number)\n.decl xk(v: number)\nxk(v) :- m(v, n), l(n, y), c(n, z), k(v).\n.output xk\n").unwrap();
+    let mut model = bare_model(&p);
+    for (rel, rows, cols) in [("m", 250_000.0, vec![(300.0, 3_000.0), (250_000.0, 1.0)]), ("l", 250_000.0, vec![(250_000.0, 1.0), (1_000.0, 250.0)]), ("c", 250_000.0, vec![(250_000.0, 1.0), (100.0, 2_500.0)]), ("k", 300.0, vec![(300.0, 1.0)])] {
+        model.stats.card.insert(rel, rows);
+        for (c, (ndv, fan)) in cols.into_iter().enumerate() {
+            model.ndv.insert((rel, c), ndv);
+            model.stats.fan.insert((rel, c), fan);
+        }
+    }
+    model.stats.nodes = 250_000.0;
+    let (order, work) = priced_first_rule(&model, &p);
+    assert!(order[0].starts_with("k("), "the documents lead: {order:?} at {work}");
+    assert!(order[1].starts_with("m("), "then the documents' nodes, not a cross product: {order:?} at {work}");
+    assert!(work < 2_000.0, "a row a document through each step: {work} {order:?}");
+}
+
 /// Decision 0299: `within(n, a)` read from its container yields the container's descendants: the mean size of a
 /// node with children (`Stats::subtree_fan`), not the view's fanout, which is of the lookups made so far.
 #[test]

@@ -3187,7 +3187,7 @@ native join it falls back to the planner's whole-rule order.
   budget tests. Reviewer: an ordinary body's search is unchanged (`pre` empty: every new branch is skipped, and
   its key's digest is as before).
 
-### Q146. A findings key computed whole starts from every node: its existential tail is priced at full fanout
+### Q146. (done) A findings key computed whole starts from every node: its existential tail is priced at full fanout
 
 - **Seen** (2026-11-18, PostHog cold on the M3, after c6917fd26): `xk_fz…_violation_3($v) :- node($v, $n, _, _, _),
   line($n, _), col($n, _), fzk…_violation($v)` (and `xk_…rr_diagnostic_…_2`) made 77 M + 39 M native work, 12.5 +
@@ -3217,3 +3217,41 @@ native join it falls back to the planner's whole-rule order.
   row-by-row path does, and a collecting walk's cut is decided (does it need every row past the tail?); (2) then the
   search prices past the head's last binding as `step` does, connected steps only, never a cross product; (3) the
   test above, and PostHog against sd1.
+- **Done** (2026-11-18):
+  - (1) The fused path (setfix.rs, `flush` and its candidate loop) ends at the first row made past `cut_from`, as the
+    row-by-row path does. Test `a_fused_step_past_the_bound_head_stops_at_its_first_witness` (cut_tests.rs): 10,000
+    rows reached `l` before, 20 after. Collecting walks keep no cut: they are a trial's (setfix.rs 3058, 3110),
+    `run_join_collect`'s and a closure's per-value search, whose callers read the rows they collect. The stratum
+    walk and the paired walk take the cut.
+  - (2) A flat one-witness cap was still wrong where few candidates are witnesses: `doc_tape`'s
+    `doc_key → loaded → doc_module(p, m)` reads every `loaded` row for each key (443 M rows, 128 s) because one in
+    15,000 passes. So the search and the fixed-order pricer price the tail by its witnesses a binding instead
+    (`witnessed`, plan.rs): past the first join made with every head variable bound (work `base`, rows `h`), the
+    tail's work is scaled by `h / rows`. Every candidate a witness reads one a binding; few witnesses read in full.
+    `step`'s cap applies only to a step joined by a bound variable, never a cross product.
+  - (3) Tests: `the_search_prices_the_steps_past_a_bound_head_as_one_witness` (plan/tests.rs: `k` leads, work under
+    2,000; red without it). `heavy_values_price_a_skewed_three_way_self_join_by_its_third_moment` now has a head that
+    reads `c`, as its comment's count needs every row.
+  - PostHog cold on the M3 (load 35–51), 29,747 findings, hash fa0efeaed6ff, every run:
+
+    | run | instructions | join work | native CPU |
+    |---|---|---|---|
+    | sd1 | 2,589 G | 546 M | 79.7 s |
+    | fx1 (before) | 2,888 G | 561 M | 85.1 s |
+    | qd143317 | 2,625 G | 451 M | 67.7 s |
+    | qe143408 | 2,635 G | 449 M | 72.1 s |
+    | qf143646 (default chunking) | 2,542 G | | |
+
+    The `xk_…` relations are gone from the per-head comparison (77 + 39 M work to under 1 M), and join work is 18 %
+    under sd1's. Warm: 119–124 G (fx2 143 G, q94n 157 G).
+
+### Q147. A warm run sometimes stops on a strict-SQL read of `atom_key` inside the waves
+
+- **Seen** (2026-11-18, PostHog warm on the M3 over qe143408's store): rc 134, `RERAIL_SQL_STRICT`: `SELECT id FROM
+  atom_key WHERE h IN rarray(?1)` from `Atoms::find` ← `intern_all` ← `ContentStore::intern_atoms` ←
+  `vtab::syntax::Batch::build` ← `run_observed`, span `answer load / a chunk projected / project and intern / intern
+  atoms`. Intermittent: over the same store the Q146 engine aborted once and passed twice. The engine from before
+  Q146 (fx2) aborted too. Warm runs over qd143317 and qf143646 passed.
+- **Wanted**: the projected chunk's atoms found without SQL inside the waves (decision 0104: one read before the
+  first wave), or this read moved before it; then a warm run over qe143408's store passes every time.
+

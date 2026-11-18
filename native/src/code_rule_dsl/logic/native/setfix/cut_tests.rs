@@ -400,3 +400,31 @@ fn counts_and_cpu_are_reported_by_the_plan_step_that_made_the_steps() {
     let from: Vec<usize> = (0..3).collect();
     assert_eq!(plan_counts(&from, 3, &counts[..3]), counts[..3].to_vec());
 }
+
+/// Work queue Q146: past the step that binds the head's last slot (`tail`), a fused step (an atom with its filters,
+/// a chunk of candidates at a time) ends its loop at the first row made, as the row-by-row walk does.
+/// `r(d) :- k(d), m(d, n), d != n, l(n)`: each of 20 documents needs one node of its 500 that `l` holds. Before, the
+/// fused `m` step passed every node on (10,000 rows into `l`); the planner, pricing that step as one witness, then
+/// took a cross product there (1.4 G rows on PostHog).
+#[test]
+fn a_fused_step_past_the_bound_head_stops_at_its_first_witness() {
+    let setup = |db: &Connection| {
+        let k: Vec<String> = (0..20).map(|d| format!("({d})")).collect();
+        let m: Vec<String> = (0..20).flat_map(|d| (0..500).map(move |i| format!("({d}, {})", 1_000 + d * 500 + i))).collect();
+        let l: Vec<String> = (0..10_000).map(|n| format!("({})", 1_000 + n)).collect();
+        db.execute_batch(&format!("CREATE TABLE k(c0); INSERT INTO k VALUES {};\nCREATE TABLE m(c0, c1); INSERT INTO m VALUES {};\nCREATE TABLE l(c0); INSERT INTO l VALUES {};\nCREATE TABLE r(c0);", k.join(", "), m.join(", "), l.join(", "))).unwrap();
+    };
+    let (k, m, l) = (format!("t:b:{}:{}:i", hex("k"), hex("c0")), format!("t:b:{}:{}:ii", hex("m"), hex("c0, c1")), format!("t:b:{}:{}:i", hex("l"), hex("c0")));
+    let join = format!("pos {k} v0\npos {m} v0 v1\nne v0 v1\npos {l} v1\nhead v0");
+    let db = connection();
+    setup(&db);
+    open(&db, &format!("name wit\nrel r i empty\nseed 0 {}", hex(&join))).unwrap();
+    assert!(matches!(&component(&db, "wit").unwrap().lock().unwrap().probes[0].body, Body::Join(j) if j.fused.iter().any(Option::is_some)), "a step is fused");
+    walks_whole(|| run(&db, "wit", 0).unwrap());
+    let counts = step_counts(&db, "wit").unwrap();
+    close(&db, "wit").unwrap();
+    let n: i64 = db.query_row("SELECT COUNT(DISTINCT c0) FROM r", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 20, "a row a document");
+    let into_l = counts[0].last().expect("the steps").0;
+    assert!(into_l <= 40, "one witness a document reaches `l`, not each of its nodes: {:?}", counts[0]);
+}
