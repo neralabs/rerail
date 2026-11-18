@@ -15,7 +15,7 @@ mod ignore_coverage;
 
 #[path = "git_snapshot_revision.rs"]
 mod revision;
-pub use revision::resolve as resolve_revision;
+pub use revision::{failure_reason as revision_failure_reason, resolve as resolve_revision};
 
 #[path = "git_snapshot_storage.rs"]
 pub mod storage;
@@ -24,20 +24,25 @@ pub mod storage;
 struct View {
     id: u64,
     root: PathBuf,
-    repository: gix::ThreadSafeRepository,
+    repository: Mutex<RepositoryState>,
     prefix: PathBuf,
     tree: gix::ObjectId,
     commit: Option<gix::ObjectId>,
     cache_root: PathBuf,
     scope: Option<String>,
     owner: OnceLock<crate::content_store::analysis_scope::AnalysisOwner>,
-    inventory: OnceLock<Inventory>,
+    inventory: Mutex<Option<(u64, Arc<Inventory>)>>,
     observed_trees: Mutex<std::collections::HashMap<gix::ObjectId, ObservedTree>>,
-    storage: OnceLock<Option<storage::Storage>>,
     source_errors: Mutex<std::collections::BTreeMap<String, String>>,
-    ignore_blob: OnceLock<Result<Option<gix::ObjectId>, String>>,
     paths: Mutex<Option<Vec<String>>>,
     host_languages: OnceLock<SourceLanguages>,
+}
+
+#[derive(Debug)]
+struct RepositoryState {
+    epoch: u64,
+    repo: gix::ThreadSafeRepository,
+    storage: Option<Arc<storage::Storage>>,
 }
 
 #[derive(Debug)]
@@ -131,7 +136,7 @@ static VIEWS: Mutex<Vec<Arc<View>>> = Mutex::new(Vec::new());
 static ACTIVE: AtomicUsize = AtomicUsize::new(0);
 thread_local! {
     // One object-store handle per worker, reused across reads. No cache of a snapshot's whole contents.
-    static REPOSITORY: RefCell<Option<(u64, gix::Repository)>> = const { RefCell::new(None) };
+    static REPOSITORY: RefCell<Option<((u64, u64), gix::Repository)>> = const { RefCell::new(None) };
 }
 
 fn error(e: impl std::fmt::Display) -> io::Error {
@@ -144,7 +149,7 @@ fn missing() -> io::Error {
 pub fn verified_object(repo: &gix::Repository, id: gix::ObjectId) -> io::Result<gix::Object<'_>> {
     let object = repo.try_find_object(id).map_err(error)?.ok_or_else(missing)?;
     gix::objs::Data::new(&object.data, object.kind, id.kind()).verify_checksum(id.as_ref())
-        .map_err(|err| error(format_args!("Git object checksum failed: {err}")))?;
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, format!("Git object checksum failed: {err}")))?;
     Ok(object)
 }
 
@@ -159,17 +164,13 @@ enum Entry {
 }
 
 impl View {
-    fn storage_stamp(&self, repo: &gix::Repository, id: gix::ObjectId) -> Option<String> {
-        self.storage.get_or_init(|| storage::Storage::of(repo)).as_ref()?.object(id)
-    }
-
     fn observed_tree(&self, id: gix::ObjectId, stamp: &str) -> Option<Arc<[RawTreeEntry]>> {
         let mut observed = self.observed_trees.lock().unwrap_or_else(|err| err.into_inner());
         if let Some(tree) = observed.get(&id).filter(|tree| tree.stamp == stamp) {
             return Some(Arc::clone(&tree.entries));
         }
         let key = super::hash_key(id.as_ref()).ok()?;
-        let inventory = self.inventory.get()?;
+        let (_, inventory) = self.saved_inventory()?;
         if inventory.tree_observations.get(&key)?.as_str() != stamp {
             return None;
         }
@@ -198,8 +199,8 @@ impl View {
         Ok(entries)
     }
 
-    fn tree_entries(&self, repo: &gix::Repository, id: gix::ObjectId) -> io::Result<Arc<[RawTreeEntry]>> {
-        let stamp = self.storage_stamp(repo, id);
+    fn tree_entries(&self, repo: &gix::Repository, storage: Option<&storage::Storage>, id: gix::ObjectId) -> io::Result<Arc<[RawTreeEntry]>> {
+        let stamp = storage.and_then(|storage| storage.object(id));
         if let Some(stamp) = &stamp && let Some(tree) = self.observed_tree(id, stamp) && repo.has_object(id) {
             return Ok(tree);
         }
@@ -217,11 +218,11 @@ impl View {
     }
 
     /// Return absence only after reading a tree and checking its entries.
-    fn lookup_tree_entry(&self, repo: &gix::Repository, path: &Path) -> io::Result<Option<RawTreeEntry>> {
+    fn lookup_tree_entry(&self, repo: &gix::Repository, storage: Option<&storage::Storage>, path: &Path) -> io::Result<Option<RawTreeEntry>> {
         let mut id = self.tree;
         let mut components = path.components().peekable();
         while let Some(component) = components.next() {
-            let tree = self.tree_entries(repo, id)?;
+            let tree = self.tree_entries(repo, storage, id)?;
             let name = component.as_os_str().as_encoded_bytes();
             let Some(entry) = tree.iter().find(|entry| entry.name == name) else { return Ok(None) };
             if components.peek().is_none() {
@@ -236,29 +237,55 @@ impl View {
     }
 
     fn ignore_blob(&self) -> Result<Option<gix::ObjectId>, String> {
-        self.ignore_blob.get_or_init(|| self.with_repo(|repo| {
-            let entry = self.lookup_tree_entry(repo, Path::new(".rerailignore"))
-                .map_err(|e| e.to_string())?;
-            Ok(entry.filter(RawTreeEntry::is_blob).map(|entry| entry.target))
-        })).clone()
+        let entry = self.with_repo(|repo, storage, _| self.lookup_tree_entry(repo, storage, Path::new(".rerailignore")))
+            .and_then(|entry| entry).map_err(|e| e.to_string())?;
+        Ok(entry.filter(RawTreeEntry::is_blob).map(|entry| entry.target))
     }
 
-    fn inventory(&self, store: Option<&Path>) -> Result<&Inventory, InventoryError> {
-        if let Some(value) = self.inventory.get() {
+    fn saved_inventory(&self) -> Option<(u64, Arc<Inventory>)> {
+        self.inventory.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn inventory(&self, store: Option<&Path>) -> Result<Arc<Inventory>, InventoryError> {
+        let (epoch, observed) = {
+            let state = self.current_repository().map_err(|error| error.to_string())?;
+            (state.epoch, state.storage.is_some())
+        };
+        if observed && let Some((saved_epoch, value)) = self.saved_inventory() && saved_epoch == epoch {
             return Ok(value);
         }
         let read = READ_INVENTORY.get().ok_or("Git tree inventory reader is unavailable")?;
-        let value = read(&self.root, store)?;
-        Ok(self.inventory.get_or_init(|| value))
+        let value = Arc::new(read(&self.root, store)?);
+        let state = self.current_repository().map_err(|error| error.to_string())?;
+        if observed && state.epoch != epoch {
+            return Err("Git object storage changed during inventory".into());
+        }
+        *self.inventory.lock().unwrap_or_else(|e| e.into_inner()) = Some((epoch, Arc::clone(&value)));
+        Ok(value)
     }
 
-    fn with_repo<T>(&self, f: impl FnOnce(&gix::Repository) -> T) -> T {
+    fn current_repository(&self) -> io::Result<std::sync::MutexGuard<'_, RepositoryState>> {
+        let mut repository = self.repository.lock().unwrap_or_else(|e| e.into_inner());
+        if !repository.storage.as_deref().is_some_and(storage::Storage::is_current) {
+            let repo = gix::ThreadSafeRepository::open(repository.repo.git_dir()).map_err(error)?;
+            repository.storage = storage::Storage::of(&repo.to_thread_local()).map(Arc::new);
+            repository.repo = repo;
+            repository.epoch += 1;
+        }
+        Ok(repository)
+    }
+
+    fn with_repo<T>(&self, f: impl FnOnce(&gix::Repository, Option<&storage::Storage>, u64) -> T) -> io::Result<T> {
+        let repository = self.current_repository()?;
+        let epoch = (self.id, repository.epoch);
+        let storage = repository.storage.clone();
         REPOSITORY.with(|slot| {
             let mut slot = slot.borrow_mut();
-            if slot.as_ref().is_none_or(|(id, _)| *id != self.id) {
-                *slot = Some((self.id, self.repository.to_thread_local()));
+            if slot.as_ref().is_none_or(|(id, _)| *id != epoch) {
+                *slot = Some((epoch, repository.repo.to_thread_local()));
             }
-            f(&slot.as_ref().unwrap().1)
+            drop(repository);
+            Ok(f(&slot.as_ref().unwrap().1, storage.as_deref(), epoch.1))
         })
     }
 
@@ -280,17 +307,19 @@ impl View {
         let key = full
             .to_string_lossy()
             .replace(std::path::MAIN_SEPARATOR, "/");
-        if let Some(files) = self.inventory.get().map(|i| &i.files)
-            && let Ok(index) = files.binary_search_by(|file| file.path.as_str().cmp(&key))
-        {
-            let blob = files[index].blob;
-            let width = if blob.is_git_sha256() { 32 } else { 20 };
-            return Ok(Entry::File(gix::ObjectId::from_bytes_or_panic(
-                &blob.key_bytes()[8..8 + width],
-            )));
-        }
-        self.with_repo(|repo| {
-            let entry = self.lookup_tree_entry(repo, &full)?.ok_or_else(missing)?;
+        self.with_repo(|repo, storage, epoch| {
+            if storage.is_some()
+                && let Some((saved_epoch, inventory)) = self.saved_inventory()
+                && saved_epoch == epoch
+                && let Ok(index) = inventory.files.binary_search_by(|file| file.path.as_str().cmp(&key))
+            {
+                let blob = inventory.files[index].blob;
+                let width = if blob.is_git_sha256() { 32 } else { 20 };
+                return Ok(Entry::File(gix::ObjectId::from_bytes_or_panic(
+                    &blob.key_bytes()[8..8 + width],
+                )));
+            }
+            let entry = self.lookup_tree_entry(repo, storage, &full)?.ok_or_else(missing)?;
             if entry.is_tree() {
                 Ok(Entry::Dir(entry.target))
             } else if entry.is_blob() {
@@ -298,7 +327,7 @@ impl View {
             } else {
                 Err(missing())
             } // Never follow symlinks or enter submodules.
-        })
+        })?
     }
 }
 
@@ -359,13 +388,13 @@ impl Snapshot {
         self.view.tree.to_string()
     }
 
-    pub fn invalid_paths(&self) -> &[String] {
-        self.view.inventory.get().map_or(&[], |inventory| inventory.invalid_paths.as_slice())
+    pub fn invalid_paths(&self) -> Vec<String> {
+        self.view.saved_inventory().map_or_else(Vec::new, |(_, inventory)| inventory.invalid_paths.clone())
     }
 
     pub fn source_failures(&self) -> Vec<SourceFailure> {
-        let invalid = self.invalid_paths().iter().map(|path| SourceFailure {
-            path: path.clone(), message: "Git path has invalid UTF-8".to_owned(),
+        let invalid = self.invalid_paths().into_iter().map(|path| SourceFailure {
+            path, message: "Git path has invalid UTF-8".to_owned(),
         });
         let unreadable = self.view.source_errors.lock().unwrap_or_else(|e| e.into_inner());
         invalid.chain(unreadable.iter().map(|(path, message)| SourceFailure {
@@ -384,7 +413,7 @@ impl Snapshot {
 
     pub fn workspace(self: &Arc<Self>, store: &Path) -> Result<super::GitWorkspace, InventoryError> {
         let inventory = self.view.inventory(Some(store))?;
-        self.view.with_repo(|repo| {
+        self.view.with_repo(|repo, _, _| {
             Ok(super::GitWorkspace {
                 snapshot: Some(Arc::clone(self)),
                 worktree_root: self.view.root.clone(),
@@ -397,7 +426,7 @@ impl Snapshot {
                 overlays: Vec::new(),
                 nested_roots: Vec::new(),
             })
-        })
+        }).map_err(|error| error.to_string())?
     }
 
     pub fn read_source(&self, path: &str, limit: u64) -> io::Result<Vec<u8>> {
@@ -429,10 +458,10 @@ impl Snapshot {
             Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(err),
         };
-        self.view.with_repo(|repo| {
-            let tree = self.view.tree_entries(repo, directory)?;
+        self.view.with_repo(|repo, storage, _| {
+            let tree = self.view.tree_entries(repo, storage, directory)?;
             Ok(Some(tree.iter().map(|entry| (entry.name.clone(), entry.mode)).collect()))
-        })
+        })?
     }
 
     pub fn owns_blob(&self, path: &str, length: u64) -> bool {
@@ -449,10 +478,10 @@ impl Snapshot {
         let Entry::File(id) = self.view.entry(&self.view.root.join(path))? else {
             return Err(io::Error::from(io::ErrorKind::IsADirectory));
         };
-        self.view.with_repo(|repo| {
+        self.view.with_repo(|repo, _, _| {
             let header = repo.find_header(id).map_err(error)?;
             f(header.size(), &|| Ok(verified_blob(repo, id)?.data.clone()))
-        })
+        })?
     }
 
     pub fn new(source: &Path, revision: &str) -> Result<Self, String> {
@@ -466,8 +495,20 @@ impl Snapshot {
 
     fn open(source: &Path, revision: &str, scope: Option<String>) -> Result<Self, String> {
         let repo = gix::discover(source).map_err(|e| e.to_string())?;
+        let prefix = if let Some(work) = repo.workdir() {
+            source
+                .canonicalize()
+                .map_err(|e| e.to_string())?
+                .strip_prefix(work.canonicalize().map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?
+                .to_path_buf()
+        } else {
+            PathBuf::new()
+        };
         let (id, commit, tree) = {
-            let mut target = resolve_revision(&repo, revision).map_err(|e| format!("{revision}: {e}"))?;
+            let base = repo.workdir().map(|_| prefix.as_path());
+            let mut target = resolve_revision(&repo, revision, base)
+                .map_err(|e| format!("{revision}: {}", revision::failure_detail(&e)))?;
             let object = loop {
                 let object = verified_object(&repo, target).map_err(|e| format!("{target}: {e}"))?;
                 if object.kind != gix::object::Kind::Tag { break object; }
@@ -480,18 +521,8 @@ impl Snapshot {
                     (id, Some(id), tree)
                 }
                 gix::object::Kind::Tree => (id, None, id),
-                _ => return Err("--revision requires a commit or tree".into()),
+                _ => return Err(format!("{revision}: Git object {id} is {}, expected a commit or tree", object.kind)),
             }
-        };
-        let prefix = if let Some(work) = repo.workdir() {
-            source
-                .canonicalize()
-                .map_err(|e| e.to_string())?
-                .strip_prefix(work.canonicalize().map_err(|e| e.to_string())?)
-                .map_err(|e| e.to_string())?
-                .to_path_buf()
-        } else {
-            PathBuf::new()
         };
         let git_dir = repo
             .git_dir()
@@ -507,6 +538,7 @@ impl Snapshot {
             root.push(invocation.to_string());
         }
         let root = root.join(id.to_string()).join(&prefix);
+        let storage = storage::Storage::of(&repo).map(Arc::new);
         let view = Arc::new(View {
             id: invocation,
             root,
@@ -516,22 +548,20 @@ impl Snapshot {
             prefix,
             scope,
             owner: OnceLock::new(),
-            inventory: OnceLock::new(),
+            inventory: Mutex::default(),
             observed_trees: Mutex::default(),
-            storage: OnceLock::new(),
             source_errors: Mutex::default(),
-            ignore_blob: OnceLock::new(),
             paths: Mutex::new(None),
             host_languages: OnceLock::new(),
-            repository: repo.into_sync(),
+            repository: Mutex::new(RepositoryState { epoch: 0, repo: repo.into_sync(), storage }),
         });
         if !view.prefix.as_os_str().is_empty() {
-            view.with_repo(|repo| {
-                let entry = view.lookup_tree_entry(repo, &view.prefix).map_err(|err| err.to_string())?
+            view.with_repo(|repo, storage, _| {
+                let entry = view.lookup_tree_entry(repo, storage, &view.prefix).map_err(|err| err.to_string())?
                     .filter(RawTreeEntry::is_tree).ok_or("the revision lacks the run root")?;
-                view.tree_entries(repo, entry.target).map_err(|err| err.to_string())?;
+                view.tree_entries(repo, storage, entry.target).map_err(|err| err.to_string())?;
                 Ok::<(), String>(())
-            })?;
+            }).map_err(|error| error.to_string())??;
         }
         let mut views = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
         views.push(Arc::clone(&view));
@@ -560,7 +590,7 @@ pub fn repository(
     let v = view(root)?;
     let under = root.strip_prefix(&v.root).ok()?;
     Some((
-        v.repository.to_thread_local(),
+        v.repository.lock().unwrap_or_else(|e| e.into_inner()).repo.to_thread_local(),
         v.prefix.join(under),
         v.tree,
         v.commit,
@@ -599,7 +629,7 @@ pub fn scan_files(root: &Path) -> Option<Result<Vec<(String, Option<String>)>, I
 /// The source library's language result, once this view has run its inventory.
 pub fn source_language(path: &Path) -> Option<Option<String>> {
     let v = view(path)?;
-    let inventory = v.inventory.get()?;
+    let (_, inventory) = v.saved_inventory()?;
     let full = v.prefix.join(path.strip_prefix(&v.root).ok()?);
     Some(inventory.languages.get(full.to_str()?).cloned())
 }
@@ -611,9 +641,10 @@ pub fn observed_tree(root: &Path, id: gix::ObjectId, stamp: &str) -> Option<Arc<
 
 /// Whether this view already holds verified entries for its root.
 pub fn root_observed(root: &Path) -> bool {
-    view(root).is_some_and(|v| v.with_repo(|repo| {
-        v.storage_stamp(repo, v.tree).is_some_and(|stamp| v.observed_tree(v.tree, &stamp).is_some())
-    }))
+    view(root).is_some_and(|v| v.with_repo(|repo, storage, _| {
+        storage.and_then(|storage| storage.object(v.tree))
+            .is_some_and(|stamp| v.observed_tree(v.tree, &stamp).is_some() && repo.has_object(v.tree))
+    }).unwrap_or(false))
 }
 
 pub fn remember_root(root: &Path, stamp: String, entries: Arc<[RawTreeEntry]>) {
@@ -630,8 +661,8 @@ pub fn decode_verified_tree(root: Option<&Path>, stamp: Option<&str>, tree: gix:
     }
 }
 
-pub fn object_storage(root: &Path, repo: &gix::Repository, id: gix::ObjectId) -> Option<String> {
-    view(root)?.storage_stamp(repo, id)
+pub fn with_repository<T>(root: &Path, f: impl FnOnce(&gix::Repository, Option<&storage::Storage>) -> T) -> io::Result<T> {
+    view(root).ok_or_else(missing)?.with_repo(|repo, storage, _| f(repo, storage))
 }
 
 pub struct InventoryFilter {
@@ -685,7 +716,8 @@ impl InventoryFilter {
 pub fn inventory_filter(root: &Path) -> Result<InventoryFilter, String> {
     let v = view(root).ok_or("Git source view is closed")?;
     let bytes = match v.ignore_blob()? {
-        Some(id) => v.with_repo(|repo| verified_blob(repo, id).map(|blob| blob.data.clone()).map_err(|e| e.to_string()))?,
+        Some(id) => v.with_repo(|repo, _, _| verified_blob(repo, id).map(|blob| blob.data.clone()))
+            .and_then(|bytes| bytes).map_err(|e| e.to_string())?,
         None => Vec::new(),
     };
     let rules = super::ignore_patterns(Path::new("/"), gix::ignore::glob::pattern::Case::Sensitive, &bytes)
@@ -701,14 +733,14 @@ pub fn inventory_selection(root: &Path) -> Option<String> {
     let v = view(root)?;
     let paths = v.paths.lock().unwrap_or_else(|err| err.into_inner());
     let ignores = match v.ignore_blob() {
-        Ok(Some(id)) => v.with_repo(|repo| {
-            v.storage_stamp(repo, id).filter(|_| repo.has_object(id))
+        Ok(Some(id)) => v.with_repo(|repo, storage, _| {
+            storage.and_then(|storage| storage.object(id)).filter(|_| repo.has_object(id))
                 .map(|stamp| format!("{id}:{stamp}"))
                 .unwrap_or_else(|| match verified_blob(repo, id) {
                     Ok(_) => format!("verified:{id}"),
                     Err(_) => format!("unreadable:{id}"),
                 })
-        }),
+        }).unwrap_or_else(|_| format!("unreadable:{id}")),
         Ok(None) => String::new(),
         Err(_) => format!("unreadable:{}", v.tree),
     };
@@ -750,7 +782,7 @@ pub fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
     let Entry::File(id) = v.entry(path)? else {
         return Err(io::Error::from(io::ErrorKind::IsADirectory));
     };
-    v.with_repo(|repo| Ok(verified_blob(repo, id)?.data.clone()))
+    v.with_repo(|repo, _, _| Ok(verified_blob(repo, id)?.data.clone()))?
 }
 
 /// Bounded read of a regular file in a registered Git source view.
@@ -759,12 +791,12 @@ pub fn read_bounded(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
     let Entry::File(id) = v.entry(path)? else {
         return Err(io::Error::from(io::ErrorKind::IsADirectory));
     };
-    v.with_repo(|repo| {
+    v.with_repo(|repo, _, _| {
         if repo.find_header(id).map_err(error)?.size() > limit {
             return Err(io::Error::from(io::ErrorKind::FileTooLarge));
         }
         Ok(verified_blob(repo, id)?.data.clone())
-    })
+    })?
 }
 
 pub fn read_to_string(path: impl AsRef<Path>) -> io::Result<String> {
@@ -813,8 +845,8 @@ pub fn listing(path: impl AsRef<Path>) -> io::Result<Vec<(String, bool)>> {
         let Entry::Dir(id) = v.entry(path)? else {
             return Err(io::Error::from(io::ErrorKind::NotADirectory));
         };
-        v.with_repo(|repo| {
-            let tree = v.tree_entries(repo, id)?;
+        v.with_repo(|repo, storage, _| {
+            let tree = v.tree_entries(repo, storage, id)?;
             let mut entries = Vec::new();
             for entry in tree.iter() {
                 if entry.is_tree() || entry.is_blob() {
@@ -825,7 +857,7 @@ pub fn listing(path: impl AsRef<Path>) -> io::Result<Vec<(String, bool)>> {
                 }
             }
             Ok::<_, io::Error>(entries)
-        })?
+        })??
     } else {
         std::fs::read_dir(path)?
             .map(|entry| {

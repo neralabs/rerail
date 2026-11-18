@@ -123,7 +123,7 @@ impl GitRevisionSource {
 
     #[napi]
     pub fn invalid_paths(&self) -> Vec<String> {
-        self.snapshot.invalid_paths().to_vec()
+        self.snapshot.invalid_paths()
     }
 
     #[napi]

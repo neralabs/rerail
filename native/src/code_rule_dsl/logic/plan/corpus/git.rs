@@ -88,7 +88,10 @@ impl Git {
     }
 
     fn revision(&self, key: &str, expression: &str) -> Result<gix::ObjectId, &'static str> {
-        snapshot::resolve_revision(self.repo(key)?, expression).map_err(|_| "unresolved")
+        self.with_repository(key, |repo, _| {
+            let base = repo.workdir().map(|_| Path::new(""));
+            snapshot::resolve_revision(repo, expression, base).map_err(|error| snapshot::revision_failure_reason(&error))
+        })
     }
 
     pub(super) fn resolve(&self, key: &str, expression: &str) -> (String, &'static str) {
@@ -106,9 +109,20 @@ impl Git {
     }
 
     fn object(&self, key: &str, oid: &str) -> Result<Vec<Record>, &'static str> {
+        self.with_repository(key, |repo, storage| self.read_object(repo, storage, oid))
+    }
+
+    fn with_repository<T>(&self, key: &str, read: impl FnOnce(&gix::Repository, Option<&storage::Storage>) -> Result<T, &'static str>) -> Result<T, &'static str> {
         let repo = self.repo(key)?;
+        if let Some(root) = &self.snapshot_root {
+            return snapshot::with_repository(root, read).map_err(|_| "unreadable-object")?;
+        }
+        read(repo, self.storage.get_or_init(|| storage::Storage::of(repo)).as_ref())
+    }
+
+    fn read_object(&self, repo: &gix::Repository, storage: Option<&storage::Storage>, oid: &str) -> Result<Vec<Record>, &'static str> {
         let id = Self::object_id(repo, oid)?;
-        let observed = self.storage_stamp(repo, id);
+        let observed = storage.and_then(|storage| storage.object(id));
         if let (Some(root), Some(stamp)) = (&self.snapshot_root, observed.as_deref()) {
             if let Some(tree) = snapshot::observed_tree(root, id, stamp) {
                 if !repo.has_object(id) { return Err("missing"); }
@@ -201,13 +215,6 @@ impl Git {
             .unwrap_or_else(|error| vec![Record::text("error", error)])
     }
 
-    fn storage_stamp(&self, repo: &gix::Repository, id: gix::ObjectId) -> Option<String> {
-        if let Some(root) = &self.snapshot_root {
-            return snapshot::object_storage(root, repo, id);
-        }
-        self.storage.get_or_init(|| storage::Storage::of(repo)).as_ref()?.object(id)
-    }
-
     /// Presence is a separate observation. Re-observe former misses and open the new ref each run.
     pub(super) fn observation(&self, operation: &str, key: &str, arg: &str) -> Option<String> {
         match operation {
@@ -216,15 +223,11 @@ impl Git {
                 Some(format!("{status}:{id}"))
             }
             OBJECT => {
-                let repo = self.repo(key);
-                Some(
-                    match repo.and_then(|repo| Self::object_id(repo, arg).map(|id| (repo, id)))
-                    {
-                        Ok((repo, id)) if repo.has_object(id) => self.storage_stamp(repo, id).unwrap_or_else(|| "unverified".to_owned()),
-                        Ok(_) => "missing".to_owned(),
-                        Err(reason) => reason.to_owned(),
-                    }
-                )
+                Some(self.with_repository(key, |repo, storage| {
+                    let id = Self::object_id(repo, arg)?;
+                    if !repo.has_object(id) { return Err("missing"); }
+                    Ok(storage.and_then(|storage| storage.object(id)).unwrap_or_else(|| "unverified".to_owned()))
+                }).unwrap_or_else(str::to_owned))
             }
             _ => None,
         }

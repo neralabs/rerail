@@ -8,6 +8,7 @@ pub struct Storage {
     loose: Sha256,
     packs: Sha256,
     indices: Option<Vec<PackIndex>>,
+    watched: Vec<(PathBuf, [u8; 32])>,
 }
 
 impl std::fmt::Debug for Storage {
@@ -40,10 +41,12 @@ impl Storage {
         loose.update(b"git-loose-storage-v1");
         packs.update(b"git-pack-storage-v1");
         let mut indices = Some(Vec::new());
+        let mut watched = Vec::new();
         for root in &roots {
             hash_path(&mut loose, root);
-            stat(&mut loose, &root.join("info/alternates"))?;
+            watch(&mut watched, Some(&mut loose), root.join("info/alternates"))?;
             let directory = root.join("pack");
+            watch(&mut watched, None, directory.clone())?;
             let mut files = match std::fs::read_dir(&directory) {
                 Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect::<std::io::Result<Vec<_>>>().ok()?,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
@@ -56,6 +59,8 @@ impl Storage {
                 if !multi && !matches!(extension, Some("idx" | "pack")) {
                     continue;
                 }
+                hash_path(&mut packs, &file);
+                watch(&mut watched, Some(&mut packs), file.clone())?;
                 if let Some(known) = &mut indices && (multi || extension == Some("idx")) {
                     let index = if multi {
                         gix::odb::pack::multi_index::File::at(&file, None).ok().map(PackIndex::Multi)
@@ -67,11 +72,17 @@ impl Storage {
                         None => indices = None,
                     }
                 }
-                hash_path(&mut packs, &file);
-                stat(&mut packs, &file)?;
             }
         }
-        Some(Self { roots, loose, packs, indices })
+        let storage = Self { roots, loose, packs, indices, watched };
+        storage.is_current().then_some(storage)
+    }
+
+    pub fn is_current(&self) -> bool {
+        self.watched.iter().all(|(path, expected)| {
+            let mut digest = Sha256::new();
+            stat(&mut digest, path).is_some() && &<[u8; 32]>::from(digest.finalize()) == expected
+        })
     }
 
     pub fn object(&self, id: gix::ObjectId) -> Option<String> {
@@ -89,6 +100,17 @@ impl Storage {
     }
 }
 
+fn watch(watched: &mut Vec<(PathBuf, [u8; 32])>, combined: Option<&mut Sha256>, path: PathBuf) -> Option<()> {
+    let metadata = metadata(&path)?;
+    let mut digest = Sha256::new();
+    hash_stat(&mut digest, metadata.as_ref());
+    if let Some(combined) = combined {
+        hash_stat(combined, metadata.as_ref());
+    }
+    watched.push((path, digest.finalize().into()));
+    Some(())
+}
+
 fn hash_path(digest: &mut Sha256, path: &Path) {
     let bytes = path.as_os_str().as_encoded_bytes();
     digest.update((bytes.len() as u64).to_le_bytes());
@@ -96,13 +118,22 @@ fn hash_path(digest: &mut Sha256, path: &Path) {
 }
 
 fn stat(digest: &mut Sha256, path: &Path) -> Option<()> {
-    let metadata = match std::fs::metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            digest.update([0]);
-            return Some(());
-        }
-        Err(_) => return None,
+    hash_stat(digest, metadata(path)?.as_ref());
+    Some(())
+}
+
+fn metadata(path: &Path) -> Option<Option<std::fs::Metadata>> {
+    match std::fs::metadata(path) {
+        Ok(metadata) => Some(Some(metadata)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(None),
+        Err(_) => None,
+    }
+}
+
+fn hash_stat(digest: &mut Sha256, metadata: Option<&std::fs::Metadata>) {
+    let Some(metadata) = metadata else {
+        digest.update([0]);
+        return;
     };
     digest.update([1]);
     digest.update(metadata.len().to_le_bytes());
@@ -124,5 +155,4 @@ fn stat(digest: &mut Sha256, path: &Path) -> Option<()> {
         digest.update(time(metadata.modified())?);
         digest.update(time(metadata.created())?);
     }
-    Some(())
 }

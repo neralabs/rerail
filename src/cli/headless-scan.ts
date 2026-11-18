@@ -173,10 +173,11 @@ function rulesAtRef(root: string, ref: string, loadedRr: NativeLoadedRrPolicies)
   try {
     source = new binding.GitRevisionSource(root, ref, "rules-ref");
   } catch (error) {
-    throw new Error(`--rules-ref ${ref} is not a commit in ${root}`, { cause: error });
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Cannot resolve --rules-ref ${ref} in ${root}. ${detail}`, { cause: error });
   }
   const commit = source.commit;
-  if (!commit) throw new Error(`--rules-ref ${ref} is not a commit in ${root}`);
+  if (!commit) throw new Error(`--rules-ref ${ref} resolved to tree ${source.tree}. This option requires a commit.`);
   const provenance: RefRuleSource = { kind: "ref", ref, commit };
   const failures: ScanFailure[] = [];
   const unreadable = (path: string, error: unknown) => {

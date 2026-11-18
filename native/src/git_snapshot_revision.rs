@@ -7,12 +7,44 @@ use gix::revision::plumbing::spec::{self, parse::delegate};
 use gix::{Object, ObjectId, Repository, Result};
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::path::Path;
 
 use super::verified_object;
 
-pub fn resolve(repo: &Repository, expression: &str) -> Result<ObjectId> {
+#[path = "git_snapshot_message_pattern.rs"]
+mod message_pattern;
+use message_pattern::MessagePattern;
+
+#[derive(Debug)]
+struct LookupError {
+    reason: &'static str,
+    detail: String,
+}
+
+impl std::fmt::Display for LookupError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for LookupError {}
+
+fn lookup_error(reason: &'static str, detail: impl std::fmt::Display) -> gix::Error {
+    gix::Error::from_error(LookupError { reason, detail: detail.to_string() })
+}
+
+pub fn failure_reason(error: &gix::Error) -> &'static str {
+    error.downcast_any_ref::<LookupError>().map_or("invalid-revision", |cause| cause.reason)
+}
+
+pub fn failure_detail(error: &gix::Error) -> String {
+    error.downcast_any_ref::<LookupError>().map_or_else(|| error.probable_cause().to_string(), |cause| cause.detail.clone())
+}
+
+pub fn resolve(repo: &Repository, expression: &str, path_base: Option<&Path>) -> Result<ObjectId> {
     let mut revision = Revision {
         repo,
+        path_base,
         reference: None,
         candidates: Vec::new(),
         read_failure: RefCell::new(None),
@@ -26,13 +58,14 @@ pub fn resolve(repo: &Repository, expression: &str) -> Result<ObjectId> {
     parsed?;
     match revision.candidates.as_slice() {
         [id] => Ok(*id),
-        [] => Err(message("No Git revision matched").raise()),
-        _ => Err(message!("Ambiguous Git revision {expression:?}").raise()),
+        [] => Err(lookup_error("missing-revision", "No Git revision matched")),
+        _ => Err(lookup_error("ambiguous-revision", format_args!("Ambiguous Git revision {expression:?}"))),
     }
 }
 
 struct Revision<'repo> {
     repo: &'repo Repository,
+    path_base: Option<&'repo Path>,
     reference: Option<gix::Reference<'repo>>,
     candidates: Vec<ObjectId>,
     read_failure: RefCell<Option<gix::Error>>,
@@ -48,11 +81,15 @@ impl<'repo> Revision<'repo> {
 
     fn read(&self, id: ObjectId) -> Result<Object<'repo>> {
         verified_object(self.repo, id).map_err(|error| {
-            let detail = error.to_string();
+            let reason = match error.kind() {
+                std::io::ErrorKind::NotFound => "missing-object",
+                std::io::ErrorKind::InvalidData => "corrupt-object",
+                _ => "unreadable-object",
+            };
             self.read_failure
                 .borrow_mut()
-                .get_or_insert_with(|| message!("{id}: {detail}").raise());
-            message!("{id}: {detail}").raise()
+                .get_or_insert_with(|| lookup_error(reason, format_args!("Git object {id}: {error}")));
+            lookup_error(reason, format_args!("Git object {id}: {error}"))
         })
     }
 
@@ -68,7 +105,8 @@ impl<'repo> Revision<'repo> {
                     object.into_commit().tree_id()?.detach()
                 }
                 _ if kind.is_none() => return Ok(object),
-                _ => return Err(message!("Git object {id} cannot be peeled to {kind:?}").raise()),
+                _ => return Err(lookup_error("wrong-object-kind",
+                    format_args!("Git object {id} is {}, expected {}", object.kind, kind.expect("requested object kind")))),
             };
         }
     }
@@ -95,10 +133,13 @@ impl<'repo> Revision<'repo> {
     fn path<'path>(&self, path: &'path BStr) -> Result<std::borrow::Cow<'path, BStr>> {
         // Only an explicit ./ or ../ is relative to the caller's worktree directory.
         if path.starts_with(b"./") || path.starts_with(b"../") {
-            self.repo
-                .prefix()?
+            use std::borrow::Cow;
+            let base = self.path_base
                 .ok_or_else(|| message("Relative Git paths require a worktree").raise())?;
-            self.repo.normalize_path(path)
+            let relative = gix::path::from_bstr(Cow::Borrowed(path))?;
+            let full = gix::path::normalize_and_clean(Cow::Owned(base.join(relative)), Path::new(""))
+                .ok_or_else(|| message!("Git path {path:?} leaves the repository").raise())?;
+            Ok(gix::path::to_unix_separators_on_windows(gix::path::into_bstr(full)?))
         } else {
             Ok(path.into())
         }
@@ -113,13 +154,17 @@ impl<'repo> Revision<'repo> {
         let mut segments = path.split(|byte| *byte == b'/').peekable();
         while let Some(name) = segments.next() {
             let entry = tree.find_entry(name).ok_or_else(|| {
-                message!("Git path {path:?} does not exist in tree {}", tree.id).raise()
+                lookup_error("missing-path", format_args!("Git path {path:?} does not exist in tree {}", tree.id))
             })?;
             let target = entry.id().detach();
             if segments.peek().is_none() {
                 return Ok(target);
             }
-            tree = self.read(target)?.try_into_tree()?;
+            let object = self.read(target)?;
+            if object.kind != Kind::Tree {
+                return Err(lookup_error("wrong-object-kind", format_args!("Git object {target} is {}, expected tree", object.kind)));
+            }
+            tree = object.into_tree();
         }
         unreachable!("an empty path returned the root")
     }
@@ -128,15 +173,18 @@ impl<'repo> Revision<'repo> {
         &self,
         tips: Vec<ObjectId>,
         pattern: &BStr,
+        matcher: &MessagePattern,
         negated: bool,
     ) -> Result<ObjectId> {
         let shallow = self.repo.shallow_commits()?;
         let mut seen = HashSet::new();
         let mut pending = gix::revwalk::PriorityQueue::new();
+        let mut order = 0;
         let mut enqueue = |id, pending: &mut gix::revwalk::PriorityQueue<_, _>| -> Result<()> {
             if seen.insert(id) {
                 let commit = self.read(id)?.try_into_commit()?;
-                pending.insert(commit.committer()?.time()?.seconds, id);
+                pending.insert((commit.committer()?.time()?.seconds, std::cmp::Reverse(order)), id);
+                order += 1;
             }
             Ok(())
         };
@@ -145,7 +193,7 @@ impl<'repo> Revision<'repo> {
         }
         while let Some(id) = pending.pop_value() {
             let commit = self.read(id)?.try_into_commit()?;
-            if commit.message_raw_sloppy().contains_str(pattern) ^ negated {
+            if matcher.matches(commit.message_raw_sloppy()) ^ negated {
                 return Ok(commit.id);
             }
             if shallow
@@ -157,13 +205,15 @@ impl<'repo> Revision<'repo> {
                 }
             }
         }
-        Err(message!("No Git commit message matched {pattern:?}").raise())
+        Err(lookup_error("missing-revision", format_args!("No Git commit message matched {pattern:?}")))
     }
 }
 
 impl delegate::Revision for Revision<'_> {
     fn find_ref(&mut self, name: &BStr) -> Result<()> {
-        self.reference = Some(self.repo.find_reference(name)?);
+        self.reference = Some(self.repo.try_find_reference(name)?.ok_or_else(|| {
+            lookup_error("missing-revision", format_args!("No Git reference matches {name:?}"))
+        })?);
         self.candidates.clear();
         Ok(())
     }
@@ -200,7 +250,7 @@ impl delegate::Revision for Revision<'_> {
             candidates.insert(padded);
         }
         if candidates.is_empty() {
-            return Err(message!("No Git object matches prefix {prefix}").raise());
+            return Err(lookup_error("missing-revision", format_args!("No Git object matches prefix {prefix}")));
         }
         self.candidates = candidates.into_iter().collect();
         self.candidates.sort_unstable();
@@ -347,10 +397,13 @@ impl delegate::Navigate for Revision<'_> {
     }
 
     fn find(&mut self, pattern: &BStr, negated: bool) -> Result<()> {
+        let matcher = MessagePattern::new(pattern).map_err(|error| {
+            lookup_error("invalid-revision", format_args!("Invalid Git message pattern {pattern:?}: {error}"))
+        })?;
         if !self.anchor()?.is_empty() {
             return self.navigate(|revision, id| {
                 let id = revision.peel(id, Some(Kind::Commit))?.id;
-                revision.matching_commit(vec![id], pattern, negated)
+                revision.matching_commit(vec![id], pattern, &matcher, negated)
             });
         }
         let references = self.repo.references()?;
@@ -362,7 +415,13 @@ impl delegate::Navigate for Revision<'_> {
                 tips.push(object.id);
             }
         }
-        self.candidates = vec![self.matching_commit(tips, pattern, negated)?];
+        if let Some(id) = self.repo.head()?.id() {
+            let object = self.peel(id.detach(), None)?;
+            if object.kind == Kind::Commit {
+                tips.push(object.id);
+            }
+        }
+        self.candidates = vec![self.matching_commit(tips, pattern, &matcher, negated)?];
         Ok(())
     }
 

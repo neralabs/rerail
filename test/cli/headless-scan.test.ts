@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
@@ -306,6 +306,37 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     await expect(scan(root, { revision, analysisScope: "selection" })).rejects.toThrow(/Git object checksum failed/u);
   });
 
+  it("rechecks packed trees after corruption and restoration in the same revision view", () => {
+    const root = checkout();
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src", "nested.py"), "nested = 1\n");
+    git(root, "add", "src");
+    git(root, "commit", "-qm", "nested source");
+    const tree = git(root, "rev-parse", "HEAD:src");
+    const objects = join(root, ".git", "objects");
+    const base = join(objects, "pack", "test-tree");
+    const hash = execFileSync("git", ["pack-objects", base], { cwd: root, input: `${tree}\n`, encoding: "utf8" }).trim();
+    const pack = `${base}-${hash}.pack`;
+    const index = `${base}-${hash}.idx`;
+    const row = git(root, "verify-pack", "-v", index).split("\n").find(line => line.startsWith(tree))!;
+    const good = readFileSync(pack);
+    let payload = Number(row.split(/\s+/u)[4]);
+    while ((good[payload++]! & 128) !== 0) { /* Skip the entry header. */ }
+    const broken = Buffer.from(good);
+    broken[payload] = 0; // Invalid Zlib header.
+    rmSync(join(objects, tree.slice(0, 2), tree.slice(2)));
+    const source = new (loadNativeBinding().GitRevisionSource)(root, "HEAD", "warm-pack");
+    const entries = [{ name: "nested.py", mode: 0o100644 }];
+    expect(source.readDirectory("src")).toEqual(entries);
+
+    chmodSync(pack, 0o644);
+    writeFileSync(pack, broken);
+    expect(() => source.readDirectory("src")).toThrow(/pack entry|decompress|checksum/iu);
+    writeFileSync(`${pack}.replacement`, good);
+    renameSync(`${pack}.replacement`, pack);
+    expect(source.readDirectory("src")).toEqual(entries);
+  });
+
   it.each(["loose", "packed"])("rejects revision expressions redirected by a corrupt %s object", async storage => {
     const root = checkout();
     const first = git(root, "rev-parse", "HEAD");
@@ -378,11 +409,17 @@ Unreadable(@place("git", 1), e) :- git_revision_error(_, e, _).
 
   it("resolves refs, IDs, reflogs and index entries through the same rule relation", async () => {
     const root = checkout();
-    git(root, "commit", "--allow-empty", "-qm", "second commit");
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src", "nested.py"), "nested = 1\n");
+    git(root, "add", "src");
+    git(root, "commit", "-qm", "second commit");
     git(root, "tag", "-am", "annotated release", "release");
     git(root, "pack-refs", "--all");
     const short = git(root, "rev-parse", "--short", "HEAD");
-    const expressions = [short, "@", "main", "HEAD@{1}", "release", "release^{}", ":a.py", ":/seed"];
+    const expressions = [
+      short, "@", "main", "HEAD@{1}", "release", "release^{}", ":a.py", ":./a.py",
+      "HEAD:./src", ":/seed", "HEAD^{/^seed}", ":/^(seed|missing)", "HEAD^{/!-^second}",
+    ];
     const policy = join(root, "refs.rr");
     writeFileSync(policy, `
 #include "git.rr"
@@ -396,6 +433,39 @@ Resolved(@place("git", 1), e, o) :- git_revision(_, e, o).
     expect(report.violations.map(finding => finding.message).sort()).toEqual(
       expressions.map(expr => `${expr} ${git(root, "rev-parse", "--verify", expr)}`).sort(),
     );
+    for (const [revision, field] of [["HEAD:./src", "tree"], ["HEAD^{/^seed}", "commit"], [":/^seed", "commit"]] as const) {
+      const selected = await scan(join(root, "src"), { revision, analysisScope: "expressions" });
+      expect(selected.source?.[field]).toBe(git(root, "rev-parse", "--verify", revision));
+    }
+  });
+
+  it("reports distinct revision error facts for missing names, wrong kinds and corruption", async () => {
+    const root = checkout();
+    const blob = git(root, "rev-parse", "HEAD:a.py");
+    git(root, "tag", "-am", "corrupt policy tag", "broken");
+    const tag = git(root, "rev-parse", "broken");
+    const object = join(root, ".git", "objects", tag.slice(0, 2), tag.slice(2));
+    chmodSync(object, 0o644);
+    writeFileSync(object, deflateSync(Buffer.from("blob 4\0oops")));
+    const errors = new Map([
+      ["mian", "missing-revision"],
+      [`${blob}^{tree}`, "wrong-object-kind"],
+      ["broken^{}", "corrupt-object"],
+    ]);
+    const policy = join(root, "revision-errors.rr");
+    writeFileSync(policy, `
+#include "git.rr"
+.policy "revision-errors" revision 1
+.violation Error(at: span, expression: symbol, reason: symbol) "{expression} {reason}"
+${[...errors.keys()].map(expr => `git_revision_request(r, "${expr}") :- git_root_repo(r).`).join("\n")}
+Error(@place("git", 1), e, k) :- git_revision_error(_, e, k).
+`);
+    const report = await scan(root, { rr: [policy] });
+    expect(report.status).toBe("completed");
+    expect(report.violations.map(finding => finding.message).sort()).toEqual(
+      [...errors].map(([expr, reason]) => `${expr} ${reason}`).sort(),
+    );
+    await expect(scan(root, { rulesRef: "broken" })).rejects.toThrow(/--rules-ref broken.*Git object checksum failed/u);
   });
 
   it("uses Git byte names for selection before reporting names with invalid UTF-8", async () => {
@@ -1551,9 +1621,10 @@ Needle(n) :- kind(n, "identifier"), text(n, "NEEDLE").
     await expect(scan(root, { packs: ["@neralabs/rerail-pack-nope"] })).rejects.toThrow("--pack @neralabs/rerail-pack-nope is not installed");
   });
 
-  it("refuses a --rules-ref that is not a commit rather than scanning with no rules", async () => {
+  it("distinguishes a missing --rules-ref from a tree", async () => {
     const root = checkout();
-    await expect(scan(root, { rulesRef: "mian" })).rejects.toThrow("--rules-ref mian is not a commit");
+    await expect(scan(root, { rulesRef: "mian" })).rejects.toThrow(/--rules-ref mian.*No Git reference matches/u);
+    await expect(scan(root, { rulesRef: "HEAD^{tree}" })).rejects.toThrow(/--rules-ref .*resolved to tree.*requires a commit/u);
   });
 
   it("scans only what changed since the merge base with --base, and only the paths asked for", async () => {
