@@ -870,6 +870,13 @@ pass.
   takes the `u8` prefix.
 - **Record** (2026-11-17): the values test lists the five cases as refused by the grammar, in C
   and C++, and compares the other 95.
+- **Done** (2026-11-18): both grammars (`bitlex_tokens/tokens.bitlex`, the directives'
+  `06-raw`) find a separator before the regions, from a run of numbers made without them, so
+  its `'` opens no character constant. They check it against the code's numbers after (an
+  escape where the two differ: `'.5'a`). The `o_chr & prev(digit)` escape, which also refused
+  `u8'a'`, is gone. Corpus: tokens 3,073 the same (3,058), 62 refused, 0 differ; directives 3,089
+  (46 refused); expansion 3,073 of 3,135 equal the lean pass (3,060), the JIT equal to the
+  interpreter on all of them. The values test compares all 100 cases.
 
 ### Q36. The compiled pp words stall: 45% of the interpreter's instructions, 1.09× its cycles
 

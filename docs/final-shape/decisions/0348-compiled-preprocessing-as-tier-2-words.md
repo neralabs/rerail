@@ -168,6 +168,14 @@ directives' ladder, so mode (a) keeps its lean tape.
   `R & ~S` gave every backend Metal's answer, but it cost JSON's tier 2 its shape (30 calls of
   its own, where it has none), so it was not kept. The grammar keeps its starts out of its runs
   (`run lit_bytes & ~lit_start`). Work queue Q32 has the guard this needs.
+- **Digit separators and `u8'…'`, read since (Q35).** A separator's `'` (`1'000'000`, `0x'1`)
+  must open no character constant, but the regions are found before the numbers. Both grammars
+  (this one and the directives' `06-raw`) find it first, from a run of numbers made without the
+  regions (`sep`). They check it after, against the code's numbers: an escape where they differ.
+  That is a separator inside a character constant (`'.5'a`), or a `'` one side takes and the
+  other does not. The old escape (a character constant after a digit) also refused `u8'a'`, and
+  is gone. Corpus: tokens 3,073 the same, 62 refused, 0 differ; expansion 3,073 of 3,135 equal
+  to the lean pass, the JIT equal to the interpreter on each.
 
 ## Stage 2, built: the words, on the interpreter
 
