@@ -65,3 +65,8 @@ A session's relations stay in their blocks between runs; nothing moves to frames
 
 - Stage 1 (counting): done, 011fc99ef.
 - Roll-up of the related worktrees before stage 2: done, b674d923a (5 merges).
+- Stage 2: done, db49bbdb9. `Origin::Based` carries the start's dead rows; `InRel::start`, `version_ids`,
+  `version_view(Ver::{Old, Minus, Plus})`; `delta_since` reads the version. A join step does not yet name a
+  version: that comes with stage 3's mode, which is the first reader.
+- Found on the way: the version's prune lacked the tree's revival of a pruned on-request attribute as an input
+  (44dfb61af); every session test had stopped on it.
