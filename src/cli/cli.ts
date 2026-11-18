@@ -77,7 +77,7 @@ import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
 import { runRuleApproveCommand } from "./rule-approval-cli.js";
 import { runShowMeCommand } from "./show-me.js";
-import { runMergeAssistCommand } from "./merge-assist-cli.js";
+import { endOnceWritten, runMergeAssistCommand } from "./merge-assist-cli.js";
 import { runSupportBundleCommand } from "./support-bundle.js";
 import { runPacksCommand } from "./packs-cli.js";
 import { runFeedbackCommand } from "./feedback-cli.js";
@@ -991,8 +991,8 @@ async function runProjectCommand(command: string, args: readonly string[], { hom
     case "scan":
     case "settings":
       return await runAuditCommand(command, args, { home, version: packageVersion });
-    // Internal testing: Merge Assist.
-    case "merge-assist": return await runMergeAssistCommand(args, usage);
+    // Internal testing: Merge Assist. It answers once, and its process ends once that answer, or its failure, is out.
+    case "merge-assist": return await endOnceWritten(await runMergeAssistCommand(args, usage).catch(failed));
     // Internal testing: the remote sink.
     case "remote": return await runRemoteCommand(args, { home });
     // `daemon`, `status` and `manage`.
@@ -1024,9 +1024,14 @@ for (const stream of [process.stdout, process.stderr]) {
   });
 }
 
+/** A command that failed: its message on stderr, and exit code 1. */
+function failed(error: unknown): number {
+  process.stderr.write(`rerail: ${(error as Error).message}\n`);
+  return 1;
+}
+
 try {
   process.exitCode = await main();
 } catch (error) {
-  process.stderr.write(`rerail: ${(error as Error).message}\n`);
-  process.exitCode = 1;
+  process.exitCode = failed(error);
 }

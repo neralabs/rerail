@@ -42,6 +42,8 @@ test.describe("Merge Assist", () => {
     await expect(scan).toBeFocused();
     // Once on, Rerail reads gh's sign-in: the scenario's gh is signed out.
     await expect(page.locator("#content .mstrip")).toContainText("gh signed out");
+    // The GitHub cell says when gh said it, as the last scan's says when it ran.
+    await expect(page.locator("#content .mstrip .mcell", { hasText: "GitHub" })).toContainText("read 0m ago");
     await expect(conflicts(page)).toContainText("No open conflicts");
     await page.reload();
     await expect(page.locator("#content .mstrip")).toBeVisible();

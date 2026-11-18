@@ -20,10 +20,12 @@ import {
   type GithubState,
   type MergeAssistSettings,
   type MergeAssistStatus,
+  type ShownReadiness,
 } from "../engine/merge-assist/model.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
 import { readRulesDashboard } from "../presentation/session-presentation.js";
 import { createMergeAssistService, MergeAssistError, type MergeAssistService, type MergeAssistSettingsChange } from "../runtime/merge-assist/service.js";
+import type { GithubClient } from "../runtime/merge-assist/github.js";
 
 const ACTIONS = ["status", "on", "off", "scan", "conflicts", "dismiss", "settings"] as const;
 type MergeAssistAction = (typeof ACTIONS)[number];
@@ -49,11 +51,14 @@ export interface MergeAssistCommandIo {
   openService?: () => MergeAssistCommandSession;
   /** The Merge Assist page of the daemon serving `root`'s checkout, or null when none runs. */
   dashboardUrl?: (root: string) => Promise<string | null>;
+  /** The `gh` the default service runs; by default the person's (`createGithubClient`). */
+  github?: GithubClient;
 }
 
-function openDefaultService(): MergeAssistCommandSession {
+function openDefaultService(github: GithubClient | undefined): MergeAssistCommandSession {
   const database = openRerailDatabase(defaultRerailDatabasePath());
-  const service = createMergeAssistService({ database });
+  // The command answers once: a status that asks gh again shows what gh says in that answer.
+  const service = createMergeAssistService({ database, answersOnce: true, ...(github === undefined ? {} : { github }) });
   // Ctrl-C while the person's hook command runs stops it (its own process group, whose timeout lives in this
   // process) before Rerail exits, so none is left running.
   const interrupt = (): void => {
@@ -182,10 +187,20 @@ const GITHUB_LINES: Record<Exclude<GithubState, "signed-in">, string> = {
   unavailable: "gh did not say whether it is signed in (it did not answer in time or failed), so recent remote branches stand in for open pull requests this time.",
 };
 
+/**
+ * When `gh` said what the status shows, and for a sign-in that keeps pull requests unread, what reads it again;
+ * nothing when Rerail ran no `gh` for it.
+ */
+function readText(github: ShownReadiness): string {
+  if (github.readAt === null) return "";
+  if (github.state === "signed-in") return `, read ${timeText(github.readAt)}`;
+  return ` Read ${timeText(github.readAt)}; rerail merge-assist scan reads it again.`;
+}
+
 function githubLine(status: MergeAssistStatus): string {
   const { github } = status.readiness;
-  if (github.state !== "signed-in") return `  GitHub: ${GITHUB_LINES[github.state]}`;
-  return `  GitHub: gh signed in${github.login === null ? "" : ` as ${plain(github.login)}`}${github.repository === null ? "" : ` (${plain(github.repository)})`}`;
+  if (github.state !== "signed-in") return `  GitHub: ${GITHUB_LINES[github.state]}${readText(github)}`;
+  return `  GitHub: gh signed in${github.login === null ? "" : ` as ${plain(github.login)}`}${github.repository === null ? "" : ` (${plain(github.repository)})`}${readText(github)}`;
 }
 
 function scanLines(status: MergeAssistStatus, scanRequested: boolean): string[] {
@@ -423,6 +438,17 @@ function outcomeText(outcome: Outcome, name: string, dashboardUrl: string | null
 }
 
 /** What the command answers while the experiment is off, under `experimental-off`. */
+/**
+ * Ends this process with `code` once what it wrote has reached stdout and stderr. The command answers once: a stat of
+ * `gh`'s hosts file still out when its answer is written (gh-config.ts: a folder on a drive that does not answer) is
+ * read by no one, and would hold the process, and the terminal or shell call that ran it, until the drive answers.
+ * Everything else the command started has ended by then: its session closed after the person's hook command answered.
+ */
+export async function endOnceWritten(code: number): Promise<never> {
+  await Promise.all([process.stdout, process.stderr].map(async stream => await new Promise(written => stream.write("", written))));
+  process.exit(code);
+}
+
 /** A refusal: `{ error, message }` on stdout under `--json`, else `● <message>` on stderr; the command exits 1. */
 function refuse(io: MergeAssistCommandIo, json: boolean, code: string, message: string): number {
   if (json) (io.stdout ?? process.stdout).write(`${JSON.stringify({ error: code, message })}\n`);
@@ -439,7 +465,7 @@ export async function runMergeAssistCommand(args: readonly string[], usage: () =
   if (!mergeAssistExperimentEnabled()) return refuse(io, args.includes("--json"), "experimental-off", experimentOffMessage("MERGE_ASSIST"));
   const stdout = io.stdout ?? process.stdout;
   const { step, root, name, json } = invocation(args, usage);
-  const session = (io.openService ?? openDefaultService)();
+  const session = io.openService?.() ?? openDefaultService(io.github);
   let outcome: Outcome;
   try {
     outcome = await outcomeOf(session, step, root);
