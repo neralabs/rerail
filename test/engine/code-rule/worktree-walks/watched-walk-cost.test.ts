@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schema.js";
 import { nativeTreeWatch } from "../../../../src/engine/code-rule/tree-watch.js";
+import { RepositoryWorktreeWalks, WORKTREE_NOTICE_MS } from "../../../../src/engine/code-rule/worktree-walks.js";
 import { startEngineService } from "../../../../src/runtime/index.js";
 import { testEmbedder } from "../../../support/hook-events.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
@@ -85,7 +86,15 @@ describe("the engine service's walk of the other worktrees, with the engine's tr
       const opens = vi.spyOn(CodeRuleBridge.prototype, "openWorkspace");
       // A Windows engine service listens on a named pipe, elsewhere on a socket file.
       const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-watched-walk-${process.pid}` : join(root, "engine.sock");
-      const service = await startEngineService({ socketPath, storageRoot: join(root, "sessions"), databasePath, embedder: testEmbedder });
+      // The engine service's own walks (`engineWorktreeWalks`), with a gap between two walks of a session that lets a
+      // take of the notices (`WORKTREE_NOTICE_MS`) in between, instead of the 5 s that keeps a busy session's walks apart:
+      // the test runs 14 walks, and what it counts is which worktrees each reads, not how often walks may run.
+      const worktreeWalks = new RepositoryWorktreeWalks({ gapMs: 2 * WORKTREE_NOTICE_MS, treeWatch: nativeTreeWatch() });
+      const service = await startEngineService({ socketPath, storageRoot: join(root, "sessions"), databasePath, embedder: testEmbedder, worktreeWalks })
+        .catch((error: unknown) => {
+          worktreeWalks.close();
+          throw error;
+        });
       try {
         await service.ingest({ kind: "session-start", eventId: "s:start", session: { host: "claude-code", sessionId: "s", cwd: w0 } });
         await vi.waitFor(() => expect(opens.mock.results).toHaveLength(1), { timeout: 60_000, interval: 50 });
@@ -136,6 +145,7 @@ describe("the engine service's walk of the other worktrees, with the engine's tr
         expect(written.w2).toBeGreaterThan(0);
       } finally {
         await service.close();
+        worktreeWalks.close();
       }
     },
   );
