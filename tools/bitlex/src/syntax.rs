@@ -90,7 +90,9 @@ pub enum TokenRule {
     /// string with escapes. Its tokens are the opener's byte and the closer's bytes (this kind),
     /// each part `P` (`N` bytes from a bit of `E` in the region), and each run of the region's
     /// other bytes (`C`). The parts' kinds are tokens of their own (`Inside`, after this one).
-    ReadParts(Region, Parts),
+    /// `read K | L parts …`: regions of one `regions` that one reader reads alike, as Kotlin's
+    /// strings and raw strings are, at one byte; each closer its own region's length.
+    ReadParts(Vec<Region>, Parts),
     /// A token of a region read in parts (`ReadParts`): `last` its last-byte mask. The reader
     /// starts it, not the token loop: no first byte ends it by a rule.
     Inside(Expr),
@@ -129,56 +131,69 @@ impl Parts {
     /// ```
     /// With `closes`: the closers' last bytes, as one mask (`ReadArm::last`); `None`, every
     /// closer the region's length.
-    pub fn closer_last(&self, r: &Region) -> Option<Expr> {
-        if self.closes.is_empty() {
+    pub fn closer_last(&self, rs: &[Region]) -> Option<Expr> {
+        if self.closes.is_empty() && rs.iter().all(|r| r.bytes == rs[0].bytes) {
             return None;
         }
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
-        let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
-        let not = |a: Expr| Expr::Not(Box::new(a));
-        let prev = |e: Expr, k: u8| match k {
-            0 => e,
-            1 => Expr::Call("prev".into(), vec![Arg::E(e)]),
-            k => Expr::Call("prev".into(), vec![Arg::E(e), Arg::N(u64::from(k))]),
-        };
-        let f = Expr::Name(format!("f_{}", r.kind));
-        let closer = and(prev(f.clone(), 1), not(f));
-        let mut own = closer.clone();
+        let closer = Self::closer(rs);
         let mut last: Option<Expr> = None;
         for (_, e, n) in &self.closes {
             let c = prev(and(closer.clone(), e.clone()), n - 1);
-            last = Some(match last {
-                Some(x) => or(x, c),
-                None => c,
-            });
-            own = and(own, not(e.clone()));
+            last = Some(or_of(last, c));
         }
-        Some(or(last.expect("one or more"), prev(own, r.bytes - 1)))
+        for r in rs {
+            let own = self.own(r);
+            last = Some(or_of(last, prev(own, r.bytes - 1)));
+        }
+        last
     }
 
-    pub fn rows(&self, kind: &str, r: &Region, s: &Expr) -> Vec<Stmt> {
+    /// The regions' fill: `f_K`, or each's, `|`ed.
+    fn fill(rs: &[Region]) -> Expr {
+        rs.iter().fold(None, |a, r| Some(or_of(a, Expr::Name(format!("f_{}", r.kind))))).expect("a region")
+    }
+
+    /// The closers' first bytes: the byte after each fill.
+    fn closer(rs: &[Region]) -> Expr {
+        let f = Self::fill(rs);
+        Expr::And(Box::new(prev(f.clone(), 1)), Box::new(Expr::Not(Box::new(f))))
+    }
+
+    /// Region `r`'s closers that are the reader's own kind (no `closes` mask holds).
+    fn own(&self, r: &Region) -> Expr {
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        let mut own = Self::closer(std::slice::from_ref(r));
+        for (_, e, _) in &self.closes {
+            own = and(own, not(e.clone()));
+        }
+        own
+    }
+
+    /// The rows of each region (`rs`), in turn: each region's tokens are rows of their own, so
+    /// each row is in its region's mode (`row_modes`), as a reader of one region's are.
+    pub fn rows(&self, kind: &str, rs: &[Region], s: &Expr) -> Vec<Stmt> {
+        rs.iter().flat_map(|r| self.region_rows(kind, r, s)).collect()
+    }
+
+    fn region_rows(&self, kind: &str, r: &Region, s: &Expr) -> Vec<Stmt> {
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
         let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
         let not = |a: Expr| Expr::Not(Box::new(a));
-        let prev = |e: Expr, k: u8| match k {
-            0 => e,
-            1 => Expr::Call("prev".into(), vec![Arg::E(e)]),
-            k => Expr::Call("prev".into(), vec![Arg::E(e), Arg::N(u64::from(k))]),
-        };
         let next = |e: Expr| Expr::Call("next".into(), vec![Arg::E(e)]);
         let f = Expr::Name(format!("f_{}", r.kind));
         let body = and(f.clone(), not(s.clone()));
-        let closer = and(prev(f.clone(), 1), not(f));
+        let closer = Self::closer(std::slice::from_ref(r));
         let token = |kind: &str, start: Expr, last: Expr| Stmt::Token { kind: kind.to_owned(), start, through: None, last: Some(last.clone()), rule: Some(TokenRule::Inside(last)) };
         // The reader's own row is its token's, the opener; the closer is its kind's too, but
         // where a `closes` mask holds: that one's kind's, its bytes.
-        let mut own = closer.clone();
         let mut out = vec![];
         for (k, e, n) in &self.closes {
             let c = and(closer.clone(), e.clone());
             out.push(token(k, c.clone(), prev(c, n - 1)));
-            own = and(own, not(e.clone()));
         }
+        let own = self.own(r);
         out.insert(0, token(kind, own.clone(), prev(own, r.bytes - 1)));
         let mut covered: Option<Expr> = None;
         let mut cover = |c: Expr| {
@@ -209,6 +224,23 @@ impl Parts {
         };
         out.push(token(&self.content, and(x.clone(), not(prev(x.clone(), 1))), and(x.clone(), not(next(x)))));
         out
+    }
+}
+
+/// `prev(e, k)`, `e` itself at 0.
+fn prev(e: Expr, k: u8) -> Expr {
+    match k {
+        0 => e,
+        1 => Expr::Call("prev".into(), vec![Arg::E(e)]),
+        k => Expr::Call("prev".into(), vec![Arg::E(e), Arg::N(u64::from(k))]),
+    }
+}
+
+/// `a | e`, or `e` with no `a`.
+fn or_of(a: Option<Expr>, e: Expr) -> Expr {
+    match a {
+        Some(a) => Expr::Or(Box::new(a), Box::new(e)),
+        None => e,
     }
 }
 
@@ -1758,10 +1790,7 @@ impl P {
                         }
                     }
                     if self.eat_kw("parts") {
-                        let [r] = regions.as_slice() else {
-                            return self.err("one region read in parts");
-                        };
-                        if r.outside || r.empty.is_some() {
+                        if regions.iter().any(|r| r.outside || r.empty.is_some()) {
                             return self.err("a region read in parts with its closer its own, no `else`");
                         }
                         self.want_p("{")?;
@@ -1811,7 +1840,7 @@ impl P {
                                 let _ = self.eat_p(",");
                             }
                         }
-                        Some(TokenRule::ReadParts(r.clone(), Parts { parts, content, closes }))
+                        Some(TokenRule::ReadParts(regions, Parts { parts, content, closes }))
                     } else {
                         Some(TokenRule::Read(regions))
                     }
@@ -1822,8 +1851,20 @@ impl P {
                     last = Some(r.last(&start));
                 }
                 // A region read in parts: its other rows after it (`Parts::rows`).
-                if let Some(TokenRule::ReadParts(r, parts)) = &rule {
-                    self.after.extend(parts.rows(&kind, r, &start));
+                if let Some(TokenRule::ReadParts(rs, parts)) = &rule {
+                    // Several regions: the opener a row in each's mode too, at its own openers
+                    // (`start & o_K`), all of the one reader (`ReadParts`).
+                    if rs.len() > 1 {
+                        let at = |r: &Region| Expr::And(Box::new(start.clone()), Box::new(Expr::Name(format!("o_{}", r.kind))));
+                        for r in &rs[1..] {
+                            let s = at(r);
+                            self.after.push(Stmt::Token { kind: kind.clone(), start: s.clone(), through: None, last: Some(s), rule: rule.clone() });
+                        }
+                        self.after.extend(parts.rows(&kind, rs, &start));
+                        let s = at(&rs[0]);
+                        return Ok(Stmt::Token { kind, start: s.clone(), through: None, last: Some(s), rule });
+                    }
+                    self.after.extend(parts.rows(&kind, rs, &start));
                 }
                 Stmt::Token { kind, start, through, last, rule }
             }

@@ -780,10 +780,31 @@ impl Lowering {
                     match rule {
                         // A region read in parts: its reader's arm, and each part's start and
                         // bytes; the closer and the parts are rows of their own (`Inside`).
-                        Some(::bitlex::syntax::TokenRule::ReadParts(r, parts)) => {
-                            let (opener, closer) = (self.expr(&r.opener)?, self.expr(&r.closer)?);
-                            self.token_reads.insert(kind.clone(), vec![(opener, closer, r.bytes as i8 - 1, crate::records::ReadNone::Refuse)]);
-                            if let Some(l) = parts.closer_last(r) {
+                        Some(::bitlex::syntax::TokenRule::ReadParts(rs, parts)) => {
+                            // One region: its opener and closer. Several (`read K | L parts`):
+                            // one arm, at their openers taken (`o_K`), to each one's closer
+                            // outside the others' fills (a `"` in a raw string closes no
+                            // string), each closer's last by `closer_last`. The first closer
+                            // after the opener is its own region's: the bytes before it are
+                            // its fill's.
+                            let (opener, closer) = match rs.as_slice() {
+                                [r] => (self.expr(&r.opener)?, self.expr(&r.closer)?),
+                                _ => {
+                                    let name = |x: String| Expr::Name(x);
+                                    let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
+                                    let o = rs.iter().map(|r| name(format!("o_{}", r.kind))).reduce(or).expect("a region");
+                                    let c = rs
+                                        .iter()
+                                        .map(|r| {
+                                            rs.iter().filter(|q| q.kind != r.kind).fold(r.closer.clone(), |c, q| Expr::And(Box::new(c), Box::new(Expr::Not(Box::new(name(format!("f_{}", q.kind)))))))
+                                        })
+                                        .reduce(or)
+                                        .expect("a region");
+                                    (self.expr(&o)?, self.expr(&c)?)
+                                }
+                            };
+                            self.token_reads.insert(kind.clone(), vec![(opener, closer, rs[0].bytes as i8 - 1, crate::records::ReadNone::Refuse)]);
+                            if let Some(l) = parts.closer_last(rs) {
                                 let l = self.expr(&l)?;
                                 self.token_closer_last.insert(kind.clone(), l);
                             }
@@ -796,7 +817,8 @@ impl Lowering {
                                 });
                             }
                             self.token_parts.insert(kind.clone(), ps);
-                            let fill = self.expr(&Expr::Name(format!("f_{}", r.kind)))?;
+                            let fill = rs.iter().map(|r| Expr::Name(format!("f_{}", r.kind))).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a region");
+                            let fill = self.expr(&fill)?;
                             self.token_fills.insert(kind.clone(), fill);
                         }
                         Some(::bitlex::syntax::TokenRule::Inside(_)) => {}
@@ -2500,6 +2522,13 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             mask: None,
         });
     }
+    // `RERAIL_TIER2_SIZES` (`bitlex_tier2::lower`): each row's first bytes, and each mark's, on
+    // stderr, as what makes tier 2's tests.
+    if std::env::var_os("RERAIL_TIER2_SIZES").is_some() {
+        for (r, row) in rows.iter().enumerate() {
+            eprintln!("row {r} {}: {} first bytes", token_rows[r].0, row.first.iter().map(|w| w.count_ones()).sum::<u32>());
+        }
+    }
     // Two rows that can begin with one byte and can start at one byte: that byte sends the
     // file to tree-sitter, as the evaluator's "both start at byte" does. A pair whose starts
     // are apart, proved (`never`: `inside` and `~inside`, say), costs nothing.
@@ -2796,6 +2825,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     first[usize::from(b) / 64] &= !(1 << (b % 64));
                 }
             }
+        }
+        if std::env::var_os("RERAIL_TIER2_SIZES").is_some() {
+            eprintln!("mark {k} {kind}: on starts {on_starts}, word {:?}, {} first bytes", word.as_ref().map(|w| String::from_utf8_lossy(w).into_owned()), first.iter().map(|w| w.count_ones()).sum::<u32>());
         }
         let unless = low.unless.get(&k).cloned().unwrap_or_default();
         marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: None, unless, settle: None, ends: low.ends.contains(&k) });

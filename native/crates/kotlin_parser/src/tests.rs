@@ -311,6 +311,32 @@ fn enums_and_labels_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 21: raw strings.
+#[test]
+fn raw_strings_are_the_lean_parsers() {
+    same(&[
+        "val a = \"\"\"x\n  \"y\" $b \\n\"\"\"\nval d = \"\"\"\"\"\"\nval f = \"\"\"$\"\"\"\nval g = \"\"\"\n    a\"\"b\n\"\"\"\nval i = \"\"\"a\"\n\"\"\"\n",
+        "fun q() = \"\"\"\n    SELECT * FROM t WHERE a = $b\n\"\"\".trimIndent()\n",
+    ]);
+    // A string whose `"` starts a block (byte 64, 65, 128), the token before in the block
+    // before: the refill reads the block before its rows' words are final, and the opener of
+    // the two regions is read from the rows (the CPU's tier 1 waits on it).
+    let at = |q: usize, line: &str| format!("//{}\n{line}\n", "x".repeat(q - line.find('"').expect("a quote") - 3));
+    let lines = ["val v = \"c\"", "val v = \"\"\"c\"\"\"", "val v = \"${a}\"", "val v = \"c\" + \"d\""];
+    let texts: Vec<String> = [64, 65, 128].iter().flat_map(|&q| lines.iter().map(move |l| at(q, l))).collect();
+    same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
+}
+
+#[test]
+fn what_step_21_does_not_read_is_refused() {
+    refused(&[
+        "val h = \"\"\"\"a\"\"\"\n",
+        "val h = \"\"\"a\"\"\"\"\n",
+        "val h = \"\"\"${a}\"\"\"\n",
+        "val h = \"\"\"\\$a\"\"\"\n",
+    ]);
+}
+
 #[test]
 fn what_step_20_does_not_read_is_refused() {
     refused(&[
@@ -323,7 +349,6 @@ fn what_step_20_does_not_read_is_refused() {
         "val s = \"${\"x\"}\"\n",
         "val s = \"${ {x} }\"\n",
         "val s = \"${}\"\n",
-        "val s = \"\"\"raw\"\"\"\n",
         "val s = \"open\n",
         "/* /* nested */ */\npackage a\n",
         "/* open\n",
@@ -453,9 +478,32 @@ fn show() {
                             eprintln!("reader {:?}", rd);
                         }
                         let run = c.program.block_programs[0].run(text.as_bytes());
+                        let cpu = c.parser.tier1.extract(text.as_bytes());
+                        for (i, (x, y)) in run.positions.iter().zip(&cpu.positions).enumerate() {
+                            if x != y {
+                                eprintln!("positions {i}: interp {x:?}\n             cpu {y:?}");
+                            }
+                        }
+                        eprintln!("totals: interp {:?} cpu {:?}", run.totals, cpu.totals);
+                        {
+                            let b = &c.program.block_programs[0];
+                            for rd in r.readers.iter().filter(|rd| !rd.parts.is_empty()) {
+                                let a = &rd.arms[0];
+                                eprintln!("reader opener {} delay {} closer {} delay {}", a.opener, b.output_delays[usize::from(a.opener)], a.closer, b.output_delays[usize::from(a.closer)]);
+                            }
+                        }
+                        if run.codes != cpu.codes {
+                            eprintln!("codes: interp {:?}\n       cpu {:?}", run.codes, cpu.codes);
+                        }
                         for rd in r.readers.iter().filter(|rd| !rd.parts.is_empty()) {
-                            for o in rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last)).chain([rd.arms[0].closer]).chain(rd.arms[0].last) {
-                                eprintln!("output {o}: {:064b}", run.outputs[usize::from(o)].first().copied().unwrap_or(0).reverse_bits());
+                            for o in rd.parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last)).chain([rd.arms[0].opener, rd.arms[0].closer]).chain(rd.arms[0].last) {
+                                let (a, b) = (&run.outputs[usize::from(o)], cpu.outputs.get(usize::from(o)));
+                                for (i, x) in a.iter().enumerate() {
+                                    let y = b.and_then(|v| v.get(i)).copied();
+                                    if y != Some(*x) {
+                                        eprintln!("output {o} word {i}: interp {:064b}\n                       cpu {:?}", x.reverse_bits(), y.map(|y| format!("{:064b}", y.reverse_bits())));
+                                    }
+                                }
                             }
                         }
                     }
@@ -508,5 +556,27 @@ fn program_size() {
     }
     if let Ok(out) = std::env::var("RERAIL_KOTLIN_MACHINE") {
         std::fs::write(out, format!("{}", c.machine)).expect("the machine written");
+    }
+}
+
+/// Tier 1 alone: `RERAIL_KOTLIN_GRAMMAR`'s, the interpreter's records against the CPU's, over
+/// `RERAIL_KOTLIN_SHOW`'s files. A grammar's tokens with a small tree compile in seconds.
+#[test]
+#[ignore = "a tool: set RERAIL_KOTLIN_GRAMMAR and RERAIL_KOTLIN_SHOW"]
+fn tier1_records() {
+    let text = std::fs::read_to_string(std::env::var("RERAIL_KOTLIN_GRAMMAR").expect("set RERAIL_KOTLIN_GRAMMAR")).expect("the grammar file");
+    let c = crate::compile_text(&text).expect("the grammar compiles");
+    for p in std::env::var("RERAIL_KOTLIN_SHOW").expect("set RERAIL_KOTLIN_SHOW").split(':') {
+        let src = std::fs::read(p).expect("a file");
+        let run = c.program.block_programs[0].run(&src);
+        let cpu = c.parser.tier1.extract(&src);
+        let same = run.positions == cpu.positions && run.codes == cpu.codes && run.totals == cpu.totals;
+        eprintln!("== {p}: {}", if same { "the same" } else { "DIFFERS" });
+        if !same {
+            for (i, (x, y)) in run.positions.iter().zip(&cpu.positions).enumerate() {
+                eprintln!("positions {i}: interp {x:?}\n             cpu {y:?}");
+            }
+            eprintln!("totals: interp {:?} cpu {:?}", run.totals, cpu.totals);
+        }
     }
 }

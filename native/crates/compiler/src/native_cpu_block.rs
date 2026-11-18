@@ -3217,11 +3217,23 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // The parts by their lengths: at one byte, the shortest part's, as `read_parts`' `min`.
     let mut parts: Vec<crate::records::ReadPart> = reader.parts.clone();
     parts.sort_by_key(|p| (p.bytes, p.start));
+    let opener_limit = rd.limit(a.opener, limit);
     let limit = if std::iter::once(a.closer).chain(a.last).chain(parts.iter().flat_map(|p| std::iter::once(p.start).chain(p.last))).all(|o| rd.bytewise(o)) { None } else { limit };
     let (walk, join) = (f.create_block(), f.create_block());
     f.append_block_param(join, types::I64);
     f.append_block_param(join, types::I64);
     let firsts = first_bytes(r, k);
+    let none = f.create_block();
+    // An opener from the rows (not the bytes, as several regions' `o_K | o_L`): its word read
+    // only when final (`bound`), as the scans' words. A delayed output's newest word is not
+    // shifted yet (`delayed_store`), and its bit read there is 0: the token not the opener.
+    if !rd.bytewise(a.opener) {
+        let ready = f.create_block();
+        let q = f.ins().ushr_imm(s, 6);
+        let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, bound(c, opener_limit));
+        inside_or_past(f, inside, ready, opener_limit, none, &[]);
+        f.switch_to_block(ready);
+    }
     let opens = rd.bit_first(f, c, s, a.opener, Some(firsts), heads);
     let gate = if known {
         opens
@@ -3251,7 +3263,7 @@ fn read_in_parts(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // A token's code, as `records::pass` (`plain_code`).
     let code_at = |f: &mut FunctionBuilder<'_>, at: Value, len: Value| plain_code(f, t, (c.tables, c.mult, c.slots), c.bytes, at, len);
     // The region's tokens, one a turn: the cursor and the byte the next starts at.
-    let (tok, scan, look, hit, after, content, none) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
+    let (tok, scan, look, hit, after, content) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
     for _ in 0..2 {
         f.append_block_param(tok, types::I64);
     }
@@ -4085,6 +4097,19 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                         Some((kind, marks)) => f.ins().iconst(types::I64, i64::from(kind) | i64::from(marks) << crate::records::MARK_SHIFT),
                         None => tag,
                     };
+                    // An opener from the rows (several regions' `o_K | o_L`): its word read only
+                    // when final (`bound`), as the closer's. The refill reads a block whose
+                    // starts the bytes make before the rows' words there are final, and the
+                    // bit read there sent the opener to the reader's other rule.
+                    if !rd.bytewise(a.opener) {
+                        let ol = rd.limit(a.opener, limit);
+                        let ready = f.create_block();
+                        let q = f.ins().ushr_imm(s, 6);
+                        let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, bound(c, ol));
+                        let none = if r.skip.is_some() { s } else { f.ins().iadd_imm(s, -1) };
+                        inside_or_past(f, inside, ready, ol, ended, &[none.into(), untag.into(), nohits.into()]);
+                        f.switch_to_block(ready);
+                    }
                     let limit = rd.limit(a.closer, limit);
                     let (arm, not) = (f.create_block(), f.create_block());
                     let bit = rd.bit_first(f, c, s, a.opener, Some(firsts), heads);

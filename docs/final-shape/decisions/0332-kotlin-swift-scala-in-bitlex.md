@@ -521,6 +521,35 @@ operand reaches. It is open: either a label ends `simple_identifier`'s token at 
 
 Corpus: 311 the same, 180 refused, 0 differ.
 
+## Kotlin, step 21 (`21-raw-strings.bitlex`)
+
+A raw string is a region of `hidden`. It runs from `"""` to the last three quotes of the next
+run of three or more (`rstr = dq3 .. rclose bytes 3`). One reader at `"` reads it and a string
+(`read str | rstr parts`, compiler item 26).
+
+The lean lexer's scanner gives a raw string's content as follows:
+
+- a token ends after each run of quotes (it reads the run looking for `"""`), and before a
+  template;
+- the opener's two quotes after its first and the closer are in no leaf;
+- the quotes of a closing run past three are in no leaf either.
+
+Here the two opening quotes are a part (`'""'`), and a run of content that reaches quotes is a
+part to the run's last quote (`q_start`). The grammar takes both, and the closer, as implied
+tokens.
+
+Refused:
+
+- `${…}` in a raw string;
+- `\$` (a backslash escapes nothing in a raw string);
+- a closing run of four quotes or more;
+- an opening run of four or more, except the empty raw string's six. The closer would be
+  found inside the run.
+
+Corpus: 327 the same (step 20: 311), 164 refused, 0 differ. The top refusals are still a
+template whose code holds a quote, a brace, a comment or a line break (24); a block comment
+before a word with `a`, `e` or `w` (18); and the grammar at `.`, `(` and `constructor`.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
@@ -650,8 +679,49 @@ Corpus: 311 the same, 180 refused, 0 differ.
     byte read `d` bytes late. Every word it reads is now checked against the ready blocks.
 23. **A token mark's kinds exclude their hard keywords** (step 16). The compiled program now
     agrees with Bitlex's evaluator, which gives a keyword's token the keyword's kind.
+24. **The SAT solver picks its decisions from a heap** (step 21). Each decision scanned
+    every variable for the most active one, so a solve cost the variables times the
+    decisions. Step 21's compile spent over 10 minutes there; it now takes 140 s at a load of
+    68. Two more fixes:
+    - Activities now scale down past 1e100. The bump grew by 1.05 a conflict and reached
+      infinity after about 14,500 conflicts, against a budget of 100,000.
+    - `analyze` reuses one `seen` vector, where it allocated one a conflict.
+
+    The heap orders by activity, then by number, so a decision is the variable the scan chose.
+25. **Tier 2's size is checked on the program** (step 21). Places were `u16` from the first
+    word made, so the limit applied to the words before `merge_words` shares those alike.
+    Step 20 made 60,900 words there, against 23,000 in its program. The emitter now keeps
+    `u32` places (`Place`, and `Switch` for `ByteSwitch`), and refuses a program past `u16`
+    once it is laid out. `RERAIL_TIER2_SIZES` prints the sizes on stderr: the words before
+    and after sharing, by opcode and by rule, and each row's and each mark's first bytes.
+26. **One reader reads several regions in parts** (`read K | L parts`, step 21). Kotlin's
+    strings and raw strings both start at `"`, and a byte has one reader. The reader is one
+    arm: at the regions' openers taken (`o_K | o_L`), to each region's closer outside the
+    others' fills (a `"` in a raw string closes no string), and each closer's last byte by a
+    mask (`closer_last`). The runtimes are unchanged. The parts are
+    shared; each part's mask holds in its own region.
+
+    Each region's tokens are rows of their own (`Parts::region_rows`), the opener's too
+    (`start & o_K`). A region is a mode (`row_modes`), and a row in two regions is in neither.
+    Tier 2 then met the string's rows in every state: 69,000 words against 23,800.
+
+    The same happens with a second `regions` block. Its fill is a carry of its own, which the
+    hidden regions' proofs don't reach.
 
 Single-extra grammars compile as before: rr's tests and the compiler's targeted tests pass.
+
+27. **A reader's opener from the rows waits for its word to be final** (step 21). The two
+    regions' opener (`o_str | o_rstr`) and the raw string's closer (`rclose & ~f_str`) are not
+    made from the bytes alone. So the CPU's token loop runs in parts, one a block, each over
+    the final words (`ready`). Its refill still reads the next block's starts, which the bytes
+    make. A string whose `"` was the first start of a block was then dispatched while the
+    rows' word there was not final: the opener's bit read 0, and the CPU refused the file.
+    The interpreter read it. The corpus fell from 311 the same to 232 until this was fixed.
+
+    The opener's read in `rule_last`'s reader arm and in `read_in_parts` now waits as the
+    scans do (`bound`, `inside_or_past`), when the opener is not from the bytes. A single
+    region's opener is from the bytes, and its code is unchanged. The test
+    `raw_strings_are_the_lean_parsers` puts strings at those bytes.
 
 ## Found on the way
 
