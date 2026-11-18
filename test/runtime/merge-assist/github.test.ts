@@ -1,4 +1,4 @@
-import type { ChildProcess, spawn } from "node:child_process";
+import { execFileSync, type ChildProcess, type spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { chmodSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -314,6 +314,31 @@ describe("the stamp of gh's sign-in", () => {
       expect(await file()).toBe(loggedOut);
       rmSync(hosts);
       expect(await file()).toBe(none);
+    } finally {
+      removeFolderSync(folder);
+    }
+  });
+
+  it("stamps a hosts file it may not read apart from an absent one and the readable one, and moves back once it can", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "rerail-gh-config-"));
+    // The folder closed to this user: no rights on Linux, a deny entry on Windows, which the person's account obeys.
+    const user = WINDOWS ? execFileSync("whoami", { encoding: "utf8" }).trim() : "";
+    const close = (): void => { if (WINDOWS) execFileSync("icacls", [folder, "/deny", `${user}:(OI)(CI)F`], { stdio: "ignore" }); else chmodSync(folder, 0o000); };
+    const open = (): void => { if (WINDOWS) execFileSync("icacls", [folder, "/remove:d", user], { stdio: "ignore" }); else chmodSync(folder, 0o700); };
+    try {
+      const file = async (): Promise<string> => await ghSignInStamps({ GH_CONFIG_DIR: folder })().file;
+      const absent = await file();
+      writeFileSync(join(folder, "hosts.yml"), "github.com:\n    user: tbelanger\n");
+      const readable = await file();
+      close();
+      let unreadable: string;
+      try {
+        unreadable = await file();
+      } finally {
+        open();
+      }
+      expect(new Set([absent, readable, unreadable]).size).toBe(3);
+      expect(await file()).toBe(readable);
     } finally {
       removeFolderSync(folder);
     }
