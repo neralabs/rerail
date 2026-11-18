@@ -40,7 +40,8 @@ pub struct GitExit {
 }
 
 /// How a blocking run (`run_git`) ended: as `GitExit`, with what the child printed, and whether the run sent it
-/// `SIGTERM` for its time limit or for printing more than its output limit.
+/// `SIGTERM` for its time limit, for printing more than its output limit, or because its wait on the outputs failed
+/// (`error`, the errno).
 #[napi(object)]
 pub struct GitRun {
     pub status: Option<i32>,
@@ -49,12 +50,14 @@ pub struct GitRun {
     pub stderr: Buffer,
     pub timed_out: bool,
     pub past_max_buffer: bool,
+    pub error: Option<i32>,
 }
 
 /// Runs `program` as `start_git` starts it, with no input, and blocks until it has exited and both outputs have
-/// ended, as Node's `spawnSync` does. Once `timeout_ms` has passed, or once stdout and stderr hold more than
-/// `max_buffer` bytes together, it sends `SIGTERM`, closes both outputs, whatever process still holds them, and waits
-/// for the exit alone.
+/// ended, as Node's `spawnSync` does. Once `timeout_ms` has passed, once stdout and stderr hold more than
+/// `max_buffer` bytes together, or when the wait on them fails, it sends `SIGTERM`, closes both outputs, whatever
+/// process still holds them, and waits for the exit alone. It fails only before the child exists: a failure once the
+/// child has started is part of the run's answer, so the caller never starts the program again for it.
 #[napi]
 pub fn run_git(
     program: String,

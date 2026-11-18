@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
@@ -227,6 +227,11 @@ describe.runIf(LINUX)("Git started through the engine in the states where it and
     expect(throughEngine).toEqual(throughNode);
     expect(throughEngine).toEqual([["SIGABRT", "SIGABRT"], ["SIGIO", "SIGIO"]]);
   });
+
+  it("ends a blocking Git and says why when the engine's wait on its output fails, as spawnSync ends a run whose read fails", () => {
+    const throughEngine = blockingRunsThroughEngine("poll-fails", tmpdir());
+    expect(throughEngine).toMatchObject({ status: null, signal: "SIGTERM", error: { code: "EINVAL", errno: -constants.errno.EINVAL, message: "spawnSync /bin/sh EINVAL" } });
+  }, 30_000);
 });
 
 describe("Git started through Node, off Linux or without the engine", () => {

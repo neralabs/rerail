@@ -10,7 +10,7 @@ import { runGitSync, type GitRunLimits, type GitRunResult } from "../../../src/e
  * engine never returns blocks the thread that called it, which no test time limit can end, so the engine's side runs
  * where a bound can end it.
  */
-export type BlockingRunSet = "limits" | "time-limit-held" | "output-limit-held";
+export type BlockingRunSet = "limits" | "time-limit-held" | "output-limit-held" | "poll-fails";
 
 /** The fields of a blocking run's error that `spawnSync` sets. */
 function errorOf(run: { error?: Error }): unknown {
@@ -78,10 +78,21 @@ function timeLimitHeld(files: string): unknown {
   };
 }
 
+/**
+ * A run whose script lowers this process's open-file limit to 2, below the three descriptors the engine's wait polls
+ * (both outputs and the exit pipe), then prints and runs on for a second: each poll after that fails with EINVAL. Run
+ * it only in a process of its own.
+ */
+function pollFails(): unknown {
+  const script = 'prlimit --nofile=2: --pid "$PPID"; echo lowered; sleep 1; echo done';
+  return answered(runGitSync("/bin/sh", ["-c", script], process.env, { timeout: 3000 }));
+}
+
 /** What each set of runs answers in this process, `files` holding the files the scripts write. */
 export function blockingRuns(set: BlockingRunSet, files: string): unknown {
   if (set === "limits") return limits();
   if (set === "time-limit-held") return timeLimitHeld(files);
+  if (set === "poll-fails") return pollFails();
   return heldRun(join(files, "holder.pid"), "head -c 1001 /dev/zero; exec sleep 10", { maxBuffer: 1000 });
 }
 

@@ -15,6 +15,7 @@ import { EventEmitter } from "node:events";
 import { Socket } from "node:net";
 import { constants } from "node:os";
 import type { Readable, Writable } from "node:stream";
+import { getSystemErrorName } from "node:util";
 import { spawn, spawnSync } from "./child-process.js";
 
 /** A Git process as its readers use it: Node's child, or one the engine started. */
@@ -52,6 +53,8 @@ export interface EngineGitRun {
   stderr: Buffer;
   timedOut: boolean;
   pastMaxBuffer: boolean;
+  /** The errno of a wait on the outputs that failed, after which the run ended the child as at a limit. */
+  error?: number | null | undefined;
 }
 
 /** The engine's calls for it, as `native.ts` types them; absent in an engine older than this module. */
@@ -158,12 +161,22 @@ function answerOf(ran: EngineGitRun, executable: string, args: readonly string[]
   return { status, signal, stdout: ran.stdout.toString("utf8"), stderr: ran.stderr.toString("utf8"), ...(error === undefined ? {} : { error }) };
 }
 
-/** The error `spawnSync` gives a run its time limit or its output limit ended: `spawnSync <file> ETIMEDOUT` or `ENOBUFS`. */
+/**
+ * The error `spawnSync` gives a run its time limit, its output limit or a failed wait ended, as `spawnSync` gives one
+ * whose read fails: `spawnSync <file> ETIMEDOUT`, `ENOBUFS`, or the failure's code.
+ */
 function runError(ran: EngineGitRun, executable: string, args: readonly string[]): Error | undefined {
-  const code = ran.timedOut ? "ETIMEDOUT" : ran.pastMaxBuffer ? "ENOBUFS" : undefined;
-  if (code === undefined) return undefined;
-  const syscall = `spawnSync ${executable}`;
-  return Object.assign(new Error(`${syscall} ${code}`), { errno: -constants.errno[code], code, syscall, path: executable, spawnargs: [...args] });
+  const errno = runErrno(ran);
+  if (errno === undefined) return undefined;
+  const [code, syscall] = [getSystemErrorName(errno), `spawnSync ${executable}`];
+  return Object.assign(new Error(`${syscall} ${code}`), { errno, code, syscall, path: executable, spawnargs: [...args] });
+}
+
+/** What ended the run before its end, as libuv numbers an errno (negative), or undefined when nothing did. */
+function runErrno(ran: EngineGitRun): number | undefined {
+  if (ran.timedOut) return -constants.errno.ETIMEDOUT;
+  if (ran.pastMaxBuffer) return -constants.errno.ENOBUFS;
+  return typeof ran.error === "number" ? -ran.error : undefined;
 }
 
 /** `env` as Node hands it to a child: `NAME=value` for each variable that is set. */
