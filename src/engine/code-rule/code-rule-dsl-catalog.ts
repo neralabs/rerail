@@ -251,6 +251,11 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
     return this.#state.quarantined;
   }
 
+  /** Whether the rules were loaded from the source as it is now: the check `refresh` makes, without loading anything. */
+  current(): boolean {
+    return this.#source.signature() === this.#state.status.sourceSignature;
+  }
+
   refresh(): boolean {
     const sourceSignature = this.#source.signature();
     if (sourceSignature === this.#state.status.sourceSignature) return false;

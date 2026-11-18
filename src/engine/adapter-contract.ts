@@ -479,6 +479,17 @@ export interface EventAnswerFacts {
   readonly sessionNote?: SessionNoteRules;
 }
 
+/**
+ * What the runtime that took an event holds of its session once it has, from which the answer's facts are made
+ * without reading anything again: the checkout the session works in and, at a session's start, what its note says.
+ */
+export interface HeldSession {
+  /** The repository and checkout the session works in; null where Rerail records no checkout there. */
+  readonly checkout: { readonly repositoryKey: string; readonly checkoutPath: string } | null;
+  /** At a session's start, what its note says about its rules. */
+  readonly sessionNote?: SessionNoteRules;
+}
+
 export interface RerailEventLoop {
   ingest(event: AdapterEvent): Promise<readonly AdapterDelivery[]>;
   /** The {@link EventAnswerFacts} of the answers to the events ingested so far; absent where answers carry none. */

@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
@@ -11,6 +11,7 @@ import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../..
 import {
   chooseEngineSocketPath, ingestEngineEvent, ingestEngineEventAnswer, listenBesideHeldPipe, preparePrivateDirectory, startEngineService,
 } from "../../../src/runtime/engine-service.js";
+import type { HeldSession } from "../../../src/engine/index.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
@@ -354,14 +355,15 @@ describe("an engine pipe another process holds", () => {
 });
 
 describe("the answer to a hook's event", () => {
-  it("carries the event's deliveries when the facts beside them cannot be read, and the facts to a hook that asks once they can", async () => {
-    const root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : SOCKET_ROOT, "rerail-event-answer-"));
+  it("carries the event's deliveries when the facts beside them cannot be told, and what its runtime holds to a hook that asks once they can", async () => {
+    const root = await realpath(await mkdtemp(join(process.platform === "win32" ? tmpdir() : SOCKET_ROOT, "rerail-event-answer-")));
     const databasePath = join(root, "rerail.sqlite");
-    startTestRepository(root, databasePath);
+    const repositoryKey = startTestRepository(root, databasePath);
     const socketPath = process.platform === "win32"
       ? String.raw`\\.\pipe\rerail-event-answer-${process.pid}-${Date.now().toString(16)}`
       : join(root, "engine.sock");
     let readable = false;
+    const held: (HeldSession | undefined)[] = [];
     const service = await startEngineService({
       socketPath,
       storageRoot: join(root, "state"),
@@ -373,9 +375,10 @@ describe("the answer to a hook's event", () => {
         auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
         close: async () => undefined,
       }),
-      answerFacts: async () => {
-        if (!readable) throw new Error("the presentation read failed");
-        return { dashboard: null, sessionNote: { setUp: false } };
+      answerFacts: (_event, _deliveries, session) => {
+        held.push(session);
+        if (!readable) throw new Error("the daemon could not tell its dashboard");
+        return { dashboard: null, ...(session?.sessionNote === undefined ? {} : { sessionNote: session.sessionNote }) };
       },
     });
     const start = (sessionId: string) => ({ kind: "session-start", eventId: `${sessionId}:start`, session: { host: "claude-code", sessionId, cwd: root } } as const);
@@ -385,6 +388,9 @@ describe("the answer to a hook's event", () => {
       readable = true;
       await expect(ingestEngineEventAnswer({ socketPath }, start("read")))
         .resolves.toEqual({ eventId: "read:start", deliveries: [], dashboard: null, sessionNote: { setUp: false } });
+      // What the runtime that took each start holds of its session: its checkout, and a note for a repository not set up.
+      const session = { checkout: { repositoryKey, checkoutPath: root }, sessionNote: { setUp: false } };
+      expect(held).toEqual([session, session]);
     } finally {
       await service.close();
       await removeFolder(root);

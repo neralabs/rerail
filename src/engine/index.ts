@@ -13,6 +13,7 @@ export {
   type AdapterSample,
   type AdapterSession,
   type EventAnswerFacts,
+  type HeldSession,
   type RerailEventLoop,
   type RerailHost,
   RULE_MESSAGE_TYPE,

@@ -6,7 +6,7 @@ import { dirname, resolve as resolvePath } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { z } from "zod/v4";
-import type { AdapterDelivery, AdapterEvent, EventAnswerFacts } from "../engine/adapter-contract.js";
+import type { AdapterDelivery, AdapterEvent, EventAnswerFacts, HeldSession } from "../engine/adapter-contract.js";
 import { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
 import { forgetFreedOwnerLocks, holdOwnerLock, someOwnerLockFreed } from "../engine/audit/owner-lock.js";
 import {
@@ -226,37 +226,44 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
   /** How long a checkout's runtime stays open once no session uses it; {@link IDLE_RUNTIME_MS} by default. */
   idleRuntimeMs?: number;
   /**
-   * What the answer to `event` tells a hook that asks (`EVENT_ANSWER_HEADER`) beside `deliveries`: the daemon's, which
-   * holds the dashboard and the database the hook would otherwise ask over HTTP. Undefined where it cannot say; the
-   * hook then asks. A standalone service (tests, benchmarks) has none.
+   * What the answer to `event` tells a hook that asks (`EVENT_ANSWER_HEADER`) beside `deliveries`, from what the runtime
+   * that took the event holds of its session (`session`; undefined where none holds it): the daemon's, which adds its
+   * dashboard's origin. Undefined where it cannot say; the hook then asks over HTTP. A standalone service (tests,
+   * benchmarks) has none. Synchronous, from facts already held, so the answer waits for no read.
    */
-  answerFacts?: (event: AdapterEvent, deliveries: readonly AdapterDelivery[]) => Promise<EventAnswerFacts | undefined>;
+  answerFacts?: (event: AdapterEvent, deliveries: readonly AdapterDelivery[], session: HeldSession | undefined) => EventAnswerFacts | undefined;
 };
 
+/** How the facts of an answer are read from the runtime that took its event, in the session's lane right after it. */
+type AnswerFactsReader = (runtime: RerailRuntime, deliveries: readonly AdapterDelivery[]) => EventAnswerFacts | undefined;
+
 /**
- * The answer to `event`: its deliveries, with the facts of `answerFacts` only for a hook that says it reads them
- * (`EVENT_ANSWER_WITH_FACTS` or later), since an older hook refuses an answer that carries them.
+ * How the answer to `event` reads its facts, for a hook that says it reads them (`EVENT_ANSWER_WITH_FACTS` or later),
+ * since an older hook refuses an answer that carries them; undefined for another hook, or a service without them.
  */
-async function eventAnswer(
-  incoming: IncomingMessage, event: AdapterEvent, deliveries: readonly AdapterDelivery[], options: EngineServiceOptions,
-): Promise<RerailEventSuccessFrame> {
+function answerFactsReader(incoming: IncomingMessage, event: AdapterEvent, options: EngineServiceOptions): AnswerFactsReader | undefined {
   const version = Number(incoming.headers[EVENT_ANSWER_HEADER]);
-  const reads = Number.isInteger(version) && version >= EVENT_ANSWER_WITH_FACTS;
-  return { eventId: event.eventId, deliveries: [...deliveries], ...(reads ? await answerFacts(event, deliveries, options) : undefined) };
+  const { answerFacts } = options;
+  if (!Number.isInteger(version) || version < EVENT_ANSWER_WITH_FACTS || answerFacts === undefined) return undefined;
+  return (runtime, deliveries) => answerFacts(event, deliveries, runtime.heldSession(event));
 }
 
 /**
- * What `options.answerFacts` says of `event`, or nothing where it fails: a fact the daemon cannot read never costs the
- * event its answer, and the hook reads it after the answer as from a daemon older than these facts.
+ * What `read` says beside an event's deliveries, or nothing where it throws: a fact the daemon cannot tell never costs
+ * the event its answer, and the hook reads it after the answer as from a daemon older than these facts.
  */
-async function answerFacts(
-  event: AdapterEvent, deliveries: readonly AdapterDelivery[], options: EngineServiceOptions,
-): Promise<EventAnswerFacts | undefined> {
+function guardedFacts(read: () => EventAnswerFacts | undefined): EventAnswerFacts | undefined {
   try {
-    return await options.answerFacts?.(event, deliveries);
+    return read();
   } catch {
     return undefined;
   }
+}
+
+/** An event's deliveries, and the facts of its answer where its caller reads them. */
+interface RoutedEvent {
+  readonly deliveries: readonly AdapterDelivery[];
+  readonly facts: EventAnswerFacts | undefined;
 }
 
 /**
@@ -402,20 +409,22 @@ function resolveRuntimeRoute(
 }
 
 async function routeEngineEvent(
-  event: AdapterEvent,
-  configuration: EngineRuntimeConfiguration | undefined,
+  { event, configuration }: EngineRequest,
   options: EngineServiceOptions,
   state: EngineRoutingState,
-): Promise<readonly AdapterDelivery[]> {
+  readFacts?: AnswerFactsReader,
+): Promise<RoutedEvent> {
   const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
   const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(event, configuration, options, state);
   const lane = laneOf(runtimeKey, sessionId);
   keepRuntime(state, runtimeKey);
-  const execution = state.lanes.run(lane, () => {
+  const execution = state.lanes.run(lane, async () => {
     const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
     // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
     if (event.kind !== "session-end") noteSessionUse(state, sessionId, runtimeKey, (options.now ?? Date.now)());
-    return runtime.ingest(event);
+    const deliveries = await runtime.ingest(event);
+    // Read in the session's lane, so the facts are this event's and not those of the session's next one.
+    return { deliveries, facts: readFacts === undefined ? undefined : guardedFacts(() => readFacts(runtime, deliveries)) };
   });
   track(state, execution);
   try {
@@ -1090,9 +1099,9 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       return;
     }
     try {
-      const { event, configuration } = await readEngineRequest(incoming);
-      const deliveries = await engineService.ingest(event, configuration);
-      response.end(encodeRerailEventResult(await eventAnswer(incoming, event, deliveries, options)));
+      const request = await readEngineRequest(incoming);
+      const { deliveries, facts } = await routeEngineEvent(request, options, routing, answerFactsReader(incoming, request.event, options));
+      response.end(encodeRerailEventResult({ eventId: request.event.eventId, deliveries: [...deliveries], ...facts }));
     } catch (error) {
       response.writeHead(400).end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
     }
@@ -1103,7 +1112,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     get socketPath() {
       return socketPath;
     },
-    ingest: (event, configuration) => routeEngineEvent(event, configuration, options, routing),
+    ingest: async (event, configuration) => (await routeEngineEvent({ event, configuration }, options, routing)).deliveries,
     openRuntimes: () => routing.runtimes.size,
     closeIdleSessions: sweepIdleSessions,
     resumeSession: sessionId => resumeSuspended(routing, sessionId, options.now ?? Date.now),

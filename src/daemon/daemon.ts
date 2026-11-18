@@ -586,7 +586,7 @@ export class RerailDaemon {
         worktreeWalks,
         ...sharedMergeAssist,
         // Until the dashboard listens, a hook reads what it needs as it did before answers carried it.
-        answerFacts: async (event, deliveries) => daemon === undefined ? undefined : await eventAnswerFacts(stores, event, deliveries),
+        answerFacts: (event, deliveries, session) => daemon === undefined ? undefined : eventAnswerFacts(stores.dashboardOrigin(), event, deliveries, session),
         // On Windows any local user can create the default pipe first; the engine then listens on a random name.
         ...(options.kernelSocketPath === undefined
           ? { pipeFallback: () => fallbackPipe(kernelSocketPath) }
