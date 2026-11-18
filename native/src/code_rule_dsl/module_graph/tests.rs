@@ -872,7 +872,10 @@ fn a_source_whose_read_is_denied_keeps_the_summary_of_its_last_write() {
     drop(denied);
     for (text, modified) in [
         ("'use server';\nimport './b';\n\n", settled),
-        ("'use client';\nimport './b';\n", settled + Duration::from_secs(1)),
+        (
+            "'use client';\nimport './b';\n",
+            settled + Duration::from_secs(1),
+        ),
     ] {
         write(text, modified);
         let _denied = crate::git_workspace::ReadDenied::new(&source);

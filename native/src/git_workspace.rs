@@ -1214,7 +1214,10 @@ mod tests {
         let workspace = discover(&root).unwrap();
         {
             let _denied = ReadDenied::new(&path);
-            assert!(workspace.read_source("a.py", 9).is_err(), "the read is denied");
+            assert!(
+                workspace.read_source("a.py", 9).is_err(),
+                "the read is denied"
+            );
             assert!(
                 workspace.holds_blob_bytes("a.py", 9),
                 "an unchanged file this process may not read keeps the answer of its stat"

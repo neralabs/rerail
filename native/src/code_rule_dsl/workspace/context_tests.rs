@@ -4055,7 +4055,10 @@ fn a_warm_index_restores_a_clean_file_whose_read_is_denied() {
     first.close();
 
     let denied = git_workspace::ReadDenied::new(&root.join("api/a.py"));
-    assert!(std::fs::read(root.join("api/a.py")).is_err(), "the read is denied");
+    assert!(
+        std::fs::read(root.join("api/a.py")).is_err(),
+        "the read is denied"
+    );
     let mut second = storage_workspace(&root, directory.store());
     second.add_code_rule(&code_rule, None).unwrap();
     let indexed = index_workspace(&second);
