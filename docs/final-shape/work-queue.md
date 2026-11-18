@@ -2980,7 +2980,7 @@ always a refusal.
   callers (`last_program`, `set_last_program`, `set_under_way`) all pass the run's `memo_program`, so every mark
   moves together; a mark of the old key (v1) is read by no build and goes with the store's blobs.
 
-### Q142. (Q113 on investigate-bend-vs-datalog at 0098f4340) A device relation's block is leased outside the one block policy
+### Q142. (Q113 on investigate-bend-vs-datalog at 0098f4340) (done) A device relation's block is leased outside the one block policy
 
 Found 2026-11-17 (the roll-up of final-rerail-shape-phased-facts, 58f1627c3): `facts::rows`'s blocks for
 `Life::Device` (a relation alone in a block the device writes) are leased by `lease_block_for_join`, sized to the
@@ -2990,7 +2990,19 @@ relation and kept within the join's budget. Every other FACTS block goes through
 - **Keep**: a device relation's block sized to it (a 4-page minimum), and the join's budget bounding it.
 - **Done when**: the policy takes a need for an exact-size device block within a named budget, `lease_exact` goes
   through it, and no FACTS block is leased past the policy.
-- **Record**: —
+- **Record**: done (2026-11-18). `rerail_blocks::alloc::Need` names a size (`Size::Slab`, a slab's least or more;
+  `Size::Exact`, the need, at least `EXACT_MIN`, four pages) and the budget a device block is counted in
+  (`Budget::Metal`; `Budget::Join`, a device join's: bounded inside `within_budget`, a refusal running the join on
+  the CPU). The policy (`rerail_accel::blocks::policy`) leases `Device::Must` + exact + join as the join's buffers
+  are (`lease_block_for_join`, now `pub(crate)`: the policy's alone) and refuses a combination it has no lease for;
+  a host block of an exact need is its size. `facts::rows::lease_exact` asks the policy like every other FACTS
+  block. Tests: `an_exact_device_block_in_a_joins_budget_is_its_size` (accel) and the exact case of
+  `with_no_policy_a_block_is_anonymous_and_shaped_by_its_writes` (blocks); on the farm (M3) with rerail-facts'
+  rows tests (10), the device's relations in rerail-device-metal (`metal_join` 4, `setfix::device` 5) and the
+  metal slabs' recycling. Reviewer: every `Need` literal names the new fields (`..Need::SLAB` keeps each one's
+  meaning); a device relation keeps its 4-page minimum and the join's bound; no FACTS block is leased past
+  `alloc::block`. Found on the way: `preparation`'s two request-record tests called `run` with its pre-merge
+  arguments, which only rerail-logic's own test target builds; fixed, 9 of 9 preparation tests pass.
 
 ### Q143. (Q114 on investigate-bend-vs-datalog at 0098f4340) (done) A cold run's cross part hands nothing off in `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady`
 
