@@ -583,34 +583,7 @@ fn walk_steps_on() -> bool {
 
 /// A micro walk's words as text: what a profile names the walk by.
 fn describe_walk(tier: usize, words: &[u32]) -> String {
-    let mut out = format!("t{tier}:");
-    for &word in words {
-        let (op, mode, arg) = super::super::split(word);
-        let named = if mode == 1 { "n" } else { "" };
-        let part = match op {
-            0 => "fail".to_owned(),
-            1 => format!("kind={arg}"),
-            2 => format!("field={arg}"),
-            3 => format!("flags{mode}/{arg}"),
-            4 => format!("text{arg}"),
-            10 => format!("class={arg}"),
-            16 => format!("child{named}"),
-            17 => format!("next{named}"),
-            18 => "parent".to_owned(),
-            19 => format!("desc{named}"),
-            20 => format!("after{named}"),
-            21 => format!("save{arg}"),
-            22 => format!("load{arg}"),
-            32 => "capture".to_owned(),
-            48 => format!("fork@{arg}"),
-            49 => format!("jump@{arg}"),
-            64 => format!("emit{arg}"),
-            other => format!("op{other}/{arg}"),
-        };
-        out.push(' ');
-        out.push_str(&part);
-    }
-    out
+    format!("t{tier}: {}", super::super::compile_micro::describe(words))
 }
 
 #[repr(C)]

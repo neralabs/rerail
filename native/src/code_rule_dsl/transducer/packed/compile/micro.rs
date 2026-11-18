@@ -34,6 +34,36 @@ pub(in crate::code_rule_dsl) const STEPS: u32 = 1 << 16;
 /// over every node per word where that is more. A move's candidates are a file's nodes at most, so
 /// a walk with one move from the root takes about that; one with nested moves may take more and
 /// then fails (06 S7: a descent from a 25 K-node module took more than `STEPS`).
+/// A micro walk's words as the profile names them (`kind=1 save0 parent … capture emit1`): the device's walk table
+/// and the label census (`RERAIL_LABEL_CENSUS`) print the same, so their rows can be matched.
+pub fn describe(words: &[u32]) -> String {
+    let parts = words.iter().map(|&word| {
+        let (op, mode, arg) = split(word);
+        let named = if mode == 1 { "n" } else { "" };
+        match op {
+            0 => "fail".to_owned(),
+            1 => format!("kind={arg}"),
+            2 => format!("field={arg}"),
+            3 => format!("flags{mode}/{arg}"),
+            4 => format!("text{arg}"),
+            10 => format!("class={arg}"),
+            16 => format!("child{named}"),
+            17 => format!("next{named}"),
+            18 => "parent".to_owned(),
+            19 => format!("desc{named}"),
+            20 => format!("after{named}"),
+            21 => format!("save{arg}"),
+            22 => format!("load{arg}"),
+            32 => "capture".to_owned(),
+            48 => format!("fork@{arg}"),
+            49 => format!("jump@{arg}"),
+            64 => format!("emit{arg}"),
+            other => format!("op{other}/{arg}"),
+        }
+    });
+    parts.collect::<Vec<_>>().join(" ")
+}
+
 pub fn steps(nodes: usize, words: usize) -> u32 {
     u32::try_from(nodes.saturating_mul(words).saturating_mul(2)).unwrap_or(u32::MAX).max(STEPS)
 }

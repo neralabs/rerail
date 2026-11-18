@@ -245,7 +245,7 @@ fn matched(
             let _confirm = profile::span(|| "ast roots over the work limit, confirmed (W's matcher at each root)".into());
             let held_over: Vec<usize> = over.iter().map(|&t| held[t]).collect();
             let found_over: Vec<BTreeSet<u32>> = over.iter().map(|&t| found[t].clone()).collect();
-            let (found_rows, budget) = captured_rows(m, &held_over, &found_over, &at, tapes, atoms)?;
+            let (found_rows, budget, _) = captured_rows(m, &held_over, &found_over, &at, tapes, atoms)?;
             if budget > 0 {
                 profile::decision("ast captures over a file's visit budget (no rows)", || format!("{}: {budget} roots", m.rel));
             }
@@ -272,7 +272,13 @@ fn matched(
             // Captures, or a relaxed matcher's roots to confirm (decision 0107): W's matcher at each root.
             let _captures = profile::span(|| "ast captures and confirmations (W's matcher at each root)".into());
             let roots: usize = found.iter().map(BTreeSet::len).sum();
-            let (found_rows, limited) = captured_rows(m, &held, &found, &at, tapes, atoms)?;
+            let (found_rows, limited, cpu) = captured_rows(m, &held, &found, &at, tapes, atoms)?;
+            // What the host's confirmation costs each relation: its roots, the rows kept and the pool's CPU.
+            if crate::code_rule_dsl::prof::on() {
+                profile::decision("ast captures by W at each root: roots, rows, captures, CPU ms", || {
+                    format!("{}: {roots} roots, {} rows, {} captures, {:.1} ms", m.rel, found_rows.len(), m.captures.len(), cpu as f64 / 1e6)
+                });
+            }
             if limited > 0 {
                 profile::decision("ast captures over a file's visit budget (no rows)", || format!("{}: {limited} roots", m.rel));
             }
@@ -304,18 +310,19 @@ fn captured_rows(
     at: &[Option<&Projected>],
     tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
     atoms: &crate::content_store::atoms::Atoms,
-) -> StoreResult<(Vec<Vec<i64>>, usize)> {
+) -> StoreResult<(Vec<Vec<i64>>, usize, u128)> {
     use crate::code_rule_dsl::waves::findings::Capture;
     use rayon::prelude::*;
-    let per: Vec<StoreResult<(Vec<Vec<i64>>, usize)>> = held
+    let per: Vec<StoreResult<(Vec<Vec<i64>>, usize, u128)>> = held
         .par_iter()
         .zip(found.par_iter())
         .map(crate::code_rule_dsl::logic::profile::carried("ast captures (pool)", |(&i, roots): (&usize, &BTreeSet<u32>)| {
             let mut rows = Vec::new();
             let mut limited = 0;
             if roots.is_empty() {
-                return Ok((rows, limited));
+                return Ok((rows, limited, 0));
             }
+            let started = rerail_prof::thread_cpu();
             let p = at[i].expect("held");
             let tape = &tapes[i].1;
             // W's matcher reads the file's path (`filePath`, which a relaxed matcher leaves to it).
@@ -351,11 +358,13 @@ fn captured_rows(
                 }
                 rows.extend(product);
             }
-            Ok((rows, limited))
+            let cpu = (rerail_prof::thread_cpu() - started).as_nanos();
+            Ok((rows, limited, cpu))
         }))
         .collect();
     let per = per.into_iter().collect::<StoreResult<Vec<_>>>()?;
-    let limited = per.iter().map(|(_, l)| l).sum();
-    Ok((per.into_iter().flat_map(|(rows, _)| rows).collect(), limited))
+    let limited = per.iter().map(|(_, l, _)| l).sum();
+    let cpu = per.iter().map(|(_, _, cpu)| cpu).sum();
+    Ok((per.into_iter().flat_map(|(rows, _, _)| rows).collect(), limited, cpu))
 }
 
