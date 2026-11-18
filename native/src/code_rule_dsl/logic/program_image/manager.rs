@@ -27,7 +27,7 @@ use super::version::{Made, Version};
 use super::{RelId, RuleId};
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -1093,7 +1093,8 @@ pub struct Pipeline<'s> {
 /// The request record (`Version::asked`, decision 0174's `asked` rows) by rule id, carried through a pipeline's
 /// steps (decision 0331): a rule kept serves its readers; a rule a pass rewrote, its source's (`RuleRef::source`);
 /// a rule equal to rules the step removed (a repeat dropped, a rule made again alike), theirs too; any other rule
-/// its own relation, which `prune` keeps wherever the relation is needed. The record is by place among a relation's
+/// the readers the step's own record states for it, else its own relation, which `prune` keeps wherever the relation
+/// is needed. The record is by place among a relation's
 /// rules, which a pass that adds, drops or reorders rules shifts: the pipeline states it again at its end.
 #[derive(Clone, Debug)]
 struct AskedByRule {
@@ -1118,13 +1119,17 @@ impl AskedByRule {
         Some(AskedByRule { by, reqs: asked.into_keys().collect() })
     }
     fn step(&mut self, from: &Version, out: &Version, delta: &Delta) {
+        let (was, stated) = (from.asked(), out.asked());
+        // A request relation whose record the step dropped is no longer one (`prune`'s `revived`: its readers all
+        // went, and it is an input again, its rules kept): the record does not state it again. A step may drop it
+        // and change no rule.
+        self.reqs.retain(|req| !was.contains_key(req) || stated.contains_key(req));
         if delta.is_empty() {
             return;
         }
         let mut next = HashMap::new();
         // A pass that states the record itself (the merge renames readers) is taken at its word where its record
         // holds an entry a rule.
-        let (was, stated) = (from.asked(), out.asked());
         for req in &self.reqs {
             let Some(rel) = out.rel(req) else { continue };
             if let Some(by) = stated.get(req).filter(|by| was.get(req) != Some(*by) && by.len() == out.heads(rel).count()) {
@@ -1147,18 +1152,30 @@ impl AskedByRule {
             // The input's rules of this relation the step removed (in a derivation, those no output rule came from),
             // by content: a rule equal to one (a repeat dropped) serves its readers too.
             let sourced: std::collections::HashSet<RuleId> = if delta.rebuilt { out.heads(rel).filter_map(|r| r.source()).collect() } else { Default::default() };
-            let mut gone: HashMap<u64, BTreeSet<String>> = HashMap::new();
+            let mut gone: HashMap<u64, Vec<BTreeSet<String>>> = HashMap::new();
             if let Some(old) = from.rel(req) {
                 for r in from.heads(old).filter(|r| if delta.rebuilt { !sourced.contains(&r.id()) } else { delta.removed.has(r.id()) }) {
                     if let Some(b) = self.by.get(&r.id()) {
-                        gone.entry(r.hash()).or_default().extend(b.iter().cloned());
+                        gone.entry(r.hash()).or_default().push(b.clone());
                     }
                 }
             }
-            // Where the carry knows nothing of a rule, a record the output states whole is its word for that place
-            // (a pass that rebuilt rules with no source, as `hide` does, and left the record as it was).
-            let whole = stated.get(req).filter(|by| by.len() == out.heads(rel).count());
-            for (place, r) in out.heads(rel).enumerate() {
+            // As many rules made alike without a source's readers as were removed: each takes one's readers, in order
+            // (a rule made again, as the tree keeps each its entry); otherwise each takes them all (repeats dropped
+            // into one).
+            let mut alike: HashMap<u64, usize> = HashMap::new();
+            for r in out.heads(rel) {
+                let added = delta.rebuilt || delta.added.contains(&r.id());
+                let at = if added { r.source() } else { Some(r.id()) };
+                if at.and_then(|id| self.by.get(&id)).is_none_or(|b| b.is_empty()) {
+                    *alike.entry(r.hash()).or_default() += 1;
+                }
+            }
+            let mut seen: HashMap<u64, usize> = HashMap::new();
+            // What the step states of this relation, an entry a rule: where the carry knows nothing of a rule (made
+            // from a rule that served no reader, as a request from its reader), the step's own word for it.
+            let said = stated.get(req).filter(|by| by.len() == out.heads(rel).count());
+            for (k, r) in out.heads(rel).enumerate() {
                 let mut readers = BTreeSet::new();
                 // A rule the step kept keeps its readers; one it made, its source's (an id of this step's input: a
                 // kept rule's own `source` names an earlier derivation's).
@@ -1167,12 +1184,20 @@ impl AskedByRule {
                 if let Some(b) = at.and_then(|id| self.by.get(&id)) {
                     readers.extend(b.iter().cloned());
                 }
-                if let Some(b) = gone.get(&r.hash()) {
-                    readers.extend(b.iter().cloned());
+                // A rule made again without a source (or from one that served no reader) takes the readers of a
+                // removed rule alike; one whose source serves readers is that source's, not its look-alike's.
+                if let Some(b) = gone.get(&r.hash()).filter(|_| readers.is_empty()) {
+                    let j = seen.entry(r.hash()).or_default();
+                    if b.len() == alike[&r.hash()] {
+                        readers.extend(b[*j].iter().cloned());
+                    } else {
+                        readers.extend(b.iter().flatten().cloned());
+                    }
+                    *j += 1;
                 }
                 if readers.is_empty() {
-                    match whole {
-                        Some(by) => readers.extend(by[place].iter().cloned()),
+                    match said {
+                        Some(by) => readers.extend(by[k].iter().cloned()),
                         None => {
                             readers.insert(req.clone());
                         }
@@ -1267,7 +1292,12 @@ impl<'s> Pipeline<'s> {
     /// image. A step that runs stores its output under its key. A pass that is skipped so has not run: what it
     /// returns in itself, beside its output and decisions, is not there (`ran`).
     pub fn keyed(name: &'static str, v: Arc<Version>, steps: &'s dyn Steps) -> Pipeline<'s> {
-        let chain = chain_start(name, &v);
+        let id = identity(&v);
+        Pipeline::keyed_by(name, v, id, steps)
+    }
+    /// `keyed`, with the input's `identity` given: a caller keying many pipelines over one input reads its rules once.
+    pub fn keyed_by(name: &'static str, v: Arc<Version>, identity: [u8; 32], steps: &'s dyn Steps) -> Pipeline<'s> {
+        let chain = chain_next(&identity, &[b"pipeline", name.as_bytes(), crate::code_rule_dsl::build_ids::engine().as_bytes()]);
         Pipeline { keyed: Some(Keyed { steps, chain, pending: None }), ..Pipeline::new(name, v) }
     }
     /// Adds a part to the key of each later step (a keyed pipeline's, 0281 §6): a value the passes read that is not in
@@ -1555,6 +1585,30 @@ impl<'s> Pipeline<'s> {
             k.plan = plan;
             k.said = said;
         }
+    }
+
+    /// A step whose output `make` writes from the input by a writer of its own, not through `ProgramW` (a stratum's
+    /// general form, decision 0298): keyed and stored as any step, its decisions those `make` returns. Its output is
+    /// not an edit of its input, so no analysis is carried to it and no delta is compared.
+    pub fn made(&mut self, pass: &'static str, version: u32, settings: &[u8], make: impl FnOnce(&Arc<Version>) -> Result<(Arc<Version>, Vec<Decided>)>) -> &mut Self {
+        if self.failed.is_some() {
+            return self;
+        }
+        let _span = crate::code_rule_dsl::logic::profile::span(|| format!("pass {}: {pass}", self.name));
+        let r = match self.stored(pass, version, settings) {
+            Ok(Some(key)) => self.load().and_then(|()| {
+                self.keep_step(key, pass, version, |p| {
+                    let (out, decided) = make(&p.v)?;
+                    p.decided.borrow_mut().extend(decided);
+                    p.stages.push(Stage { pass, ran: Ran::Whole, form: Form::Derived, visited: 0, input: (p.v.size(), p.v.digest()), output: (out.size(), out.digest()), delta: out.size(), touched: Reads::ALL });
+                    p.v = out;
+                    Ok(())
+                })
+            }),
+            Ok(None) => Ok(()),
+            Err(e) => Err(e),
+        };
+        self.fail(pass, r)
     }
 
     /// A keyed pipeline's next step (0281 §6): its key, chained; `Ok(None)` when the store holds it (the step is
@@ -1906,6 +1960,10 @@ pub fn rebase(last: &Arc<Version>, new: &Arc<Version>) -> Result<Option<Arc<Vers
     }
     let lists = crate::code_rule_dsl::logic::front::Lists::default();
     let (was, header) = (last.header(&lists)?, new.header(&lists)?);
+    // The rebased rules' order: `last`'s kept, then `new`'s others, each by its head and hash.
+    let gone: HashSet<_> = removed.iter().copied().collect();
+    let order: Vec<(&str, u64)> = last.rules().filter(|r| !gone.contains(&r.id())).map(|r| (last.rel_name(r.head().rel()), r.hash())).chain(added.iter().map(|r| (new.rel_name(r.head().rel()), r.hash()))).collect();
+    let asked = rebased_record(new, &order);
     let mut b = Builder::on(last);
     for id in removed {
         b.remove(id);
@@ -1914,6 +1972,9 @@ pub fn rebase(last: &Arc<Version>, new: &Arc<Version>) -> Result<Option<Arc<Vers
         b.copy(new, r);
     }
     b.set_header(&was, &header);
+    if let Some(asked) = asked {
+        b.set_asked(&asked);
+    }
     b.finish_overlay().map(Some)
 }
 
@@ -1962,6 +2023,34 @@ pub fn rebase_output(last: &Arc<Version>, new: &Arc<Version>) -> Result<Option<A
     b.finish_overlay().map(Some)
 }
 
+/// `new`'s request record restated over the rebased rules (`rebase`), `order` their heads and hashes: the record
+/// names each request rule's readers by its place among its relation's rules (decision 0331), and the rebased version
+/// holds `last`'s rules in `last`'s order and `new`'s others after them. Taken by place from `new`, the readers of a
+/// request relation whose rules lie in another order sat on other rules (`rr_value_req`'s `__all__` rule serving
+/// `plain_str`), which `same_program` refused; a run found its last run only when the store had written it. `None`
+/// where `new` has no record.
+fn rebased_record(new: &Version, order: &[(&str, u64)]) -> Option<super::about::Asked> {
+    let asked = new.asked();
+    if asked.is_empty() {
+        return None;
+    }
+    // Each request rule's readers by its head and hash, in `new`'s order (a rule held twice, its places in turn).
+    let mut by_rule: HashMap<(&str, u64), std::collections::VecDeque<&BTreeSet<String>>> = HashMap::new();
+    for (req, by) in &asked {
+        for (r, readers) in new.rel(req).into_iter().flat_map(|rel| new.heads(rel)).zip(by) {
+            by_rule.entry((req.as_str(), r.hash())).or_default().push_back(readers);
+        }
+    }
+    let mut out = super::about::Asked::new();
+    for &(head, hash) in order {
+        if asked.contains_key(head) {
+            let readers = by_rule.get_mut(&(head, hash)).and_then(|q| q.pop_front()).cloned().unwrap_or_default();
+            out.entry(head.to_owned()).or_default().push(readers);
+        }
+    }
+    Some(out)
+}
+
 /// A version's identity for a key: its digest (a sum, blind to the rules' order), its size, and its rules' hashes in
 /// order, so a reordering (`RuleOrder`) is a different input.
 pub fn identity(v: &Version) -> [u8; 32] {
@@ -1974,10 +2063,6 @@ pub fn identity(v: &Version) -> [u8; 32] {
         h.update(r.hash().to_le_bytes());
     }
     h.finalize().into()
-}
-
-fn chain_start(name: &str, v: &Version) -> StepKey {
-    chain_next(&identity(v), &[b"pipeline", name.as_bytes(), crate::code_rule_dsl::build_ids::engine().as_bytes()])
 }
 
 /// The chain `prev` extended by `parts`, each length-prefixed.

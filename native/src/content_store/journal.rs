@@ -26,7 +26,7 @@ pub enum Since<C = String> {
     Changed { paths: Vec<PathBuf>, cursor: C },
     /// The journal cannot say: everything may have changed. Next time, ask from `cursor`.
     Lost { cursor: Option<C>, why: &'static str },
-    /// The journal's history did not hold a change made just before the question (its marker, decision 0399): what
+    /// The journal's history did not hold a change made just before the question (its marker, decision 0400): what
     /// it would name may not be all that changed before it (t46), so the caller checks the roots another way. Every
     /// change after `cursor` comes to a question asked from it.
     Behind { cursor: C },
@@ -318,7 +318,7 @@ mod fsevents {
         /// When the history replay ended, and when the last cookie came: for `RERAIL_JOURNAL_TRACE` only.
         history_at: Option<Instant>,
         cookie_at: Option<Instant>,
-        /// Whether the marker written before the stream started came in its history (decision 0399): fseventsd had
+        /// Whether the marker written before the stream started came in its history (decision 0400): fseventsd had
         /// logged every change made before it, so the replay holds them.
         marker_in_history: bool,
     }
@@ -676,7 +676,7 @@ mod tests {
     /// what it tests, not the fallback.
     const SETTLE: Duration = Duration::from_secs(5);
 
-    /// Decision 0399 R8: a replay to a new stream answers `Changed` only with its marker in its history. A change made
+    /// Decision 0400 R8: a replay to a new stream answers `Changed` only with its marker in its history. A change made
     /// half a second before the stream starts (t46: missed by 6 of 10 replays that took the cookie as proof) is
     /// named, or the answer is `Behind`; never a `Changed` without it.
     #[test]

@@ -218,6 +218,7 @@ pub fn first_bits(ops: &[BlockOp], tables: &[ClassTable], v: u16) -> Option<u32>
                 Bounds { zero_from: None, ones: all.then_some((0, None)), zero_past: (!t.member(0, bits)).then_some(0) }
             }
             BlockOp::Within(d) => Bounds { zero_from: None, ones: Some((u32::from(d), Some(u32::from(d)))), zero_past: Some(u32::from(d)) },
+            BlockOp::Prefix(n, _) => Bounds { zero_from: Some(u32::from(n)), ones: None, zero_past: Some(0) },
             BlockOp::And(a, c) => {
                 let (x, y) = (get(a), get(c));
                 let ones = match (x.ones, y.ones) {
@@ -299,8 +300,10 @@ pub struct Lowering {
     pub pending_counts: Vec<(String, Val, Val, u32)>,
     /// The escapes and errors `A & L` whose `L` is local, a few byte tests at fixed offsets
     /// (`local_ops`): a tree's whose `A` lies in one row's tokens are tier 2's (`CHECK`,
-    /// `tree_section`), the rest joined to the fallback after it.
-    pub pending_checks: Vec<(Val, Val)>,
+    /// `tree_section`), the rest joined to the fallback after it. With `true`, the error is
+    /// `A & ~L` (decision 0399): the check's last op is `L`'s `not`, which a check of `A`'s
+    /// bytes takes as it is, with no cut to the stream.
+    pub pending_checks: Vec<(Val, Val, bool)>,
     /// Each number's planes, bit 0 first (`NUMBER_BITS`).
     pub numbers: HashMap<String, Vec<Val>>,
     pub tokens: Vec<(String, Val, Option<TokenEnd>)>,
@@ -504,8 +507,8 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         tier2 = Some(tree_section(symbols, &mut low, &token_rows)?);
     }
     // The checks left: the fallback's.
-    for (a, l) in std::mem::take(&mut low.pending_checks) {
-        let x = low.and(a, l)?;
+    for (a, l, not) in std::mem::take(&mut low.pending_checks) {
+        let x = if not { low.andnot(a, l)? } else { low.and(a, l)? };
         low.fallbacks.push(x);
     }
     // The counts left: tier 1's, as bit-planes.
@@ -747,14 +750,28 @@ impl Lowering {
                 }
                 // Both send the file to tree-sitter.
                 Stmt::Error(_, expr) | Stmt::Escape(_, expr) => {
-                    if let Expr::And(a, b) = expr {
+                    // Worth a check of its own only where `L` is more than a test or two.
+                    let local = |low: &Self, x: Val| low.local_ops(x).is_some_and(|ops| ops.len() >= 8);
+                    // `A & ~L`: `L`'s own ops, then its `not` (decision 0399). The `~` as a mask
+                    // is cut to the stream (`within`), which a check at `A`'s bytes needs not.
+                    let negated = match expr {
+                        Expr::And(a, b) => match &**b {
+                            Expr::Not(l) => Some((a, l)),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let Some((a, l)) = negated
+                        && let (av, lv) = (self.expr(a)?, self.expr(l)?)
+                        && self.local_ops_in_stream(lv).is_some_and(|ops| ops.len() + 1 >= 8)
+                    {
+                        self.pending_checks.push((av, lv, true));
+                    } else if let Expr::And(a, b) = expr {
                         let (a, b) = (self.expr(a)?, self.expr(b)?);
-                        // Worth a check of its own only where `L` is more than a test or two.
-                        let local = |low: &Self, x: Val| low.local_ops(x).is_some_and(|ops| ops.len() >= 8);
                         if local(self, b) {
-                            self.pending_checks.push((a, b));
+                            self.pending_checks.push((a, b, false));
                         } else if local(self, a) {
-                            self.pending_checks.push((b, a));
+                            self.pending_checks.push((b, a, false));
                         } else {
                             let value = self.and(a, b)?;
                             self.fallbacks.push(value);
@@ -787,7 +804,7 @@ impl Lowering {
                             // after the opener is its own region's: the bytes before it are
                             // its fill's.
                             let (opener, closer) = match rs.as_slice() {
-                                [r] => (self.expr(&r.opener)?, self.expr(&r.closer)?),
+                                [r] => (self.expr(&r.opener)?, self.expr(&r.closers())?),
                                 _ => {
                                     let name = |x: String| Expr::Name(x);
                                     let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
@@ -795,7 +812,7 @@ impl Lowering {
                                     let c = rs
                                         .iter()
                                         .map(|r| {
-                                            rs.iter().filter(|q| q.kind != r.kind).fold(r.closer.clone(), |c, q| Expr::And(Box::new(c), Box::new(Expr::Not(Box::new(name(format!("f_{}", q.kind)))))))
+                                            rs.iter().filter(|q| q.kind != r.kind).fold(r.closers(), |c, q| Expr::And(Box::new(c), Box::new(Expr::Not(Box::new(name(format!("f_{}", q.kind)))))))
                                         })
                                         .reduce(or)
                                         .expect("a region");
@@ -824,6 +841,9 @@ impl Lowering {
                         Some(::bitlex::syntax::TokenRule::Read(regions)) => {
                             let mut arms = Vec::new();
                             for r in regions {
+                                if r.or.is_some() {
+                                    return Err(format!("token {kind}: a `read` of region {} with a second closer: read it in parts", r.kind));
+                                }
                                 let (opener, closer) = (self.expr(&r.opener)?, self.expr(&r.closer)?);
                                 let off = if r.outside { -1 } else { r.bytes as i8 - 1 };
                                 let none = match (&r.empty, r.outside) {
@@ -1014,11 +1034,16 @@ impl Lowering {
     /// `back_fill` at `D - 1`: the same bits, a byte on.
     pub fn regions(&mut self, regions: &::bitlex::syntax::Regions) -> Result<(), String> {
         let mut inputs = Vec::new();
+        let mut seconds = Vec::new();
         for r in &regions.kinds {
             inputs.push((self.expr(&r.opener)?, self.expr(&r.closer)?));
+            seconds.push(match &r.or {
+                Some((c2, m)) => Some((self.expr(c2)?, *m)),
+                None => None,
+            });
         }
         let later = regions.kinds.iter().any(|r| r.empty.is_some());
-        let d = inputs.iter().flat_map(|(o, c)| [o.d, c.d]).max().unwrap_or(0) + u8::from(later);
+        let d = inputs.iter().flat_map(|(o, c)| [o.d, c.d]).chain(seconds.iter().flatten().map(|(c, _)| c.d)).max().unwrap_or(0) + u8::from(later);
         let zero = self.op(BlockOp::Const(0));
         let w = self.within(d)?;
         let clean = |me: &mut Self, x: Val, d: u8| -> Result<u16, String> {
@@ -1032,7 +1057,7 @@ impl Lowering {
         // byte is `prev(t)`, the opener `q & ~prev(t)`, and the fill
         // `open | (prev(t) & ~q) = q ^ prev(t) = t`.
         if let ([r], [(o, c)]) = (regions.kinds.as_slice(), inputs.as_slice()) {
-            if r.empty.is_none() && !r.outside && r.bytes == 1 && (o.v, o.d) == (c.v, c.d) {
+            if r.empty.is_none() && r.or.is_none() && !r.outside && r.bytes == 1 && (o.v, o.d) == (c.v, c.d) {
                 let q = Val { v: clean(self, *o, d)?, d, dirty: false, set: None };
                 let fill = self.carried(q, BlockOp::Toggle);
                 let hidden = self.op(BlockOp::Prev(fill.v, 1));
@@ -1045,10 +1070,17 @@ impl Lowering {
                 return Ok(());
             }
         }
+        // Each kind's opener and closer at `D`; with `or C2`, the closer `C | C2` and `C2`.
         let mut ins = Vec::new();
-        for &(o, c) in &inputs {
+        for (&(o, c), second) in inputs.iter().zip(&seconds) {
             let later = if later { Some(clean(self, c, d - 1)?) } else { None };
-            ins.push((clean(self, o, d)?, clean(self, c, d)?, later));
+            let (mut closer, mut or) = (clean(self, c, d)?, None);
+            if let Some((c2, m)) = *second {
+                let c2 = clean(self, c2, d)?;
+                closer = self.op(BlockOp::Or(closer, c2));
+                or = Some((c2, m));
+            }
+            ins.push((clean(self, o, d)?, closer, later, or));
         }
         let hidden = self.program.ops.len() as u16;
         self.program.ops.push(BlockOp::Carry(zero));
@@ -1060,14 +1092,41 @@ impl Lowering {
         let named = |me: &mut Self, name: String, v: u16| {
             me.names.insert(name, Val { v, d, dirty: true, set: None });
         };
-        for (r, &(opener, closer, c_before)) in regions.kinds.iter().zip(&ins) {
+        // In the walk's order, which is the regions' (`after` kinds last, verified): a kind with
+        // `after` reads the plain kinds' openers taken. Where two kinds open a byte the walk opens
+        // the first listed of those that may open there, so each kind's opener excludes the
+        // earlier kinds' taken (an `after` kind's with its condition: e3927f1d7, 0332 step 35).
+        let mut opens: Vec<u16> = Vec::with_capacity(regions.kinds.len());
+        for (at, (r, &(opener, closer, c_before, or))) in regions.kinds.iter().zip(&ins).enumerate() {
             let mut taken = self.op(BlockOp::And(opener, code));
+            let mut after = 0u16;
+            if !r.after.is_empty() {
+                // Taken where the last plain kind's opener taken before is one `after` names.
+                let mut named = None;
+                let mut others = None;
+                for (k, q) in regions.kinds[..at].iter().enumerate().filter(|(_, q)| q.after.is_empty()) {
+                    let o = opens[k];
+                    let side = if r.after.contains(&q.kind) {
+                        after |= 1 << k;
+                        &mut named
+                    } else {
+                        &mut others
+                    };
+                    *side = Some(match *side {
+                        Some(x) => self.op(BlockOp::Or(x, o)),
+                        None => o,
+                    });
+                }
+                let last = self.op(BlockOp::Fill(named.expect("verified: a kind named"), others.unwrap_or(zero)));
+                let before = self.op(BlockOp::Prev(last, 1));
+                taken = self.op(BlockOp::And(taken, before));
+            }
             if let Some(e) = earlier {
                 taken = self.op(BlockOp::AndNot(taken, e));
             }
             earlier = Some(match earlier {
-                Some(e) => self.op(BlockOp::Or(e, opener)),
-                None => opener,
+                Some(e) => self.op(BlockOp::Or(e, taken)),
+                None => taken,
             });
             let (open, empty) = match &r.empty {
                 Some((e, m)) => {
@@ -1082,10 +1141,23 @@ impl Lowering {
                 }
                 None => (taken, None),
             };
+            opens.push(open);
             let fill = self.op(BlockOp::Fill(open, closer));
             if r.outside {
                 let p = self.op(BlockOp::Prev(fill, 1));
                 hide.push(self.op(BlockOp::AndNot(p, closer)));
+            } else if let Some((c2, m)) = or {
+                // From the closer's first byte (`c`): `N - 1` bytes more, `M - 1` at a `C2`.
+                let p = self.op(BlockOp::Prev(fill, 1));
+                hide.push(p);
+                let c = self.op(BlockOp::AndNot(p, fill));
+                let (one, two) = (self.op(BlockOp::AndNot(c, c2)), self.op(BlockOp::And(c, c2)));
+                for k in 1..r.bytes {
+                    hide.push(self.op(BlockOp::Prev(one, k)));
+                }
+                for k in 1..m {
+                    hide.push(self.op(BlockOp::Prev(two, k)));
+                }
             } else {
                 for k in 1..=r.bytes {
                     hide.push(self.op(BlockOp::Prev(fill, k)));
@@ -1099,7 +1171,7 @@ impl Lowering {
             let before = self.prev(f, 1)?;
             let flips = self.xor(f, before)?;
             self.toggles.push((f, flips));
-            kinds.push(crate::block::WalkKind { opener, closer, open, fill, bytes: r.bytes, outside: r.outside, empty });
+            kinds.push(crate::block::WalkKind { opener, closer, open, fill, bytes: r.bytes, outside: r.outside, empty, or, after });
         }
         let mut next = *hide.first().ok_or("regions that hide nothing")?;
         for &h in &hide[1..] {
@@ -1288,36 +1360,18 @@ impl Lowering {
         }
     }
 
-    /// A prefix's value (`Stmt::Prefix`): at the file's first byte where its bytes follow, and
-    /// at the bytes after it that it covers. Made before the prefix is set, from the file's own
-    /// `within`. Its `n` bytes are a test at delay `n - 1` (at least 1), brought to delay 0 by
-    /// one `early` over the whole of it: every value that reads the prefix reads that `early`,
-    /// so a window past the file's first bytes makes none of it (`native_cpu_bytes`), and a full
-    /// block knows it is zero (`native_cpu_lanes`' `full_words`).
+    /// A prefix's value (`Stmt::Prefix`): the file's first `n` positions, where it starts with
+    /// the prefix's bytes. One leaf (`BlockOp::Prefix`), which an executor makes once a file
+    /// from the file's first word, as simdjson strips a byte order mark before its loop: a full
+    /// block knows it is zero (`native_cpu_lanes`' `full_words`), and a window past the file's
+    /// first bytes makes none of it (`native_cpu_bytes`).
     pub fn prefix_value(&mut self, bytes: &[u8]) -> Result<Val, String> {
         debug_assert!(self.prefix.is_none());
-        let all = self.within_val(0)?;
-        let before = self.prev(all, 1)?;
-        let mut at = self.andnot(all, before)?;
-        for (j, &b) in bytes.iter().enumerate() {
-            let mut set = [0u64; 4];
-            set[usize::from(b) / 64] |= 1 << (b % 64);
-            let x = self.class_set(set);
-            let x = self.next(x, j as u64)?;
-            at = self.and(at, x)?;
+        if !(1..=8).contains(&bytes.len()) {
+            return Err(format!("a prefix of {} bytes: from 1 to 8", bytes.len()));
         }
-        // The test and the bytes after it, at delay `top`, by `prev`s of the test there.
-        let top = (bytes.len() as u8 - 1).max(1);
-        let t = self.at(at, top)?;
-        let mut v = t;
-        for j in 1..bytes.len() {
-            let x = self.prev_op(t, j as u8);
-            v = self.op(BlockOp::Or(v, x));
-        }
-        let v = self.op(BlockOp::Early(v, top));
-        if !first_bits(&self.program.ops, &self.program.tables, v).is_some_and(|s| s <= crate::block::EARLY_BITS) {
-            return Err(format!("a prefix of {} bytes is not a value of the file's first {} bytes", bytes.len(), crate::block::EARLY_BITS));
-        }
+        let word = bytes.iter().enumerate().fold(0u64, |a, (j, &b)| a | u64::from(b) << (8 * j));
+        let v = self.op(BlockOp::Prefix(bytes.len() as u8, word));
         Ok(Val { v, d: 0, dirty: false, set: None })
     }
 
@@ -1441,10 +1495,119 @@ impl Lowering {
     }
 
     pub fn local_ops(&self, x: Val) -> Option<Vec<crate::program::LocalOp>> {
+        self.local_ops_with(x, false, None)
+    }
+
+    /// `local_ops` of a check that reads no byte before its place (decision 0399): its `prev`s
+    /// and `within`s reach back no further than its delay, so from a place in a token every
+    /// byte it reads is in the stream, past a prefix, where the prefix's value is 0. A `next`'s
+    /// cut to the stream (`within` less the prefix) is then the bytes' `within`.
+    pub fn local_ops_in_stream(&self, x: Val) -> Option<Vec<crate::program::LocalOp>> {
         use crate::program::LocalOp as L;
-        fn walk(low: &Lowering, v: u16, at: &mut HashMap<u16, u16>, out: &mut Vec<L>) -> Option<u16> {
+        let ops = self.local_ops_with(x, true, None)?;
+        let mut reach = vec![0u32; ops.len()];
+        for (k, op) in ops.iter().enumerate() {
+            let at = |o: u16| reach[usize::from(o)];
+            reach[k] = match *op {
+                L::Prev(a, sh) => at(a) + u32::from(sh),
+                L::Within(d) => u32::from(d),
+                _ => op.operands().into_iter().map(at).max().unwrap_or(0),
+            };
+        }
+        (reach.iter().all(|&r| r <= u32::from(x.d))).then_some(ops)
+    }
+
+    /// An error `A & ~L` at a row's tokens, with `A` at their last bytes (`last`), as a token's
+    /// check (decision 0399): tier 2 tests it on the token's bytes and `L`'s after them, and
+    /// needs no mask. Within the token `A` is `last` at its last byte and the rest of `A`'s ops
+    /// there: `A` with `last` all ones, at the place `last` is `A`'s. Its ops: that, `L`, and
+    /// `Last`, each at the check's delay (the most of `A`'s and `L`'s), then `A & Last & ~L`. `None`
+    /// where `A` or `L` reads before the token's last byte, or reaches past 63 bytes.
+    pub fn token_ops_past(&self, a: Val, last: Val, l: Val) -> Option<(Vec<crate::program::LocalOp>, u8)> {
+        use crate::program::LocalOp as L;
+        let reach = |ops: &[L]| {
+            let mut r = vec![0u32; ops.len()];
+            for (k, op) in ops.iter().enumerate() {
+                r[k] = match *op {
+                    L::Prev(x, sh) => r[usize::from(x)] + u32::from(sh),
+                    L::Within(d) => u32::from(d),
+                    _ => op.operands().into_iter().map(|o| r[usize::from(o)]).max().unwrap_or(0),
+                };
+            }
+            r.into_iter().max().unwrap_or(0)
+        };
+        let mut ops = self.local_ops_with(a, true, Some(last.v))?;
+        // `last`, if read, at `A`'s own place only: the depth from `A`'s top is `a.d - last.d`.
+        let sub = ops.iter().position(|op| *op == L::Const(u64::MAX));
+        if let Some(sub) = sub {
+            let mut depths: Vec<Vec<u32>> = vec![Vec::new(); ops.len()];
+            depths[ops.len() - 1].push(0);
+            for k in (0..ops.len()).rev() {
+                let ds = std::mem::take(&mut depths[k]);
+                for &dd in &ds {
+                    match ops[k] {
+                        L::Prev(x, sh) => depths[usize::from(x)].push(dd + u32::from(sh)),
+                        ref op => op.operands().into_iter().for_each(|o| depths[usize::from(o)].push(dd)),
+                    }
+                }
+                depths[k] = ds;
+            }
+            let want = u32::from(a.d).checked_sub(u32::from(last.d))?;
+            if depths[sub].iter().any(|&dd| dd != want) {
+                return None;
+            }
+        }
+        if reach(&ops) > u32::from(a.d) {
+            return None;
+        }
+        let lops = self.local_ops_in_stream(l)?;
+        let d = a.d.max(l.d);
+        if d > 63 {
+            return None;
+        }
+        let ta = ops.len() as u16 - 1;
+        let base = ops.len() as u16;
+        ops.extend(lops.iter().map(|op| offset_op(op, base)));
+        let tl = ops.len() as u16 - 1;
+        let at = |ops: &mut Vec<L>, x: u16, k: u8| {
+            if k == 0 {
+                x
+            } else {
+                ops.push(L::Prev(x, k));
+                ops.len() as u16 - 1
+            }
+        };
+        let sa = at(&mut ops, ta, d - a.d);
+        let sl = at(&mut ops, tl, d - l.d);
+        ops.push(L::Last);
+        let last_op = ops.len() as u16 - 1;
+        // `Last` is the token's last byte at its own place: at the check's delay, `d` on.
+        let sz = at(&mut ops, last_op, d);
+        ops.push(L::And(sa, sz));
+        let both = ops.len() as u16 - 1;
+        ops.push(L::AndNot(both, sl));
+        Some((ops, d))
+    }
+
+    /// Whether `v` is the prefix's value, at some delay (`prev`s of `BlockOp::Prefix`).
+    fn prefix_chain(&self, v: u16) -> bool {
+        match self.program.ops[usize::from(v)] {
+            BlockOp::Prefix(..) => true,
+            BlockOp::Prev(x, _) => self.prefix_chain(x),
+            _ => false,
+        }
+    }
+
+    fn local_ops_with(&self, x: Val, prefix_zero: bool, ones: Option<u16>) -> Option<Vec<crate::program::LocalOp>> {
+        use crate::program::LocalOp as L;
+        fn walk(low: &Lowering, v: u16, at: &mut HashMap<u16, u16>, out: &mut Vec<L>, pz: bool, ones: Option<u16>) -> Option<u16> {
             if let Some(&k) = at.get(&v) {
                 return Some(k);
+            }
+            if ones == Some(v) {
+                out.push(L::Const(u64::MAX));
+                at.insert(v, out.len() as u16 - 1);
+                return Some(out.len() as u16 - 1);
             }
             if out.len() > 512 {
                 return None;
@@ -1481,12 +1644,15 @@ impl Lowering {
                 }
                 BlockOp::Const(c) => L::Const(c),
                 BlockOp::Within(d) => L::Within(d),
-                BlockOp::Not(a) => L::Not(walk(low, a, at, out)?),
-                BlockOp::Prev(a, k) => L::Prev(walk(low, a, at, out)?, k),
-                BlockOp::And(a, b) => L::And(walk(low, a, at, out)?, walk(low, b, at, out)?),
-                BlockOp::Or(a, b) => L::Or(walk(low, a, at, out)?, walk(low, b, at, out)?),
-                BlockOp::Xor(a, b) => L::Xor(walk(low, a, at, out)?, walk(low, b, at, out)?),
-                BlockOp::AndNot(a, b) => L::AndNot(walk(low, a, at, out)?, walk(low, b, at, out)?),
+                BlockOp::Prefix(..) if pz => L::Const(0),
+                BlockOp::Not(a) => L::Not(walk(low, a, at, out, pz, ones)?),
+                BlockOp::Prev(a, k) => L::Prev(walk(low, a, at, out, pz, ones)?, k),
+                BlockOp::And(a, b) => L::And(walk(low, a, at, out, pz, ones)?, walk(low, b, at, out, pz, ones)?),
+                BlockOp::Or(a, b) => L::Or(walk(low, a, at, out, pz, ones)?, walk(low, b, at, out, pz, ones)?),
+                BlockOp::Xor(a, b) => L::Xor(walk(low, a, at, out, pz, ones)?, walk(low, b, at, out, pz, ones)?),
+                // `x` less the prefix, where the prefix is 0: `x`.
+                BlockOp::AndNot(a, b) if pz && low.prefix_chain(b) => return walk(low, a, at, out, pz, ones),
+                BlockOp::AndNot(a, b) => L::AndNot(walk(low, a, at, out, pz, ones)?, walk(low, b, at, out, pz, ones)?),
                 _ => return None,
             };
             out.push(op);
@@ -1495,7 +1661,7 @@ impl Lowering {
             Some(k)
         }
         let mut out = Vec::new();
-        walk(self, x.v, &mut HashMap::new(), &mut out)?;
+        walk(self, x.v, &mut HashMap::new(), &mut out, prefix_zero, ones)?;
         Some(out)
     }
 
@@ -2335,7 +2501,7 @@ pub fn live_of(program: &BlockProgram, keep: &[bool]) -> BlockProgram {
         .iter()
         .filter_map(|w| {
             let group = kept_groups.iter().position(|&g| g == usize::from(w.group))? as u16;
-            let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: n(k.opener), closer: n(k.closer), open: n(k.open), fill: n(k.fill), empty: k.empty.map(|(e, m)| (n(e), m)), ..*k }).collect();
+            let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: n(k.opener), closer: n(k.closer), open: n(k.open), fill: n(k.fill), empty: k.empty.map(|(e, m)| (n(e), m)), or: k.or.map(|(c, m)| (n(c), m)), ..*k }).collect();
             Some(crate::block::Walk { group, hidden: n(w.hidden), kinds })
         })
         .collect();
@@ -2375,10 +2541,14 @@ fn is_keyword_kind(keywords: &[(String, Vec<(Vec<u8>, Option<String>)>, bool)], 
 fn token_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows: &[(String, Val, Val)]) -> Result<Option<usize>, String> {
     let proved = |low: &Lowering, x: Val| bitlex_prove::never(&low.proof_ops(), &low.program.tables, x.v, x.d) || bitlex_prove::never_unrolled(&low.proof_ops(), &low.program.tables, &[], x.v, x.d, 4, 1000);
     let grammar_rows: Vec<usize> = (0..rows.len()).filter(|&r| !low.extra.contains(&token_rows[r].0) && !row_kinds(&rows[r]).is_empty()).collect();
+    // At the row's first bytes, or at its last (a check reads `A` from a token's start to its
+    // end: an escape's `u`, its last byte, decision 0399).
     for &r in &grammar_rows {
-        let off = low.andnot(a, token_rows[r].1)?;
-        if proved(low, off) {
-            return Ok(Some(r));
+        for edge in [token_rows[r].1, token_rows[r].2] {
+            let off = low.andnot(a, edge)?;
+            if proved(low, off) {
+                return Ok(Some(r));
+            }
         }
     }
     let mut fills: Vec<Val> = low.names.values().copied().filter(|x| matches!(low.program.ops[usize::from(x.v)], BlockOp::Fill(..))).collect();
@@ -2403,12 +2573,185 @@ fn token_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows:
     Ok(None)
 }
 
+/// `op` with its operands `base` later: an op of a list appended to another.
+fn offset_op(op: &crate::program::LocalOp, base: u16) -> crate::program::LocalOp {
+    use crate::program::LocalOp as L;
+    match *op {
+        L::Not(x) => L::Not(x + base),
+        L::Prev(x, k) => L::Prev(x + base, k),
+        L::And(x, y) => L::And(x + base, y + base),
+        L::Or(x, y) => L::Or(x + base, y + base),
+        L::Xor(x, y) => L::Xor(x + base, y + base),
+        L::AndNot(x, y) => L::AndNot(x + base, y + base),
+        L::Fill(x, y) => L::Fill(x + base, y + base),
+        ref other => other.clone(),
+    }
+}
+
+/// Two token's checks of a row as one: `b`'s ops after `a`'s, each test at the most delay (a
+/// `prev` by the difference; the places it shifts in lie below the delay, which are not
+/// tested), ORed. Ops both make (byte sets, `start`, `last`) are made once.
+fn merge_token_checks(a: &crate::program::LocalCheck, b: &crate::program::LocalCheck) -> crate::program::LocalCheck {
+    use crate::program::LocalOp as L;
+    let mut ops = a.ops.clone();
+    let mut map: Vec<u16> = Vec::with_capacity(b.ops.len());
+    for op in &b.ops {
+        let op = match *op {
+            L::Not(x) => L::Not(map[usize::from(x)]),
+            L::Prev(x, k) => L::Prev(map[usize::from(x)], k),
+            L::And(x, y) => L::And(map[usize::from(x)], map[usize::from(y)]),
+            L::Or(x, y) => L::Or(map[usize::from(x)], map[usize::from(y)]),
+            L::Xor(x, y) => L::Xor(map[usize::from(x)], map[usize::from(y)]),
+            L::AndNot(x, y) => L::AndNot(map[usize::from(x)], map[usize::from(y)]),
+            L::Fill(x, y) => L::Fill(map[usize::from(x)], map[usize::from(y)]),
+            ref other => other.clone(),
+        };
+        let k = match ops.iter().position(|o| *o == op) {
+            Some(k) => k as u16,
+            None => {
+                ops.push(op);
+                ops.len() as u16 - 1
+            }
+        };
+        map.push(k);
+    }
+    let d = a.delay.max(b.delay);
+    let (ta, tb) = (a.ops.len() as u16 - 1, map[b.ops.len() - 1]);
+    let at = |ops: &mut Vec<L>, x: u16, k: u8| {
+        if k == 0 {
+            x
+        } else {
+            ops.push(L::Prev(x, k));
+            ops.len() as u16 - 1
+        }
+    };
+    let sa = at(&mut ops, ta, d - a.delay);
+    let sb = at(&mut ops, tb, d - b.delay);
+    ops.push(L::Or(sa, sb));
+    crate::program::LocalCheck { mask: 0, delay: d, ops, token: true }
+}
+
+/// The grammar row whose tokens' last bytes hold every bit of `a`, as the prover shows it.
+fn last_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows: &[(String, Val, Val)]) -> Result<Option<usize>, String> {
+    let grammar_rows: Vec<usize> = (0..rows.len()).filter(|&r| !low.extra.contains(&token_rows[r].0) && !row_kinds(&rows[r]).is_empty()).collect();
+    for r in grammar_rows {
+        let off = low.andnot(a, token_rows[r].2)?;
+        if bitlex_prove::never(&low.proof_ops(), &low.program.tables, off.v, off.d) || bitlex_prove::never_unrolled(&low.proof_ops(), &low.program.tables, &[], off.v, off.d, 4, 1000) {
+            return Ok(Some(r));
+        }
+    }
+    Ok(None)
+}
+
 /// The token kinds a row's tokens are taken as: its own, its keywords', its soft keywords'.
 fn row_kinds(row: &bitlex_tier2::Row) -> Vec<u16> {
     let mut out: Vec<u16> = (row.kind != 0).then_some(row.kind).into_iter().chain(row.keywords.iter().map(|k| k.1)).chain(row.soft.iter().map(|k| k.1)).collect();
     out.sort_unstable();
     out.dedup();
     out
+}
+
+/// A check's byte machine (`grammar::byte_check`) as a token's check (`LocalCheck::token`,
+/// decision 0398): `Lowering::check`'s masks, in the token's frame. Place 0 is the token's first
+/// byte, so a state's mask is entered at `start` from the start state and at `prev(sources, 1)`
+/// after it; a self-loop on bytes `L` is `fill(entered, ~L | start)`. Refused: the last byte in
+/// no accepting state, of a token beginning with a byte the machine takes (another is tier 2's
+/// switch's).
+fn token_check_ops(accept: &[bool], arms: &[(u16, ByteSet, u16)]) -> Result<Vec<crate::program::LocalOp>, String> {
+    use crate::program::LocalOp as L;
+    let n = accept.len();
+    let mut ins: Vec<usize> = (0..n).map(|q| arms.iter().filter(|a| usize::from(a.2) == q && a.0 != a.2).count()).collect();
+    if ins[0] != 0 {
+        return Err("an arm back to the start: not compiled yet".into());
+    }
+    let (mut order, mut ready) = (Vec::new(), vec![0usize]);
+    while let Some(p) = ready.pop() {
+        order.push(p);
+        for a in arms.iter().filter(|a| usize::from(a.0) == p && a.0 != a.2) {
+            let q = usize::from(a.2);
+            ins[q] -= 1;
+            if ins[q] == 0 {
+                ready.push(q);
+            }
+        }
+    }
+    if order.len() != n {
+        return Err("a cycle through two or more states: not compiled yet".into());
+    }
+    let mut ops: Vec<L> = Vec::new();
+    let mut push = |ops: &mut Vec<L>, op: L| -> u16 {
+        if let Some(k) = ops.iter().position(|o| *o == op) {
+            return k as u16;
+        }
+        ops.push(op);
+        ops.len() as u16 - 1
+    };
+    let or = |ops: &mut Vec<L>, push: &mut dyn FnMut(&mut Vec<L>, L) -> u16, a: Option<u16>, b: u16| match a {
+        None => b,
+        Some(a) => push(ops, L::Or(a, b)),
+    };
+    let start = push(&mut ops, L::Start);
+    let takes = arms.iter().filter(|a| a.0 == 0).fold([0u64; 4], |s, a| std::array::from_fn(|i| s[i] | a.1[i]));
+    let taken = push(&mut ops, L::Bytes(takes));
+    let checked = push(&mut ops, L::And(start, taken));
+    let mut masks: Vec<Option<Option<u16>>> = vec![None; n];
+    for &q in &order {
+        let mut groups: Vec<(ByteSet, Vec<usize>)> = Vec::new();
+        for a in arms.iter().filter(|a| usize::from(a.2) == q && (a.0 != a.2 || q == 0)) {
+            match groups.iter_mut().find(|g| g.0 == a.1) {
+                Some(g) => g.1.push(usize::from(a.0)),
+                None => groups.push((a.1, vec![usize::from(a.0)])),
+            }
+        }
+        let (mut first, mut later): (Option<u16>, Option<u16>) = (None, None);
+        for (bytes, from) in groups {
+            let b = push(&mut ops, L::Bytes(bytes));
+            if from.contains(&0) {
+                let here = push(&mut ops, L::And(checked, b));
+                first = Some(or(&mut ops, &mut push, first, here));
+            }
+            let mut sources: Option<u16> = None;
+            for &p in from.iter().filter(|&&p| p != q) {
+                if let Some(m) = masks[p].expect("a source before its target") {
+                    sources = Some(or(&mut ops, &mut push, sources, m));
+                }
+            }
+            if let Some(src) = sources {
+                let back = push(&mut ops, L::Prev(src, 1));
+                let here = push(&mut ops, L::And(back, b));
+                later = Some(or(&mut ops, &mut push, later, here));
+            }
+        }
+        let mut mask = match (first, later) {
+            (f, None) => f,
+            (f, Some(l)) => {
+                let inside = push(&mut ops, L::AndNot(l, start));
+                Some(or(&mut ops, &mut push, f, inside))
+            }
+        };
+        if let (Some(m), Some(a)) = (mask, arms.iter().find(|a| usize::from(a.0) == q && a.2 == a.0)) {
+            let stays = push(&mut ops, L::Bytes(a.1));
+            let leaves = push(&mut ops, L::Not(stays));
+            let stop = push(&mut ops, L::Or(leaves, start));
+            mask = Some(push(&mut ops, L::Fill(m, stop)));
+        }
+        masks[q] = Some(mask);
+    }
+    let mut good: Option<u16> = None;
+    for q in (0..n).filter(|&q| accept[q]) {
+        if let Some(m) = masks[q].expect("every state") {
+            good = Some(or(&mut ops, &mut push, good, m));
+        }
+    }
+    let span = push(&mut ops, L::Fill(checked, start));
+    let last = push(&mut ops, L::Last);
+    let ends = match good {
+        Some(g) => push(&mut ops, L::AndNot(last, g)),
+        None => last,
+    };
+    // The last op is the check's value: pushed even where an equal op is made.
+    ops.push(L::And(span, ends));
+    Ok(ops)
 }
 
 /// The tree section lowered: the grammar's state machine (`grammar`), its checks added to the
@@ -2530,18 +2873,27 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             }
         }
     }
-    // Each check, a byte machine over its tokens' bytes (doc 18 §4), compiled into masks
-    // over the whole file with the rest of the block program: a token it refuses joins the
-    // fallback. Tier 2 keeps only the bytes a token passing it begins with.
+    // Each check, a byte machine over its tokens' bytes (doc 18 §4). Tier 2 runs it at each of
+    // its tokens, over the token's own bytes, as simdjson's stage 2 parses a number (decision
+    // 0398): a token's check. Where a keyword of the row begins with a byte the machine takes,
+    // its tokens are told apart in tier 1: the machine is masks over the whole file there, with
+    // the rest of the block program, and a token it refuses joins the fallback. Tier 2 keeps
+    // only the bytes a token passing it begins with.
     let mut check_of: HashMap<usize, ByteSet> = HashMap::new();
+    let mut token_checks: Vec<(usize, Vec<crate::program::LocalOp>)> = Vec::new();
     for (kind, g) in low.checks.clone() {
         let token = token_rows.iter().position(|t| t.0 == kind).ok_or_else(|| format!("check {kind}: no token row of that kind"))?;
         let (accept, arms) = grammar::byte_check(&g, &low.classes).map_err(|e| format!("check {kind}: {e}"))?;
         let first = arms.iter().filter(|a| a.0 == 0).fold([0u64; 4], |s, a| [s[0] | a.1[0], s[1] | a.1[1], s[2] | a.1[2], s[3] | a.1[3]]);
         let words: Vec<Vec<u8>> = low.keywords.iter().filter(|k| k.0 == kind).flat_map(|k| k.1.iter().map(|w| w.0.clone())).collect();
-        let (_, start, last) = token_rows[token].clone();
-        let refused = low.check(start, last, &accept, &arms, &words).map_err(|e| format!("check {kind}: {e}"))?;
-        low.fallbacks.push(refused);
+        let taken_word = words.iter().any(|w| first[usize::from(w[0] / 64)] >> (w[0] % 64) & 1 == 1);
+        if taken_word {
+            let (_, start, last) = token_rows[token].clone();
+            let refused = low.check(start, last, &accept, &arms, &words).map_err(|e| format!("check {kind}: {e}"))?;
+            low.fallbacks.push(refused);
+        } else {
+            token_checks.push((token, token_check_ops(&accept, &arms).map_err(|e| format!("check {kind}: {e}"))?));
+        }
         check_of.insert(token, first);
     }
     let mut rows = Vec::new();
@@ -2745,7 +3097,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 let moved = match (a, l) {
                     (Some(a), Some(l)) => match (token_row(low, a, &rows, token_rows)?, low.local_ops(l)) {
                         (Some(r), Some(ops)) => {
-                            checks.push((row_kinds(&rows[r]), Some(mark_kinds[k]), a, crate::program::LocalCheck { mask: 0, delay: l.d, ops }));
+                            checks.push((row_kinds(&rows[r]), Some(mark_kinds[k]), a, crate::program::LocalCheck { mask: 0, delay: l.d, ops, token: false }));
                             true
                         }
                         _ => false,
@@ -3016,17 +3368,45 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         if kinds.is_empty() {
             return Err(format!("a token test of `{kind}`: no token of the kind"));
         }
-        checks.push((kinds, mark.map(|k| mark_kinds[k]), a, crate::program::LocalCheck { mask: 0, delay: l.d, ops }));
+        checks.push((kinds, mark.map(|k| mark_kinds[k]), a, crate::program::LocalCheck { mask: 0, delay: l.d, ops, token: false }));
     }
-    for (a, l) in std::mem::take(&mut low.pending_checks) {
-        match (token_row(low, a, &rows, token_rows)?, low.local_ops(l)) {
-            (Some(r), Some(ops)) => checks.push((row_kinds(&rows[r]), None, a, crate::program::LocalCheck { mask: 0, delay: l.d, ops })),
+    // The tokens' checks: at their rows' tokens, over each token's bytes; no mask of tier 1's.
+    for (r, ops) in token_checks {
+        checks.push((row_kinds(&rows[r]), None, token_rows[r].1, crate::program::LocalCheck { mask: 0, delay: 0, ops, token: true }));
+    }
+    for (a, l, not) in std::mem::take(&mut low.pending_checks) {
+        // `A & ~L` with `A` at a row's tokens' last bytes: a token's check (decision 0399).
+        if not
+            && let Some(r) = last_row(low, a, &rows, token_rows)?
+            && let Some((ops, delay)) = low.token_ops_past(a, token_rows[r].2, l)
+        {
+            checks.push((row_kinds(&rows[r]), None, token_rows[r].1, crate::program::LocalCheck { mask: 0, delay, ops, token: true }));
+            continue;
+        }
+        let ops = if not { low.local_ops_in_stream(l) } else { low.local_ops(l) };
+        match (token_row(low, a, &rows, token_rows)?, ops) {
+            (Some(r), Some(mut ops)) => {
+                if not {
+                    ops.push(crate::program::LocalOp::Not(ops.len() as u16 - 1));
+                }
+                checks.push((row_kinds(&rows[r]), None, a, crate::program::LocalCheck { mask: 0, delay: l.d, ops, token: false }));
+            }
             _ => {
-                let x = low.and(a, l)?;
+                let x = if not { low.andnot(a, l)? } else { low.and(a, l)? };
                 low.fallbacks.push(x);
             }
         }
     }
+    // A row's token's checks are one (decision 0399): one load of the token's bytes, its
+    // classes and their masks made once, the tests ORed at the most delay.
+    let mut merged: Vec<(Vec<u16>, Option<u16>, Val, crate::program::LocalCheck)> = Vec::new();
+    for c in checks {
+        match merged.iter_mut().find(|m| m.3.token && c.3.token && m.0 == c.0 && m.1 == c.1 && m.2.v == c.2.v) {
+            Some(m) => m.3 = merge_token_checks(&m.3, &c.3),
+            None => merged.push(c),
+        }
+    }
+    let checks = merged;
     let check_kinds: Vec<(Vec<u16>, Option<u16>)> = checks.iter().map(|c| (c.0.clone(), c.1)).collect();
     let tested = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, true, by_rules, token_extras, &counts, &check_kinds)?.tested;
     for (j, &r) in tested.iter().enumerate() {
@@ -3203,8 +3583,10 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // The checks' masks, after every other: each its `A`.
     let mut local_checks = Vec::new();
     for (_, _, a, mut c) in checks {
-        mark_masks.push(a);
-        c.mask = mark_masks.len() as u16 - 1;
+        if !c.token {
+            mark_masks.push(a);
+            c.mask = mark_masks.len() as u16 - 1;
+        }
         local_checks.push(c);
     }
     crate::rir_text::local_check_rows(&mut lowered.text, &local_checks);
@@ -3472,7 +3854,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
         rd.quiet = quiet;
     }
-    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), check_masks: local_checks.iter().map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default() };
+    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), check_masks: local_checks.iter().filter(|c| !c.token).map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default() };
     crate::records::WordTable::new(&records.words)?;
     // A mark's tests pass over an extra's token by its mark (`records::gap_marks`): the token
     // loop knows it only where the reader gives it (`Reader::retag`).

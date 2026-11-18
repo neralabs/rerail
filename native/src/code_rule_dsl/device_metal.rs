@@ -181,6 +181,14 @@ pub mod matcher {
             matcher_metal::wave_labelled(wave, tapes, active, roots)
         }
 
+        fn wave_pattern_sources(&self, wave: &LoweredWave) -> Result<Vec<String>, Error> {
+            matcher_metal::wave_pattern_sources(wave)
+        }
+
+        fn patterns_ready(&self, sources: &[String], format: u32) -> bool {
+            crate::code_rule_dsl::transducer::packed::metal_program_backend::label_passes::patterns_ready(sources, format)
+        }
+
         fn warm_labels(&self) {
             matcher_metal::warm();
         }
@@ -188,13 +196,18 @@ pub mod matcher {
         fn drop_label_pipelines(&self) {
             programs::label_passes::drop_pipelines();
         }
-        fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[crate::code_rule_dsl::transducer::packed::block::BatchFile<'_>]) -> Option<Vec<Vec<u64>>> {
+        fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[crate::code_rule_dsl::transducer::packed::block::BatchFile<'_>]) -> Result<Option<Vec<Vec<u64>>>, Error> {
             use programs::block_program::{ClassStrategy, Executor, LaneWidth, generated_ready, run_split};
             // Each set of patterns is a kernel of its own: until its compile (on a thread of its own) is done, the
             // interpreter's pipeline runs the batch, so no launch waits on the compiler.
             let executor = if generated_ready(natives, LaneWidth::W64) { Executor::Generated(ClassStrategy::Lookup) } else { Executor::Interpreter };
-            let run = run_split(natives, batch, LaneWidth::W64, executor, 64).ok()?;
-            Some(run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect())
+            // A form Metal lacks is refused before anything runs, and recorded (`metal-form`, decision 0202): the cores'.
+            // Every other error is the run's (decision 0382).
+            match run_split(natives, batch, LaneWidth::W64, executor, 64) {
+                Ok(run) => Ok(Some(run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect())),
+                Err(Error::UnsupportedBackend) => Ok(None),
+                Err(error) => Err(error),
+            }
         }
         fn execution_metrics(&self) -> (usize, usize) {
             #[cfg(any(test, feature = "test-hooks"))]

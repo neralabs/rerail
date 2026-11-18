@@ -161,7 +161,7 @@ Done (2026-11-17):
   that outgrows its bound leaves the rest to the transducer and W, by cost.
 
 - **`replan` is the default** (2026-11-17; `RERAIL_DEVICE_BUDGET=full` for the CPU's limits). The check, in
-  place of a corpus run (a run from this checkout stops under strict SQL, work queue Q17, whatever the budget):
+  place of a corpus run (a run from this checkout stops under strict SQL, work queue Q21, whatever the budget):
   every lowered Python clause of the pack (491), in waves, over corpus0's files, with `full` and with `replan`
   from an empty cost store; a clause left to the transducer finds `full`'s roots, one given to W has W's matcher
   find them at its candidates (`replan_finds_the_full_budgets_roots_on_the_pack`, CPU and Metal). On 10 files:

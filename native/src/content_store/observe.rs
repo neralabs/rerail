@@ -151,7 +151,7 @@ pub struct Counts {
     pub mismatched: u64,
     /// Digests taken from a clean Git blob's alias, unread.
     pub git: u64,
-    /// Directories listed to check a small root's answers (decision 0399), and the answers they named as changed.
+    /// Directories listed to check a small root's answers (decision 0400), and the answers they named as changed.
     pub checked_dirs: u64,
     pub checked_named: u64,
 }
@@ -245,7 +245,7 @@ pub struct Observer {
     own: Vec<PathBuf>,
     /// Output directories named this run under no root the store has a cursor for yet (`own_output`).
     unreported: Vec<PathBuf>,
-    /// The observer's own journal of the roots checked by their listings (decision 0399): each path named, with the
+    /// The observer's own journal of the roots checked by their listings (decision 0400): each path named, with the
     /// generation of the check that named it (`observed_changes`, read a part at a time with the answers), the last
     /// generation, and the oldest a record may ask from (collection drops older rows).
     changes: BTreeMap<PathBuf, u64>,
@@ -275,12 +275,12 @@ struct Root {
     pending: Option<(Option<[u8; 16]>, String)>,
     /// The paths under it this run checked by `stat` or recorded (not trusted only).
     checked: HashSet<PathBuf>,
-    /// Checked by its directories' listings (decision 0399), not asked of the journal: its cursor is the observer's
+    /// Checked by its directories' listings (decision 0400), not asked of the journal: its cursor is the observer's
     /// own journal's (`L<generation>`).
     listed: bool,
 }
 
-/// Whether the answer `e` still holds for what is at its path now (`None`: nothing), by a listing (decision 0399):
+/// Whether the answer `e` still holds for what is at its path now (`None`: nothing), by a listing (decision 0400):
 /// the same kind and stat, a directory's size aside (a listing gives none; its entries changing change its times), and
 /// recorded safely after the path last changed (`Entry::holds`).
 fn listed_holds(e: &Entry, now: Option<(Kind, Stat)>) -> bool {
@@ -396,7 +396,7 @@ impl Observer {
         if let Some(k) = db.as_ref() {
             own.extend(k.meta.keys().filter_map(|k| k.strip_prefix(OWN_OUTPUT)).flat_map(|d| spellings(Path::new(d))));
         }
-        // The observer's own journal's last generation and the oldest a record may ask from (decision 0399).
+        // The observer's own journal's last generation and the oldest a record may ask from (decision 0400).
         let meta_int = |key: &str| db.as_ref().and_then(|k| k.meta.get(key)).and_then(|v| match v {
             rusqlite::types::Value::Integer(i) => u64::try_from(*i).ok(),
             _ => None,
@@ -535,7 +535,7 @@ impl Observer {
                 self.entries.entry(PathBuf::from(path)).or_insert(Entry { kind: Kind::of_code(kind), stat: Stat { dev, ino, size, mtime_ns, ctime_ns }, digest: digest.and_then(|d| d.try_into().ok()).unwrap_or_default(), listing, recorded_ns });
             }
         }
-        // The observer's own journal's rows for the part (decision 0399).
+        // The observer's own journal's rows for the part (decision 0400).
         if let Ok(mut st) = reader.prepare_cached("SELECT path, gen FROM observed_changes WHERE path = ?1 OR (path >= ?2 AND path < ?3)")
             && let Ok(rows) = st.query_map(params![at, from, to], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
         {
@@ -879,7 +879,7 @@ impl Observer {
                 rusqlite::types::Value::Integer(i) => Some(i.to_string()),
                 _ => None,
             });
-            // A small root is checked by its directories' listings (decision 0399): what FSEvents replays to a new
+            // A small root is checked by its directories' listings (decision 0400): what FSEvents replays to a new
             // process is not all that changed before it (t46), and listing each directory that holds an answer costs
             // less than waiting for the replay.
             if self.listable(&root) {
@@ -888,7 +888,7 @@ impl Observer {
             }
             match super::journal::since(std::slice::from_ref(&root), cursor.as_deref(), &cookies, self.journal_settle) {
                 // The replay may not hold every change made before this run (its marker was not in its history):
-                // the root is checked by its listings, keeping the journal's cursor (decision 0399, step 2).
+                // the root is checked by its listings, keeping the journal's cursor (decision 0400, step 2).
                 super::journal::Since::Behind { cursor: next } => self.check_behind(root, volume, &next),
                 super::journal::Since::Changed { paths, cursor: next } => {
                     // News of rerail's own files is no news (decision 0284): each run writes them.
@@ -936,7 +936,7 @@ impl Observer {
         }
     }
 
-    /// Whether `root` is checked by its directories' listings (decision 0399): where this system lists entries with
+    /// Whether `root` is checked by its directories' listings (decision 0400): where this system lists entries with
     /// their stats, and the root holds at most `list_max` answers (its part of the store read first, `watch`).
     fn listable(&self, root: &Path) -> bool {
         let max = self.list_max;
@@ -944,7 +944,7 @@ impl Observer {
     }
 
     /// Checks the answers kept under `root` against its directories' listings, forgets those that no longer hold,
-    /// and trusts the rest for this run (decision 0399). What it names goes in the observer's own journal under the
+    /// and trusts the rest for this run (decision 0400). What it names goes in the observer's own journal under the
     /// next generation; the root's cursor is that journal's. Naming nothing writes nothing, but a root's first
     /// cursor of that journal (a warm run writes none).
     fn check_listed(&mut self, root: PathBuf, volume: Option<[u8; 16]>, stored: Option<&str>) {
@@ -967,7 +967,7 @@ impl Observer {
         self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: true });
     }
 
-    /// A larger root whose replay was `Behind` (decision 0399, step 2): checked by its listings as a small root is,
+    /// A larger root whose replay was `Behind` (decision 0400, step 2): checked by its listings as a small root is,
     /// what they name forgotten and logged as `check_listed` does, the root's cursor the journal's (`next`, every
     /// change after it told to the next replay). Naming nothing writes nothing: the stored cursor stays, and the next
     /// replay from it names again what this run found holding, a path looked at again, never one missed.
@@ -1178,7 +1178,7 @@ impl Observer {
             if covered {
                 continue;
             }
-            // A root checked by its listings: what its checks named after the record's generation (decision 0399),
+            // A root checked by its listings: what its checks named after the record's generation (decision 0400),
             // the root checked for this run first. A record from before the oldest kept generation is not answered.
             if let Some(g) = listing_cursor(cursor) {
                 self.watch(std::slice::from_ref(root));
@@ -1696,10 +1696,10 @@ fn text_cursor(v: &rusqlite::types::Value) -> Option<String> {
 const CURSOR_AGE: u64 = 1 << 20;
 
 /// The most answers a root may hold and still be checked by its directories' listings rather than the journal
-/// (decision 0399, `RERAIL_LIST_MAX`).
+/// (decision 0400, `RERAIL_LIST_MAX`).
 const LIST_MAX: usize = 20_000;
 
-/// How many of the observer's own journal's generations collection keeps (decision 0399): a record from before
+/// How many of the observer's own journal's generations collection keeps (decision 0400): a record from before
 /// them is not answered (`changed_since` gives `None`), and is made again.
 const LIST_KEEP: u64 = 1 << 16;
 
@@ -1946,7 +1946,7 @@ pub struct Swept {
     pub records: usize,
     /// Output directories recorded as rerail's own that are gone (decision 0284).
     pub outputs: usize,
-    /// Rows of the observer's own journal under no root kept, or older than the generations it keeps (decision 0399).
+    /// Rows of the observer's own journal under no root kept, or older than the generations it keeps (decision 0400).
     pub changes: usize,
 }
 
@@ -1960,7 +1960,7 @@ pub struct Swept {
 /// - a whole-run cutoff's record (`reuse::CUTOFF`) that names no plan `live` says is live (a run of another build,
 ///   whose manifests the content store no longer keeps), and one from before records named their plans.
 ///
-/// - a row of the observer's own journal (decision 0399) under no root kept, or `LIST_KEEP` generations old: the
+/// - a row of the observer's own journal (decision 0400) under no root kept, or `LIST_KEEP` generations old: the
 ///   floor moves up with it, and a record from before it is not answered (`changed_since`).
 ///
 /// Then the WAL is folded into the database and truncated. Other records (`constants:`, `cone-rounds:`) stay.
@@ -2243,7 +2243,7 @@ mod tests {
     use super::*;
 
     /// An observer that asks the journal for every root (decision 0105), as these tests were written for: no root
-    /// is checked by its listings (decision 0399), whose tests open `Observer::open`.
+    /// is checked by its listings (decision 0400), whose tests open `Observer::open`.
     fn journal_observer(store: &Path) -> Observer {
         let mut o = Observer::open(Some(store));
         o.list_max = 0;
@@ -3046,7 +3046,7 @@ mod tests {
         assert!(encode_listing(&[("a\nb".to_owned(), false)]).is_none());
     }
 
-    /// A tree for the listing tests (decision 0399): `root/pkg/m0.py` … `m4.py`, each past the racy window.
+    /// A tree for the listing tests (decision 0400): `root/pkg/m0.py` … `m4.py`, each past the racy window.
     fn listing_tree(name: &str) -> (PathBuf, PathBuf, Vec<PathBuf>) {
         let base = std::env::temp_dir().join(format!("rerail-listing-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);

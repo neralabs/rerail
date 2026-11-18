@@ -1269,7 +1269,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
         };
         for (i, a) in arms.iter().enumerate() {
             if arms[..i].iter().any(|b| b.0 == a.0) {
-                let name = ids.tokens.iter().find(|t| (ids.kind)(t).ok() == Some(a.0)).cloned().unwrap_or_else(|| format!("kind {}", a.0));
+                let name = ids.tokens.iter().find(|t| (ids.kind)(t).ok() == Some(a.0)).cloned().unwrap_or_else(|| if ids.marks.contains(&a.0) { format!("a mark (kind {})", a.0) } else { format!("kind {}", a.0) });
                 let rule = &b.rules[level_rules[level]].kind;
                 return Err(format!("the grammar is not LL(1): two ways on {name} at one place in {rule}'s level"));
             }

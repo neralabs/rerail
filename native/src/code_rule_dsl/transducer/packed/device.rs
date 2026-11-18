@@ -3,7 +3,8 @@
 //! on macOS that is Metal (`rerail-device-metal`, `code_rule_dsl::device_metal`). Nothing here names a device.
 //!
 //! The backends stay data (`ExecutionBackend`, `Backend::MetalInterpreter`, `RanOn`): a backend with no device to
-//! run it is refused (`Error::UnsupportedBackend`), or falls back to the CPU where it did before the split.
+//! run it is refused (`Error::UnsupportedBackend`, decision 0382). The product's own choice of backend, where no device
+//! is registered, is the CPU's (`execute_production_corpus`): no device is not an error.
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
@@ -50,13 +51,19 @@ pub trait MatcherDevice: Send + Sync {
     fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: ClauseRoots<'_>) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error>;
     /// Every clause's labels over the batch, as views of its tapes the root programs read, with `roots`' records.
     fn wave_labelled(&self, wave: &LoweredWave, tapes: &[TapeDoc], active: &[Vec<bool>], roots: Option<&RootJobs<'_>>) -> Result<(Vec<TapeDoc>, Outcome), Error>;
+    /// The sources of the wave's generated kernels (its patterns'), in the plan's order.
+    fn wave_pattern_sources(&self, wave: &LoweredWave) -> Result<Vec<String>, Error>;
+    /// Whether the kernels of `sources` are at hand without a compile (decision 0395); each missing one is
+    /// recorded, and compiled as the mode says.
+    fn patterns_ready(&self, sources: &[String], format: u32) -> bool;
     /// Starts compiling the label passes' pipelines.
     fn warm_labels(&self);
     /// Drops the label passes' pipelines (their memory) once the documents they ran over are gone.
     fn drop_label_pipelines(&self);
-    /// Span prefilters' ends (`regex_block`): bit `i` of a file's words, a match can end after its byte `i`. None:
-    /// the device could not run them (the cores do).
-    fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[super::block::BatchFile<'_>]) -> Option<Vec<Vec<u64>>>;
+    /// Span prefilters' ends (`regex_block`): bit `i` of a file's words, a match can end after its byte `i`.
+    /// `Ok(None)`: a program form the device lacks, recorded in 0202's `metal-form` list (the cores run them). Any
+    /// other failure is the run's error (decision 0382: no fallback on an error).
+    fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[super::block::BatchFile<'_>]) -> Result<Option<Vec<Vec<u64>>>, Error>;
     /// This thread's program invocations and host events since the last reset (tests count them).
     fn execution_metrics(&self) -> (usize, usize);
     /// Resets this thread's `execution_metrics`.

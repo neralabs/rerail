@@ -1152,6 +1152,8 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                     ::bitlex::syntax::TokenElem::Not(_) => return Err("a `~` inside a `~`".into()),
                 }
             }
+            // The token before, `~`: it holds with no token before too (`end` there).
+            let end = end || (offset == -1 && not);
             elems.push((offset, kinds, words, not, end));
         }
         // A refusing one's word: its bit in the record is the word's alone (no state tests it,

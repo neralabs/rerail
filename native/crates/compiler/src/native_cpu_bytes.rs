@@ -107,7 +107,7 @@ impl<'a> Bytewise<'a> {
             let o = |a: u16| can[usize::from(a)];
             can[x] = plan.lanes[x]
                 || match *inst {
-                    BlockInst::Const(_) => true,
+                    BlockInst::Const(_) | BlockInst::Prefix(..) => true,
                     BlockInst::Escaped(a) | BlockInst::Not(a) | BlockInst::Prev(a, _) | BlockInst::Early(a, _) => o(a),
                     BlockInst::And(a, b) | BlockInst::Or(a, b) | BlockInst::Xor(a, b) | BlockInst::AndNot(a, b) => o(a) && o(b),
                     _ => false,
@@ -731,7 +731,8 @@ impl<'a> Bytewise<'a> {
             let j = d - back;
             match b.native.insts[x] {
                 BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) => j == 0 || ((1..=known).contains(&j) && exact_at(b.native, x).is_some_and(|n| n.set == set)),
-                BlockInst::Within(_) | BlockInst::Const(_) => true,
+                // The prefix's bytes lie before the stream, so before any token's.
+                BlockInst::Within(_) | BlockInst::Const(_) | BlockInst::Prefix(..) => true,
                 BlockInst::Not(a) => go(b, usize::from(a), back, d, set, known),
                 BlockInst::Prev(a, k) => go(b, usize::from(a), back + i64::from(k), d, set, known),
                 BlockInst::Early(a, k) => go(b, usize::from(a), back - i64::from(k), d, set, known),
@@ -876,6 +877,39 @@ impl<'a> Bytewise<'a> {
                     f.set_cold_block(cold);
                     let (mut w, mut m) = (HashMap::new(), HashMap::new());
                     let v = self.mask_at(f, at, usize::from(a), start, back - i64::from(k), &mut w, &mut m, carry, heads);
+                    f.ins().jump(join, &[v.into()]);
+                    f.switch_to_block(join);
+                    f.block_params(join)[0]
+                }
+                // The prefix's positions (`BlockOp::Prefix`): the file's first `n`, where it
+                // starts with the prefix's bytes, compared once (`prefix_start`). Only a window
+                // that holds them has any, behind a branch, as an `early`'s.
+                BlockInst::Prefix(n, w) => {
+                    let pos = here(f);
+                    let near = f.ins().icmp_imm(IntCC::SignedLessThan, pos, i64::from(n));
+                    let (cold, join) = (f.create_block(), f.create_block());
+                    f.append_block_param(join, types::I64);
+                    let zero = f.ins().iconst(types::I64, 0);
+                    f.ins().brif(near, cold, &[], join, &[zero.into()]);
+                    f.switch_to_block(cold);
+                    f.set_cold_block(cold);
+                    let k = crate::native_cpu_block::prefix_start(f, n, w, at.bytes, at.len);
+                    let one = f.ins().iconst(types::I64, 1);
+                    let stride = i64::from(carry.stride.max(1));
+                    let mut v = f.ins().iconst(types::I64, 0);
+                    // Position `j`'s bit, `j - pos` lanes into the window.
+                    for j in 0..i64::from(n) {
+                        let d = f.ins().irsub_imm(pos, j);
+                        let ge = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, d, 0);
+                        let lt = f.ins().icmp_imm(IntCC::SignedLessThan, d, 64 / stride);
+                        let set = f.ins().icmp_imm(IntCC::SignedGreaterThan, k, j);
+                        let ok = f.ins().band(ge, lt);
+                        let ok = f.ins().band(ok, set);
+                        let sh = if stride == 1 { d } else { f.ins().imul_imm(d, stride) };
+                        let bit = f.ins().ishl(one, sh);
+                        let bit = f.ins().select(ok, bit, zero);
+                        v = f.ins().bor(v, bit);
+                    }
                     f.ins().jump(join, &[v.into()]);
                     f.switch_to_block(join);
                     f.block_params(join)[0]
@@ -1151,6 +1185,14 @@ impl<'a> Bytewise<'a> {
                         f.ins().band(p, nq)
                     }
                 }
+            }
+            // The prefix's positions: below the stream's start (`prefix_start`).
+            BlockInst::Prefix(n, w) => {
+                let k = crate::native_cpu_block::prefix_start(f, n, w, at.bytes, at.len);
+                let ge = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, i, 0);
+                let lt = f.ins().icmp(IntCC::SignedLessThan, i, k);
+                let both = f.ins().band(ge, lt);
+                f.ins().uextend(types::I64, both)
             }
             // As `mask_at`'s: none from `EARLY_BITS` on.
             BlockInst::Early(a, k) => {

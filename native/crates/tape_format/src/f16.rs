@@ -715,22 +715,15 @@ pub fn numbers(lang: &Lang, table: &CodeTable) -> Result<Vec<u32>, String> {
 
 // ---- the reader ------------------------------------------------------------------------------------------
 
-/// One group of up to 64 nodes from `base` of a run whose code bytes are `codes`: those whose code is in the set
-/// (`byte` below the cutoff, `tail` when the set holds a number past it; `number` a node's code past it).
-#[inline(always)]
 /// The groups of up to `PART` nodes from `codes` (a part's code bytes) into `out`: bit j of group g set when node
-/// `64 g + j` is in `set`. A byte below the cutoff is looked up; one past it is the prefix of a number whose low
-/// part is in the part's entries of side list 0, so when the set holds a number past the cutoff the entries are
-/// walked in order (`part_codes`), each once, rather than searched for a node at a time.
-fn part_groups(codes: &[u8], lang: &Lang, set: &CodeSet, byte: &[bool; 256], tail: Option<(&[u8], &TapeView, usize)>, out: &mut [u64; PART / 64]) -> usize {
+/// `64 g + j` is in `set`. A byte below the cutoff is tested by the set's nibble tables, 64 at a time (`ByteSet`);
+/// one past it is the prefix of a number whose low part is in the part's entries of side list 0, so when the set
+/// holds a number past the cutoff the entries are walked in order (`part_codes`), each once, rather than searched
+/// for a node at a time.
+#[inline(always)]
+fn part_groups(codes: &[u8], lang: &Lang, set: &CodeSet, byte: &ByteSet, tail: Option<(&[u8], &TapeView, usize)>, out: &mut [u64; PART / 64]) -> usize {
     let groups = codes.len().div_ceil(64);
-    for (g, chunk) in codes.chunks(64).enumerate() {
-        let mut m = 0u64;
-        for (j, &b) in chunk.iter().enumerate() {
-            m |= u64::from(byte[b as usize]) << j;
-        }
-        out[g] = m;
-    }
+    code_groups(codes, byte, out);
     if let Some((bytes, view, part)) = tail {
         let cut = lang.cut;
         part_codes(bytes, view, part, |local, low| {
@@ -774,11 +767,65 @@ fn part_codes(bytes: &[u8], view: &TapeView, part: usize, mut f: impl FnMut(usiz
 }
 
 /// A set's test a code byte at a time: membership of each number below the cutoff, and whether it holds any past.
-fn byte_table(lang: &Lang, set: &CodeSet) -> ([bool; 256], bool) {
+fn byte_table(lang: &Lang, set: &CodeSet) -> (ByteSet, bool) {
     let cut = lang.cut as usize;
     let mut byte = [false; 256];
     set.mark_below(cut, &mut byte);
-    (byte, set.any_from(cut))
+    (ByteSet::of(&byte), set.any_from(cut))
+}
+
+/// A set of byte values as simdjson's nibble tables (Hyperscan's "truffle"): byte `b` is in it where bit `b >> 4`
+/// of `low[b & 15]` is set (`b` below 128), or bit `(b >> 4) - 8` of `high[b & 15]` (128 and above). Each half is
+/// a nibble classification (`classify`), the high nibble's bit from a fixed table, so 64 codes are tested by four
+/// lookups, not a lookup a code.
+struct ByteSet {
+    low: [u8; 16],
+    high: [u8; 16],
+}
+
+/// The high nibble's bit in `ByteSet::low` (0 for a byte at 128 or above) and in `ByteSet::high`.
+const NIBBLE_LOW: [u8; 16] = [1, 2, 4, 8, 16, 32, 64, 128, 0, 0, 0, 0, 0, 0, 0, 0];
+const NIBBLE_HIGH: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 4, 8, 16, 32, 64, 128];
+
+impl ByteSet {
+    fn of(member: &[bool; 256]) -> Self {
+        let (mut low, mut high) = ([0u8; 16], [0u8; 16]);
+        for (b, _) in member.iter().enumerate().filter(|(_, member)| **member) {
+            let (lo, hi) = (b & 15, b >> 4);
+            if hi < 8 {
+                low[lo] |= 1 << hi;
+            } else {
+                high[lo] |= 1 << (hi - 8);
+            }
+        }
+        Self { low, high }
+    }
+}
+
+/// Bit `j` of `out[g]`: code byte `64 g + j` is in `set`, 64 codes a step (the last group's past `codes` clear).
+#[inline(always)]
+unsafe fn groups_of<S: rerail_simd8::Simd8x64>(codes: &[u8], set: &ByteSet, out: &mut [u64; PART / 64]) {
+    for (g, chunk) in codes.chunks(64).enumerate() {
+        // The last group's codes in a register's width (the bytes past them cleared below).
+        let mut last = [0u8; 64];
+        let block: &[u8; 64] = match <&[u8; 64]>::try_from(chunk) {
+            Ok(block) => block,
+            Err(_) => {
+                last[..chunk.len()].copy_from_slice(chunk);
+                &last
+            }
+        };
+        // SAFETY: `dispatch!` runs this on a backend the CPU runs.
+        let m = unsafe {
+            let v = S::load(block);
+            S::nonzero(S::or(S::classify(v, &set.low, &NIBBLE_LOW), S::classify(v, &set.high, &NIBBLE_HIGH)))
+        };
+        out[g] = if chunk.len() == 64 { m } else { m & ((1u64 << chunk.len()) - 1) };
+    }
+}
+
+rerail_simd8::dispatch! {
+    fn code_groups(codes: &[u8], set: &ByteSet, out: &mut [u64; PART / 64]) -> () = groups_of, on code_groups_on;
 }
 
 /// A format 16 tape read in place with its language's choices, through the tape's reads (decision 0310's Rust
@@ -1502,6 +1549,28 @@ mod tests {
         let mut short = tagged.as_bytes().to_vec();
         short.pop();
         assert!(Tape16::from_bytes(short).is_err());
+    }
+
+    /// A byte set's nibble tables (`ByteSet`) find the codes the set holds, on every backend this CPU runs, for sets
+    /// on either side of 128 and a run that ends inside a group.
+    #[test]
+    fn byte_sets_find_their_codes_on_every_backend() {
+        let codes: Vec<u8> = (0..1_000u32).map(|i| (i * 37 % 256) as u8).collect();
+        let sets: [fn(usize) -> bool; 5] = [|b| b % 3 == 0, |b| b >= 200, |b| b == 0, |b| b == 255, |_| true];
+        for member in sets {
+            let table: [bool; 256] = std::array::from_fn(member);
+            let set = ByteSet::of(&table);
+            let mut want = [0u64; PART / 64];
+            for (i, &code) in codes.iter().enumerate() {
+                want[i / 64] |= u64::from(table[code as usize]) << (i % 64);
+            }
+            for backend in rerail_simd8::Backend::ALL {
+                let mut got = [0u64; PART / 64];
+                if code_groups_on(backend, &codes, &set, &mut got).is_some() {
+                    assert_eq!(got, want, "{backend:?}");
+                }
+            }
+        }
     }
 
     /// Wide values escape to the side lists, and codes past the cutoff keep their low parts there: a long, flat

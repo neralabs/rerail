@@ -772,6 +772,14 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
             }
             COUNT => counts[usize::from(operand)] = counts[usize::from(operand)].saturating_sub(1),
+            CHECK if program.local_checks[usize::from(operand)].token => {
+                // The token's own bytes, as simdjson's stage 2 reads a number (decision 0398).
+                let c = &program.local_checks[usize::from(operand)];
+                let end = (rec_end as usize).min(bytes.len()).max(start as usize);
+                if crate::program::token_value(&c.ops, bytes, start as usize, end, c.delay) {
+                    return refuse!(pc - 1, "a token's check holds");
+                }
+            }
             CHECK => {
                 // The mask's bits in the token's bytes, a word at a time; at each, the check.
                 let c = &program.local_checks[usize::from(operand)];
@@ -891,20 +899,20 @@ pub fn validate_tier2(program: &Words) -> Result<(), Error> {
 }
 
 /// The local checks (`Words::local_checks`): each a mask tier 2 reads, its ops' operands
-/// earlier ones, a `Prev` of 1 to 63, at least one op.
+/// earlier ones, a `Prev` of 1 to 63, at least one op. A token's check (`LocalCheck::token`)
+/// reads no mask, and a delay under 64; only it has `fill`, `start` and `last`.
 pub fn validate_local_checks(program: &Words) -> Result<(), Error> {
     let masks = program.block_programs.first().map_or(0, |b| b.masks.len());
     for (i, c) in program.local_checks.iter().enumerate() {
         let earlier = c.ops.iter().enumerate().all(|(k, op)| {
             let k = k as u16;
-            match *op {
-                LocalOp::Not(a) => a < k,
-                LocalOp::And(a, b) | LocalOp::Or(a, b) | LocalOp::Xor(a, b) | LocalOp::AndNot(a, b) => a < k && b < k,
+            let ok = match *op {
                 LocalOp::Prev(a, s) => a < k && (1..=63).contains(&s),
-                LocalOp::Bytes(_) | LocalOp::Const(_) | LocalOp::Within(_) => true,
-            }
+                _ => op.operands().iter().all(|&a| a < k),
+            };
+            ok && (c.token || !op.token_only())
         });
-        if c.ops.is_empty() || !earlier || usize::from(c.mask) >= masks {
+        if c.ops.is_empty() || !earlier || (!c.token && usize::from(c.mask) >= masks) || (c.token && c.delay >= 64) {
             return Err(Error::InvalidOperand(i));
         }
     }
@@ -919,8 +927,9 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
     for (i, m) in program.token_marks.iter().enumerate() {
         let rising = i == 0 || program.token_marks[i - 1].order < m.order;
         let offsets = m.elems.windows(2).all(|w| w[0].offset < w[1].offset) && m.elems.iter().any(|e| e.offset == 0) && m.elems.first().is_some_and(|e| e.offset >= -1);
-        // A `not` or an `end` only after the mark's token; an `end` only last.
-        let after = m.elems.iter().all(|e| (!e.not && !e.end) || e.offset > 0) && m.elems.iter().rev().skip(1).all(|e| !e.end);
+        // A `not` or an `end` only after the mark's token, but for the token before's `not`,
+        // which has an `end` (no token before holds); an `end` only last after the mark's.
+        let after = m.elems.iter().all(|e| (!e.not && !e.end) || e.offset > 0 || (e.offset == -1 && e.not && e.end)) && m.elems.iter().filter(|e| e.offset >= 0).rev().skip(1).all(|e| !e.end);
         let offsets = offsets && after;
         let words = m.elems.iter().flat_map(|e| &e.words).all(|&s| usize::from(s) < program.strings.len());
         // A grammar with no extras has nothing to skip between the mark's tokens.

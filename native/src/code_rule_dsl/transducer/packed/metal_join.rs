@@ -2453,7 +2453,12 @@ impl Batch {
             self.submit_open()?;
         }
         if self.pass.is_none() {
-            let command = queue()?.new_command_buffer().to_owned();
+            // Made in a pool of its own: `new_command_buffer` gives an autoreleased buffer, and a worker thread has no
+            // pool to release it. Each one so left held a slot of the queue's (64) after its batch let it go, and a
+            // run of many device strata stopped in `commandBuffer` with every slot taken (Q170).
+            let queue = queue()?;
+            let command = metal::objc::rc::autoreleasepool(|| queue.new_command_buffer().to_owned());
+            rerail_accel::exec::command_opened();
             // SAFETY: the command buffer is owned by `self.open` and outlives the pass, which `commit` ends and drops
             // before the command buffer (the field order of the take there).
             let r: &'static metal::CommandBufferRef = unsafe { &*(command.as_ref() as *const metal::CommandBufferRef) };
@@ -2469,6 +2474,7 @@ impl Batch {
         self.done.dispatches += pass.dispatches() as u32;
         pass.end();
         let command = self.open.take().expect("an open command buffer");
+        rerail_accel::exec::command_committed();
         let s = Submitted::commit(&command)?;
         self.committed.push(s);
         self.done.submissions += 1;
@@ -2790,12 +2796,12 @@ impl Batch {
     }
 
     /// A head's rows written in place (decision 0325 step 4): `src`'s first rows (as many as slot `count` of `totals`
-    /// holds, at most `cap`; `cap` of them with no slot) into rows `0..` of `dst`, a relation in its block whose
-    /// chunks hold `cap` rows. Each column of the head is a column of `src` or a constant (`cols`). The batch keeps
-    /// `dst`'s block until its work completes.
+    /// holds, at most `cap`; `cap` of them with no slot) into rows `at..` of `dst`, a relation in its block whose
+    /// chunks hold `at + cap` rows (the head's own tail past its rows, decision 0384 step 3). Each column of the head
+    /// is a column of `src` or a constant (`cols`). The batch keeps `dst`'s block until its work completes.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn place_rows(&mut self, src: Rows<'_>, cap: usize, count: Option<usize>, totals: &Words, cols: &[Col], dst: DevRel) -> Result<(), Error> {
-        self.copy(src, cap, count.map(|c| (c, totals)), cols, Rows::Rel(&dst), 0)?;
+    pub(in crate::code_rule_dsl) fn place_rows(&mut self, src: Rows<'_>, cap: usize, count: Option<usize>, totals: &Words, cols: &[Col], dst: DevRel, at: usize) -> Result<(), Error> {
+        self.copy(src, cap, count.map(|c| (c, totals)), cols, Rows::Rel(&dst), at)?;
         self.keep.push(dst.buffer);
         Ok(())
     }
@@ -2932,7 +2938,10 @@ impl Drop for Batch {
     /// guard, whose thread-local a batch dropped in a thread's teardown (a wave left open) can no longer read.
     fn drop(&mut self) {
         drop(self.pass.take());
-        drop(self.open.take());
+        if self.open.take().is_some() {
+            // Not this thread's to commit any more (decision 0386's count).
+            rerail_accel::exec::command_committed();
+        }
         for s in self.committed.drain(..) {
             s.wait();
         }

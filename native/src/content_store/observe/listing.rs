@@ -1,4 +1,4 @@
-//! A directory's entries with their stats, read as a listing (decision 0399): on macOS by `getattrlistbulk`, which
+//! A directory's entries with their stats, read as a listing (decision 0400): on macOS by `getattrlistbulk`, which
 //! returns many entries' attributes a call; elsewhere on Unix by `readdir` and `fstatat` relative to the open
 //! directory. The observer checks a small root's kept answers against these, with no `stat` of a path.
 

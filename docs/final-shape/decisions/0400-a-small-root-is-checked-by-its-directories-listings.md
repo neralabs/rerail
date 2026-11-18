@@ -1,4 +1,4 @@
-# 0399: A small root is checked by its directories' listings, and the observer keeps its own journal of what changed
+# 0400 (was 0399): A small root is checked by its directories' listings, and the observer keeps its own journal of what changed
 
 Status: decided by the user (2026-11-18, Q189's question 3, option (a): "use directory listing where possible to avoid
 bombarding with individual stat calls"); built: step 1 (`content_store/observe/listing.rs`, `Observer::check_listed`),
@@ -91,7 +91,7 @@ changes its directory's. ctime cannot be set from user space, so a copy that kee
 
 ## Measured
 
-ep2 on the M3, profiling build, at f523157f2 (load 52–68), against e134 at 3b5f7f457, before 0399 (same state, same
+ep2 on the M3, profiling build, at f523157f2 (load 52–68), against e134 at 3b5f7f457, before 0400 (same state, same
 edit query, `RERAIL_JOURNAL_TRACE=1`):
 
 | run | wall | CPU | instructions | `before`, off core | `combine`, off core | rows (differing) |

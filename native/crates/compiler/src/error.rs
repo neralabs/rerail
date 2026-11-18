@@ -43,7 +43,9 @@ pub enum Error {
 /// The executor's GPU lane reports its failures as messages; to the engine they are a backend failure, as the other
 /// device paths' (`metal_join`, `metal_rows`).
 impl From<String> for Error {
-    fn from(_: String) -> Error {
+    fn from(message: String) -> Error {
+        // Said where it happens: the error's kind is all its callers keep, and a device failure is never silent.
+        eprintln!("rerail: a device path failed: {message}");
         Error::BackendFailure
     }
 }

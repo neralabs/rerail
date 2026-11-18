@@ -305,7 +305,7 @@ impl Text {
                 lower::sources_on_request(&mut tree, round);
             }
             let t = version_of(&tree)?;
-            assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "the cone copied on the version is the tree's: {}", super::program_image::differences(&t, &v));
+            assert!(super::program_image::same_program(&t, &v), "the cone copied on the version is the tree's: {}", super::program_image::differences(&t, &v));
         }
         Ok(Some(v))
     }
@@ -328,7 +328,7 @@ impl Text {
         #[cfg(debug_assertions)]
         {
             let t = version_of(&tree.own)?;
-            assert_eq!((t.size(), t.digest()), (written.size(), written.digest()), "the walk's version is the tree's: {}", super::program_image::differences(&t, &written));
+            assert!(super::program_image::same_program(&t, &written), "the walk's version is the tree's: {}", super::program_image::differences(&t, &written));
         }
         let version = link_seeded_version(linked, written, scoped, core_names())?;
         // A text that adds to library relations asks of the library (decision 0089 §3): its request's cone, the library
@@ -573,7 +573,7 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
                 #[cfg(debug_assertions)]
                 {
                     let t = version_of(&lower::link(modules.iter().map(lower::Module::clone).collect())?)?;
-                    assert_eq!((t.size(), t.digest()), (version.size(), version.digest()), "the library linked on versions is the tree's: {}", super::program_image::differences(&t, &version));
+                    assert!(super::program_image::same_program(&t, &version), "the library linked on versions is the tree's: {}", super::program_image::differences(&t, &version));
                 }
                 if keep_image(store, "a linked library's image", key, version.base_bytes().expect("a folded version is a base").to_vec()) {
                     crate::code_rule_dsl::prof::count("rr.linked_library_written", 1);
@@ -1076,7 +1076,7 @@ fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::progr
         lower::widen_cyclic_contexts(&mut tree);
         lower::unseed(&mut tree, seeds, core);
         let t = version_of(&tree)?;
-        assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "the lowering's tail on the version is the tree's: {}", super::program_image::differences(&t, &v));
+        assert!(super::program_image::same_program(&t, &v), "the lowering's tail on the version is the tree's: {}", super::program_image::differences(&t, &v));
     }
     Ok(v)
 }

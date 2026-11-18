@@ -111,6 +111,8 @@ pub fn define_function(
     for (_, function) in context.func.dfg.ext_funcs.iter_mut() {
         function.colocated = false;
     }
+    // Every table a tree, rustc's where 0322 holds, balanced for the rest: no jump table in
+    // Cranelift's code (Q186).
     switch_trees(&mut context.func);
     // Each integer constant made again in the blocks that read it (decision 0351).
     remat_consts(&mut context.func);

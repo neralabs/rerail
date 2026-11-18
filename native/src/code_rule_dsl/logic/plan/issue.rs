@@ -468,8 +468,9 @@ impl<'a> Board<'a> {
                 let mark = super::super::lanes::wave::mark();
                 let mut waiting = Vec::new();
                 let (mut n, mut stop) = strand.run_members(&data, &mut times, &mut reserved, level_wave().then_some(&mut waiting));
-                // A device joins' submission opened here is this thread's: its members' wave is flushed here.
-                if !waiting.is_empty() && super::super::lanes::wave::deferred_since(mark) && let Err(e) = strand.flush_parked(&data, &mut waiting, &mut times) {
+                // A device joins' submission opened here, or a wave flushed here meanwhile, is this thread's: its
+                // members' wave is flushed here (`kept_here`).
+                if !waiting.is_empty() && super::super::lanes::wave::kept_here(mark) && let Err(e) = strand.flush_parked(&data, &mut waiting, &mut times) {
                     waiting.clear();
                     (n, stop) = (0, Some(Err(e)));
                 }
@@ -629,8 +630,9 @@ impl<'a> Board<'a> {
                     let mark = super::super::lanes::wave::mark();
                     let Waiting { strand, waiting, data, times, reserved, .. } = &mut *w;
                     let mut r = strand.reserving(reserved, |s| s.resume_parked(data, waiting, times));
-                    // A device joins' submission opened here is this thread's: its members' wave is flushed here.
-                    if r.is_ok() && !waiting.is_empty() && super::super::lanes::wave::deferred_since(mark) {
+                    // A device joins' submission opened here, or a wave flushed here meanwhile, is this thread's: its
+                    // members' wave is flushed here (`kept_here`).
+                    if r.is_ok() && !waiting.is_empty() && super::super::lanes::wave::kept_here(mark) {
                         r = strand.reserving(reserved, |s| s.flush_parked(data, waiting, times));
                     }
                     let waves = super::super::lanes::wave::since(before);
