@@ -3186,3 +3186,19 @@ native join it falls back to the planner's whole-rule order.
   those, setfix's three maintain-mode tests, the two corpus maintain-mode tests, the session tests (19) and the plan
   budget tests. Reviewer: an ordinary body's search is unchanged (`pre` empty: every new branch is skipped, and
   its key's digest is as before).
+
+### Q146. A findings key computed whole starts from every node: its existential tail is priced at full fanout
+
+- **Seen** (2026-11-18, PostHog cold on the M3, after c6917fd26): `xk_fz…_violation_3($v) :- node($v, $n, _, _, _),
+  line($n, _), col($n, _), fzk…_violation($v)` (and `xk_…rr_diagnostic_…_2`) made 77 M + 39 M native work, 12.5 +
+  6.2 s CPU; sd1 made 0.16 + 0.13 M. Since c6917fd26 they are not demanded: `fzk` is a view of `doc`'s columns, a
+  base relation of 138 rows a chunk, so the split's bar takes `xk` as small. That is right by the bar. The cost is the
+  order: 77 of 159 chunks ran the plan `col` (every node) → `node` on `n` → `fzk` → `line`, 19 M rows a step. The other
+  82 ran `fzk` → `node` on `d` → `line` → `col`, which the engine ends at the first node of each document (14,631
+  rows in and out of every step, 0.3 ms in all). The planner priced the two near even (906,746 against a
+  posting-weighted fanout by document for the second), so which one a run keeps depends on the chunk that planned
+  first.
+- **Wanted**: once a body has bound every head variable, its remaining steps are priced as the existence tests the
+  engine runs (a row a binding at most), so `fzk`'s order wins in every chunk; then the gap to sd1 (2,589 G) is
+  measured again. Also timing-dependent still: the inline-or-store and demand choice kept per program (decision
+  0090 §5) is the first chunk's to plan at its scale.
