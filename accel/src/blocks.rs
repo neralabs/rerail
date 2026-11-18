@@ -21,6 +21,7 @@ pub fn install() {
 
 /// A block for `need` (module docs).
 pub fn policy(need: &Need) -> Result<Block, String> {
+    #[cfg(target_os = "macos")]
     let shaped = |b| rerail_blocks::alloc::shaped(b, need);
     match need.device {
         #[cfg(target_os = "macos")]
