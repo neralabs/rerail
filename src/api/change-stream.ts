@@ -58,10 +58,9 @@ function streamToken(stores: RerailApiStores, salt: string, checkout: string | u
   };
 }
 
-/** The message a notice sends, or none: a beat always (the daemon is alive), a data notice only once the token moved. */
-function message(notice: ChangeNotice, token: string, last: string): string | undefined {
-  if (notice === "conflicts") return `event: conflicts\ndata: ${token}\n\n`;
-  return notice === "beat" || token !== last ? `data: ${token}\n\n` : undefined;
+/** The message a notice sends: the feed tells `data` only once a commit shows, and a beat says the daemon is alive. */
+function message(notice: ChangeNotice, token: string): string {
+  return notice === "conflicts" ? `event: conflicts\ndata: ${token}\n\n` : `data: ${token}\n\n`;
 }
 
 /** Close a stream that may already be closed or cancelled. */
@@ -74,8 +73,8 @@ function closeQuietly(controller: ReadableStreamDefaultController<Uint8Array>): 
 }
 
 /**
- * The held response of `GET /api/changes`, as server-sent events: the token at once, then a message whenever it
- * moves, a `conflicts` message on each Merge Assist conflict event, and the token again at each beat. It ends only
+ * The held response of `GET /api/changes`, as server-sent events: the token at once, then the token again at each
+ * commit the change feed tells and at each beat, and a `conflicts` message on each Merge Assist conflict event. It ends only
  * when the client leaves (the body is cancelled, and the stream stops listening) or the daemon closes its connections
  * at stop, which the page reads as the daemon gone. A token it cannot read (the database closing) ends it too.
  */
@@ -83,14 +82,10 @@ function changeStream(feed: ChangeFeed, token: (notice: ChangeNotice | "start") 
   let stop = (): void => {};
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
-      let last = token("start");
-      controller.enqueue(encoder.encode(`data: ${last}\n\n`));
+      controller.enqueue(encoder.encode(`data: ${token("start")}\n\n`));
       stop = feed.listen(notice => {
         try {
-          const now = token(notice);
-          const text = message(notice, now, last);
-          last = now;
-          if (text !== undefined) controller.enqueue(encoder.encode(text));
+          controller.enqueue(encoder.encode(message(notice, token(notice))));
         } catch {
           stop();
           closeQuietly(controller);

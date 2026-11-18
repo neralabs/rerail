@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import type { FSWatcher, watch as watchFolder } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { databaseChangeFeed, type ChangeNotice } from "../../src/api/change-feed.js";
+import { databaseChangeFeed, LOOK_AGAIN_MS, type ChangeNotice } from "../../src/api/change-feed.js";
 
 const DATABASE = join("/rerail-home", "rerail.sqlite");
 
@@ -22,6 +22,15 @@ function fakeWatch(): { watch: typeof watchFolder; report: (name: string | null)
   return { watch, report: name => listener?.("change", name), watched: () => open, fail: on => { failing = on; } };
 }
 
+/** A database version that has moved at every look, as one a commit moved each time would. */
+function moving(): () => string {
+  let version = 0;
+  return () => {
+    version += 1;
+    return String(version);
+  };
+}
+
 /** The notices heard so far, once the turn that reported them has ended. */
 async function heardAfterTurn(heard: ChangeNotice[]): Promise<ChangeNotice[]> {
   await vi.advanceTimersToNextTimerAsync();
@@ -39,7 +48,7 @@ describe("the database's change feed", () => {
 
   it("tells a commit to the database's -wal file once per turn, and nothing for another file in its folder", async () => {
     const folder = fakeWatch();
-    const feed = databaseChangeFeed(DATABASE, { watch: folder.watch });
+    const feed = databaseChangeFeed(DATABASE, moving(), { watch: folder.watch });
     const heard: ChangeNotice[] = [];
     feed.listen(notice => heard.push(notice));
 
@@ -53,7 +62,7 @@ describe("the database's change feed", () => {
 
   it("takes a notice that names no file as the database's, since some systems name none", async () => {
     const folder = fakeWatch();
-    const feed = databaseChangeFeed(DATABASE, { watch: folder.watch });
+    const feed = databaseChangeFeed(DATABASE, moving(), { watch: folder.watch });
     const heard: ChangeNotice[] = [];
     feed.listen(notice => heard.push(notice));
 
@@ -64,7 +73,7 @@ describe("the database's change feed", () => {
 
   it("watches and beats only while someone listens, and leaves no timer behind once nobody does", () => {
     const folder = fakeWatch();
-    const feed = databaseChangeFeed(DATABASE, { watch: folder.watch, beatMs: 5_000 });
+    const feed = databaseChangeFeed(DATABASE, moving(), { watch: folder.watch, beatMs: 5_000 });
     expect([folder.watched(), vi.getTimerCount()]).toEqual([0, 0]);
 
     const stop = feed.listen(() => {});
@@ -75,7 +84,7 @@ describe("the database's change feed", () => {
   });
 
   it("beats while someone listens, with nothing else to tell", async () => {
-    const feed = databaseChangeFeed(DATABASE, { watch: fakeWatch().watch, beatMs: 5_000 });
+    const feed = databaseChangeFeed(DATABASE, moving(), { watch: fakeWatch().watch, beatMs: 5_000 });
     const heard: ChangeNotice[] = [];
     feed.listen(notice => heard.push(notice));
 
@@ -88,7 +97,7 @@ describe("the database's change feed", () => {
   it("tries a watch that could not start again at the next beat, and tells commits once it runs", async () => {
     const folder = fakeWatch();
     folder.fail(true);
-    const feed = databaseChangeFeed(DATABASE, { watch: folder.watch, beatMs: 5_000 });
+    const feed = databaseChangeFeed(DATABASE, moving(), { watch: folder.watch, beatMs: 5_000 });
     const heard: ChangeNotice[] = [];
     feed.listen(notice => heard.push(notice));
     expect(folder.watched()).toBe(0);
@@ -102,7 +111,7 @@ describe("the database's change feed", () => {
   });
 
   it("tells what this process says changed, and nothing once closed", async () => {
-    const feed = databaseChangeFeed(DATABASE, { watch: fakeWatch().watch });
+    const feed = databaseChangeFeed(DATABASE, moving(), { watch: fakeWatch().watch });
     const heard: ChangeNotice[] = [];
     feed.listen(notice => heard.push(notice));
 
@@ -113,5 +122,50 @@ describe("the database's change feed", () => {
     feed.notify("data");
     expect(vi.getTimerCount()).toBe(0);
     expect(heard).toEqual(["conflicts"]);
+  });
+
+  it("tells another process's commit once readers can see it, looking again after the notice that came before it", async () => {
+    // The writer's -wal write is heard before its sync ends; its commit shows to readers 7 ms later.
+    const folder = fakeWatch();
+    let version = "1";
+    const feed = databaseChangeFeed(DATABASE, () => version, { watch: folder.watch });
+    const heard: ChangeNotice[] = [];
+    feed.listen(notice => heard.push(notice));
+
+    folder.report("rerail.sqlite-wal");
+    expect(await heardAfterTurn(heard)).toEqual([]);
+    setTimeout(() => { version = "2"; }, 7);
+    await vi.advanceTimersByTimeAsync(LOOK_AGAIN_MS.at(-1)!);
+
+    expect(heard).toEqual(["data"]);
+    // The looks ended once it showed: only the beat is left.
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it("stops looking again past its last step, leaving the beat to read it", async () => {
+    const folder = fakeWatch();
+    const feed = databaseChangeFeed(DATABASE, () => "1", { watch: folder.watch, beatMs: 60_000 });
+    const heard: ChangeNotice[] = [];
+    feed.listen(notice => heard.push(notice));
+
+    folder.report("rerail.sqlite-wal");
+    await vi.advanceTimersByTimeAsync(LOOK_AGAIN_MS.at(-1)!);
+
+    expect(heard).toEqual([]);
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it("tells a notice whose commit already shows at once, as this process's commits always do, and looks no more", async () => {
+    const folder = fakeWatch();
+    let version = "1";
+    const feed = databaseChangeFeed(DATABASE, () => version, { watch: folder.watch });
+    const heard: ChangeNotice[] = [];
+    feed.listen(notice => heard.push(notice));
+
+    version = "2";
+    folder.report("rerail.sqlite-wal");
+
+    expect(await heardAfterTurn(heard)).toEqual(["data"]);
+    expect(vi.getTimerCount()).toBe(1);
   });
 });

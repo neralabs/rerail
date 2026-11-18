@@ -571,8 +571,6 @@ export class RerailDaemon {
       resumeSession: sessionId => void started.engineService?.resumeSession(sessionId),
       ...sharedMergeAssist,
     });
-    // A conflict event reaches the dashboard's change stream as it happens, whatever else the database holds.
-    sharedMergeAssist.mergeAssist?.onConflictsChanged(() => stores.changes().notify("conflicts"));
     try {
       // One walk of each repository's other worktrees for the sessions of both servers: hook sessions and native OMP and
       // Pi sessions in worktrees of one repository read them once, through the engine's one watch.

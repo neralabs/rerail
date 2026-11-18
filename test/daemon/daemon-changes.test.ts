@@ -3,10 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RerailDaemon } from "../../src/daemon/daemon.js";
-import { openRerailDatabase, repositories } from "../../src/engine/index.js";
 import { startPolling } from "../../ui/poll.js";
 import { data, setScope } from "../../ui/state.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+import { startDatabaseWriter } from "../support/processes/database-writer.js";
 
 const ACCESS = "test-access-capability";
 const healthyNative = () => ({ ok: true, kernelVersion: "1" });
@@ -18,7 +18,7 @@ let visibility: (() => void)[] = [];
  * The dashboard's own fetch orchestration (`ui/poll.js`) against a real daemon, as a browser tab runs it: the page's
  * origin is the daemon's, its storage holds the capability the link gave it, and the tab shows.
  */
-function openPage(daemon: RerailDaemon): { rendered: (until: () => boolean) => Promise<void> } {
+function openPage(daemon: RerailDaemon): { rendered: (until: () => boolean) => Promise<void>; nextRender: () => Promise<void> } {
   vi.stubGlobal("location", { origin: new URL(daemon.url).origin });
   vi.stubGlobal("localStorage", { getItem: (key: string) => (key === "rerail-access" ? ACCESS : null) });
   vi.stubGlobal("document", { hidden: false, addEventListener: (_: string, listener: () => void) => visibility.push(listener) });
@@ -30,6 +30,7 @@ function openPage(daemon: RerailDaemon): { rendered: (until: () => boolean) => P
       waiting = () => { if (until()) resolve(); };
       waiting();
     }),
+    nextRender: () => new Promise<void>(resolve => { waiting = resolve; }),
   };
 }
 
@@ -58,19 +59,18 @@ describe("the dashboard against a running daemon", () => {
     });
     const page = openPage(daemon);
     await page.rendered(() => data.loaded);
-
-    // Another connection's commit, as the CLI's set-up writes and as each hook's records do in the daemon.
-    const other = openRerailDatabase(databasePath);
-    const wrote = performance.now();
+    // Another process committing through Rerail's own opener, as the CLI's writes do.
+    const writer = await startDatabaseWriter(databasePath);
     try {
-      other.insert(repositories).values({
-        repositoryKey: "remote:github.com/acme/web", displayName: "web", configuredAt: null, started: null, createdAt: 1, updatedAt: 1,
-      }).run();
-    } finally {
-      other.$client.close();
-    }
-    await page.rendered(() => data.repositories.some(repository => repository.repositoryKey === "remote:github.com/acme/web"));
+      // Right after a render, the next poll or beat is about 5 s away: only the commit itself can show it sooner.
+      await page.nextRender();
+      const wrote = performance.now();
+      await writer.commit("remote:github.com/acme/web");
+      await page.rendered(() => data.repositories.some(repository => repository.repositoryKey === "remote:github.com/acme/web"));
 
-    expect(performance.now() - wrote).toBeLessThan(1_000);
+      expect(performance.now() - wrote).toBeLessThan(1_000);
+    } finally {
+      await writer.close();
+    }
   }, 30_000);
 });

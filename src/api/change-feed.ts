@@ -2,7 +2,7 @@ import { watch as watchFolder, type FSWatcher } from "node:fs";
 import { basename, dirname } from "node:path";
 
 /**
- * What a listener of the {@link ChangeFeed} hears. `data`: the database may hold a commit it did not (any connection's,
+ * What a listener of the {@link ChangeFeed} hears. `data`: the database holds a commit it did not (any connection's,
  * in this process or another), or the API's own stores wrote. `conflicts`: Merge Assist's conflicts may have changed.
  * `beat`: every {@link BEAT_MS} while anyone listens, so a listener can say it is alive and look again at what no
  * notice covers (installed packs, a checkout's own rules, a notice the OS dropped).
@@ -28,33 +28,104 @@ export interface ChangeFeed {
  */
 export const BEAT_MS = 5_000;
 
+/**
+ * The looks again after a file notice that found no new commit, in milliseconds after it. Another process's commit is
+ * heard when it writes the `-wal` file, before readers can see it: with `synchronous = FULL` (Rerail's own opener, so
+ * every CLI write) the writer syncs the file to disk between the two, then publishes the commit in the shared-memory
+ * index, which no watch hears, and writes nothing more. Nothing else tells when that sync ends, so the version is read
+ * again on these steps until it moves; they cover the syncs measured on Linux and Windows 11 with room to spare, and
+ * past the last one the next beat reads it, as the poll did.
+ */
+export const LOOK_AGAIN_MS = [2, 5, 10, 20, 40, 80, 160, 320, 640, 1_280] as const;
+
 export interface ChangeFeedOptions {
   /** `node:fs`'s `watch` by default; tests pass one that reports what they say. */
   readonly watch?: typeof watchFolder;
   readonly beatMs?: number;
 }
 
+/** Whether the version moved since the last look: told once per move. A version that cannot be read counts as moved. */
+function versionTracker(version: () => string | undefined): { moved(): boolean; reset(): void } {
+  let last: string | undefined;
+  let unreadable = 0;
+  const read = (): string | undefined => {
+    try {
+      return version();
+    } catch {
+      // The database closing: tell the listeners, whose own reads then end what they serve.
+      unreadable += 1;
+      return `unreadable:${unreadable}`;
+    }
+  };
+  return {
+    moved() {
+      const now = read();
+      if (now === last) return false;
+      last = now;
+      return true;
+    },
+    reset() {
+      last = read();
+    },
+  };
+}
+
 /**
- * The feed over the database at `databasePath`. Every commit, from any connection, writes the database's `-wal` file
- * (the database runs in WAL mode with `synchronous = FULL`, so the write reaches the disk at the commit), and a watch
- * of the folder hears it; a notice for the main file covers a database not in WAL mode yet, and a name the OS does not
- * report is taken as either. The folder is watched, not the file, so a database created, removed or replaced keeps
- * its watch. A watch that could not start or failed is tried again at the next beat; until then the beat alone looks.
+ * Reads the version again on {@link LOOK_AGAIN_MS} after a notice that found it unmoved, and calls `onMoved` once it
+ * moves; a new notice starts the steps over, and `stop` ends them.
  */
-export function databaseChangeFeed(databasePath: string, options: ChangeFeedOptions = {}): ChangeFeed {
+function lookAgain(moved: () => boolean, onMoved: () => void): { start(): void; stop(): void } {
+  let timer: NodeJS.Timeout | undefined;
+  const step = (index: number): void => {
+    const previous = index === 0 ? 0 : LOOK_AGAIN_MS[index - 1]!;
+    timer = setTimeout(() => {
+      timer = undefined;
+      if (moved()) onMoved();
+      else if (index + 1 < LOOK_AGAIN_MS.length) step(index + 1);
+    }, LOOK_AGAIN_MS[index]! - previous);
+    timer.unref();
+  };
+  const stop = (): void => {
+    clearTimeout(timer);
+    timer = undefined;
+  };
+  return { start: () => { stop(); step(0); }, stop };
+}
+
+/**
+ * The feed over the database at `databasePath`, whose committed state `version` reads (`PRAGMA data_version` with the
+ * stores' own writes). Every commit, from any connection, writes the database's `-wal` file, and a watch of the folder
+ * hears it; a `data` notice is told once `version` moved, at once for this process's commits, and after the looks
+ * again of {@link LOOK_AGAIN_MS} for another process's. A notice for the main file covers a database not in WAL mode
+ * yet, and a name the OS does not report is taken as either. The folder is watched, not the file, so a database
+ * created, removed or replaced keeps its watch. A watch that could not start or failed is tried again at the next
+ * beat; until then the beat alone looks.
+ */
+export function databaseChangeFeed(databasePath: string, version: () => string | undefined, options: ChangeFeedOptions = {}): ChangeFeed {
   const names = new Set([basename(databasePath), `${basename(databasePath)}-wal`]);
   const watch = options.watch ?? watchFolder;
   const listeners = new Set<(notice: ChangeNotice) => void>();
   const pending = new Set<ChangeNotice>();
+  const committed = versionTracker(version);
   let watcher: FSWatcher | undefined;
   let beat: NodeJS.Timeout | undefined;
   let flushing = false;
 
+  const tell = (notice: ChangeNotice): void => {
+    for (const listener of [...listeners]) listener(notice);
+  };
+  const looks = lookAgain(() => committed.moved(), () => tell("data"));
+  /** A data notice is told once its commit shows; else the looks again wait for it. */
+  const tellData = (): void => {
+    if (!committed.moved()) return looks.start();
+    looks.stop();
+    tell("data");
+  };
   const flush = (): void => {
     flushing = false;
     const notices = [...pending];
     pending.clear();
-    for (const notice of notices) for (const listener of [...listeners]) listener(notice);
+    for (const notice of notices) (notice === "data" ? tellData : tell)(notice);
   };
   const hear = (notice: ChangeNotice): void => {
     if (listeners.size === 0) return;
@@ -81,6 +152,7 @@ export function databaseChangeFeed(databasePath: string, options: ChangeFeedOpti
     }
   };
   const start = (): void => {
+    committed.reset();
     startWatch();
     beat = setInterval(() => {
       startWatch();
@@ -91,6 +163,7 @@ export function databaseChangeFeed(databasePath: string, options: ChangeFeedOpti
   const stop = (): void => {
     clearInterval(beat);
     beat = undefined;
+    looks.stop();
     unwatch();
     pending.clear();
   };

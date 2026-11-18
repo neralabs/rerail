@@ -23,8 +23,11 @@ export interface DatabaseApiStoresOptions {
   readonly codingAgents?: () => Promise<CodingAgentState[]>;
   /** The daemon's engine service, which starts opening again a session it suspended (`RerailApiStores.resumeSession`). */
   readonly resumeSession?: (sessionId: string) => void;
-  /** The Merge Assist service sessions share (the runtime's); without one, a service over this database. */
-  readonly mergeAssist?: MergeAssistService;
+  /**
+   * The Merge Assist service sessions share (the runtime's); without one, a service over this database. Its conflict
+   * events, when it tells them, are `conflicts` notices of {@link DatabaseApiStores.changes}.
+   */
+  readonly mergeAssist?: MergeAssistService & Partial<Pick<MergeAssistRuntime, "onConflictsChanged">>;
   /** How {@link DatabaseApiStores.changes} watches and beats; tests set the beat. */
   readonly changeFeed?: ChangeFeedOptions;
 }
@@ -51,8 +54,9 @@ export class DatabaseApiStores implements RerailApiStores {
   #localRevision = 0;
   /** {@link installedAt} once known; it never changes. */
   #installedAt: number | null = null;
-  /** {@link changes} once asked for; closed with the stores. */
+  /** {@link changes} once asked for, and how it stops hearing Merge Assist's conflict events; both end with the stores. */
   #changes: ChangeFeed | undefined;
+  #stopConflicts: (() => void) | undefined;
 
   constructor(path: string, options: DatabaseApiStoresOptions) {
     this.#path = path;
@@ -144,8 +148,12 @@ export class DatabaseApiStores implements RerailApiStores {
   }
 
   changes(): ChangeFeed {
-    this.#changes ??= databaseChangeFeed(this.#path, this.#options.changeFeed);
-    return this.#changes;
+    if (this.#changes !== undefined) return this.#changes;
+    const feed = databaseChangeFeed(this.#path, () => this.historyVersion(), this.#options.changeFeed);
+    // A conflict event of the Merge Assist these stores answer with reaches the stream as it happens.
+    this.#stopConflicts = this.#options.mergeAssist?.onConflictsChanged?.(() => feed.notify("conflicts"));
+    this.#changes = feed;
+    return feed;
   }
 
   repositoryState(workspace: string): RepositoryStartState {
@@ -158,6 +166,7 @@ export class DatabaseApiStores implements RerailApiStores {
   close(): void {
     // Its hook commands get SIGTERM and its late answers record nothing, before the database closes under them.
     void this.#ownMergeAssist?.stop(0);
+    this.#stopConflicts?.();
     this.#changes?.close();
     this.reader.close();
     this.#sessionStore?.close();

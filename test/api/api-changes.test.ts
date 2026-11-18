@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { EventEmitter } from "node:events";
+import type { FSWatcher, watch as watchFolder } from "node:fs";
 import { realpathSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,17 +9,30 @@ import type { OpenAPIHono } from "@hono/zod-openapi";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRerailApi } from "../../src/api/http.js";
 import { operations } from "../../src/api/operations.js";
-import { DatabaseApiStores } from "../../src/api/stores.js";
+import { DatabaseApiStores, type DatabaseApiStoresOptions } from "../../src/api/stores.js";
 import { openRerailDatabase, recordCheckout, type RerailDatabase } from "../../src/engine/index.js";
-import { SqliteSessionStore } from "../../src/runtime/index.js";
+import { SqliteSessionStore, type MergeAssistService } from "../../src/runtime/index.js";
 import { installPack, uninstallPack } from "../support/installed-packs.js";
 import { gitRepository } from "../support/repository-setup.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+import { startDatabaseWriter } from "../support/processes/database-writer.js";
 
 /** The beat of these streams: none comes within a test unless the test moves the clock to it. */
 const BEAT_MS = 60 * 60_000;
 
 interface Message { readonly event: string; readonly data: string }
+
+/** A folder watch the test drives: `report(name)` is the OS saying `name` in the database's folder changed. */
+function drivenWatch(): { watch: typeof watchFolder; report: (name: string) => void } {
+  let listener: ((event: string, name: string) => void) | undefined;
+  const watch = ((_folder: string, _options: unknown, onChange: (event: string, name: string) => void) => {
+    listener = onChange;
+    const watcher = new EventEmitter() as FSWatcher;
+    watcher.close = () => { listener = undefined; };
+    return watcher;
+  }) as unknown as typeof watchFolder;
+  return { watch, report: name => listener?.("change", name) };
+}
 
 /** One server-sent event's lines; `event` is "message" when it names none. */
 function parseMessage(text: string): Message {
@@ -74,6 +89,13 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     await removeFolder(root);
   });
 
+  /** Stores over the test's database, as the daemon makes them, with `options` added. */
+  const storesFor = (options: Partial<DatabaseApiStoresOptions>): DatabaseApiStores => new DatabaseApiStores(databasePath, {
+    health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
+    origin: () => "http://127.0.0.1:4737",
+    ...options,
+  });
+
   const open = async (query = ""): Promise<ReturnType<typeof messagesOf>> => {
     const response = await app.request(`/api/changes${query}`);
     expect([response.status, response.headers.get("content-type")]).toEqual([200, "text/event-stream"]);
@@ -95,7 +117,23 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     await stream.stop();
   });
 
-  it("sends a new token when another connection commits, as a hook's records and the CLI's writes do", async () => {
+  it("sends a new token when another process commits through Rerail's own opener, as the CLI's writes do", async () => {
+    // The writer syncs the write-ahead log between writing its commit and publishing it, so the daemon hears the
+    // write before it can read the commit, and no later notice comes.
+    const writer = await startDatabaseWriter(databasePath);
+    const stream = await open();
+    try {
+      const first = await stream.next();
+      await writer.commit("remote:github.com/acme/web");
+
+      expect((await stream.next()).data).not.toBe(first.data);
+    } finally {
+      await stream.stop();
+      await writer.close();
+    }
+  });
+
+  it("sends a new token when another connection of the daemon's process commits, as a hook's records do", async () => {
     const stream = await open();
     const first = await stream.next();
     const other = new SqliteSessionStore(databasePath);
@@ -110,28 +148,61 @@ describe("the daemon's change stream (GET /api/changes)", () => {
   });
 
   it("sends nothing for a checkpoint of the write-ahead log, which commits nothing", async () => {
-    const stream = await open();
-    const first = await stream.next();
-
-    database.$client.pragma("wal_checkpoint(TRUNCATE)");
+    // The folder's notices come as the test says, so the checkpoint's are heard alone, before any commit.
+    const folder = drivenWatch();
+    const watched = storesFor({ changeFeed: { beatMs: BEAT_MS, watch: folder.watch } });
+    const stream = messagesOf(await createRerailApi(watched, operations, { version: "0.0.0-test" }).request("/api/changes"));
     const other = new SqliteSessionStore(databasePath);
     try {
+      const first = await stream.next();
+      database.$client.pragma("wal_checkpoint(TRUNCATE)");
+      folder.report("rerail.sqlite");
+      folder.report("rerail.sqlite-wal");
+      await new Promise(resolve => setImmediate(resolve));
+
       other.openSession({ host: "codex", sessionId: "session-c", cwd: root });
-      // The first message after the checkpoint is the commit's: the checkpoint's own notice sent nothing.
+      folder.report("rerail.sqlite-wal");
+
+      // The first message after the checkpoint is the commit's: the checkpoint's own notices sent nothing.
       expect((await stream.next()).data).not.toBe(first.data);
     } finally {
       other.close();
       await stream.stop();
+      watched.close();
     }
   });
 
-  it("tells a Merge Assist conflict event as a conflicts message", async () => {
+  it("tells a conflict event of the Merge Assist the stores answer with as a conflicts message", async () => {
+    let conflictsChanged: ((checkoutPath: string) => void) | undefined;
+    // Only the conflict events are read here; the stores call nothing else of it unless a Merge Assist route runs.
+    const mergeAssist = {
+      onConflictsChanged: (listener: (checkoutPath: string) => void) => {
+        conflictsChanged = listener;
+        return () => { conflictsChanged = undefined; };
+      },
+    } as unknown as MergeAssistService;
+    const withMergeAssist = storesFor({ changeFeed: { beatMs: BEAT_MS }, mergeAssist });
+    const stream = messagesOf(await createRerailApi(withMergeAssist, operations, { version: "0.0.0-test" }).request("/api/changes"));
+    try {
+      await stream.next();
+
+      conflictsChanged?.(root);
+
+      expect((await stream.next()).event).toBe("conflicts");
+    } finally {
+      await stream.stop();
+      withMergeAssist.close();
+    }
+    expect(conflictsChanged).toBeUndefined();
+  });
+
+  it("sends a new token when the stores count a write of their own, before any file notice of its commit", async () => {
     const stream = await open();
-    await stream.next();
+    const first = await stream.next();
 
-    stores.changes().notify("conflicts");
+    stores.markChanged();
 
-    expect((await stream.next()).event).toBe("conflicts");
+    expect((await stream.next()).data).not.toBe(first.data);
     await stream.stop();
   });
 
