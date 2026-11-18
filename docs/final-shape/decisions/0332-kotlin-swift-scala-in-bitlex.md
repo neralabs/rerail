@@ -756,6 +756,20 @@ abstract class A {
 Corpus: 414 the same (step 29: 409), 77 refused, 0 differ. The lost comments' open item (below)
 now covers the zero-width case only.
 
+## Kotlin, step 31 (`31-soft-templates.bitlex`)
+
+```kotlin
+val s = "a $value b"
+```
+
+The lean parser gives a soft keyword after a template's `$` a leaf of its own, named after the
+word, inside the `interpolated_identifier`. The token kind `interpolated_identifier` takes the
+soft keywords (`keywords interpolated_identifier { } soft { … }`, the 44 words the escape
+named), and the tree retags one to the node (`soft_interp`). A word with more after it
+(`$values`) is a plain identifier, as before.
+
+Corpus: 417 the same (step 30: 414), 74 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment

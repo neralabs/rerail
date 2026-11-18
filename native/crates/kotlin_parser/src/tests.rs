@@ -387,6 +387,18 @@ fn strings_in_templates_are_the_lean_parsers() {
 }
 
 #[test]
+fn soft_words_in_templates_are_the_lean_parsers() {
+    same(&[
+        "val s = \"a $value b\"\n",
+        "val s = \"$data\"\n",
+        "val s = \"$values $field.x\"\n",
+        "val s = \"\"\"$get x\"\"\"\n",
+        "val s = \"$constructor $value\"\n",
+        "val s = \"a $field b\"\n",
+    ]);
+}
+
+#[test]
 fn swallowed_comments_are_the_lean_parsers() {
     same(&[
         "abstract class A {\n    val x = 1\n    /* c */\n    abstract fun f()\n}\n",
@@ -542,7 +554,6 @@ fn what_step_20_does_not_read_is_refused() {
         "fun String?.h() = 1\n",
         "fun f() {\n    loop@ for (i in a) break@loop\n}\n",
         "val a = b as java.util.List<Int>\n",
-        "val s = \"a $field b\"\n",
         "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
         "class A\n@Inject constructor(x: Int)\n",
         "fun f() {\n    a\n    /* c */ .b()\n}\n",
