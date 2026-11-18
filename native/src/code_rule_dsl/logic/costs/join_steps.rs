@@ -122,14 +122,6 @@ pub fn category(text: &str, words: usize) -> String {
     if s.is_empty() { "none".to_owned() } else { s.join(" ") }
 }
 
-/// The columns a step's access names: "lookup on (c0, c2)" two, "scan" none.
-pub fn bound_columns(access: &str) -> u32 {
-    match (access.find('('), access.rfind(')')) {
-        (Some(a), Some(b)) if b > a + 1 => access[a + 1..b].split(',').count() as u32,
-        _ => 0,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -138,9 +130,9 @@ mod tests {
         assert_eq!(super::category("scan of the component", 4), "scan of the component");
         assert_eq!(super::category("lookup on (c0, c2)", 1), "lookup");
         assert_eq!(super::category("", 3), "none");
-        assert_eq!(super::bound_columns("lookup on (c0, c2)"), 2);
-        assert_eq!(super::bound_columns("scan"), 0);
-        assert_eq!(super::bound_columns("anti-join on ()"), 0);
+        // As the search names them for a prediction (decision 0354): the same categories.
+        assert_eq!(super::category("range in document on (c1)", 1), super::category("range", 1));
+        assert_eq!(super::category("assign or test", 1), "assign");
     }
 }
 
@@ -180,7 +172,11 @@ impl crate::code_rule_dsl::logic::plan::joins::Pricer for ModelPricer {
         if steps.is_empty() {
             return None;
         }
-        let targets = self.0.fanouts(&steps).ok()?;
+        let targets = {
+            let on = if self.0.on_device() && steps.len() >= rerail_accel::join_model::DEVICE_ROWS { "on the device" } else { "on the host" };
+            let _span = crate::code_rule_dsl::logic::profile::span(|| format!("join model: {on}"));
+            self.0.fanouts(&steps).ok()?
+        };
         let mut at = 0;
         Some(
             round

@@ -185,6 +185,49 @@ within it too). corpus0, planner and model twice each: the same 660 relations an
 What stays on the host: the features (each candidate's plan record: the planner's statistics read per step, not
 device work), and a dispatch's 60 µs where rounds are small (the driver's per-wave rounds, live replans).
 
+## Features from the search, and the prediction armed ahead (2026-11-17)
+
+The user: the features (each candidate's plan record) go too, the search's own per-step rows taken instead; and the
+GPU's command is submitted before the round is built, so it runs once the round's rows are written.
+
+1. **The search's steps** (`SearchCx::steps_of`): with a pricer set, the search hands back its best's and its
+   runners-up's steps from its own cells: each join's rows a row in and the rule that priced them (`Cell::fan`,
+   `basis`; a runner-up's last join from its `finals` entry), each filter's share, access and source by kind.
+   `decide` takes them before any record; a proposal the search did not price is still explained. A prediction's
+   relation and bound columns come from the body, not the record's text (the samples' too, so both agree), and
+   `bound_columns` is gone. `the_searchs_own_steps_are_the_records_features`: rows, basis, access and source as the
+   record of the same order gives them, with and without a delta.
+2. **The prediction armed** (`DeviceForest`'s `Armed`): bucketing and the walk encoded and committed ahead into a
+   command buffer that waits on a shared event, on a queue of its own (a waiting command buffer holds back those
+   committed after it on its queue). A call writes its values into that command's buffers, signals, waits; the next
+   is armed after it, and training arms the first (`prepare_values`, 1,024 rows). Its sizes are fixed when armed
+   (the kernels' plans take the rows): a call of fewer rows packs only its own, the rest bucket 0 and unread; a
+   larger call, or columns of other kinds, releases it and arms a larger one. Dropping the forest releases it. The
+   trees are summed over lanes chosen for the armed rows, so the predictions equal the unarmed ones to rounding
+   (`an_armed_prediction_is_the_unarmed_ones`). The GPU's seconds exclude the wait (0.038 ms for a call 20 ms after
+   arming). A call's host CPU (M3, `the_device_predicts_as_the_host_and_its_cost`): 61.6 to 38.5 µs at 1 row, 63 to
+   47 µs at 10, 86 to 72 µs at 100, arming the next included.
+
+hogql, profiled, inclusive CPU:
+
+| | before (M3) | | after (M3) | | after (M1 Max) | |
+|---|---|---|---|---|---|---|
+| features | 0.94 s | 0.67 s | 0.13 s | 0.10 s | 0.07 s | 0.13 s |
+| candidates explained for them | 25,341 | 22,721 | 177 | 122 | 15 | 53 |
+| prediction | 0.94 s | 0.50 s | 0.90 s | 0.71 s | 0.57 s | 0.87 s |
+| of it on the device / on the host (calls) | | | | | 0.29 s (3,147) / 0.26 s (3,236) | 0.46 s (6,254) / 0.35 s (5,834) |
+| a stratum's first plans in one round | 0.29 s | 0.15 s | 0.16 s | 0.18 s | 0.04 s | 0.17 s |
+
+Work on the M1 Max: the planner 1.37 G and 1.41 G, the model 1.39 G and 1.41 G. Findings, hogql planned twice and
+by the model twice: the same 660 relations, 100,617 rows (each relation's rows sorted; the files' own order follows
+the join order). The prediction is now most of what is left: about 80 µs a round either way, a round of a few
+steps on the host, a larger one on the device; the per-wave rounds are small.
+
+Found on the way: a plan record is made only when the run is profiled, binds the device, or reads a kind-set axis.
+A CPU-bound unprofiled run therefore stored no samples (and, before step 1, priced no candidate). The search's
+steps are not handed to the record's other readers (placement's `add_joins` reads the columns' names and the
+walked rows they lack), so that gap stays open (Q82).
+
 ## Not done
 
 - **Samples of orders not kept, made on purpose**: an offline generator running each line's other orders over the

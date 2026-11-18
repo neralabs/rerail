@@ -540,6 +540,9 @@ pub(super) fn propose(key: PlanKey, mut orders: Vec<(Vec<StoredStep>, f64)>, wal
 pub(in crate::code_rule_dsl) struct SearchCx {
     pub wide: bool,
     pub runners_up: Vec<(Vec<Step>, f64)>,
+    /// With a batch pricer (decision 0354): the best's and the runners-up's steps as the search priced them, each
+    /// step's rows, basis, access and source from the search's own cells (no plan record made for them).
+    pub steps_of: Vec<(Vec<Step>, Vec<super::super::profile::StepPlan>)>,
     /// An order to try first (decision 0258): taken where it runs, is led by the delta and prices under a search's
     /// cost, before greedy-first and the search.
     pub start: Option<Vec<Step>>,

@@ -2875,3 +2875,57 @@ fn a_computed_value_waits_for_the_atoms_that_narrow_its_arguments() {
     let out = run(&body::Placed::of_program(&p).unwrap(), &db, inputs, None, Hooks::default()).unwrap();
     assert_eq!(out.shown()["o"].len(), 1, "{:?}", out.shown()["o"]);
 }
+
+/// Decision 0354: with a batch pricer, the search hands back its best's and runners-up's steps from its own cells,
+/// and they are the features the plan record of the same order gives (the samples the model learns from): each
+/// step's rows, basis, access and source alike.
+#[test]
+fn the_searchs_own_steps_are_the_records_features() {
+    struct NoPrice;
+    impl joins::Pricer for NoPrice {
+        fn price(&self, _: &[joins::Choice]) -> Option<Vec<Vec<f64>>> {
+            None
+        }
+    }
+    use crate::code_rule_dsl::logic::costs::join_steps::category;
+    let p = parse(".decl delta(k:number,a:number,t:number,f:number)\n.decl expand(o:number,t:number,k:number)\n.decl restrict(c:number,o:number,a:number)\n.input restrict\n.decl result(c:number,f:number)\nresult(c,f) :- restrict(c,o,a), expand(o,1,k), delta(k,a,2,f), c != f.\n.output result\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    for (rel, rows, ndv, fan) in [
+        ("delta",526.0,vec![526.0,173.0,1.0,526.0],vec![1.0,5.0,526.0,1.0]),
+        ("expand",201_000.0,vec![10000.0,4.0,1878.0],vec![30.0,100000.0,200.0]),
+        ("restrict",450.0,vec![450.0,450.0,4.0],vec![1.0,1.0,140.0]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c,(ndv,fan)) in ndv.into_iter().zip(fan).enumerate() {
+            model.ndv.insert((rel,c),ndv);
+            model.stats.fan.insert((rel,c),fan);
+        }
+    }
+    model.stats.solve(["delta","expand","result"].into_iter().map(str::to_owned).collect());
+    joins::set_pricer(Some(std::sync::Arc::new(NoPrice)));
+    let fields = body::Placed::of_program(&p).unwrap();
+    let fields = fields.fields().unwrap();
+    let r = &p.rules[0];
+    let alone = body::alone(r).unwrap();
+    let b = body::nth(&alone, 0);
+    // The record made in full, as a profiled run makes it.
+    let was = explaining(true);
+    for first in [None, Some(2)] {
+        let got = model.search_steps_against_records(fields, &b, first).unwrap();
+        assert!(got.len() >= 2, "the best and a runner-up, delta {first:?}: {}", got.len());
+        for (steps, x) in &got {
+            let x = x.as_ref().expect("a record of the order");
+            assert_eq!(steps.len(), x.steps.len());
+            for (s, e) in steps.iter().zip(&x.steps) {
+                assert!((s.rows - e.rows).abs() <= 1e-9 * e.rows.abs().max(1.0), "{}: rows {} against the record's {}", e.literal, s.rows, e.rows);
+                assert_eq!(category(&s.basis, 4), category(&e.basis, 4), "{}: basis", e.literal);
+                assert_eq!(category(&s.access, 1), category(&e.access, 1), "{}: access", e.literal);
+                assert_eq!(category(&s.source, 4), category(&e.source, 4), "{}: source", e.literal);
+            }
+        }
+    }
+    explaining(was);
+    joins::set_pricer(None);
+}

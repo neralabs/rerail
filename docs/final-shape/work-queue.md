@@ -1664,7 +1664,12 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   round at a time on the device, a stratum's first plans in one round, training's buckets on the device, features
   for candidates within 16× only, exploration under 1 M rows. Overhead about 6 s to 1.3–2.2 s CPU on hogql; work
   the planner's within the spread. Left on the host: the candidates' plan records (features).
-- **Next**: features without plan records (the search's own per-step rows); model-planned runs over more corpora, the model retrained between; filters (×1.58 to ×1.70) and
+- **Features from the search, the prediction armed** (the user): features 0.67–0.94 s to 0.07–0.13 s (the search's
+  own steps); the device's command committed ahead, waiting on an event, so a round's rows start it. Prediction
+  about 80 µs a round, on the host or the device. Work and findings as the planner's.
+- **Open**: a CPU-bound unprofiled run makes no plan records, so it stores no samples; fewer, larger rounds for
+  the per-wave replans.
+- **Next**: model-planned runs over more corpora, the model retrained between; filters (×1.58 to ×1.70) and
   the median; the first step's samples (delta and seed sizes); one sample per line and place with counts. Then the
   model on by default where it wins, and step 2.
 - **Found along the way**: `facts_only::every_table_is_facts_or_listed` and `every_kept_map_is_state_or_listed` fail

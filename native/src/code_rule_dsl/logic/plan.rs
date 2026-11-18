@@ -2196,6 +2196,15 @@ impl Model {
 
     /// `plan_rule`, and when profiling, the plan as EXPLAIN shows it (`profile::RulePlan`): the search's size, and per
     /// step its access method, source and the rows expected after it.
+    /// Decision 0354 (tests): the orders a search priced with a batch pricer on, each with its steps as the search
+    /// made them and as the plan record of the same order gives them.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn search_steps_against_records(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>) -> Result<Vec<(Vec<super::profile::StepPlan>, Option<super::profile::RulePlan>)>> {
+        let mut cx = joins::SearchCx::default();
+        self.plan_inner_in(pf, b, first, None, false, &mut cx)?;
+        Ok(cx.steps_of.into_iter().map(|(order, st)| (st, self.explain_order(pf, b, first, &order))).collect())
+    }
+
     pub fn plan_rule_explained(
         &self,
         pf: Fields<'_>,
@@ -2408,7 +2417,7 @@ impl Model {
         let Some(kept) = plans_find(&key, b.len(), nodes) else {
             plan_cache(0);
             let mut cx = joins::SearchCx::default();
-            return self.plan_inner_in(pf, b, first, None, true, &mut cx).map(|got| self.decide(pf, b, first, key, got, cx.runners_up, round.take()));
+            return self.plan_inner_in(pf, b, first, None, true, &mut cx).map(|got| self.decide(pf, b, first, key, got, cx.runners_up, cx.steps_of, round.take()));
         };
         // A line with work queued for its next plan (decision 0203: a wider search, a proposal not tried) is searched.
         let pending = joins::pending(&key);
@@ -2571,7 +2580,7 @@ impl Model {
             plan_cache(1);
             super::profile::decision("plan cache (decision 0038)", || "planned (first sight of the rule)".into());
         }
-        let got = self.decide(pf, b, first, key, got, cx.runners_up, round.take());
+        let got = self.decide(pf, b, first, key, got, cx.runners_up, cx.steps_of, round.take());
         PLANS.with(|p| {
             if let Some(p) = p.borrow().as_ref() {
                 let gap = got.0.1 / SEED.with(|c| c.get()).max(1.0);
@@ -2921,7 +2930,7 @@ impl Model {
             self.plan_inner_in(pf, b, first, None, false, &mut cx)?
         };
         let got = match line {
-            Some(line) => self.decide(pf, b, first, line, got, cx.runners_up, round),
+            Some(line) => self.decide(pf, b, first, line, got, cx.runners_up, cx.steps_of, round),
             None => got,
         };
         // Its work as searched (for live replans, the second field), against which a re-pricing is judged.
@@ -2934,7 +2943,8 @@ impl Model {
     /// search is not run here: the line asks for it at its end, and the background serves it. A line with no note and no batch pricer takes
     /// the search's best at once. In an open round (`round`) the choice is recorded and the best kept.
     #[allow(clippy::too_many_arguments)]
-    fn decide(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, key: PlanKey, got: (Plan, Option<super::profile::RulePlan>), alternatives: Vec<(Vec<Step>, f64)>, round: Option<&mut Vec<joins::Choice>>) -> (Plan, Option<super::profile::RulePlan>) {
+    #[allow(clippy::too_many_arguments)]
+    fn decide(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, key: PlanKey, got: (Plan, Option<super::profile::RulePlan>), alternatives: Vec<(Vec<Step>, f64)>, steps_of: Vec<(Vec<Step>, Vec<super::profile::StepPlan>)>, round: Option<&mut Vec<joins::Choice>>) -> (Plan, Option<super::profile::RulePlan>) {
         if !joins::on() {
             return got;
         }
@@ -2965,10 +2975,15 @@ impl Model {
                 if c.est > joins::feature_span() * best {
                     continue;
                 }
-                // The search's best comes with its record; the others are explained here.
+                // The search's own steps where it priced the order (the best, the runners-up); else the search's best
+                // record, or one explained here (a proposal re-priced).
                 let made;
-                let x = match (i, &got.1) {
-                    (0, Some(x)) => x,
+                let x = match (steps_of.iter().find(|(o, _)| *o == c.order), i, &got.1) {
+                    (Some((_, st)), _, _) => {
+                        made = super::profile::RulePlan { steps: st.clone(), ..Default::default() };
+                        &made
+                    }
+                    (None, 0, Some(x)) => x,
                     _ => match self.explain_order(pf, b, first, &c.order) {
                         Some(x) => {
                             made = x;
@@ -3252,6 +3267,7 @@ impl Model {
         let exact = joins::exact_for(rule);
         if fixed.is_none() {
             cx.runners_up.clear();
+            cx.steps_of.clear();
         }
         // var → the constant an equality binds it to (`$k = #k1207`): read as the constant where an atom reads it.
         let mut consts: HashMap<VarSlot, Constant> = HashMap::new();
@@ -4032,6 +4048,9 @@ impl Model {
             /// Its rows rest only on relations with no rows of their own when priced (empty, or unsized): a
             /// cross product taken from it is priced from at least a search's rows (`SEARCH_WORK`), not theirs.
             unfounded: bool,
+            /// Its last join's rows out a row in, and the rule that priced them (decision 0354's features).
+            fan: f64,
+            basis: &'static str,
         }
         let filters: Vec<usize> = (0..b.len()).filter(|&i| !b.is_join(i)).collect();
         // Each filter's share of rows passed on (decision 0297); a body's first 128 filters are priced.
@@ -4081,7 +4100,8 @@ impl Model {
         #[derive(Clone, Copy)]
         enum Price {
             No,
-            Atom(f64, Option<f64>),
+            /// Rows a binding, a range's where it reads one, and the rule `atom_rows` priced it by.
+            Atom(f64, Option<f64>, &'static str),
             Climb(f64),
             Descend(f64),
         }
@@ -4111,7 +4131,11 @@ impl Model {
                 let bound = &set_of(bits);
                 let j = joins[i];
                 match b.view(j) {
-                Lit::Atom(_) => Price::Atom(atom_rows(j, bound), doc_range(j, bound).map(|(_, r)| r)),
+                Lit::Atom(_) => {
+                    let rows = atom_rows(j, bound);
+                    let by = basis.get();
+                    Price::Atom(rows, doc_range(j, bound).map(|(_, r)| r), by)
+                }
                 Lit::Nearest { n, a, kindset } => {
                     if !b.ready(j, bound) {
                         Price::No
@@ -4130,7 +4154,7 @@ impl Model {
         let priced = |p: Price, rows: f64| -> Option<(f64, f64, Option<Mode>)> {
             match p {
                 Price::No => None,
-                Price::Atom(ar, range) => {
+                Price::Atom(ar, range, _) => {
                     let out = rows * ar;
                     if let Some(r) = range
                         && rows * r < out
@@ -4147,7 +4171,7 @@ impl Model {
         // By subset mask (at most `GREEDY` joins, so 4,096 subsets).
         let mut cells: Vec<Option<Cell>> = (0..1usize << joins.len()).map(|_| None).collect();
         let mut closed: Vec<(u128, u128)> = vec![(0, 0); 1 << joins.len()];
-        cells[0] = Some(Cell { work: 0.0, rows: 1.0, prev: 0, last: usize::MAX, mode: None, unfounded: false });
+        cells[0] = Some(Cell { work: 0.0, rows: 1.0, prev: 0, last: usize::MAX, mode: None, unfounded: false, fan: 1.0, basis: "" });
         closed[0] = closure(0);
         // Only the subsets one join more than a subset reached (with the delta first, half of them or fewer): a
         // subset no order reaches has no cell, and its closure is not worked out. Each is solved as before, its last
@@ -4155,7 +4179,7 @@ impl Model {
         let mut reached: Vec<u64> = vec![0];
         // The candidates of the full subset, each the best order ending in its last join: the search's runners-up
         // (decision 0203 §1), kept for a later choice.
-        let mut finals: Vec<(f64, u64, usize, Option<Mode>)> = Vec::new();
+        let mut finals: Vec<(f64, u64, usize, Option<Mode>, f64, &'static str)> = Vec::new();
         // A subset is solved from smaller ones only, so the order its size's subsets are solved in is free: each is
         // taken once (`listed`), not sorted (a sort of each size's subsets was 14% of a cold run's searches).
         let mut listed = vec![false; 1usize << joins.len()];
@@ -4195,7 +4219,10 @@ impl Model {
                     // for: priced from a search's rows at least, it is taken only where it is cheap even so.
                     let crossed = prev != 0 && jmask[i] & *bound == 0;
                     let left = if crossed && from.unfounded { from.rows.max(SEARCH_WORK) } else { from.rows };
-                    let Some((w, mut out, mode)) = priced(price(i, *bound), left) else { continue };
+                    let p = price(i, *bound);
+                    let by = match p { Price::Atom(_, _, by) => by, _ => "" };
+                    let Some((w, mut out, mode)) = priced(p, left) else { continue };
+                    let fan = if left > 0.0 { out / left } else { 0.0 };
                     let unfounded = (prev == 0 || from.unfounded) && no_rows_when_priced(i);
                     candidates += 1;
                     // The filters this join makes ready, as `close` places them: each passes its share on, and its work
@@ -4208,9 +4235,9 @@ impl Model {
                         out *= pass[k];
                         filtered += out;
                     }
-                    let cand = Cell { work: from.work + w + filtered, rows: out, prev, last: i, mode, unfounded };
+                    let cand = Cell { work: from.work + w + filtered, rows: out, prev, last: i, mode, unfounded, fan, basis: by };
                     if mask == full_mask {
-                        finals.push((cand.work, prev, i, mode));
+                        finals.push((cand.work, prev, i, mode, fan, by));
                     }
                     if best.as_ref().is_none_or(|b| cand.work < b.work) {
                         best = Some(cand);
@@ -4279,6 +4306,79 @@ impl Model {
             }
         }
         subsets_reached = cells.iter().filter(|c| c.is_some()).count() as u64;
+        // Decision 0354: an order's steps as this search priced them, for the learned model's features: each join's
+        // rows a row in and basis from its cell (`last`: a runner-up's final join, which is not its subset's cell),
+        // a filter passing its share; access and source as the plan record names them, their first words.
+        let source_of = |rel: &str| -> &'static str {
+            if rel.starts_with(super::strings::RELATION) {
+                "text test"
+            } else if self.is_input(pf, rel) {
+                "input"
+            } else if self.view_src.contains_key(rel) {
+                "view of an input"
+            } else {
+                "derived"
+            }
+        };
+        let planned = |order: &[Step], last: Option<(usize, f64, &'static str)>| -> Option<Vec<super::profile::StepPlan>> {
+            let (mut mask, mut r, mut bound) = (0u64, 1.0f64, VarSet::new());
+            let n = order.iter().filter(|s| joins.contains(&s.at)).count();
+            let (mut seen, mut out) = (0, Vec::with_capacity(order.len()));
+            for s in order {
+                let (access, source, by): (&str, &str, &str) = match joins.iter().position(|&j| j == s.at) {
+                    Some(i) => {
+                        seen += 1;
+                        mask |= 1 << i;
+                        let (fan, by) = match last {
+                            Some((li, fan, by)) if seen == n && li == i => (fan, by),
+                            _ => {
+                                let c = cells[mask as usize].as_ref()?;
+                                if c.last != i {
+                                    return None;
+                                }
+                                (c.fan, c.basis)
+                            }
+                        };
+                        r *= fan;
+                        match b.view(s.at) {
+                            Lit::Atom(a) => {
+                                let args = b.args(s.at);
+                                let c = (0..args.len()).filter(|&c| b.constant(args[c]).is_some() || matches!(args[c], TermRef::Var(v) if bound.contains(v))).count();
+                                let access = match s.mode {
+                                    Some(Mode::Range) => "range",
+                                    _ if c == 0 => "scan",
+                                    _ if c == args.len() => "membership",
+                                    _ => "lookup",
+                                };
+                                (access, source_of(b.rel(a)), by)
+                            }
+                            Lit::Nearest { .. } => (s.mode.map_or("nearest", Mode::name), "tree", ""),
+                            _ => ("filter", "", ""),
+                        }
+                    }
+                    None => match b.view(s.at) {
+                        Lit::Atom(a) => {
+                            r *= b.filter_pass(s.at);
+                            ("anti-join", source_of(b.rel(a)), "")
+                        }
+                        Lit::Cmp { op, .. } => {
+                            r *= b.filter_pass(s.at);
+                            (if op == CmpOp::Eq { "assign" } else { "filter" }, "", "")
+                        }
+                        Lit::Agg { .. } => ("aggregate", "", ""),
+                        _ => {
+                            r *= b.filter_pass(s.at);
+                            ("filter", "", "")
+                        }
+                    },
+                };
+                bound.extend(b.vars(s.at));
+                out.push(super::profile::StepPlan { literal: String::new(), access: access.to_owned(), source: source.to_owned(), rows: r, all: r, passed: Vec::new(), basis: by.to_owned() });
+            }
+            Some(out)
+        };
+        // Made for a batch pricer's features.
+        let pricing = joins::pricing();
         if fixed.is_none() && joins::on() && finals.len() > 1 {
             finals.sort_by(|a, b| a.0.total_cmp(&b.0));
             let best_last = cells[full_mask as usize].as_ref().map(|c| c.last);
@@ -4286,15 +4386,21 @@ impl Model {
                 .iter()
                 .filter(|f| Some(f.2) != best_last)
                 .take(joins::ALTERNATIVES)
-                .filter_map(|&(work, prev, last, mode)| {
+                .filter_map(|&(work, prev, last, mode, fan, by)| {
                     let (_, _, mut order, mut bound, mut rest) = rebuild(prev)?;
                     order.push(Step { at: joins[last], mode });
                     bound.extend(b.vars(joins[last]));
                     close(&mut order, 1.0, &mut bound, &mut rest);
+                    if pricing && rest.is_empty() && let Some(st) = planned(&order, Some((last, fan, by))) {
+                        cx.steps_of.push((order.clone(), st));
+                    }
                     rest.is_empty().then_some((order, work))
                 })
                 .collect();
             cx.runners_up = alternatives;
+        }
+        if pricing && let Some(best) = best_of.get(&full_mask) && let Some(st) = planned(&best.2, None) {
+            cx.steps_of.push((best.2.clone(), st));
         }
         }
         if let Some((g, gc)) = &greedy_probe
@@ -6317,7 +6423,7 @@ fn text_test_defined(vs: &body::Versions, rules: &[body::RuleKey], input: &str) 
 /// the columns bound when it reads. Without `counts`, each step's features for a prediction (the model's choice):
 /// every step after the first, its rows in and out the statistics'.
 fn step_samples(model: &Model, b: &Body<'_>, order: &[Step], x: &super::profile::RulePlan, counts: Option<&[(u64, u64)]>, seed: bool, origin: &str) -> Option<Vec<super::costs::join_steps::StepSample>> {
-    use super::costs::join_steps::{StepSample, bound_columns, category};
+    use super::costs::join_steps::{StepSample, category};
     if x.steps.len() != order.len() || counts.is_some_and(|c| c.len() != order.len()) {
         return None;
     }
@@ -6345,13 +6451,14 @@ fn step_samples(model: &Model, b: &Body<'_>, order: &[Step], x: &super::profile:
             let args = if rel.is_some() { b.args(at) } else { &[] };
             let bound_cols: Vec<usize> = (0..args.len()).filter(|&c| b.constant(args[c]).is_some() || matches!(args[c], TermRef::Var(v) if bound.contains(v))).collect();
             let key_ndv = rel.map_or(0.0, |r| bound_cols.iter().filter_map(|&c| model.ndv.at(&r, c).copied()).fold(0.0, f64::max));
-            // The relation's name, as the literal shows it: the words before its arguments.
-            let relation = if rel.is_some() { s.literal.trim_start_matches(['!', ' ']).split('(').next().unwrap_or("").trim().to_owned() } else { String::new() };
+            // The relation's name, and its bound columns' count, from the body: a record the search makes for a
+            // prediction has neither the literal's text nor the columns' names.
+            let relation = rel.map_or_else(String::new, str::to_owned);
             out.push(StepSample {
                 basis: category(&s.basis, 4),
                 access: category(&s.access, 1),
                 source: category(&s.source, 4),
-                bound: bound_columns(&s.access),
+                bound: bound_cols.len() as u32,
                 step: i as u32,
                 steps: order.len() as u32,
                 est_in: before,

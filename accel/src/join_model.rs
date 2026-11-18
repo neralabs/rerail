@@ -155,7 +155,7 @@ pub fn compared(held: &[StepSample], predicted: &[f64], trained_on: usize) -> Jo
 }
 
 #[cfg(target_os = "macos")]
-pub use on::{JoinModel, compare, compare_on};
+pub use on::{DEVICE_ROWS, JoinModel, compare, compare_on};
 
 /// The GPU seconds of every forest command buffer awaited so far in this process.
 #[cfg(target_os = "macos")]
@@ -253,6 +253,10 @@ mod on {
             let (forest, scale) = train_regression_flat(fs.clone(), &targets, None, Some(&weights), config)?;
             let rules = BucketRules::new(&fs)?;
             let device = DeviceForest::new(&forest).ok().zip(DeviceBucketizer::from_rules(&rules).ok());
+            // The first round's prediction committed now, waiting for its rows (`prepare_values`).
+            if let Some((f, b)) = &device {
+                let _ = f.prepare_values(b, &device_columns(&[]), ARMED_ROWS);
+            }
             Ok(JoinModel { rules, forest, scale, device, trained_on: samples.len() })
         }
 
@@ -311,6 +315,10 @@ mod on {
     /// The steps a call predicts on the device from (`JoinModel::fanouts`). Measured on the M3 (Q82): a dispatch
     /// costs the host about 60 µs and 0.24 µs a step, a walk on the host about 9 µs a step.
     pub const DEVICE_ROWS: usize = 8;
+
+    /// The rows the first prediction is armed for at training (`DeviceForest::prepare_values`); a larger round arms
+    /// the next larger.
+    const ARMED_ROWS: usize = 1024;
 
     /// The steps' features as the device takes them, in [`STEP_FEATURES`]' order: numbers, or categories as codes
     /// into their names (mapped here, a name at a time; the device buckets the rows).
