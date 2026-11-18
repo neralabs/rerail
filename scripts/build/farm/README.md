@@ -219,6 +219,7 @@ hosts, and everything compiles and tests here, as without the farm.
 | `link` | the host's network interface the farm's traffic must arrive on (its fast link); unset: any |
 | `min_free_gb` | under this much free disk, the farm frees its own data on the host and says so (default 40) |
 | `floor_free_gb` | the free disk left to the host's own work: under it the host is not used (default 20) |
+| `max_target_gb` | the most a host's test target directories hold together (default 150 GB; per host too) |
 | `max_rtt_ms` | the slowest round trip a host may have (default 150), for a host without `link` |
 | `min_mbps` | the least throughput to it, MB/s (default 8), for a host without `link`: with one, the link check catches a fall back to WiFi, and both are only reported. Both are measured through ssh: the round trip is the least of three (each starts an ssh process, which a loaded Mac delays), and the throughput is 32 MB written through a plain pipe (Python's `run(input=)` writes 512 bytes at a time and read 57 MB/s on a Thunderbolt link that does 270 through ssh and 800 raw). They still fall when either Mac is busy: a low figure is no proof of a slow link |
 | `tcp` | `false` keeps the live mirror's data on ssh (default `true`; also `RERAIL_FARM_TCP=0`) |
@@ -311,6 +312,16 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
   just above it, and the next build took it under. Never one a command is running in: each command
   holds its target's lock (`targets.noindex/.locks`) until it ends, and pruning skips a held one
   (farm 21; before, a checkout's run on a short disk removed another's target mid-build).
+  The targets together stay under `max_target_gb` (150 GB): over it, the least recently used no
+  command holds go. While a command runs, its agent checks the host every minute (one agent at a
+  time): targets due a clean are cleaned whether or not their own commands ever ended, the budget is
+  measured every 10 minutes, and under `min_free_gb` + 40 GB free the least recently used targets
+  and the root's idle copies go. A target goes by a rename aside first, so a removal cut short
+  leaves no half a target. An agent whose connection drops (its caller killed) stays to stop the
+  command and clean after it. Before farm 27 a host's targets were checked only when a command
+  started and cleaned only when one ended normally: 16 checkouts' targets reached 318 GB, 33 GB of
+  one of them leftovers never cleaned, and concurrent builds took the host from 255 GB free to none
+  within the hour (2026-11-17).
 
 `scripts/build/farm/status` probes every host now and prints whether it is usable and why not,
 with its round trip, throughput and free disk (`--json` for scripts; exit 1 when none is usable).

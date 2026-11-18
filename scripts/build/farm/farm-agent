@@ -394,9 +394,157 @@ def prune(keep, min_free_gb):
                 continue
             try:
                 print(f"farm-agent: removing the test target {os.path.basename(d)} (unused since {time.ctime(when)})", file=sys.stderr, flush=True)
-                shutil.rmtree(d, ignore_errors=True)
+                # Aside first, at once: a removal cut short (this process ends with its command)
+                # leaves no half a target that cargo would trust, only trash the next sweep removes.
+                trash = os.path.join(TARGETS, f".trash.{os.path.basename(d)}.{os.getpid()}")
+                try:
+                    os.rename(d, trash)
+                except OSError:
+                    continue
             finally:
                 lock.close()
+            shutil.rmtree(trash, ignore_errors=True)
+
+
+# While a command runs, its agent checks the host every SWEEP_SECONDS (one agent at a time):
+# targets due a clean are cleaned, whether or not their own commands ever ended (a test-remote
+# killed by its caller took its agent with it, and that target was never cleaned: 33 GB of a
+# host's 318 GB of targets were leftover objects), and while the disk is short, the least
+# recently used targets no command holds go, then the root's idle copies. Checking only when a
+# command started let concurrent builds take a host from 255 GB free to none within the hour
+# (2026-11-17).
+SWEEP_SECONDS = 60
+# The test targets together stay under the job's `max_target_gb` (farm.py, `max_target_gb`): the
+# least recently used no command holds go first. Measured at most every BUDGET_SECONDS. Without a
+# bound the targets grew with the checkouts using a host (16 of them: 318 GB), until the host's
+# disk ran out.
+MAX_TARGET_GB = 150
+BUDGET_SECONDS = 600
+
+
+def target_sizes():
+    """{target directory: GB on disk}, by `du` (a few seconds for hundreds of GB)."""
+    out = {}
+    try:
+        names = [n for n in os.listdir(TARGETS) if not n.startswith(".")]
+    except OSError:
+        return out
+    for n in names:
+        d = os.path.join(TARGETS, n)
+        try:
+            r = subprocess.run(["du", "-sk", d], capture_output=True, text=True, timeout=300)
+            out[d] = int(r.stdout.split()[0]) / (1 << 20)
+        except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+            pass
+    return out
+
+
+def keep_to_budget(max_gb, keep=None):
+    """Removes the least recently used targets no command holds while they hold over `max_gb`."""
+    import shutil
+    sizes = target_sizes()
+    total = sum(sizes.values())
+    if total <= max_gb:
+        return
+    def used(d):
+        try:
+            return os.stat(os.path.join(d, ".used")).st_mtime
+        except OSError:
+            return 0
+    for d in sorted(sizes, key=used):
+        if total <= max_gb:
+            break
+        name = os.path.basename(d)
+        if name == keep:
+            continue
+        lock = target_lock(name, True)
+        if lock is None:
+            continue
+        try:
+            trash = os.path.join(TARGETS, f".trash.{name}.{os.getpid()}")
+            try:
+                os.rename(d, trash)
+            except OSError:
+                continue
+        finally:
+            lock.close()
+        print(f"farm-agent: removing the test target {name} ({sizes[d]:.0f} GB; the targets hold "
+              f"{total:.0f} GB, over {max_gb:g})", file=sys.stderr, flush=True)
+        total -= sizes[d]
+        shutil.rmtree(trash, ignore_errors=True)
+
+
+def sweep(job):
+    """One pass of the watchdog (see SWEEP_SECONDS). Returns at once when another agent sweeps."""
+    import fcntl, shutil
+    try:
+        lock = open(os.path.join(FARM, "sweep.lock"), "a+")
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return
+    try:
+        min_free_gb = job.get("min_free_gb", 40)
+        try:
+            names = os.listdir(TARGETS)
+        except OSError:
+            names = []
+        for n in names:
+            if n.startswith(".trash."):
+                shutil.rmtree(os.path.join(TARGETS, n), ignore_errors=True)
+        if job.get("cleaner"):
+            home = ROOT + os.path.expanduser("~/Library/Caches/rerail-farm/relax-home")
+            for n in names:
+                d = os.path.join(TARGETS, n)
+                if n.startswith(".") or not os.path.isdir(d):
+                    continue
+                try:
+                    used = os.stat(os.path.join(d, ".used")).st_mtime
+                except OSError:
+                    continue
+                try:
+                    cleaned = os.stat(os.path.join(d, ".cleaned")).st_mtime
+                except OSError:
+                    cleaned = 0
+                if cleaned >= used or time.time() - cleaned < CLEAN_SECONDS:
+                    continue
+                open(os.path.join(d, ".cleaned"), "w").close()
+                try:
+                    with open(os.path.join(d, ".cleaned.log"), "w") as log:
+                        # Its own session: it finishes even when this agent ends with its command.
+                        subprocess.run(["nice", "-n", "19", "/usr/bin/python3", "-c", job["cleaner"], "--relax-home", home, d],
+                                       stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True, timeout=900,
+                                       env={k: v for k, v in os.environ.items() if k != "RELAX_HOME"})
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+        stamp = os.path.join(FARM, "budget.checked")
+        try:
+            due = time.time() - os.stat(stamp).st_mtime >= BUDGET_SECONDS
+        except OSError:
+            due = True
+        if due:
+            open(stamp, "w").close()
+            keep_to_budget(job.get("max_target_gb", MAX_TARGET_GB), job.get("target"))
+        if free_gb() < min_free_gb + PRUNE_HEADROOM_GB:
+            prune(job.get("target"), min_free_gb)
+        if free_gb() < min_free_gb + PRUNE_HEADROOM_GB:
+            fd = os.open(os.path.join(FARM, "root.log"), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+            try:
+                prune_roots(min_free_gb, (ROOT_DAYS,) + ROOT_SHORT_DAYS + (1 / 24,), lambda line: os.write(fd, (line + "\n").encode()))
+            finally:
+                os.close(fd)
+    except Exception as e:
+        try:
+            print(f"farm-agent: the sweep failed: {e!r}", file=sys.stderr, flush=True)
+        except Exception:
+            pass
+    finally:
+        lock.close()
+
+
+def watchdog(job):
+    while True:
+        sweep(job)
+        time.sleep(SWEEP_SECONDS)
 
 
 def run_command(job):
@@ -407,6 +555,9 @@ def run_command(job):
     dependencies, so no two writers share one. The command stops when this command's input ends
     (the connection closed): a host's sshd does not stop it without a terminal."""
     import resource, signal
+    # The connection's end (a caller killed, a closed terminal) hangs this agent up: it stays, to
+    # stop the command (`watch`) and clean after it, instead of dying with the session.
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
     m = mapper(job.get("map", []))
     env = dict(os.environ)
     env.update({k: m(v) for k, v in job.get("env", {}).items()})
@@ -455,9 +606,14 @@ def run_command(job):
         except OSError:
             pass
     threading.Thread(target=watch, daemon=True).start()
+    if job.get("target"):
+        threading.Thread(target=watchdog, args=(job,), daemon=True).start()
     code = proc.wait()
-    sys.stdout.flush()
-    sys.stderr.flush()
+    for f in (sys.stdout, sys.stderr):
+        try:
+            f.flush()
+        except OSError:
+            pass  # the connection is gone: the cleaning below still runs
     if job.get("target") and job.get("cleaner"):
         clean(os.path.join(TARGETS, job["target"]), job["cleaner"], env.get("RELAX_HOME"))
     if job.get("target"):
@@ -534,7 +690,7 @@ def free_space(job):
     say = lambda line: steps.append(line)
     if os.path.isdir(TARGETS):
         prune(None, min_free_gb)
-        if free_gb() < want and job.get("cleaner"):
+        if job.get("cleaner"):
             home = ROOT + os.path.expanduser("~/Library/Caches/rerail-farm/relax-home")
             for name in os.listdir(TARGETS):
                 d = os.path.join(TARGETS, name)
@@ -547,6 +703,8 @@ def free_space(job):
                 except (OSError, subprocess.TimeoutExpired):
                     pass
             say(f"targets cleaned; {free_gb():.0f} GB free")
+        keep_to_budget(job.get("max_target_gb", MAX_TARGET_GB))
+        say(f"targets kept to {job.get('max_target_gb', MAX_TARGET_GB):g} GB; {free_gb():.0f} GB free")
     if free_gb() < want:
         prune_roots(min_free_gb, (ROOT_DAYS,) + ROOT_SHORT_DAYS + (1 / 24,), say)
     held = 0

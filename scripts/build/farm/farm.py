@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 25
+VERSION = 27
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -731,6 +731,9 @@ DEFAULTS = {
     # this much: a host that dropped to WiFi or a busy network is no faster than here.
     "min_free_gb": 40,
     "floor_free_gb": 20,
+    # The most a host's test targets hold together (GB): over it, the least recently used that no
+    # command holds go (farm-agent, `keep_to_budget`).
+    "max_target_gb": 150,
     "max_rtt_ms": 150,
     "min_mbps": 8,
 }
@@ -956,7 +959,7 @@ def free_host(name):
     if host is None:
         return
     cfg = config()
-    job = {"min_free_gb": cfg["min_free_gb"]}
+    job = {"min_free_gb": cfg["min_free_gb"], "max_target_gb": host.get("max_target_gb", cfg["max_target_gb"])}
     text = cleaner()
     if text:
         job["cleaner"] = text
@@ -1259,6 +1262,7 @@ def agent_exec(job):
     text = cleaner()
     if text:
         job = dict(job, cleaner=text)
+    job.setdefault("max_target_gb", config()["max_target_gb"])
     return on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
 
 
