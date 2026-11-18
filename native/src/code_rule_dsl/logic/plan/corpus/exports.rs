@@ -16,9 +16,11 @@ use std::collections::BTreeMap;
 use std::hash::Hasher;
 use std::sync::Arc;
 
-/// One export's rows, where they lie: the chunks' relations appended as segments (`Rows::append_part`), not copied,
-/// with a set of row ids, hashed by the rows' values read in place, that keeps each row once. A row a chunk gave that
-/// another gave already (or its relation's own dead row) is marked dead, not removed.
+/// One export's rows, as one relation (decision 0384): each chunk's new rows written into it once when the chunk is
+/// filed, read where they lie in the chunk's relation, with a set of row ids, hashed by the rows' values, that keeps
+/// each row once. A row another chunk gave already, or dead in the chunk's relation, is not written. The chunks'
+/// relations go when they are filed, and a reader (the device's, which binds one relation in its block) finds the
+/// export whole, not in a part per chunk merged into a copy (`Rows::one`).
 struct Held {
     rows: Rows,
     /// Rows not among the export's (bit `id`): a row given again, or dead in the relation it came from.
@@ -66,6 +68,20 @@ impl Held {
 
     fn row_hash(&self, id: u32) -> u64 {
         Held::hash((0..self.width()).map(|c| self.get(id, c)))
+    }
+
+    /// `row` written as the next row unless the set holds its like. Whether it was written.
+    fn insert(&mut self, row: &[i64]) -> bool {
+        let h = Held::hash(row.iter().copied());
+        let (rows, width) = (&self.rows, self.width());
+        if self.set.find(h, |&i| (0..width).all(|c| rows.get(i, c) == row[c])).is_some() {
+            return false;
+        }
+        let id = self.len() as u32;
+        self.rows.extend_from_slice(row);
+        let rows = &self.rows;
+        self.set.insert_unique(h, id, |&i| Held::hash((0..width).map(|c| rows.get(i, c))));
+        true
     }
 
     /// Row `id` kept unless the set holds its like: then it is marked dead. Whether it was kept.
@@ -124,21 +140,42 @@ pub(super) struct Exports {
 
 impl Exports {
     /// Adds the rows of `rows` (its first `width` columns) to export `rel`; how many were new. A relation the engine
-    /// derived (`held_rows`) is kept where it lies: its parts appended, its rows given before marked dead. Other
-    /// sources' rows are copied in.
+    /// derived (`held_rows`) is read where it lies, its live rows not given before written once into the export's
+    /// relation, as one batch's: nothing of the chunk's relation is kept. Other sources' rows are copied in.
     pub(super) fn add(&mut self, rel: &str, width: usize, rows: &dyn Source) -> usize {
         let held = self.rels.entry(rel.to_owned()).or_insert_with(|| Held::new(width));
         debug_assert!(held.source.is_none(), "export {rel} added to after the cross-file part read it");
         let start = held.len() as u32;
         let in_place = crate::code_rule_dsl::logic::native::component::held_rows(rows)
-            .filter(|(r, n, ..)| r.width() == width && r.rows() == *n && r.parts().all(|p| matches!(p.life(), Life::Run | Life::Kept)));
+            .filter(|(r, n, ..)| r.width() == width && r.rows() == *n);
         let given: Vec<bool> = match in_place {
             Some((r, n, dead, types)) => {
                 held.types.get_or_insert_with(|| types.to_vec());
-                for p in r.parts() {
-                    held.rows.append_part(p.clone());
-                }
-                (0..n).map(|id| dead.get(id / 64).is_some_and(|w| w >> (id % 64) & 1 == 1)).collect()
+                // Room for every row at once: the tail grows once, not row by row, and pages no row reaches are
+                // never touched.
+                held.rows.reserve(n * width);
+                let mut row = vec![0i64; width];
+                let mut added = 0;
+                r.each_run(0, n as u32, |p, lo, hi, first| {
+                    for i in lo..hi {
+                        let id = (first + i - lo) as usize;
+                        if dead.get(id / 64).is_some_and(|w| w >> (id % 64) & 1 == 1) {
+                            continue;
+                        }
+                        for (c, v) in row.iter_mut().enumerate() {
+                            *v = p.get(i, c);
+                        }
+                        // A row of a document whose own rows were appended unchecked may be one of them: they are set
+                        // first.
+                        if !held.unset.is_empty() && held.at.is_none_or(|at| held.unset_docs.contains(&super::memo::document_of(row[at]))) {
+                            held.set_all();
+                        }
+                        if held.insert(&row) {
+                            added += 1;
+                        }
+                    }
+                });
+                return added;
             }
             None => {
                 let mut row = vec![0i64; width];
@@ -580,10 +617,11 @@ pub mod tests {
         assert_eq!(exports.source("none", 3).len(), 0);
     }
 
-    /// A chunk's derived relation is held where it lies, not copied: the export's rows share its relation's parts,
-    /// and a row another chunk gave first, or one dead in its relation, is not among the export's.
+    /// Decision 0384: an export is one relation. The chunks' derived relations are read where they lie and each new
+    /// live row is written into it once: it holds none of their parts, and a row another chunk gave first, or one dead
+    /// in its relation, is not written at all (no dead rows), so a reader binding it finds one relation, all live.
     #[test]
-    fn an_export_holds_the_chunks_relations_where_they_lie() {
+    fn an_export_is_one_relation_of_the_chunks_new_rows() {
         use crate::code_rule_dsl::logic::native::component::{InRel, held_rows};
         let names = || vec!["c0".to_owned(), "c1".to_owned()];
         let a = InRel::from_flat(vec![1, 2, 3, 4, 7, 8], 3, vec![b'i', b'i']).source(names());
@@ -597,7 +635,10 @@ pub mod tests {
         {
             let held = &exports.rels["e"];
             let (ra, ..) = held_rows(a.as_ref()).expect("rows");
-            assert!(held.rows.parts().any(|p| ra.parts().any(|q| std::ptr::eq(p.rel(), q.rel()))), "the chunk's rows were copied");
+            assert!(!held.rows.parts().any(|p| ra.parts().any(|q| std::ptr::eq(p.rel(), q.rel()))), "a chunk's part held");
+            assert_eq!(held.rows.parts().count(), 1, "one relation");
+            assert_eq!(held.rows.rows(), 4, "the repeat and the dead row not written");
+            assert!(held.dead.iter().all(|&w| w == 0));
         }
         assert_eq!(exports.len("e"), 4);
         let s = exports.source("e", 2);

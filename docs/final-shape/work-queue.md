@@ -2098,3 +2098,30 @@ Also measured here, for the open items of the user's list:
 Found 2026-11-17 (Q91). At 100 files a cold run with `--metal` peaks at 3.3–3.5 GB against the CPU's 1.22 GB, and at
 300 files at 3.5–4.0 GB against 1.85 GB. The budget is 1 GB, with Metal allowed 0.5 GB on top. Next: a heap profile
 of a Metal run (`RERAIL_HEAP_FRAMES`) and the device leases at its peak.
+
+### Q93. An export is one relation (decision 0384 step 1)
+
+Built 2026-11-17. The user picked "one relation, written in place" for the merged copy (`Rows::one`) and for the
+fixpoint's indexes. When a chunk is filed (`Exports::add`), its derived relation is read where it lies, and each
+live row no earlier chunk gave is written once into the export's one relation. Before this, the chunk's parts were
+appended to the export and its repeats marked dead. The device merged those parts into a copy each time it bound
+the export.
+
+Measured on cold 300-file runs:
+- Metal (profiled): merges went from 262 (56 MB) to 157 (32 MB), and the peak from 3.8 GB to 3.0 GB.
+- CPU: the findings are the reference's, in 18.3 s at a peak of 1.79 GB, against 19.5 s and 1.85 GB.
+- Strict 10-file outputs are byte-identical.
+
+Test: `an_export_is_one_relation_of_the_chunks_new_rows`, which replaces the test of the old form.
+
+Still merged: 157 relations, nearly all of two parts. Steps 2 and 3 of 0384 cover them.
+
+### Q94. Metal runs give wrong findings in some runs (open)
+
+Found 2026-11-17 (Q93). Cold 300-file runs with `--metal` differed from the reference in 4 of 7 profiled runs, by 3
+to 13 files, and in 0 of 2 unprofiled runs. One run had 18 extra B030 findings in `benchmarks/bench_versioning_git.py`.
+Runs on the old export path, with the same binary, differed as often (2 of 4), so this predates Q93. The CPU
+binding's findings are the reference's in every run. Timing matters: profiled runs differ more often.
+
+Next: find the first relation that differs between two Metal runs of the same input (the stratum outputs' digests),
+then the device form that made it.
