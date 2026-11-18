@@ -227,6 +227,7 @@ jobs:
               - '.cargo/**'
               - 'scripts/check/check-rustfmt.mjs'
               - 'scripts/check/check-rustfmt/files.txt'
+              - 'scripts/check/native-test-legs.mjs'
               - 'scripts/profiling/reachability/**'
               - 'scripts/profiling/preparation/**'
               - 'scripts/profiling/composition.py'
@@ -491,20 +492,13 @@ jobs:
           AWS_REGION: us-east-2
         run: node scripts/s3/pack-fixtures.mjs check
 
-  # rustfmt (on the files scripts/check/check-rustfmt/files.txt lists) and clippy, and the engine's own tests, side by
-  # side; nothing downstream waits for them.
-  # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts. The tests read three
-  # tool-packs' test data (native/src/code_rule_dsl/test_support.rs's callers), restored from what the test-data job
-  # saved, so the job runs where that job does (the note at the top). The tests run in five legs: the workspace's (much
-  # of it waiting out the store's busy timeouts), the anchor index's, the waves' and the transducer's, with the
-  # profiling labs' checks after them (`profiling`); the logic engine's rule files and converters; the rest of the logic
-  # engine with the typing phases; the SQL executor and the slice; then every other, skipping exactly what the first
-  # four run. On the 4-vCPU runner (2 cores, hyperthreaded) the slowest legs run 14 to 15 minutes of tests after a build
-  # of up to 12, and no leg can be cut below its longest test (the slice's real-file check, 14 minutes): the timeout is
-  # 40 minutes, so each leg ends with at least 5 to spare.
-  rust:
-    name: Rust engine (${{ matrix.name }})
-    needs: [changes, test-data]
+  # rustfmt (on the files scripts/check/check-rustfmt/files.txt lists) and clippy, the engine's own tests, and the
+  # profiling labs' checks, side by side; nothing downstream waits for them. They keep no Actions cache (the
+  # repository's 10 GB hold the other jobs' entries): each compiles from scratch, and the tests' compile happens once
+  # per run (rust-tests-build).
+  rust-clippy:
+    name: Rust engine (fmt, clippy)
+    needs: changes
     if: >-
       ${{
         needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
@@ -514,34 +508,10 @@ jobs:
         )
       }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 30
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - task: clippy
-            name: fmt, clippy
-            run: npm run check:native
-          - task: test
-            name: tests, workspace, anchors, waves and transducer
-            run: "npm run test:native -- -- code_rule_dsl::workspace:: code_rule_dsl::matcher::anchors:: code_rule_dsl::waves:: code_rule_dsl::transducer::"
-            profiling: true
-          - task: test
-            name: tests, logic rules and converters
-            run: "npm run test:native -- -- code_rule_dsl::logic::rr:: code_rule_dsl::logic::convert::"
-          - task: test
-            name: tests, logic and typing
-            run: "npm run test:native -- -- code_rule_dsl::logic:: code_rule_dsl::typing:: --skip code_rule_dsl::logic::rr:: --skip code_rule_dsl::logic::convert::"
-          - task: test
-            name: tests, SQL executor and slice
-            run: "npm run test:native -- -- code_rule_dsl::sql_executor:: code_rule_dsl::slice::"
-          - task: test
-            name: tests, the rest
-            run: "npm run test:native -- -- --skip code_rule_dsl::workspace:: --skip code_rule_dsl::matcher::anchors:: --skip code_rule_dsl::waves:: --skip code_rule_dsl::transducer:: --skip code_rule_dsl::logic:: --skip code_rule_dsl::typing:: --skip code_rule_dsl::sql_executor:: --skip code_rule_dsl::slice::"
-    # Line tables keep file:line in panics at a fraction of full debuginfo; incremental state only
-    # bloats the cache, since dependencies never build incrementally.
+    # Line tables keep file:line in panics at a fraction of full debuginfo; nothing here builds twice incrementally.
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
@@ -553,48 +523,6 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/lfs
-
-      # The clippy leg only compiles the tests; the tests legs run them, and four read pack test data: Ruff's fixtures,
-      # SQLFluff's expected findings and fixtures, eslint-plugin-vue's fixtures, and the data-layer port's recordings and
-      # rule corpus (the converter, census, replay and text tests).
-      - if: matrix.task == 'test'
-        uses: ./.github/actions/pack-test-data
-        with:
-          pack: python
-          tool: ruff
-          fetch: "false"
-
-      - if: matrix.task == 'test'
-        uses: ./.github/actions/pack-test-data
-        with:
-          pack: sql
-          tool: sqlfluff
-          fetch: "false"
-
-      - if: matrix.task == 'test'
-        uses: ./.github/actions/pack-test-data
-        with:
-          pack: vue
-          tool: eslint-plugin-vue
-          fetch: "false"
-
-      - if: matrix.task == 'test'
-        uses: ./.github/actions/pack-test-data
-        with:
-          pack: data-layer
-          tool: lint
-          fetch: "false"
-
-      # The canonical Python AST facts (`value::python_ast`) run CPython 3.13 as `python3.13`; the runner has 3.12.
-      - if: matrix.task == 'test'
-        name: Set up uv
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-
-      - if: matrix.task == 'test'
-        name: Put CPython 3.13 on PATH
-        run: |
-          uv python install 3.13
-          dirname "$(uv python find 3.13)" >> "$GITHUB_PATH"
 
       # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
       # so the toolchain installed here must be the same channel.
@@ -608,35 +536,223 @@ jobs:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: rustfmt, clippy
 
-      - name: Cache cargo artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Run fmt, clippy
+        run: npm run check:native
+
+  # The engine's test binaries, compiled once for the legs of the rust job (scripts/check/native-test-legs.mjs): it runs
+  # `cargo test --workspace` with that script as cargo's target runner, which records each test binary with the
+  # working directory and environment cargo gives it instead of running it, and runs the doc tests. It then lists every
+  # binary's tests whole and under each leg's filters, fails unless each test is in exactly one leg, and hands the
+  # binaries on as an artifact (1.5 GB). It reads no pack test data, so it starts with the test-data job. A cold compile
+  # takes 13 to 17 minutes on the 4-vCPU runner; from main's compile cache (.github/actions/rust-compile-cache, an
+  # artifact a push to main saves) about 5. Without one it compiles cold: never a failure.
+  rust-tests-build:
+    name: Rust engine (test build)
+    needs: changes
+    if: >-
+      ${{
+        needs.changes.outputs.rust-packages != '[]' &&
+        needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # actions: main's compile cache, an artifact of another run.
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      legs: ${{ steps.build.outputs.legs }}
+    # Line tables keep file:line in panics at a fraction of full debuginfo; nothing here builds twice incrementally.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: rerail-${{ matrix.task }}-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            rerail-${{ matrix.task }}-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
+      # so the toolchain installed here must be the same channel.
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      # sccache, starting from main's newest store (an artifact): what main compiled the same way is fetched.
+      - id: compile-cache
+        uses: ./.github/actions/rust-compile-cache
+        with:
+          name: test
+
+      # The crates a pull request's changes reach (the changes job): `--workspace`, or `-p <package>` for each.
+      - id: build
+        name: Build the test binaries, run the doc tests and check the legs
+        env:
+          NATIVE_TESTS_CARGO_ARGS: ${{ needs.changes.outputs.rust-cargo-args }}
+        run: node scripts/check/native-test-legs.mjs build "$RUNNER_TEMP/native-tests"
+
+      - name: Hand the test binaries to the legs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-tests
+          path: ${{ runner.temp }}/native-tests/native-tests.tar.zst
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
+      - name: Save the compile cache for later runs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/rust-compile-cache/save
+        with:
+          artifact: ${{ steps.compile-cache.outputs.artifact }}
+          dir: ${{ steps.compile-cache.outputs.dir }}
+
+  # The engine's tests, in the legs scripts/check/native-test-legs.mjs names, each running the binaries the
+  # rust-tests-build job compiled with its libtest filters, as `cargo test --workspace -- <filters>` would. Four read pack
+  # test data (native/src/code_rule_dsl/test_support.rs's callers): Ruff's fixtures, SQLFluff's expected findings and
+  # fixtures, eslint-plugin-vue's fixtures, and the data-layer port's recordings and rule corpus (the converter, census,
+  # replay and text tests), restored from what the test-data job saved, so the job runs where that job does (the note
+  # at the top). Each leg runs 3 to 8 minutes of tests after a minute taking the binaries; the slowest, the waves', is
+  # bounded by its two 8-minute tests. The test watchdog stops a hung test at 10 minutes (native/src/test_watchdog.rs):
+  # the timeout leaves room for that.
+  rust:
+    name: Rust engine (${{ matrix.name }})
+    needs: [changes, test-data, rust-tests-build]
+    if: >-
+      ${{
+        needs.rust-tests-build.outputs.legs != '[]' &&
+        needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.rust-tests-build.outputs.legs) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: python
+          tool: ruff
+          fetch: "false"
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: sql
+          tool: sqlfluff
+          fetch: "false"
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: vue
+          tool: eslint-plugin-vue
+          fetch: "false"
+
+      - uses: ./.github/actions/pack-test-data
+        with:
+          pack: data-layer
+          tool: lint
+          fetch: "false"
+
+      # The canonical Python AST facts (`value::python_ast`) run CPython 3.13 as `python3.13`; the runner has 3.12.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Put CPython 3.13 on PATH
+        run: |
+          uv python install 3.13
+          dirname "$(uv python find 3.13)" >> "$GITHUB_PATH"
+
+      - name: Take the test binaries
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-tests
+          path: ${{ runner.temp }}/native-tests
 
       - name: Run ${{ matrix.name }}
-        run: ${{ matrix.run }}
+        run: node scripts/check/native-test-legs.mjs run "${{ matrix.leg }}" "$RUNNER_TEMP/native-tests"
+
+  # The profiling labs: the reachability spike and the SQL preparation lab, each its own manifest and target directory,
+  # checked, built and tested apart from the engine's tests. Their builds are small (the job takes 2 minutes cold), so
+  # they keep no cache.
+  rust-profiling:
+    name: Rust engine (profiling labs)
+    needs: changes
+    if: >-
+      ${{
+        needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    # Line tables keep file:line in panics at a fraction of full debuginfo; nothing here builds twice incrementally.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: ./.github/actions/lfs
+
+      # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
+      # so the toolchain installed here must be the same channel.
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          components: rustfmt, clippy
 
       - name: Check isolated reachability spike
-        if: matrix.task == 'clippy'
         run: |
           cargo fmt --manifest-path scripts/profiling/reachability/Cargo.toml -- --check
           cargo clippy --manifest-path scripts/profiling/reachability/Cargo.toml --locked --target-dir target/reachability-spike -- -D warnings
 
       - name: Build isolated reachability extension
-        if: matrix.profiling
         run: cargo build --manifest-path scripts/profiling/reachability/Cargo.toml --release --locked --target-dir target/reachability-spike
 
       # The extension is bound to the bundled SQLite's API (modern_sqlite) and refuses an older host. The runner's
       # Python links the system SQLite 3.45.1 (the CPython 3.13 put on PATH above links its own, older one, statically):
       # build the amalgamation the lock resolves and load it into the runner's Python for the tests.
       - name: Build the SQLite the reachability extension is bound to
-        if: matrix.profiling
         run: |
           sys=$(cargo metadata --manifest-path scripts/profiling/reachability/Cargo.toml --format-version 1 --locked \
             | jq -r '.packages[] | select(.name == "libsqlite3-sys") | .manifest_path')
@@ -645,7 +761,6 @@ jobs:
             -o "$RUNNER_TEMP/sqlite/libsqlite3.so.0" "$(dirname "$sys")/sqlite3/sqlite3.c" -lm -lpthread -ldl
 
       - name: Test SQL and Rust reachability adapters
-        if: matrix.profiling
         env:
           RERAIL_REACH_EXTENSION: ${{ github.workspace }}/target/reachability-spike/release/librerail_reachability_spike.so
           PYTHONDONTWRITEBYTECODE: "1"
@@ -664,28 +779,28 @@ jobs:
       # The shape gate requires profiling spans and must never silently skip on a production addon.
       # Keep this debug addon separate from the package's release artifact.
       - uses: ./.github/actions/node-deps
-        if: matrix.profiling && env.RERAIL_RELATIONAL_TESTS == '1'
+        if: env.RERAIL_RELATIONAL_TESTS == '1'
 
       - name: Build profiling addon for the producer shape gate
-        if: matrix.profiling && env.RERAIL_RELATIONAL_TESTS == '1'
+        if: env.RERAIL_RELATIONAL_TESTS == '1'
         run: |
           cargo build --manifest-path native/Cargo.toml --features code-rule-profile
           cp target/debug/librerail_engine.so "$RUNNER_TEMP/rerail-producer-shape.node"
 
       - name: Enforce broad producer execution shape
-        if: matrix.profiling && env.RERAIL_RELATIONAL_TESTS == '1'
+        if: env.RERAIL_RELATIONAL_TESTS == '1'
         env:
           RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
         run: npm run test:producer-shape
 
       - name: Enforce 100 engine SQL submissions for the complete cold job
-        if: matrix.profiling && env.RERAIL_RELATIONAL_TESTS == '1'
+        if: env.RERAIL_RELATIONAL_TESTS == '1'
         env:
           RERAIL_ENGINE_PATH: ${{ runner.temp }}/rerail-producer-shape.node
         run: npm run test:sql-execution-budget -- "$RUNNER_TEMP/rerail-sql-budget"
 
       - name: Preserve SQL execution budget evidence
-        if: always() && matrix.profiling && env.RERAIL_RELATIONAL_TESTS == '1'
+        if: always() && env.RERAIL_RELATIONAL_TESTS == '1'
         uses: actions/upload-artifact@v7
         with:
           name: sql-execution-budget
@@ -702,15 +817,14 @@ jobs:
             ${{ runner.temp }}/rerail-sql-budget/capture/sql/execution-budget.json
 
       - name: Test SQL statement capture and deferred explanations
-        if: matrix.profiling
         run: cargo test --manifest-path scripts/profiling/reachability/Cargo.toml --no-default-features --locked code_rule_dsl::sql::tests
 
       - name: Check and test captured SQL replay and composition kernels
-        if: matrix.profiling
         run: |
           cargo fmt --manifest-path scripts/profiling/preparation/Cargo.toml -- --check
           cargo clippy --manifest-path scripts/profiling/preparation/Cargo.toml --locked --all-targets --target-dir target/sql-preparation-lab -- -D warnings
           cargo test --manifest-path scripts/profiling/preparation/Cargo.toml --locked --target-dir target/sql-preparation-lab
+
   # The tree watch's FSEvents adapter (native/src/tree_watch/fsevents.rs) is compiled out everywhere but macOS, so its
   # tests and the tree watch's shared tests run here, on the engine's inputs, gated as the rust job is. They read no
   # pack test data. A debug build, as in the rust job.
@@ -719,6 +833,7 @@ jobs:
     needs: changes
     if: >-
       ${{
+        needs.changes.outputs.rust-engine != 'false' &&
         needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
         (
           github.event_name != 'pull_request' ||
@@ -727,8 +842,10 @@ jobs:
       }}
     runs-on: macos-15
     timeout-minutes: 30
+    # actions: main's compile cache, an artifact of another run.
     permissions:
       contents: read
+      actions: read
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
@@ -751,19 +868,20 @@ jobs:
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      - name: Cache cargo artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - id: compile-cache
+        uses: ./.github/actions/rust-compile-cache
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: rerail-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            rerail-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-
+          name: test
 
       - name: Tree watch tests
         run: "cargo test --manifest-path native/Cargo.toml --lib tree_watch::"
+
+      - name: Save the compile cache for later runs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/rust-compile-cache/save
+        with:
+          artifact: ${{ steps.compile-cache.outputs.artifact }}
+          dir: ${{ steps.compile-cache.outputs.dir }}
 
   # Builds the package once: dist/ and the release native engine, handed to every test job.
   build:
@@ -1572,7 +1690,10 @@ jobs:
       - changes
       - test-data
       - test-data-in-s3
+      - rust-clippy
+      - rust-tests-build
       - rust
+      - rust-profiling
       - rust-macos
       - build
       - unit
