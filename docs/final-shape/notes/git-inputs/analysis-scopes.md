@@ -95,9 +95,10 @@ and parser and tape versions. Path and module identity remain inputs to
 context-sensitive rules. An unchanged file retains its cache key across
 revisions. A changed file requests new content, and changes to the imports or
 configuration invalidate their dependents.
-Each language key identifies the matching name or suffix that selects the
-language. A file without a match has its own key. A change to an unrelated
-registry entry leaves these keys intact.
+Each language key describes the registry entries that match the file name.
+The cached result selects the grammar from these entries. Files with the
+same entries can use the same classification. A file without a match uses
+the empty set of entries. An unrelated registry entry leaves the key intact.
 
 The Git view stays pinned during a run. Different revisions can use the same
 cache space, provided the engine compares their input facts before it reuses

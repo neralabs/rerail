@@ -620,9 +620,10 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     const root = checkout();
     const home = `${root}-home`;
     mkdirSync(home);
-    writeFileSync(join(root, "a.py"), "a = f(1)\n");
+    const priorPaths = ["a.py", "c.py", "d.py", "e.py", "f.py"];
+    for (const [i, path] of priorPaths.entries()) writeFileSync(join(root, path), `a = f(${i})\n`);
     writeFileSync(join(root, "b.sample"), "b = g(2)\n");
-    git(root, "add", "a.py", "b.sample");
+    git(root, "add", ...priorPaths, "b.sample");
     git(root, "commit", "-qm", "files for both registry versions");
     const store = join(home, "store.sqlite");
     writeFileSync(join(home, "policy.rr"), `
@@ -633,8 +634,7 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
 .violation Call(at: node) "call"
 .violation LanguageKey(at: span, key: symbol) "{key}"
 Call(n) :- kind(n, "call").
-source_language_request("a.py").
-source_language_request("b.sample").
+${[...priorPaths, "b.sample"].map(path => `source_language_request("${path}").`).join("\n")}
 LanguageKey(@place(path, 1), k) :- source_language_key(path, k, _).
 `);
     const script = `
@@ -671,16 +671,18 @@ LanguageKey(@place(path, 1), k) :- source_language_key(path, k, _).
     const original = { ".py": "python" };
     const extended = { ...original, ".sample": "python" };
     const cold = measure(0, original, "a");
-    expect(cold.paths).toEqual(["a.py"]);
-    expect(Object.keys(cold.keys).sort()).toEqual(["a.py", "b.sample"]);
+    const allPaths = [...priorPaths, "b.sample"].sort();
+    expect(cold.paths).toEqual(priorPaths);
+    expect(Object.keys(cold.keys).sort()).toEqual(allPaths);
     expect(cold.classifications).toBeGreaterThan(0);
     expect(cold.parses).toBeGreaterThan(0);
     expect(measure(1, original, "a")).toEqual({ ...cold, classifications: 0, parses: 0 });
     const relabeled = measure(2, extended, "a");
-    expect(relabeled.paths).toEqual(["a.py", "b.sample"]);
-    expect(relabeled.keys["a.py"]).toBe(cold.keys["a.py"]);
+    expect(relabeled.paths).toEqual(allPaths);
+    for (const path of priorPaths) expect(relabeled.keys[path]).toBe(cold.keys[path]);
     expect(relabeled.keys["b.sample"]).not.toBe(cold.keys["b.sample"]);
     expect(relabeled.classifications).toBeGreaterThan(0);
+    expect(relabeled.parses).toBe(1);
     expect(relabeled.tapes[0]?.count).toBe(cold.tapes[0]!.count + 1);
     // Test hooks let a new process change the parser build ID without rebuilding the addon.
     if (cold.tapes[0]?.version === "a".repeat(15)) {
@@ -688,8 +690,8 @@ LanguageKey(@place(path, 1), k) :- source_language_key(path, k, _).
       expect(reparsed.paths).toEqual(relabeled.paths);
       expect(reparsed.keys).toEqual(relabeled.keys);
       expect(reparsed.classifications).toBe(0);
-      expect(reparsed.parses).toBe(2);
-      expect(reparsed.tapes).toEqual([...relabeled.tapes, { version: "b".repeat(15), count: 2 }]);
+      expect(reparsed.parses).toBe(allPaths.length);
+      expect(reparsed.tapes).toEqual([...relabeled.tapes, { version: "b".repeat(15), count: allPaths.length }]);
     }
   }, 20_000);
 

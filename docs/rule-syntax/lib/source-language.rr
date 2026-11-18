@@ -20,29 +20,40 @@ sl_candidate(p, ext, strlen(ext), order, g, built) :-
     sl_basename(p, name), sl_suffix(ext, g, order, built), !sl_named(p, _, _),
     suffix(ext, name), strlen(ext) < strlen(name).
 
-.decl sl_longest(path: symbol, length: number)
-sl_longest(p, n) :-
-    sl_candidate(p, _, _, _, _, _), n = max len : { sl_candidate(p, _, len, _, _, _) }.
-
-// The winner carries the inputs that affect the result. The registry version
-// and entries for other names or suffixes stay out of a file's key.
-.decl sl_selected(path: symbol, kind: symbol, selector: symbol, grammar: symbol, built: number)
-sl_selected(p, "name", name, g, 1) :- sl_named(p, name, g).
-sl_selected(p, "suffix", ext, g, built) :-
-    sl_longest(p, n), i = max j : { sl_candidate(p, _, n, j, _, _) },
-    sl_candidate(p, ext, n, i, g, built).
-
-.decl sl_evidence(path: symbol, inputs: symbol, grammar: symbol)
-sl_evidence(p, cat(k, "\t", s, "\t", g), g) :- sl_selected(p, k, s, g, 1).
-sl_evidence(p, cat(k, "\t", s, "\t", g, "\tunbuilt"), "") :- sl_selected(p, k, s, g, 0).
-sl_evidence(p, "unlisted", "") :- source_language_request(p), !sl_selected(p, _, _, _, _).
+// Describe the candidates before selecting one. Generate the same key wherever
+// the same set of registry entries applies.
+.decl sl_evidence(path: symbol, entry: symbol)
+sl_evidence(p, cat("name ", @json_str(name), " ", @json_str(g))) :- sl_named(p, name, g).
+sl_evidence(p, cat("suffix ", @json_str(ext), " ", @json_str(g), " ", to_string(i), " ", to_string(built))) :-
+    sl_candidate(p, ext, _, i, g, built).
 
 .decl source_language_key(path: symbol, inputs: symbol, algorithm: symbol)
-source_language_key(p, @sha256(inputs), "basename-v3") :- sl_evidence(p, inputs, _).
+source_language_key(p, @sha256(entries), "basename-v4") :-
+    source_language_request(p), entries = join e by e sep "\n" : { sl_evidence(p, e) }.
+
+.decl source_language_classification_key(inputs: symbol, algorithm: symbol)
+source_language_classification_key(k, "basename-v4") :- source_language_key(_, k, "basename-v4").
+
+.decl sl_names_for_key(inputs: symbol, grammar: symbol)
+sl_names_for_key(k, g) :- source_language_key(p, k, _), sl_named(p, _, g).
+
+.decl sl_suffixes_for_key(inputs: symbol, length: number, order: number, grammar: symbol, built: number)
+sl_suffixes_for_key(k, n, i, g, built) :- source_language_key(p, k, _), sl_candidate(p, _, n, i, g, built).
+
+.decl sl_longest(inputs: symbol, length: number)
+sl_longest(k, n) :-
+    sl_suffixes_for_key(k, _, _, _, _), n = max len : { sl_suffixes_for_key(k, len, _, _, _) }.
+
+.decl source_language_classification(inputs: symbol, grammar: symbol)
+source_language_classification(k, g) :- source_language_classification_key(k, _), sl_names_for_key(k, g).
+source_language_classification(k, g) :-
+    source_language_classification_key(k, _), sl_longest(k, n),
+    i = max j : { sl_suffixes_for_key(k, n, j, _, _) },
+    sl_suffixes_for_key(k, n, i, g, 1).
+.cache source_language_classification by source_language_classification_key
 
 .decl source_language_result(path: symbol, inputs: symbol, grammar: symbol)
-source_language_result(p, key, g) :- source_language_key(p, key, _), sl_evidence(p, _, g), g != "".
-.cache source_language_result by source_language_key
+source_language_result(p, k, g) :- source_language_key(p, k, _), source_language_classification(k, g).
 
 .decl source_language(path: symbol, grammar: symbol)
 source_language(p, g) :- source_language_result(p, _, g).

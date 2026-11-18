@@ -41,6 +41,7 @@ use std::path::Path;
 pub enum Error {
     Front(super::front::Error),
     Sql(rusqlite::Error),
+    Cache(crate::content_store::StoreError),
     /// The facts have no planner statistics, or statistics of other data.
     Statistics(String),
     /// A rule the planner cannot order or lower.
@@ -52,8 +53,15 @@ impl fmt::Display for Error {
         match self {
             Error::Front(e) => write!(f, "{e}"),
             Error::Sql(e) => write!(f, "{e}"),
+            Error::Cache(e) => write!(f, "{e}"),
             Error::Statistics(m) | Error::Plan(m) => f.write_str(m),
         }
+    }
+}
+
+impl From<crate::content_store::StoreError> for Error {
+    fn from(error: crate::content_store::StoreError) -> Self {
+        Self::Cache(error)
     }
 }
 
@@ -9590,7 +9598,7 @@ fn with_answers(f: Fields<'_>, db: &Connection, scc: &BTreeSet<String>, reads: O
 /// After a stratum ran: each of its relations' digest and rows, given to `ks` with what the stratum read
 /// (`reads`, each with its digest then), and its digest to this run's `fresh`.
 fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BTreeSet<String>, reads: Option<&Vec<(String, u64)>>, fresh: &mut HashMap<String, Option<u64>>) {
-    if scc.contains("source_language_result") {
+    if scc.contains("source_language_classification") {
         crate::code_rule_dsl::prof::count("source_language.evaluations", 1);
     }
     let mut members = Vec::new();
@@ -11035,7 +11043,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                 }
                 for (j, rules, moved) in reached_strata {
                     let scc = &sccs[j];
-                    if scc.contains("source_language_result") {
+                    if scc.contains("source_language_classification") {
                         crate::code_rule_dsl::prof::count("source_language.evaluations", 1);
                     }
                     let key = stratum_key(scc);

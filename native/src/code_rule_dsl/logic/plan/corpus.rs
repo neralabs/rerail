@@ -4634,7 +4634,7 @@ fn run_observed(
     }
     // The tapes of the files the run's waves will load (a phase's, its loads'), read before the first wave (decision
     // 0104), by source: set below, once the memo's entries the waves may find are known.
-    let wave_tapes: std::sync::OnceLock<HashMap<crate::content_store::SourceId, crate::content_store::TapeFrame>> = std::sync::OnceLock::new();
+    let wave_tapes: std::sync::OnceLock<HashMap<[u8; 32], crate::content_store::TapeFrame>> = std::sync::OnceLock::new();
     // Files looked up together: stat each, find the entries of those the stat index knows in one statement, read and
     // hash the others, find their contents in one statement and their entries in one more. A few statements for any
     // number of files, and nothing written: a source found is pinned by the store's writer, a new one is stored with
@@ -4800,25 +4800,28 @@ fn run_observed(
                 }
             }
         }
-        // The tapes of the files the memo has no entry for, of those whose sources the store holds: one read.
+        // A file memo can be partial for the current rules. Fetch tapes by content before the waves,
+        // so completing a memo entry does not reparse the source.
         let mut tape: Vec<Option<crate::content_store::TapeFrame>> = vec![None; window.len()];
         if let (true, Some(cache), Some(lang)) = (reading, tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")), crate::code_rule_dsl::language::dialect_by_label(label)) {
-            let asked: Vec<usize> = (0..window.len()).filter(|i| found[*i].is_none() && matches!(content[*i], Some(memo::Content::Stored(_)))).collect();
-            if let (false, Some(tag)) = (asked.is_empty(), crate::code_rule_dsl::language::tape_tag(lang)) {
+            let mut seen = std::collections::HashSet::new();
+            let ids: Vec<_> = content.iter().filter_map(|source| source.and_then(memo::Content::stored))
+                .filter(|&id| seen.insert(id)).collect();
+            if let (false, Some(tag)) = (ids.is_empty(), crate::code_rule_dsl::language::tape_tag(lang)) {
                 let _tapes = crate::code_rule_dsl::logic::profile::span(|| "tapes, by their sources".into());
-                let ids: Vec<crate::content_store::SourceId> = asked.iter().map(|i| content[*i].and_then(memo::Content::stored).expect("stored")).collect();
                 let frames = cache
                     .tape_frames_for(&ids, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()))
                     .map_err(|e| Error::Plan(e.to_string()))?;
-                for (i, f) in asked.into_iter().zip(frames) {
-                    tape[i] = f;
+                let frames: HashMap<_, _> = ids.into_iter().zip(frames).filter_map(|(id, frame)| frame.map(|frame| (id, frame))).collect();
+                for (tape, source) in tape.iter_mut().zip(&content) {
+                    *tape = source.and_then(memo::Content::stored).and_then(|id| frames.get(&id)).cloned();
                 }
             }
         } else if let Some(held) = wave_tapes.get().filter(|_| !reading) {
             // In a wave, from those read before the first: a file that misses the memo (a new plan's run over an
             // older store) is decompressed, not parsed again.
-            for i in (0..window.len()).filter(|i| found[*i].is_none()) {
-                tape[i] = content[i].and_then(memo::Content::stored).and_then(|id| held.get(&id)).cloned();
+            for i in 0..window.len() {
+                tape[i] = digest[i].and_then(|digest| held.get(&digest)).cloned();
             }
         }
         let mut texts: HashMap<usize, String> = if keep { rest.into_iter().zip(texts).collect() } else { HashMap::new() };
@@ -4962,28 +4965,28 @@ fn run_observed(
             }
             _ => (0, 0, None),
         };
-        // The tapes of the files the waves will load and find no entry for: those the lane's last run read (whichever
-        // build ran it), but the run's own files (looked up above, their tapes read with them) and those whose
-        // entries were just admitted. One read; none when every load has its entry (a warm run).
-        if let (Some(admitted), Some(cache), Some(tag)) = (
-            admitted,
+        // Source requests start inside the waves, after storage reads are closed. Use the
+        // observed digests and the last run's sources to bring their tapes in before that boundary.
+        if let (Some(cache), Some(tag)) = (
             tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")),
             crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag),
         ) {
             let _tapes = crate::code_rule_dsl::logic::profile::span(|| "tapes of the waves' loads, by their sources".into());
-            let own: std::collections::HashSet<crate::content_store::SourceId> = before.lock().values().filter_map(|b| b.content.and_then(memo::Content::stored)).collect();
-            let found: std::collections::HashSet<crate::content_store::SourceId> = admitted.iter().filter_map(|p| stat_index.recorded(p)).collect();
-            let wanted: Vec<crate::content_store::SourceId> = store
-                .lane_sources(&canonical_root, &lane)
-                .map_err(|e| Error::Plan(e.to_string()))?
-                .into_iter()
-                .filter(|s| !own.contains(s) && !found.contains(s))
-                .collect();
+            let observed = phases::observed_source_digests();
+            let mut wanted = memo::found_sources(cache, &observed)?.into_iter().flatten().collect::<Vec<_>>();
+            if admitted.is_some() {
+                let fact_root = crate::git_workspace::snapshot::fact_root(root);
+                let root = fact_root.as_ref().map(|path| path.to_string_lossy())
+                    .unwrap_or_else(|| std::borrow::Cow::Borrowed(canonical_root.as_str()));
+                wanted.extend(store.lane_sources(&root, &lane)?);
+            }
+            let mut unique = std::collections::HashSet::new();
+            wanted.retain(|&source| unique.insert(source));
+            let digests = cache.source_digests(&wanted)?;
             let frames = cache
-                .tape_frames_for(&wanted, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()))
-                .map_err(|e| Error::Plan(e.to_string()))?;
+                .tape_frames_for(&wanted, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()))?;
             let asked = wanted.len();
-            let held: HashMap<_, _> = wanted.into_iter().zip(frames).filter_map(|(s, f)| f.map(|f| (s, f))).collect();
+            let held: HashMap<_, _> = digests.into_iter().zip(frames).filter_map(|(digest, frame)| digest.zip(frame)).collect();
             if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
                 eprintln!("rerail: tapes before the first wave for its loads: {asked} sources asked, {} tapes, {:.1} MB", held.len(), held.values().map(crate::content_store::TapeFrame::len).sum::<usize>() as f64 / 1048576.0);
             }

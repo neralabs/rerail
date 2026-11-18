@@ -448,6 +448,20 @@ pub(super) fn handed_down_text() -> String {
     HANDED_DOWN.with(|h| h.borrow().last().map(|(n, f)| format!("{n}\0{f:?}")).unwrap_or_default())
 }
 
+/// Content already observed for source requests, available before the request waves start.
+pub(super) fn observed_source_digests() -> Vec<[u8; 32]> {
+    HANDED_DOWN.with(|handed| {
+        let handed = handed.borrow();
+        handed.last().and_then(|(_, facts)| facts.get("observer__source_file"))
+            .into_iter().flatten()
+            .filter_map(|row| match row.get(3) {
+                Some(Value::Str(digest)) => crate::content_store::observe::unhex(digest),
+                _ => None,
+            })
+            .collect::<std::collections::BTreeSet<_>>().into_iter().collect()
+    })
+}
+
 /// Whether a phase's run is under way on this thread (its documents are its own: phase 1 does not run inside it).
 pub(super) fn in_phase() -> bool {
     RUNNING.with(|r| !r.borrow().is_empty())
