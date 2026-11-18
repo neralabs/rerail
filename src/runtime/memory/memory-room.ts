@@ -17,11 +17,15 @@ export interface MemoryReading {
 }
 
 /**
- * Past this share of its heap limit after a full collection, the daemon lets go of what no session uses: under the 0.8
- * at which the heap watch restarts the daemon (`HEAP_CEILING_RATIO`), so what it keeps warm never brings that restart
- * about.
+ * The share of its heap limit past which a daemon restarts itself rather than wait to run out (`watchHeap` in
+ * daemon/heap-ceiling.ts), once it has closed what no session uses and its heap is still past it after a full collection.
  */
-const HEAP_ROOM_RATIO = 0.6;
+export const HEAP_CEILING_RATIO = 0.8;
+/**
+ * Past this share of its heap limit after a full collection, the daemon lets go of what no session uses: three quarters
+ * of the ceiling, so what it keeps for its checkouts' next sessions is closed well before that restart comes near.
+ */
+const HEAP_ROOM_RATIO = HEAP_CEILING_RATIO * 0.75;
 /**
  * Past this share of the machine's memory held by the daemon itself, the daemon lets go of what no session uses. The
  * resident size counts what the heap does not: a compiled rule's program is native memory, 512 MB for the Node pack's
