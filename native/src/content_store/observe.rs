@@ -3152,16 +3152,20 @@ mod tests {
     }
 
     /// R4: an answer recorded inside the racy window is named by the listing: its file may have changed in the tick
-    /// it was recorded in.
+    /// it was recorded in. The listing's own stat of the file, with the answer recorded just inside the window and
+    /// just past it (a run timed against the window would depend on the host's load).
     #[cfg(unix)]
     #[test]
     fn a_racy_answer_is_named_by_the_listing() {
         let (base, root, files) = listing_tree("racy");
         std::fs::write(&files[0], "x = 3\n").unwrap();
-        let store = base.join("store.files");
-        listing_run(&store, &root, &files);
-        let (second, _, _) = listing_run(&store, &root, &files);
-        assert!(second.checked_named >= 1 && second.hashed >= 1, "the racy file is read again: {second}");
+        let name = files[0].file_name().unwrap().to_owned();
+        let listed = listing::entries(&root.join("pkg")).unwrap().into_iter().find(|(n, _)| *n == name).and_then(|(_, l)| l);
+        let Some((Kind::File, stat)) = listed else { panic!("the file is listed with its stat: {listed:?}") };
+        let changed = stat.mtime_ns.max(stat.ctime_ns);
+        let answer = |recorded_ns: i64| Entry { kind: Kind::File, stat, digest: [0; 32], listing: None, recorded_ns };
+        assert!(!listed_holds(&answer(changed + RACY_NS / 2), listed), "recorded inside the window: named");
+        assert!(listed_holds(&answer(changed + RACY_NS + 1), listed), "recorded past it: holds");
         let _ = std::fs::remove_dir_all(&base);
     }
 

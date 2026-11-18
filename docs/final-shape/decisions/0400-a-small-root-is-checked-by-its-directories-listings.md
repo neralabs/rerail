@@ -77,9 +77,13 @@ changes its directory's. ctime cannot be set from user space, so a copy that kee
 
 ## What stays open
 
-- **A replay filters by `id > cursor`** (`journal::since`). duscope found a history record carrying an older id than
-  a change it holds. The marker shows the log was caught up; it does not show each record's id. Recorded, not
-  fixed: a large root only.
+- **Fixed at the hub merge (2026-11-18): a replay no longer filters by `id > cursor`.** duscope found a history
+  record carrying an older id than a change it holds; the M3 showed it twice, as a missed edit with the marker in
+  the history, and as a missed edit on a kept stream told live (a path's record keeps its first id). A stream now
+  answers by arrival: each sync notes where its cookie came among the events, a question from that cursor takes
+  what came after it, any other question all the stream was told. A path named again, never one missed. A test of
+  the journal lets its settle budget cover the cookie's wait too (a run keeps 2 s); the observer's and journal's
+  33 tests are green 6 of 6 at load 41–65.
 - **A large root's records** are not answered across a `Behind` replay, and on a loaded host most replays are
   `Behind`: the cone rounds and `git_files` run again there. Every root of ep2 is below `LIST_MAX` (e142 started
   no stream); the data-layer repository's is not yet measured.
