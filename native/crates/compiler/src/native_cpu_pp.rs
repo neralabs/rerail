@@ -15,8 +15,8 @@
 use crate::Error;
 use crate::native_cpu_shape::Step;
 use crate::pp_expr::Value as Val;
-use crate::pp_words::{self, BOL, Bounds, COND_ELSE, COND_SIZE, COND_SRC, COND_TAKEN, Ctx, Ex, Inc, MAX_INCLUDE_DEPTH, NamedC, OPS, Want, op_index, DIGRAPH, Def, DefState, EOF, EXP, Env, Expanded, File, FileC, Frame, HASH, HASHHASH, IDENT, LEVEL, LITERAL, NO_PARAM, NOEXP, NONE, NUMBER, PAIR, PASTE, PASTE_MARK, PLACEMARKER, PUNCT, Refused, SPACE, Slot, Src, Sub, Tok, USE, VA_ARGS, VA_OPT, VA_OPT_MARK};
-use crate::program::{ACCEPT, ARG, COND, DEFINE, DEFINED, EXPR, FRAME, GLUE, GOTO, IF, INCLUDE, IS, PRAGMA, SKIP, KEEP, LINE, LOOKUP, MACRO, PAINT, PEEK, PRE, PUSH, PUT, PpTables, READ, RETURN, SKIPLINE, STOP, STR, SUB, UNDEF, Words, split};
+use crate::pp_words::{self, Asked, B_BASE_FILE, B_COUNTER, B_DATE, B_FILE, B_FILE_NAME, B_HAS_EMBED, B_HAS_INCLUDE, B_HAS_INCLUDE_NEXT, B_INCLUDE_LEVEL, B_LINE, B_PRAGMA, B_TIME, B_TIMESTAMP, BUILTINS, Bi, Bounds, COND_ELSE, COND_SIZE, COND_SRC, COND_TAKEN, Ctx, Ex, FeatureC, Inc, MAX_INCLUDE_DEPTH, NamedC, OPS, Want, op_index, BOL, DIGRAPH, Def, DefState, EOF, EXP, Env, Expanded, File, FileC, Frame, HASH, HASHHASH, IDENT, LEVEL, LITERAL, NO_PARAM, NOEXP, NONE, NUMBER, PAIR, PASTE, PASTE_MARK, PLACEMARKER, PUNCT, Refused, SPACE, Slot, Src, Sub, Tok, USE, VA_ARGS, VA_OPT, VA_OPT_MARK};
+use crate::program::{ACCEPT, ARG, BUILTIN, COND, DEFINE, DEFINED, EXPR, FRAME, GLUE, GOTO, IF, INCLUDE, IS, LINEDIR, PRAGMA, SKIP, KEEP, LINE, LOOKUP, MACRO, PAINT, PEEK, PRE, PUSH, PUT, PpTables, READ, RETURN, SKIPLINE, STOP, STR, SUB, UNDEF, Words, split};
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, BlockCall, InstBuilder, JumpTableData, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -66,6 +66,7 @@ const REASONS: &[&str] = &[
     "no precedence",
     "past the wanted files' bound",
     "past push_macro's bound",
+    "past the unanswered features' bound",
 ];
 const R_STOPPED: u64 = 1;
 const R_CALLS: u64 = 2;
@@ -101,6 +102,7 @@ const R_NO_OP: u64 = 29;
 const R_NO_PREC: u64 = 30;
 const R_WANTED: u64 = 31;
 const R_PUSHED: u64 = 32;
+const R_ASKED: u64 = 33;
 
 /// One of the machine's buffers in `Ctx`: its start's, length's and room's fields, its
 /// element's size, and why a push past its room refuses.
@@ -139,6 +141,7 @@ const LIVE: V = v!(live, nlive, room_live, 1, R_EX);
 const WANTED: V = v!(wanted, nwanted, room_wanted, size_of::<Want>(), R_WANTED);
 const NAMED: i64 = size_of::<NamedC>() as i64;
 const PUSHED: V = v!(pushed, npushed, room_pushed, PAIR.0, R_PUSHED);
+const ASKED: V = v!(asked, nasked, room_asked, size_of::<Asked>(), R_ASKED);
 const V_BITS: i32 = offset_of!(Val, bits) as i32;
 const V_UNS: i32 = offset_of!(Val, unsigned) as i32;
 
@@ -3168,6 +3171,903 @@ impl Lower<'_, '_> {
         self.pragma_do(pc, file, (p0, wn), has_lit, (lp, ln), next);
     }
 
+    /// The count of the `n` `u32`s at `p` (rising) below `key` (`partition_point`), by halves
+    /// (`Step::Halve`).
+    fn count_below(&mut self, p: Value, n: Value, key: Value) -> Value {
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Halve));
+        let done = self.f.create_block();
+        self.f.append_block_param(done, types::I64);
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().jump(head, &[z.into(), n.into()]);
+        self.f.switch_to_block(head);
+        let (lo, hi) = (self.f.block_params(head)[0], self.f.block_params(head)[1]);
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
+        let step = self.f.create_block();
+        self.f.ins().brif(more, step, &[], done, &[lo.into()]);
+        self.f.switch_to_block(step);
+        let span = self.f.ins().isub(hi, lo);
+        let half = self.f.ins().ushr_imm(span, 1);
+        let mid = self.f.ins().iadd(lo, half);
+        let e = elem(self.f, p, mid, 4);
+        let k = ldu(self.f, types::I32, e, 0);
+        let below = self.f.ins().icmp(IntCC::UnsignedLessThan, k, key);
+        let m1 = self.f.ins().iadd_imm(mid, 1);
+        let lo1 = self.f.ins().select(below, m1, lo);
+        let hi1 = self.f.ins().select(below, hi, mid);
+        self.f.ins().jump(head, &[lo1.into(), hi1.into()]);
+        self.f.switch_to_block(done);
+        self.f.block_params(done)[0]
+    }
+
+    /// The top source whose `test(file)` holds, searched from the top (`Step::Item`): whether
+    /// there is one, and its address.
+    fn last_source(&mut self, test: &dyn Fn(&mut Self, Value) -> Value) -> (Value, Value) {
+        let n = self.vlen(SOURCES);
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Item));
+        let join = self.f.create_block();
+        self.f.append_block_param(join, types::I8);
+        self.f.append_block_param(join, types::I64);
+        self.f.ins().jump(head, &[n.into()]);
+        self.f.switch_to_block(head);
+        let i = self.f.block_params(head)[0];
+        let step = self.f.create_block();
+        let z = self.f.ins().iconst(types::I64, 0);
+        let no = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().brif(i, step, &[], join, &[no.into(), z.into()]);
+        self.f.switch_to_block(step);
+        let k = self.f.ins().iadd_imm(i, -1);
+        let s = self.vat(SOURCES, k);
+        let file = ldu(self.f, types::I32, s, offset_of!(Src, file) as i32);
+        let hit = test(self, file);
+        let yes = self.f.ins().iconst(types::I8, 1);
+        let on = self.f.create_block();
+        self.f.ins().brif(hit, join, &[yes.into(), s.into()], on, &[]);
+        self.f.switch_to_block(on);
+        self.f.ins().jump(head, &[k.into()]);
+        self.f.switch_to_block(join);
+        let r = self.f.block_params(join);
+        (r[0], r[1])
+    }
+
+    /// `Machine::cur_file`: the innermost file read, 0 where none is.
+    fn cur_file(&mut self) -> Value {
+        let (some, s) = self.last_source(&|l, f| l.f.ins().icmp_imm(IntCC::NotEqual, f, i64::from(NONE)));
+        let j = self.f.create_block();
+        self.f.append_block_param(j, types::I64);
+        let yes = self.f.create_block();
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().brif(some, yes, &[], j, &[z.into()]);
+        self.f.switch_to_block(yes);
+        let f = ldu(self.f, types::I32, s, offset_of!(Src, file) as i32);
+        self.f.ins().jump(j, &[f.into()]);
+        self.f.switch_to_block(j);
+        self.f.block_params(j)[0]
+    }
+
+    /// `Machine::number_tok`: `v`'s decimal digits (and sign) in scratch, a number token with
+    /// `like`'s spacing and expansion, into `T`. Straight code: the digits' count by compares,
+    /// then up to 20 digits.
+    fn number_tok(&mut self, pc: usize, v: Value) {
+        let ctx = self.ctx;
+        let neg = self.f.ins().icmp_imm(IntCC::SignedLessThan, v, 0);
+        let nv = self.f.ins().ineg(v);
+        let u = self.f.ins().select(neg, nv, v);
+        let mut len = self.f.ins().iconst(types::I64, 1);
+        let mut p10: u64 = 10;
+        for _ in 1..20 {
+            let ge = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, u, p10 as i64);
+            let x = self.f.ins().uextend(types::I64, ge);
+            len = self.f.ins().iadd(len, x);
+            p10 = p10.wrapping_mul(10);
+        }
+        let sign = self.f.ins().uextend(types::I64, neg);
+        let total = self.f.ins().iadd(len, sign);
+        let start = ld(self.f, types::I64, ctx, at!(nscratch));
+        let room = ld(self.f, types::I64, ctx, at!(room_scratch));
+        let end = self.f.ins().iadd(start, total);
+        let ok = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, room);
+        self.check(ok, pc, R_SCRATCH);
+        let base = ld(self.f, types::I64, ctx, at!(scratch));
+        let p = self.f.ins().iadd(base, start);
+        let minus = self.f.ins().iconst(types::I8, i64::from(b'-'));
+        let put_sign = self.f.create_block();
+        let digits = self.f.create_block();
+        self.f.ins().brif(neg, put_sign, &[], digits, &[]);
+        self.f.switch_to_block(put_sign);
+        self.f.ins().store(bytes_flags(), minus, p, 0);
+        self.f.ins().jump(digits, &[]);
+        self.f.switch_to_block(digits);
+        // The last digit at `end - 1`, the one before it before.
+        let last = self.f.ins().iadd(base, end);
+        let mut x = u;
+        let done = self.f.create_block();
+        for i in 0..20i64 {
+            let more = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, len, i);
+            let put = self.f.create_block();
+            self.f.ins().brif(more, put, &[], done, &[]);
+            self.f.switch_to_block(put);
+            let q = self.f.ins().udiv_imm(x, 10);
+            let q10 = self.f.ins().imul_imm(q, 10);
+            let d = self.f.ins().isub(x, q10);
+            let c = self.f.ins().iadd_imm(d, i64::from(b'0'));
+            let c = self.f.ins().ireduce(types::I8, c);
+            self.f.ins().store(bytes_flags(), c, last, -1 - i as i32);
+            x = q;
+        }
+        self.f.ins().jump(done, &[]);
+        self.f.switch_to_block(done);
+        st(self.f, types::I64, end, ctx, at!(nscratch));
+        self.like_tok(NUMBER, start, end);
+    }
+
+    /// `T` a token of `kind` spelled `scratch[start..end]`, with `like`'s spacing and expansion.
+    fn like_tok(&mut self, kind: u8, start: Value, end: Value) {
+        let ctx = self.ctx;
+        let lf = ldu(self.f, types::I8, ctx, at!(like) + T_FLAGS);
+        let fl = self.f.ins().band_imm(lf, i64::from(BOL | SPACE));
+        let exp = ldu(self.f, types::I32, ctx, at!(like) + offset_of!(Tok, exp) as i32);
+        let k = self.f.ins().iconst(types::I8, i64::from(kind));
+        let z = self.f.ins().iconst(types::I32, 0);
+        self.put_tok(ctx, at!(t), k, fl, z, start, end, exp);
+    }
+
+    /// `Machine::string_tok`: `(p, n)` as a string literal (`"` and `\\` escaped) into `T`.
+    fn string_tok(&mut self, pc: usize, p: Value, n: Value) {
+        let start = ld(self.f, types::I64, self.ctx, at!(nscratch));
+        self.scratch_push(pc, b"\"");
+        self.scratch_append(pc, p, n, true);
+        self.scratch_push(pc, b"\"");
+        let end = ld(self.f, types::I64, self.ctx, at!(nscratch));
+        self.like_tok(LITERAL, start, end);
+    }
+
+    /// `Machine::line_of` of the token at `tok`: its physical line, moved by its file's `#line`.
+    fn line_of(&mut self, tok: Value) -> Value {
+        let ctx = self.ctx;
+        let buf = ldu(self.f, types::I32, tok, offset_of!(Tok, buf) as i32);
+        let start = ldu(self.f, types::I32, tok, offset_of!(Tok, start) as i32);
+        let nf = ld(self.f, types::I64, ctx, at!(nfiles));
+        let join = self.f.create_block();
+        self.f.append_block_param(join, types::I64);
+        let some = self.f.ins().icmp_imm(IntCC::NotEqual, buf, 0);
+        let within = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, buf, nf);
+        let ok = self.f.ins().band(some, within);
+        let go = self.f.create_block();
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().brif(ok, go, &[], join, &[z.into()]);
+        self.f.switch_to_block(go);
+        let f = self.f.ins().iadd_imm(buf, -1);
+        let fc = self.file_c(f);
+        let lines = ld(self.f, types::I64, fc, offset_of!(FileC, lines) as i32);
+        let nl = ld(self.f, types::I64, fc, offset_of!(FileC, nlines) as i32);
+        let below = self.count_below(lines, nl, start);
+        let phys = self.f.ins().iadd_imm(below, 1);
+        let (has, s) = self.last_source(&|l, file| l.f.ins().icmp(IntCC::Equal, file, f));
+        let dj = self.f.create_block();
+        self.f.append_block_param(dj, types::I64);
+        let dy = self.f.create_block();
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().brif(has, dy, &[], dj, &[z.into()]);
+        self.f.switch_to_block(dy);
+        let d = ld(self.f, types::I32, s, offset_of!(Src, delta) as i32);
+        let d = self.f.ins().sextend(types::I64, d);
+        self.f.ins().jump(dj, &[d.into()]);
+        self.f.switch_to_block(dj);
+        let d = self.f.block_params(dj)[0];
+        let line = self.f.ins().iadd(phys, d);
+        let line = self.f.ins().band_imm(line, 0xffff_ffff);
+        self.f.ins().jump(join, &[line.into()]);
+        self.f.switch_to_block(join);
+        self.f.block_params(join)[0]
+    }
+
+    /// `Machine::presumed_path`: the innermost file's path, a `#line`'s where it set one.
+    fn presumed_path(&mut self) -> (Value, Value) {
+        let (some, s) = self.last_source(&|l, f| l.f.ins().icmp_imm(IntCC::NotEqual, f, i64::from(NONE)));
+        let join = self.f.create_block();
+        self.f.append_block_param(join, types::I64);
+        self.f.append_block_param(join, types::I64);
+        let yes = self.f.create_block();
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().brif(some, yes, &[], join, &[z.into(), z.into()]);
+        self.f.switch_to_block(yes);
+        let p = offset_of!(Src, presumed);
+        let p0 = ldu(self.f, types::I32, s, (p + offset_of!((u32, u32), 0)) as i32);
+        let p1 = ldu(self.f, types::I32, s, (p + offset_of!((u32, u32), 1)) as i32);
+        let set = self.f.ins().icmp_imm(IntCC::NotEqual, p0, i64::from(NONE));
+        let mine = self.f.create_block();
+        let path = self.f.create_block();
+        self.f.ins().brif(set, mine, &[], path, &[]);
+        self.f.switch_to_block(mine);
+        let base = ld(self.f, types::I64, self.ctx, at!(scratch));
+        let a = self.f.ins().iadd(base, p0);
+        let n = self.f.ins().isub(p1, p0);
+        self.f.ins().jump(join, &[a.into(), n.into()]);
+        self.f.switch_to_block(path);
+        let f = ldu(self.f, types::I32, s, offset_of!(Src, file) as i32);
+        let fc = self.file_c(f);
+        let a = ld(self.f, types::I64, fc, offset_of!(FileC, path) as i32);
+        let n = ld(self.f, types::I64, fc, offset_of!(FileC, npath) as i32);
+        self.f.ins().jump(join, &[a.into(), n.into()]);
+        self.f.switch_to_block(join);
+        let r = self.f.block_params(join);
+        (r[0], r[1])
+    }
+
+    /// The bytes after the last `/` of `(p, n)` (all of them where there is none); the windows
+    /// searched eight bytes a step (`Step::Word`).
+    fn after_last_slash(&mut self, p: Value, n: Value) -> (Value, Value) {
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Word));
+        let done = self.f.create_block();
+        self.f.append_block_param(done, types::I64);
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().jump(head, &[z.into(), z.into()]);
+        self.f.switch_to_block(head);
+        let (i, from) = (self.f.block_params(head)[0], self.f.block_params(head)[1]);
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, i, n);
+        let step = self.f.create_block();
+        self.f.ins().brif(more, step, &[], done, &[from.into()]);
+        self.f.switch_to_block(step);
+        let rem = self.f.ins().isub(n, i);
+        let q = self.f.ins().iadd(p, i);
+        let w = self.chunk(q, rem);
+        let m = self.bytes_eq(w, b'/');
+        let valid = self.valid_bytes(rem);
+        let m = self.f.ins().band(m, valid);
+        let lz = self.f.ins().clz(m);
+        let top = self.f.ins().iconst(types::I64, 63);
+        let bit = self.f.ins().isub(top, lz);
+        let j = self.f.ins().ushr_imm(bit, 3);
+        let at = self.f.ins().iadd(i, j);
+        let at1 = self.f.ins().iadd_imm(at, 1);
+        let from1 = self.f.ins().select(m, at1, from);
+        let i8 = self.f.ins().iadd_imm(i, 8);
+        self.f.ins().jump(head, &[i8.into(), from1.into()]);
+        self.f.switch_to_block(done);
+        let from = self.f.block_params(done)[0];
+        let a = self.f.ins().iadd(p, from);
+        let k = self.f.ins().isub(n, from);
+        (a, k)
+    }
+
+    /// `Machine::builtin_value`: built-in `b`'s value (its call `like`, its operand
+    /// `kept[lo..hi]`) into `T`.
+    fn builtin_value(&mut self, pc: usize, b: Value, lo: Value, hi: Value) {
+        let ctx = self.ctx;
+        let done = self.f.create_block();
+        let mut sw = Switch::new();
+        let mut cases = Vec::new();
+        for c in [B_LINE, B_FILE, B_FILE_NAME, B_BASE_FILE, B_COUNTER, B_INCLUDE_LEVEL, B_DATE, B_TIME, B_TIMESTAMP, B_HAS_INCLUDE, B_HAS_INCLUDE_NEXT, B_HAS_EMBED] {
+            let blk = self.f.create_block();
+            sw.set_entry(u128::from(c), blk);
+            cases.push((c, blk));
+        }
+        let feature = self.f.create_block();
+        sw.emit(self.f, b, feature);
+        for (c, blk) in cases {
+            self.f.switch_to_block(blk);
+            match c {
+                B_LINE => {
+                    // The outermost call's end: the expansions' ends followed (`Step::Item`).
+                    let head = self.f.create_block();
+                    self.f.append_block_param(head, types::I64);
+                    self.heads.push((head, Step::Item));
+                    let at = self.f.ins().iadd_imm(ctx, i64::from(at!(like)));
+                    self.f.ins().jump(head, &[at.into()]);
+                    self.f.switch_to_block(head);
+                    let r = self.f.block_params(head)[0];
+                    let exp = ldu(self.f, types::I32, r, offset_of!(Tok, exp) as i32);
+                    let up = self.f.create_block();
+                    let found = self.f.create_block();
+                    self.f.ins().brif(exp, up, &[], found, &[]);
+                    self.f.switch_to_block(up);
+                    let k = self.f.ins().iadd_imm(exp, -1);
+                    let e = self.vat(EXPS, k);
+                    let e1 = self.f.ins().iadd_imm(e, EXP.2 as i64);
+                    self.f.ins().jump(head, &[e1.into()]);
+                    self.f.switch_to_block(found);
+                    let line = self.line_of(r);
+                    self.number_tok(pc, line);
+                }
+                B_FILE | B_FILE_NAME | B_BASE_FILE => {
+                    let (p, n) = if c == B_BASE_FILE {
+                        let z = self.f.ins().iconst(types::I64, 0);
+                        let nf = ld(self.f, types::I64, ctx, at!(nfiles));
+                        let j = self.f.create_block();
+                        self.f.append_block_param(j, types::I64);
+                        self.f.append_block_param(j, types::I64);
+                        let some = self.f.create_block();
+                        self.f.ins().brif(nf, some, &[], j, &[z.into(), z.into()]);
+                        self.f.switch_to_block(some);
+                        let fc = self.file_c(z);
+                        let a = ld(self.f, types::I64, fc, offset_of!(FileC, path) as i32);
+                        let n = ld(self.f, types::I64, fc, offset_of!(FileC, npath) as i32);
+                        self.f.ins().jump(j, &[a.into(), n.into()]);
+                        self.f.switch_to_block(j);
+                        (self.f.block_params(j)[0], self.f.block_params(j)[1])
+                    } else {
+                        self.presumed_path()
+                    };
+                    let (p, n) = if c == B_FILE_NAME { self.after_last_slash(p, n) } else { (p, n) };
+                    self.string_tok(pc, p, n);
+                }
+                B_COUNTER => {
+                    let n = ld(self.f, types::I64, ctx, at!(counter));
+                    let n1 = self.f.ins().iadd_imm(n, 1);
+                    let n1 = self.f.ins().band_imm(n1, 0xffff_ffff);
+                    st(self.f, types::I64, n1, ctx, at!(counter));
+                    let v = self.f.ins().iadd_imm(n1, -1);
+                    self.number_tok(pc, v);
+                }
+                B_INCLUDE_LEVEL => {
+                    let n = self.file_sources();
+                    let v = self.f.ins().iadd_imm(n, -1);
+                    self.number_tok(pc, v);
+                }
+                B_DATE | B_TIME | B_TIMESTAMP => {
+                    let (fp, fn_) = match c {
+                        B_DATE => (at!(date), at!(ndate)),
+                        B_TIME => (at!(time), at!(ntime)),
+                        _ => (at!(timestamp), at!(ntimestamp)),
+                    };
+                    let p = ld(self.f, types::I64, ctx, fp);
+                    let n = ld(self.f, types::I64, ctx, fn_);
+                    self.string_tok(pc, p, n);
+                }
+                _ => {
+                    // `__has_include`, `__has_include_next`, `__has_embed`: 0 not found, 1 found,
+                    // 2 found and empty (`#embed`).
+                    let file = self.cur_file();
+                    let s0 = ld(self.f, types::I64, ctx, at!(nscratch));
+                    let (some, p, n, angle) = self.header_name(pc, KEPT, lo, hi);
+                    let v = self.f.create_block();
+                    self.f.append_block_param(v, types::I64);
+                    let look = self.f.create_block();
+                    let z = self.f.ins().iconst(types::I64, 0);
+                    self.f.ins().brif(some, look, &[], v, &[z.into()]);
+                    self.f.switch_to_block(look);
+                    let nx = if c == B_HAS_INCLUDE_NEXT { self.f.ins().icmp_imm(IntCC::NotEqual, file, 0) } else { self.f.ins().iconst(types::I8, 0) };
+                    let em = self.f.ins().iconst(types::I8, i64::from(c == B_HAS_EMBED));
+                    let (found, to) = self.find_named(file, p, n, angle, nx, em);
+                    let hit = self.f.create_block();
+                    let miss = self.f.create_block();
+                    self.f.ins().brif(found, hit, &[], miss, &[]);
+                    self.f.switch_to_block(miss);
+                    self.want(pc, file, p, n, angle, nx, em);
+                    let z = self.f.ins().iconst(types::I64, 0);
+                    self.f.ins().jump(v, &[z.into()]);
+                    self.f.switch_to_block(hit);
+                    let none = self.f.ins().icmp_imm(IntCC::Equal, to, i64::from(NONE));
+                    let there = self.f.create_block();
+                    let z = self.f.ins().iconst(types::I64, 0);
+                    self.f.ins().brif(none, v, &[z.into()], there, &[]);
+                    self.f.switch_to_block(there);
+                    let one = self.f.ins().iconst(types::I64, 1);
+                    if c == B_HAS_EMBED {
+                        let fc = self.file_c(to);
+                        let nb = ld(self.f, types::I64, fc, offset_of!(FileC, nbytes) as i32);
+                        let empty = self.f.ins().icmp_imm(IntCC::Equal, nb, 0);
+                        let two = self.f.ins().iconst(types::I64, 2);
+                        let x = self.f.ins().select(empty, two, one);
+                        self.f.ins().jump(v, &[x.into()]);
+                    } else {
+                        self.f.ins().jump(v, &[one.into()]);
+                    }
+                    self.f.switch_to_block(v);
+                    let x = self.f.block_params(v)[0];
+                    st(self.f, types::I64, s0, ctx, at!(nscratch));
+                    self.number_tok(pc, x);
+                }
+            }
+            self.f.ins().jump(done, &[]);
+        }
+        // A feature: the operand's spellings run together, looked up among the answers.
+        self.f.switch_to_block(feature);
+        let s0 = ld(self.f, types::I64, ctx, at!(nscratch));
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Item));
+        let spelled = self.f.create_block();
+        self.f.ins().jump(head, &[lo.into()]);
+        self.f.switch_to_block(head);
+        let k = self.f.block_params(head)[0];
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, k, hi);
+        let step = self.f.create_block();
+        self.f.ins().brif(more, step, &[], spelled, &[]);
+        self.f.switch_to_block(step);
+        let t = self.vat(KEPT, k);
+        self.scratch_copy(pc, t, 0, false);
+        let k1 = self.f.ins().iadd_imm(k, 1);
+        self.f.ins().jump(head, &[k1.into()]);
+        self.f.switch_to_block(spelled);
+        let e = ld(self.f, types::I64, ctx, at!(nscratch));
+        let base = ld(self.f, types::I64, ctx, at!(scratch));
+        let p = self.f.ins().iadd(base, s0);
+        let n = self.f.ins().isub(e, s0);
+        let feats = ld(self.f, types::I64, ctx, at!(features));
+        let nfe = ld(self.f, types::I64, ctx, at!(nfeatures));
+        let v = self.f.create_block();
+        self.f.append_block_param(v, types::I64);
+        let fh = self.f.create_block();
+        self.f.append_block_param(fh, types::I64);
+        self.heads.push((fh, Step::Item));
+        let z = self.f.ins().iconst(types::I64, 0);
+        let unanswered = self.f.create_block();
+        self.f.ins().jump(fh, &[z.into()]);
+        self.f.switch_to_block(fh);
+        let i = self.f.block_params(fh)[0];
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, i, nfe);
+        let step = self.f.create_block();
+        self.f.ins().brif(more, step, &[], unanswered, &[]);
+        self.f.switch_to_block(step);
+        let fe = elem(self.f, feats, i, size_of::<FeatureC>() as i64);
+        let fb = ldu(self.f, types::I32, fe, offset_of!(FeatureC, b) as i32);
+        let fl = ld(self.f, types::I64, fe, offset_of!(FeatureC, len) as i32);
+        let sb = self.f.ins().icmp(IntCC::Equal, fb, b);
+        let sl = self.f.ins().icmp(IntCC::Equal, fl, n);
+        let same = self.f.ins().band(sb, sl);
+        let i1 = self.f.ins().iadd_imm(i, 1);
+        let bytes = self.f.create_block();
+        let on = self.f.create_block();
+        self.f.ins().brif(same, bytes, &[], on, &[]);
+        self.f.switch_to_block(bytes);
+        let fp = ld(self.f, types::I64, fe, offset_of!(FeatureC, name) as i32);
+        let eq = self.same_bytes(p, fp, n);
+        let hit = self.f.create_block();
+        self.f.ins().brif(eq, hit, &[], on, &[]);
+        self.f.switch_to_block(hit);
+        let fv = ld(self.f, types::I64, fe, offset_of!(FeatureC, value) as i32);
+        self.f.ins().jump(v, &[fv.into()]);
+        self.f.switch_to_block(on);
+        self.f.ins().jump(fh, &[i1.into()]);
+        // Not answered: recorded; `__is_identifier`'s 1, any other's 0.
+        self.f.switch_to_block(unanswered);
+        let na = self.vlen(ASKED);
+        let room = ld(self.f, types::I64, ctx, at!(room_asked));
+        let ok = self.f.ins().icmp(IntCC::UnsignedLessThan, na, room);
+        let lo_b = ld(self.f, types::I64, ctx, at!(nasked_bytes));
+        let broom = ld(self.f, types::I64, ctx, at!(room_asked_bytes));
+        let end = self.f.ins().iadd(lo_b, n);
+        let fits = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, broom);
+        let ok = self.f.ins().band(ok, fits);
+        self.check(ok, pc, R_ASKED);
+        self.append_bytes(pc, (at!(asked_bytes), at!(nasked_bytes), at!(room_asked_bytes)), R_ASKED, p, n, false);
+        let a = self.vpush(ASKED, pc);
+        st(self.f, types::I32, b, a, offset_of!(Asked, b) as i32);
+        st(self.f, types::I32, lo_b, a, offset_of!(Asked, lo) as i32);
+        st(self.f, types::I32, end, a, offset_of!(Asked, hi) as i32);
+        let is_id = BUILTINS.iter().position(|x| x.0 == "__is_identifier").unwrap() as i64;
+        let ii = self.f.ins().icmp_imm(IntCC::Equal, b, is_id);
+        let x = self.f.ins().uextend(types::I64, ii);
+        self.f.ins().jump(v, &[x.into()]);
+        self.f.switch_to_block(v);
+        let x = self.f.block_params(v)[0];
+        st(self.f, types::I64, s0, ctx, at!(nscratch));
+        self.number_tok(pc, x);
+        self.f.ins().jump(done, &[]);
+        self.f.switch_to_block(done);
+    }
+
+    /// A level opened (`(u16::MAX, kept's length)`).
+    fn push_level(&mut self, pc: usize) {
+        let nk = self.vlen(KEPT);
+        let lp = self.vpush(LEVELS, pc);
+        let p = self.f.ins().iconst(types::I16, i64::from(u16::MAX));
+        self.f.ins().store(flags(), p, lp, LEVEL.1 as i32);
+        st(self.f, types::I32, nk, lp, LEVEL.2 as i32);
+    }
+
+    /// `Machine::push_kept`: `kept[lo..hi]` to the arena, a token a step (`Step::Item`).
+    fn push_kept(&mut self, pc: usize, lo: Value, hi: Value) {
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Item));
+        let done = self.f.create_block();
+        self.f.ins().jump(head, &[lo.into()]);
+        self.f.switch_to_block(head);
+        let k = self.f.block_params(head)[0];
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, k, hi);
+        let step = self.f.create_block();
+        self.f.ins().brif(more, step, &[], done, &[]);
+        self.f.switch_to_block(step);
+        let t = self.vat(KEPT, k);
+        self.push_arena_tok(pc, t, 0);
+        let k1 = self.f.ins().iadd_imm(k, 1);
+        self.f.ins().jump(head, &[k1.into()]);
+        self.f.switch_to_block(done);
+    }
+
+    /// `pragma_words` of the `n` bytes at `p` (`_Pragma`'s text): its word's range, and
+    /// `( "…" )`'s string's (where `ok`). A fold a byte a lane (`lanes`): the state (0 blanks,
+    /// 1 the word, 2 blanks, 3 after `(`, 4 the string's prefix, 5 the string, 6 an escaped
+    /// byte, 7 closed, 8 none), the byte's index, and the ranges' ends.
+    fn pragma_words(&mut self, p: Value, n: Value) -> ((Value, Value), Value, (Value, Value)) {
+        let k = |l: &mut Self, x: i64| l.f.ins().iconst(types::I64, x);
+        let init = [k(self, 0), k(self, 0), k(self, 0), k(self, 0), k(self, 0), k(self, 0)];
+        let st = self.lanes(p, n, &init, &mut |l, c, st| {
+            let f = &mut *l.f;
+            let (mut state, i, mut w0, mut w1, mut s0, mut e) = (st[0], st[1], st[2], st[3], st[4], st[5]);
+            let is = |f: &mut FunctionBuilder<'_>, x: Value, y: i64| f.ins().icmp_imm(IntCC::Equal, x, y);
+            let k = |f: &mut FunctionBuilder<'_>, x: i64| f.ins().iconst(types::I64, x);
+            let mut blank = f.ins().iconst(types::I8, 0);
+            for b in [b' ', b'\t', 0x0b, 0x0c] {
+                let x = is(f, c, i64::from(b));
+                blank = f.ins().bor(blank, x);
+            }
+            let mut word = f.ins().iconst(types::I8, 0);
+            for (lo, n) in [(b'0', 10), (b'A', 26), (b'a', 26)] {
+                let d = f.ins().iadd_imm(c, -i64::from(lo));
+                let x = f.ins().icmp_imm(IntCC::UnsignedLessThan, d, n);
+                word = f.ins().bor(word, x);
+            }
+            for b in [b'_', b'$'] {
+                let x = is(f, c, i64::from(b));
+                word = f.ins().bor(word, x);
+            }
+            let nblank = f.ins().bxor_imm(blank, 1);
+            let nword = f.ins().bxor_imm(word, 1);
+            let lp = is(f, c, i64::from(b'('));
+            let q = is(f, c, i64::from(b'"'));
+            let bs = is(f, c, i64::from(b'\\'));
+            // 0: blanks, then the word begins here.
+            let s = is(f, state, 0);
+            let go = f.ins().band(s, nblank);
+            w0 = f.ins().select(go, i, w0);
+            let one = k(f, 1);
+            state = f.ins().select(go, one, state);
+            // 1: the word, then its end here.
+            let s = is(f, state, 1);
+            let end = f.ins().band(s, nword);
+            w1 = f.ins().select(end, i, w1);
+            let two = k(f, 2);
+            state = f.ins().select(end, two, state);
+            let mut cons = f.ins().band(s, word);
+            // 2: blanks, then `(`, else none.
+            let s = is(f, state, 2);
+            let nc = f.ins().bxor_imm(cons, 1);
+            let s = f.ins().band(s, nc);
+            let paren = f.ins().band(s, lp);
+            let other = f.ins().band(s, nblank);
+            let np = f.ins().bxor_imm(lp, 1);
+            let other = f.ins().band(other, np);
+            let three = k(f, 3);
+            let eight = k(f, 8);
+            state = f.ins().select(paren, three, state);
+            state = f.ins().select(other, eight, state);
+            cons = f.ins().bor(cons, s);
+            // 3: blanks, then the string's prefix begins here.
+            let s = is(f, state, 3);
+            let nc = f.ins().bxor_imm(cons, 1);
+            let s = f.ins().band(s, nc);
+            let go = f.ins().band(s, nblank);
+            s0 = f.ins().select(go, i, s0);
+            let four = k(f, 4);
+            state = f.ins().select(go, four, state);
+            let sb = f.ins().band(s, blank);
+            cons = f.ins().bor(cons, sb);
+            // 4: the prefix's word bytes, then `"`, else none.
+            let s = is(f, state, 4);
+            let nc = f.ins().bxor_imm(cons, 1);
+            let s = f.ins().band(s, nc);
+            let open = f.ins().band(s, q);
+            let nq = f.ins().bxor_imm(q, 1);
+            let bad = f.ins().band(s, nword);
+            let bad = f.ins().band(bad, nq);
+            let five = k(f, 5);
+            state = f.ins().select(open, five, state);
+            state = f.ins().select(bad, eight, state);
+            cons = f.ins().bor(cons, s);
+            // 6: an escaped byte passed.
+            let s6 = is(f, state, 6);
+            let nc = f.ins().bxor_imm(cons, 1);
+            let s6 = f.ins().band(s6, nc);
+            state = f.ins().select(s6, five, state);
+            cons = f.ins().bor(cons, s6);
+            // 5: the string to its `"`, a `\` passing the byte after it.
+            let s5 = is(f, state, 5);
+            let nc = f.ins().bxor_imm(cons, 1);
+            let s5 = f.ins().band(s5, nc);
+            let esc = f.ins().band(s5, bs);
+            let close = f.ins().band(s5, q);
+            let six = k(f, 6);
+            let seven = k(f, 7);
+            state = f.ins().select(esc, six, state);
+            state = f.ins().select(close, seven, state);
+            let i1 = f.ins().iadd_imm(i, 1);
+            e = f.ins().select(close, i1, e);
+            vec![state, i1, w0, w1, s0, e]
+        });
+        let (state, w0, w1, s0, e) = (st[0], st[2], st[3], st[4], st[5]);
+        let f = &mut *self.f;
+        // The text's end: in the blanks, the word is empty there; in the word, it ends there.
+        let s0_ = f.ins().icmp_imm(IntCC::Equal, state, 0);
+        let s1_ = f.ins().icmp_imm(IntCC::Equal, state, 1);
+        let w0 = f.ins().select(s0_, n, w0);
+        let open = f.ins().bor(s0_, s1_);
+        let w1 = f.ins().select(open, n, w1);
+        let ok = f.ins().icmp_imm(IntCC::Equal, state, 7);
+        ((w0, w1), ok, (s0, e))
+    }
+
+    fn bi_state(&mut self) -> Value {
+        ld(self.f, types::I64, self.ctx, at!(bi))
+    }
+
+    /// `BUILTIN` (`Machine::builtin`), its modes.
+    fn builtin(&mut self, pc: usize, mode: u8) {
+        let ctx = self.ctx;
+        let next = self.blocks[pc + 1];
+        let skip = self.blocks.get(pc + 2).copied().unwrap_or(next);
+        let header = |l: &mut Self, b: Value| {
+            let x = l.f.ins().icmp_imm(IntCC::Equal, b, i64::from(B_HAS_INCLUDE));
+            let y = l.f.ins().icmp_imm(IntCC::Equal, b, i64::from(B_HAS_INCLUDE_NEXT));
+            let z = l.f.ins().icmp_imm(IntCC::Equal, b, i64::from(B_HAS_EMBED));
+            let a = l.f.ins().bor(x, y);
+            l.f.ins().bor(a, z)
+        };
+        match mode {
+            0 | 1 => {
+                let d = ld(self.f, types::I64, ctx, at!(d));
+                let defs = ld(self.f, types::I64, ctx, at!(defs));
+                let def = elem(self.f, defs, d, DEF);
+                let bb = ldu(self.f, types::I8, def, offset_of!(Def, builtin) as i32);
+                let b = self.f.ins().iadd_imm(bb, -1);
+                let b = self.f.ins().band_imm(b, 0xff);
+                if mode == 0 {
+                    copy_tok(self.f, ctx, at!(t), ctx, at!(like));
+                    let z = self.f.ins().iconst(types::I64, 0);
+                    self.builtin_value(pc, b, z, z);
+                    self.f.ins().jump(next, &[]);
+                } else {
+                    let h = header(self, b);
+                    let in_if = ldu(self.f, types::I8, ctx, at!(in_if));
+                    let out = self.f.ins().icmp_imm(IntCC::Equal, in_if, 0);
+                    let no = self.f.ins().band(h, out);
+                    let go = self.f.create_block();
+                    self.f.ins().brif(no, skip, &[], go, &[]);
+                    self.f.switch_to_block(go);
+                    let bi = self.bi_state();
+                    st(self.f, types::I32, b, bi, offset_of!(Bi, b) as i32);
+                    copy_tok(self.f, ctx, at!(t), bi, offset_of!(Bi, name) as i32);
+                    let z = self.f.ins().iconst(types::I32, 0);
+                    self.f.ins().store(flags(), z, bi, offset_of!(Bi, depth) as i32);
+                    self.push_level(pc);
+                    let c = ld(self.f, types::I64, ctx, at!(collecting));
+                    let c = self.f.ins().iadd_imm(c, 1);
+                    st(self.f, types::I64, c, ctx, at!(collecting));
+                    self.f.ins().jump(next, &[]);
+                }
+            }
+            2 => {
+                // The operand's tokens to its `)`, a parenthesis' depth kept.
+                let k = ldu(self.f, types::I8, ctx, at!(t) + T_KIND);
+                let punct = self.f.ins().icmp_imm(IntCC::Equal, k, i64::from(PUNCT));
+                let close = self.spelled(b")");
+                let close = self.f.ins().band(close, punct);
+                let open = self.spelled(b"(");
+                let open = self.f.ins().band(open, punct);
+                let bi = self.bi_state();
+                let depth = ldu(self.f, types::I32, bi, offset_of!(Bi, depth) as i32);
+                let top = self.f.ins().icmp_imm(IntCC::Equal, depth, 0);
+                let end = self.f.ins().band(close, top);
+                let keep = self.f.create_block();
+                self.f.ins().brif(end, next, &[], keep, &[]);
+                self.f.switch_to_block(keep);
+                let up = self.f.ins().iadd_imm(depth, 1);
+                let down = self.f.ins().iadd_imm(depth, -1);
+                let d = self.f.ins().select(open, up, depth);
+                let d = self.f.ins().select(close, down, d);
+                st(self.f, types::I32, d, bi, offset_of!(Bi, depth) as i32);
+                let p = self.vpush(KEPT, pc);
+                copy_tok(self.f, ctx, at!(t), p, 0);
+                self.f.ins().jump(skip, &[]);
+            }
+            3 => {
+                let c = ld(self.f, types::I64, ctx, at!(collecting));
+                let c = self.f.ins().iadd_imm(c, -1);
+                st(self.f, types::I64, c, ctx, at!(collecting));
+                let lp = self.vtop(LEVELS, pc, R_NO_LEVEL);
+                let at = ldu(self.f, types::I32, lp, LEVEL.2 as i32);
+                let nl = self.vlen(LEVELS);
+                let nl1 = self.f.ins().iadd_imm(nl, -1);
+                self.vset_len(LEVELS, nl1);
+                let hi = self.vlen(KEPT);
+                let bi = self.bi_state();
+                let b = ldu(self.f, types::I32, bi, offset_of!(Bi, b) as i32);
+                let h = header(self, b);
+                // Whether the operand starts a header name already: `"…"` or `<`.
+                let sj = self.f.create_block();
+                self.f.append_block_param(sj, types::I8);
+                let some = self.f.ins().icmp(IntCC::UnsignedLessThan, at, hi);
+                let look = self.f.create_block();
+                let f8 = self.f.ins().iconst(types::I8, 0);
+                self.f.ins().brif(some, look, &[], sj, &[f8.into()]);
+                self.f.switch_to_block(look);
+                let t = self.vat(KEPT, at);
+                let k = ldu(self.f, types::I8, t, T_KIND);
+                let (p, n) = self.spelling(t, 0);
+                let lit = self.f.ins().icmp_imm(IntCC::Equal, k, i64::from(LITERAL));
+                let ne = self.f.ins().icmp_imm(IntCC::NotEqual, n, 0);
+                let lj = self.f.create_block();
+                self.f.append_block_param(lj, types::I8);
+                let lq = self.f.create_block();
+                let litne = self.f.ins().band(lit, ne);
+                let f8 = self.f.ins().iconst(types::I8, 0);
+                self.f.ins().brif(litne, lq, &[], lj, &[f8.into()]);
+                self.f.switch_to_block(lq);
+                let c0 = ldu(self.f, types::I8, p, 0);
+                let dq = self.f.ins().icmp_imm(IntCC::Equal, c0, i64::from(b'"'));
+                self.f.ins().jump(lj, &[dq.into()]);
+                self.f.switch_to_block(lj);
+                let quoted = self.f.block_params(lj)[0];
+                let punct = self.f.ins().icmp_imm(IntCC::Equal, k, i64::from(PUNCT));
+                let lt = self.spelled_at(p, n, b"<");
+                let lt = self.f.ins().band(punct, lt);
+                let x = self.f.ins().bor(quoted, lt);
+                self.f.ins().jump(sj, &[x.into()]);
+                self.f.switch_to_block(sj);
+                let starts = self.f.block_params(sj)[0];
+                let pragma = self.f.ins().icmp_imm(IntCC::Equal, b, i64::from(B_PRAGMA));
+                let ns = self.f.ins().bxor_imm(starts, 1);
+                let hn = self.f.ins().band(h, ns);
+                let expand = self.f.ins().bor(pragma, hn);
+                let exp_b = self.f.create_block();
+                let value = self.f.create_block();
+                self.f.ins().brif(expand, exp_b, &[], value, &[]);
+                // The operand expanded first: a stop source of its tokens, and a level.
+                self.f.switch_to_block(exp_b);
+                let a = self.vlen(ARENA);
+                self.push_kept(pc, at, hi);
+                self.vset_len(KEPT, at);
+                let ns = self.vlen(SOURCES);
+                let nl = self.vlen(LEVELS);
+                let room = ld(self.f, types::I64, ctx, at!(room_sources));
+                let s_ok = self.f.ins().icmp(IntCC::UnsignedLessThan, ns, room);
+                let l_ok = self.f.ins().icmp(IntCC::UnsignedLessThan, nl, room);
+                let ok = self.f.ins().band(s_ok, l_ok);
+                self.check(ok, pc, R_SOURCES);
+                let e = self.vlen(ARENA);
+                let none = self.f.ins().iconst(types::I32, i64::from(NONE));
+                self.push_arena_src(pc, a, e, none, true);
+                self.push_level(pc);
+                self.f.ins().jump(next, &[]);
+                self.f.switch_to_block(value);
+                let bi = self.bi_state();
+                copy_tok(self.f, bi, offset_of!(Bi, name) as i32, ctx, at!(like));
+                self.builtin_value(pc, b, at, hi);
+                self.vset_len(KEPT, at);
+                self.f.ins().jump(skip, &[]);
+            }
+            _ => {
+                let (lo, hi) = self.line_end(pc);
+                let bi = self.bi_state();
+                let b = ldu(self.f, types::I32, bi, offset_of!(Bi, b) as i32);
+                let pragma = self.f.ins().icmp_imm(IntCC::Equal, b, i64::from(B_PRAGMA));
+                let value = self.f.create_block();
+                let prag = self.f.create_block();
+                self.f.ins().brif(pragma, prag, &[], value, &[]);
+                self.f.switch_to_block(value);
+                copy_tok(self.f, bi, offset_of!(Bi, name) as i32, ctx, at!(like));
+                self.builtin_value(pc, b, lo, hi);
+                self.vset_len(KEPT, lo);
+                self.f.ins().jump(next, &[]);
+                // `_Pragma("…")`: one string literal, its text the pragma's.
+                self.f.switch_to_block(prag);
+                let n = self.f.ins().isub(hi, lo);
+                let one = self.f.ins().icmp_imm(IntCC::Equal, n, 1);
+                let look = self.f.create_block();
+                self.vset_len(KEPT, lo);
+                self.f.ins().brif(one, look, &[], skip, &[]);
+                self.f.switch_to_block(look);
+                let t = self.vat(KEPT, lo);
+                let k = ldu(self.f, types::I8, t, T_KIND);
+                let lit = self.f.ins().icmp_imm(IntCC::Equal, k, i64::from(LITERAL));
+                let go = self.f.create_block();
+                self.f.ins().brif(lit, go, &[], skip, &[]);
+                self.f.switch_to_block(go);
+                let (p, n) = self.spelling(t, 0);
+                let (ok, t0, t1) = self.destringize(pc, p, n);
+                let text = self.f.create_block();
+                self.f.ins().brif(ok, text, &[], skip, &[]);
+                self.f.switch_to_block(text);
+                let base = ld(self.f, types::I64, ctx, at!(scratch));
+                let tp = self.f.ins().iadd(base, t0);
+                let tn = self.f.ins().isub(t1, t0);
+                let ((w0, w1), has_lit, (l0, l1)) = self.pragma_words(tp, tn);
+                let file = self.cur_file();
+                let wp = self.f.ins().iadd(tp, w0);
+                let wn = self.f.ins().isub(w1, w0);
+                let lp = self.f.ins().iadd(tp, l0);
+                let ln = self.f.ins().isub(l1, l0);
+                self.pragma_do(pc, file, (wp, wn), has_lit, (lp, ln), skip);
+            }
+        }
+    }
+
+    /// `LINEDIR` (`Machine::linedir`): `m=0` a line marker's number kept; `m=1` the expanded
+    /// line read: its number the next line's, its string the file's presumed name.
+    fn linedir(&mut self, pc: usize, mode: u8) {
+        let ctx = self.ctx;
+        let next = self.blocks[pc + 1];
+        if mode == 0 {
+            copy_tok(self.f, ctx, at!(t), ctx, at!(marker));
+            let one = self.f.ins().iconst(types::I8, 1);
+            self.f.ins().store(flags(), one, ctx, at!(has_marker));
+            self.f.ins().jump(next, &[]);
+            return;
+        }
+        let last_end = ldu(self.f, types::I32, ctx, at!(line_last) + offset_of!(Tok, end) as i32);
+        let (lo, hi) = self.line_end(pc);
+        let has_marker = ldu(self.f, types::I8, ctx, at!(has_marker));
+        let z8 = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().store(flags(), z8, ctx, at!(has_marker));
+        // The line's tokens, after the marker's where there is one: the first and the second.
+        let mk = self.f.ins().icmp_imm(IntCC::NotEqual, has_marker, 0);
+        let kept = ld(self.f, types::I64, ctx, at!(kept));
+        let n = self.f.ins().isub(hi, lo);
+        let lo_p = elem(self.f, kept, lo, TOK);
+        let marker = self.f.ins().iadd_imm(ctx, i64::from(at!(marker)));
+        // first: the marker, else kept[lo] (where n > 0); second: kept[lo] (marker, n > 0), else
+        // kept[lo + 1] (n > 1).
+        let lo1_p = self.f.ins().iadd_imm(lo_p, TOK);
+        let first = self.f.ins().select(mk, marker, lo_p);
+        let one = self.f.ins().iconst(types::I8, 1);
+        let n1 = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, n, 0);
+        let n2 = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, n, 1);
+        let has_first = self.f.ins().select(mk, one, n1);
+        let second = self.f.ins().select(mk, lo_p, lo1_p);
+        let has_second = self.f.ins().select(mk, n1, n2);
+        // Copied aside before kept is cut (the copies' tokens are read after).
+        let pt = at!(pragma_toks);
+        copy_tok(self.f, first, 0, ctx, pt);
+        copy_tok(self.f, second, 0, ctx, pt + TOK as i32);
+        self.vset_len(KEPT, lo);
+        let s = self.file_src(pc);
+        let fk = ldu(self.f, types::I8, ctx, pt + T_KIND);
+        let num = self.f.ins().icmp_imm(IntCC::Equal, fk, i64::from(NUMBER));
+        let go = self.f.ins().band(has_first, num);
+        let parse = self.f.create_block();
+        self.f.ins().brif(go, parse, &[], next, &[]);
+        self.f.switch_to_block(parse);
+        let (p, n) = self.spelling(ctx, pt);
+        let (ok, v, _) = self.number(p, n);
+        let set = self.f.create_block();
+        self.f.ins().brif(ok, set, &[], next, &[]);
+        self.f.switch_to_block(set);
+        // The directive's last line: the line after it is line `v`.
+        let file = ldu(self.f, types::I32, s, offset_of!(Src, file) as i32);
+        let fc = self.file_c(file);
+        let lines = ld(self.f, types::I64, fc, offset_of!(FileC, lines) as i32);
+        let nl = ld(self.f, types::I64, fc, offset_of!(FileC, nlines) as i32);
+        let below = self.count_below(lines, nl, last_end);
+        let phys = self.f.ins().iadd_imm(below, 2);
+        let delta = self.f.ins().isub(v, phys);
+        st(self.f, types::I32, delta, s, offset_of!(Src, delta) as i32);
+        let sk = ldu(self.f, types::I8, ctx, pt + TOK as i32 + T_KIND);
+        let lit = self.f.ins().icmp_imm(IntCC::Equal, sk, i64::from(LITERAL));
+        let go = self.f.ins().band(has_second, lit);
+        let name = self.f.create_block();
+        self.f.ins().brif(go, name, &[], next, &[]);
+        self.f.switch_to_block(name);
+        let (p, n) = self.spelling(ctx, pt + TOK as i32);
+        let (ok, p0, p1) = self.destringize(pc, p, n);
+        let put = self.f.create_block();
+        self.f.ins().brif(ok, put, &[], next, &[]);
+        self.f.switch_to_block(put);
+        let pr = offset_of!(Src, presumed);
+        st(self.f, types::I32, p0, s, (pr + offset_of!((u32, u32), 0)) as i32);
+        st(self.f, types::I32, p1, s, (pr + offset_of!((u32, u32), 1)) as i32);
+        self.f.ins().jump(next, &[]);
+    }
+
     /// `INCLUDE` (`Machine::include`), its modes.
     fn include(&mut self, pc: usize, mode: u8) {
         let ctx = self.ctx;
@@ -4612,6 +5512,8 @@ impl Lower<'_, '_> {
             SKIP => self.skip(pc),
             INCLUDE => self.include(pc, mode),
             PRAGMA => self.pragma(pc),
+            BUILTIN => self.builtin(pc, mode),
+            LINEDIR => self.linedir(pc, mode),
             COND => self.cond(pc, mode),
             IF if mode != 1 => self.if_open(pc, mode == 0),
             IF => self.expr_begin(pc),

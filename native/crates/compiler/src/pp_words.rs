@@ -111,19 +111,19 @@ pub const BUILTINS: &[(&str, bool)] = &[
 ];
 
 /// `BUILTINS`' indexes the words tell apart (the rest from `__has_feature` on are features).
-const B_LINE: u8 = 0;
-const B_FILE: u8 = 1;
-const B_FILE_NAME: u8 = 2;
-const B_BASE_FILE: u8 = 3;
-const B_COUNTER: u8 = 4;
-const B_INCLUDE_LEVEL: u8 = 5;
-const B_DATE: u8 = 6;
-const B_TIME: u8 = 7;
-const B_TIMESTAMP: u8 = 8;
-const B_PRAGMA: u8 = 9;
-const B_HAS_INCLUDE: u8 = 10;
-const B_HAS_INCLUDE_NEXT: u8 = 11;
-const B_HAS_EMBED: u8 = 12;
+pub(crate) const B_LINE: u8 = 0;
+pub(crate) const B_FILE: u8 = 1;
+pub(crate) const B_FILE_NAME: u8 = 2;
+pub(crate) const B_BASE_FILE: u8 = 3;
+pub(crate) const B_COUNTER: u8 = 4;
+pub(crate) const B_INCLUDE_LEVEL: u8 = 5;
+pub(crate) const B_DATE: u8 = 6;
+pub(crate) const B_TIME: u8 = 7;
+pub(crate) const B_TIMESTAMP: u8 = 8;
+pub(crate) const B_PRAGMA: u8 = 9;
+pub(crate) const B_HAS_INCLUDE: u8 = 10;
+pub(crate) const B_HAS_INCLUDE_NEXT: u8 = 11;
+pub(crate) const B_HAS_EMBED: u8 = 12;
 
 /// The configuration the built-ins read: `__DATE__`, `__TIME__` and `__TIMESTAMP__`, fixed so
 /// runs are deterministic (`c_fixed`), and the `__has_feature` family's answers (`c_feature`:
@@ -196,6 +196,35 @@ pub(crate) struct Want {
     pub(crate) angle: bool,
     pub(crate) next: bool,
     pub(crate) embed: bool,
+}
+
+/// A built-in call being read (`BUILTIN`): which, its name's token, its parentheses' depth.
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub(crate) struct Bi {
+    pub(crate) b: u32,
+    pub(crate) name: Tok,
+    pub(crate) depth: u32,
+}
+
+/// A feature asked and not answered (`Expanded::unanswered`'s row): its built-in (`BUILTINS`),
+/// and its operand's bytes (`asked_bytes[lo..hi]`).
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub(crate) struct Asked {
+    pub(crate) b: u32,
+    pub(crate) lo: u32,
+    pub(crate) hi: u32,
+}
+
+/// A feature's answer as the compiled words read it (`Env::features`): its built-in's index
+/// (`BUILTINS`, `NONE` for none of them), its operand's bytes, and its value.
+#[repr(C)]
+pub(crate) struct FeatureC {
+    pub(crate) b: u32,
+    pub(crate) name: *const u8,
+    pub(crate) len: u64,
+    pub(crate) value: i64,
 }
 
 /// A file's named target as the compiled words read it (`Named`).
@@ -552,12 +581,15 @@ struct Machine<'a> {
     wanted_bytes: Vec<u8>,
     env: &'a Env<'a>,
     exps: Vec<(Tok, Tok)>,
-    unanswered: Vec<(Vec<u8>, Vec<u8>)>,
+    /// The features asked and not answered: rows, their operands' bytes in `asked_bytes`.
+    asked: Vec<Asked>,
+    asked_bytes: Vec<u8>,
     counter: u32,
     /// The built-in whose operand is read: its index and name, and the operand's depth.
-    bi: (u8, Tok, u32),
+    bi: Bi,
     /// The line marker's number (`LINEDIR m=0`).
-    marker: Option<Tok>,
+    marker: Tok,
+    has_marker: bool,
     /// The directive line's token read last.
     line_last: Tok,
     /// The `#embed` read: its parameters' tokens until they are pushed, its name, and its file
@@ -810,10 +842,12 @@ impl<'a> Machine<'a> {
         wanted_bytes: Vec::new(),
         env,
         exps: Vec::new(),
-        unanswered: Vec::new(),
+        asked: Vec::new(),
+        asked_bytes: Vec::new(),
         counter: 0,
-        bi: (0, eof(0), 0),
-        marker: None,
+        bi: Bi { b: 0, name: eof(0), depth: 0 },
+        marker: eof(0),
+        has_marker: false,
         line_last: eof(0),
         embed: ((0, 0), None, None),
         sub: Sub::default(),
@@ -829,7 +863,9 @@ impl<'a> Machine<'a> {
     fn finish(self) -> Expanded {
         let bytes = &self.wanted_bytes;
         let wanted = self.wanted.iter().map(|w| (w.file, Named { name: bytes[w.lo as usize..w.hi as usize].to_vec(), angle: w.angle, next: w.next, embed: w.embed, to: NONE })).collect();
-        Expanded { toks: self.out, scratch: self.scratch, wanted, exps: self.exps, unanswered: self.unanswered }
+        let bytes = &self.asked_bytes;
+        let unanswered = self.asked.iter().map(|a| (BUILTINS[a.b as usize].0.as_bytes().to_vec(), bytes[a.lo as usize..a.hi as usize].to_vec())).collect();
+        Expanded { toks: self.out, scratch: self.scratch, wanted, exps: self.exps, unanswered }
     }
 }
 
@@ -840,6 +876,9 @@ impl<'a> Machine<'a> {
 #[repr(C)]
 pub(crate) struct Ctx {
     pub files: *const FileC,
+    pub nfiles: u64,
+    /// A token the compiled words keep aside (a built-in's name while its value is made).
+    pub like: Tok,
     pub sources: *mut Src,
     pub nsources: u64,
     pub room_sources: u64,
@@ -930,6 +969,27 @@ pub(crate) struct Ctx {
     pub collecting: u64,
     pub t: Tok,
     pub line_last: Tok,
+    /// The built-in call being read, `__COUNTER__`'s count, and a line marker's number token.
+    pub bi: *mut Bi,
+    pub counter: u64,
+    pub marker: Tok,
+    pub has_marker: u8,
+    /// The features asked and not answered, and their operands' bytes.
+    pub asked: *mut Asked,
+    pub nasked: u64,
+    pub room_asked: u64,
+    pub asked_bytes: *mut u8,
+    pub nasked_bytes: u64,
+    pub room_asked_bytes: u64,
+    /// The environment: `__DATE__`'s, `__TIME__`'s and `__TIMESTAMP__`'s bytes, the features.
+    pub date: *const u8,
+    pub ndate: u64,
+    pub time: *const u8,
+    pub ntime: u64,
+    pub timestamp: *const u8,
+    pub ntimestamp: u64,
+    pub features: *const FeatureC,
+    pub nfeatures: u64,
     /// `#pragma`'s first three tokens (the compiled words' own).
     pub pragma_toks: [Tok; 3],
     /// `push_macro`'s stack: `(u32, u32)`s (`PAIR`), a slot and its definition.
@@ -1011,8 +1071,15 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         n as u64
     }
     let mut returns = vec![0u32; bounds.depth];
+    let features: Vec<FeatureC> = env
+        .features
+        .iter()
+        .map(|f| FeatureC { b: BUILTINS.iter().position(|b| b.0.as_bytes() == f.0).map_or(NONE, |i| i as u32), name: f.1.as_ptr(), len: f.1.len() as u64, value: f.2 })
+        .collect();
     let mut c = Ctx {
         files: filesc.as_ptr(),
+        nfiles: filesc.len() as u64,
+        like: Tok::default(),
         room_sources: room(&mut m.sources, bounds.depth),
         sources: m.sources.as_mut_ptr(),
         nsources: m.sources.len() as u64,
@@ -1094,6 +1161,24 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         t: m.t,
         line_last: m.line_last,
         pragma_toks: [Tok::default(); 3],
+        bi: &mut m.bi,
+        counter: u64::from(m.counter),
+        marker: m.marker,
+        has_marker: u8::from(m.has_marker),
+        room_asked: room(&mut m.asked, bounds.output),
+        asked: m.asked.as_mut_ptr(),
+        nasked: m.asked.len() as u64,
+        room_asked_bytes: room(&mut m.asked_bytes, bounds.scratch),
+        asked_bytes: m.asked_bytes.as_mut_ptr(),
+        nasked_bytes: m.asked_bytes.len() as u64,
+        date: env.date.as_ptr(),
+        ndate: env.date.len() as u64,
+        time: env.time.as_ptr(),
+        ntime: env.time.len() as u64,
+        timestamp: env.timestamp.as_ptr(),
+        ntimestamp: env.timestamp.len() as u64,
+        features: features.as_ptr(),
+        nfeatures: features.len() as u64,
         room_pushed: room(&mut m.pushed, bounds.macros * 4),
         pushed: m.pushed.as_mut_ptr().cast(),
         npushed: m.pushed.len() as u64,
@@ -1121,6 +1206,8 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         m.exps.set_len(c.nexps as usize);
         m.wanted.set_len(c.nwanted as usize);
         m.pushed.set_len(c.npushed as usize);
+        m.asked.set_len(c.nasked as usize);
+        m.asked_bytes.set_len(c.nasked_bytes as usize);
         m.wanted_bytes.set_len(c.nwanted_bytes as usize);
         m.ex.vals.set_len(c.nvals as usize);
         m.ex.ops.set_len(c.nops as usize);
@@ -1128,6 +1215,7 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         m.ex.live.set_len(c.nlive as usize);
     }
     (m.collecting, m.t, m.from_file, m.in_if, m.d, m.line_last) = (c.collecting as u32, c.t, c.from_file != 0, c.in_if != 0, c.d as u32, c.line_last);
+    (m.counter, m.marker, m.has_marker) = (c.counter as u32, c.marker, c.has_marker != 0);
     if r == 0 {
         return Ok(m.finish());
     }
@@ -2468,7 +2556,7 @@ impl<'a> Machine<'a> {
                 if !self.in_if && matches!(b, B_HAS_INCLUDE | B_HAS_INCLUDE_NEXT | B_HAS_EMBED) {
                     return Ok(Some(false));
                 }
-                self.bi = (b, self.t, 0);
+                self.bi = Bi { b: u32::from(b), name: self.t, depth: 0 };
                 if self.levels.len() >= self.bounds.depth {
                     return Err("past the sources' bound");
                 }
@@ -2479,12 +2567,12 @@ impl<'a> Machine<'a> {
             2 => {
                 let t = self.t;
                 if self.spelled(&t, b")") && t.kind == PUNCT {
-                    if self.bi.2 == 0 {
+                    if self.bi.depth == 0 {
                         return Ok(Some(true));
                     }
-                    self.bi.2 -= 1;
+                    self.bi.depth -= 1;
                 } else if self.spelled(&t, b"(") && t.kind == PUNCT {
-                    self.bi.2 += 1;
+                    self.bi.depth += 1;
                 }
                 if self.kept.len() >= self.bounds.arena {
                     return Err("past the arena's bound");
@@ -2496,7 +2584,7 @@ impl<'a> Machine<'a> {
                 self.collecting -= 1;
                 let (_, at) = self.levels.pop().ok_or("no level open")?;
                 let hi = self.kept.len() as u32;
-                let (b, name, _) = self.bi;
+                let (b, name) = (self.bi.b as u8, self.bi.name);
                 let header = matches!(b, B_HAS_INCLUDE | B_HAS_INCLUDE_NEXT | B_HAS_EMBED);
                 let starts = at < hi && {
                     let t = self.kept[at as usize];
@@ -2520,7 +2608,7 @@ impl<'a> Machine<'a> {
             }
             _ => {
                 let (lo, hi) = self.line_end()?;
-                let (b, name, _) = self.bi;
+                let (b, name) = (self.bi.b as u8, self.bi.name);
                 if b != B_PRAGMA {
                     self.t = self.builtin_value(b, &name, Toks::Kept(lo, hi))?;
                     self.kept.truncate(lo as usize);
@@ -2669,8 +2757,13 @@ impl<'a> Machine<'a> {
                 let v = match found {
                     Some(v) => v,
                     None => {
-                        let name = self.scratch[s0..].to_vec();
-                        self.unanswered.push((builtin.to_vec(), name));
+                        let n = self.scratch.len() - s0;
+                        if self.asked.len() >= self.bounds.output || self.asked_bytes.len() + n > self.bounds.scratch {
+                            return Err("past the unanswered features' bound");
+                        }
+                        let lo = self.asked_bytes.len() as u32;
+                        self.asked_bytes.extend_from_slice(&self.scratch[s0..]);
+                        self.asked.push(Asked { b: u32::from(b), lo, hi: self.asked_bytes.len() as u32 });
                         i64::from(builtin == b"__is_identifier")
                     }
                 };
@@ -2683,13 +2776,14 @@ impl<'a> Machine<'a> {
     /// `#line N "file"` and `# N "file" flags`: the next line is line `N` (of `file`).
     fn linedir(&mut self, mode: u8) -> R<()> {
         if mode == 0 {
-            self.marker = Some(self.t);
+            (self.marker, self.has_marker) = (self.t, true);
             return Ok(());
         }
         let last = self.line_last;
         let (lo, hi) = self.line_end()?;
         // The line's tokens, after the marker's (a line marker's number) where there is one.
-        let marker = self.marker.take();
+        let marker = self.has_marker.then_some(self.marker);
+        self.has_marker = false;
         let tok = |m: &Self, k: u32| match marker {
             Some(t) if k == 0 => Some(t),
             Some(_) => (lo + k - 1 < hi).then(|| m.kept[(lo + k - 1) as usize]),
