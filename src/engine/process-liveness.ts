@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { spawnSync } from "./child-process.js";
+import { loadNativeBinding, type NativeBinding } from "./native/native.js";
 import { windowsPowerShell } from "./system-programs.js";
 
 /**
@@ -60,12 +61,41 @@ function isZombie(pid: number): boolean | undefined {
 /**
  * When the process holding `pid` started, in epoch milliseconds, or undefined where it cannot be read. A process keeps
  * its pid for life, so its start time tells the process that holds a pid now from one that held it before. Linux reads
- * `/proc` ({@link linuxStartedAt}), Windows the process's creation time within `timeoutMs` ({@link windowsStartedAt});
- * other systems are not read.
+ * `/proc` ({@link linuxStartedAt}), Windows the process's creation time through Windows PowerShell within `timeoutMs`
+ * ({@link windowsStartedAt}), which loads no engine: for a process that deletes the engine's folder after it reads, as
+ * the uninstall does. Every other reader asks {@link processStartedAtThroughEngine}. Other systems are not read.
  */
 export function processStartedAt(pid: number, timeoutMs: number, platform: NodeJS.Platform = process.platform): number | undefined {
+  return startedAt(pid, platform, () => windowsStartedAt(pid, timeoutMs));
+}
+
+/**
+ * {@link processStartedAt}, with Windows reading the creation time through the engine (`GetProcessTimes`), which starts
+ * no process: a hook or a status pays a system call where a PowerShell start costs about a second, and a policy that
+ * blocks Windows PowerShell does not keep it from the answer. An engine that does not load, or was built before the
+ * read, reads nothing.
+ */
+export function processStartedAtThroughEngine(
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+  engine: () => Pick<NativeBinding, "processStartedAt"> = loadNativeBinding,
+): number | undefined {
+  return startedAt(pid, platform, () => engineStartedAt(pid, engine));
+}
+
+/** Linux's start of `pid`, `windows` on Windows, and none elsewhere. */
+function startedAt(pid: number, platform: NodeJS.Platform, windows: () => number | undefined): number | undefined {
   if (platform === "linux") return linuxStartedAt(pid);
-  return platform === "win32" ? windowsStartedAt(pid, timeoutMs) : undefined;
+  return platform === "win32" ? windows() : undefined;
+}
+
+/** What the engine reads of when `pid` started; nothing when it does not load or has no such read. */
+function engineStartedAt(pid: number, engine: () => Pick<NativeBinding, "processStartedAt">): number | undefined {
+  try {
+    return engine().processStartedAt?.(pid) ?? undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

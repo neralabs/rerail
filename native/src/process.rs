@@ -101,6 +101,27 @@ pub fn detached_exit_code(pid: u32) -> Result<Option<u32>> {
     }
 }
 
+/// Windows only: when the process holding `pid` started, in milliseconds since the Unix epoch, or null where Windows
+/// does not say (no process holds `pid`, or this user may not query it). Windows keeps a process's creation time for
+/// its life and gives its pid to no other process while its object lives, so the time tells the process that holds a
+/// pid now from one that held it before. The read starts no process: a policy that blocks Windows PowerShell does not
+/// stop it, and it costs a system call where a PowerShell start costs a second.
+#[napi]
+pub fn process_started_at(pid: u32) -> Result<Option<f64>> {
+    #[cfg(windows)]
+    {
+        Ok(windows::process_started_at(pid))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        Err(Error::new(
+            Status::GenericFailure,
+            "processStartedAt is only needed on Windows; /proc gives a process's start elsewhere",
+        ))
+    }
+}
+
 #[cfg(windows)]
 mod windows {
     use super::{Error, HashMap, Result, Status, windows_command_line};
@@ -110,7 +131,8 @@ mod windows {
     use std::ptr::{null, null_mut};
     use std::sync::{Mutex, PoisonError};
     use windows_sys::Win32::Foundation::{
-        CloseHandle, GENERIC_READ, GetLastError, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+        CloseHandle, FILETIME, GENERIC_READ, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+        WAIT_OBJECT_0,
     };
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -120,9 +142,10 @@ mod windows {
     use windows_sys::Win32::System::Threading::{
         CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
         DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess,
-        InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
-        PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION, STARTF_USESTDHANDLES,
-        STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
+        GetProcessTimes, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
+        OpenProcess, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION,
+        PROCESS_QUERY_LIMITED_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+        UpdateProcThreadAttribute, WaitForSingleObject,
     };
 
     /// The process handles of the children `spawn_detached` started, by pid. A handle keeps its process object, and
@@ -327,6 +350,38 @@ mod windows {
         }
         launched.swap_remove(index);
         Ok(Some(code))
+    }
+
+    /// Milliseconds from 1601-01-01 UTC, where a FILETIME counts from, to the Unix epoch.
+    const FILETIME_EPOCH_MS: u64 = 11_644_473_600_000;
+
+    pub(super) fn process_started_at(pid: u32) -> Option<f64> {
+        // SAFETY: opens the process by id with only the right GetProcessTimes needs; a null handle is a refusal or a
+        // pid no process holds.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            return None;
+        }
+        let handle = OwnedHandle(handle);
+        let [mut created, mut exited, mut kernel, mut user] = [FILETIME::default(); 4];
+        // SAFETY: `handle` is an open process handle with that right, and the four times outlive the call.
+        let read = unsafe {
+            GetProcessTimes(
+                handle.0,
+                &mut created,
+                &mut exited,
+                &mut kernel,
+                &mut user,
+            )
+        };
+        if read == 0 {
+            return None;
+        }
+        // 100 ns ticks since 1601, to whole milliseconds since 1970: a double holds them exactly.
+        let ticks = (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime);
+        (ticks / 10_000)
+            .checked_sub(FILETIME_EPOCH_MS)
+            .map(|ms| ms as f64)
     }
 }
 

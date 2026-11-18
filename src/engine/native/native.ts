@@ -380,6 +380,11 @@ export interface NativeBinding {
    * the handle it kept, so a pid Windows has given to another process is no answer. A binary built before it lacks it.
    */
   detachedExitCode?(pid: number): number | null;
+  /**
+   * Windows only: when the process holding `pid` started (its creation time), in epoch milliseconds, or null where
+   * Windows does not say: no process holds `pid`, or this user may not query it. A binary built before it lacks it.
+   */
+  processStartedAt?(pid: number): number | null;
   /** The content-store file name this binary's store schema owns (`content-v1.sqlite` at store floor 1). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
