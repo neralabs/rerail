@@ -59,9 +59,27 @@ export function readsNamed(text) {
   return NAMED.filter((name) => text.includes(`\n# env-dep:${name}=`) || text.includes(`\n# env-dep:${name}\n`));
 }
 
+/** The repository's Rust sources: git's list, or a walk of a copy without git (a build box's synced checkout). */
+function rustSources() {
+  try {
+    return execFileSync("git", ["ls-files", "-z", "--", "*.rs"], { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).split("\0");
+  } catch {
+    const out = [];
+    const walk = (dir) => {
+      for (const entry of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
+        const path = dir === "" ? entry.name : `${dir}/${entry.name}`;
+        if (entry.isDirectory() && !["target", "node_modules", ".git", ".worktrees"].includes(entry.name)) walk(path);
+        else if (entry.isFile() && entry.name.endsWith(".rs")) out.push(path);
+      }
+    };
+    walk("");
+    return out;
+  }
+}
+
 /** Sources other than the fixtures' macros that read RERAIL_FIXTURES_DIR as they compile. */
 function fixturesReaders() {
-  const files = execFileSync("git", ["ls-files", "-z", "--", "*.rs"], { cwd: ROOT, encoding: "utf8" }).split("\0");
+  const files = rustSources();
   return files.filter(
     (file) =>
       file !== "" &&
