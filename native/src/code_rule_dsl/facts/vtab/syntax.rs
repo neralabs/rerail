@@ -392,11 +392,15 @@ pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Pr
         if !program.inputs.iter().any(|r| r == "rr_long_text_node") {
             program.inputs.push("rr_long_text_node".into());
         }
+        // A twin serves its rule's readers (`Program::set_rules_from`).
         let rules = std::mem::take(&mut program.rules);
-        for (r, rule) in rules.into_iter().enumerate() {
-            program.rules.push(rule);
-            program.rules.extend(twins.remove(&r).unwrap_or_default());
+        let mut placed = Vec::with_capacity(rules.len() + made);
+        for (r, rule) in rules.iter().enumerate() {
+            placed.push((rule.clone(), vec![r]));
+            placed.extend(twins.remove(&r).unwrap_or_default().into_iter().map(|t| (t, vec![r])));
         }
+        program.rules = rules;
+        program.set_rules_from(placed);
     }
     made
 }

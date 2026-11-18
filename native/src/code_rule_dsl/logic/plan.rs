@@ -6879,6 +6879,43 @@ fn stratum_label(scc: &BTreeSet<String>) -> String {
     if key.len() > 80 { format!("{}…({} relations)", &key[..key.floor_char_boundary(80)], scc.len()) } else { key }
 }
 
+/// A reach index made again (decision 0119) against its old rows kept in memory (decision 0331): its delta held as
+/// `rel__minus` and `rel__plus`, the rows of each sorted and compared, so its readers are maintained rather than
+/// derived again. Returns whether it changed.
+fn reach_delta(db: &Connection, rel: &str, old: &Arc<super::native::component::InRel>, native_rels: &mut BTreeSet<String>) -> Result<bool> {
+    let _span = super::profile::span(|| format!("{rel}: the reach index's delta"));
+    let types = old.types().to_vec();
+    let k = types.len();
+    let new = super::native::component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel}: the reach index made is not held")))?;
+    let rows = |s: &dyn crate::code_rule_dsl::facts::vtab::Source| -> Vec<Vec<i64>> {
+        let cols: Vec<usize> = (0..k).collect();
+        let mut v: Vec<Vec<i64>> = (0..s.len()).map(|r| { let mut row = vec![0i64; k]; s.row_at(r, &cols, &mut row); row }).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    };
+    let (was, now) = (rows(old.source((0..k).map(|c| sql_col(rel, c)).collect()).as_ref()), rows(new.as_ref()));
+    let (mut minus, mut plus) = (Vec::new(), Vec::new());
+    let (mut i, mut j) = (0, 0);
+    while i < was.len() || j < now.len() {
+        match (was.get(i), now.get(j)) {
+            (Some(a), Some(b)) if a == b => (i, j) = (i + 1, j + 1),
+            (Some(a), Some(b)) if a < b => { minus.extend_from_slice(a); i += 1; }
+            (Some(_), Some(b)) | (None, Some(b)) => { plus.extend_from_slice(b); j += 1; }
+            (Some(a), None) => { minus.extend_from_slice(a); i += 1; }
+            (None, None) => unreachable!(),
+        }
+    }
+    let changed = !minus.is_empty() || !plus.is_empty();
+    for (suffix, flat) in [("minus", minus), ("plus", plus)] {
+        let name = format!("{rel}__{suffix}");
+        let n = flat.len() / k.max(1);
+        super::native::component::hold_rows(db, &name, types.clone(), flat, n);
+        native_rels.insert(name);
+    }
+    Ok(changed)
+}
+
 fn stratum_key(scc: &BTreeSet<String>) -> String {
     let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
     if key.len() > 80 { format!("{}…({} relations)", &key[..key.floor_char_boundary(80)], scc.len()) } else { key }
@@ -10100,6 +10137,8 @@ pub trait Maintain {
     fn has_delta(&self, rel: &str) -> bool;
     /// `rel` changed and has no deltas (derived again, and its old rows not kept): its readers derive again.
     fn no_delta(&mut self, rel: &str);
+    /// `rel`'s delta was made by the run itself (`reach_delta`): its readers read `rel__minus` and `rel__plus`.
+    fn delta_made(&mut self, rel: &str);
     /// The run's end: how many strata were reached, of those the driver walked.
     fn walked(&mut self, reached: usize, quiet: usize, of: usize);
     /// The inputs that changed with a delta not empty, or with none: the walk's first moved reads.
@@ -11161,6 +11200,8 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     // The maintained run's driver (decision 0117 step 3).
     let mut maintaining = hooks.maintain.take();
     let mut moved_rels: HashSet<String> = maintaining.as_deref_mut().map(|m| m.seeds().into_iter().collect()).unwrap_or_default();
+    // Reach indexes made again whose old rows are kept in memory: their deltas made once they are (`reach_delta`).
+    let mut reach_olds: HashMap<String, Arc<super::native::component::InRel>> = HashMap::new();
     let (mut reached, mut quiet_slots) = (0usize, 0usize);
     // Each stratum as its level's start placed it (decision 0117 step 3), the strata placed so far, and the forms issued
     // as jobs and the pieces they ran.
@@ -11713,13 +11754,19 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                     }
                     // A native operator's stratum (the reach index, decision 0119) has no maintained form: it is made again
                     // from its reads as they are now, as the base program makes it, and its readers derive again. A text
-                    // test's has (`maintain`: only the new strings tested).
+                    // test's has (`maintain`: only the new strings tested). A reach index whose old rows are kept in
+                    // memory (a chunk's guest rounds, decision 0331) is made the same way, and its delta is then made
+                    // against them (`reach_delta`), so its readers are maintained.
                     if scc.iter().any(|r| f0.native(r).is_some_and(|n| !matches!(n.spec, super::program_image::NativeSpec::TextTest { .. }))) {
                         need.extend(reads.iter().filter(|r| !scc.contains(*r)).cloned());
                         base_strata.push(j);
                         for r in scc {
-                            m.no_delta(r);
-                            moved_rels.insert(r.clone());
+                            if let Some(old) = m.kept(r).filter(|_| matches!(f0.native(r).map(|n| &n.spec), Some(super::program_image::NativeSpec::Reach { .. } | super::program_image::NativeSpec::ReachThrough { .. }))) {
+                                reach_olds.insert(r.clone(), old);
+                            } else {
+                                m.no_delta(r);
+                                moved_rels.insert(r.clone());
+                            }
                         }
                         continue;
                     }
@@ -12340,7 +12387,24 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             super::profile::stratum(&skey, "reach index over held relations (decision 0119)", || why);
             super::profile::note(format!("{rel} rows"), || n.to_string());
             outcome.native.insert(key);
+            if let Some(old) = reach_olds.remove(rel.as_str())
+                && let Some(m) = maintaining.as_deref_mut()
+            {
+                if reach_delta(db, rel, &old, &mut run.native_rels)? {
+                    m.delta_made(rel);
+                    moved_rels.insert((*rel).clone());
+                } else {
+                    outcome.unchanged.insert((*rel).clone());
+                }
+            }
             continue;
+        }
+        // A reach index not made in place (`reach_rows`) has no delta: its readers derive again.
+        if let Some(m) = maintaining.as_deref_mut() {
+            for r in scc.iter().filter(|r| reach_olds.remove(r.as_str()).is_some()) {
+                m.no_delta(r);
+                moved_rels.insert(r.clone());
+            }
         }
         // A text test over strings the run answered, from the rows the engine holds: no table read or written. With
         // the device on, its rule runs as placed (the device's text-test form, `native_stratum_`), never on the host

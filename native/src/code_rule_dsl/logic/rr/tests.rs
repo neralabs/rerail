@@ -3518,7 +3518,6 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
         // (`rr_text20_rr_d`): masked as the helper is.
         let helper = regex::Regex::new(r"\brr_([a-z_]*[a-z])([0-9]+)((?:_rr_d)?)\b").unwrap();
         let fresh = regex::Regex::new(r"\brr_([a-z]+)([0-9]+)_([ft][0-9]+)\b").unwrap();
-        let inlined = regex::Regex::new(r"_rr_d[0-9]+_").unwrap();
         let shape = |mut p: Program| {
             // Pruned as a corpus run prunes it: the requests the engine reads are outputs where a rule makes them
             // (`corpus::run_observed`), those a library derives (embeds, loads) and those lowering makes of a body's
@@ -3577,9 +3576,19 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                 }
             }
             let kept = p.rules.clone();
-            // A definition's variables are renamed apart by the lowering's count of definitions met (`{v}_rr_d{k}_{i}`,
-            // `lower`'s inlining), so masked too.
-            let mask = |s: &str| helper.replace_all(&fresh.replace_all(&inlined.replace_all(s, "_rr_d#_"), "rr_${1}#_$3"), "rr_$1#$3").into_owned();
+            // A desugared clause's variables (`k_rr_d117_4`, renamed apart `t_rr_d699_3_f258`) are numbered by the
+            // clauses before it too, inside a variable's name where `helper` sees no word boundary.
+            let desugared = regex::Regex::new(r"rr_d[0-9]+_([0-9]+)(?:_([ft])[0-9]+)?").unwrap();
+            // And a fresh variable's number before it (`rr_text20_rr_d#_0`).
+            let fresh_desugared = regex::Regex::new(r"\brr_([a-z_]*[a-z])[0-9]+_rr_d#").unwrap();
+            let mask = |s: &str| {
+                let s = desugared.replace_all(s, |c: &regex::Captures| match c.get(2) {
+                    Some(k) => format!("rr_d#_{}_{}#", &c[1], k.as_str()),
+                    None => format!("rr_d#_{}", &c[1]),
+                });
+                let s = fresh_desugared.replace_all(&s, "rr_${1}#_rr_d#");
+                helper.replace_all(&fresh.replace_all(&s, "rr_${1}#_$3"), "rr_$1#$3").into_owned()
+            };
             // A violation's rule for `@place` values (`rr_v0 < -1`) is made when any rule of the program makes one
             // (`lower`'s `place_values`): an unreached clause made it for the whole program, where no reached
             // rule makes the value it reads.
