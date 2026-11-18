@@ -1416,8 +1416,14 @@ Their siblings, found later the same day (0310 steps 4 and 5):
     (`bytes_equal`, aligned words of the block and of the strings' bytes);
   - format 16's `match_groups` tests 64 code bytes a step by nibble tables (`ByteSet`, simdjson's lookups in
     `rerail-simd8`), not a table lookup a byte.
-- **Left**: the device's `string_contains` is a naive substring search, a byte a step at every offset. A text
-  search is the chunked matcher's (string matching is chunked); it goes there, not to a word loop here.
+- **Done** (2026-11-18, the user: "please do this"): a contains test (`CaptureProgram::Contains`) is a row of the
+  batch's, past its derived classes (`packed_batch::contains_rows`), which the text layer makes (decision 0042,
+  `text::scan::Batch`: one literal pass over each file's text for every needle of the batch, a node's bit from the
+  matches its span holds). Metal's `evaluate_assertion` (the interpreter and the JIT's generated MSL) reads the
+  node's bit (`batch_row`, the record's `second` its first row), and so does the CPU JIT (`contains_bit`, the
+  task's `contains_start`). No substring search at a node is left on either. The CPU interpreter, which tests the
+  few nodes a predicate captured, searches each one's text with memchr's SIMD `memmem`, not a window a byte. The
+  label passes' batches have no contains test (W's matchers have no capture predicates; asserted).
 
 
 ### Q60. (Q53 at 8e2b232ad) On the device, a group of 64 nodes' roots run serially in one thread, and a parent is a search (oscar's to take)
@@ -1844,8 +1850,13 @@ too, not as walks from every start.
   0036's roots formula passes are device formulas (`Pass::Formula`); the count anchors are measured. Then (§10)
   targets passes are their images on the device, and a fused pack's anchor keeps its members' text tests.
 - **Left**: anchors in the recursive groups' rounds (0365 §5 keeps them out). A design is with the user: each group
-  member's anchor with the group's own labels read as every node, a superset whatever they settle to, evaluated once
-  before the group's rounds.
+  member's anchor with the group's own labels read as every node (`Set::labels_unknown`), a superset whatever they
+  settle to, evaluated once before the group's rounds.
+- **Measured** (2026-11-18, `anchor_rows_per_answer`, 10 of corpus0's files, M1 Max, debug): the groups' roots
+  passes start at 5,736,730 nodes a round (6,770 formula passes, which Metal walks in the groups, and 120 micro
+  walks). Within the group anchors: 1,281,802 (22%); within anchors reading the settled labels, the best a per-round
+  anchor could do: 501,045 (9%); answers 453,974. The groups' targets passes (50, 1,083 starts) keep every start. No
+  start outside a group anchor emits with the settled labels (the census asserts it on every tape).
 
 ### Q135. (Q24 on sync-integration-hub-tape) The wave's labelling: about 80 s of 93 s process CPU outside its stages
 
@@ -1864,6 +1875,22 @@ where the rest goes (a sample of the run), before reading the wave's CPU totals 
   each walk all of them). Fixing it needs each parent's gaps once per file. t31 says "nothing is cached or
   indexed", so this waits for the user: per-file gaps through `file_index` (as the suppression indexes are kept),
   or the gaps as a derived fact.
+- **Spiked** (2026-11-18, the user: "spike on both"; `matcher::gap::GapScope`, `RERAIL_GAPS`): a parent's stored
+  children (ids, extras) and gaps made once (`ParentGaps`), the test reading them by the child's id (a binary search,
+  not a scan). `scratch`: made when a tape's facts first ask, kept for that tape's call (`fact_rows` installs it, as
+  `FileScopeSlot`). `fact`: every parent's, made once a tape before its facts, by node id. On the M3 Max (loaded),
+  debug, `anchored_walks_find_the_unanchored_roots` on 4 of corpus0's files (30 waves, 120 tape calls), the same
+  anchors and labels in all three:
+
+  | | `fact_rows.tape` CPU | the labelling's process CPU |
+  |---|---|---|
+  | each (t31) | 7.09 s | 10.7 s |
+  | scratch | 3.06 s | 6.7 s |
+  | fact | 2.78 s (0.27 s of it the fact: 2.2 ms a tape) | 6.3 s |
+
+  Both end the quadratic part. The fact reads by index where the scratch hashes; it is made per wave here, as the
+  scratch is, so kept with the document it would cost its 2.2 ms a tape once. Still in both: `Earlier` and `Later`
+  test each token of the gaps before (after) the node, linear in the siblings for each.
 
 ### Q136. (Q25 on sync-integration-hub-tape) The label pipelines compile cold for 110 s
 

@@ -323,24 +323,41 @@ impl Set {
     /// This set with its text slots `by` further on: a member's tests in a union whose slots are its members' in turn
     /// (a fused pack's anchor, decision 0365).
     pub fn shift_texts(self, by: u16) -> Self {
-        let shift = |set: Box<Set>| Box::new(set.shift_texts(by));
-        match self {
+        self.map_tests(&|test| match test {
             Set::Text(slot) => Set::Text(slot + by),
-            Set::And(parts) => Set::And(parts.into_iter().map(|part| part.shift_texts(by)).collect()),
-            Set::Or(parts) => Set::Or(parts.into_iter().map(|part| part.shift_texts(by)).collect()),
-            Set::Child { named, of } => Set::Child { named, of: shift(of) },
-            Set::Descendant { named, of } => Set::Descendant { named, of: shift(of) },
-            Set::Following { named, of } => Set::Following { named, of: shift(of) },
-            Set::Parent(of) => Set::Parent(shift(of)),
-            Set::Chain { named, through, to } => Set::Chain { named, through: shift(through), to: shift(to) },
+            test => test,
+        })
+    }
+
+    /// This set with each read of a label `unknown` names as every node (decision 0365, a recursive group's anchor):
+    /// a superset whatever those labels hold, since a set reads its labels only as members (a complement is a label
+    /// of its own).
+    pub fn labels_unknown(self, unknown: &dyn Fn(u16) -> bool) -> Self {
+        self.map_tests(&|test| match test {
+            Set::Class(class) if class >= DERIVED_CLASS_BASE && unknown(class - DERIVED_CLASS_BASE) => Set::All,
+            test => test,
+        })
+    }
+
+    /// This set with `f` applied to each of its tests (the sets with no operand), its steps kept.
+    fn map_tests(self, f: &dyn Fn(Set) -> Set) -> Self {
+        let map = |set: Box<Set>| Box::new(set.map_tests(f));
+        match self {
+            Set::And(parts) => Set::and(parts.into_iter().map(|part| part.map_tests(f)).collect()),
+            Set::Or(parts) => Set::Or(parts.into_iter().map(|part| part.map_tests(f)).collect()),
+            Set::Child { named, of } => Set::Child { named, of: map(of) },
+            Set::Descendant { named, of } => Set::Descendant { named, of: map(of) },
+            Set::Following { named, of } => Set::Following { named, of: map(of) },
+            Set::Parent(of) => Set::Parent(map(of)),
+            Set::Chain { named, through, to } => Set::Chain { named, through: map(through), to: map(to) },
             Set::Reached { step, named, from } => {
                 let step = match step {
-                    Step::Chain(through) => Step::Chain(shift(through)),
+                    Step::Chain(through) => Step::Chain(map(through)),
                     step => step,
                 };
-                Set::Reached { step, named, from: shift(from) }
+                Set::Reached { step, named, from: map(from) }
             }
-            set @ (Set::All | Set::Kind(_) | Set::Field(_) | Set::Flags { .. } | Set::Class(_)) => set,
+            test @ (Set::All | Set::Text(_) | Set::Kind(_) | Set::Field(_) | Set::Flags { .. } | Set::Class(_)) => f(test),
         }
     }
 

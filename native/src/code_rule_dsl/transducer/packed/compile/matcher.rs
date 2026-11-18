@@ -202,6 +202,8 @@ pub fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::m
             .flat_map_iter(|tape| crate::code_rule_dsl::prof::time("fact_rows.tape", || {
                 let file = ast_grep_core::AstGrep::doc(tape.clone());
                 let _scopes = crate::code_rule_dsl::matcher::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
+                // The tape's parents' gaps for its facts' gap tests (Q135's spike, `RERAIL_GAPS`).
+                let _gaps = crate::code_rule_dsl::matcher::gap::GapScope::install(&file.root(), tape.grammar().dialect());
                 let source = Arc::as_ptr(tape.document_source()) as usize;
                 // The tape's sibling positions and `nthChild` answers, shared by its facts.
                 let siblings = crate::code_rule_dsl::matcher::SiblingPositions::default();
@@ -241,6 +243,11 @@ impl Labels {
     fn reserve(&mut self, label: Label) -> u16 {
         self.defs.push(label);
         LABEL_BASE + self.offset + (self.defs.len() - 1) as u16
+    }
+
+    /// The recursive group label `id` is in (its step), if it is in one: the labels that settle together in rounds.
+    pub fn group_of(&self, id: u16) -> Option<&[u16]> {
+        self.steps.iter().find(|step| step.contains(&id) && self.recursive.values().any(|r| step.contains(r))).map(Vec::as_slice)
     }
 
     pub fn def(&self, id: u16) -> &Label {

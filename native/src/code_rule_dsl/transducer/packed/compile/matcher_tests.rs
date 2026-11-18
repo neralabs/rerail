@@ -1003,17 +1003,21 @@ fn anchor_rows_per_answer() {
     let mut by_route = BTreeMap::<(&str, &str), (u64, u64, u64, u64)>::new();
     let mut passes = BTreeMap::<String, (u64, u64, u64, String, &str, String)>::new();
     // The anchor of a walk's program, evaluated on a tape: its members (`Set::anchor`, decision 0365).
-    let anchored = |program: &super::Program, view: &TapeDoc, index: &super::compile_sets::Index| -> Vec<u64> {
+    // A recursive group's pass reads its group's labels as every node (`unknown`): its anchor holds whatever they
+    // settle to, so one evaluation before the group's rounds serves every round.
+    let anchored_with = |program: &super::Program, view: &TapeDoc, index: &super::compile_sets::Index, unknown: &dyn Fn(u16) -> bool| -> Vec<u64> {
         use super::compile_sets::{Reader, Set};
         let walk = super::compile_micro::Micro::of(program);
         let texts = walk.as_ref().and_then(|walk| walk.texts(program, view));
         let set = match (&walk, &texts) {
             (Some(walk), Some(_)) => Set::anchor(&walk.words, &|_| true),
             _ => Set::anchor(&program.words, &|_| false),
-        };
+        }
+        .labels_unknown(unknown);
         let texts = texts.unwrap_or_default();
         Reader { tape: view, index, labels: view.transducer_labels(), texts: &texts }.eval(&set)
     };
+    let anchored = |program: &super::Program, view: &TapeDoc, index: &super::compile_sets::Index| anchored_with(program, view, index, &|_| false);
     let get = |bits: &[u64], node: u32| bits.get(node as usize / 64).is_some_and(|w| w >> (node % 64) & 1 != 0);
     for (matchers, names) in lowered.chunks(16).zip(names.chunks(16)) {
         let wave = LoweredWave::new(&matchers.iter().collect::<Vec<_>>()).unwrap();
@@ -1037,6 +1041,9 @@ fn anchor_rows_per_answer() {
                     steps += used as u64;
                 }
                 for (at, def) in clause.labels.defs.iter().enumerate() {
+                    // The recursive group the label is in, if any: its step of the clause's labels.
+                    let id = (crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as usize + clause.labels.offset() + at) as u16;
+                    let group = clause.labels.group_of(id);
                     let (kind, program, d) = match def {
                         Label::Roots(p, d) => ("roots", p, d),
                         Label::Targets(p, d) => ("targets", p, d),
@@ -1050,10 +1057,13 @@ fn anchor_rows_per_answer() {
                         (Label::Targets(..), Some(walk)) => super::compile_sets::Set::targets(&walk.words, super::compile_sets::Set::All).is_some(),
                         _ => false,
                     };
-                    let route = match (kind, formula, walk.is_some()) {
+                    let route = match (kind, formula, walk.is_some(), group.is_some()) {
                         ("pattern", ..) => "pattern",
-                        (_, true, _) => "formula",
-                        (_, false, true) => "micro walk",
+                        (_, true, _, true) => "group, formula",
+                        (.., true) if walk.is_some() => "group, micro walk",
+                        (.., true) => "group, interpreter",
+                        (_, true, ..) => "formula",
+                        (_, false, true, _) => "micro walk",
                         _ => "interpreter",
                     };
                     let pass_entry = Entry::of(program);
@@ -1061,7 +1071,24 @@ fn anchor_rows_per_answer() {
                     let rows = pass_starts.len() as u64;
                     let answers = sets.get(clause.labels.offset() + at).map_or(0, |bits| bits.iter().map(|w| u64::from(w.count_ones())).sum());
                     // Anchored starts where a pass walks from each start (a roots, targets or count walk).
-                    let anchor = if route != "formula" && route != "pattern" && matches!(def, Label::Roots(..) | Label::Targets(..) | Label::Count { .. }) {
+                    let anchor = if let Some(group) = group.filter(|_| matches!(def, Label::Roots(..) | Label::Targets(..) | Label::Count { .. })) {
+                        // The group's anchor (its labels unknown): no start outside it emits with the labels settled,
+                        // nor in any round before (it reads none of them).
+                        let anchor = anchored_with(program, view, index, &|label| group.contains(&((crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as usize + usize::from(label)) as u16)));
+                        let outside: Vec<u32> = pass_starts.iter().copied().filter(|&n| !get(&anchor, n)).collect();
+                        if let Ok((outputs, _)) = program.execute_roots_budgeted(view, outside.iter().copied(), usize::MAX) {
+                            assert!(outputs.is_empty(), "{name}: a recursive group's start outside its anchor emitted");
+                        }
+                        // The same pass's anchor reading its group's settled labels: what a per-round anchor could
+                        // drop at best.
+                        let settled = anchored(program, view, index);
+                        let r = by_route.entry((kind, "group, settled labels")).or_default();
+                        r.0 += 1;
+                        r.1 += rows;
+                        r.2 += pass_starts.iter().filter(|&&n| get(&settled, n)).count() as u64;
+                        r.3 += answers;
+                        pass_starts.iter().filter(|&&n| get(&anchor, n)).count() as u64
+                    } else if route != "formula" && route != "pattern" && matches!(def, Label::Roots(..) | Label::Targets(..) | Label::Count { .. }) {
                         let anchor = anchored(program, view, index);
                         if matches!(def, Label::Count { .. }) {
                             // A count's tally is over every node, so an unwalked start must count 0: no start outside the

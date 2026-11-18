@@ -25,7 +25,94 @@ use crate::code_rule_dsl::tape::tokens::TokenGrammar;
 pub use crate::code_rule_dsl::tape::tokens::stored_gaps;
 use ast_grep_core::{Doc, Node};
 use regex::Regex;
-use std::sync::Arc;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+use crate::code_rule_dsl::tape::tokens::Gaps;
+
+/// A parent's stored children (their node ids, ascending, and which are extras) and its gaps, as `stored_gaps` gives
+/// them (Q135's spike).
+pub(in crate::code_rule_dsl) struct ParentGaps {
+    ids: Vec<usize>,
+    extra: Vec<bool>,
+    gaps: Gaps<'static>,
+}
+
+fn parent_gaps<D: Doc>(grammar: &'static TokenGrammar, parent: &Node<'_, D>) -> Option<ParentGaps> {
+    let (children, gaps) = stored_gaps(grammar, parent)?;
+    Some(ParentGaps { ids: children.iter().map(Node::node_id).collect(), extra: children.iter().map(|child| grammar.is_extra(&child.kind())).collect(), gaps })
+}
+
+/// Q135's spike, `RERAIL_GAPS`: `each` (each test makes its parent's gaps, as t31 has it), `scratch` (made once per
+/// parent a tape's facts ask, kept for that tape's call), `fact` (every parent's, made once a tape before its facts).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GapMode {
+    Each,
+    Scratch,
+    Fact,
+}
+
+pub fn gap_mode() -> GapMode {
+    match std::env::var("RERAIL_GAPS").as_deref() {
+        Ok("each") => GapMode::Each,
+        Ok("fact") => GapMode::Fact,
+        _ => GapMode::Scratch,
+    }
+}
+
+/// By the dialect whose automata made them (a test's own; a guest document's tape is its host's grammar's) and the
+/// parent's node id.
+enum TapeGaps {
+    Scratch(HashMap<(GrammarDialect, usize), Option<Rc<ParentGaps>>>),
+    Fact(GrammarDialect, Vec<Option<Rc<ParentGaps>>>),
+}
+
+thread_local! {
+    static TAPE_GAPS: RefCell<Option<TapeGaps>> = const { RefCell::new(None) };
+}
+
+/// One tape's parents' gaps for its facts' gap tests, on this thread until dropped (`fact_rows`).
+pub struct GapScope {
+    previous: Option<TapeGaps>,
+}
+
+impl GapScope {
+    pub fn install<D: Doc>(root: &Node<'_, D>, dialect: GrammarDialect) -> Self {
+        let tape = match gap_mode() {
+            GapMode::Each => None,
+            GapMode::Scratch => Some(TapeGaps::Scratch(HashMap::new())),
+            GapMode::Fact => TokenGrammar::of_dialect_static(dialect).map(|grammar| {
+                let _stage = crate::code_rule_dsl::prof::Stage::start("gaps.fact");
+                let mut by = Vec::new();
+                for node in root.dfs() {
+                    let id = node.node_id();
+                    if by.len() <= id {
+                        by.resize_with(id + 1, || None);
+                    }
+                    by[id] = parent_gaps(grammar, &node).map(Rc::new);
+                }
+                TapeGaps::Fact(dialect, by)
+            }),
+        };
+        Self { previous: TAPE_GAPS.with(|gaps| gaps.replace(tape)) }
+    }
+}
+
+impl Drop for GapScope {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        TAPE_GAPS.with(|gaps| *gaps.borrow_mut() = previous);
+    }
+}
+
+/// `parent`'s gaps: the tape's where its scope holds them, else made here.
+fn gaps_of<D: Doc>(dialect: GrammarDialect, grammar: &'static TokenGrammar, parent: &Node<'_, D>) -> Option<Rc<ParentGaps>> {
+    TAPE_GAPS.with(|gaps| match &mut *gaps.borrow_mut() {
+        Some(TapeGaps::Scratch(by)) => by.entry((dialect, parent.node_id())).or_insert_with(|| parent_gaps(grammar, parent).map(Rc::new)).clone(),
+        Some(TapeGaps::Fact(made, by)) if *made == dialect => by.get(parent.node_id()).cloned().flatten(),
+        _ => parent_gaps(grammar, parent).map(Rc::new),
+    })
+}
 
 /// Where, relative to the node, the token is looked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -48,9 +135,8 @@ pub(in crate::code_rule_dsl) enum Place {
 pub struct GapTest {
     pub(in crate::code_rule_dsl) place: Place,
     pub(in crate::code_rule_dsl) regex: Regex,
-    /// The dialect's automata, decoded when the test first runs on a tape ([`Self::grammar`]): compiling a rule
-    /// asks the census, and a warm run that tests no tape decodes nothing.
-    pub(in crate::code_rule_dsl) grammar: std::sync::OnceLock<Option<Arc<TokenGrammar>>>,
+    /// Its dialect, whose automata are decoded when a test first runs on a tape (`TokenGrammar::of_dialect_static`):
+    /// compiling a rule asks the census, and a warm run that tests no tape decodes nothing.
     pub(in crate::code_rule_dsl) dialect: GrammarDialect,
     /// A neighbour walk's `stopBy: {not: X}`: X, which must name only kinds and tokens (by a bare
     /// regex), so the walk passes them. `None`: a plain neighbour, where an extra
@@ -65,8 +151,8 @@ impl std::fmt::Debug for GapTest {
 }
 
 impl GapTest {
-    fn grammar(&self) -> Option<&TokenGrammar> {
-        self.grammar.get_or_init(|| TokenGrammar::of_dialect(self.dialect)).as_deref()
+    fn grammar(&self) -> Option<&'static TokenGrammar> {
+        TokenGrammar::of_dialect_static(self.dialect)
     }
 
     /// Whether an implied token the regex matches is at the test's place.
@@ -86,7 +172,8 @@ impl GapTest {
         let skipped = |token: &str| skips.iter().any(|skip| skip.is_match(token));
         match &self.place {
             Place::Own | Place::Field(_) => {
-                let Some((_, gaps)) = stored_gaps(grammar, node) else { return false };
+                let Some(parent_gaps) = gaps_of(self.dialect, grammar, node) else { return false };
+                let gaps = &parent_gaps.gaps;
                 let field = match &self.place {
                     Place::Field(field) => Some(field.as_str()),
                     _ => None,
@@ -95,26 +182,29 @@ impl GapTest {
             }
             Place::Before | Place::After | Place::Earlier | Place::Later => {
                 let Some(parent) = node.parent() else { return false };
-                let Some((children, gaps)) = stored_gaps(grammar, &parent) else { return false };
-                let Some(at) = children.iter().position(|child| child.node_id() == node.node_id()) else { return false };
+                let Some(parent_gaps) = gaps_of(self.dialect, grammar, &parent) else { return false };
+                let gaps = &parent_gaps.gaps;
+                let Ok(at) = parent_gaps.ids.binary_search(&node.node_id()) else { return false };
+                // The stored children as nodes, only where a walk's stop rule reads them.
+                let children: Vec<Node<'_, D>> = if past.is_some() { parent.children().collect() } else { Vec::new() };
                 // A stored child the walk passes: one its stop rule matches. The gap's word comes
                 // before the extras between the two stored children.
-                let passed = |child: &Node<'_, D>| {
+                let passed = |k: usize| {
                     use ast_grep_core::matcher::Matcher;
-                    past.is_some_and(|stop| stop.match_node_with_env(child.clone(), &mut std::borrow::Cow::Owned(ast_grep_core::meta_var::MetaVarEnv::new())).is_some())
+                    past.is_some_and(|stop| stop.match_node_with_env(children[k].clone(), &mut std::borrow::Cow::Owned(ast_grep_core::meta_var::MetaVarEnv::new())).is_some())
                 };
                 match self.place {
                     // The first token back that the walk does not pass, through the gaps of the
                     // children it passes; a stored child is the relation's own walk's.
                     // An extra right before the node is its neighbour, unless the walk passes it.
-                    Place::Before if past.is_none() && at > 0 && grammar.is_extra(&children[at - 1].kind()) => false,
+                    Place::Before if past.is_none() && at > 0 && parent_gaps.extra[at - 1] => false,
                     Place::Before => {
                         let mut k = at;
                         loop {
                             if let Some(token) = gaps.before[k].iter().rev().find(|token| !skipped(token.0)) {
                                 return matches(token);
                             }
-                            if k == 0 || !passed(&children[k - 1]) {
+                            if k == 0 || !passed(k - 1) {
                                 return false;
                             }
                             k -= 1;
@@ -131,7 +221,7 @@ impl GapTest {
                             if let Some(token) = word.iter().find(|token| !skipped(token.0)) {
                                 return matches(token);
                             }
-                            if k >= children.len() || !passed(&children[k]) {
+                            if k >= children.len() || !passed(k) {
                                 return false;
                             }
                             k += 1;
