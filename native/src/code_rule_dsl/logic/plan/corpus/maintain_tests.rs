@@ -215,8 +215,10 @@ fn r3_a_reached_stratum_is_derived_again_only_on_its_first_run_or_past_the_thres
 /// R4: an edit that reaches too much of a stratum (0090 §4: its changed reads past θ of its kept rows) derives it
 /// again, and its levels come fresh from that derive. A small edit does not.
 #[test]
-#[ignore = "R4: 0090 §4's threshold went with the forms (t43 step 2)"]
 fn r4_an_edit_that_reaches_most_of_a_stratum_derives_it_again() {
+    // The test's relations are small: a floor under θ (0090 §4's is 1,024 rows) above a small edit's deltas and below
+    // the corpus's. nextest runs a test as a process of its own.
+    unsafe { std::env::set_var("RERAIL_AGAIN_MIN", "50") };
     let files: Vec<(String, String)> = (0..40).map(|i| (format!("m{i}.py"), format!("import m{}\ndef f{i}():\n    pass\n", (i + 1) % 40))).collect();
     let refs: Vec<(&str, &str)> = files.iter().map(|(f, b)| (f.as_str(), b.as_str())).collect();
     let mut s = Session::new("r4", KINDS, KIND_OUTPUTS, &refs);
@@ -224,11 +226,12 @@ fn r4_an_edit_that_reaches_most_of_a_stratum_derives_it_again() {
     s.write("m0.py", "import m1\nimport m7\ndef f0():\n    pass\n");
     let small = s.edit("one import added");
     assert!(!small.report.cross_again.contains_key(maintain::THRESHOLD), "R4: a small edit is maintained: {:?}", small.report.cross_again);
+    // Every definition renamed: `def`'s deltas are 80 rows, twice the 40 rows of the strata that read it.
     for i in 0..40 {
-        s.write(&format!("m{i}.py"), &format!("def f{i}():\n    pass\n"));
+        s.write(&format!("m{i}.py"), &format!("import m{}\ndef g{i}():\n    pass\n", (i + 1) % 40));
     }
-    let big = s.edit("every import removed");
-    assert!(big.report.cross_again.contains_key(maintain::THRESHOLD), "R4: an edit that reaches every row derives again: {:?}", big.report.cross_again);
+    let big = s.edit("every definition renamed");
+    assert!(big.report.cross_again.contains_key(maintain::THRESHOLD), "R4: an edit that reaches most of a stratum derives it again: {:?}", big.report.cross_again);
 }
 
 /// R5: levels. A ring of imports entered by one edge holds itself up through its rows; when the entry goes, every row

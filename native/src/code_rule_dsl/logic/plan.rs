@@ -11592,7 +11592,20 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                         let b = |s: &str| crate::code_rule_dsl::facts::vtab::bound_source(db, &format!("{base}__{s}"));
                         Some((r.clone(), ([m.old_input(&base)?, b("minus")?, b("plus")?], cols)))
                     }).collect();
-                    let blocks = run.maintain_mode_blocks(scc, &rules, &moved, &olds, &ins);
+                    // 0090 §4's threshold (0364 R4): a stratum whose changed reads' deltas reach past θ of its kept rows
+                    // is derived again, its levels fresh from that derive. The deltas are their versions' sizes.
+                    let delta_rows: usize = moved.iter().map(|r| match ins.get(r) {
+                        Some((srcs, _)) => srcs[1].len() + srcs[2].len(),
+                        None => super::native::component::held(db, r).map_or(0, |x| {
+                            [super::native::component::Ver::Minus, super::native::component::Ver::Plus].into_iter().filter_map(|v| x.version_view(v)).map(|v| v.rows()).sum()
+                        }),
+                    }).sum();
+                    let kept_rows: usize = olds.values().map(|o| o.rows()).sum();
+                    let blocks = if crate::code_rule_dsl::logic::plan::corpus::maintain::past_threshold(delta_rows, kept_rows) {
+                        Some(crate::code_rule_dsl::logic::plan::corpus::maintain::THRESHOLD.to_owned())
+                    } else {
+                        run.maintain_mode_blocks(scc, &rules, &moved, &olds, &ins)
+                    };
                     if std::env::var_os("RERAIL_MODE_TRACE").is_some() {
                         eprintln!("RERAIL_MODE_TRACE {key}: {}", blocks.as_deref().unwrap_or("the maintain mode"));
                     }

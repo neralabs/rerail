@@ -42,6 +42,19 @@ pub const NOT_WALKED: &str = "its part is not walked: no kept part, or gates";
 /// A read changed with no version (a relation derived again in SQL, or with its kept rows not held).
 pub const NO_VERSION: &str = "a read changed without a version";
 
+/// 0090 §4's threshold (0364 R4): whether an edit whose changed reads give `delta` rows reaches too much of a
+/// stratum of `kept` rows to maintain it: `delta ≥ θ · kept` (`RERAIL_AGAIN_THETA`, default 0.25) and `delta ≥
+/// RERAIL_AGAIN_MIN` (default 1,024 rows: below it, maintaining costs little whatever the share). `RERAIL_AGAIN=off`
+/// maintains every stratum. Read at each choice, so a test can set them.
+pub fn past_threshold(delta: usize, kept: usize) -> bool {
+    if std::env::var("RERAIL_AGAIN").is_ok_and(|v| v == "off") {
+        return false;
+    }
+    let theta = std::env::var("RERAIL_AGAIN_THETA").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.25);
+    let min = std::env::var("RERAIL_AGAIN_MIN").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(1024);
+    delta >= min && delta as f64 >= theta * kept as f64
+}
+
 /// The class of a reason the maintain mode gave for not taking a stratum (`Run::maintain_mode_blocks`), as the
 /// report counts it: one of its fixed reasons, `NO_VERSION` for a read named in it, or `other`.
 pub fn reason_class(why: &str) -> &'static str {
