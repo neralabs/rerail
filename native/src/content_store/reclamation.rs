@@ -57,14 +57,13 @@ impl ContentStore {
     }
 
     pub fn release_pins(&self, owner: &str) -> StoreResult<usize> {
-        let connection = self
-            .connection
-            .lock()
-            .expect("content store mutex poisoned");
-        connection.execute(
-            "DELETE FROM object_pins WHERE owner_string_id IN (SELECT string_id FROM strings WHERE domain_id=?1 AND value=?2)",
-            params![STRING_OWNER, owner],
-        ).map_err(StoreError::from)
+        // In a transaction, so the delete takes its turn in the writer line like every write.
+        self.immediate_transaction_once(|transaction| {
+            transaction.execute(
+                "DELETE FROM object_pins WHERE owner_string_id IN (SELECT string_id FROM strings WHERE domain_id=?1 AND value=?2)",
+                params![STRING_OWNER, owner],
+            ).map_err(StoreError::from)
+        })
     }
 
     pub fn capacity(&self) -> StoreResult<StoreCapacity> {

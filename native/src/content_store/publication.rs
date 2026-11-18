@@ -1,6 +1,6 @@
 //! Bulk overlay publication: object preparation, identity resolution, and the publish transaction.
 
-use super::connection::retry_busy;
+use super::connection::{retry_busy, waits_end_when};
 use super::objects::{compress_documents, validate_tape_payload};
 use super::relationships::{
     execute_relationship_pass, prepare_relationship_pass, relationship_references_current,
@@ -75,7 +75,10 @@ impl ContentStore {
     }
 
     /// `publish_overlay_files_cancellable`, adding the publication's busy retries to `busy`
-    /// whatever it returns: a publication that ends `Busy` has no result to carry them.
+    /// whatever it returns: a publication that ends `Busy` has no result to carry them. Every
+    /// cancellable publication passes here, so its waits for a turn in the store's writer line end
+    /// once `cancelled` holds (`waits_end_when`), as it stopped between busy attempts before the
+    /// line: the owner that cancels it wakes those waits (`end_waits`).
     pub fn publish_overlay_files_reporting_busy(
         &self,
         workspace_id: WorkspaceId,
@@ -83,13 +86,15 @@ impl ContentStore {
         cancelled: &dyn Fn() -> bool,
         busy: &mut BusyRetries,
     ) -> StoreResult<PublicationResult> {
-        self.publish_overlay_files_cancellable_attempt(
-            workspace_id,
-            publications,
-            cancelled,
-            busy,
-            0,
-        )
+        waits_end_when(cancelled, || {
+            self.publish_overlay_files_cancellable_attempt(
+                workspace_id,
+                publications,
+                cancelled,
+                busy,
+                0,
+            )
+        })
     }
 
     fn publish_overlay_files_cancellable_attempt(

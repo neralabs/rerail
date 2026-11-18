@@ -21,12 +21,21 @@ pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
 mod workspaces;
+mod writer_line;
+#[cfg(test)]
+mod writer_line_tests;
 
 pub(crate) use compression::compress;
 pub(crate) use connection::BusyRetries;
 pub(crate) use connection::OperationDeadline;
+pub(crate) use connection::operation_found_busy;
+pub(crate) use connection::{WritesOnlyWhenFree, end_waits, waits_end_when};
 pub use schema::STORE_FILE_NAME;
 
+#[cfg(test)]
+pub(crate) use connection::CHECKPOINT_HOOK;
+#[cfg(test)]
+pub(crate) use connection::spend_operation_wait;
 #[cfg(test)]
 pub(crate) use connection::{
     BUSY_ATTEMPT_HOOK, BUSY_DEADLINE_OVERRIDE, BUSY_TIMEOUT_OVERRIDE, BUSY_WAIT_HOOK,
@@ -34,8 +43,10 @@ pub(crate) use connection::{
 };
 #[cfg(test)]
 pub(crate) use snapshots::AFTER_GIT_TREE_TRANSACTION;
+#[cfg(test)]
+pub(crate) use writer_line::LINE_WAIT_HOOK;
 
-use connection::{ThreadConnection, retry_busy};
+use connection::{ThreadConnection, retry_busy, take_turn};
 use read_cache::{CachedBacking, DecompressedReadCache};
 use results::LocalResultCache;
 use rusqlite::{Connection, OpenFlags};
@@ -47,6 +58,7 @@ use std::sync::Mutex;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use writer_line::WriterLine;
 
 const HASH_SHA256: i64 = 1;
 const HASH_GIT_SHA1: i64 = 2;
@@ -208,10 +220,10 @@ pub enum StoreError {
     Io(std::io::Error),
     Invalid(String),
     Corrupt(String),
-    /// Another writer holds the store. A write's attempts are retried until the write deadline
-    /// (`connection::retry_busy`; one deadline for all the writes of an `OperationDeadline`), so
-    /// a write returns it only once that passed. The store is a cache, so a caller may proceed
-    /// without it.
+    /// Another writer holds the store. A write waits its turn behind this process's other writers
+    /// (`writer_line`) and then for a writer of another process (`connection::retry_busy`), for
+    /// one write deadline in all (one for all the writes of an `OperationDeadline`), so a write
+    /// returns it only once that passed. The store is a cache, so a caller may proceed without it.
     Busy,
     /// A row a publication had resolved vanished before the publication used it, under a
     /// concurrent collection. Never a reason to proceed without the store.
@@ -548,15 +560,21 @@ impl ContentStore {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
+        let line = WriterLine::of(path);
         let mut connection = Connection::open_with_flags(path, flags)?;
-        // Only creating or migrating the schema takes the write lock (`initialize`).
-        retry_busy(&mut BusyRetries::default(), || {
-            Self::initialize(&mut connection)
-        })?;
+        // Only creating or migrating the schema takes the write lock (`initialize`), in the
+        // open's turn among this process's writers of the file.
+        {
+            let _turn = take_turn(&line)?;
+            retry_busy(&mut BusyRetries::default(), || {
+                Self::initialize(&mut connection)
+            })?;
+        }
         Ok(Self {
             database_path: path.to_path_buf(),
             connection: ThreadConnection {
                 database_path: path.to_path_buf(),
+                line,
             },
             compression_level: DEFAULT_COMPRESSION_LEVEL,
             decompressed_cache: Mutex::new(DecompressedReadCache::new(

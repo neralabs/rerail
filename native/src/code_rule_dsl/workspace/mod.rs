@@ -84,8 +84,10 @@ const REUSE_LOCAL_RESULTS: bool = true;
 /// completion record proves the entire clean directory was evaluated.
 const REUSE_DIRECTORY_RESULTS: bool = true;
 /// How long a workspace leaves a store alone after a write of its own waited out the write
-/// deadline (`content_store`'s `BUSY_DEADLINE`): one maintenance wake (`storage.rs`), so a
-/// scan's later batches do not each wait out the deadline again.
+/// deadline (`content_store`'s `BUSY_DEADLINE`) on a writer of another process, whose end this
+/// process cannot see: one maintenance wake (`storage.rs`), so a scan's later batches do not each
+/// wait out the deadline again. A write of this process that held the store as long ends the
+/// wait at its own release instead (`ContentStore::writes_stalled`).
 const STORE_BUSY_COOLDOWN: Duration = Duration::from_secs(30);
 /// The source and tape bytes the files a busy store left unpublished may keep resident in all.
 /// Past it, later files are released down to their results (`release_unpublished_over_budget`),
@@ -167,11 +169,25 @@ fn store_busy_now() -> Instant {
     Instant::now()
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Runs once on this thread right after a write that found the store busy was noted
+    /// (`note_store_busy`): a test lets the writer it waited behind go there.
+    pub(super) static AFTER_STORE_BUSY_NOTED: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 impl WorkspaceState {
-    /// Whether the store is inside the window a busy write opened: an apply then treats it as
-    /// busy from the start, with no write to it. A window that passed is cleared, so the next
-    /// write tries the store again and reopens it only if the store is still busy.
+    /// Whether an apply treats the store as busy from the start, with no write to it: a write of
+    /// the current operation already found it busy (`operation_found_busy`), a write of this
+    /// process holds it past another write's whole wait for it (`ContentStore::writes_stalled`),
+    /// or the store is inside the window a write that waited out another process's writer
+    /// opened. A window that passed is cleared, so the next write tries the store again and
+    /// reopens it only if the store is still busy.
     fn store_cooling_down(&mut self) -> bool {
+        if crate::content_store::operation_found_busy() || self.store_stalled() {
+            return true;
+        }
         match self.store_busy_until {
             Some(until) if store_busy_now() < until => true,
             Some(_) => {
@@ -182,16 +198,37 @@ impl WorkspaceState {
         }
     }
 
+    /// Whether a write of this process holds the workspace's store past another write's whole
+    /// wait for it.
+    fn store_stalled(&self) -> bool {
+        self.storage
+            .as_ref()
+            .is_some_and(|storage| storage.store.writes_stalled())
+    }
+
     /// Records that a write `during` an apply (or a completion) waited out the store's write
-    /// deadline: opens the window, and says so on stderr the first time, as the attach does when
-    /// it finds the store busy (`rerail: repository reuse is disabled: …`).
+    /// deadline, and says so on stderr the first time, as the attach does when it finds the store
+    /// busy (`rerail: repository reuse is disabled: …`). Behind a write of this process the
+    /// store stays busy until that write lets go (`store_stalled`); behind a writer of another
+    /// process it opens the window.
     fn note_store_busy(&mut self, during: &str) {
-        self.store_busy_until = Some(store_busy_now() + STORE_BUSY_COOLDOWN);
+        let stalled = self.store_stalled();
+        if !stalled {
+            self.store_busy_until = Some(store_busy_now() + STORE_BUSY_COOLDOWN);
+        }
         if !std::mem::replace(&mut self.store_busy_reported, true) {
+            let until = if stalled {
+                "once the writer holding it lets go".to_owned()
+            } else {
+                format!("after {} seconds", STORE_BUSY_COOLDOWN.as_secs())
+            };
             eprintln!(
-                "rerail: repository reuse is paused: content store busy: another writer held it past the write deadline {during}; results stay in memory and the first apply after {} seconds publishes them",
-                STORE_BUSY_COOLDOWN.as_secs()
+                "rerail: repository reuse is paused: content store busy: another writer held it past the write deadline {during}; results stay in memory and the first apply {until} publishes them"
             );
+        }
+        #[cfg(test)]
+        if let Some(noted) = AFTER_STORE_BUSY_NOTED.take() {
+            noted();
         }
     }
 

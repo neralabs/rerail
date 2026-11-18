@@ -297,8 +297,9 @@ impl ContentStore {
     }
 
     /// Renews the leases of `workspaces` in a single attempt: the maintenance thread renews them
-    /// again on its next wake, and closing the last workspace joins that thread, so it never
-    /// waits out other writers (`retry_busy`).
+    /// again on its next wake. Its turn in the writer line waits for the writers ahead, and the
+    /// maintenance handle's drop ends that wait (`waits_end_when`) before it joins the thread, so
+    /// closing the last workspace never waits on them.
     pub fn renew_workspace_leases(
         &self,
         workspaces: &[(WorkspaceId, &str)],
@@ -347,15 +348,14 @@ impl ContentStore {
     }
 
     pub fn retire_workspace(&self, workspace_id: WorkspaceId) -> StoreResult<()> {
-        let connection = self
-            .connection
-            .lock()
-            .expect("content store mutex poisoned");
-        connection.execute(
-            "UPDATE workspaces SET state_id=2, lease_until=0 WHERE workspace_id=?1",
-            [workspace_id.0],
-        )?;
-        Ok(())
+        // In a transaction, so the update takes its turn in the writer line like every write.
+        self.immediate_transaction_once(|transaction| {
+            transaction.execute(
+                "UPDATE workspaces SET state_id=2, lease_until=0 WHERE workspace_id=?1",
+                [workspace_id.0],
+            )?;
+            Ok(())
+        })
     }
 }
 

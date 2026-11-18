@@ -5,15 +5,18 @@ use super::api::{
     CodeRuleDslWorkspace, LAST_APPLY_STORAGE_RETRIES, LAST_APPLY_UNPUBLISHED_FILES,
     ON_STORAGE_ATTACHED, StorageAttachment, WorkspaceApplyTask,
 };
-use super::persisted::{AFTER_FILES_PUBLISHED, LEASE_RENEWAL_ATTEMPTS};
+use super::persisted::{AFTER_FILES_PUBLISHED, LEASE_RENEWAL_ATTEMPTS, grammar_version};
 use super::secret_names::SecretNamePatterns;
-use super::storage::storage_context_in;
+use super::storage::{index_stored_tapes_when_free, storage_context_in};
 use super::tests::{WORKSPACE_TEST_SLOT, git, result_page};
-use super::{STORE_BUSY_COOLDOWN, TEST_STORE_BUSY_CLOCK_ADVANCE, TEST_UNPUBLISHED_RESIDENT_BYTES};
+use super::{
+    AFTER_STORE_BUSY_NOTED, STORE_BUSY_COOLDOWN, TEST_STORE_BUSY_CLOCK_ADVANCE,
+    TEST_UNPUBLISHED_RESIDENT_BYTES,
+};
 use crate::code_rule_dsl::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
 use crate::content_store::{
     AFTER_GIT_TREE_TRANSACTION, BUSY_ATTEMPT_HOOK, BUSY_DEADLINE_OVERRIDE, BUSY_TIMEOUT_OVERRIDE,
-    BUSY_WAIT_HOOK, CLOCK_OFFSET, ContentStore, MAX_COLLECTION_BATCH,
+    BUSY_WAIT_HOOK, CLOCK_OFFSET, ContentStore, LINE_WAIT_HOOK, MAX_COLLECTION_BATCH, StoreResult,
 };
 use napi::Task;
 use parking_lot::MutexGuard;
@@ -22,7 +25,8 @@ use std::cell::RefCell;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const STORE_VARIABLE: &str = "RERAIL_CONTENT_STORE_PATH";
@@ -1051,6 +1055,361 @@ fn a_store_that_stays_busy_costs_one_deadline_not_one_per_apply() {
         "a free store is left alone inside the window"
     );
     workspace.close();
+}
+
+/// A write of this process that holds the store past an apply's whole wait for it stalls the
+/// store: that apply keeps its results unpublished, later applies leave the store alone without
+/// waiting and open no window, and the first apply after the holder lets go publishes them.
+#[test]
+fn an_apply_behind_a_stalled_write_publishes_at_the_first_apply_after_it_lets_go() {
+    let _slot = test_slot();
+    let repository = Repository::new("stalled-write");
+    let store = repository.store("content.sqlite");
+    let workspace = attached_workspace(&repository, &store, &needle_code_rule());
+    let shared = shared_store(&workspace);
+    let holder = ProcessWriter::hold(&shared);
+    {
+        // The apply's wait in the store's line ends at once at its bound.
+        let _deadline = BusyDeadline::set(Duration::from_nanos(1));
+        assert_eq!(apply_source(&workspace, 1, "NEEDLE\n"), ["NEEDLE"]);
+    }
+    let (retries, wait_nanoseconds) = last_apply_storage_retries();
+    assert!(
+        retries >= 1 && wait_nanoseconds > 0,
+        "a wait that reached the deadline shows in the profile: {retries} retries, {wait_nanoseconds} ns"
+    );
+    assert!(is_unpublished(&workspace, "edited.py"));
+    assert!(shared.writes_stalled());
+    assert!(
+        workspace.state.lock().unwrap().store_busy_until.is_none(),
+        "a stall behind a write of this process opens no window"
+    );
+    LINE_WAIT_HOOK.set(Some(Box::new(|| {
+        panic!("an apply waited for a stalled store")
+    })));
+    let applied = apply_source(&workspace, 2, "NEEDLE = 2\n");
+    LINE_WAIT_HOOK.set(None);
+    assert_eq!(applied, ["NEEDLE"]);
+    assert_eq!(
+        last_apply_storage_retries(),
+        (0, 0),
+        "an apply while the store is stalled never waits on it"
+    );
+    assert!(is_unpublished(&workspace, "edited.py"));
+
+    holder.let_go();
+    assert!(!shared.writes_stalled());
+    assert_eq!(apply_source(&workspace, 3, "NEEDLE = 3\n"), ["NEEDLE"]);
+    assert!(!is_unpublished(&workspace, "edited.py"));
+    assert!(
+        workspace.state.lock().unwrap().files["edited.py"]
+            .stored
+            .is_some(),
+        "the first apply after the holder let go publishes the file"
+    );
+    workspace.close();
+}
+
+/// The store `workspace` attached.
+fn shared_store(workspace: &CodeRuleDslWorkspace) -> Arc<ContentStore> {
+    Arc::clone(
+        &workspace
+            .state
+            .lock()
+            .unwrap()
+            .storage
+            .as_ref()
+            .unwrap()
+            .store,
+    )
+}
+
+/// A write of this process that holds the store on its own thread until `let_go`.
+struct ProcessWriter {
+    release: mpsc::Sender<()>,
+    thread: std::thread::JoinHandle<StoreResult<()>>,
+}
+
+impl ProcessWriter {
+    fn hold(store: &Arc<ContentStore>) -> Self {
+        let (holding, held) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        let store = Arc::clone(store);
+        let thread = std::thread::spawn(move || store.hold_write(&holding, &released));
+        held.recv().unwrap();
+        Self { release, thread }
+    }
+
+    fn let_go(self) {
+        self.release.send(()).unwrap();
+        self.thread.join().unwrap().unwrap();
+    }
+}
+
+/// A completion whose publication ended busy behind a write of this process records no reuse and
+/// leaves the files unpublished, also when that write lets go between the busy publication and
+/// the completion's last check: the operation remembers that a write of it ended busy.
+#[test]
+fn a_completion_whose_publication_ended_busy_records_no_reuse_after_the_writer_lets_go() {
+    let _slot = test_slot();
+    let _deadline = BusyDeadline::set(Duration::from_secs(1));
+    let window = BusyWindowClock;
+    let repository = Repository::new("completion-busy-stall");
+    let store = repository.store("content.sqlite");
+    let workspace = attached_workspace(&repository, &store, &needle_code_rule());
+    let shared = shared_store(&workspace);
+    let workspace_id = workspace
+        .state
+        .lock()
+        .unwrap()
+        .storage
+        .as_ref()
+        .unwrap()
+        .workspace_id;
+    // A writer of another process leaves the file unpublished; its window then passes.
+    let other_process = HeldWriter::hold(&store);
+    spend_deadline_on_busy_attempts(Duration::from_secs(1), || {});
+    assert_eq!(apply_source(&workspace, 1, "NEEDLE\n"), ["NEEDLE"]);
+    BUSY_ATTEMPT_HOOK.set(None);
+    drop(other_process);
+    window.pass_window();
+    assert!(is_unpublished(&workspace, "edited.py"));
+
+    let holder = ProcessWriter::hold(&shared);
+    AFTER_STORE_BUSY_NOTED.set(Some(Box::new(move || holder.let_go())));
+    BUSY_DEADLINE_OVERRIDE.set(Some(Duration::from_nanos(1)));
+    let completed = workspace.completion_task().compute();
+    BUSY_DEADLINE_OVERRIDE.set(Some(Duration::from_secs(1)));
+    assert!(
+        AFTER_STORE_BUSY_NOTED.take().is_none(),
+        "the completion's publication ended busy"
+    );
+    assert!(
+        !shared.writes_stalled(),
+        "the writer let go before the check"
+    );
+    assert_eq!(
+        completed.unwrap_err().reason,
+        "content store writer is busy"
+    );
+    assert_eq!(
+        shared.completed_workspace_revision(workspace_id).unwrap(),
+        None,
+        "no reuse is recorded while files stay unpublished"
+    );
+    assert!(is_unpublished(&workspace, "edited.py"));
+    workspace.close();
+}
+
+/// An apply whose publication waits in the store's writer line behind a write of this process
+/// stops waiting when its workspace closes, as it stopped between busy attempts before the line:
+/// it ends with the writer still holding, and marks no stall. Without the close's cancel it
+/// would wait out its 10 s deadline and mark the writer stalled. Another workspace keeps the
+/// store, so the close drops no maintenance handle and only the close's own wake ends the wait.
+#[test]
+fn an_apply_waiting_for_the_store_stops_when_its_workspace_closes() {
+    let _slot = test_slot();
+    let repository = Repository::new("apply-close-waits");
+    let store = repository.store("content.sqlite");
+    let workspace = attached_workspace(&repository, &store, &needle_code_rule());
+    let other = attached_workspace(&repository, &store, &needle_code_rule());
+    let shared = shared_store(&workspace);
+    let holder = ProcessWriter::hold(&shared);
+    let (waiting, waits) = mpsc::channel();
+    let applying = {
+        let (state, closed) = (Arc::clone(&workspace.state), Arc::clone(&workspace.closed));
+        std::thread::spawn(move || {
+            LINE_WAIT_HOOK.set(Some(Box::new(move || {
+                let _ = waiting.send(());
+            })));
+            let files =
+                json!([{ "path": "edited.py", "language": "python", "source": "NEEDLE\n" }]);
+            let mut task = WorkspaceApplyTask {
+                state,
+                closed,
+                request_json: json!({ "revision": 1, "files": files, "removed": [] }).to_string(),
+                request_buffer: None,
+                request_direct: None,
+            };
+            task.compute().map(|_| ())
+        })
+    };
+    waits.recv().unwrap();
+    workspace.close();
+    // Its result does not matter: the host drops a closed workspace's answer (`resolve`).
+    let _ = applying.join().unwrap();
+    assert!(
+        !shared.writes_stalled(),
+        "it stopped at the close, not at its deadline"
+    );
+    holder.let_go();
+    other.close();
+}
+
+/// A completion that publishes the files a busy store left unpublished, waiting in the store's
+/// writer line behind a write of this process, stops when its workspace closes: the close wakes
+/// it, its publication's own cancel ends the wait, and it ends with the writer still holding,
+/// marking no stall. Its deadline is an hour, so only the close's wake ends the wait before the
+/// test's guard; before the line it stopped within one busy attempt.
+#[test]
+fn a_completion_waiting_for_the_store_stops_when_its_workspace_closes() {
+    let _slot = test_slot();
+    let _deadline = BusyDeadline::set(Duration::from_secs(1));
+    let window = BusyWindowClock;
+    let repository = Repository::new("completion-close-waits");
+    let store = repository.store("content.sqlite");
+    let workspace = attached_workspace(&repository, &store, &needle_code_rule());
+    let other = attached_workspace(&repository, &store, &needle_code_rule());
+    let shared = shared_store(&workspace);
+    // A writer of another process leaves the file unpublished; its window then passes.
+    let other_process = HeldWriter::hold(&store);
+    spend_deadline_on_busy_attempts(Duration::from_secs(1), || {});
+    assert_eq!(apply_source(&workspace, 1, "NEEDLE\n"), ["NEEDLE"]);
+    BUSY_ATTEMPT_HOOK.set(None);
+    drop(other_process);
+    window.pass_window();
+    assert!(is_unpublished(&workspace, "edited.py"));
+    let holder = ProcessWriter::hold(&shared);
+    let (waiting, waits) = mpsc::channel();
+    let (done, completed) = mpsc::channel();
+    let mut task = workspace.completion_task();
+    std::thread::spawn(move || {
+        let window = BusyWindowClock;
+        window.pass_window();
+        BUSY_DEADLINE_OVERRIDE.set(Some(Duration::from_secs(3_600)));
+        LINE_WAIT_HOOK.set(Some(Box::new(move || {
+            let _ = waiting.send(());
+        })));
+        let _ = done.send(task.compute().map(|_| ()));
+    });
+    waits.recv().unwrap();
+    shared.sync_writer_line();
+    workspace.close();
+    let ended = completed
+        .recv_timeout(Duration::from_secs(60))
+        .expect("the completion's publication still waited after its workspace closed");
+    assert!(
+        ended.is_err(),
+        "a closed workspace's completion records nothing"
+    );
+    assert!(
+        !shared.writes_stalled(),
+        "it stopped at the close, not at its deadline"
+    );
+    holder.let_go();
+    other.close();
+}
+
+/// The maintenance thread's search-index batch takes the store only when no writer of this
+/// process holds it or waits for it (`index_stored_tapes_when_free`): behind a holder it gives up
+/// at once, without a place in the line, and runs again at a later wake, so the checked edit that
+/// arrives next is the first to be handed the store.
+#[test]
+fn a_search_index_batch_never_waits_ahead_of_a_checked_edit() {
+    let _slot = test_slot();
+    let repository = Repository::new("index-when-free");
+    let store = repository.store("content.sqlite");
+    let workspace = attached_workspace(&repository, &store, &needle_code_rule());
+    let shared = shared_store(&workspace);
+    // A stored tape with no search index, which this build cannot decode: the batch writes its
+    // incomplete index set.
+    let source = shared.put_source(b"NEEDLE\n", &[]).unwrap();
+    shared
+        .put_tape(
+            source,
+            1,
+            grammar_version(),
+            i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION),
+            b"not a tape",
+        )
+        .unwrap();
+    let unindexed = || {
+        shared
+            .tapes_without_search_index_after(
+                grammar_version(),
+                i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION),
+                None,
+                8,
+            )
+            .unwrap()
+            .len()
+    };
+    assert_eq!(unindexed(), 1, "a stored tape has no search index");
+    let holder = ProcessWriter::hold(&shared);
+    LINE_WAIT_HOOK.set(Some(Box::new(|| {
+        panic!("the search-index batch waited in the store's line")
+    })));
+    let mut cursor = None;
+    index_stored_tapes_when_free(&shared, &AtomicBool::new(false), &mut cursor);
+    LINE_WAIT_HOOK.set(None);
+    assert_eq!(unindexed(), 1, "the batch gave up behind the holder");
+    let (waiting, waits) = mpsc::channel();
+    let applying = {
+        let (state, closed) = (Arc::clone(&workspace.state), Arc::clone(&workspace.closed));
+        std::thread::spawn(move || {
+            LINE_WAIT_HOOK.set(Some(Box::new(move || {
+                let _ = waiting.send(());
+            })));
+            let files =
+                json!([{ "path": "edited.py", "language": "python", "source": "NEEDLE\n" }]);
+            let mut task = WorkspaceApplyTask {
+                state,
+                closed,
+                request_json: json!({ "revision": 1, "files": files, "removed": [] }).to_string(),
+                request_buffer: None,
+                request_direct: None,
+            };
+            task.compute().map(|_| ())
+        })
+    };
+    waits.recv().unwrap();
+    shared.sync_writer_line();
+    holder.let_go();
+    applying.join().unwrap().unwrap();
+    assert!(
+        !is_unpublished(&workspace, "edited.py"),
+        "the checked edit was published"
+    );
+    let mut cursor = None;
+    index_stored_tapes_when_free(&shared, &AtomicBool::new(false), &mut cursor);
+    assert_eq!(
+        unindexed(),
+        0,
+        "the next pass on a free store indexes the tapes"
+    );
+    workspace.close();
+}
+
+/// Closing the last workspace of a store joins its maintenance thread on the host's thread. When
+/// that thread's wake waits in the store's writer line behind a write of this process, the close
+/// ends the wait instead of waiting for the writer or the write deadline: the renewal gives up and
+/// marks no stall. Without the cancel the close would wait 10 s and the renewal mark the writer
+/// stalled.
+#[test]
+fn closing_the_last_workspace_does_not_wait_for_the_writer_its_maintenance_waits_behind() {
+    let _slot = test_slot();
+    let repository = Repository::new("close-maintenance-waits");
+    let store = repository.store("content.sqlite");
+    let workspace = attached_workspace(&repository, &store, &needle_code_rule());
+    let shared = shared_store(&workspace);
+    let holder = ProcessWriter::hold(&shared);
+    workspace
+        .state
+        .lock()
+        .unwrap()
+        .storage
+        .as_ref()
+        .unwrap()
+        .wake_maintenance();
+    shared.wait_for_line_waiters(1);
+    let started = std::time::Instant::now();
+    workspace.close();
+    let closed_in = started.elapsed();
+    assert!(
+        !shared.writes_stalled(),
+        "the maintenance thread waited out its deadline behind the writer; the close took {closed_in:?}"
+    );
+    holder.let_go();
 }
 
 /// Once the window has passed and the writer left, the next apply tries the store again: it

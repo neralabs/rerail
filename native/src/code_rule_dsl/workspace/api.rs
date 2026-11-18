@@ -36,7 +36,7 @@ use crate::code_rule_dsl::model::{
 use crate::code_rule_dsl::placement::parse_placement;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::{matcher::GrammarMatcher, profile};
-use crate::content_store::{OperationDeadline, StoreError, WorkspaceCompletion};
+use crate::content_store::{OperationDeadline, StoreError, WorkspaceCompletion, end_waits};
 use crate::release_allocator_memory;
 use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi::{Env, Result, Task};
@@ -597,7 +597,9 @@ impl CodeRuleDslWorkspace {
 
     #[napi(catch_unwind)]
     pub fn close(&self) {
-        self.closed.store(true, Ordering::Release);
+        // Also wakes this workspace's publications waiting for the store, which then see the close
+        // (`publish_overlay_files_reporting_busy`).
+        end_waits(&self.closed);
         clear_if_unlocked(&self.state);
         match self.scopes.lock() {
             Ok(mut scopes) => *scopes = Vec::new(),
@@ -694,7 +696,7 @@ pub(super) fn close_poisoned(
     mutex: &Mutex<WorkspaceState>,
     closed: &AtomicBool,
 ) -> napi::Error {
-    closed.store(true, Ordering::Release);
+    end_waits(closed);
     drop(StateLease {
         guard: Some(guard),
         mutex,
