@@ -50,12 +50,12 @@ function isZombie(pid: number): boolean {
 /**
  * When the process holding `pid` started, in epoch milliseconds, or undefined where it cannot be read. A process keeps
  * its pid for life, so its start time tells the process that holds a pid now from one that held it before. Linux reads
- * `/proc` ({@link linuxStartedAt}), Windows the process's creation time ({@link windowsStartedAt}); other systems are
- * not read.
+ * `/proc` ({@link linuxStartedAt}), Windows the process's creation time within `timeoutMs` ({@link windowsStartedAt});
+ * other systems are not read.
  */
-export function processStartedAt(pid: number, platform: NodeJS.Platform = process.platform): number | undefined {
+export function processStartedAt(pid: number, timeoutMs: number, platform: NodeJS.Platform = process.platform): number | undefined {
   if (platform === "linux") return linuxStartedAt(pid);
-  return platform === "win32" ? windowsStartedAt(pid) : undefined;
+  return platform === "win32" ? windowsStartedAt(pid, timeoutMs) : undefined;
 }
 
 /**
@@ -78,11 +78,14 @@ function linuxStartedAt(pid: number): number | undefined {
 /**
  * Windows: the process's creation time, as .NET's `Process.StartTime` reads it, through Windows PowerShell, which loads
  * no Rerail engine: the uninstall reads it before it removes `versions/`, and Windows keeps a loaded DLL from being
- * deleted. A process this user may not query is not read.
+ * deleted. The read runs synchronously, so PowerShell is ended at `timeoutMs` and not started with no time left (Node
+ * reads a timeout of 0 as none). A process this user may not query, a PowerShell that cannot run and one ended at the
+ * bound read nothing.
  */
-function windowsStartedAt(pid: number): number | undefined {
+function windowsStartedAt(pid: number, timeoutMs: number): number | undefined {
+  if (!(timeoutMs > 0)) return undefined;
   const read = spawnSync(windowsPowerShell(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-    `([DateTimeOffset][Diagnostics.Process]::GetProcessById(${pid}).StartTime).ToUnixTimeMilliseconds()`], { encoding: "utf8" });
+    `([DateTimeOffset][Diagnostics.Process]::GetProcessById(${pid}).StartTime).ToUnixTimeMilliseconds()`], { encoding: "utf8", timeout: timeoutMs });
   const text = String(read.stdout ?? "").trim();
   return read.status === 0 && /^\d+$/u.test(text) ? Number(text) : undefined;
 }
