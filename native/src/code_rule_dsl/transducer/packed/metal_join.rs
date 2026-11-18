@@ -1646,16 +1646,18 @@ kernel void ix_place(device uchar* B [[buffer(0)]], device const uint* perm [[bu
 }
 
 // A lattice relation's rounds on the device (decision 0124): a round's rows `U` (a table of `k` slots: the key's
-// `nkeys` columns, then the value) folded by key into the held relation `R` (its `k` columns and a change count,
-// stride `had`). `P` groups `U`'s rows by key (each place the least row of its key), `best` the key's chosen row
-// (min and max select one of their values), `flags` a flat key's conflict. A held key's row is updated in place; a
-// new key's row goes to `N` (as `R`'s columns), found next by `H` (key to `R`'s row, kept from round to round). Each
-// changed key's row (key and value) goes to `D`, the next round's delta: `counters[0]` of them, `counters[1]` new.
-// `level`: the round, written to a changed or new key's level column (`nkeys + 2`) where the relation keeps levels
-// (decision 0311); 0: no level column.
-struct LatP { long top; uint n; uint had; uint nkeys; uint code; uint after; uint pmask; uint hmask; uint level; ulong r_at, r_rows_at; };
+// `nkeys` columns, then the value) folded by key into the lattice's relation `R` itself (its `k` columns, `had` rows
+// held: one live row a key), through its key map `H` (decision 0384 step 5, `setfix::keys`), which lies in a block at
+// `h_at`: a slot a key, three words: the key's row (EMPTY: none), its changes, its round. `P` groups `U`'s rows by
+// key (each place the least row of its key), `best` the key's chosen row (min and max select one of their values),
+// `flags` a flat key's conflict. A held key's row is updated where it lies; a new key's row is written past `R`'s
+// rows (at `had` on, room the host reserved), and its slot put in `H`. Each changed key's row (key and value) goes to
+// `D`, the next round's delta: `counters[0]` of them, `counters[1]` new. `level`: the round, written to a changed or
+// new key's slot where the relation keeps levels (decision 0311); 0: none.
+struct LatP { long top; uint n; uint had; uint nkeys; uint code; uint after; uint pmask; uint hmask; uint level; uint omask; uint pad;
+              ulong r_at, r_rows_at, h_at, h0_at; };
 
-// The held relation `R`'s row `row` in column `c`, and the place to write it: `R` is a relation in its block
+// The relation `R`'s row `row` in column `c`, and the place to write it: `R` is a relation in its block
 // (decision 0325 step 5), its descriptor at `r_at`, its rows' at `r_rows_at`.
 static inline long lat_r(device const uchar* R, constant LatP& p, uint row, uint c) {
     return long(clif_rel_get(R, p.r_at, row, c));
@@ -1681,21 +1683,35 @@ kernel void lat_clear(device uint* P [[buffer(0)]], device uint* best [[buffer(1
     flags[i] = 0;
 }
 
-kernel void lat_hclear(device uint* H [[buffer(0)]], constant LatP& p [[buffer(1)]], uint i [[thread_position_in_grid]]) {
-    if (i <= p.hmask) H[i] = 0xffffffffu;
+// The key map's slot `i` emptied (a map new, or grown).
+kernel void lat_hclear(device uchar* HB [[buffer(0)]], constant LatP& p [[buffer(1)]], uint i [[thread_position_in_grid]]) {
+    if (i > p.hmask) return;
+    device uint* H = (device uint*)(HB + p.h_at);
+    H[3 * i] = 0xffffffffu;
+    H[3 * i + 1] = 0;
+    H[3 * i + 2] = 0;
 }
 
-// `R`'s row `t` into `H` (a table grown: every held row placed again).
-kernel void lat_rehash(device const uchar* R [[buffer(0)]], device atomic_uint* H [[buffer(1)]], constant LatP& p [[buffer(2)]],
-                       uint t [[thread_position_in_grid]]) {
-    if (t >= p.had) return;
+// The old map's slot `s` (at `h0_at` in `OB`, `omask + 1` slots) into the new one (grown: every key placed again, its
+// changes and round with it); its key read in `R`'s row.
+kernel void lat_rehash(device const uchar* R [[buffer(0)]], device const uchar* OB [[buffer(1)]], device uchar* HB [[buffer(2)]],
+                       constant LatP& p [[buffer(3)]], uint s [[thread_position_in_grid]]) {
+    if (s > p.omask) return;
+    device const uint* O = (device const uint*)(OB + p.h0_at);
+    uint t = O[3 * s];
+    if (t == 0xffffffffu) return;
+    device atomic_uint* H = (device atomic_uint*)(HB + p.h_at);
     long key[8];
     for (uint c = 0; c < p.nkeys && c < 8; c++) key[c] = lat_r(R, p, t, c);
     uint at = lat_hash(key, p.nkeys, p.hmask);
     // Bounded: a place at a time, and a weak exchange's spurious failure tries the place again.
     for (uint k = 0; k < 2 * (p.hmask + 1); k++) {
         uint seen = 0xffffffffu;
-        if (atomic_compare_exchange_weak_explicit(&H[at], &seen, t, memory_order_relaxed, memory_order_relaxed)) return;
+        if (atomic_compare_exchange_weak_explicit(&H[3 * at], &seen, t, memory_order_relaxed, memory_order_relaxed)) {
+            atomic_store_explicit(&H[3 * at + 1], O[3 * s + 1], memory_order_relaxed);
+            atomic_store_explicit(&H[3 * at + 2], O[3 * s + 2], memory_order_relaxed);
+            return;
+        }
         if (seen == 0xffffffffu) continue;
         at = (at + 1) & p.hmask;
     }
@@ -1796,9 +1812,10 @@ static inline long lat_widen(constant LatP& p, long old, long now) {
 }
 
 kernel void lat_merge(device const long* U [[buffer(0)]], device const uint* P [[buffer(1)]], device const uint* best [[buffer(2)]],
-                      device const uint* flags [[buffer(3)]], device uchar* R [[buffer(4)]], device atomic_uint* H [[buffer(5)]],
-                      device long* N [[buffer(6)]], device long* D [[buffer(7)]], device atomic_uint* counters [[buffer(8)]],
-                      device atomic_uint* A [[buffer(9)]], constant LatP& p [[buffer(10)]], uint s [[thread_position_in_grid]]) {
+                      device const uint* flags [[buffer(3)]], device uchar* R [[buffer(4)]], device uchar* HB [[buffer(5)]],
+                      device long* D [[buffer(6)]], device atomic_uint* counters [[buffer(7)]],
+                      device atomic_uint* A [[buffer(8)]], constant LatP& p [[buffer(9)]], uint s [[thread_position_in_grid]]) {
+    device atomic_uint* H = (device atomic_uint*)(HB + p.h_at);
     if (s > p.pmask) return;
     uint rep = P[s];
     if (rep == 0xffffffffu) return;
@@ -1807,12 +1824,12 @@ kernel void lat_merge(device const long* U [[buffer(0)]], device const uint* P [
     if (p.code == 2 && flags[s] != 0) v = p.top;
     long key[8];
     for (uint c = 0; c < p.nkeys && c < 8; c++) key[c] = U[ulong(c) * p.n + r];
-    uint k = p.nkeys + 1;
     uint at = lat_hash(key, p.nkeys, p.hmask);
     uint held = 0xffffffffu;
     for (uint i = 0; i <= p.hmask; i++) {
-        uint h = atomic_load_explicit(&H[at], memory_order_relaxed);
+        uint h = atomic_load_explicit(&H[3 * at], memory_order_relaxed);
         if (h == 0xffffffffu) break;
+        // A row past `had` is a new key's this round (another key's: each key is one place of `P`).
         bool same = h < p.had;
         for (uint c = 0; same && c < p.nkeys && c < 8; c++) same = lat_r(R, p, h, c) == key[c];
         if (same) { held = h; break; }
@@ -1822,26 +1839,28 @@ kernel void lat_merge(device const long* U [[buffer(0)]], device const uint* P [
         long o = lat_r(R, p, held, p.nkeys);
         long m = lat_lub(p, A, o, v);
         if (m == o) return;
-        long changes = lat_r(R, p, held, k);
-        if (p.after != 0xffffffffu && changes >= long(p.after)) {
+        uint changes = atomic_load_explicit(&H[3 * at + 1], memory_order_relaxed);
+        if (p.after != 0xffffffffu && changes >= p.after) {
             m = lat_widen(p, o, m);
             if (m == o) return;
         }
         *lat_rp(R, p, held, p.nkeys) = m;
-        *lat_rp(R, p, held, k) = changes + 1;
-        if (p.level != 0) *lat_rp(R, p, held, k + 1) = long(p.level);
+        atomic_store_explicit(&H[3 * at + 1], changes + 1, memory_order_relaxed);
+        if (p.level != 0) atomic_store_explicit(&H[3 * at + 2], p.level, memory_order_relaxed);
         v = m;
     } else {
         uint a = atomic_fetch_add_explicit(&counters[1], 1u, memory_order_relaxed);
-        for (uint c = 0; c < p.nkeys && c < 8; c++) N[ulong(c) * p.n + a] = key[c];
-        N[ulong(p.nkeys) * p.n + a] = v;
-        N[ulong(k) * p.n + a] = 1;
-        if (p.level != 0) N[ulong(k + 1) * p.n + a] = long(p.level);
         uint id = p.had + a;
+        for (uint c = 0; c < p.nkeys && c < 8; c++) *lat_rp(R, p, id, c) = key[c];
+        *lat_rp(R, p, id, p.nkeys) = v;
         uint place = lat_hash(key, p.nkeys, p.hmask);
         for (uint i = 0; i < 2 * (p.hmask + 1); i++) {
             uint seen = 0xffffffffu;
-            if (atomic_compare_exchange_weak_explicit(&H[place], &seen, id, memory_order_relaxed, memory_order_relaxed)) break;
+            if (atomic_compare_exchange_weak_explicit(&H[3 * place], &seen, id, memory_order_relaxed, memory_order_relaxed)) {
+                atomic_store_explicit(&H[3 * place + 1], 1u, memory_order_relaxed);
+                atomic_store_explicit(&H[3 * place + 2], p.level, memory_order_relaxed);
+                break;
+            }
             if (seen == 0xffffffffu) continue;
             place = (place + 1) & p.hmask;
         }
@@ -2256,6 +2275,21 @@ impl Table {
         let out = unsafe { std::slice::from_raw_parts_mut(t.buffer.buffer.contents().cast::<i64>(), slots.max(1)) };
         out.fill(0);
         out[..values.len()].copy_from_slice(values);
+        Ok(t)
+    }
+
+    /// A table of the rows `rows` (row-major, `slots` values a row): a test's round of rows.
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn of_rows(slots: usize, rows: &[i64]) -> Result<Table, Error> {
+        let n = rows.len() / slots;
+        let t = Table::new(slots, n)?;
+        // SAFETY: the buffer holds `slots * cap` values, and nothing else refers to it yet.
+        let out = unsafe { std::slice::from_raw_parts_mut(t.buffer.buffer.contents().cast::<i64>(), slots * t.cap) };
+        for (i, row) in rows.chunks(slots).enumerate() {
+            for (c, &v) in row.iter().enumerate() {
+                out[c * t.cap + i] = v;
+            }
+        }
         Ok(t)
     }
 
@@ -3225,12 +3259,13 @@ pub mod tests {
 
 }
 
-/// A lattice relation's key table on the device (`Batch::lattice_fold`): each held key's row, kept from round to
-/// round, grown (every held row placed again) when the rows it may hold pass half its places.
-#[derive(Default)]
-pub(in crate::code_rule_dsl) struct LatKeys {
-    table: Option<Held>,
-    places: usize,
+/// A lattice relation's key map where it lies (decision 0384 step 5, `setfix::keys::KeyMap`): its block, its slots'
+/// offset there, and how many slots (a power of two).
+#[derive(Clone, Copy)]
+pub(in crate::code_rule_dsl) struct LatMap<'a> {
+    pub(in crate::code_rule_dsl) home: &'a std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>,
+    pub(in crate::code_rule_dsl) at: usize,
+    pub(in crate::code_rule_dsl) places: usize,
 }
 
 /// A lattice the device folds by (`Batch::lattice_fold`): 0 min, 1 max, 2 flat, 3 shortlex (its values arena texts,
@@ -3242,49 +3277,54 @@ pub(in crate::code_rule_dsl) struct LatCode {
     pub(in crate::code_rule_dsl) after: Option<u32>,
 }
 
+/// What a fold does to its key map first: nothing, empty it (new, its words not written), or empty it and place
+/// every key of the old one in it (grown).
+#[derive(Clone, Copy)]
+pub(in crate::code_rule_dsl) enum MapFirst<'a> {
+    Ready,
+    Clear,
+    Grow(LatMap<'a>),
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct LatParams { top: i64, n: u32, had: u32, nkeys: u32, code: u32, after: u32, pmask: u32, hmask: u32, level: u32, r_at: u64, r_rows_at: u64 }
+struct LatParams { top: i64, n: u32, had: u32, nkeys: u32, code: u32, after: u32, pmask: u32, hmask: u32, level: u32, omask: u32, pad: u32,
+                   r_at: u64, r_rows_at: u64, h_at: u64, h0_at: u64 }
 
-const _: () = assert!(std::mem::size_of::<LatParams>() == 56);
+const _: () = assert!(std::mem::size_of::<LatParams>() == 80);
 
 impl Batch {
     /// A lattice relation's round (decision 0124): the `n` rows of `u` (its key's `nkeys` columns, then the value)
-    /// folded by key into `total` (the relation's `nkeys + 2` columns, its last a key's changes; `had` rows): a held
-    /// key's row updated in place, a new key's row into `new_keys` (as `total`'s columns), each changed key's row (key
-    /// and value) into `delta`. `counters`: `[changed, new]`. `level`: where the relation keeps levels (decision
-    /// 0311), the round, written to a changed or new key's row in a column after its changes (`total` and `new_keys`
-    /// then have one more).
+    /// folded by key into `r`, the relation itself (`had` rows held, one live row a key), through its key map `map`
+    /// (decision 0384 step 5), which `first` empties or grows first. A held key's row is updated where it lies; a new
+    /// key's row is written at `had` on (room the caller reserved for `n` more) and its slot put in the map. Each
+    /// changed key's row (key and value) into `delta`. `counters`: `[changed, new]`. `level`: where the relation keeps
+    /// levels (decision 0311), the round, written to a changed or new key's slot.
     #[allow(clippy::too_many_arguments)]
     /// Code 3 compares its values' texts in `arena`, which holds every value the fold reads.
-    pub(in crate::code_rule_dsl) fn lattice_fold(&mut self, u: &Table, n: usize, total: Option<&DevRel>, nkeys: usize, lat: LatCode, keys: &mut LatKeys,
-                                                 counters: &Words, new_keys: &Table, delta: &Table, arena: Option<&Arena>, level: Option<u32>) -> Result<(), Error> {
+    pub(in crate::code_rule_dsl) fn lattice_fold(&mut self, u: &Table, n: usize, r: &DevRel, had: usize, nkeys: usize, lat: LatCode, map: LatMap<'_>,
+                                                 first: MapFirst<'_>, counters: &Words, delta: &Table, arena: Option<&Arena>, level: Option<u32>) -> Result<(), Error> {
         assert!(lat.code != 3 || arena.is_some(), "a shortlex fold reads its values' texts");
-        assert!(nkeys + 1 <= MAX_KEYS && u.cap == n && new_keys.cap == n && delta.cap == n);
-        let had = total.map_or(0, |t| t.rows);
+        assert!(nkeys + 1 <= MAX_KEYS && u.cap == n && delta.cap == n);
+        assert!(map.places.is_power_of_two() && 2 * n <= map.places, "a key map of {} slots for {n} rows", map.places);
         let pplaces = (2 * n).next_power_of_two().max(16);
-        let want = (2 * (had + n)).next_power_of_two().max(16);
-        let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32, hmask: 0, level: level.unwrap_or(0),
-                                 r_at: total.map_or(0, |t| t.at), r_rows_at: total.map_or(0, |t| t.rows_at()) };
-        let r: metal::Buffer = total.map_or_else(|| self.dummy.buffer.to_owned(), |t| t.buffer.buffer.to_owned());
-        if keys.places < want {
-            // Grown: every held row placed again.
-            let table = Held::new(4 * want)?;
-            p.hmask = (want - 1) as u32;
-            let bytes = lat_bytes(&p);
+        let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32,
+                                hmask: (map.places - 1) as u32, level: level.unwrap_or(0), omask: 0, pad: 0, r_at: r.at, r_rows_at: r.rows_at(), h_at: map.at as u64, h0_at: 0 };
+        // The map's block as it is now (reaching its slots), kept until the work completes.
+        let hb = bound(map.home)?;
+        if !matches!(first, MapFirst::Ready) {
             let hclear = pipeline("join", "lat_hclear", || SOURCE.to_owned())?;
-            let rehash = pipeline("join", "lat_rehash", || SOURCE.to_owned())?;
             let pass = self.pass(2)?;
-            pass.run_bytes(&hclear, &[&table.buffer], bytes, groups(want));
-            if had > 0 {
-                pass.run_bytes(&rehash, &[&r, &table.buffer], bytes, groups(had));
+            pass.run_bytes(&hclear, &[&hb.buffer], lat_bytes(&p), groups(map.places));
+            if let MapFirst::Grow(old) = first {
+                p.omask = (old.places - 1) as u32;
+                p.h0_at = old.at as u64;
+                let ob = bound(old.home)?;
+                let rehash = pipeline("join", "lat_rehash", || SOURCE.to_owned())?;
+                pass.run_bytes(&rehash, &[&r.buffer.buffer, &ob.buffer, &hb.buffer], lat_bytes(&p), groups(old.places));
+                self.keep.push(ob);
             }
-            if let Some(old) = keys.table.replace(table) {
-                self.keep.push(old);
-            }
-            keys.places = want;
         }
-        p.hmask = (keys.places - 1) as u32;
         let bytes = lat_bytes(&p);
         let clear = pipeline("join", "lat_clear", || SOURCE.to_owned())?;
         let claim = pipeline("join", "lat_claim", || SOURCE.to_owned())?;
@@ -3293,15 +3333,14 @@ impl Batch {
         let places = Held::new(4 * pplaces)?;
         let chosen = Held::new(4 * pplaces)?;
         let flags = Held::new(4 * pplaces)?;
-        let h: metal::Buffer = keys.table.as_ref().expect("a key table").buffer.to_owned();
         let a: metal::Buffer = arena.map_or_else(|| self.dummy.buffer.to_owned(), |a| a.buffer.buffer.to_owned());
         let pass = self.pass(4)?;
         let ub: &BufferRef = &u.buffer.buffer;
         pass.run_bytes(&clear, &[&places.buffer, &chosen.buffer, &flags.buffer], bytes, groups(pplaces));
         pass.run_bytes(&claim, &[ub, &places.buffer], bytes, groups(n));
         pass.run_bytes(&best, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &a], bytes, groups(n));
-        pass.run_bytes(&merge, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &r, &h, &new_keys.buffer.buffer, &delta.buffer.buffer, &counters.buffer.buffer, &a], bytes, groups(pplaces));
-        self.keep.extend([places, chosen, flags]);
+        pass.run_bytes(&merge, &[ub, &places.buffer, &chosen.buffer, &flags.buffer, &r.buffer.buffer, &hb.buffer, &delta.buffer.buffer, &counters.buffer.buffer, &a], bytes, groups(pplaces));
+        self.keep.extend([places, chosen, flags, hb]);
         Ok(())
     }
 }

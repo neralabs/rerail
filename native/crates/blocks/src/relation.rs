@@ -313,6 +313,20 @@ impl Relation {
         unsafe { std::ptr::write_volatile(&raw mut (*ix).ncols, room.ncols as u32) };
     }
 
+    /// Every index added forgotten (their room stays in the block, unused): for a relation whose rows' values change
+    /// in place (a lattice's fold, decision 0384 step 5), whose indexes built before no longer hold. The next reader
+    /// that probes a key builds its index again.
+    ///
+    /// # Safety
+    /// Under its owner's index lock, and no reader probes an index of it meanwhile.
+    pub unsafe fn forget_indexes(&self) {
+        for ix in self.indexes.as_slice() {
+            // SAFETY: the caller's; `find_index` skips an entry whose `ncols` is 0.
+            unsafe { std::ptr::write_volatile(&raw mut (*std::ptr::from_ref(ix).cast_mut()).ncols, 0) };
+        }
+        self.nindex.store(0, Release);
+    }
+
     /// `held_bytes` by part: values written, chunk room unwritten, order, index buckets, index rows, dead bits,
     /// descriptors.
     pub fn held_parts(&self) -> [usize; 7] {

@@ -95,6 +95,53 @@ whole. A relation is never a list of parts that a reader must merge.
    shapes of `ordered` (`Runs`, `TaggedRuns`, `Growing`) are the index-cost spike's (`RERAIL_INDEX_SPIKE`), not the
    fixpoint's.
 
+5. **A lattice's key map is an index in its relation's block** (Q177). A lattice relation (decision 0124) holds one
+   live row a key. Until this step, three structures held its keys:
+   - the host's `Lat`, two `HashMap`s on the heap, from key to live row and from key to changes;
+   - the device's `LatKeys`, a key table in device memory, rebuilt by every device fixpoint;
+   - the device fixpoint's own copy of the head (`own.total`), copied whole into a new device relation every round a
+     key was added, and read back at the end, row by row, into the host's fold, which folded it a second time.
+
+   Now there is one key map: an open-addressed table in the relation's block (`setfix::keys::KeyMap`), a slot a key,
+   three words: the key's live row (`u32::MAX` for none), its changes (for `widen`; its first value counts one) and
+   its round (where the relation keeps levels).
+   - Host and device hash a key by the same function (`key_hash`) and probe the same slots, comparing the key's
+     columns in the relation's rows where they lie.
+   - The host's fold (`Rel::fold`) probes the map, kills a key's old row and appends its new one (its readers see the
+     delta), and points the slot at the new row.
+   - The device folds into the head's relation itself, through the same map (`Batch::lattice_fold`, kernels
+     `lat_hclear`, `lat_rehash`, `lat_merge`):
+     - the head's relation is made at its first round (`Part::for_writes_with_room`), alone in a block with 256 MiB
+       of address space past its rows (`LAT_ROOM`; memory only as it is written). Its rows (`Part::reserve`) and its
+       map grow in that block, never moved. A head past it refuses its stratum;
+     - a held key's row is updated where it lies;
+     - a new key's row is written past the relation's rows, into the room reserved, and claimed after the round
+       (`Part::written_more`);
+     - the map grows (every live slot placed again, on the device) past half full;
+     - a round that changed rows in place makes the relation forget its indexes (`Relation::forget_indexes`): an
+       index built on it before no longer holds, and the next probe builds its own. Their room stays in the block
+       unused.
+   - No relation is copied a round, nothing is read back, and nothing is folded twice. A `shortlex_min` value (an
+     arena text, decision 0307) is made its symbol where it lies. The store takes the relation as it lies with the
+     map (`Fresh::place_folded`), each row at its slot's round, so a later CPU fold probes the map the device built.
+
+   Requirements, each with a test:
+   - R1. The host's fold keeps its results (the existing lattice tests: `flat_lattice_fixpoint_joins_copies_and_transfers`,
+     `unbounded_lattices_run_only_with_widen`, `a_declared_lattice_replaces_the_join`,
+     `shortlex_min_orders_symbols_by_length_then_bytes`).
+   - R2. The key map lies in its relation's block, and no `HashMap` holds a lattice's keys (`a_lattices_key_map_lies_in_its_relations_block`).
+   - R3. The device's fold gives the CPU's rows and levels, and the head's rows are placed, not read back
+     (`a_leveled_recursion_on_the_device_has_the_cpus_levels`, its assertion on `placed` now true for the lattice).
+   - R4. Nothing is read back: every head row the device fixpoint makes is placed (the report's `placed` is its
+     `distinct`, asserted in R3's test for both heads). The read-back loop and the per-round copy of `own.total` are
+     gone from the code.
+   - R5. A CPU fold after the device's goes on through the device's map (`a_cpu_fold_goes_on_in_the_devices_key_map`).
+
+   Built: the five requirements' tests pass, and a cold 100-file Metal run over e2's corpus gives the CPU
+   reference's outputs (strict SQL). B-now has no lattices, so that run checks the set heads' path is unchanged.
+   Left: the forgotten indexes' room is not given back to the block. A head that is probed by a key every round
+   leaves an index's room behind each round, within its block's address space.
+
 Measured on cold 300-file Metal runs over e2's corpus:
 
 | | Merged copies | Copied |

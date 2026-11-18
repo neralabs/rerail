@@ -3510,6 +3510,38 @@ Test: `an_export_is_one_relation_of_the_chunks_new_rows`, which replaces the tes
 
 Still merged: 157 relations, nearly all of two parts. Steps 2 and 3 of 0384 cover them.
 
+### Q177. A lattice's key map is an index in its relation's block: step 5 of decision 0384 (done)
+
+Done 2026-11-18. The user asked how the GPU would run with the lattice maps still on the heap. Three structures held
+a lattice's keys:
+- the host's `Lat`: two `HashMap`s;
+- the device's `LatKeys`, rebuilt each fixpoint;
+- the device fixpoint's `own.total`, copied whole into a new device relation every round that added a key, then read
+  back row by row (`total.column`) into the host's fold, which folded it again.
+
+Now one key map (`setfix::keys::KeyMap`), three words a slot, lies in the relation's block. Host and device hash
+keys the same way (`key_hash`) and probe the same slots.
+- The device folds into the head's one relation: held keys' rows where they lie, new keys' rows past them.
+- The store takes the relation as it lies, with the map (`Fresh::place_folded`).
+- A later CPU fold goes on in the device's map.
+- A round that changed rows in place makes the relation forget its built indexes (`Relation::forget_indexes`).
+
+Found on the way: the device's `Fresh` was merged into the stratum's field by field (setfix.rs, the seeds' merge), and
+the map was dropped there. Without carrying it over, the rows were folded again at the current wave, and every row's
+level came out as the stratum's.
+
+Tests:
+- `a_lattices_key_map_lies_in_its_relations_block` (logic);
+- `a_cpu_fold_goes_on_in_the_devices_key_map` (device: three device rounds, one growing the map, then a CPU fold,
+  against a CPU fold alone);
+- `a_leveled_recursion_on_the_device_has_the_cpus_levels`, which now asserts that the lattice head is placed and
+  `placed == distinct`;
+- the native lattice tests, unchanged.
+
+A cold 100-file Metal run gives the CPU reference's outputs. B-now has no lattices.
+
+Left: the room of forgotten indexes is not given back to the block (decision 0384 step 5, "Left").
+
 ### Q176. A relation's indexes lie in its block: step 4 of decision 0384 (done)
 
 Done 2026-11-18. The fixpoint's host indexes held about 45 MB at a 300-file peak, the sorted runs 37 MB of it (Q170).

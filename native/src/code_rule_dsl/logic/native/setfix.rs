@@ -42,6 +42,7 @@ pub mod liveness;
 pub mod ordered;
 /// A relation's indexes (decision 0112): sorted orders of row ids for the key sets probes bind, one run a wave.
 pub mod runs;
+pub mod keys;
 mod held;
 use runs::{Index, RowData};
 mod rows;
@@ -432,10 +433,9 @@ pub struct Lat {
     keys: usize,
     lattice: Arc<dyn super::Lattice>,
     widen: Option<u32>,
-    /// Each key's live row.
-    at: HashMap<Box<[i64]>, u32>,
-    /// Each key's changes so far (its first value counts one), while `widen` is set.
-    changes: HashMap<Box<[i64]>, u32>,
+    /// Each key's live row, its changes so far (its first value counts one) and its round: an index of the relation in
+    /// its block, the one the device folds through too (decision 0384 step 5).
+    map: keys::KeyMap,
 }
 
 impl Lat {
@@ -516,7 +516,7 @@ impl Rel {
         let rows = self.data.to_vec(0, self.n, self.k);
         let mut fresh = Rel::new(&self.table, &self.types.clone());
         fresh.stored = 0;
-        fresh.lat = Some(Box::new(Lat { name: name.to_owned(), keys, lattice, widen, at: HashMap::default(), changes: HashMap::default() }));
+        fresh.lat = Some(Box::new(Lat { name: name.to_owned(), keys, lattice, widen, map: keys::KeyMap::new(None, 0) }));
         fresh.fold(&rows);
         *self = fresh;
         Ok(())
@@ -562,7 +562,10 @@ impl Rel {
         let mut any = false;
         let mut row = vec![0i64; k];
         for (key, agg) in lat.group(rows, k) {
-            let held = lat.at.get(&key).copied();
+            lat.map.reserve(&self.data, k, lat.keys, self.data.home().as_ref());
+            let slot = lat.map.find(&self.data, k, &key);
+            let held = slot.ok().map(|s| lat.map.row(s));
+            let changes = slot.map_or(0, |s| lat.map.changes(s));
             let old = held.map(|id| self.data.value(id, k, lat.keys));
             let mut v = match old {
                 None => agg,
@@ -573,15 +576,12 @@ impl Rel {
                 continue;
             }
             if let (Some(after), Some(o)) = (lat.widen, old) {
-                if lat.changes.get(&key).copied().unwrap_or(0) >= after {
+                if changes >= after {
                     v = lat.lattice.widen(o, v);
                 }
                 if v == o {
                     continue;
                 }
-            }
-            if lat.widen.is_some() {
-                *lat.changes.entry(key.clone()).or_default() += 1;
             }
             if let Some(id) = held
                 && kill(&mut self.dead, id)
@@ -596,7 +596,8 @@ impl Rel {
                 self.level.push(self.lbase + self.wave + 1);
             }
             self.n += 1;
-            lat.at.insert(key, id);
+            let (Ok(s) | Err(s)) = slot;
+            lat.map.set(s, id, changes + 1, self.wave);
             any = true;
         }
         self.lat = Some(lat);
@@ -793,6 +794,30 @@ impl Rel {
         // rows derived here (which may repeat them) or into a lattice (which folds each), they are read with those
         // instead.
         let placed = std::mem::take(&mut f.placed);
+        // A lattice relation's rows the device folded, with its key map (decision 0384 step 5): taken as they lie,
+        // the map its own, into a relation with none yet (a device fixpoint's heads start empty).
+        if let Some(map) = f.map.take()
+            && f.n == 0 && self.n == 0 && placed.len() == 1
+            && let Some(lat) = self.lat.as_mut()
+        {
+            let (p, rounds) = placed.into_iter().next().expect("one lot");
+            let m = p.len() as usize;
+            debug_assert_eq!(map.keys(), m, "a key a row");
+            match p {
+                Placed::Part(p) => self.data.append_part(p),
+                // SAFETY: the writer finished, and wrote every value of the rows `n` counts.
+                Placed::Tail { lent, n } => unsafe { self.data.claim_tail(&lent, n) },
+            }
+            lat.map = map;
+            for x in 0..m {
+                if self.leveled && self.level.len() == self.n {
+                    let round = rounds.as_ref().map_or(self.wave, |r| r[x]);
+                    self.level.push(self.lbase + round + 1);
+                }
+                self.n += 1;
+            }
+            return m > 0;
+        }
         if !placed.is_empty() && (f.n > 0 || self.lat.is_some()) {
             let k = self.k;
             for (p, rounds) in placed {
@@ -1024,7 +1049,10 @@ pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize, break
                    /// Rows written in place by another writer (the device, decision 0325 step 4), each lot distinct,
                    /// not held by the relation, and in no order: the relation takes them as they lie (`push_fresh`).
                    /// With each lot, its rows' rounds when the device's fixpoint made them (decision 0311's levels).
-                   placed: Vec<(Placed, Option<Vec<u32>>)> }
+                   placed: Vec<(Placed, Option<Vec<u32>>)>,
+                   /// A lattice relation's key map the device folded its placed rows through (decision 0384 step 5):
+                   /// the relation takes it as its own with them.
+                   map: Option<keys::KeyMap> }
 
 /// Where another writer (the device) wrote rows of a relation (decision 0325 step 4).
 #[derive(Clone)]
@@ -1074,6 +1102,13 @@ impl Fresh {
         if placed.len() > 0 {
             self.placed.push((placed, rounds));
         }
+    }
+    /// A lattice relation's rows another writer folded in place (the device, decision 0384 step 5): one live row a
+    /// key, each with its round where the relation keeps levels, and the key map it folded them through.
+    pub fn place_folded(&mut self, placed: Placed, rounds: Option<Vec<u32>>, map: keys::KeyMap) {
+        debug_assert!(self.placed.is_empty() && self.n == 0, "a fold's rows beside others");
+        self.place(placed, rounds);
+        self.map = Some(map);
     }
     /// The last lot another writer wrote (`place`): where a next one for the same relation goes on (decision 0384 step 3).
     pub fn last_placed(&self) -> Option<&Placed> {
@@ -2140,8 +2175,13 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                         f.n += d.n;
                         // The device's rows, in no order known here.
                         f.lost |= d.n > 0;
-                        // Its rows written in place (decision 0325 step 4).
+                        // Its rows written in place (decision 0325 step 4), and a lattice's key map they were folded
+                        // through (decision 0384 step 5).
                         f.placed.extend(d.placed);
+                        if d.map.is_some() {
+                            debug_assert!(f.map.is_none(), "two folds' maps for one relation");
+                            f.map = d.map;
+                        }
                     }
                     true
                 }
@@ -7918,3 +7958,47 @@ pub mod sorted_tests {
     }
 }
 
+
+/// A `min` lattice relation for another crate's tests (the device's, decision 0384 step 5): folded on the CPU, or
+/// given rows another writer folded with their key map, and read back as each live row's key, value and changes.
+#[cfg(any(test, feature = "test-hooks"))]
+pub struct TestLattice(Rel);
+#[cfg(any(test, feature = "test-hooks"))]
+impl TestLattice {
+    /// A relation of two columns, `min` by its first.
+    pub fn min() -> TestLattice {
+        let mut rel = Rel::new("t", b"ii");
+        rel.set_lattice("min", 1, Arc::new(super::Min), None).expect("a lattice");
+        TestLattice(rel)
+    }
+    /// Its fold's code, top and widen count, as the device folds by it.
+    pub fn device_lattice(&self) -> (u32, i64, Option<u32>) {
+        self.0.device_lattice().expect("a lattice").expect("one the device folds")
+    }
+    /// `rows` (row-major) folded on the CPU.
+    pub fn fold(&mut self, rows: &[i64]) -> bool {
+        self.0.fold(rows)
+    }
+    /// The rows `part` another writer folded through `map`, taken as they lie (`Fresh::place_folded`).
+    pub fn take_folded(&mut self, part: crate::code_rule_dsl::facts::rows::Part, map: keys::KeyMap) -> bool {
+        let mut fresh = Fresh::default();
+        fresh.place_folded(Placed::Part(part), None, map);
+        self.0.push_fresh(fresh, false)
+    }
+    /// Its rows, dead ones too.
+    pub fn len(&self) -> usize {
+        self.0.n
+    }
+    /// Each live row's key, value and its key's changes, sorted; each checked to be its key's slot's row.
+    pub fn live(&self) -> Vec<(i64, i64, u32)> {
+        let (rel, lat) = (&self.0, self.0.lat.as_ref().expect("a lattice"));
+        let mut out: Vec<(i64, i64, u32)> = (0..rel.n as u32).filter(|&i| !is_dead(&rel.dead, i)).map(|i| {
+            let key = rel.data.value(i, 2, 0);
+            let s = lat.map.find(&rel.data, 2, &[key]).expect("each live row's key in the map");
+            assert_eq!(lat.map.row(s), i, "the key's slot holds its live row");
+            (key, rel.data.value(i, 2, 1), lat.map.changes(s))
+        }).collect();
+        out.sort_unstable();
+        out
+    }
+}

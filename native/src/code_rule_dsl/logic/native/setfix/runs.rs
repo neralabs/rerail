@@ -596,7 +596,9 @@ impl Run {
                 let home = data.home();
                 let joined = |a: &[_], b: &[_]| {
                     let mut v = BlockVec::with_capacity_in(home.as_ref(), a.len() + b.len());
+                    // copy: derived: two runs' prints joined into the merged run's (an index written where it is computed)
                     v.extend_from_slice(a);
+                    // copy: derived: as the line above
                     v.extend_from_slice(b);
                     v
                 };
@@ -605,7 +607,9 @@ impl Run {
                 if tagged(cols, k) {
                     let tags = {
                         let mut v = BlockVec::with_capacity_in(home.as_ref(), first.tags.len() + second.tags.len());
+                        // copy: derived: two runs' tags joined into the merged run's
                         v.extend_from_slice(&first.tags);
+                        // copy: derived: as the line above
                         v.extend_from_slice(&second.tags);
                         v
                     };
@@ -1583,6 +1587,7 @@ pub mod tests {
         let k = 2;
         let mut rows = super::super::rows::Rows::new(k);
         let vals: Vec<i64> = (0..3000i64).flat_map(|i| [(i * 7919) % 101, i]).collect();
+        // copy: not block data: a test's rows
         rows.extend_from_slice(&vals);
         let home = rows.home().expect("a home").facts().clone();
         let block = |v: Option<&Arc<super::super::rows::Facts>>| v.is_some_and(|f| Arc::ptr_eq(f, &home));

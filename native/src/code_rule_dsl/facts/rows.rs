@@ -276,6 +276,7 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         BLOCK_VEC_CHUNKS[which].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if self.len > 0 {
             // SAFETY: the old chunk holds `len` written `T`s; the new one is this vector's alone, apart from it.
+            // copy: growth: an array that outgrew its chunk, moved once, as a vector's growth moves it
             unsafe { std::ptr::copy_nonoverlapping(self.as_ptr(), facts.block.ptr::<T>(at), self.len) };
         }
         self.free();
@@ -315,9 +316,11 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
         self.len += 1;
     }
 
+    // copy: derived: an array's values written once where they are computed (a merged run's)
     pub fn extend_from_slice(&mut self, src: &[T]) {
         self.reserve(src.len());
         // SAFETY: room for `src` past `len` is this vector's alone, apart from `src`.
+        // copy: derived: the values `extend_from_slice` writes
         unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), self.ptr_mut().add(self.len), src.len()) };
         self.len += src.len();
     }
@@ -350,6 +353,21 @@ impl<T: rerail_blocks::Pod> BlockVec<T> {
     /// The block it lies in, if it has a chunk.
     pub fn facts(&self) -> Option<&Arc<Facts>> {
         self.facts.as_ref()
+    }
+
+    /// Its first `T`'s offset in its block (0 with no chunk): where a reader that binds the block finds it.
+    pub fn offset(&self) -> usize {
+        self.at
+    }
+
+    /// `n` `T`s near `home`, not written: for a writer other than the host (the device) to write before any read.
+    ///
+    /// # Safety
+    /// Nothing reads them before that writer wrote every one.
+    pub unsafe fn unwritten_in(home: Option<&Home>, n: usize) -> Self {
+        let mut v = BlockVec::with_capacity_in(home, n);
+        v.len = n;
+        v
     }
 }
 
@@ -394,6 +412,7 @@ impl<T: rerail_blocks::Pod> Clone for BlockVec<T> {
         if self.len > 0 {
             v.realloc(self.facts.as_ref().map(|f| (f, 0)), self.len);
             // SAFETY: room for `len` `T`s, this vector's alone.
+            // copy: derived: a derived array written again for a writer of its own (a merge of a shared run)
             unsafe { std::ptr::copy_nonoverlapping(self.as_ptr(), v.ptr_mut(), self.len) };
             v.len = self.len;
         }
@@ -697,6 +716,58 @@ impl Part {
     /// `rows_at`), then says how many it wrote (`written`).
     pub fn for_writes(k: usize, rows: usize) -> Part {
         Part::new(Life::Run, k, rows)
+    }
+
+    /// `for_writes` alone in a block with `room` bytes past its rows' (decision 0384 step 5): a relation the device
+    /// goes on writing round after round (a lattice head, its held rows updated in place, its new keys' rows past
+    /// them), its rows' chunks and its key map growing in the block (`reserve`), never moved. Its block reserves
+    /// address space: the room is memory only as it is written. `Err` when no block can be had.
+    pub fn for_writes_with_room(k: usize, rows: usize, room: usize) -> Result<Part, String> {
+        Part::try_new_with(Life::Run, k, rows, room.max(1))
+    }
+
+    /// Room for `rows` rows in all (its rows' chunks in its block), not moved: for a writer other than the host
+    /// (`for_writes_with_room`). Whether the block had it.
+    pub fn reserve(&self, rows: u64) -> bool {
+        !self.capped() && self.rel().rows.try_reserve(&self.facts.block, rows)
+    }
+
+    /// Rows `len..len + n` written by the writer it was made for (`for_writes_with_room`, a round at a time), now its
+    /// rows.
+    ///
+    /// # Safety
+    /// The writer has finished, and wrote every value of those rows, within the rows reserved.
+    pub unsafe fn written_more(&self, n: u32) {
+        assert!(self.len() + n <= self.rel().rows.reserved(), "{n} rows written past {} into room for {}", self.len(), self.rel().rows.reserved());
+        // SAFETY: within the rows reserved (asserted); the caller says they are written.
+        unsafe { self.rel().rows.claim_reserved(n) };
+    }
+
+    /// Row `i`'s value in column `c` written where it lies: a derived value put in its place (a device fold's text
+    /// made its symbol).
+    ///
+    /// # Safety
+    /// Row `i` is reserved, and no reader or other writer touches it meanwhile.
+    pub unsafe fn put(&self, i: u32, c: usize, v: i64) {
+        debug_assert!(!self.capped(), "a capped part is never written");
+        // SAFETY: the caller's.
+        unsafe { self.rel().rows.put(i, c, v) };
+    }
+
+    /// Its indexes forgotten (`Relation::forget_indexes`): its rows' values were changed in place (a lattice's fold,
+    /// decision 0384 step 5).
+    ///
+    /// # Safety
+    /// No reader probes an index of it meanwhile.
+    pub unsafe fn forget_indexes(&self) {
+        let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: under the block's index lock; the caller's.
+        unsafe { self.rel().forget_indexes() };
+    }
+
+    /// Where structures derived from its rows go (`BlockVec`): its block.
+    pub fn home(&self) -> Home {
+        Home { facts: self.facts.clone(), life: self.life, grow: 0 }
     }
 
     /// This relation where it lies, `rows` of it, for a reader or writer that binds its block (the device): it keeps
@@ -1413,6 +1484,7 @@ mod tests {
     #[test]
     fn the_dead_rows_bound_are_those_given_now() {
         let mut rows = Rows::new(1);
+        // copy: not block data: a test's rows
         rows.extend_from_slice(&[1, 2, 3, 4]);
         let bits = |b: &InBlock| unsafe { (*b.facts.block.ptr::<Relation>(b.dead)).dead.as_slice().to_vec() };
         let first = rows.in_block_dead(&[0b0101]).expect("a delta");
@@ -1429,6 +1501,7 @@ mod tests {
     #[test]
     fn an_index_array_lies_in_its_relations_block() {
         let mut rows = Rows::new(1);
+        // copy: not block data: a test's rows
         rows.extend_from_slice(&[1, 2, 3]);
         let home = rows.home().expect("a relation with rows has a home");
         let mut v = BlockVec::from_iter_in(Some(&home), 0..100u32);
@@ -1454,6 +1527,7 @@ mod tests {
     fn a_part_written_elsewhere_becomes_the_tail() {
         let k = 2;
         let mut rows = Rows::new(k);
+        // copy: not block data: a test's rows
         rows.extend_from_slice(&[1, 2, 3, 4]);
         let part = Part::for_writes(k, 3);
         // SAFETY: rows 0..3 are reserved, and nothing else writes this part.
@@ -1466,6 +1540,7 @@ mod tests {
         }
         let place = part.rel() as *const _;
         rows.append_part(part);
+        // copy: not block data: a test's rows
         rows.extend_from_slice(&[5, 6]);
         assert_eq!(rows.rows(), 6);
         let all: Vec<Vec<i64>> = (0..6).map(|i| rows.row(i, k).to_vec()).collect();
@@ -1484,6 +1559,7 @@ mod tests {
     fn rows_written_into_the_tails_room_keep_one_relation() {
         let k = 2;
         let mut rows = Rows::new(k);
+        // copy: not block data: a test's rows
         rows.extend_from_slice(&[1, 2, 3, 4]);
         let write = |lent: &Lent, vals: &[[i64; 2]]| {
             for (i, v) in vals.iter().enumerate() {
@@ -1513,6 +1589,7 @@ mod tests {
         let b = rows.in_block().expect("bound whole");
         assert_eq!(b.rows, 5);
         assert_eq!(MERGED[0].load(std::sync::atomic::Ordering::Relaxed), merged, "nothing merged");
+        // copy: not block data: a test's rows
         let all: Vec<Vec<i64>> = (0..5).map(|i| rows.row(i, k).to_vec()).collect();
         assert_eq!(all, [[1, 2], [3, 4], [10, 20], [11, 21], [12, 22]].map(|r| r.to_vec()));
         // Lent again once given back; read, not claimed, and the room the next push's.
@@ -1521,6 +1598,7 @@ mod tests {
         // SAFETY: the row is written.
         assert_eq!(*unsafe { Rows::unclaimed(&lent, 0, k) }, [7, 8]);
         drop(lent);
+        // copy: not block data: a test's rows
         rows.extend_from_slice(&[5, 6]);
         assert_eq!((rows.rows(), &*rows.row(5, k)), (6, &[5, 6][..]));
     }
@@ -1532,10 +1610,12 @@ mod tests {
     fn a_relation_started_from_frozen_rows_goes_on_in_their_relation() {
         let k = 1;
         let mut first = Rows::new(k);
+        // copy: not block data: a test's rows
         first.extend_from_slice(&[1, 2, 3]);
         let kept = first.freeze(3);
         let mut next = kept.shared(3);
         assert!(next.segs.is_empty() && next.from == 0, "the writer taken as the tail, from row 0");
+        // copy: not block data: a test's rows
         next.extend_from_slice(&[4]);
         assert_eq!((kept.rows(), next.rows()), (3, 4), "the frozen rows read their own");
         assert!(next.shares(&kept));
