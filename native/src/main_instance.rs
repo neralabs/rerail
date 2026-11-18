@@ -7,9 +7,11 @@
 //!
 //! A waiting take ([`lock_exclusive`]) tries first, on the calling thread, so a free lock costs what
 //! a try costs. While another handle holds the lock, it asks the OS without the fail-at-once flag,
-//! so the OS hands the lock over the moment its holder lets go, to the waiters it has queued. That
+//! so the OS hands the lock over the moment its holder lets go, to the waiters it has queued. The
 //! wait runs on a thread of its own, never on the JavaScript thread or on Node's thread pool, whose
-//! threads also serve file reads; its bound is the caller's.
+//! threads also serve file reads; its bound is the caller's. On Windows the calling thread queues
+//! the request, which returns at once, and hands it to that thread; `flock` blocks the thread that
+//! asks, so on Unix the waiting thread asks.
 
 use napi::bindgen_prelude::PromiseRaw;
 use napi::{Env, Error, JsDeferred, JsValue, Result, Status};
@@ -118,14 +120,15 @@ type Taking<'env> = PromiseRaw<'env, Option<ExclusiveFileLock>>;
 /// A wait given up never ends up holding the lock. The open and the first try happen before this
 /// returns, so a failure of either throws here.
 #[napi(ts_return_type = "Promise<ExclusiveFileLock | null>")]
-// Only JavaScript calls it; tests drive `wait_for_lock`, the wait its thread runs.
+// Only JavaScript calls it; tests make the calls its wait makes (`wait_for_lock` on Unix,
+// `request_lock` then `PendingLock::granted_within` on Windows).
 #[cfg_attr(test, allow(dead_code))]
 pub fn lock_exclusive(env: &Env, path: String, wait_ms: u32) -> Result<Taking<'_>> {
     let file = open_for_take(&path, wait_ms)?;
     match file.try_lock() {
         Ok(()) => PromiseRaw::resolve(env, Some(ExclusiveFileLock::holding(file))),
         Err(TryLockError::WouldBlock) if wait_ms == 0 => PromiseRaw::resolve(env, None),
-        Err(TryLockError::WouldBlock) => wait_on_its_thread(env, file, wait_ms, path),
+        Err(TryLockError::WouldBlock) => wait_for_release(env, file, wait_ms, path),
         Err(TryLockError::Error(error)) => Err(lock_failure("lock", &path, error)),
     }
 }
@@ -141,10 +144,39 @@ fn open_for_take(path: &str, wait_ms: u32) -> Result<File> {
     }
 }
 
-/// Waits for the lock another handle holds on a thread of its own, up to `wait_ms`.
+/// Unix: the waiting thread asks the OS for the lock another handle holds (`wait_for_lock`), up to
+/// `wait_ms`, since `flock` blocks the thread that asks.
+#[cfg(unix)]
 #[cfg_attr(test, allow(dead_code))]
-fn wait_on_its_thread(env: &Env, file: File, wait_ms: u32, path: String) -> Result<Taking<'_>> {
+fn wait_for_release(env: &Env, file: File, wait_ms: u32, path: String) -> Result<Taking<'_>> {
     let wait = Duration::from_millis(wait_ms.into());
+    wait_on_its_thread(env, path, move || wait_for_lock(file, wait))
+}
+
+/// Windows: this thread queues the request in the kernel (`request_lock` returns at once on the
+/// overlapped handle) and hands it to the waiting thread, which waits for the OS to grant it up to
+/// `wait_ms` (`PendingLock::granted_within`). A lock its holder let go of since the try is granted
+/// to the request at once, and taken here. The OS ends a thread's requests as the thread ends; the
+/// calling thread is Node's, which lives as long as the process.
+#[cfg(windows)]
+#[cfg_attr(test, allow(dead_code))]
+fn wait_for_release(env: &Env, file: File, wait_ms: u32, path: String) -> Result<Taking<'_>> {
+    let wait = Duration::from_millis(wait_ms.into());
+    match request_lock(file).map_err(|error| lock_failure("lock", &path, error))? {
+        Requested::Granted(file) => PromiseRaw::resolve(env, Some(ExclusiveFileLock::holding(file))),
+        Requested::Pending(pending) => {
+            wait_on_its_thread(env, path, move || pending.granted_within(wait))
+        }
+    }
+}
+
+/// Runs `wait`, a wait for the lock another handle holds, on a thread of its own, and settles the
+/// promise it returns with what that wait ends with.
+#[cfg_attr(test, allow(dead_code))]
+fn wait_on_its_thread<Wait>(env: &Env, path: String, wait: Wait) -> Result<Taking<'_>>
+where
+    Wait: FnOnce() -> std::io::Result<Option<File>> + Send + 'static,
+{
     // The promise is made only once its thread runs: a promise left unsettled would keep Node's
     // event loop, and so the process, alive for ever.
     let (hand, handed) = mpsc::sync_channel::<JsDeferred<Option<ExclusiveFileLock>, Settle>>(1);
@@ -152,7 +184,7 @@ fn wait_on_its_thread(env: &Env, file: File, wait_ms: u32, path: String) -> Resu
         .name("rerail-lock-wait".to_owned())
         .spawn(move || {
             if let Ok(deferred) = handed.recv() {
-                settle(deferred, wait_and_name(file, wait, &path));
+                settle(deferred, wait_and_name(wait, &path));
             }
         })
         .map_err(|error| {
@@ -168,9 +200,12 @@ fn wait_on_its_thread(env: &Env, file: File, wait_ms: u32, path: String) -> Resu
 }
 
 #[cfg_attr(test, allow(dead_code))]
-fn wait_and_name(file: File, wait: Duration, path: &str) -> Result<Option<File>> {
+fn wait_and_name(
+    wait: impl FnOnce() -> std::io::Result<Option<File>>,
+    path: &str,
+) -> Result<Option<File>> {
     crate::panic_boundary::contain_panic("the wait for a lock", || {
-        wait_for_lock(file, wait).map_err(|error| lock_failure("lock", path, error))
+        wait().map_err(|error| lock_failure("lock", path, error))
     })
 }
 
@@ -280,6 +315,12 @@ struct PendingLock {
     ended: bool,
 }
 
+// SAFETY: the handles are kernel handles any thread of the process may wait on, cancel and close,
+// and only the one thread that owns the request uses them; the OVERLAPPED is boxed, so moving the
+// request moves no memory the OS writes to.
+#[cfg(windows)]
+unsafe impl Send for PendingLock {}
+
 /// Asks the OS for the lock on `file`'s overlapped handle without the fail-at-once flag. A held lock leaves the request
 /// queued: `LockFileEx` returns at once, and the request completes at the hand-over.
 #[cfg(windows)]
@@ -381,16 +422,6 @@ impl Drop for PendingLock {
             self.cancel();
             let _ = self.end();
         }
-    }
-}
-
-/// The OS queues the request for a held lock, and the wait for it has a bound: at the bound `CancelIoEx` ends the
-/// request, and its result then says whether the OS granted it first, so no request outlives the wait.
-#[cfg(windows)]
-fn wait_for_lock(file: File, wait: Duration) -> std::io::Result<Option<File>> {
-    match request_lock(file)? {
-        Requested::Granted(file) => Ok(Some(file)),
-        Requested::Pending(pending) => pending.granted_within(wait),
     }
 }
 
@@ -537,10 +568,18 @@ mod tests {
     fn a_waiter_is_handed_the_lock_at_its_holders_release() {
         let (directory, path) = lock_path("handover");
         let held = try_lock_exclusive(path.clone()).unwrap().unwrap();
+        // As `wait_for_release` does: this thread queues the request, a thread of its own waits for it.
         let pending = queued(open_waiting_lock_file(&path).unwrap());
+        let waiter = std::thread::spawn(move || pending.granted_within(NEVER));
         held.release();
+        // The OS grants the queued request as the holder lets go, so no handle that only tries gets
+        // the lock in between.
+        assert!(
+            try_lock_exclusive(path.clone()).unwrap().is_none(),
+            "the lock is the queued request's from its holder's release on"
+        );
 
-        assert_handed(pending.granted_within(NEVER), &path);
+        assert_handed(waiter.join().unwrap(), &path);
         std::fs::remove_dir_all(directory).unwrap();
     }
 
@@ -553,8 +592,16 @@ mod tests {
         #[cfg(target_os = "linux")]
         let fd = std::os::fd::AsRawFd::as_raw_fd(&file);
         // On a thread of its own, so a wait whose cancel is lost fails here in seconds instead of hanging.
+        // As `wait_for_release` waits: on Windows this thread queues the request first.
+        #[cfg(target_os = "linux")]
+        let wait = move || wait_for_lock(file, Duration::from_millis(20));
+        #[cfg(windows)]
+        let wait = {
+            let pending = queued(file);
+            move || pending.granted_within(Duration::from_millis(20))
+        };
         let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || sender.send(wait_for_lock(file, Duration::from_millis(20))));
+        std::thread::spawn(move || sender.send(wait()));
         let given_up = receiver
             .recv_timeout(SOON)
             .expect("a wait ends at its bound");
@@ -627,7 +674,15 @@ mod tests {
     #[test]
     fn a_free_lock_is_taken_at_once_by_a_wait() {
         let (directory, path) = lock_path("free");
-        let taken = wait_for_lock(open_waiting_lock_file(&path).unwrap(), Duration::ZERO).unwrap();
+        let file = open_waiting_lock_file(&path).unwrap();
+        #[cfg(unix)]
+        let taken = wait_for_lock(file, Duration::ZERO).unwrap();
+        // Windows grants a request for a free lock as it is made, with nothing queued.
+        #[cfg(windows)]
+        let taken = match request_lock(file).unwrap() {
+            Requested::Granted(file) => Some(file),
+            Requested::Pending(_) => None,
+        };
         assert!(taken.is_some(), "a free lock is taken whatever the bound");
         drop(taken);
         std::fs::remove_dir_all(directory).unwrap();
