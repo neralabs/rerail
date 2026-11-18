@@ -1359,6 +1359,17 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
     - `gpu.size` was 173 of its 217 ms in the profile's own count, which walked every root node of every file for
       each pass. It now counts the groups each walk launches; the real sizing is about 45–60 ms, most of it text rows
       (`size.texts`).
+    - **The text rows** (2026-11-17): they are not rebuilt between waves. Each (test, file) pair is scanned once
+      (`texts.scanned` 744 at s1000; none came from the term index). The cost was per-node host work in each scan:
+      - every scan read every node's span and sorted all the nodes twice, to find the nodes at a literal's
+        occurrence (`Index`, 51 ms CPU);
+      - a "contains" regex with `\b` at its start also tested every node's text for a match touching the node's
+        end (40 ms), though only an assertion at that end reads differently there.
+      Now a start-anchored hit searches the candidates' starts read in place (preorder: they never decrease), an
+      edge plan exists only on a side where the core asserts (`looks_at`), and placement stops at the last match's
+      start. Scans 135 → 45 ms CPU, `size.texts` 24–56 → 8 ms, with no verdict different under
+      `RERAIL_SCAN_CHECK` at s1000. The rows are still the host's on the Metal path: a text test on the device is
+      the remaining port.
     - A program's price learns from the run's own launches (`price::observe`, from 4 samples). Wall and host CPU are
       each a robust line: a launch's fixed cost plus a unit's. The wave on the GPU: about 6 ms + 1.1–2.0e-8 s a unit of
       wall, 4.3 ms + 4e-9 s of host CPU. The cores' samples are fitted net of their load, and the lane's host ratio
