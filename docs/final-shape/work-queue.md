@@ -1860,3 +1860,12 @@ always a refusal.
   reports each one as it read it; a difference compiles here, uncached. The daemon also asks the
   host again for them before each compile. Not installed: the farm owner merges and installs it.
 - **Done when**: farm 24 (or its merge) is installed and the reproduction above no longer fails.
+
+### Q123. An M1 Max repeats the persistent dispatch's launch (`a_batch_of_files_and_programs_is_one_launch`)
+
+- **Found** (2026-11-17, roll-up after 7d4a35093): on the farm's M1 Max the test sees 5–9 launches where it expects
+  1 (Interpreter, 16-byte lanes, spins > 0); it passes on the M3. `run_batch` repeats a launch when a look-back runs
+  out of polls, which happens when not all `WORKERS` (768 SIMD groups, chosen on an M5 Max) are resident. The files'
+  results are equal; only the launch count differs.
+- **To do**: the workers from the device's residency (its cores and threadgroup limits), not a constant, so the M1
+  (which must work, platform priorities) runs one launch too.

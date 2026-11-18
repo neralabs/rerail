@@ -96,10 +96,13 @@ pub struct Table {
 impl Slab {
     /// A slab of at least `bytes`, within the Metal budget.
     fn lease(id: u64, bytes: usize) -> Result<Slab, Error> {
+        // The device first: making it installs the one block policy (decision 0342), without which no block is a
+        // device slab (`alloc::plain` refuses `Device::Must`). A process that leases a slab before anything else
+        // touched the device (the parser crate's tests) had every lease refused as over capacity.
+        let device = crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
         // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
         let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must };
         let block = rerail_blocks::alloc::block(&need).map_err(|_| Error::BackendCapacity)?;
-        let device = crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
         let buffer = block.gpu_buffer(device);
         Ok(Slab { id, block, buffer, tables: Mutex::default() })
     }

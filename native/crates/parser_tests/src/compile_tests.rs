@@ -980,8 +980,17 @@ fn only_the_compiler_reads_tier2s_states() {
                 continue;
             }
             let text = std::fs::read_to_string(&path).expect("reads a source file");
-            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`) are not the table's.
-            let table_line = |line: &str| needles.iter().any(|n| line.contains(n)) && !((line.contains("rd.arms") || line.contains("reader.arms")) && !needles[1..].iter().any(|n| line.contains(n)));
+            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`, `readers[i].arms`, a part's
+            // `parted[0].arms`) are not the table's, nor a shape's or a count's (`shape.arms`, `cols.arms`,
+            // `c.arms`): an `.arms` is the table's only after another name.
+            let table_arms = |line: &str| {
+                line.match_indices(".arms").any(|(at, _)| {
+                    let before = &line[..at];
+                    let name = &before[before.trim_end_matches(|c: char| c.is_alphanumeric() || c == '_').len()..];
+                    !before.ends_with(']') && !["rd", "reader", "shape", "cols", "c"].contains(&name)
+                })
+            };
+            let table_line = |line: &str| table_arms(line) || needles[1..].iter().any(|n| line.contains(n));
             if text.lines().any(table_line) {
                 readers.push(path.display().to_string());
             }
