@@ -1593,3 +1593,15 @@ place of the views: copies of tape answers. The views already cover the whole so
 - **Check**: the view's rows equal the rows made today, for a program reading each span relation.
 - **Done when**: no place row is made for a node or token in core.rr's shape.
 
+
+### Q124. The device's `str_cmp` of made texts loses rows under load
+
+`device::parity::parity_random_texts` (seeded, deterministic cases) differed in 2 of 16 full runs (2026-11-17), each
+time a different case, each a `str_cmp` over a made text (`cat`, `sql_replace` into the arena): #216 (device 6
+rows, CPU 38) and #683 (145 against 172). The device's rows are always a subset of the CPU's. It passes alone, and
+fails about 1 in 12 runs with six copies of the test at once (the test binary run directly with `--exact`), so the
+loss depends on the device's timing, not the cases. It reads no view, and no 0353 step 4 change reaches it.
+- Suspects: the arena's text read as empty when its value is -1 (`txt_of`, "the stage runs again") with the rerun
+  not taken; a made text read by the next dispatch before its write is visible.
+- **Do**: find which (count the stage's reruns and the arena's fill in a failing run), then fix it at its cause.
+- **Done when**: 60 runs, six at a time, all pass.

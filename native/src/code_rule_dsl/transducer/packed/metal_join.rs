@@ -2281,10 +2281,8 @@ fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     stage.nr = rel.rows as u32;
     stage.r_at = rel.at;
     stage.r_dead = rel.dead;
-    if let Some(v) = &rel.view {
-        stage.v_dir = v.dir;
-        stage.r_view = v.kind;
-    }
+    // A relation reads none: a stage bound before to a view reads its new relation, not the view.
+    (stage.v_dir, stage.r_view) = rel.view.as_ref().map_or((0, 0), |v| (v.dir, v.kind));
     if let Some(ix) = index {
         stage.r_index = ix.index;
     }
