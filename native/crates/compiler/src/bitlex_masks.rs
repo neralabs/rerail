@@ -3968,9 +3968,13 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     crate::records::EndRule::Last(mask_of(low, l.expect("a row"), &mut mark_masks))
                 }
             };
-            // The tests of the kinds starting here: only where no other kind does.
+            // The tests of the kinds starting here: an escape only where no other kind does. A
+            // mark's test (`at KIND when`) is a test of every token that starts here: its mask
+            // must hold in none of another kind's (decision 0406: a number's `real`, whose bytes
+            // a hex number has not), as the ladder's check of the reference finds.
             let tests: Vec<usize> = (0..low.token_escapes.len()).filter(|&i| these.iter().any(|&r| token_rows[r].0 == low.token_escapes[i].0)).collect();
-            if !tests.is_empty() && these.iter().any(|&r| tests.iter().any(|&i| token_rows[r].0 != low.token_escapes[i].0)) {
+            let escapes = tests.iter().any(|&i| low.token_escapes[i].4 == crate::records::CheckThen::Escape);
+            if escapes && these.iter().any(|&r| tests.iter().any(|&i| token_rows[r].0 != low.token_escapes[i].0)) {
                 return Err(format!("a token test of `{}`: another kind's tokens start at byte {b:#x} too", low.token_escapes[tests[0]].0));
             }
             let at = match rules.iter().zip(&rule_tests).position(|(&x, t)| x == rule && *t == tests) {
