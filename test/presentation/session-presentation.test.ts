@@ -208,8 +208,7 @@ describe("installed session presentation", () => {
     await mkdir(nested);
     const result = await readPresentation({ sessionId, host: "claude-code", cwd: nested });
     expect(result.text).toBe("R E R A I L ● 3 rules · steered 2×");
-    // On Windows the folder goes as spelt, so the daemon's start check also reads what Rerail 0.1.4 saved under it.
-    expect(new URL(requested[0]!).searchParams.get("repository")).toBe(process.platform === "win32" ? nested : await realpath(nested));
+    expect(new URL(requested[0]!).searchParams.get("repository")).toBe(await realpath(nested));
   });
 
   it("says starting, not unavailable, while the daemon has not recorded the session's start yet (#302)", async () => {
@@ -319,6 +318,36 @@ describe("installed session presentation", () => {
     expect(rendered).toContain("\u001b]8;;http://127.0.0.1/\u0007R E R A I L\u001b]8;;\u0007");
     expect(rendered).toContain("\u001b]8;;http://127.0.0.1/#rules\u00072 rules\u001b]8;;\u0007");
     expect(rendered).not.toContain("\u001b\\");
+  });
+});
+
+describe("the folder as spelt, which the daemon's start check reads what Rerail 0.1.4 saved under", () => {
+  /** `folder` with its drive letter in the other case, as VS Code spells it on Windows; as it is elsewhere. */
+  const otherCase = (folder: string) => folder.replace(/^[a-z](?=:)/iu, letter => letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase());
+  const askedFor = () => requested.map(href => new URL(href).searchParams).map(query => [query.get("repository"), query.get("spelling")]);
+
+  it("goes on Windows apart from `repository`, which stays the real path, to a daemon that says it reads it", async () => {
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, readsSpelling: true }));
+    const spelt = otherCase(cwd);
+    await readPresentation({ sessionId, host: "claude-code", cwd: spelt });
+    await readRepositoryState(spelt, "claude-code");
+    const stored = await realpath(cwd);
+    expect(askedFor()).toEqual(Array(2).fill([stored, process.platform === "win32" && spelt !== stored ? spelt : null]));
+  });
+
+  it("does not go to a daemon whose state does not say so, which refuses a query value it does not know", async () => {
+    const spelt = otherCase(cwd);
+    await readPresentation({ sessionId, host: "claude-code", cwd: spelt });
+    await readRepositoryState(spelt, "claude-code");
+    expect(askedFor()).toEqual(Array(2).fill([await realpath(cwd), null]));
+  });
+
+  it("does not go where the folder is spelt as its real path", async () => {
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, readsSpelling: true }));
+    const stored = await realpath(cwd);
+    await readPresentation({ sessionId, host: "claude-code", cwd: stored });
+    await readRepositoryState(stored, "claude-code");
+    expect(askedFor()).toEqual(Array(2).fill([stored, null]));
   });
 });
 

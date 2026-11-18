@@ -34,8 +34,9 @@ export function checkoutRealpath(path: string): string {
  * upgrades from those versions, delete this function, {@link earlierPhysicalPath}, and what the compiler then names:
  * the earlier-key read of `SqliteAuditControlStore` (`#settingsRow`, `#earlierKey`, `#savedHere`, `#outsideGit`,
  * `settingsUnderEither`, `recordedRepository`, `SpeltFolder`), `CheckoutContext.earlierCheckoutPath` with `earlierKeyOf`,
- * `earlierKeyAt` and `ownStarted`'s second key in `repository-registry.ts`; and `startStateFolder` in
- * `session-presentation.ts`, which hands the daemon the folder as spelt for this lookup.
+ * `earlierKeyAt`, `spelledCheckout` and `ownStarted`'s second key in `repository-registry.ts`; the `spelling` value
+ * of `GET /api/presentation` (`readingSpelling` in `operations.ts`, `DaemonState.readsSpelling`, and the
+ * `spelling` that `presentationQuery` in `session-presentation.ts` hands the daemon for this lookup).
  */
 export function earlierRealpath(path: string): string {
   return realpathOn("linux")(path);
