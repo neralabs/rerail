@@ -267,9 +267,12 @@ function readOrCreateIdentity(identityPath: string, candidate: string): string {
  * `workspace`'s clone id, created on first use and stored atomically in Git's common metadata directory. Linked
  * worktrees share it; clones and forks receive a new one; a legacy `rerail.repository-id` Git config value is adopted
  * when it is a well-formed id. Folders outside Git use the same file contract under `.rerail`, which must not be a
- * symlink.
+ * symlink; there an id file not created yet takes the id `recordedIdAt` gives for the folder, where the caller holds
+ * one, else a new one.
  */
-export function resolveCloneId(workspace: string): { cloneId: string; location: RepositoryIdentityLocation } {
+export function resolveCloneId(
+  workspace: string, recordedIdAt?: (location: RepositoryIdentityLocation) => string | undefined,
+): { cloneId: string; location: RepositoryIdentityLocation } {
   const location = repositoryIdentityLocation(workspace);
   if (location.git) {
     const legacyId = gitText(location.workspaceRoot, ["config", "--local", "--get", "rerail.repository-id"]) ?? "";
@@ -284,7 +287,7 @@ export function resolveCloneId(workspace: string): { cloneId: string; location: 
     if (errorCode(error) !== "EEXIST") throw error;
     if (!lstatSync(directory).isDirectory()) throw new Error(`${directory} is not a directory Rerail can keep its identity in`);
   }
-  return { cloneId: readOrCreateIdentity(location.identityPath, randomUUID()), location };
+  return { cloneId: readOrCreateIdentity(location.identityPath, recordedIdAt?.(location) ?? randomUUID()), location };
 }
 
 export interface RemoteAddress {

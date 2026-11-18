@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer, type Server } from "node:http";
@@ -6,18 +7,31 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { type AdapterDelivery, conflictNote, defaultRerailDatabasePath, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
+import { type AdapterDelivery, codeRuleSchema, conflictNote, defaultRerailDatabasePath, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
 import { claudeHookOutput, handleClaudeEvent } from "../../../src/hosts/claude/claude-hook-adapter.js";
 import { runClaudeHook } from "../../../src/hosts/claude/claude-hook.js";
 import { bindSteerReceipt, type HookInput, type HookOptions } from "../../../src/harness/index.js";
 import { dashboardOrigin, presentedSessionNoteRules } from "../../../src/presentation/index.js";
 import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
+import { setUpTestRepository } from "../../support/repository-rules.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 import { editSteer, steeredRules } from "../../support/steers.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
 import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
+
+/** A code rule that steers every `print(` in a Python file. */
+const NO_PRINT = codeRuleSchema.parse({
+  format: "rerail.policy/v1", id: "test:no-print", revision: 1, mode: "steer",
+  scope: { include: ["**/*.py"], exclude: [] },
+  clauses: [{
+    id: "no-print",
+    violation: { code: "PRINT", anchor: "witness.span", message: "Use logging" },
+    forbid: { regex: { pattern: "\\bprint\\(", source: "file.content" } },
+  }],
+});
 
 /**
  * `hookOptions` without the test's embedder, so a hook takes the daemon path a coding agent's hook takes, and, unless
@@ -260,6 +274,43 @@ describe("Claude Code hook with a running daemon", () => {
     expect(await ledgerSamples(root, "reply-session", "message")).toEqual([
       { eventId: "reply-session:message:m1:3", text: "Here is the plan:\n\nFix the test." },
     ]);
+  });
+
+  it("records and checks a session in a worktree whose main checkout was deleted, under the repository it was recorded in", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const main = join(root, "main");
+    const worktree = join(root, "feature");
+    await mkdir(main);
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, stdio: "ignore" });
+    git(main, "init", "-q", "-b", "main");
+    git(main, "commit", "-q", "--allow-empty", "-m", "first");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    setUpTestRepository(main, { library: [{ kind: "code", rule: NO_PRINT }] });
+    startTestRepository(worktree);
+    // Git refuses the worktree from here on: its .git file names a Git folder that went with the main checkout.
+    await removeFolder(main);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    await startNativeTestDaemon(root);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+
+    const common = { session_id: "gone-main-session", cwd: worktree };
+    const file = join(worktree, "app.py");
+    const content = "print(1)\n";
+    const write = { ...common, tool_name: "Write", tool_use_id: "tool-1", tool_input: { file_path: file, content } };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    await runClaudeHook({ ...write, hook_event_name: "PreToolUse" }, daemonPath);
+    await writeFile(file, content);
+    const result = await runClaudeHook({ ...write, hook_event_name: "PostToolUse", tool_response: "ok" }, daemonPath);
+    const stop = await runClaudeHook({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: false }, daemonPath);
+
+    const database = new Database(defaultRerailDatabasePath(), { readonly: true });
+    try {
+      expect(database.prepare("SELECT kind FROM events WHERE session_id = ? AND kind IN ('call', 'result', 'turn-end') ORDER BY sequence")
+        .all("gone-main-session")).toEqual([{ kind: "call" }, { kind: "result" }, { kind: "turn-end" }]);
+    } finally {
+      database.close();
+    }
+    expect(JSON.stringify([result, stop])).toContain("test:no-print");
   });
 });
 

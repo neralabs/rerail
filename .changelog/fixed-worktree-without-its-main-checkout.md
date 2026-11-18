@@ -1,0 +1,1 @@
+A session in a Git worktree whose main checkout was deleted is recorded and checked again, under the repository and start state Rerail already had for that worktree. Before, Rerail told the agent it was on, then recorded nothing after the session's start and dropped the worktree's own settings.
