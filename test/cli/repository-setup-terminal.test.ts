@@ -83,28 +83,36 @@ describe("set-up in a terminal", { timeout: SETUP_TIMEOUT_MS }, () => {
     expectUntouched(setup);
   });
 
-  it("numbers the main flow's questions, counting the sessions question only when it is asked", async () => {
-    const setup = await fixture();
-    const approved = terminalIo(["", "1"]);
-    await runSetup(approved, request(setup, fakeSetupEnvironment()));
-    expect(approved.text()).toContain("Step 1 of 2 · Find rule packs for acme-api?");
-    expect(approved.text()).toContain("Step 2 of 2 · Start Rerail in acme-api with this rule pack?");
+  // One set-up per test: each test's time limit, SETUP_TIMEOUT_MS, is for one, and a loaded Windows run takes up to
+  // about 9 s for each.
+  describe("numbers the main flow's questions, counting the sessions question only when it is asked", () => {
+    it("as two steps where the sessions question was answered before", async () => {
+      const setup = await fixture();
+      const approved = terminalIo(["", "1"]);
+      await runSetup(approved, request(setup, fakeSetupEnvironment()));
+      expect(approved.text()).toContain("Step 1 of 2 · Find rule packs for acme-api?");
+      expect(approved.text()).toContain("Step 2 of 2 · Start Rerail in acme-api with this rule pack?");
+    });
 
-    const fresh = await fixture();
-    const asked = terminalIo(["", "", "1"]);
-    await runSetup(asked, request(fresh, fakeSetupEnvironment({ sessionsApproved: false })));
-    expect(asked.text()).toContain("Step 1 of 3 · OK for Rerail to read your coding agent sessions?");
-    expect(asked.text()).toContain("Step 2 of 3 · Find rule packs for acme-api?");
-    expect(asked.text()).toContain("Step 3 of 3 · Start Rerail in acme-api with this rule pack?");
+    it("as three steps where it is asked", async () => {
+      const fresh = await fixture();
+      const asked = terminalIo(["", "", "1"]);
+      await runSetup(asked, request(fresh, fakeSetupEnvironment({ sessionsApproved: false })));
+      expect(asked.text()).toContain("Step 1 of 3 · OK for Rerail to read your coding agent sessions?");
+      expect(asked.text()).toContain("Step 2 of 3 · Find rule packs for acme-api?");
+      expect(asked.text()).toContain("Step 3 of 3 · Start Rerail in acme-api with this rule pack?");
+    });
 
     // A folder named with --repo is the go-ahead to read it: no read-repo question to count.
-    const named = await fixture();
-    const other = gitRepository(join(named.root, "landing-page"));
-    const repo = terminalIo(["", "1"]);
-    await runSetup(repo, request(named, fakeSetupEnvironment({ sessionsApproved: false }), { repo: other }));
-    expect(repo.text()).toContain("Step 1 of 2 · OK for Rerail to read your coding agent sessions?");
-    expect(repo.text()).toContain("Step 2 of 2 · Start Rerail in landing-page with this rule pack?");
-    expect(repo.text()).not.toContain("Find rule packs for");
+    it("as two steps where it is asked and --repo names the folder", async () => {
+      const named = await fixture();
+      const other = gitRepository(join(named.root, "landing-page"));
+      const repo = terminalIo(["", "1"]);
+      await runSetup(repo, request(named, fakeSetupEnvironment({ sessionsApproved: false }), { repo: other }));
+      expect(repo.text()).toContain("Step 1 of 2 · OK for Rerail to read your coding agent sessions?");
+      expect(repo.text()).toContain("Step 2 of 2 · Start Rerail in landing-page with this rule pack?");
+      expect(repo.text()).not.toContain("Find rule packs for");
+    });
   });
 
   it("installs, connects and turns on nothing when the person answers not now", async () => {

@@ -69,6 +69,11 @@ export interface DaemonState {
    * the key, and this names it and the command that fixes it. Absent for every other daemon.
    */
   remoteRefused?: string;
+  /**
+   * True where the daemon's `GET /api/presentation` takes `spelling`, the folder as a Windows host spelt it. Absent in
+   * a state file an older daemon wrote: that one refuses a query value it does not know, so it is not sent one.
+   */
+  readsSpelling?: boolean;
 }
 
 /** Header a Rerail process, and the dashboard page, send the daemon's {@link DaemonState.accessToken} in. */
