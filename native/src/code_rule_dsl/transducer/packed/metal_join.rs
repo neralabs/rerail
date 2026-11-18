@@ -341,7 +341,8 @@ static inline void view_put(device uchar* out, ulong rows_at, uint r, uint c, lo
     clif_rows_put((device const uchar*)out, rows_at, r, c, ulong(v));
 }
 
-// p: the root's offset, the view (`device_chunk::VIEW_*`), the rows, the columns, an axis's pairs' offset (else 0),
+// p: the root's offset, the view (`device_chunk::VIEW_*`), the rows, the columns, 0 (an axis's pairs' place until
+// decision 0353 step 5),
 // the made relation's rows' descriptor's offset (low, high), then each column's index.
 kernel void view_expand(device const char* B [[buffer(0)]], device uchar* out [[buffer(1)]], constant uint* p [[buffer(2)]],
                         uint r [[thread_position_in_grid]]) {
@@ -351,16 +352,6 @@ kernel void view_expand(device const char* B [[buffer(0)]], device uchar* out [[
     device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
     device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
     uint view = p[1];
-    if (view == 4u) {
-        // An axis read whole (`Within`): a pair of node rows, inner << 32 | outer; each column the node's id.
-        ulong pair = ((device const ulong*)(B + p[4]))[r];
-        for (uint c = 0u; c < p[3]; c++) {
-            uint row = p[7 + c] == 0u ? uint(pair >> 32) : uint(pair & 0xffffffffu);
-            device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, row)];
-            view_put(out, rows_at, r, c, global_of(d, row - d.node_row));
-        }
-        return;
-    }
     if (view >= 5u && view <= 8u) {
         // core.rr's places (`View::Loc`): the document whose `Loc` rows hold `r`, then its local's span.
         uint lo = 0u, hi = root->ndocs;
@@ -471,19 +462,26 @@ kernel void axis_count(device const char* B [[buffer(0)]], device uint* start [[
     start[v] = count;
 }
 
-// Each node row's rows from its start (the scanned counts): inner << 32 | outer, nearest first. p[4] is the rows
-// the pairs' space holds: when the total (`start[n]`) is more, nothing is written, and the host writes again.
-kernel void axis_write(device const char* B [[buffer(0)]], device const uint* start [[buffer(1)]], device ulong* pairs [[buffer(2)]],
+// Each node row's rows from its start (the scanned counts), nearest first: the ids of `n` and `a`, written once into
+// the axis's relation (decision 0353 step 5) through the writer written once, bounded by its chunks. p[4] is the
+// rows the relation holds, the total (`start[n]`) read before: a total past it writes nothing. p[5], p[6]: the
+// relation's rows' descriptor's offset in `out`'s block (low, high).
+kernel void axis_write(device const char* B [[buffer(0)]], device const uint* start [[buffer(1)]], device uchar* out [[buffer(2)]],
                        constant uint* p [[buffer(3)]], uint v [[thread_position_in_grid]]) {
     if (v >= p[1] || start[p[1]] > p[4]) return;
+    ulong rows_at = ulong(p[5]) | (ulong(p[6]) << 32);
     device const ChunkRoot* root = (device const ChunkRoot*)(B + p[0]);
     device const ChunkDoc* docs = items<ChunkDoc>(root->docs);
     device const ChunkDoc& d = docs[doc_of_node(docs, root->ndocs, v)];
     uint at = start[v];
-    uint up = parent_of(d, v - d.node_row);
+    uint l = v - d.node_row;
+    long n_id = global_of(d, l);
+    uint up = parent_of(d, l);
     for (uint k = 0u; k < d.nodes && up != CH_NONE; k++) {
         if (axis_member(B, p[2], d, up)) {
-            pairs[at++] = ulong(v) << 32 | ulong(d.node_row + up);
+            view_put(out, rows_at, at, 0u, n_id);
+            view_put(out, rows_at, at, 1u, global_of(d, up));
+            at++;
             if (p[3] == 0u) break;
         }
         up = parent_of(d, up);
@@ -1910,25 +1908,15 @@ pub fn available() -> bool {
     rerail_accel::gpu::join::device().is_ok()
 }
 
-/// A kind-set axis's batch solve on the device, written into `chunk` (decision 0289 §2, `facts::nearest::ChunkAxis`):
-/// each node's rows counted by a climb of its ancestors, the counts scanned into the starts, then the pairs written,
-/// in one submission. The pairs' space is sized before the count: a nearest axis has at most a row per node, so its
-/// bound is exact; containment's is `INSIDE_ROWS` a node, and the rare batch past it writes again once its total is
-/// read. The space past the total is given back to the block. The starts and the pairs are page-aligned in the
-/// block, each bound as a buffer of its own with no copy; the block reserves address space, so the bound's pages
-/// the device never writes are never memory.
+/// A kind-set axis's batch solve on the device (decision 0289 §2, `facts::nearest::ChunkAxis`), from `chunk`: each
+/// node's rows counted by a climb of its ancestors and the counts scanned into the starts (in the chunk, page-aligned,
+/// bound as a buffer of their own with no copy); then, the total read, the rows written, each the ids of `n` and `a`,
+/// into a relation of exactly that many rows (decision 0353 step 5). It is a derived fact like a rule's head: it lies
+/// in a run's block, not leased from the device's budget, which a room sized before the count (containment's up to
+/// several rows a node) filled.
 pub fn axis_in_chunk(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk, bits: Option<&[u32]>, inside: bool)
                      -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String> {
-    axis_in_chunk_bounded(chunk, bits, inside, INSIDE_ROWS)
-}
-
-/// Containment's rows a node that the pairs' space is sized for before the count.
-const INSIDE_ROWS: usize = 8;
-
-/// `axis_in_chunk`, with containment's space sized for `inside_rows` a node (a test makes it 0, to write again).
-pub(in crate::code_rule_dsl) fn axis_in_chunk_bounded(chunk: &crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk,
-                                                      bits: Option<&[u32]>, inside: bool, inside_rows: usize)
-                                                      -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String> {
+    use crate::code_rule_dsl::facts::rows::Part;
     use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::ChunkRoot;
     const PAGE: usize = 16384;
     let b = &chunk.block;
@@ -1939,6 +1927,7 @@ pub(in crate::code_rule_dsl) fn axis_in_chunk_bounded(chunk: &crate::code_rule_d
         Some(words) => {
             let p: *mut u32 = b.try_alloc_t(words.len()).ok_or_else(full)?;
             // SAFETY: just allocated for `words.len()` values.
+            // copy: not block data: the set's membership bits, made here for the kernel.
             unsafe { std::ptr::copy_nonoverlapping(words.as_ptr(), p, words.len()) };
             b.offset_of(p)
         }
@@ -1946,48 +1935,42 @@ pub(in crate::code_rule_dsl) fn axis_in_chunk_bounded(chunk: &crate::code_rule_d
     };
     let start_bytes = (4 * (n + 1)).next_multiple_of(PAGE);
     let start_at = b.try_alloc(start_bytes, PAGE).ok_or_else(full)?;
-    let cap = if inside { inside_rows * n } else { n }.min(u32::MAX as usize);
-    let cap_bytes = (8 * cap).max(8).next_multiple_of(PAGE);
-    let pairs_at = b.try_alloc(cap_bytes, PAGE).ok_or_else(full)?;
     let device = rerail_accel::gpu::join::device()?;
     let whole = b.gpu_buffer(device);
-    let part = |at: usize, bytes: usize| {
-        device.new_buffer_with_bytes_no_copy(b.ptr::<u8>(at) as *const std::ffi::c_void, bytes as u64, metal::MTLResourceOptions::StorageModeShared, None)
-    };
-    let starts = part(start_at, start_bytes);
-    let pairs = part(pairs_at, cap_bytes);
+    let starts = device.new_buffer_with_bytes_no_copy(b.ptr::<u8>(start_at) as *const std::ffi::c_void, start_bytes as u64, metal::MTLResourceOptions::StorageModeShared, None);
     let count = pipeline("chunk_views", "axis_count", chunk_views_source)?;
     let write = pipeline("chunk_views", "axis_write", chunk_views_source)?;
     let at = |o: usize| u32::try_from(o).map_err(|_| "the axis lies past 4 GB of its chunk".to_string());
-    let p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), cap as u32];
+    let mut p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), 0, 0, 0];
     let scan = Scan::owned(n + 1)?;
     let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
-    let pass = batch.pass(17).map_err(|e| format!("{e:?}"))?;
+    let pass = batch.pass(16).map_err(|e| format!("{e:?}"))?;
     pass.run(&count, &[&whole, &starts], &p, &[], groups(n + 1));
     scan.encode(pass, &starts)?;
-    if n > 0 {
-        pass.run(&write, &[&whole, &starts, &pairs], &p, &[], groups(n));
-    }
     batch.finish().map_err(|e| format!("{e:?}"))?;
     // SAFETY: the scan completed: its last value is the total.
     let len = unsafe { *b.ptr::<u32>(start_at + 4 * n) } as usize;
-    if len <= cap {
-        b.shrink_last(pairs_at, cap_bytes, (8 * len).max(8).next_multiple_of(PAGE));
-        return Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: start_at, pairs: pairs_at, len });
+    // Alone in its block, with room for an index by each column: strata probe an axis by `n` and by `a`.
+    let rows = Part::for_writes_indexed(2, len, 2);
+    if len > 0 {
+        let needed = rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
+        let rows_at = rows.rows_at() as u64;
+        (p[4], p[5], p[6]) = (len as u32, rows_at as u32, (rows_at >> 32) as u32);
+        let out = rows.facts().block.gpu_buffer(device);
+        let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
+        let pass = batch.pass(1).map_err(|e| format!("{e:?}"))?;
+        pass.run(&write, &[&whole, &starts, &out], &p, &[], groups(n));
+        batch.finish().map_err(|e| format!("{e:?}"))?;
+        // Bounded by the relation's chunks (decision 0403): what the writer refused fails the solve, which the host
+        // then makes.
+        let now = rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
+        if now != needed {
+            return Err(format!("the axis's writer refused {} rows past its relation's chunks (decision 0403)", now.wrapping_sub(needed)));
+        }
     }
-    // Past the bound: the write was skipped, and is made again into space of the total's size.
-    let _span = crate::code_rule_dsl::logic::profile::span(|| format!("containment past {inside_rows} rows a node: written again"));
-    b.shrink_last(pairs_at, cap_bytes, 0);
-    let pairs_bytes = (8 * len).next_multiple_of(PAGE);
-    let pairs_at = b.try_alloc(pairs_bytes, PAGE).ok_or_else(full)?;
-    let pairs = part(pairs_at, pairs_bytes);
-    let whole = b.gpu_buffer(device);
-    let p = [p[0], p[1], p[2], p[3], len as u32];
-    let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
-    let pass = batch.pass(1).map_err(|e| format!("{e:?}"))?;
-    pass.run(&write, &[&whole, &starts, &pairs], &p, &[], groups(n));
-    batch.finish().map_err(|e| format!("{e:?}"))?;
-    Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: start_at, pairs: pairs_at, len })
+    // SAFETY: the write completed, every row below the total written.
+    unsafe { rows.written(len as u32) };
+    Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: start_at, rows })
 }
 
 /// A relation's columns on the device: `rows` 64-bit values each, column-major.
@@ -2789,10 +2772,9 @@ impl Batch {
 
     /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into
     /// `out`, a relation of `out.rows` rows whose columns are `cols` in order: what `Viewed::row_at` made on the host.
-    /// `pairs`: an axis's pairs' offset in the block (`device_chunk::VIEW_AXIS`), else 0.
 // copy (0353 step 4): a view expanded into a relation (660.8 MB a run on hogql). It goes: a view is a
 // read of the tape, and a stage reads it in place (decision 0353).
-    pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &metal::Buffer, root: usize, view: u32, pairs: usize, cols: &[usize], out: &DevRel) -> Result<(), Error> {
+    pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &metal::Buffer, root: usize, view: u32, cols: &[usize], out: &DevRel) -> Result<(), Error> {
         let expand = pipeline("chunk_views", "view_expand", chunk_views_source)?;
         static EXPANDED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(4, "4", "a view expanded into a device relation (expand_view)");
         EXPANDED.copied(8 * out.rows * cols.len());
@@ -2800,7 +2782,7 @@ impl Batch {
         let pass = self.pass(1)?;
         let at = |o: usize| u32::try_from(o).map_err(|_| Error::BackendCapacity);
         let rows_at = out.rows_at();
-        let mut p = vec![at(root)?, view, out.rows as u32, cols.len() as u32, at(pairs)?, rows_at as u32, (rows_at >> 32) as u32];
+        let mut p = vec![at(root)?, view, out.rows as u32, cols.len() as u32, 0, rows_at as u32, (rows_at >> 32) as u32];
         p.extend(cols.iter().map(|&c| c as u32));
         if out.rows > 0 {
             pass.run(&expand, &[block, &out.buffer.buffer], &p, &[], groups(out.rows));

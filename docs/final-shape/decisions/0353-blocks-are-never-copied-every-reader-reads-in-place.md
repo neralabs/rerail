@@ -372,7 +372,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 3 | The chunk block's node columns: `core`, `up`, `fielded`, `low`, `start`, `end`, `kind`, `field`, and the canonical code copy. `low` is made by one scan of the granule table. `core`, `up` and `fielded` are made here from the rank index and the walk, now that the host holds no arrays of them. | `device_chunk.rs`, `build` (`made`, `made_in_order`, `put`) | 22 bytes a node; 0.07 s a run | Step 4 |
 | 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 660.8 MB, 111.5 ms a run | Step 4 |
 | 5 | Views, flat relations and names uploaded from the host | `metal_join.rs`, `DevRel::upload`; `device.rs`, `resident`, `texts` | 7.4 MB, 22.1 ms a run | Steps 4, 6 |
-| 6 | An axis's pairs copied into the chunk, then expanded to ids | `within.rs`; `device_chunk.rs`, `put_pairs`; `VIEW_AXIS` | 8 bytes a pair, then the expansion | Step 5 |
+| 6 | Gone (step 5, 2026-11-18): an axis's pairs copied into the chunk, then expanded to ids. The solve writes ids once into a relation of its own, which every reader reads where it lies; `put_pairs` and `VIEW_AXIS` are deleted. `has` is still made per looked-up node and uploaded (row 5) until its probe climbs the tape | — | — | Done |
 | 7 | `core.rr`'s and the vtab's per-node rows: tape answers (`line`, `end_line`, `col`, `docof`, `visit_index`, `doc_root`, `host_node`) and eager derived values (`text`, `parts`, `words`, `intval`, `op_t`) | `syntax.rs` `node rows`, `NodeRows`; `core_rr`; `tree.rs`; `guests.rs` | 0.45–0.49 s of CPU a run | Step 3 |
 | 8 | The CPU's head rows, staged in `Fresh`, merged by `extend_from_slice`, then pushed into the relation | `setfix.rs`, `Fresh` | Every row a CPU stratum derives | Step 6 |
 | 9 | A second key's index copies the relation (`DevIndex::moved`); a relation over several blocks merged for the device (`in_block`) | `metal_join.rs`; `facts/rows.rs` | Q67 counts them | Step 6 |
@@ -659,6 +659,24 @@ Each step ends with:
    - The solve, on the CPU or the GPU, writes its answers as ids into a relation in the chunk block, which both read.
    - `put_pairs` and `VIEW_AXIS` go.
    - `has`, made per looked-up node, is a probe that climbs the tape, not an upload.
+   - Built 2026-11-18, for the batch's solve (`nearest`, `inside`, `within`):
+     - The relation lies alone in a run's block (`Part::for_writes_indexed`), not the chunk block: a derived fact
+       like a rule's head, with room for an index by each column (strata probe an axis by `n` and by `a`). In the
+       chunk block, or in a block of its own sized before the count and leased from the device's budget (a first
+       cut: containment's room 8 rows a node), it filled the budget: refusals rose from 5–38 to 23–52 a run.
+     - On the device: `axis_count` and the scan (one submission), the total read, then `axis_write` writes each row's
+       two ids (`global_of`) through `view_put`, the writer written once, bounded by the relation's chunks
+       (decision 0403). The starts (node row → first row) stay in the chunk; on the CPU, a vector beside the
+       relation.
+     - On the CPU: the climb counts, then writes `batch.id` of each side into the same kind of relation.
+     - Every reader reads it in place: `value` and `documents_of` through `Part::get`, the device through
+       `Source::in_block` (`DevRel::in_block`). `Within::device_view`, its `pairs` and `on_device`, `view_expand`'s
+       axis branch, `DeviceView.pairs` and `expand_view`'s argument for it are deleted; view number 4 stays unused.
+     - `has` is left: its probe that climbs the tape on the device is a probe read, done with 4b's parent probes.
+   - Measured (hogql, 16z, the Metal binding, cold; interleaved with the commit before, 3 pairs at load 23–33):
+     copies 125.9 MB a run against 792.4 MB (rows 4, 6 and the axis's row 9 at 0: 472.1, 143.0 and up to 124.5 MB);
+     strata refused at run time 2, 2 and 2 against 22, 10 and 5; peak 817–928 MB against 831–1,023 MB; instructions
+     106.1–113.0 B against 103.1–108.2 B; findings 1,629, and 1,629 in format 15.
 6. **The executors write and index in place.**
    - The CPU's head rows are claimed and written in the relation's block, as the device's are (0325 step 4). A
      round's new rows are the relation's delta range; `Fresh`'s staging and merge go.

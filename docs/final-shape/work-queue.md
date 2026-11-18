@@ -1527,6 +1527,15 @@ inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan
 
 Q68 (step 6's prices) waits for step 4: most of what it prices goes.
 
+4. Step 5 is built for the batch's solve (2026-11-18, 0353 step 5): the axis's ids written once into a relation of
+   its own in a run's block, with room for its two indexes, read in place by the CPU and the device. hogql 16z:
+   copies 125.9 MB a run against 792.4 MB, refusals at run time 2 a run against 5–22, findings 1,629. Left: `has`'s
+   probe on the device (with 4b's parent probes), then step 6.
+
+Q68 after step 5: the refusals that remain on hogql are 2 a run (binding tables, one index of 0.8 M rows). The
+device-budget failures surfaced as a bare `BackendFailure`: a `String` error turned into `Error` loses its text
+(`compiler::Error::from`), so a refusal names no cause; naming it is part of Q68.
+
 ### Q90. Parked strata resumed on another thread are refused to the CPU — done 2026-11-18
 
 A stratum whose device joins wait for the wave (`setfix::device::submit`) keeps its encoded runs in its thread's

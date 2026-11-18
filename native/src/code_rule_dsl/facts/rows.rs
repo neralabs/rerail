@@ -177,7 +177,8 @@ impl Part {
         // A device relation is written once at its size, and lives as the device's buffers did: alone in a block of
         // its size (leased within the device's budget), given back with it. A run's tail grows: its block has room for
         // it to double.
-        let alone = life == Life::Device;
+        // A run's relation with room for indexes (`for_writes_indexed`) lies alone too: its indexes lie with it.
+        let alone = life == Life::Device || extra > 0;
         let mut open = OPEN[life as usize].lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
             let facts = match &*open {
@@ -216,6 +217,27 @@ impl Part {
         Ok(part)
     }
 
+    /// Row `id`'s value in column `c`, read where it lies.
+    #[inline]
+    pub fn get(&self, id: u32, c: usize) -> i64 {
+        self.cols[c].get(id)
+    }
+
+    /// Stores row `id`'s value `v` in column `c`.
+    ///
+    /// # Safety
+    /// Row `id` is within the rows reserved, and no reader reads it until it is claimed (`written`).
+    #[inline]
+    pub unsafe fn put(&self, id: u32, c: usize, v: i64) {
+        // SAFETY: as the caller says.
+        unsafe { self.rel().rows.put(id, c, v) }
+    }
+
+    /// Where it lies, for a reader that binds its block (the device, decision 0325).
+    pub fn in_block(&self) -> InBlock {
+        InBlock { facts: self.facts.clone(), at: self.rel_at(), rows: self.len(), dead: 0 }
+    }
+
     /// Its relation's descriptor's offset in its block: what a reader's `rel_*` reads take.
     pub fn rel_at(&self) -> usize {
         self.facts.block.offset_of(self.rel)
@@ -242,6 +264,16 @@ impl Part {
     /// `rows_at`), then says how many it wrote (`written`).
     pub fn for_writes(k: usize, rows: usize) -> Part {
         Part::new(Life::Run, k, rows)
+    }
+
+    /// `for_writes`' relation alone in a run's block, with room for `indexes` indexes of its rows, one for each key its
+    /// readers probe it by (an axis's, by `n` and by `a`: decision 0353 step 5): a key past them copies the relation
+    /// (`DevIndex::moved`). A derived fact like a rule's head, not leased from the device's budget.
+    pub fn for_writes_indexed(k: usize, rows: usize, indexes: usize) -> Part {
+        let cap = rows.next_power_of_two().max(1);
+        let one = 4 * (cap + 1) + 4 * rows.max(1) + 3 * 64;
+        let room = indexes.clamp(1, rerail_blocks::relation::ADDED_INDEXES) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>();
+        Part::try_new_with(Life::Run, k, rows, room).unwrap_or_else(|e| panic!("a run's relation of {rows} rows: {e}"))
     }
 
     /// Its rows' descriptor's offset in its block: what a writer's `rows_at` takes.
