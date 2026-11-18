@@ -53,7 +53,7 @@ pub(super) trait Part: Sized + Send {
     fn shown(&self, heads: &BTreeSet<String>) -> Vec<String>;
     /// Drops each rule whose head `gone` names.
     fn drop_heads(&mut self, gone: &dyn Fn(&str) -> bool);
-    /// Bounded to the documents it shows (`hiding::hide`).
+    /// Bounded to the documents it shows (`preparation::hide::Hide`).
     fn hide(&mut self, bound: u32) -> Result<()>;
     /// `rr::lower::undo_on_request`.
     fn undo_on_request(&mut self) -> Result<()>;

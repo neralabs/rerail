@@ -1148,7 +1148,7 @@ pub const GUEST_POLICY: &str = "guest_policy";
 /// language `GUEST_KEYS..ANNOTATION_KEYS`, annotations (type expressions, Python's in a Python run)
 /// `ANNOTATION_KEYS..HIDDEN_KEYS`, and every other document (a guest in another grammar, a value) `HIDDEN_KEYS..2^31`
 /// (decision 0058 §1: what a rule sees is a bound on these keys). A rule that does not name a guest sees files and code
-/// guests; a relation an annotation's rows reach (`corpus::hiding::fold_own`) sees annotations too.
+/// guests; a relation an annotation's rows reach (`corpus::preparation::combining::FoldOwn`) sees annotations too.
 pub const GUEST_KEYS: u32 = 1 << 30;
 pub const ANNOTATION_KEYS: u32 = (1 << 30) + (1 << 28);
 pub const HIDDEN_KEYS: u32 = (1 << 30) + (1 << 29);

@@ -1547,7 +1547,7 @@ fn every_switch_lowering_reads_is_classified() {
     combining.push(("corpus.rs, combine_tail".to_owned(), region("\nfn combine_tail(", "\n}\n")));
     combining.push(("corpus.rs, the combine's tail".to_owned(), region("\nenum Tail {", "\n/// The programs `programs` linked into one")));
     combining.push(("corpus.rs, combine_linked_as".to_owned(), region("\nfn combine_linked_as<", "Ok((all, Tail::Many { hide, policies }))")));
-    // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`hiding::fold_own`,
+    // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`combining::FoldOwn`,
     // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
     // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under
     // `choices::key`, which holds the switches those read (`RERAIL_INLINE`, `RERAIL_INLINE_ONLY`,
@@ -1555,7 +1555,7 @@ fn every_switch_lowering_reads_is_classified() {
     let mut preparing = sources(&[
         "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs", "logic/magic", "logic/plan/lower.rs",
         "logic/plan/corpus/cross_memo.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
-        // Its passes, on the version (`preparation`): the front's, the lowering's, `fold_own`'s and the merges, and
+        // Its passes, on the version (`preparation`): the front's, the lowering's, `FoldOwn`'s and the merges, and
         // the combine's fact spaces.
         "logic/plan/corpus/preparation.rs", "logic/plan/corpus/preparation",
         "logic/plan/corpus/session.rs", "logic/profile.rs", "logic/costs.rs", "typing/file_local.rs", "typing/file_local",

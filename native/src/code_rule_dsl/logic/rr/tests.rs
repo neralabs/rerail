@@ -4279,7 +4279,7 @@ fn a_request_is_kept_for_a_gone_reader_and_for_a_readers_copy() {
     copy.head.rel = "a_g".into();
     p.push_rule_from(copy, a);
     assert_eq!(p.asked_by["q"], vec![by(&["a", "a_g"]), by(&["b"])]);
-    // The copy folded back into `a` (hiding's `fold_own`), or merged: its requests serve `a`.
+    // The copy folded back into `a` (hiding's `FoldOwn`), or merged: its requests serve `a`.
     p.rename_readers(|b| (b == "a_g").then(|| "a".to_owned()));
     assert_eq!(p.asked_by["q"], vec![by(&["a"]), by(&["b"])]);
     // A reader `prune` drops leaves the record, beside one it keeps: a later gate cannot take it for a gone one.

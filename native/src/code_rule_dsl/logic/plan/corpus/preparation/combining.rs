@@ -3,7 +3,7 @@
 //!
 //! - `FactSpaces`: the canonical relations and each narrower policy's guards (decision 0091).
 //! - `same_relations`: the relations that are one made one after combining.
-//! - `FoldOwn`: `hiding::fold_own`, the copies hiding made for guests in the run's own language folded back.
+//! - `FoldOwn`: the copies hiding made for guests in the run's own language folded back.
 
 use super::simplify::{Made, Out, Tm, write_rule};
 use crate::code_rule_dsl::logic::front;
@@ -369,8 +369,14 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn bound(v: &Version, f: Field
     if off { GUEST_KEYS } else { ANNOTATION_KEYS }
 }
 
-/// `hiding::fold_own` on the version (see there): the copies of `label`'s own guests folded into their originals.
-/// How many copies and kind sets it folded.
+/// Folds the copies hiding made for guests in the run's own language back into their originals, once the run's
+/// language (`label`) is known (decision 0058). Such a guest's documents are shown (`GUEST_KEYS..HIDDEN_KEYS`, a
+/// guest whose grammar's label is the run's: `guests::key`) and its kinds are the run's (`python:x` resolves as `x`),
+/// so a copy specialized to it holds its original's rows: its rules differ only by the seeded column's bound, which
+/// those documents are under, and by the qualified kinds. Its readers read the original, its rules go, and a
+/// qualified kind of `label` is written plainly; a clone (O110) is then its rule again, dropped as a repeat by
+/// `DropRepeated`. With guests not shown (`bound`, `.guests off`) nothing is folded.
+/// `folded`: how many copies and kind sets it folded. `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
 pub(in crate::code_rule_dsl::logic::plan::corpus) struct FoldOwn<'a> {
     pub(in crate::code_rule_dsl::logic::plan::corpus) label: &'a str,
     pub(in crate::code_rule_dsl::logic::plan::corpus) folded: usize,
@@ -388,6 +394,7 @@ impl ProgramPass for FoldOwn<'_> {
             return Ok(());
         }
         let dialect = crate::code_rule_dsl::logic::plan::corpus::hiding::dialect_label;
+        // `rr_in_<g>_<c>_…<orig>`, every `<g>` the run's own (as `Hide` names them: `g` with non-alphanumerics as `_`).
         let grammars: Vec<&str> = ["annotation", label].into_iter().filter(|g| dialect(g) == label).collect();
         let own_mid = |mut mid: &str| -> bool {
             if mid.is_empty() {
@@ -405,6 +412,7 @@ impl ProgramPass for FoldOwn<'_> {
         let mut folded: HashMap<String, String> = HashMap::new();
         for rel in declared.iter().filter(|r| r.starts_with("rr_in_")) {
             let tail = &rel["rr_in_".len()..];
+            // The longest original that leaves an own prefix.
             let orig = (0..tail.len()).filter(|&i| tail.is_char_boundary(i)).map(|i| (&tail[..i], &tail[i..])).find(|(mid, orig)| !orig.starts_with("rr_in_") && declared.contains(*orig) && own_mid(mid));
             if let Some((_, orig)) = orig {
                 folded.insert((*rel).to_owned(), orig.to_owned());
@@ -421,6 +429,8 @@ impl ProgramPass for FoldOwn<'_> {
         if folded.is_empty() && sets.is_empty() {
             return Ok(());
         }
+        // An original holds its copies' rows: its rules' bounds take the annotations in (`ANNOTATION_KEYS` to
+        // `HIDDEN_KEYS`), as its copies' seeded columns did. A rule that does not reach an annotation keeps the bound.
         let originals: BTreeSet<String> = folded.values().cloned().collect();
         let (narrow, wide) = (i64::from(ANNOTATION_KEYS), i64::from(HIDDEN_KEYS));
         let plain = format!("{label}:");
@@ -476,7 +486,7 @@ impl ProgramPass for FoldOwn<'_> {
     }
 }
 
-/// `fold_own`'s edit of each rule.
+/// `FoldOwn`'s edit of each rule.
 struct Folding<'a> {
     folded: &'a HashMap<String, String>,
     sets: &'a HashMap<String, String>,

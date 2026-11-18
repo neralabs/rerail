@@ -126,7 +126,7 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_AST_PARTS",
     "RERAIL_AST_PART_CAPTURES",
     "RERAIL_RULE_ORDER",
-    // Guests' copies kept unfolded (`hiding::fold_own`).
+    // Guests' copies kept unfolded (`combining::FoldOwn`).
     "RERAIL_SHOWN_COPIES",
 ];
 
@@ -3558,7 +3558,7 @@ fn run_observed(
     // With requests answered inside the fixpoint too: the cone runs first, so every loaded document's exports, the
     // component rules' only reads, are in before the components are (decision 0065 §2a).
     // The copies hiding made for guests in the run's own language are folded where the program is prepared (decision
-    // 0058, `fold_own`): a function of the combined program and the run's language, which the prepared key names, so a
+    // 0058, `FoldOwn`): a function of the combined program and the run's language, which the prepared key names, so a
     // program read prepared is not folded first.
     let loading_run = world::wanted(&*v, &shape);
     let cross_declared = cross_memo::declared(&*v).filter(|_| cross_mode != cross_memo::Mode::Off && label == "python");

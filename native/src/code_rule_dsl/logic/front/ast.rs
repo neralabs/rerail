@@ -467,7 +467,7 @@ impl Program {
         self.rules.push(rule);
     }
     /// Renames readers in the request record, as a pass that merges or folds relations renames their reads
-    /// (`simplify::merge_identical`, hiding's `fold_own`): a request of a merged reader serves the relation it was
+    /// (`simplify::merge_identical`, hiding's `FoldOwn`): a request of a merged reader serves the relation it was
     /// merged into.
     pub fn rename_readers(&mut self, rename: impl Fn(&str) -> Option<String>) {
         for readers in self.asked_by.values_mut().flatten() {
