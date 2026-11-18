@@ -3135,6 +3135,33 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // The fixed points' equations prove most apart: one row's tokens in a region, the other's
     // outside it (a string's content and a comment's opener).
     let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
+    // A walk's regions (`block::Walk`): a byte is one kind's at most, as the walk opens a region
+    // only outside the others. That holds of all the kinds together, not of two alone (each
+    // pair is apart because the others are): one value, any two kinds' places at one byte,
+    // proved never by induction on itself; then each pair a lemma of the proofs after.
+    let walks = low.program.walks.clone();
+    for w in &walks {
+        let val = |low: &Lowering, v: u16| low.names.values().copied().find(|x| x.v == v);
+        let places: Vec<(usize, Val)> = w.kinds.iter().enumerate().flat_map(|(k, kind)| [(k, kind.open), (k, kind.fill)]).filter_map(|(k, v)| val(low, v).map(|x| (k, x))).collect();
+        let mut pairs = Vec::new();
+        for (i, &(ka, a)) in places.iter().enumerate() {
+            for &(kb, b) in &places[i + 1..] {
+                if ka != kb {
+                    pairs.push((a, b, low.and(a, b)?));
+                }
+            }
+        }
+        let Some(mut any) = pairs.first().map(|p| p.2) else { continue };
+        for p in &pairs[1..] {
+            any = low.or(any, p.2)?;
+        }
+        if settled.never_inductive(&low.proof_ops(), &low.program.tables, any.v, any.d) {
+            for (a, b, _) in pairs {
+                let lag = |x: Val| u32::from(any.d - x.d);
+                settled.add_lemma(vec![(a.v, lag(a), true), (b.v, lag(b), true)]);
+            }
+        }
+    }
     for a in 0..rows.len() {
         for b in a + 1..rows.len() {
             if shares(a, b) {
