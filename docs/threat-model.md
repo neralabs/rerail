@@ -733,8 +733,9 @@ should not widen it.
   nested worktree or submodule are not skipped, nor is any repository's when the process started outside it. The
   daemon finds Git once, from the folder and `PATH` it started with, and keeps it. The daemon alone looks again, from the
   same folder, `PATH` and repository and by the same checks, only when a start of the Git it kept finds no program
-  there, and within that call's time limit. A hook or a command never looks again: such a start fails that call, and
-  the next process looks for Git afresh at its first call. The daemon alone also asks whether the home share
+  there. That call waits for the look only within its time limit and until it is stopped: then it fails as its start
+  did, and the look goes on for the calls after it. A hook or a command never looks again: such a start fails that
+  call, and the next process looks for Git afresh at its first call. The daemon alone also asks whether the home share
   `HOMEDRIVE` and `HOMEPATH` name is a folder, to put that home's `bin` on `PATH` as Git for Windows' launcher does; a
   hook's or a command's Git gets both homes' `bin`, the share's first.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
