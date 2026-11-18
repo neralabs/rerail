@@ -1671,8 +1671,16 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   (3.2–4.4 s); every line planned in the round before its loop; whole replans a round a chunk; device from 6 steps.
   Planning 5.2–5.3 s against the planner's 8.2–9.2 s; work −4.8% in two pairs. "Doubled searches" was chunking;
   "probe re-planning" was an index build.
-- **Open**: a CPU-bound unprofiled run makes no plan records, so it stores no samples; rounds merged across strata
-  running at once (one a stratum is the floor now); more pairs for the work difference.
+- **Rounds shared, buckets as numbers, the threshold measured** (the user's 1 and 2): strata planned at once share
+  dispatches (8,192 rounds, 5,408 dispatches); the categorical columns reach the device as bucket numbers; the
+  device's threshold is measured per forest at training (the engine's: 1 to 3 steps). The model's prediction CPU
+  is 0.39 s. Earlier per-call numbers were from the unoptimized tests' build, and are corrected in 0354.
+- **A stratum planned once per run** (the user's 4): not done. Kept plans already decide most lines. A chunk repeats
+  the check that they hold and the spec built from them (3.6 to 5.7 s of about 150 s), and 30% of lines' sizes move
+  more than 2× between chunks. Planning once per run would save it, but chunks' plans would stop following their
+  sizes. That is the user's choice (0354).
+- **Open**: a CPU-bound unprofiled run makes no plan records, so it stores no samples; more pairs for the work
+  difference.
 - **Next**: model-planned runs over more corpora, the model retrained between; filters (×1.58 to ×1.70) and
   the median; the first step's samples (delta and seed sizes); one sample per line and place with counts. Then the
   model on by default where it wins, and step 2.

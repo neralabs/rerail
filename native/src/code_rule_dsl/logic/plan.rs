@@ -2381,6 +2381,7 @@ impl Model {
     /// `late`), as what the rounds should have asked. `priced`: a line that is searched whatever was kept
     /// (`plan_rule_live`).
     pub(in crate::code_rule_dsl) fn late(&mut self, f: Fields<'_>, b: &Body<'_>, first: Option<usize>, priced: bool) -> Result<()> {
+        let _span = super::profile::span(|| "late statistics".into());
         let rels: Vec<&str> = b.reads_statistics().into_iter().filter(|x| self.deferred(x)).collect();
         if rels.is_empty() || !priced && !self.needs_statistics(b, first) {
             return Ok(());
@@ -2422,7 +2423,10 @@ impl Model {
         // A line with work queued for its next plan (decision 0203: a wider search, a proposal not tried) is searched.
         let pending = joins::pending(&key);
         let kept = if pending { None } else { kept };
-        let sizes = self.live_sizes_at(b, first, &misses);
+        let sizes = {
+            let _span = super::profile::span(|| "kept plan: its sizes".into());
+            self.live_sizes_at(b, first, &misses)
+        };
         if super::profile::on() {
             note_planned(key);
         }
@@ -2431,13 +2435,17 @@ impl Model {
         };
         // A rule whose line did less work than a search when it last ran (scaled by how much what it reads grew)
         // keeps its order as it is: neither searched nor priced (decision 0122).
+        let budget = super::profile::span(|| "kept plan: the budget".into());
         if let Some(k) = &kept && let Some(got) = self.budget_takes(k, b, first, &sizes) {
+            drop(budget);
+            let _span = super::profile::span(|| "kept plan: taken, remembered".into());
             plan_cache(8);
             super::profile::decision("plan cache (decision 0038)", || format!("a kept plan taken as it is: its rule did {} rows of work when it last ran, less than a search costs (decision 0122)", k.5.unwrap_or(0.0)));
             // Its sizes now, against which the next run's growth is measured.
             remember(&key, &got);
             return Ok(got);
         }
+        drop(budget);
         // Why a kept plan was not taken as it is (`RERAIL_PLAN_CACHE_COUNTS`).
         if plan_budget() && let Some(k) = &kept {
             let why = match (&k.4, k.5) {
@@ -8082,8 +8090,11 @@ impl<'a> Run<'a, '_> {
         // Round 1 (decision 0123): the seeds' statistics, those that will be priced.
         let seed_bodies: Vec<Body<'_>> = seeds.iter().map(|&r| vs.at(r)).collect();
         let mut wanted = BTreeSet::new();
-        self.model.wants(seed_bodies.iter().map(|b| (b, None)), &mut wanted);
-        self.model.make_statistics(pf, &wanted)?;
+        {
+            let _span = super::profile::span(|| "statistics requested".into());
+            self.model.wants(seed_bodies.iter().map(|b| (b, None)), &mut wanted);
+            self.model.make_statistics(pf, &wanted)?;
+        }
         self.heavy_for(seeds.iter().copied(), false, None);
         plan_site("a stratum's seed");
         let mut ahead = self.model.plan_ahead(pf, &seed_bodies.iter().map(|b| (b, None)).collect::<Vec<_>>());
@@ -8185,8 +8196,11 @@ impl<'a> Run<'a, '_> {
             let whole = rec.iter().any(|(_, a)| whole_wanted(self, a));
             rec.into_iter().filter(|(ai, _)| !lazy.contains_key(&(r, *ai))).map(|(ai, _)| (b, Some(ai))).chain(whole.then_some((b, None))).collect::<Vec<_>>()
         }).collect();
-        self.model.wants(round.iter().copied(), &mut wanted);
-        self.model.make_statistics(pf, &wanted)?;
+        {
+            let _span = super::profile::span(|| "statistics requested".into());
+            self.model.wants(round.iter().copied(), &mut wanted);
+            self.model.make_statistics(pf, &wanted)?;
+        }
         self.heavy_for(rules.iter().copied(), false, None);
         let mut ahead = self.model.plan_ahead(pf, &round);
         let mut probes = Vec::new();

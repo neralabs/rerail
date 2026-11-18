@@ -161,6 +161,7 @@ impl<'a> Run<'a, '_> {
         scc: &BTreeSet<String>,
         native_rels: &BTreeSet<String>,
     ) -> Option<Arc<JoinSpec>> {
+        let _span = super::super::profile::span(|| "a line's join spec".into());
         let mut bound = VarSet::new();
         for s in steps {
             let mut add = |t: TermRef<'_>| {
