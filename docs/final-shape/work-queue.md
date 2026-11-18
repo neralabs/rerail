@@ -5201,3 +5201,66 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - **Open for 0361's owner**: most rules test a kind's constant, so fewer lines are prepared. A prepared order that
   is right for every constant needs the constants' frequencies, which no fact gives; the run's statistics have them.
 
+
+### Q243. PostHog on Metal (2026-11-18): what a cold run still needs
+
+- **Runs** (M3 Max, profiling build at 2667b6d36, cold, `opts-m3-reuse.json`, load 36–73; every run that finished
+  gave 29,747 findings, fa0efeaed6ff):
+
+  | run | binding | chunk | Metal budget | wall | CPU | instructions | GPU busy | outcome |
+  |---|---|---|---|---|---|---|---|---|
+  | hc155001 | CPU | 262,144 | – | 69 s | 197 s | 2,226 G | – | done |
+  | qf143646 | CPU | default | – | 67 s | 232 s | 2,542 G | – | done |
+  | gm160557 | `metal` | 262,144 | 512 MB | 150 s | 208 s | 2,060 G | 8.0 s | 1,686 leases past the budget, refused to the CPU |
+  | gn161450, go161705 | `metal` | 262,144 | 4 GB, 1 GB | – | – | – | – | stopped: the AST matcher wave, `BackendCapacity` |
+  | gp161752 | `metal` | default | 4 GB | 78 s | 219 s | 1,938 G | 18.8 s | 18,252 of 152,677 runs on the GPU |
+  | ga161936 | `always` | default | 4 GB | 94 s | 236 s | 1,781 G | 44.8 s | 98,765 of 117,451 runs on the GPU; abort at exit |
+
+- **Wanted**, each its own item below: Q244 (dispatches), Q245 (big chunks), Q246 (prices), Q247 (computed terms and
+  the other refused forms), Q248 (uploads are copies), Q249 (the abort at exit).
+
+### Q244. The device's work is millions of small dispatches: 5.2 M dispatches, 223 k submissions, 23 s encoding
+
+- **Seen** (ga161936, `always`): 638,337 stages in 223,563 submissions and 5,178,767 dispatches; the host's CPU
+  35.6 s (encode 23.3 s, uploads 9.5 s) for 44.8 s of GPU time. `metal` (gp161752): 58,597 submissions, 1.53 M
+  dispatches, encode 8.0 s. A chunk's stratum's stage is a dispatch of its own.
+- **Wanted**: a level's strata, across chunks, enqueued as one persistent dispatch over a work queue (the device's
+  enqueue is a work queue), so dispatches and submissions scale with levels, not chunks × strata × stages.
+
+### Q245. A big chunk does not run on Metal: the AST matcher wave stops on `BackendCapacity`, leases past 512 MB
+
+- **Seen**: at 262,144-node chunks with a 1 GB or 4 GB Metal budget, `ast_wave.rs:155` panics "the ast matcher wave
+  failed on Metal: BackendCapacity" (decision 0382 §6: no CPU wave in its place), though its comment says what does
+  not fit is split (0334). At the default 512 MB the wave stays on the CPU, and 1,686 strata's leases fail
+  (`device budget: a lease of N MB past the Metal budget`); peak footprint 4.2 GB.
+- **Wanted**: the wave split to what fits; which of the interpreter's `BackendCapacity` sites it is named (the error
+  carries no origin); strata's leases sized to the budget.
+
+### Q246. Placement's GPU prices are far off: `metal` costs more CPU than the CPU binding
+
+- **Seen** (gp161752): `ann_ctx` 2,236 GPU runs, 5.46 s host CPU and 1.99 s GPU, where its 758 CPU runs took 0.17 s;
+  `walk` est 3,147 ms, actual 1.45 s host + 1.51 s GPU; gm160557's `tgt` 11.3 s host on the GPU against 16 ms on the
+  CPU. The prices leave out the host's encoding and each dispatch's cost (Q244).
+- **Wanted**: the device's measured per-run host and GPU costs priced (decision 0354's learned correction trained on
+  these runs), so `metal` never costs more than the CPU binding.
+
+### Q247. Strata the device has no form for: computed terms (13–18 s CPU), split, gates, several indexes
+
+- **Seen** (ga161936): `@rr_node_text` in a comparison (16 strata, 15.9 s), `@cat` in a head (4, 8.9 s), `@pkg_up`,
+  `@rx_group`, `@concat`, `@head`, `@replace_all`, `@str_between`, `@substr`, `@rr_node_value`; refused at run time:
+  "no native seed join" (`parsed_in`), "an atom over the component's own relation by several indexes"
+  (`exported/public_name`), "split has no device form" (`rr_agg7`), "a component with gates or requests".
+- **Wanted**: device forms for the text terms first (`@rr_node_text`, `@cat`): 25 s of the 32 s.
+
+### Q248. Inputs' views are uploaded to the device: 0.8–1.3 GB a run, 5.9–8.8 s of host CPU
+
+- **Seen**: "uploads by what they read: views 769 MB in 5,855 ms" (ga161936), 1,274 MB in 8,756 ms (gm160557). On
+  unified memory these are copies (decision 0353): the device should read the inputs' blocks in place.
+- **Wanted**: Native-and-GPU-strata's 0353 steps 4b–5 (the transducer's kernels and the view read in place) merged,
+  then the views' uploads counted again.
+
+### Q249. An `always` run aborts at exit: a thread local read during or after its destruction
+
+- **Seen** (ga161936): after the outputs were written, `main` panicked "cannot access a Thread Local Storage value
+  during or after destruction", "thread local panicked on drop, aborting" (rc 134). No backtrace.
+- **Wanted**: the drop that reads it named (a run with `RUST_BACKTRACE=1`), and fixed.
