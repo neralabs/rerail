@@ -862,6 +862,10 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
   `dotted` mark at `fun ValueMapperBuilder.forKotlin()` (bytes 2165 to 2192, across 2176) in
   pkl's `ConfigExtensions.kt`; the interpreter's mark is right. `tests::tier1_records` over
   step 27's lexer with `by_w` as the stop reproduces it. The ladder uses an undelayed stop.
+  It still reproduces with every mark but `dotted` taken out and `dotted = recv_at`. It does not
+  reproduce in a small lexer with the same receiver masks over plain comment and string regions,
+  even with `code` or `by_w` made to look up to 30 bytes ahead. So it needs something more of
+  step 27's lexer, perhaps its token loop running in parts.
 
 - Open: the lean parser's lost block comments (26 corpus files, three escapes). After a line
   break, before a token that goes on the line, it keeps the comment as a zero-width
