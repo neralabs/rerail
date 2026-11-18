@@ -19,24 +19,7 @@ impl ProgramPass for Prune {
         let rules: Vec<RuleRef<'_>> = v.rules().collect();
         let head = |i: usize| v.rel_name(rules[i].head().rel());
         // Each request's readers, rule by rule (`Program::asked_by`, the `asked` rows).
-        let b0 = w.input().clone();
-        let asked: BTreeMap<String, Vec<BTreeSet<String>>> = {
-            let mut out: BTreeMap<String, Vec<BTreeSet<String>>> = BTreeMap::new();
-            for f in b0.about_facts().into_iter().filter(|f| b0.text(f.name()) == "asked") {
-                for row in f.rows() {
-                    let row: Vec<Cell> = row.collect();
-                    if let [_, Cell::Str(req), Cell::Int(k), Cell::Str(by)] = row.as_slice() {
-                        let k = *k as usize;
-                        let e = out.entry(b0.text(*req).to_owned()).or_default();
-                        if e.len() <= k {
-                            e.resize_with(k + 1, BTreeSet::new);
-                        }
-                        e[k].insert(b0.text(*by).to_owned());
-                    }
-                }
-            }
-            out
-        };
+        let asked = asked_of(w.input());
         let mut gate: Vec<Option<&BTreeSet<String>>> = vec![None; rules.len()];
         for (req, readers) in asked.iter().filter(|(req, _)| !roots.contains(req)) {
             let at: Vec<usize> = (0..rules.len()).filter(|&i| head(i) == req.as_str()).collect();
@@ -109,17 +92,7 @@ impl ProgramPass for Prune {
         }
         let b = w.on()?;
         if asked_after != asked {
-            let p = super::demand::about_p(b);
-            let mut rows = Vec::new();
-            for (req, readers) in &asked_after {
-                for (k, by) in readers.iter().enumerate() {
-                    for x in by {
-                        let (q, y) = (b.atom(req), b.atom(x));
-                        rows.push(vec![p, Cell::Str(q), Cell::Int(k as i64), Cell::Str(y)]);
-                    }
-                }
-            }
-            b.set_about_rows("asked", rows);
+            set_asked(b, &asked_after);
         }
         // The natives' rows (each names its native in column 1).
         if !dropped_natives.is_empty() {
@@ -129,4 +102,38 @@ impl ProgramPass for Prune {
         }
         Ok(())
     }
+}
+
+/// Each request's readers, rule by rule (`Program::asked_by`): the version's `asked` rows.
+pub(super) fn asked_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> BTreeMap<String, Vec<BTreeSet<String>>> {
+    let mut out: BTreeMap<String, Vec<BTreeSet<String>>> = BTreeMap::new();
+    for f in v.about_facts().into_iter().filter(|f| v.text(f.name()) == "asked") {
+        for row in f.rows() {
+            let row: Vec<Cell> = row.collect();
+            if let [_, Cell::Str(req), Cell::Int(k), Cell::Str(by)] = row.as_slice() {
+                let k = *k as usize;
+                let e = out.entry(v.text(*req).to_owned()).or_default();
+                if e.len() <= k {
+                    e.resize_with(k + 1, BTreeSet::new);
+                }
+                e[k].insert(v.text(*by).to_owned());
+            }
+        }
+    }
+    out
+}
+
+/// Writes `asked` as the version's `asked` rows, by request, rule and reader.
+pub(super) fn set_asked(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, asked: &BTreeMap<String, Vec<BTreeSet<String>>>) {
+    let p = super::demand::about_p(b);
+    let mut rows = Vec::new();
+    for (req, readers) in asked {
+        for (k, by) in readers.iter().enumerate() {
+            for x in by {
+                let (q, y) = (b.atom(req), b.atom(x));
+                rows.push(vec![p, Cell::Str(q), Cell::Int(k as i64), Cell::Str(y)]);
+            }
+        }
+    }
+    b.set_about_rows("asked", rows);
 }

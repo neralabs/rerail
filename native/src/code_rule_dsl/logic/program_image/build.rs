@@ -252,6 +252,15 @@ impl<'p> Builder<'p> {
         self.enc.set_from(id.0 - self.enc.rule_base(), rule.id());
         id
     }
+    /// Adds a copy of `rule`, one of `from`'s, with the source `from` records for it (`RuleRef::source`): a rule
+    /// carried into a new base as it was, as a kept link splices the parts it did not link again.
+    pub fn copy_as_is(&mut self, from: &Version, rule: RuleRef<'_>) -> RuleId {
+        let id = self.copy(from, rule);
+        if let Some(src) = rule.source() {
+            self.enc.set_from(id.0 - self.enc.rule_base(), src);
+        }
+        id
+    }
     fn same(&self, rule: RuleRef<'_>) -> bool {
         self.ids.is_some_and(|v| v.holds_image(rule.image()))
     }

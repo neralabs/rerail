@@ -387,6 +387,11 @@ pub fn measured_lane_for(kernel: &Kernel) -> Option<Lane> {
 pub trait Pending {
     /// Waits for it to complete: its outputs, in its launches' order.
     fn finish(self: Box<Self>) -> Result<Vec<Output>, String>;
+    /// Whether it already ran to its end as it began (a submission the backend ran at once): the worker then hands
+    /// its outputs back before it begins the next, which would otherwise hold them for that one's whole run.
+    fn done(&self) -> bool {
+        false
+    }
 }
 
 /// A submission that ran as it began.
@@ -395,6 +400,9 @@ struct Ready(Result<Vec<Output>, String>);
 impl Pending for Ready {
     fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
         self.0
+    }
+    fn done(&self) -> bool {
+        true
     }
 }
 
@@ -672,7 +680,12 @@ fn worker(backend: Arc<dyn Backend>, board: Arc<Scoreboard>) -> std::sync::mpsc:
                             r
                         })
                     };
-                    if let Some(f) = flight.replace(Flight { claims, ids, ticket, start, pending }) {
+                    let begun = Flight { claims, ids, ticket, start, pending };
+                    // One that ran as it began (or failed to begin) is handed back now: kept in flight, its outputs
+                    // would wait for the next submission's whole run.
+                    if begun.pending.as_ref().map_or(true, |p| p.done()) {
+                        lane_host(lane, || begun.end(&board, lane));
+                    } else if let Some(f) = flight.replace(begun) {
                         lane_host(lane, || f.end(&board, lane));
                     }
                     continue;

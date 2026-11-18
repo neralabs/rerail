@@ -18,6 +18,7 @@ mod magic;
 mod prune;
 mod simplify;
 mod nearest;
+pub mod parts;
 pub mod text;
 pub use merge::{DropRepeated, MergeIdentical};
 pub use nearest::Nearest;

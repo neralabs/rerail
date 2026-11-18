@@ -282,7 +282,7 @@ impl Text {
     /// on the tree as well, a debug build's tree check and the run queued two images of one program under one key,
     /// the encoded tree's bytes and the folded version's, and the store refused the second.
     pub fn lower_in(self, src: &str, library: &Library, scoped: &Scoped, store: Option<&crate::content_store::ContentStore>) -> Result<Option<Program>, Error> {
-        let Some(v) = self.lower_in_version(src, library, scoped, store)? else { return Ok(None) };
+        let Some(v) = self.lower_in_version(src, library, scoped, store, None)? else { return Ok(None) };
         v.program(&Default::default()).map(Some).map_err(Error::Syntax)
     }
 
@@ -356,15 +356,28 @@ impl Text {
 
     /// `lower_in` as a version: the stored image handed on unread (decision 0281's path, step 7a-2); else the text
     /// lowered, and its image kept.
-    pub fn lower_in_version(self, src: &str, library: &Library, scoped: &Scoped, store: Option<&crate::content_store::ContentStore>) -> Result<Option<std::sync::Arc<super::program_image::Version>>, Error> {
+    /// `found`: the image as the caller read it already (`images::read_all`, its lease renewed there), or `None` to
+    /// read it here.
+    pub fn lower_in_version(self, src: &str, library: &Library, scoped: &Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<images::Found>>) -> Result<Option<std::sync::Arc<super::program_image::Version>>, Error> {
         if !matches!(self.0, Read::Modular { .. }) {
             return Ok(None);
         }
-        let key = program_key(src, &scoped.keys);
-        if let Some((bytes, id)) = images::read(store, key)
+        let key = {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "a program's image key".into());
+            program_key(src, &scoped.keys)
+        };
+        let read_here = found.is_none();
+        let found = match found {
+            Some(found) => found,
+            None => {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "a program's image, from the store".into());
+                images::read(store, key)
+            }
+        };
+        if let Some((bytes, id)) = found
             && let Ok(version) = super::program_image::Version::open(&bytes)
         {
-            if let (Some(store), Some(id)) = (store, id) {
+            if read_here && let (Some(store), Some(id)) = (store, id) {
                 renew_image(store, id);
             }
             crate::code_rule_dsl::prof::count("rr.program_image_read", 1);
@@ -849,6 +862,17 @@ pub(in crate::code_rule_dsl) fn keep_graph_image(store: Option<&crate::content_s
 /// The lease of image `id`, read by this run, renewed (`keep_image`) once more than half of it has run: a run that reads
 /// images an earlier run kept or renewed within that writes nothing (decision 0250), and an image read at least
 /// every half lease is never collected.
+/// `renew_image` of many images, their leases read in one statement's hold.
+pub(in crate::code_rule_dsl) fn renew_images(store: &crate::content_store::ContentStore, ids: &[crate::content_store::SourceId]) {
+    let now = image_lease() - IMAGE_LEASE_SECS;
+    let Ok(leases) = store.source_leases(ids, IMAGE_OWNER) else { return };
+    for (id, until) in ids.iter().zip(leases) {
+        if !until.is_some_and(|until| until - now > IMAGE_LEASE_SECS / 2) {
+            renew_image(store, *id);
+        }
+    }
+}
+
 fn renew_image(store: &crate::content_store::ContentStore, id: crate::content_store::SourceId) {
     use crate::content_store::write_back::Syms;
     let now = image_lease() - IMAGE_LEASE_SECS;

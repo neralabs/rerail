@@ -23,6 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Program, Term};
 
 /// What `combine` knows of one policy: its prefix, its own relations (prefixed), its globals (unprefixed), its scope.
+#[derive(Clone, Debug)]
 pub(super) struct Policy {
     pub prefix: String,
     pub own: BTreeSet<String>,

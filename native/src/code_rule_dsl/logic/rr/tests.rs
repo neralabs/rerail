@@ -3479,7 +3479,9 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
         // made them. So the programs are compared with every helper's number masked (`rr_agg#`, `rr_earlier#_f18`),
         // and a helper's rules by its stem alone (an aggregate's columns are its fresh variables in the order of
         // their names, which the numbers change).
-        let helper = regex::Regex::new(r"\brr_([a-z_]*[a-z])([0-9]+)\b").unwrap();
+        // A helper variable a reader's ask takes (decision 0291) keeps its number before the ask's suffix
+        // (`rr_text20_rr_d`): masked as the helper is.
+        let helper = regex::Regex::new(r"\brr_([a-z_]*[a-z])([0-9]+)((?:_rr_d)?)\b").unwrap();
         let fresh = regex::Regex::new(r"\brr_([a-z]+)([0-9]+)_([ft][0-9]+)\b").unwrap();
         let shape = |mut p: Program| {
             // Pruned as a corpus run prunes it: the requests the engine reads are outputs where a rule makes them
@@ -3539,7 +3541,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                 }
             }
             let kept = p.rules.clone();
-            let mask = |s: &str| helper.replace_all(&fresh.replace_all(s, "rr_${1}#_$3"), "rr_$1#").into_owned();
+            let mask = |s: &str| helper.replace_all(&fresh.replace_all(s, "rr_${1}#_$3"), "rr_$1#$3").into_owned();
             // A violation's rule for `@place` values (`rr_v0 < -1`) is made when any rule of the program makes one
             // (`lower`'s `place_values`): an unreached clause made it for the whole program, where no reached
             // rule makes the value it reads.
@@ -3896,7 +3898,7 @@ fn a_cone_copied_onto_the_version_is_the_trees() {
     let scoped = library.scoped(&files);
     // A debug build copies the tree's cone beside the version's and checks the two images agree (`lowered_in_version`).
     assert!(cfg!(debug_assertions), "the check is a debug build's");
-    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let heads: Vec<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
     assert!(heads.contains(&"cmp_same"), "the cone's rules are copied: {heads:?}");
     // The attributes on request are made again over the cone: its readers ask (decision 0174), and the library's own
@@ -3922,7 +3924,7 @@ fn a_context_in_a_cycle_is_widened_on_the_version() {
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
     assert!(cfg!(debug_assertions), "the check is a debug build's");
-    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let ctx: Vec<String> = v.rules().filter(|r| v.rel_name(r.head().rel()).starts_with("rr_ctx")).map(|r| v.show_rule(r)).collect();
     assert!(!ctx.is_empty() && ctx.iter().all(|r| !r.contains("ask(")), "{ctx:?}");
 }
@@ -3943,7 +3945,7 @@ fn the_lowerings_sets_are_made_on_the_version() {
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
-    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let r: Vec<String> = v.rules().filter(|x| v.rel_name(x.head().rel()) == "r").map(|x| v.show_rule(x)).collect();
     assert_eq!(r.len(), 1, "one rule of r, its literal once: {r:?}");
     assert_eq!(r[0].matches("a(").count(), 1, "{r:?}");
@@ -3964,7 +3966,7 @@ fn a_rule_left_reading_no_relation_reads_the_unit_on_the_version() {
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
-    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let r: Vec<String> = v.rules().filter(|x| v.rel_name(x.head().rel()) == "r").map(|x| v.show_rule(x)).collect();
     assert!(r.iter().all(|x| x.contains("rr_unit(0)")), "{r:?}");
 }
@@ -3984,7 +3986,7 @@ fn aggregate_demand_is_placed_on_the_version() {
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
-    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
     assert!(rules.iter().any(|x| x.starts_with("rr_demand_agg_")), "a demand is placed: {rules:#?}");
     let s: Vec<&String> = rules.iter().filter(|x| x.starts_with("s(")).collect();
@@ -4010,7 +4012,7 @@ fn finishs_rewrites_run_on_the_version() {
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
-    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
     let before = rules.iter().find(|x| x.starts_with("before(")).expect("before's rule");
     assert!(before.contains("node_order("), "{before}");
@@ -4037,7 +4039,7 @@ fn nullary_relations_and_the_scope_are_made_on_the_version() {
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
-    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
     assert!(rules.iter().any(|x| x.starts_with("flag(1)")) && rules.iter().any(|x| x.starts_with("r(") && x.contains("flag(1)")), "{rules:#?}");
     let head = v.header(&Default::default()).unwrap();
@@ -4064,7 +4066,7 @@ fn kind_sets_are_made_on_the_version() {
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
-    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let head = v.header(&Default::default()).unwrap();
     assert!(head.kindsets.get("calls").is_some_and(|k| k == &["call"]), "{:?}", head.kindsets);
     let heads: BTreeSet<&str> = v.rules().map(|x| v.rel_name(x.head().rel())).collect();
@@ -4082,7 +4084,7 @@ fn grammar_names_and_builtins_are_checked_on_the_version() {
         let files = super::read_text(&src).unwrap().files().expect("a modular text");
         let library = super::lower_library(&files, None).unwrap();
         let scoped = library.scoped(&files);
-        super::read_text(&src).unwrap().lower_in_version(&src, &library, &scoped, None).map(|v| v.expect("a modular text"))
+        super::read_text(&src).unwrap().lower_in_version(&src, &library, &scoped, None, None).map(|v| v.expect("a modular text"))
     };
     let refused = lower("hit(s) :- kind(s, \"string\"), parsed(s, \"postgres\", _).").map(|_| ()).unwrap_err().to_string();
     assert!(refused.contains("no grammar \"postgres\""), "{refused}");
@@ -4105,7 +4107,7 @@ fn span_patterns_are_found_on_the_version() {
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
-    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let head = v.header(&Default::default()).unwrap();
     use crate::code_rule_dsl::logic::front::SpanIn;
     assert!(head.rx_spans.iter().any(|(w, p)| *w == SpanIn::Line && p.contains("TODO")), "{:?}", head.rx_spans);
@@ -4121,7 +4123,7 @@ fn core_declarations_and_projections_are_made_on_the_version() {
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
-    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
     assert!(rules.first().is_some_and(|r| r.starts_with("kind($n, $k) :- node(")), "{rules:#?}");
     let head = v.header(&Default::default()).unwrap();
@@ -4145,7 +4147,7 @@ fn findings_are_written_on_the_version() {
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
-    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
     assert!(rules.iter().any(|r| r.starts_with("violation(") && r.contains("call_at(") && r.contains("\"C001\"")), "{rules:#?}");
     assert!(rules.iter().any(|r| r.starts_with("violation(") && r.contains("syntax_error(")), "{rules:#?}");
@@ -4171,7 +4173,7 @@ fn three_valued_relations_are_written_on_the_version() {
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
-    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None).unwrap().expect("a modular text");
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
     let has = |r: &str| rules.iter().any(|x| x == r);
     assert!(has("rr_must_p($x) :- known($x)") && has("p($x) :- known($x)") && has("p($x) :- base($x), !known($x)"), "{rules:#?}");
@@ -4191,7 +4193,7 @@ fn a_module_is_linked_and_checked_declared_on_the_version() {
         let files = super::read_text(&src).unwrap().files().expect("a modular text");
         let library = super::lower_library(&files, None).unwrap();
         let scoped = library.scoped(&files);
-        super::read_text(&src).unwrap().lower_in_version(&src, &library, &scoped, None).map(|v| v.expect("a modular text")).map_err(|e| e.to_string())
+        super::read_text(&src).unwrap().lower_in_version(&src, &library, &scoped, None, None).map(|v| v.expect("a modular text")).map_err(|e| e.to_string())
     };
     let e = lower("hit(n) :- kind(n, \"call\"), nowhere(n).").map(|_| ()).unwrap_err();
     assert!(e.contains("relation nowhere is read by the rule for hit and not declared"), "{e}");

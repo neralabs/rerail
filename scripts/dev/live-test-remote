@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 """Relax's live test loop on another Mac (docs/final-shape/notes/t37, §3 "On another Mac").
 
-    scripts/dev/live-test-remote [--host NAME] [--verbose] PACKAGE [--lib | --test NAME] [-- FILTER...]
+    scripts/dev/live-test-remote [--host NAME] [--verbose] [--once] PACKAGE [--lib | --test NAME] [-- FILTER...]
 
 Runs `relax test --live PACKAGE ...` on a host of the build farm (scripts/build/farm: the first usable one by default) in this
 checkout's copy there (under the host's farm root), and
@@ -11,6 +11,7 @@ the live process and Relax's store are the host's, and this machine spends only 
 
 Relax is `$RELAX`, else the one `scripts/dev/relax/build` installs (with its std), else `relax` on
 PATH; its std is `$RELAX_STD` if set. Both are sent to the host's farm root. Ctrl-C stops the session on the host too.
+`--once` stops it after the first verdict: a check that runs the named tests once, not a loop that waits for saves.
 """
 import ctypes
 import ctypes.util
@@ -91,10 +92,12 @@ def watch(root, on_files):
 
 
 def main(argv):
-    host, verbose = None, False
-    while argv and argv[0] in ("--host", "--verbose"):
+    host, verbose, once = None, False, False
+    while argv and argv[0] in ("--host", "--verbose", "--once"):
         if argv[0] == "--host":
             host, argv = argv[1], argv[2:]
+        elif argv[0] == "--once":
+            once, argv = True, argv[1:]
         else:
             verbose, argv = True, argv[1:]
     if not argv:
@@ -138,6 +141,8 @@ def main(argv):
     proc = subprocess.Popen(farm.ssh(host, remote, "live"), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, bufsize=1)
     pushed = [None]
+    # `--once`: the verdict's outcome, the exit status (0 when every test it ran passed).
+    passed = [None]
 
     def show():
         for line in proc.stdout:
@@ -146,11 +151,16 @@ def main(argv):
                     f" ({time.time() - started:.0f} s after the start)"
                 print(line.rstrip() + since, flush=True)
                 pushed[0] = None
+                if once:
+                    passed[0] = " failed=0 " in line
+                    # As Ctrl-C does: the main thread stops the session on the host.
+                    os.kill(os.getpid(), signal.SIGTERM)
             elif verbose or "error" in line.split(":", 1)[0] or line.startswith(("relax: ", "relax live")) or "panicked" in line:
                 print(line.rstrip(), flush=True)
         print(f"live-test-remote: the session on {host} ended (a lost host ends it: start it again,"
               " on another host or here)", flush=True)
-        os._exit(proc.wait() or 0)
+        status = proc.wait() or 0
+        os._exit((0 if passed[0] else 1) if passed[0] is not None else status)
 
     threading.Thread(target=show, daemon=True).start()
 
@@ -179,6 +189,8 @@ def main(argv):
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
+    if passed[0] is not None:
+        sys.exit(0 if passed[0] else 1)
 
 
 if __name__ == "__main__":

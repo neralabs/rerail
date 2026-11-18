@@ -4,10 +4,21 @@
 //! never protected, its pages kept. Only the reservation's cost differs; what a block holds and how it reads do not.
 
 use crate::block::PAGE;
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+
+/// The bytes `reserve` holds now (address space, not all of it resident): what a profile reads beside the heap, which
+/// never sees these mappings.
+static RESERVED: AtomicUsize = AtomicUsize::new(0);
+
+/// The bytes reserved now and not yet released.
+pub fn reserved() -> usize {
+    RESERVED.load(Relaxed)
+}
 
 /// `len` bytes (a multiple of `PAGE`), page-aligned, reading zero.
 pub fn reserve(len: usize) -> *mut u8 {
     debug_assert_eq!(len % PAGE, 0, "a reservation of whole pages");
+    RESERVED.fetch_add(len, Relaxed);
     #[cfg(unix)]
     {
         let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0) };
@@ -23,11 +34,17 @@ pub fn reserve(len: usize) -> *mut u8 {
     }
 }
 
+/// Counts `len` bytes about to be `release`d that `reserve` did not take (a file's mapping).
+pub fn uncounted(len: usize) {
+    RESERVED.fetch_add(len, Relaxed);
+}
+
 /// Gives back what `reserve` (or, on Unix, any mapping of `len` bytes at `p`) took.
 ///
 /// # Safety
 /// `p` and `len` are a reservation's (a mapping's), and nothing reads it after.
 pub unsafe fn release(p: *mut u8, len: usize) {
+    RESERVED.fetch_sub(len, Relaxed);
     #[cfg(unix)]
     unsafe {
         libc::munmap(p.cast(), len);
@@ -52,12 +69,55 @@ pub unsafe fn protect_read(p: *mut u8, len: usize) {
     let _ = (p, len);
 }
 
+/// Gives back the whole pages inside `len` bytes at `p` of an anonymous reservation that nothing will read or write
+/// again: on macOS as reusable (`MADV_FREE_REUSABLE`), which takes them out of the footprint at once (`MADV_FREE`
+/// leaves them counted until the OS wants them); elsewhere `MADV_FREE`. Pages the range only partly covers stay.
+///
+/// # Safety
+/// The range lies in a reservation of `reserve`'s, and nothing reads or writes it after.
+pub unsafe fn give_back(p: *mut u8, len: usize) {
+    let (start, end) = ((p as usize).next_multiple_of(PAGE), (p as usize + len) / PAGE * PAGE);
+    if end <= start {
+        return;
+    }
+    #[cfg(target_vendor = "apple")]
+    unsafe {
+        libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_FREE_REUSABLE);
+    }
+    #[cfg(all(unix, not(target_vendor = "apple")))]
+    unsafe {
+        libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_FREE);
+    }
+    #[cfg(not(unix))]
+    let _ = (start, end);
+}
+
+/// Marks pages `free_pages` gave back as in use again, before they are written: macOS counts them in the footprint
+/// again (without it, its ledger of reusable pages would not); elsewhere nothing.
+///
+/// # Safety
+/// `p` and `len` lie in a reservation.
+pub unsafe fn reuse_pages(p: *mut u8, len: usize) {
+    #[cfg(target_vendor = "apple")]
+    unsafe {
+        libc::madvise(p.cast(), len, libc::MADV_FREE_REUSE);
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    let _ = (p, len);
+}
+
 /// Tells the OS a reservation's pages need not be kept (their bytes may be lost); elsewhere nothing.
 ///
 /// # Safety
 /// `p` and `len` lie in a reservation, and nothing reads those bytes before writing them again.
 pub unsafe fn free_pages(p: *mut u8, len: usize) {
-    #[cfg(unix)]
+    // On macOS `MADV_FREE` leaves the pages in the footprint until the OS wants them; reusable ones leave it at
+    // once, and a later use marks them in use again (`reuse_pages`).
+    #[cfg(target_vendor = "apple")]
+    unsafe {
+        libc::madvise(p.cast(), len, libc::MADV_FREE_REUSABLE);
+    }
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     unsafe {
         libc::madvise(p.cast(), len, libc::MADV_FREE);
     }

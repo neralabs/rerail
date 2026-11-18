@@ -492,6 +492,12 @@ pub struct Stats {
     /// Exact postings of the program's constants: table → (column, value) → n. By table first: a relation's are
     /// read without a pass over every table's (`of_relation`, once per input of a session's run).
     pub memo: HashMap<String, HashMap<(String, Constant), i64>>,
+    /// The relations whose constants' postings in `memo` are estimates: counted over a sample of one chunk of a mix
+    /// and scaled to the others (`corpus::Own`). A constant missing from them is unknown, not absent: the chunk
+    /// measured may lack a value every other chunk holds. Priced as absent (one row), `#f65561` (a comprehension's
+    /// field) led `pre_115`'s plan in every chunk of a cold PostHog run: 14.5 M rows into three anti-joins, and 47
+    /// slow-plan checks measuring exact pair statistics that the kept plan never used.
+    pub estimated: BTreeSet<String>,
     steps_cache: StepsCache,
     kindsets: std::sync::Arc<BTreeMap<String, Vec<String>>>,
     /// (relation, column) → a lookup's CPU as a multiple of a derived relation's, where its source says it is not
@@ -608,6 +614,7 @@ impl Stats {
             indexes: Default::default(),
             docs: None,
             memo: HashMap::new(),
+            estimated: BTreeSet::new(),
             steps_cache: StepsCache::default(),
             kindsets: Arc::new(kindsets),
             lookup: Default::default(),
@@ -813,6 +820,7 @@ impl Stats {
             solving_digest: 0,
             indexes: Default::default(),
             docs: meta.get("docs").copied(),
+            estimated: BTreeSet::new(),
             memo: of("val").filter_map(|r| Some((text(&r[0]), (text(&r[1]), sql_constant(&r[3])?), int(&r[2])))).fold(HashMap::new(), |mut m, (t, k, n)| {
                 m.entry(t).or_insert_with(HashMap::new).insert(k, n);
                 m
@@ -826,10 +834,14 @@ impl Stats {
         })
     }
 
-    /// Exact postings for a constant probe on an input column; `None` if the column has no statistics.
+    /// Exact postings for a constant probe on an input column; `None` if the column has no statistics, or the value
+    /// is missing from postings that are estimates (`estimated`).
     pub fn const_freq(&self, rel: &str, cname: &str, v: &Constant) -> Option<i64> {
         if let Some(&n) = self.memo.get(rel).and_then(|m| m.get(&(cname.to_owned(), v.clone()))) {
             return Some(n);
+        }
+        if self.estimated.contains(rel) {
+            return None;
         }
         self.col.of(rel).is_some_and(|c| c.contains_key(cname)).then_some(0)
     }
@@ -975,6 +987,7 @@ impl Model {
             indexes: st.indexes.clone(),
             docs: st.docs,
             memo: HashMap::default(),
+            estimated: rels.iter().filter(|r| st.estimated.contains(*r)).cloned().collect(),
             steps_cache: StepsCache::default(),
             kindsets: st.kindsets.clone(),
             lookup: st.lookup.clone(),
@@ -5531,6 +5544,7 @@ impl<'a> Run<'a, '_> {
         let was: Vec<(String, Option<f64>)> = sizes.into_iter().map(|(r, n)| (r.clone(), self.model.stats.card.insert(r, n.max(1.0)))).collect();
         // The form's rules are planned as the run's are, read by their handles.
         // A local copy: the run's versions are not grown by a pricing.
+        let placing = super::profile::span(|| "derive again or maintain: the forms placed".into());
         let mut vs = (*self.versions).clone();
         let keys = |vs: &mut body::Versions, deltas: bool| -> Vec<RuleKey> {
             let n = if deltas { again.deltas.len() } else { again.rules.len() };
@@ -5555,8 +5569,15 @@ impl<'a> Run<'a, '_> {
             let calls = rules.iter().map(|&r| vs.head_at(r)).collect::<BTreeSet<_>>().len();
             Some(total + CALL * calls as f64)
         };
-        let again_cost = price(&again_rules, false);
-        let kept = price(&kept_rules, true);
+        drop(placing);
+        let again_cost = {
+            let _s = super::profile::span(|| format!("derive again or maintain: derived again planned ({} rules)", again_rules.len()));
+            price(&again_rules, false)
+        };
+        let kept = {
+            let _s = super::profile::span(|| format!("derive again or maintain: maintained planned ({} rules)", kept_rules.len()));
+            price(&kept_rules, true)
+        };
         for (r, n) in was {
             match n {
                 Some(n) => self.model.stats.card.insert(r, n),
@@ -5856,6 +5877,31 @@ impl<'a> Run<'a, '_> {
             freq: Vec::new(),
         });
         Ok(Some(source.len()))
+    }
+
+    /// A view of `node`'s columns `cols` (`input_view`) held in place (decision 0329, `hold_view_in_place`), where `src`
+    /// is a batch's: its statistics each column's exact ones, counted from the batch without reading its rows
+    /// (`syntax::node_column_counts`), as a copy's sketches gave them (`live_of`). `None`: `src` is not a batch's, and
+    /// the view is read into flat rows (`hold_view`).
+    fn hold_view_in_place(&mut self, rel: &str, src: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: &[usize], types: Vec<u8>) -> Option<LiveRel> {
+        if src.columns().len() != 5 {
+            return None;
+        }
+        let batch = src.python_batch()?;
+        let n = src.len() as i64;
+        let mut ndv = Vec::new();
+        let mut sq = Vec::new();
+        let mut freq: Vec<(usize, HashMap<Constant, i64>)> = Vec::new();
+        for (j, &c) in cols.iter().enumerate() {
+            let (d, s, counts) = crate::code_rule_dsl::facts::vtab::syntax::node_column_counts(&batch, c)?;
+            ndv.push(d);
+            sq.push(s);
+            if let Some(counts) = counts {
+                freq.push((j, counts.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect()));
+            }
+        }
+        super::native::component::hold_view_in_place(self.db, rel, Arc::clone(src), cols.to_vec(), types);
+        Some(LiveRel { n, delta: n, ndv, sq, freq })
     }
 
     /// The reach index (decision 0119, `front::Native::Reach` and `ReachThrough`) over relations the engine holds:
@@ -6727,6 +6773,9 @@ impl<'a> Run<'a, '_> {
         if rules.iter().any(|&r| self.versions.rule_at(r).1.body().any(|l| matches!(l.view(), Lit::Ast { .. }))) {
             return Err("an Ast literal");
         }
+        if self.input_view_stratum(scc, rules).is_some() {
+            return Err("a view of an input's columns, held on the run's thread");
+        }
         let mut reads: BTreeSet<String> = scc.clone();
         for &r in rules {
             let (v, rule) = self.versions.rule_at(r);
@@ -7373,18 +7422,6 @@ impl<'a> Run<'a, '_> {
         Some((base.to_owned(), src, cols))
     }
 
-    /// Gives view `rel` of `base`'s source columns `cols` (`input_view`) those columns' statistics, and its rows.
-    fn view_stats(&mut self, rel: &str, base: &str, src: &dyn crate::code_rule_dsl::facts::vtab::Source, cols: &[usize]) -> Result<()> {
-        self.model.stats.card.insert(rel.to_owned(), src.len().max(1) as f64);
-        let f = self.versions.whole(self.version);
-        self.model.resolve(f, [base])?;
-        let names = crate::code_rule_dsl::facts::vtab::named(base, src);
-        let Some((stats, vals)) = self.model.stats.of_columns(base, &names, cols) else { return Ok(()) };
-        let width = stats.len();
-        self.model.stats.measured(rel, stats.into_iter().enumerate().map(|(c, m)| (sql_col(rel, c), m)), vals.into_iter().map(|(c, v, n)| (sql_col(rel, c), v, n)));
-        input_stats(&mut self.model.stats, &mut self.model.ndv, Some(width), rel)
-    }
-
     /// Stratum `scc` (`rules`) as a view of an input's columns (`input_view`): its relation, and what it views.
     fn input_view_stratum(&self, scc: &BTreeSet<String>, rules: &[RuleKey]) -> Option<(String, String)> {
         let f = self.fields();
@@ -7629,18 +7666,26 @@ impl<'a> Run<'a, '_> {
             return Ok(Native::Ran);
         }
         // A copy of a bound input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _)`, 3.5 M rows a cold run of
-        // hogql): its relation is held as a view of the input's columns (`hold_view`), read in place by every reader,
-        // and no component copies it. `RERAIL_COPY_VIEWS` derives it as before (to measure what the view saves).
+        // hogql): its relation is the input's columns read once into flat rows (`hold_view`), and no component
+        // copies it. `RERAIL_COPY_VIEWS` derives it as before (to measure what the view saves).
         if let ([rel], [r]) = (rels.as_slice(), rules.as_slice())
             && based.is_empty() && gates.is_empty() && levels.is_empty() && !asks && !facts
             && let Some((base, src, cols)) = self.input_view(*r)
         {
-            // Its rows are the input's, one each, so each column's statistics are the input column's: without them
-            // each column read as one value, and its readers' plans probed it as all its rows.
-            self.view_stats(rel, &base, src.as_ref(), &cols)?;
-            super::native::component::hold_view(self.db, rel, src, cols.clone(), types(rel).into_bytes());
+            // Held in place where the source answers the view's probes and counts its columns itself (a batch's
+            // `node`, decision 0329): no row read. Else read once into flat rows (`hold_view`). Either way its
+            // statistics are a copy's, exact or sketched: its readers plan as they did when a stratum copied it.
+            let (form, live) = match self.hold_view_in_place(rel, &src, &cols, types(rel).into_bytes()) {
+                Some(live) => ("held in place", live),
+                None => {
+                    let _span = super::profile::span(|| "a view of an input's columns: its rows".into());
+                    let l = super::native::component::hold_view(self.db, rel, src, cols.clone(), types(rel).into_bytes());
+                    ("read into flat rows", LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, v.into_iter().map(|(v, m)| (Constant::Int(v), m)).collect())).collect() })
+                }
+            };
+            live_stats(&mut self.model, rel, live);
             INPUT_VIEWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            super::profile::stratum(&stratum_key(scc), "native set engine", || format!("a view of {base}'s columns {cols:?}: held in place, no component opened"));
+            super::profile::stratum(&stratum_key(scc), "native set engine", || format!("a view of {base}'s columns {cols:?}: {form}, no component opened"));
             self.native_rels.extend(scc.iter().cloned());
             return Ok(Native::Ran);
         }
@@ -7857,6 +7902,12 @@ impl<'a> Run<'a, '_> {
                 return Ok(Native::Declined);
             }
             rel_lines.push(SpecLine::Lattice { rel: ri[*r], keys: l.keys, name: f.text(l.lattice).to_owned(), widen: l.widen });
+        }
+        // The relations the run keeps past it (a chunk's exports): in blocks of their own, so a reader that holds
+        // them where they lie does not keep the run's other relations' blocks.
+        let kept_rows: Vec<usize> = rels.iter().filter(|r| self.model.inputs.kept.contains(r.as_str())).map(|r| ri[*r]).collect();
+        if !kept_rows.is_empty() {
+            rel_lines.push(SpecLine::KeptRows(kept_rows));
         }
         lines.splice(rel_at..rel_at, rel_lines);
         let nseeds = orders.len();
@@ -9491,8 +9542,8 @@ pub fn run_atoms_native_over(
 #[derive(Default)]
 pub struct Hooks<'a> {
     /// A kept relation no later stratum reads: the caller writes it where it goes, and the run drops it
-    /// (`Outcome::handed`).
-    pub hand_off: Option<&'a mut dyn FnMut(&str) -> Result<()>>,
+    /// (`Outcome::handed`); one the caller does not take (`false`) is held to the run's end as before.
+    pub hand_off: Option<&'a mut dyn FnMut(&str) -> Result<bool>>,
     /// Inputs a stratum is about to read for the first time: the caller binds their rows now.
     pub load: Option<&'a mut dyn FnMut(&[String]) -> Result<()>>,
     /// Inputs no later stratum reads: the caller may drop their rows (the run has dropped its views of them).
@@ -9949,6 +10000,26 @@ impl<'a> Cells<'a> {
             return rows.par_chunks(PART * w).map(|part| self.sum_one(part)).reduce(|| 0, u64::wrapping_add);
         }
         self.sum_one(rows)
+    }
+
+    /// `rows_digest` of `n` rows read a batch at a time where they lie (`batches(lo, hi, f)`: the rows of ids
+    /// `lo..hi` of `ids`, `f` per batch), with no copy of them all: many ids are summed in parts at once.
+    pub fn digest_batches(&self, ids: usize, n: usize, batches: &(dyn Fn(usize, usize, &mut dyn FnMut(&[i64])) + Sync)) -> u64 {
+        const PART: usize = 1 << 15;
+        let part = |lo: usize| {
+            let mut s = 0u64;
+            batches(lo, (lo + PART).min(ids), &mut |rows| s = s.wrapping_add(self.sum_one(rows)));
+            s
+        };
+        let sum = if self.width == 0 {
+            0
+        } else if ids >= 2 * PART {
+            use rayon::prelude::*;
+            (0..ids).into_par_iter().step_by(PART).map(part).reduce(|| 0, u64::wrapping_add)
+        } else {
+            part(0)
+        };
+        sum ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
     }
 
     /// `sum` on this thread.
@@ -10783,12 +10854,16 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     }
     // What stays, and what the views among it read (through views): SQL reads a view's inputs once the run ends.
     let mut pinned: BTreeSet<String> = stays.clone();
+    // Of them, the relations a view that stays reads (through views), kept ones too: not handed off (`hand_off`), as
+    // the view is read after the run.
+    let mut view_read: BTreeSet<String> = BTreeSet::new();
     loop {
-        let more: Vec<String> = body::Versions::keys(0, p0.len())
+        let reads: Vec<String> = body::Versions::keys(0, p0.len())
             .filter(|&r| pinned.contains(run.versions.head_at(r)) && run.views.contains(run.versions.head_at(r)))
             .flat_map(|r| reads_of(&run.versions, r).map(str::to_owned).collect::<Vec<_>>())
-            .filter(|r| !pinned.contains(r.as_str()))
             .collect();
+        view_read.extend(reads.iter().cloned());
+        let more: Vec<String> = reads.into_iter().filter(|r| !pinned.contains(r.as_str())).collect();
         if more.is_empty() {
             break;
         }
@@ -11032,9 +11107,11 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             }
         }
         if let Some(hand) = hooks.hand_off.as_deref_mut() {
-            let give: Vec<String> = read_out.iter().filter(|r| run.model.inputs.kept.contains(*r) && !gated.contains(*r)).cloned().collect();
-            for r in &give {
-                hand(r)?;
+            let mut give: Vec<String> = Vec::new();
+            for r in read_out.iter().filter(|r| run.model.inputs.kept.contains(*r) && !gated.contains(*r) && !view_read.contains(*r)) {
+                if hand(r)? {
+                    give.push(r.clone());
+                }
             }
             if !give.is_empty() {
                 super::native::component::release(db, &give);
@@ -11126,8 +11203,18 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                 // What the level's strata read of what is kept, read now in one batch, and held where unread.
                 let need: Vec<String> = need.into_iter().collect();
                 m.need(&need, &mut run.model)?;
-                for r in need.iter().filter(|r| unread.contains(*r)) {
-                    let Some(o) = m.kept(r) else { return Err(Error::Plan(format!("{r}: its kept rows were not read"))) };
+                // A kept relation that is no stratum of this program (an earlier round's, decision 0331) is held too:
+                // a stratum derived again reads it as it was. Only the program's own quiet strata were held (`unread`),
+                // so `chain_below`'s reach, derived again in a later guest round, found `chain_step` and its seed read
+                // but not held, and declined to SQL whenever the round chose to derive it again.
+                let hold: Vec<&String> = need.iter().filter(|r| unread.contains(*r) || (!stratum_of.contains_key(r.as_str()) && !run.native_rels.contains(*r) && !f0.is_input(r))).collect();
+                for r in hold {
+                    let Some(o) = m.kept(r) else {
+                        if unread.contains(r) {
+                            return Err(Error::Plan(format!("{r}: its kept rows were not read")));
+                        }
+                        continue;
+                    };
                     hold_quiet(&mut run, f0, db, r, o);
                 }
                 unread.retain(|r| !need.contains(r));

@@ -479,6 +479,61 @@ fn a_device_begins_its_next_submission_before_it_reads_the_last() {
     assert_eq!(kinds, ["start", "start", "end", "end"], "the second began while the first was in flight");
 }
 
+/// A "device" whose submissions run to their end as they begin (a program that commits and waits for its own
+/// command buffers), logging when each ended.
+struct AtOnce {
+    delay: std::time::Duration,
+    log: Arc<std::sync::Mutex<Vec<(&'static str, std::time::Instant)>>>,
+}
+
+struct Finished(Vec<rerail_accel::kernel::Output>);
+
+impl rerail_accel::exec::Pending for Finished {
+    fn finish(self: Box<Self>) -> Result<Vec<rerail_accel::kernel::Output>, String> {
+        Ok(self.0)
+    }
+    fn done(&self) -> bool {
+        true
+    }
+}
+
+impl rerail_accel::exec::Backend for AtOnce {
+    fn lane(&self) -> Lane {
+        Lane::Gpu
+    }
+    fn can(&self, _: &Kernel) -> bool {
+        true
+    }
+    fn submit(&self, ks: &[&Kernel]) -> Result<Vec<rerail_accel::kernel::Output>, String> {
+        std::thread::sleep(self.delay);
+        self.log.lock().unwrap().push(("ran", std::time::Instant::now()));
+        Ok(ks.iter().map(|k| cpu::run(k)).collect())
+    }
+    fn start<'a>(&'a self, ks: &[&Kernel]) -> Result<Box<dyn rerail_accel::exec::Pending + 'a>, String> {
+        Ok(Box::new(Finished(self.submit(ks)?)))
+    }
+}
+
+/// A submission that ran to its end as it began is handed back at once: held in flight, its caller waited for the
+/// next submission's whole run too (2026-11-17: each chunk's GPU matcher wave waited for another chunk's).
+#[test]
+fn a_device_hands_back_a_submission_that_ran_as_it_began_before_the_next() {
+    use rerail_accel::exec::CpuBackend;
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ex = Executor::with(vec![Arc::new(CpuBackend::default()), Arc::new(AtOnce { delay: std::time::Duration::from_millis(300), log: Arc::clone(&log) })]);
+    let mut rng = Rng(0xd3);
+    let (a, b) = (probe(&mut rng, 100), probe(&mut rng, 120));
+    let want = [cpu::run(&a), cpu::run(&b)];
+    let ra = ex.begin(Batch(vec![Launch::on(a, Lane::Gpu)])).unwrap();
+    let rb = ex.begin(Batch(vec![Launch::on(b, Lane::Gpu)])).unwrap();
+    let (da, _) = ra.wait().unwrap();
+    log.lock().unwrap().push(("read", std::time::Instant::now()));
+    let (db, _) = rb.wait().unwrap();
+    assert_eq!((&da[0].out, &db[0].out), (&want[0], &want[1]));
+    let kinds: Vec<&str> = log.lock().unwrap().iter().map(|e| e.0).collect();
+    assert_eq!(kinds, ["ran", "read", "ran"], "the first's outputs came back before the second ended");
+}
+
 /// A program of the caller's (`Kernel::Program`): its result says which lane's form ran it.
 struct Where {
     units: f64,

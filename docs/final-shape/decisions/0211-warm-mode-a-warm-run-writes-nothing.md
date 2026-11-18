@@ -54,9 +54,6 @@ both before every commit (the commit hook runs it beside the cache and thread-st
 
   | Write (the writer's job) | Why |
   |---|---|
-  | the run's hold on its plans | A lock: a lease on the run's plans against a collection in another process (0053) |
-  | the run's hold released | The lease's release |
-  | a source's pin | A lock: a lease on a source the run reads, until its manifest names it (O95) |
   | the combined program's pins released | The release of the combined program's leases |
   | the run's manifest | Timestamps, only for a manifest identical to one stored: its last run and time move, by which collection keeps a root's last two. A new manifest is a fault (`a new manifest recorded`) |
   | the journal's aged cursor | A timestamp: a root's journal cursor, or a cutoff record's (`git-files:`, `cone-rounds:`), stored again once it is `observe::CURSOR_AGE` (2^20) events behind with nothing named since. Added with the user's approval (2026-11-14) |
@@ -134,8 +131,9 @@ and takes 6.7 G instructions and 0.58 s user, against 8.0 G and 0.72 s over `dl1
 - **Collection's bookkeeping, with the cutoff off.** A warm run that plans still writes:
   - its manifest, identical to its root's newest: an identical manifest only moves its `last_run`, the recency by which
     collection protects a root's last two;
-  - its hold on its plans and the hold's release, a source's pins, and the combined program's pins and their release:
-    leases against a collection pass in another process while the run reads;
+  - the combined program's pins' release: leases against a collection pass in another process. The run's hold on
+    its plans, its release and a source's pins are gone (decision 0306 step 4: the run's collection lease is its
+    one hold; removed from the list with the user's approval, 2026-11-16);
   - the frames' used marks (`frames`, `the frames' parts used`), by which relations unused for `RUNS` runs are
     forgotten. Gone: decision 0227 keeps frames while a kept manifest reaches them, and a run marks nothing;
   - the run's atoms, if any were made (`flush_atoms`, `the pending atoms`), and the writer waits.

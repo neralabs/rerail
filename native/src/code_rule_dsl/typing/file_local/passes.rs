@@ -99,7 +99,7 @@ impl ProgramPass for Locate {
         let targets: BTreeSet<String> = exports
             .iter()
             .map(String::as_str)
-            .chain(f.outputs().filter(|o| file_local.contains(*o)))
+            .chain(f.outputs().filter(|o| file_local.contains(*o) && !f.qualified(o, crate::code_rule_dsl::logic::plan::fields::PART_OUT)))
             .filter(|r| local.contains(r) && locations.get(*r).is_none_or(Vec::is_empty))
             .map(str::to_owned)
             .collect();
@@ -119,7 +119,7 @@ impl ProgramPass for Locate {
         let mut ats: Vec<(String, Vec<(String, String)>)> = Vec::new();
         let mut names: HashSet<String> = f.decls().iter().map(|d| v.text(d.name()).to_owned()).collect();
         for rel in &targets {
-            let read_locally = readers.get(rel.as_str()).is_some_and(|&n| n > 0);
+            let read_locally = readers.get(rel.as_str()).is_some_and(|&n| n > 0) || f.qualified(rel, crate::code_rule_dsl::logic::plan::fields::PART_LOCAL_READ);
             let Some(cols) = f.columns(rel).filter(|_| !read_locally && !f.lattice(rel)) else {
                 self.blocked.push(rel.clone());
                 continue;

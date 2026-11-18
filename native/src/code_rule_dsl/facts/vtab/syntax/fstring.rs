@@ -41,6 +41,9 @@ impl super::Producer for Producer {
 }
 
 impl super::ProducerRun for FStrings {
+    fn name(&self) -> &'static str {
+        "f-string trees"
+    }
     fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, own: bool, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         FStrings::document(self, p, d, dialect, own, string)
     }

@@ -228,6 +228,18 @@ impl Block {
 
     /// `size` bytes at `align`, or `None` when the block's reservation cannot hold them.
     pub fn try_alloc(&self, size: usize, align: usize) -> Option<usize> {
+        let start = self.try_alloc_raw(size, align)?;
+        if self.dirty {
+            // SAFETY: `start..start + size` was just allocated to this call alone.
+            unsafe { std::ptr::write_bytes(self.base.add(start), 0, size) };
+        }
+        Some(start)
+    }
+
+    /// `try_alloc`, its bytes as the backing left them (a dirty block's earlier bytes): for what every reader finds
+    /// written first, as a relation's chunks (a value is read only below `len`, and written before it is claimed).
+    /// A device relation's chunks of a pooled block then cost no memset (decision 0325 step 5).
+    pub fn try_alloc_raw(&self, size: usize, align: usize) -> Option<usize> {
         assert!(self.writable, "alloc in a frozen block");
         let mut cur = self.top.load(Relaxed);
         loop {
@@ -237,12 +249,7 @@ impl Block {
                 return None;
             }
             match self.top.compare_exchange_weak(cur, end, AcqRel, Relaxed) {
-                Ok(_) => {
-                    if self.dirty {
-                        unsafe { std::ptr::write_bytes(self.base.add(start), 0, size) };
-                    }
-                    return Some(start);
-                }
+                Ok(_) => return Some(start),
                 Err(c) => cur = c,
             }
         }
@@ -383,9 +390,37 @@ impl Block {
     }
 }
 
+impl Block {
+    /// Gives the whole pages of the rows' chunks back to the OS, for a relation of this block that nothing will read
+    /// or write again (its last holder gone). Only an anonymous block's (`anon`): a pooled slab's pages are the
+    /// device buffer's, and a file's are written back. The block's room is not reused: what was given back stays
+    /// out of the footprint until the block goes.
+    ///
+    /// # Safety
+    /// `rows` is a relation's of this block, and nothing reads or writes its chunks after.
+    pub unsafe fn give_back_rows(&self, rows: &crate::rows::Rows) -> usize {
+        if self.backing.is_some() || self.file.is_some() || !self.writable {
+            return 0;
+        }
+        let mut bytes = 0;
+        for (p, len) in rows.chunk_spans() {
+            if len >= PAGE {
+                // SAFETY: the chunk lies in this block's reservation, and nothing reads it after (the caller's).
+                unsafe { crate::mem::give_back(p, len) };
+                bytes += len;
+            }
+        }
+        bytes
+    }
+}
+
 impl Drop for Block {
     fn drop(&mut self) {
         if self.backing.is_none() {
+            // A file's mapping was never `reserve`'s: it is unmapped without counting.
+            if self.file.is_some() {
+                crate::mem::uncounted(self.reserved);
+            }
             unsafe { crate::mem::release(self.base, self.reserved) };
         }
     }

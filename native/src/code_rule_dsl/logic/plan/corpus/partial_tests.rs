@@ -31,7 +31,7 @@ fn run(dir: &std::path::Path, program: &str, outputs: &[&str]) -> (super::Report
 const FILES: &[(&str, &str)] = &[
     ("a.py", "def helper(x):\n    assert x\n    return x\n\ndef other(y):\n    while y:\n        assert y\n    return helper(y)\n"),
     ("b.py", "from a import helper, other\n\ndef main():\n    assert True\n    helper(1)\n    other(2)\n    if main:\n        assert main\n"),
-    ("c.py", "def lone():\n    try:\n        assert lone\n    except Exception:\n        pass\n    return other(3)\n"),
+    ("c.py", "def lone():\n    try:\n        assert lone\n    except Exception:\n        pass\n    return other(3)\n\ndef helper(z):\n    return z\n"),
 ];
 
 /// A cross-file rule (`at`) reads `col` of the nodes an export (`called`) names, joined with another file's export
@@ -45,16 +45,20 @@ called(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x).
 defined(d, x) :- kind(d, "function_definition"), field(d, "name", n), text(n, x).
 .decl at(x: symbol, k: number)
 at(x, k) :- called(c, x), defined(_, x), col(c, k).
+.decl both(d: node, e: node, x: symbol)
+both(d, e, x) :- defined(d, x), defined(e, x), d != e.
+.decl twice(x: symbol)
+twice(x) :- both(_, _, x).
 .decl flagged(n: node)
 flagged(n) :- kind(n, "assert_statement"), !kind(n, "{kind}").
 .decl flag_col(k: number, l: number)
 flag_col(k, l) :- flagged(n), col(n, k), line(n, l).
-.output at, flag_col
+.output at, flag_col, twice
 "#
     )
 }
 
-const OUTPUTS: &[&str] = &["at", "flag_col"];
+const OUTPUTS: &[&str] = &["at", "flag_col", "twice"];
 
 /// An edit of `flagged`'s body: the second run reads every file as a partial hit, and gives the rows a run with no
 /// memo gives, its cross-file part seeing no input changed (no export nor base relation the edit did not touch).
@@ -86,13 +90,15 @@ fn a_hit_read_for_its_outputs_alone_decodes_no_export_or_base_rows() {
     let program = program("try_statement");
     // Past the stat index's racy window (git's rule), so every run finds the unchanged files by their stat.
     std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 200_000_000));
-    let _ = run(&dir, &program, OUTPUTS);
+    let (cold, _) = run(&dir, &program, OUTPUTS);
+    assert_eq!(cold.stats_kept, Some(Ok((3, 0))), "a cold run counts every file in");
+    assert_unchanged(&run(&dir, &program, OUTPUTS).0, "a rerun with nothing changed");
     let mut kept = 0;
     let mut edits = Vec::new();
     for (k, tail) in ["\nhelper(4)\n", "\nhelper(5)\n", "\nhelper(6)\n"].into_iter().enumerate() {
         std::fs::write(dir.join("c.py"), format!("# {marker}\n{}{tail}", FILES[2].1)).unwrap();
         let (edited, rows) = run(&dir, &program, OUTPUTS);
-        assert_eq!(edited.memo_kept.1, 0, "edit {k}: {} hits read for their outputs alone decoded export or base rows", edited.memo_kept.0);
+        assert_steady(&edited, &format!("edit {k}"));
         kept += edited.memo_kept.0;
         edits.push((tail, rows));
     }
@@ -105,6 +111,126 @@ fn a_hit_read_for_its_outputs_alone_decodes_no_export_or_base_rows() {
         assert_eq!(rows, expected, "edit {k}: the rows of a full run");
     }
     assert_eq!(kept, 3 * 2, "each edit reads both unchanged files for their outputs alone");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A steady edit of one of `FILES` (c.py): the other two are memo hits read for their outputs alone, decoding none
+/// of their export or base rows, and the statistics keeper counts the edited file out and in, and no other.
+fn assert_steady(edited: &super::Report, what: &str) {
+    assert!(edited.cross_kept.is_some_and(|(run, all)| run < all), "{what}: the cross-file part kept, some strata not run: {:?}", edited.cross_kept);
+    assert_eq!(edited.cross_handed, 0, "{what}: a run driven by deltas hands nothing off");
+    assert_eq!(edited.cross_unloaded, 0, "{what}: nor lets an input go: a session keeps its inputs for the next run");
+    assert_eq!(edited.memo.0, 2, "{what}: the unchanged files are memo hits");
+    assert_eq!(edited.memo_kept.0, 2, "{what}: the hits are read for their outputs alone (decision 0117 step 1)");
+    assert_eq!(edited.memo_kept.1, 0, "{what}: {} hits read for their outputs alone decoded export or base rows", edited.memo_kept.0);
+    assert_eq!(edited.stats_kept, Some(Ok((1, 1))), "{what}: only the edited file is counted in and out (decision 0096 §3)");
+}
+
+/// A run with nothing changed since the last (no whole-run cutoff asked, `options.reuse`): every file a memo hit read
+/// for its outputs alone, none of their export or base rows decoded, and no file counted in or out.
+fn assert_unchanged(report: &super::Report, what: &str) {
+    assert_eq!(report.memo.0, FILES.len(), "{what}: every file is a memo hit");
+    assert_eq!(report.memo_kept, (FILES.len(), 0), "{what}: every hit read for its outputs alone, no row decoded");
+    assert_eq!(report.stats_kept, Some(Ok((0, 0))), "{what}: no file counted in or out");
+}
+
+/// A new engine build over the store an older build left (decision 0096 §3, Q71). Its first edit finds none of the
+/// old build's entries, so it evaluates every file; and it counts every file in afresh, since what the old build's
+/// keeper counted is of entries this build's plan does not hold (it could neither count the edited file out nor
+/// trust the others' counts). Its next edit is a steady one. Before, that first edit kept the old build's statistics
+/// and gave them up at the edited file, and the next edit replayed every hit whole to count every file in.
+#[test]
+fn a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady() {
+    let marker = format!("{:?}", std::time::SystemTime::now());
+    let dir = corpus("new-build", &marker, FILES);
+    let program = program("try_statement");
+    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 200_000_000));
+    let edit = |tail: &str| {
+        std::fs::write(dir.join("c.py"), format!("# {marker}\n{}{tail}", FILES[2].1)).unwrap();
+        run(&dir, &program, OUTPUTS)
+    };
+    let (cold, _) = run(&dir, &program, OUTPUTS);
+    assert_eq!(cold.stats_kept, Some(Ok((3, 0))), "a cold run counts every file in");
+    assert!(cold.cross_handed > 0, "a cold run hands its cross-file relations off as it goes, not all held to its end: {} handed; strata {:?}", cold.cross_handed, cold.cross_kept);
+    assert_steady(&edit("\nhelper(4)\n").0, "an edit of the first build");
+    crate::code_rule_dsl::build_ids::rebuild_for_tests();
+    let (first, _) = edit("\nhelper(5)\n");
+    assert_eq!(first.memo.0, 0, "no entry of the old build's is a hit");
+    assert_eq!(first.stats_kept, Some(Ok((3, 0))), "the new build's first edit counts every file in");
+    // Nor is anything of the old build's cross-file part read (decision 0077 §4: kept per engine build): no
+    // stratum's rows (their identities are of the build), and no input's rows, which it read to make deltas with
+    // nothing to apply them to. So every input is new to it, `defined` too, which the edit leaves as it was.
+    assert!(first.cross_kept.is_none_or(|(run, all)| run == all), "the new build derives every cross-file stratum: {:?}", first.cross_kept);
+    assert!(first.cross_changed.iter().any(|r| r == "defined"), "no input compared with the old build's rows: {:?} changed", first.cross_changed);
+    assert!(first.cross_handed > 0, "its cross-file relations handed off as it goes");
+    assert!(first.cross_unloaded > 0, "its cross-file inputs let go after their last reader");
+    let tail = "\nhelper(6)\n";
+    let (next, rows) = edit(tail);
+    assert_steady(&next, "the new build's second edit");
+    assert_unchanged(&run(&dir, &program, OUTPUTS).0, "the new build's rerun with nothing changed");
+    let c = format!("{}{tail}", FILES[2].1);
+    let fresh = corpus("new-build-fresh", &format!("{marker} fresh"), &[FILES[0], FILES[1], ("c.py", &c)]);
+    let (_, expected) = run(&fresh, &program, OUTPUTS);
+    assert_eq!(rows, expected, "the rows of a full run");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A run stopped after it wrote its first entries (killed, out of memory, a strict abort) leaves the statistics as the
+/// last finished run kept them, valid: it ran the same program, whose entries it wrote are of the contents it read,
+/// and the contents the keeper counted are still in the memo. The next edit is a steady one. Before, the stopped run's
+/// mark ("a run is under way", of no program) emptied the keeper, and the next edit counted every file in, decoding
+/// every hit whole.
+#[test]
+fn an_edit_after_a_stopped_run_of_the_same_program_is_steady() {
+    let marker = format!("{:?}", std::time::SystemTime::now());
+    let dir = corpus("stopped", &marker, FILES);
+    let program = program("try_statement");
+    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 200_000_000));
+    let edit = |tail: &str| std::fs::write(dir.join("c.py"), format!("# {marker}\n{}{tail}", FILES[2].1)).unwrap();
+    let (cold, _) = run(&dir, &program, OUTPUTS);
+    assert_eq!(cold.stats_kept, Some(Ok((3, 0))), "a cold run counts every file in");
+    edit("\nhelper(4)\n");
+    super::STOP_AFTER_ENTRIES.with(|s| s.set(true));
+    let out = dir.join(".out");
+    let stopped = super::run(&program, &dir, None, &out, "program", Binding::Cpu, 1 << 18);
+    assert!(stopped.is_err_and(|e| e.to_string().contains("stopped after its first entries")), "the run stops where the hook stops it");
+    assert!(!super::STOP_AFTER_ENTRIES.with(std::cell::Cell::get), "the hook was reached");
+    edit("\nhelper(5)\n");
+    let (next, rows) = run(&dir, &program, OUTPUTS);
+    assert_steady(&next, "the edit after a stopped run");
+    let c = format!("{}\nhelper(5)\n", FILES[2].1);
+    let fresh = corpus("stopped-fresh", &format!("{marker} fresh"), &[FILES[0], FILES[1], ("c.py", &c)]);
+    let (_, expected) = run(&fresh, &program, OUTPUTS);
+    assert_eq!(rows, expected, "the rows of a full run");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The other side of the last test: a stopped run of another program (a rule edited) rewrote some of the entries
+/// the statistics count (its partial hits, decision 0225 §2), so the next run of the first program trusts none of
+/// what was kept: it counts every file in, and its rows are a full run's.
+#[test]
+fn a_stopped_run_of_another_program_leaves_nothing_kept_trusted() {
+    let marker = format!("{:?}", std::time::SystemTime::now());
+    let dir = corpus("stopped-other", &marker, FILES);
+    let (first, edited) = (program("try_statement"), program("while_statement"));
+    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 200_000_000));
+    let (cold, _) = run(&dir, &first, OUTPUTS);
+    assert_eq!(cold.stats_kept, Some(Ok((3, 0))), "a cold run counts every file in");
+    super::STOP_AFTER_ENTRIES.with(|s| s.set(true));
+    let stopped = super::run(&edited, &dir, None, &dir.join(".out"), "program", Binding::Cpu, 1 << 18);
+    assert!(stopped.is_err_and(|e| e.to_string().contains("stopped after its first entries")), "the edited program's run stops where the hook stops it");
+    let tail = "\nhelper(4)\n";
+    std::fs::write(dir.join("c.py"), format!("# {marker}\n{}{tail}", FILES[2].1)).unwrap();
+    let (next, rows) = run(&dir, &first, OUTPUTS);
+    assert_eq!(next.memo_kept.0, 0, "no hit is read for its outputs alone: what was kept is not trusted");
+    assert_eq!(next.stats_kept, Some(Ok((3, 0))), "every file counted in again");
+    let c = format!("{}{tail}", FILES[2].1);
+    let fresh = corpus("stopped-other-fresh", &format!("{marker} fresh"), &[FILES[0], FILES[1], ("c.py", &c)]);
+    let (_, expected) = run(&fresh, &first, OUTPUTS);
+    assert_eq!(rows, expected, "the rows of a full run");
+    let _ = std::fs::remove_dir_all(&fresh);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

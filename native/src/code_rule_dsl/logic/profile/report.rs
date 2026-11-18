@@ -35,6 +35,7 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 sort_hits: u64::from(d.sort_hits),
                 rows: d.rows,
                 distinct: d.distinct,
+                placed: d.placed,
                 bindings: d.bindings,
                 made: d.made,
                 waved: u64::from(d.waved),
@@ -262,6 +263,8 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     }
     std::fs::write(dir.join("spans.tsv"), spans_tsv)?;
     std::fs::write(dir.join("memory.tsv"), memory::sampled_tsv())?;
+    let _ = std::fs::write(dir.join("heap.tsv"), memory::heap_tsv());
+    if !rerail_prof::heap::snapshot_frames().is_empty() || std::env::var_os("RERAIL_HEAP_FRAMES").is_some() { let _ = std::fs::write(dir.join("heap-frames.tsv"), memory::heap_frames_tsv()); }
     let mut sql: Vec<_> = state.sql.iter().collect();
     sql.sort_by_key(|(_, s)| std::cmp::Reverse(s.ns));
     let mut sql_tsv = String::from("span\truns\tms\tvm_steps\tfullscan_steps\tsorts\tautoindex_rows\tsql\n");
