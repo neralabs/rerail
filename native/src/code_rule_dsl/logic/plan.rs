@@ -7437,16 +7437,24 @@ impl<'a> Run<'a, '_> {
                 Ok(m) => {
                     use wellfounded::Order;
                     let facts = &self.model.inputs.facts;
+                    // A node's key is read where the run has it bound: a part that holds no tree (a cross part
+                    // whose tree steps were pushed into the chunks, decision 0051) has not, and its candidates go in
+                    // id order, each checked again when a row it may read goes (`Measured::keyed`).
+                    let read = |rel: &str| {
+                        let sql = format!("SELECT k FROM {facts}{rel} WHERE n = ?1");
+                        self.db.sql().is_ok_and(|c| c.prepare(&sql).is_ok()).then_some(sql)
+                    };
                     let (desc, key) = match m.order {
-                        Order::Down => (false, Some(format!("SELECT k FROM {facts}ast_depth WHERE n = ?1"))),
-                        Order::Up => (true, Some(format!("SELECT k FROM {facts}ast_depth WHERE n = ?1"))),
-                        Order::Back => (true, Some(format!("SELECT k FROM {facts}node_order WHERE n = ?1"))),
+                        Order::Down => (false, read("ast_depth")),
+                        Order::Up => (true, read("ast_depth")),
+                        Order::Back => (true, read("node_order")),
                         Order::Climbs | Order::Same => (false, None),
                         Order::Falls => (true, None),
                     };
+                    let keyed = key.is_some() || matches!(m.order, Order::Climbs | Order::Falls | Order::Same);
                     let cols = scc.iter().map(|r| m.col.get(r).copied().unwrap_or(0)).collect();
                     let ranks = scc.iter().map(|r| m.rank.get(r).copied().unwrap_or(0) as usize).collect();
-                    lines.push(SpecLine::Measured { desc, key, cols, ranks });
+                    lines.push(SpecLine::Measured { desc, key, keyed, cols, ranks });
                 }
                 // Its rows keep levels.
                 Err(_) => lines.push(SpecLine::Leveled((0..scc.len()).collect())),

@@ -1245,6 +1245,8 @@ struct MaintMode {
 struct Measured {
     desc: bool,
     key: Option<String>,
+    /// Whether the order is the measure's: else a candidate that stays is checked again when a row it may read goes.
+    keyed: bool,
     cols: Vec<usize>,
     ranks: Vec<usize>,
 }
@@ -1339,7 +1341,10 @@ impl MaintMode {
     ///
     /// A component the static check proved (`measured`, decision 0364 §5) keeps no levels: its candidates go in its
     /// measure's order, and a row's derivations read only rows before it there, all decided. So each is rechecked
-    /// once, over the relations as they are (no `cap`), and a row gone is never derived again.
+    /// once, over the relations as they are (no `cap`), and a row gone is never derived again. Where the run cannot
+    /// read the measure's key (`!keyed`), a candidate that stays is checked again when a row it may read goes: a
+    /// kill is sound whatever the order (rows only go, so a row no rule derives now none derives at the end), and
+    /// with no cycle every stay is checked against rows that stay.
     fn run_leveled(&mut self, store: &mut Store, syms: &mut Interner, conn: Option<&Connection>) -> Result<()> {
         use std::cmp::Reverse;
         type Heap = std::collections::BinaryHeap<Reverse<(i64, u32, usize, u32)>>;
@@ -1348,6 +1353,8 @@ impl MaintMode {
         let mut seen: rustc_hash::FxHashSet<(usize, u32)> = Default::default();
         let measured = self.measured.take();
         let what = if measured.is_some() { "measure" } else { "levels" };
+        // `seen`: the rows queued once, ever; unkeyed, the rows queued now (a decided row may be queued again).
+        let again = measured.as_ref().is_some_and(|m| !m.keyed);
         let push = |heap: &mut Heap, store: &Store, r: usize, rows: &[i64], seen: &mut rustc_hash::FxHashSet<(usize, u32)>, counts: &mut [u64; 3]| -> Result<()> {
             let rel = &store.rels[r];
             for row in rows.chunks_exact(rel.k.max(1)) {
@@ -1371,6 +1378,9 @@ impl MaintMode {
         let mut gone: Vec<(usize, Vec<i64>)> = Vec::new();
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("mode: candidates by {what} ({} first)", heap.len()));
         while let Some(Reverse((l, _, r, id))) = heap.pop() {
+            if again {
+                seen.remove(&(r, id));
+            }
             let row: Vec<i64> = store.rels[r].row(id as usize).to_vec();
             let stays = if measured.is_some() {
                 self.derives(r, &row, store, syms, &mut out)
@@ -1822,7 +1832,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             Line::Unplanned { head, delta } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Unplanned, whole: None, wkey: None, budget: Default::default() }),
             Line::Device => device_wanted = solver().is_some(),
             Line::Leveled(rels) => { leveled = true; cyclic.extend(rels.iter().copied()); }
-            Line::Measured { desc, key, cols, ranks } => maint.measured = Some(Measured { desc: *desc, key: key.clone(), cols: cols.clone(), ranks: ranks.clone() }),
+            Line::Measured { desc, key, keyed, cols, ranks } => maint.measured = Some(Measured { desc: *desc, key: key.clone(), keyed: *keyed, cols: cols.clone(), ranks: ranks.clone() }),
             Line::KeptOld => kept_old = true,
             Line::KeptRows(_) => {}
             Line::Lattice { rel, keys, name, widen } => {

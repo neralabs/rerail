@@ -415,5 +415,18 @@ A proved component:
   again: every row a candidate's derivations read is before it in that order, so already decided;
 - is counted maintained, not by levels.
 
+**Where the key cannot be read.** A part that holds no tree has neither `ast_depth` nor `node_order` bound: the
+cross part of `calls.rr`, whose tree steps were pushed into the chunks (the replay's first measured run failed on
+"no such table: main.ast_depth"). The measure's key there would be an input the part does not read, so the order is
+dropped, not the proof. Unkeyed (`measured … u`), candidates go in id order, and a candidate that stays is queued
+again when a row it may read goes. This is sound in any order:
+- a kill is final: rows only go, so a row no rule derives over the rows now, none derives at the end;
+- a stay is checked again whenever a support goes, and with no cycle that ends with every stay over rows that stay.
+
+The key buys "once each". Without it, a row is checked once per support that goes, still with no levels.
+Bringing the key to the cross part (its documents' depths, as an input of the part) is open.
+
 `r6_a_component_that_cannot_cycle_keeps_no_levels` passes and is no longer ignored. With the proof forced off it
-fails (by levels: 1). R5's ring, which can cycle, is still maintained by levels.
+fails (by levels: 1). Its first edit only adds rows, so it pushed no candidate and passed with a key no run could
+read. It now also shrinks the body, removes the import and puts it back, each against a fresh run (R10) and with no
+levels. R5's ring, which can cycle, is still maintained by levels.

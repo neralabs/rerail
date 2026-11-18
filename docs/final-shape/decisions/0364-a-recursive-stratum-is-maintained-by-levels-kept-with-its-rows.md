@@ -442,6 +442,11 @@ against the forms' figures (t43, "Measurements").
   of the whole program's version that a part's run asks by component. It reads `nearest` as the engine lowers it
   (`rr_nearest_<set>`). Still worth teaching it string length (`@pkg_up`-style chains) and the tree helpers it
   cannot read yet.
+- **R6's "once each" where the key is not bound.** A measure by depth or document order reads `ast_depth` or
+  `node_order`, and a cross part whose tree steps were pushed into the chunks binds neither. There a proved
+  component still keeps no levels, but its candidates go unkeyed: a stay is checked again when a support goes
+  (sound in any order, t43 step 7), not once each. Closing it means giving such a part its documents' keys as an
+  input.
 - **A dump artifact.** In the data-layer history's first state, the run split into 2 chunks and dumped 210
   `dotted_expr` rows that no `drv` rule derives. It is a file-local relation, and the rows measured are the heads,
   but the cause is not known (`REC_LAX`).

@@ -323,6 +323,13 @@ depth(a, n) :- used(a), n = count : { below(a, _) }.
     let ran = s.edit("the used function's body grows");
     assert!(ran.report.cross_maintained.1 > 0, "R6: the recursive stratum is maintained");
     assert_eq!(ran.by_levels, 0, "R6: a component that cannot cycle is not maintained by levels");
+    // Rows go: their candidates are rechecked in the measure's order (or again as their supports go), with no
+    // levels, and the outputs are a fresh run's (`edit`).
+    for (file, body, what) in [("a.py", "def f():\n    x = 1\n", "the used function's body shrinks"), ("b.py", "x = 2\n", "the import goes"), ("b.py", "from a import f\n", "the import comes back")] {
+        s.write(file, body);
+        let ran = s.edit(what);
+        assert_eq!(ran.by_levels, 0, "R6: after {what}, not maintained by levels");
+    }
 }
 
 /// R7: the mode's lines are the program's plans, priced (0328 §4, 0122): the recheck's order with its head bound is

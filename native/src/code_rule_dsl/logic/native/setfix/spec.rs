@@ -156,9 +156,10 @@ pub enum Line {
     /// A recursive component the static check proved (decision 0364 §5): no levels, its candidates rechecked once
     /// each in the measure's order. Each relation's measure column (`cols`) and rank (`ranks`: a row's derivations
     /// at its own node read relations of lower rank); a row's key is its measure's value, or the one row `key`'s
-    /// SQL reads with it bound (`?1`: the node's depth or document order); descending where `desc`
-    /// (`measured a|d <key|-> <cols> <ranks>`).
-    Measured { desc: bool, key: Option<String>, cols: Vec<usize>, ranks: Vec<usize> },
+    /// SQL reads with it bound (`?1`: the node's depth or document order); descending where `desc`. Not `keyed`:
+    /// the order is not the measure's (a node's key the run cannot read), and a candidate that stays is checked again
+    /// when a row it may read goes (`measured a|d <key|-> k|u <cols> <ranks>`).
+    Measured { desc: bool, key: Option<String>, keyed: bool, cols: Vec<usize>, ranks: Vec<usize> },
     /// Its relations started from kept rows (`Start::Base`) hold them as no wave's delta: its first wave is driven by
     /// its inputs' changes (seeds that read them, `plan::reads_change`), not by its kept rows (decision 0122 §2).
     KeptOld,
@@ -474,7 +475,7 @@ impl std::fmt::Display for Line {
             Line::NoWrite => f.write_str("nowrite"),
             Line::Device => f.write_str("device"),
             Line::Leveled(rels) => write!(f, "leveled {}", comma(rels)),
-            Line::Measured { desc, key, cols, ranks } => write!(f, "measured {} {} {} {}", if *desc { "d" } else { "a" }, key.as_ref().map_or_else(|| "-".to_owned(), |k| hex(k)), comma(cols), comma(ranks)),
+            Line::Measured { desc, key, keyed, cols, ranks } => write!(f, "measured {} {} {} {} {}", if *desc { "d" } else { "a" }, key.as_ref().map_or_else(|| "-".to_owned(), |k| hex(k)), if *keyed { "k" } else { "u" }, comma(cols), comma(ranks)),
             Line::KeptOld => f.write_str("keptold"),
             Line::KeptRows(rels) => write!(f, "keptrows {}", comma(rels)),
             Line::Lattice { rel, keys, name, widen } => write!(f, "lattice {rel} {keys} {} {}", hex(name), widen.map_or_else(|| "-".to_owned(), |w| w.to_string())),
@@ -569,8 +570,9 @@ impl ComponentSpec {
                 "measured" => Line::Measured {
                     desc: at(1)? == "d",
                     key: if at(2)? == "-" { None } else { Some(unhex(at(2)?)?) },
-                    cols: list(at(3)?)?,
-                    ranks: list(at(4)?)?,
+                    keyed: at(3)? == "k",
+                    cols: list(at(4)?)?,
+                    ranks: list(at(5)?)?,
                 },
                 "keptold" => Line::KeptOld,
                 "keptrows" => Line::KeptRows(list(at(1)?)?),
