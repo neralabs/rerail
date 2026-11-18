@@ -2859,6 +2859,29 @@ describe("CodeRuleBridge and Git's own writes", () => {
     ]);
   });
 
+  // A command that commits again as the second reading of Git is made: the third reading, made once `HEAD` holds, finds
+  // the files of both commits the command's own.
+  it("keeps auditing a file its command committed in each of the walk's first two readings of Git", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await shell(bridge, async () => {
+      await writeFile(join(root, "src", "mine.py"), "mine\n");
+      await writeFile(join(root, "src", "two.py"), "two\n");
+      git(root, "add", "src/mine.py");
+      whileVerdictsRead(
+        listsBranches,
+        () => git(root, "commit", "--quiet", "-m", "mine"),
+        () => { git(root, "add", "src/two.py"); git(root, "commit", "--quiet", "-m", "two"); },
+      );
+    });
+    const edits = auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits);
+    expect(edits).toHaveLength(2);
+    expect(edits).toEqual(expect.arrayContaining([
+      { path: "src/mine.py", language: "python", generatedText: "mine\n" },
+      { path: "src/two.py", language: "python", generatedText: "two\n" },
+    ]));
+  });
+
   // Reading Git again costs one more process only where a reading takes a change for Git's: a walk whose changes Git did
   // not write reads `HEAD` once more than a walk that finds no change, for its verdicts, as before.
   it("reads HEAD once for the Git verdicts of a shell edit Git did not write", async () => {
