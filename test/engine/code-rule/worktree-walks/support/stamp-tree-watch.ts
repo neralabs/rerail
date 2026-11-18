@@ -104,12 +104,17 @@ export class StampTreeWatch implements TreeWatch {
   #takeRoot(root: string, before: ReadonlyMap<string, string>): TreeNotice | undefined {
     const after = entriesOf(root);
     this.#entries.set(root, after);
-    const named = noticeOf(root, before, after, this.#lost.delete(root), this.#ended.delete(root));
-    const notice = this.#watched(root, this.#movedAway.delete(root) ? withoutWhatWentWith(named, before) : named);
+    const notice = this.#watched(root, this.#named(root, before, after));
     if (notice.ended) this.unwatch(root);
     const gone = this.#byFolder && !notice.ended ? this.#letGo(root) : [];
     const told = gone.length === 0 ? notice : { ...notice, changed: notice.changed.filter(path => !gone.includes(path)), renamed: [...new Set([...notice.renamed, ...gone])] };
     return tells(told) ? told : undefined;
+  }
+
+  /** What the system names of `root` from `before` to `after` (`noticeOf`), each folder moved away as itself alone (`movedAway`). */
+  #named(root: string, before: ReadonlyMap<string, string>, after: ReadonlyMap<string, string>): TreeNotice {
+    const named = noticeOf(root, before, after, this.#lost.delete(root), this.#ended.delete(root));
+    return this.#movedAway.delete(root) ? withoutWhatWentWith(named, before) : named;
   }
 
   /**
