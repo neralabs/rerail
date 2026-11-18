@@ -410,6 +410,13 @@ Each step ends with:
    - Its derived values (`text`, `intval`, ...) become rules computed on demand, written once into relations.
    - Check: the views' rows equal today's, for every view and dialect, cold and warm.
 4. **The base views read the tape on the GPU.**
+   - First, each tape's one home is a residency slab (user, 2026-11-17). A batch's tapes were host-heap images
+     (`Facts::tape`, an `Arc<TapeImage>`), and the device's were copies of them in the transducer's slabs
+     (`slabs::insert`, and `gather`'s copies between slabs). The tape store's load writes a tape straight into a
+     slab, a GPU-shareable chunk block, and the host's `DocTape` reads it there, holding the slab. A format 15 tape
+     is decompressed (zstd, on disk only) into its slab; format 16 is placed as stored; a 16z tape stays compressed
+     (its LZ4 blocks as stored), so the reads written once read 16z in place, a block decoded where a read falls in
+     it, and `DocTape::in_place`'s laid-out copy goes. A host without a device uses the same blocks.
    - A stage's input may be a tape view: the kernels read the chunk block's placed tapes through the generated MSL
      (`metal_tape.metal`'s reads, 0293 §9).
    - A scan is a dispatch over 64-node groups.
