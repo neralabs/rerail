@@ -1684,13 +1684,13 @@ describe("CodeRuleBridge", () => {
           await writeFile(join(folder, `f${String(start + offset).padStart(5, "0")}.py`), "x = 1\n")));
     }
     /**
-     * A walk view that looks each path up by its real path, as the router's does, so Windows refuses a path the user is
-     * denied with EPERM. `deny` denies a folder, or with `files` the files in it, for real where this process holds no
-     * backup privilege on Windows, else by refusing the view's look of it with EPERM, as Windows does. Counts its looks.
+     * A walk view that looks each path up by its real path, as the router's does (`physicalPath`), and refuses with EPERM
+     * the look of each path `deny` names: a folder, or with `files` the files in it. The router's look keeps such a refusal
+     * on Windows for a link the user is denied; it passes over any other path whose real path is refused, which the walk
+     * then meets in its own listing or open, so a real denial would not reach this path. Counts its looks.
      */
     function refusingView(root: string) {
       const refused: Array<(absolute: string) => boolean> = [];
-      const denied: string[] = [];
       let looks = 0;
       const view = {
         acceptsPath: () => true,
@@ -1705,15 +1705,8 @@ describe("CodeRuleBridge", () => {
       return {
         view,
         looks: () => looks,
-        async deny(folder: string, files = false): Promise<boolean> {
-          denied.push(folder);
-          if (process.platform === "win32" && await denyAccess(folder, { files, probe: join(folder, "f00000.py") })) return true;
-          await restoreAccess(folder);
+        deny(folder: string, files = false): void {
           refused.push(files ? absolute => dirname(absolute) === folder : absolute => absolute === folder);
-          return false;
-        },
-        async restore(): Promise<void> {
-          for (const folder of denied.splice(0)) await restoreAccess(folder);
         },
       };
     }
@@ -1796,20 +1789,16 @@ describe("CodeRuleBridge", () => {
       const refusing = refusingView(root);
       const onDiscoveryGaps = vi.fn();
       const bridge = createBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => refusing.view }, { onDiscoveryGaps });
-      try {
-        await bridge.openWorkspace("session-1");
-        await bridge.checkpoint("turn");
-        await bridge.checkpoint("turn");
-        const clean = await checkpointWork(bridge, refusing.looks);
-        await refusing.deny(locked);
-        const extra: number[] = [];
-        for (let turn = 0; turn < 4; turn += 1) extra.push(await checkpointWork(bridge, refusing.looks) - clean);
-        expect(extra[0]).toBeLessThanOrEqual(1);
-        expect(extra.slice(1).filter(more => more > 0)).toEqual([]);
-        expect(onDiscoveryGaps.mock.calls.map(([gaps]) => (gaps as Array<{ path?: string }>).map(gap => gap.path))).toEqual([["src"]]);
-      } finally {
-        await refusing.restore();
-      }
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      await bridge.checkpoint("turn");
+      const clean = await checkpointWork(bridge, refusing.looks);
+      refusing.deny(locked);
+      const extra: number[] = [];
+      for (let turn = 0; turn < 4; turn += 1) extra.push(await checkpointWork(bridge, refusing.looks) - clean);
+      expect(extra[0]).toBeLessThanOrEqual(1);
+      expect(extra.slice(1).filter(more => more > 0)).toEqual([]);
+      expect(onDiscoveryGaps.mock.calls.map(([gaps]) => (gaps as Array<{ path?: string }>).map(gap => gap.path))).toEqual([["src"]]);
     });
 
     // A walk looks again at no more refusals than a checkpoint records, each by its attributes and its lstat.
@@ -1821,21 +1810,17 @@ describe("CodeRuleBridge", () => {
       const refusing = refusingView(root);
       const onDiscoveryGaps = vi.fn();
       const bridge = createBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => refusing.view }, { onDiscoveryGaps });
-      try {
-        await bridge.openWorkspace("session-1");
-        await bridge.checkpoint("turn");
-        await bridge.checkpoint("turn");
-        const clean = await checkpointWork(bridge, refusing.looks);
-        await refusing.deny(denied, true);
-        const extra: number[] = [];
-        const turns = MAX_TOLD_GAPS / MAX_TOLD_AT_ONCE + 2;
-        for (let turn = 0; turn < turns; turn += 1) extra.push(await checkpointWork(bridge, refusing.looks) - clean);
-        expect(extra.filter(more => more > 2 * MAX_TOLD_AT_ONCE)).toEqual([]);
-        expect(extra.at(-1)).toBeLessThanOrEqual(0);
-        expect(onDiscoveryGaps.mock.calls.flatMap(([gaps]) => gaps as unknown[])).toHaveLength(MAX_TOLD_GAPS + 1);
-      } finally {
-        await refusing.restore();
-      }
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      await bridge.checkpoint("turn");
+      const clean = await checkpointWork(bridge, refusing.looks);
+      refusing.deny(denied, true);
+      const extra: number[] = [];
+      const turns = MAX_TOLD_GAPS / MAX_TOLD_AT_ONCE + 2;
+      for (let turn = 0; turn < turns; turn += 1) extra.push(await checkpointWork(bridge, refusing.looks) - clean);
+      expect(extra.filter(more => more > 2 * MAX_TOLD_AT_ONCE)).toEqual([]);
+      expect(extra.at(-1)).toBeLessThanOrEqual(0);
+      expect(onDiscoveryGaps.mock.calls.flatMap(([gaps]) => gaps as unknown[])).toHaveLength(MAX_TOLD_GAPS + 1);
     });
 
     /** The path of each place told, in the order told. */
@@ -1925,7 +1910,8 @@ describe("CodeRuleBridge", () => {
         const root = await workspace();
         const file = join(root, "src", "a.py");
         await writeFile(file, "a = 1\n");
-        // As the router's owner lookup refuses a file the walk saw first that Windows denies, or whose delete is pending.
+        // As the router's owner lookup refuses, on Windows, a file the walk saw first whose real path is refused and that
+        // lstat cannot tell from a link: one denied, or one whose delete is pending.
         const sourceRoot = (path: string): string => {
           if (path === "src/a.py") throw refusal("realpath", file);
           return root;

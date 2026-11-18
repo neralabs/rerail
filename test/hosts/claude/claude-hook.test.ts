@@ -407,11 +407,12 @@ describe("Claude Code hook with a running daemon", () => {
       if (!await deny(locked)) skip("this process reads a folder its user is denied: root, or a Windows token holding the backup privilege");
       for (let turn = 0; turn < 2; turn += 1) await session.turn();
       const recorded = gapRows("restart-session");
-      // POSIX lists the folder's parent and records the folder. On Windows the native real path of a path the user is
-      // denied fails the walk view's look of it, so the parent's listing fails, and a walk that met a file it had seen
-      // there fails whole: what is recorded then names the parent, or no path.
-      if (process.platform === "win32") expect(recorded.length).toBeGreaterThan(0);
-      else expect(recorded).toEqual([{ path: "src/locked", reason: `EACCES: permission denied, opendir '${locked}'` }]);
+      // The parent lists the folder and the folder refuses its own listing: with EACCES on POSIX, with EPERM on Windows,
+      // whose look again finds the folder still there, as a folder the user is denied stays.
+      const reason = process.platform === "win32"
+        ? expect.stringMatching(/^EPERM: operation not permitted, opendir '.+[\\/]src[\\/]locked'$/)
+        : `EACCES: permission denied, opendir '${locked}'`;
+      expect(recorded).toEqual([{ path: "src/locked", reason }]);
 
       await closeNativeTestDaemons();
       await startNativeTestDaemon(repository);
