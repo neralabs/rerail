@@ -997,6 +997,19 @@ pass.
     back: 118.0. `a_readers_short_form_is_the_loops_arm` names the number's rule
     (`PassShape::arm_rules`). Corpus: 396.0 M instructions.
 
+### Q41. The pp words on Metal (0348, stage 5): the spike says one TU a thread does not pay
+
+- **Done** (2026-11-18), 5a: the words' IR as MSL (`clif_msl`), `run_native` split into
+  `prepare` and `complete`, and `metal::pp_on`'s batch over one arena. Metal equals the
+  interpreter on `EXAMPLES` and `TUS`, 62 of 62. Found on the way: the device compiler reordered
+  accesses through integer-cast pointers (`#if !(1/0)` true), so every access is now the
+  arena's pointer at an offset.
+- **Measured** (M5 Max, not quiet): a run takes 3,798 µs on one GPU thread against 6.4 µs on
+  one core with Cranelift. A batch takes about 3.7 ms whatever its thread count, so 128 copies
+  come to 25 µs a run. 1.4–3.2 MB of arena a run caps a 512 MB batch at about 128–170 runs.
+- **Waits on the user:** 5b–5e (a complete `clif_msl`, rounds as batches) build out a shape the
+  numbers say loses to one core. Question 3 below.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
@@ -1020,3 +1033,9 @@ pass.
    (`corpus::requests_file_local`, `file_local::requests_file_local`), with the test
    `a_cross_file_reader_finds_the_text_of_another_files_node`; `a_cross_file_text_test_is_maintained_as_a_filter`
    runs again.
+3. **Q41: the pp words on Metal.** One TU per GPU thread (0348 stage 5a) runs 600× slower than a
+   CPU core a thread, and a quarter of one core's throughput at the 128 threads the budget allows.
+   Options: (a) stop stage 5 here: expansion stays on the CPU (rustc's build), and the device keeps
+   stage 1's masks; (b) build 5b–5e as planned anyway, for a Metal-only path; (c) a different
+   device design: many TUs' steps in lockstep, or only the data-parallel parts (directive lines,
+   `#if` values) on the device. Recommended: (a).

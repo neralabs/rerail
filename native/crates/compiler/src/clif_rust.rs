@@ -212,9 +212,14 @@ pub(crate) struct Shape {
     merges: Vec<Vec<usize>>,
     header: Vec<bool>,
     merge: Vec<bool>,
+    /// The structure printed as MSL's C++ (`clif_msl`), which has no labels: each labelled
+    /// block a `do { … } while (false)` and each loop a `for (;;)` over one. A jump sets the
+    /// target's number (`j`: a loop's `2x + 1`, a merge's `2y + 2`) and breaks; each construct
+    /// on the way out stops it there or breaks on.
+    pub(crate) msl: bool,
 }
 
-fn successors(f: &ir::Function, b: ir::Block) -> Vec<ir::Block> {
+pub(crate) fn successors(f: &ir::Function, b: ir::Block) -> Vec<ir::Block> {
     let Some(last) = f.layout.last_inst(b) else { return Vec::new() };
     f.dfg.insts[last].branch_destination(&f.dfg.jump_tables, &f.dfg.exception_tables).iter().map(|c| c.block(&f.dfg.value_lists)).collect()
 }
@@ -366,7 +371,7 @@ impl Shape {
         for m in &mut merges {
             m.sort_by_key(|&b| std::cmp::Reverse(order.rpo[b]));
         }
-        Some(Shape { block, succ, label, rpo: order.rpo, merges, header, merge })
+        Some(Shape { block, succ, label, rpo: order.rpo, merges, header, merge, msl: false })
     }
 
     /// Each loop (a strongly connected part of the graph, its header out, then the parts within,
@@ -423,16 +428,20 @@ impl Shape {
     /// successor's).
     pub(crate) fn tree(&self, emit: Emit<'_>, x: usize) -> Result<String, String> {
         let within = self.within(emit, x, &self.merges[x])?;
-        Ok(if self.header[x] { format!("'b{x}: loop {{\n{within}}}\n") } else { within })
+        Ok(match (self.header[x], self.msl) {
+            (false, _) => within,
+            (true, false) => format!("'b{x}: loop {{\n{within}}}\n"),
+            (true, true) => format!("for (;;) {{\ndo {{\n{within}}} while (false);\nif (j != 0u && j != {}u) break;\nj = 0u;\n}}\n", 2 * x + 1),
+        })
     }
 
     /// Node `x`'s `k`th edge: its dispatch's label, then a jump.
     fn transfer(&self, emit: Emit<'_>, x: usize, k: usize) -> Result<String, String> {
         let to = self.succ[x][k];
         let jump = if self.rpo[to] <= self.rpo[x] {
-            format!("continue 'b{to};")
+            if self.msl { format!("{{ j = {}u; break; }}", 2 * to + 1) } else { format!("continue 'b{to};") }
         } else if self.merge[to] {
-            format!("break 'm{to};")
+            if self.msl { format!("{{ j = {}u; break; }}", 2 * to + 2) } else { format!("break 'm{to};") }
         } else {
             self.tree(emit, to)?
         };
@@ -446,9 +455,21 @@ impl Shape {
         if let Some((&y, rest)) = ys.split_first() {
             let inner = self.within(emit, x, rest)?;
             let after = self.tree(emit, y)?;
+            if self.msl {
+                return Ok(format!("do {{\n{inner}}} while (false);\nif (j != 0u && j != {}u) break;\nj = 0u;\n{after}", 2 * y + 2));
+            }
             return Ok(format!("'m{y}: {{\n{inner}}}\n{after}"));
         }
         let Some(b) = self.block[x] else {
+            if self.msl {
+                // A jump in a case breaks the `switch`, then the construct around it.
+                let mut s = String::from("switch (d) {\n");
+                for k in 0..self.succ[x].len() {
+                    writeln!(s, "case {k}u: {{ {} }} break;", self.transfer(emit, x, k)?).unwrap();
+                }
+                s.push_str("default: break;\n}\n");
+                return Ok(s);
+            }
             let mut s = String::from("match d {\n");
             for k in 0..self.succ[x].len() {
                 writeln!(s, "{k} => {{ {} }}", self.transfer(emit, x, k)?).unwrap();
@@ -564,7 +585,7 @@ fn cond(cc: IntCC, a: &str, b: &str, s: &str, u: &str) -> String {
 
 /// Whether call `inst` is followed by a return of its results, in order, and nothing else:
 /// `return f(…)`.
-fn returned_call(f: &ir::Function, inst: ir::Inst) -> bool {
+pub(crate) fn returned_call(f: &ir::Function, inst: ir::Inst) -> bool {
     let dfg = &f.dfg;
     if dfg.insts[inst].opcode() != ir::Opcode::Call {
         return false;
@@ -771,7 +792,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
 
 /// The `band`s each read only by compares that print as a bit test (`tested_bits`): the
 /// test is the `and` too, so they are not printed.
-fn absorbed(f: &ir::Function) -> std::collections::HashSet<ir::Inst> {
+pub(crate) fn absorbed(f: &ir::Function) -> std::collections::HashSet<ir::Inst> {
     let dfg = &f.dfg;
     let insts: Vec<ir::Inst> = f.layout.blocks().flat_map(|b| f.layout.block_insts(b)).collect();
     let mut tested = std::collections::HashSet::new();
