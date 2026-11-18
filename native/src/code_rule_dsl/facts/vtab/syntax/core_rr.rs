@@ -285,6 +285,27 @@ pub struct Literal {
     pub value: Option<(String, &'static str)>,
 }
 
+/// Whether a node of `kind` with `children` has a part other than constant text (a Python `interpolation`, a PHP
+/// `encapsed_string`'s variable).
+fn interpolated(f: &Facts, dialect: &Dialect, kind: &str, children: &[u32]) -> bool {
+    let named_child = |k: &dyn Fn(&str) -> bool| children.iter().any(|&c| f.named(c) && k(dialect.name(f, c)));
+    match (dialect.family, kind) {
+        (Family::Python, _) => named_child(&|k| k == "interpolation"),
+        (Family::Php, "encapsed_string") => named_child(&|k| !matches!(k, "string_content" | "escape_sequence")),
+        _ => false,
+    }
+}
+
+/// Tape node `id`'s string literal's content (`str(n, s)` in `core.rr`'s shape), as `CoreRows::node` reads it: none
+/// for a comment or a node that is no string. What `str`'s answer on request reads (decision 0353 step 3, 0174).
+pub fn node_str(f: &Facts, dialect: &Dialect, id: u32) -> Option<String> {
+    let kind = dialect.name(f, id);
+    if is_comment(kind) {
+        return None;
+    }
+    literal(dialect.family, kind, f.text(id), interpolated(f, dialect, kind, &f.children(id))).str
+}
+
 /// The literal facts of a node of `kind` with source `text`; `interpolated` when it has a part other than
 /// constant text (a Python `interpolation`, a PHP `encapsed_string`'s variable).
 pub fn literal(family: Family, kind: &str, text: &str, interpolated: bool) -> Literal {
@@ -756,12 +777,7 @@ impl CoreRows {
             } else if dialect.family == Family::Rr && kind == "variable" {
                 self.name.push([n, string(text) as i64]);
             }
-            let named_child = |k: &dyn Fn(&str) -> bool| children.iter().any(|&c| f.named(c) && k(dialect.name(f, c)));
-            let interpolated = !self.skip.literal && match (dialect.family, kind) {
-                (Family::Python, _) => named_child(&|k| k == "interpolation"),
-                (Family::Php, "encapsed_string") => named_child(&|k| !matches!(k, "string_content" | "escape_sequence")),
-                _ => false,
-            };
+            let interpolated = !self.skip.literal && interpolated(f, dialect, kind, &children);
             let mut lit = if self.skip.literal { Literal::default() } else { literal(dialect.family, kind, text, interpolated) };
             // A format string's node: its value is its parser's (an `error`'s message, a `field_name`'s argument).
             if !self.skip.literal

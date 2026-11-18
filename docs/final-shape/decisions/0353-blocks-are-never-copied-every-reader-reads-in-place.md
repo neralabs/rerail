@@ -241,6 +241,15 @@ Step 3, as built for them (2026-11-17):
 - Check: in `node_ids_in_place_equal_the_numbered_ones`, each node's point reads equal the walk's, in every format,
   whole and narrowed; `a_views_filter_scan_holds_the_rows_a_per_row_read_finds` holds the scans to the point reads.
 
+**Step 3's derived values: `str` on request** (2026-11-17). `str(n, s)` is answered on request, as 0174 answers
+`node_text` and `value`: `ON_REQUEST`'s second round, answered by `@rr_node_str(n)` (`LongTexts::str_any`), which
+reads the node's literal as the batch's shape states it (`core_rr::node_str`, the definition the eager rows use too,
+or T's). Check: `str_answered_on_request_holds_the_eager_rows`, against a reader that keeps it eager. On hogql
+(`p0_names` asks for 2 nodes) it saves almost nothing, and the reason is in the profile: the projection's skip
+flags compute each node's literal wherever `text` is read (a literal's prefix makes it token-like), and hogql's
+rules read every node's `text` (no kind narrows them, `text_nodes` is none), so `CoreRows::node` visits all
+1.3 M nodes for `text`. Rules look `text` up by node for 663,057 rows. `text` is what row 7's time is.
+
 `DefIds`' `low`, `order` and `back` are gone. Every projection, narrowed ones too, keeps its granule table, and it
 answers ids, order keys and their inverses:
 - `order`, an order key (its run's rank, then its index in its granule): the table keeps each granule stretch's run

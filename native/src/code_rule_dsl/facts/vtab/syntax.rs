@@ -455,6 +455,25 @@ impl LongTexts {
         values.get(&local).cloned()
     }
 
+    /// Node `n`'s string literal's content, as the batch's shape states `str(n, s)`: `core.rr`'s literal reading
+    /// (`core_rr::node_str`), or T's (a string node's content between its quotes, `NodeRows`). It answers `str`'s
+    /// requests (decisions 0174, 0353 step 3): only the nodes a rule asks for are read and interned.
+    pub fn str_any(&self, n: i64) -> Option<String> {
+        let (key, low) = ((n >> 32) as u32, n as u32);
+        let p = &self.batch.docs[*self.docs.get(&key)?];
+        let local = p.local_of(low)?;
+        let x = p.ranks().select(Item::Node, local)?;
+        let dialect = self.batch.dialects.get(p.tag)?;
+        let f = &*p.facts;
+        match self.batch.shape {
+            Shape::Core => core_rr::node_str(f, dialect, x),
+            Shape::T => match dialect.class(f, x) {
+                Class::String => dialect.string(f, x).and_then(|(_, content)| content.map(str::to_owned)),
+                _ => None,
+            },
+        }
+    }
+
     /// Node `n`'s text or value as function `name` reads it (`NODE_READS`) through `source`, a binding of
     /// `rr_long_text_node`; none for another source or function.
     pub fn of(source: &dyn Source, name: &str, n: i64) -> Option<String> {
@@ -463,6 +482,7 @@ impl LongTexts {
             "rr_node_text" => texts.long_text(n),
             "rr_node_text_any" => texts.text_any(n),
             "rr_node_value" => texts.value_any(n),
+            "rr_node_str" => texts.str_any(n),
             _ => None,
         }
     }
@@ -515,7 +535,7 @@ pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
 
 /// The functions that read a node's text or value from the run's batch (`LongTexts::of`): their values are the run's,
 /// so `functions::eval` gives none.
-pub const NODE_READS: [&str; 3] = ["rr_node_text", "rr_node_text_any", "rr_node_value"];
+pub const NODE_READS: [&str; 4] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str"];
 
 /// The request relation of `value` (decision 0174): a batch keeps its documents' tapes for W's values where a program
 /// derives it.
