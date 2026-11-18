@@ -108,6 +108,35 @@ describe("the start checks hooks gave up on", () => {
     expect({ pending, folder: marksOf(folder), other: marksOf(other) }).toEqual({ pending: 3, folder: [], other: ["asking"] });
   });
 
+  it("tries the pending marks of a folder it could not list again at the next start check it serves, of any folder", async () => {
+    const [folder, other] = [join(home, "app"), join(home, "other")];
+    let refused = true;
+    vi.resetModules();
+    vi.doMock("node:fs", async () => {
+      const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+      const readdirSync = ((...list: Parameters<typeof actual.readdirSync>) => {
+        if (refused) throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+        return actual.readdirSync(...list);
+      }) as typeof actual.readdirSync;
+      return { ...actual, readdirSync };
+    });
+    try {
+      const { ServedAsks: Served } = await import("../../../src/runtime/start-check/waiting-asks.js");
+      makeAnswersFolder(home);
+      const daemon = new Served();
+      daemon.open(home, DAEMON);
+      writeFileSync(join(asksFolder(), `${nameOf(folder)}.0123456789abcdef.asking`), "");
+      daemon.served(folder);
+      const kept = marksOf(folder);
+      refused = false;
+      daemon.served(other);
+      expect({ kept, after: marksOf(folder) }).toEqual({ kept: ["asking"], after: [] });
+    } finally {
+      vi.doUnmock("node:fs");
+      vi.resetModules();
+    }
+  });
+
   it("serves a start check where its folder of marks is gone, as where it cannot be listed", () => {
     const folder = join(home, "app");
     const daemon = daemonWithKeptAnswer(folder);

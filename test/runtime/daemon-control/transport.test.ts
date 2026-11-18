@@ -1,11 +1,13 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { connect, createServer, type AddressInfo, type Server, type Socket } from "node:net";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { daemonFetch } from "../../../src/runtime/index.js";
+import { selfSignedCertificate } from "../../support/self-signed-certificate.js";
 
 const transportModule = pathToFileURL(resolve(import.meta.dirname, "..", "..", "..", "src", "runtime", "daemon-control", "transport.ts")).href;
 const ACCESS = { "x-rerail-access": "capability" };
@@ -132,6 +134,18 @@ describe("daemonFetch over http", () => {
     expect({ told, connections }).toEqual({ told: ["/api/presentation"], connections: 1 });
   });
 
+  it("tells a caller that gives `sent` once its request was handed to an https daemon it pins", async () => {
+    const certificate = selfSignedCertificate();
+    const server = createHttpsServer({ cert: certificate.cert, key: certificate.key }, (_request, response) => response.end("{}"));
+    servers.push({ close: async () => { server.closeAllConnections(); server.close(); await once(server, "close"); } });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const url = `https://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+    let told = 0;
+    const response = await daemonFetch({ url, tlsFingerprint256: certificate.fingerprint256 }, () => { told += 1; })(new URL("/healthz", url), { headers: ACCESS });
+    expect({ body: await response.json() as unknown, told }).toEqual({ body: {}, told: 1 });
+  });
+
   it("sends a GET once more on a new connection when the daemon closed the kept one as it arrived, and never a POST", async () => {
     // The daemon answers the first request on a connection and closes the connection when a second one reaches it.
     const onData = (connection: Admitted): void => {
@@ -142,7 +156,9 @@ describe("daemonFetch over http", () => {
       }
     };
     const { daemon, url } = await fakeDaemon(onData);
-    const send = daemonFetch({ url });
+    // Told for the first request and for the one sent again, each on a new connection; not for the one the daemon closed.
+    let told = 0;
+    const send = daemonFetch({ url }, () => { told += 1; });
     const status = async (target: string, init: RequestInit): Promise<number> => {
       const response = await send(new URL(target), init);
       await response.text();
@@ -150,7 +166,7 @@ describe("daemonFetch over http", () => {
     };
     expect(await status(new URL("/healthz", url).href, { headers: ACCESS })).toBe(200);
     expect(await status(new URL("/healthz", url).href, { headers: ACCESS })).toBe(200);
-    expect(daemon.admitted.map(connection => requests(connection.text))).toEqual([2, 1]);
+    expect({ carried: daemon.admitted.map(connection => requests(connection.text)), told }).toEqual({ carried: [2, 1], told: 2 });
 
     const posting = await fakeDaemon(onData);
     const post = { method: "POST", headers: ACCESS, body: "{}" };
