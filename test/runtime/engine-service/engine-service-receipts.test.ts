@@ -104,7 +104,9 @@ describe("the engine service's receipts", () => {
   it("records a receipt a hook hands over in its session's runtime, once however often it is handed", async () => {
     const { databasePath, repositoryKey, socketPath, session } = await serviceOverCheckout();
     const link = engineLink({ socketPath });
-    vi.useFakeTimers({ toFake: ["Date"], now: 1_000_000 });
+    // The runtime this ingest builds reads the session's row on an interval timer: faked here, it cannot tick while
+    // the row is gone, where it would throw from the timer and fail the run.
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"], now: 1_000_000 });
     await link.ingest({ kind: "session-start", eventId: "a:start", session: session("a") });
     // A reset removed the session's row: the runtime that holds the session puts it back with its own start, where a
     // record on connections of the service's own would date the session from the receipt.
