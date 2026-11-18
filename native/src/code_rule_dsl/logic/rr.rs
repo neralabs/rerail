@@ -824,11 +824,11 @@ pub(in crate::code_rule_dsl) fn graph_image(store: Option<&crate::content_store:
 /// files its graph reached, so an edited library gives the same key another graph: the store's alias holds one
 /// image, and the first stays. A run then finds it does not hold (`Graph::holds`) and derives the graph, as without
 /// images. The shipped bundle's graphs are its library's; exported, the last derived is the one written.
-pub(in crate::code_rule_dsl) fn keep_graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey, bytes: Vec<u8>) -> bool {
+pub(in crate::code_rule_dsl) fn keep_graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey, bytes: Vec<u8>) {
     use crate::content_store::write_back::{Key, Syms};
     const WHAT: &str = "phase 0's graph of a seed";
     images::export(key, &bytes);
-    let Some(store) = store else { return false };
+    let Some(store) = store else { return };
     // A record of its own (decision 0306), dropped where the queue is full, as `keep_image`'s: the graph in its byte
     // area, the first kept under its key staying.
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
@@ -840,7 +840,7 @@ pub(in crate::code_rule_dsl) fn keep_graph_image(store: Option<&crate::content_s
         cx.store.pin_source(id, IMAGE_OWNER, image_lease())
     }
     let queued = Key::of(&[WHAT.as_bytes(), &key.sha256_bytes().unwrap_or_default()]);
-    store.queue_record(Syms::None, WHAT, vec![queued], &key, Some(bytes), apply, true)
+    store.queue_record(Syms::None, WHAT, vec![queued], &key, Some(bytes), apply, true);
 }
 
 /// The lease of image `id`, read by this run, renewed (`keep_image`) once more than half of it has run: a run that reads

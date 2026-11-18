@@ -697,7 +697,7 @@ pub fn declare_axes(prog: &mut Program) {
 /// `finish`'s checks of a tree, on its version (`finish_checks_on`): the tree is encoded for them, until the tree's
 /// lowering goes (decision 0276 step 5).
 pub fn finish_checks(prog: &Program) -> Result<(), Error> {
-    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program_less_maintenance(prog).and_then(|b| b.finish()).map_err(Error::Syntax)?;
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(prog).and_then(|b| b.finish()).map_err(Error::Syntax)?;
     finish_checks_on(&v)
 }
 

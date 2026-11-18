@@ -312,6 +312,13 @@ mod fsevents {
     // (`observe::forget`).
     const LOST: u32 = 0x2 | 0x4 | 0x8 | 0x20 | 0x40 | 0x80;
     const HISTORY_DONE: u32 = 0x10;
+    /// An item's bytes or name changed: created, removed, renamed, modified (`kFSEventStreamEventFlagItem…`), or a
+    /// rescan of its directory (`MustScanSubDirs`).
+    const CONTENT: u32 = 0x100 | 0x200 | 0x800 | 0x1000 | 0x1;
+    /// Only its metadata changed: inode metadata (an access time set, a mode), Finder info, owner, extended
+    /// attributes. Its bytes are as they were, so an event of these alone names no change (Q152: a host's agent setting
+    /// the access times of the files a command will read made a warm run forget their answers).
+    const META: u32 = 0x400 | 0x2000 | 0x4000 | 0x8000;
     /// How long a replay may wait for its cookie.
     const WAIT: Duration = Duration::from_secs(2);
 
@@ -376,6 +383,9 @@ mod fsevents {
                 let at = seen.events.len();
                 seen.cookies.entry(path).or_insert((id, at));
                 seen.cookie_at = Some(Instant::now());
+                continue;
+            }
+            if flag & META != 0 && flag & CONTENT == 0 {
                 continue;
             }
             seen.events.push((id, path));
@@ -820,6 +830,19 @@ mod tests {
             Since::Lost { cursor: Some(c), why } => assert!(why.contains("slower") && c >= settled, "{why}: {c} against {settled}"),
             other => panic!("a bound of nothing is slower than any journal: {other:?}"),
         }
+        // A file whose times are set, its mtime to what it was (as a host's agent marks a file a command will read),
+        // is not named: its bytes are as they were. Written, it is.
+        let kept = root.join("sub/kept.py");
+        let mtime = std::fs::metadata(&kept).unwrap().modified().unwrap();
+        std::fs::File::options().write(true).open(&kept).unwrap().set_times(std::fs::FileTimes::new().set_accessed(std::time::SystemTime::now()).set_modified(mtime)).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        next_epoch();
+        let Since::Changed { paths, cursor: touched } = since(std::slice::from_ref(&root), Some(settled), &cookies) else { panic!("a replay") };
+        assert!(!paths.contains(&kept), "an access time set is no change: {paths:?}");
+        std::fs::write(&kept, "x = 2\n").unwrap();
+        next_epoch();
+        let Since::Changed { paths, .. } = since(std::slice::from_ref(&root), Some(touched), &cookies) else { panic!("a replay") };
+        assert!(paths.contains(&kept), "a write is named: {paths:?}");
         // A root under one asked is answered by the same stream, kept for the process: a change made since the
         // run's question is told to the next run.
         std::fs::write(root.join("sub/later.py"), "z = 3\n").unwrap();

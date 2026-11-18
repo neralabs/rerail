@@ -945,6 +945,9 @@ pub(in crate::code_rule_dsl) struct ObservedShared {
     published: arc_swap::ArcSwapOption<Observed>,
     pending: parking_lot::Mutex<Vec<Observed>>,
     folding: parking_lot::Mutex<()>,
+    /// A chunk's (Q88, `chunk_observed`): what its jobs handed in over the run's as filed, apart, for the run's in the
+    /// chunks' order (`file_observed`).
+    made: Option<parking_lot::Mutex<Observed>>,
 }
 
 /// The jobs' sums handed in before one of them folds them in: the lag of an estimate read in a job.
@@ -986,6 +989,9 @@ impl ObservedShared {
         let Some(now) = self.published.load_full() else { return };
         let mut next = Observed::clone(&now);
         for p in pending {
+            if let Some(made) = &self.made {
+                made.lock().add(p.clone());
+            }
             next.add(p);
         }
         self.published.store(Some(Arc::new(next)));
@@ -1091,6 +1097,30 @@ impl ObservedKey {
     }
 }
 static OBSERVED: ObservedKey = ObservedKey;
+
+/// A chunk's observations (Q88): the run's as filed when it began (`published`), what it observes over them, and that
+/// apart (`observed_made`).
+pub(in crate::code_rule_dsl) fn chunk_observed(published: Option<Arc<Observed>>) -> SharedObserved {
+    let s = ObservedShared { made: Some(Default::default()), ..Default::default() };
+    s.published.store(published);
+    Arc::new(s)
+}
+
+/// What a chunk observed (`chunk_observed`), every job's handed in.
+pub(in crate::code_rule_dsl) fn observed_made(chunk: &SharedObserved) -> Observed {
+    chunk.fold(true);
+    chunk.made.as_ref().map(|m| std::mem::take(&mut *m.lock())).unwrap_or_default()
+}
+
+/// The observations as last published: `None` while not observing.
+pub(in crate::code_rule_dsl) fn observed_now(s: &SharedObserved) -> Option<Arc<Observed>> {
+    s.published.load_full()
+}
+
+/// Adds a chunk's observations to the run's, as the main thread files it (Q88: in the chunks' order).
+pub(in crate::code_rule_dsl) fn file_observed(run: &SharedObserved, made: Observed) {
+    run.change(|o| o.add(made));
+}
 
 /// This thread's observations, for a job on another thread to enter.
 pub(in crate::code_rule_dsl) fn share_observed() -> SharedObserved {

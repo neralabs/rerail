@@ -48,7 +48,7 @@ fn t_programs_match_t_front_end() {
         let (d, r, f, l, dm, k, i, o, s, big, pr, ps) = expected;
         assert_eq!(got, (d, r, f, l, dm.to_vec(), k, i, o, s, big, pr, ps), "{name}");
         // O11: the value cycles, each bounded by the tree.
-        let treed: Vec<String> = cycles::check(&crate::code_rule_dsl::logic::program_image::Builder::of_program_less_maintenance(&p).and_then(|b| b.finish()).unwrap().0).unwrap().iter().map(|c| c.iter().cloned().collect::<Vec<_>>().join(",")).collect();
+        let treed: Vec<String> = cycles::check(&crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).and_then(|b| b.finish()).unwrap().0).unwrap().iter().map(|c| c.iter().cloned().collect::<Vec<_>>().join(",")).collect();
         let expected: &[&str] = match name {
             "calls.rr" => &["qn"],
             "calls_rust.rr" => &["modn"],

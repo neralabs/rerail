@@ -2523,7 +2523,7 @@ are the same.
   targeted set (548), `the_request_record_follows_the_preparation_steps` (logic crate), the prune case in
   `a_request_is_kept_for_a_gone_reader_and_for_a_readers_copy`.
 
-### Q120. (Q51 on benchmarks-on-integration at 9a9b270ce) The engine's library built with `test-hooks` alone warns in the generated mounts
+### Q120. (Q51 on benchmarks-on-integration at 9a9b270ce) (closed: the mounts are clean; the generator no longer regenerates) The engine's library built with `test-hooks` alone warns in the generated mounts
 
 Seen 2026-11-17 (`cargo check --lib --features test-hooks`, the CLI's feature set): 90 warnings, every one in
 `native/src/code_rule_dsl/mod.rs` (tools/cratify/mounts.py's mounts). Two kinds: a facade's glob re-export under
@@ -2536,7 +2536,12 @@ regenerated since keep the wider condition. The profiling build has none (Q13).
 - **Done when**: the generator gives each re-export and `#[path]` the condition of what reads it (`dir_attr`'s union,
   apply.py's test-hooks rule), the mounts are regenerated, and the `test-hooks` library and the test build list no
   warning.
-- **Record**: —
+- **Record** (2026-11-18, at c52041356): `cargo build --lib --features test-hooks` and the library's test build list
+  no warning from the mounts; the one warning left is the linker's (`__eh_frame` over 16 MB). The mounts were made
+  clean by hand: e2572ec31 (Q53) gated 53 module paths used only by test modules on `test`. The generator's half
+  no longer applies: since 625dc89e7 (0365 step 2) `tools/cratify` "can no longer regenerate the split as a whole",
+  and the mounts are kept by hand in its shape, so a regeneration can't bring the wider condition back. A mount
+  written by hand that has the wider condition shows up as the compiler's warning in the `test-hooks` build.
 
 ### Q184. (Q36 on Go-C-and-C-support) The compiled pp words stall: 45% of the interpreter's instructions, 1.09× its cycles
 
@@ -3180,7 +3185,7 @@ Q86 (step 6's prices) waits for step 4: most of what it prices goes.
   or by an atom a constant restricts; any other lead is searched again from the demand (`Body::demand_bounds_lead`).
   Test `a_demanded_rule_may_be_led_by_a_constant_restricted_atom`; decision 0048's last section.
 
-### Q88. (Q60 at django-bugs 36f3475c0) A run's plans depend on which concurrent chunk planned first
+### Q88. (Q60 at django-bugs 36f3475c0; Q94 at django-bugs cf28cfd53) (done) A run's plans depend on which concurrent chunk planned first
 
 - **Found** (2026-11-17, from Q59): the run's kept plans (`PLANS`, decision 0301) are shared by the chunks that run at
   once (15 on PostHog). A job plans with its own chunk's statistics, keeps the order in its own map
@@ -3189,6 +3194,33 @@ Q86 (step 6's prices) waits for step 4: most of what it prices goes.
   differ run to run (Q59: +600 G in 2 of 7 runs). Findings do not. `plans_learnt` (a kept plan's price and work) is
   last writer wins as well.
 - **Wanted**: what a chunk plans with is a function of the run's inputs, never of timing.
+- **Record** (2026-11-18): built. Chunk `n` (from 0, in the order the main thread files them) plans from the run's
+  plans and observations as they were once chunks `0..=n - 8` were filed (`PLAN_WINDOW`, the most chunks that
+  evaluate at once: those are always filed when `n` begins, so it never waits). What it plans, prices, learns and
+  observes is its own (`ChunkView`: new entries over the view's, which no chunk changes in place) and is the run's
+  as the main thread files it, in the chunks' order (`OrderedPlans`, `in_view`; `keeps::chunk_observed`). The same
+  rule holds whether chunks evaluate at once or one by one, so both plan alike. The guest slice's and the inputs'
+  statistics measured once per mix (`measured_once`, `guest_postings_once`) are each the earliest chunk's that made
+  them, and a chunk reads one only from a chunk filed before it began (`Once`, `once_keep`). Test:
+  `plan::ordered_tests::a_chunk_sees_the_plans_filed_before_its_window_never_a_neighbours` (rerail-logic; red with
+  the view taken as filed now, `(Some(10.0), Some(20.0))`).
+  - **Still timing-dependent: where the corpus is cut.** The chunk sizes come from the footprint each chunk adds
+    (Q74, Q55's 47785e475: bytes a node, the most measured this run), and the builder cuts ahead of the
+    measurements. Two runs cut PostHog differently: 331 chunks in sd1 (2026-11-17), 541 in q18a (2026-11-18,
+    one chunk measured at 4,138 bytes a node, every later chunk sized from it at 97,294 nodes). `RERAIL_CHUNK_NODES`
+    (a measurement aid) fixes the size after the first chunk.
+  - **Measured** (PostHog cold, profiled, M3 at load 20–57, 262,144 nodes a chunk): two runs with Q88 alone,
+    3,101 and 3,103 G instructions, 755 M native work each: the plans repeat once the cut does.
+  - **The instruction increase** (sd1 2,589 G, q18a 3,005 G, q94n 3,101 G) was not the chunks' count: 546 M native
+    work in sd1 against 755 M, of which `tp_name`, `demand_tp_name` and the `pre_<i>` feeding them made 92 + 55 + 89 M.
+    `tp_name` was demanded again, and `tp_ref`'s split joined every identifier with each of its ancestors (55 M
+    rows), the 0319 fault by another way: since Q37 `kind` is a view of `node`'s columns, so the split's scan took
+    `kind(o, "type_alias_statement")` as derived and bounding nothing, and a definition's `field(o, "left", l)`
+    (8,152 rows in a chunk) made `tp_name` large. Which way a run went depended on the chunk whose choice was kept
+    first (decision 0090 §5): one run with Q157 reverted did 503 M, another 755 M. Fixed: `demand::over` reads a
+    view of an input as its input's columns (`view_of`; test
+    `demand::over::tests::a_view_of_an_input_reads_as_the_inputs_columns`). Two runs: 2,888 and 2,862 G, 561 and
+    562 M native work, `tp_name` not demanded in any chunk, the same 29,747 findings.
 
 ### Q89. (Q61 at django-bugs 36f3475c0) The fast path's peak, by holder (PostHog cold, the memory line lifted)
 
@@ -3834,7 +3866,7 @@ chunk's dead relations (a stratum's deltas, a tail moved to a bigger block, fini
 - **Fix**: `Rows::frozen(rows, n, k)` takes the width from its caller. Test:
   `a_relation_started_from_an_empty_kept_one_holds_its_rows`; the session tests pass but Q149's two.
 
-### Q152. (Q80 on Typing-support) `the_run_after_a_cold_one_writes_nothing` fails here: phased-facts' Q68, fixed there, not merged yet
+### Q152. (Q80 on Typing-support; Q129 at django-bugs cf28cfd53) (done) `the_run_after_a_cold_one_writes_nothing` fails here: phased-facts' Q68, fixed there, not merged yet
 
 - **Found** (2026-11-17, after the hub's merge d1875e723): the warm child run exits 3. The observer's store is asked
   inside the waves under the root's canonical form (`/private/var/…`: `World::resolve_all` in the load rounds), and
@@ -3858,8 +3890,36 @@ chunk's dead relations (a stratum's deltas, a tail moved to a bigger block, fini
   stored ("no volume"): `FSEventsCopyUUIDForDevice` returns null in the Relax-hosted process, though the host
   answers it for the same device (ctypes on the m3) and the cargo-built test does not hit it. A Relax FFI fault,
   for the user to raise upstream; the tests that assert a warm run writes nothing fail under Relax for it.
+- **Record**: done (2026-11-18), three causes, each checked id by id on the M3.
+  - The lead held: each warm manifest left out exactly the sources the cold run's `record_runs` items named (the
+    two pipelines' runs, their images and facts). A run that takes the prepared program whole now names them:
+    `Prepared::runs` (`KeptRuns`: the digest the runs are kept under, `runs_digest`, and their images' digests,
+    which `record_runs` gives) is kept in the pointer (`prepared_runs`, `prepared_run_image`). `prepared::lookup` and
+    `prepared::documents` add the runs' sources, found by alias with nothing read (`program_text::run_sources`).
+    The run puts the digest among its manifest's plans, as the cold run did (`kept_runs`).
+  - Then the outer manifest's plans differed: phase 0's graph image keeps the bootstrap run's plans, and a run
+    reading it names them (b68e8c7b9, Q49). But f7e047997, made where the image kept none, cleared them in the run
+    that keeps the image. So the cold run named none and the warm run named them all. The clear is gone: both name
+    them, and what the graph came from stays live while it is used (b68e8c7b9's invariant).
+    `keep_graph_image` returns nothing now: its result had no other reader.
+  - Beside other tests, the first command after the farm sent the checkout still failed now and then: "the
+    observer forgot answers the journal named changed", 16 paths under `typing/programs`. The farm's agent sets the
+    times of every file a command will read, the mtime to what it was (`had`, `seen(touch=True)`). FSEvents reports
+    that as an inode metadata change, and the journal counted every event as a change. An event that only changes
+    an item's metadata (inode metadata, Finder info, owner, extended attributes; no create, remove, rename,
+    modify or rescan) leaves its bytes as they were, and now names nothing (`journal::fsevents`, `META`,
+    `CONTENT`). Spotlight, backups and quarantine attributes make the same events on a user's machine.
+  - Tests: `the_journal_names_what_changed_since_its_cursor` sets a file's times as the agent does (not named)
+    and then writes it (named). Without the filter it fails. On the farm (M3): it and the observer's tests (26, three
+    times); `the_run_after_a_cold_one_writes_nothing` alone, and in a batch with the phase 0, prepared, preparation,
+    graph image, second-run and `programs_are_kept_by_the_hashes_of_what_they_read` tests (11 of 11, four times,
+    the first right after a send).
+- **At the hub's merge** (django-bugs at cf28cfd53, merged 2026-11-18): the hub had fixed the first cause its own way (c18b1e567, Q101: a reused
+  program names its lane's kept runs, read by `run_sources(store, key)`, which names 0393's held images and 0385's
+  rows too). One mechanism is kept, the hub's: `KeptRuns`, `prepared_runs` and the digest-list `run_sources` are not
+  taken. The second cause was fixed on the hub too (Q150). The journal's `META` filter (the third) is taken.
 
-### Q81. An edited include is read with its old digest in the same process (`programs_are_kept_by_the_hashes_of_what_they_read`)
+### Q81. (Q130 at django-bugs cf28cfd53) (closed: not reproduced) An edited include is read with its old digest in the same process (`programs_are_kept_by_the_hashes_of_what_they_read`)
 
 - **Found** (2026-11-17, steady, at f5b6023e8 and after): after the helper's edit and `observe(|o| o.flush())`,
   `read_file` does not reuse its program (it lowers again), but `program_shared` → `read_shared` gets the helper's
@@ -3868,6 +3928,23 @@ chunk's dead relations (a stratum's deltas, a tail moved to a bigger block, fini
   read: the observer vouches for the old answer (the journal's `trusted`, a root asked since the flush, or the
   racy window's settling, Q45).
 - **Done when**: the cause is named in the observer and fixed there; the test passes.
+- **Record**: not reproduced (2026-11-18, at 4d9fad6fe), so no cause to name. The test passes in every way it is
+  run here:
+  - under nextest: 8 runs alone on the M3, one on the M1 Max, and every batch of Q152's (11 tests, five times);
+  - under `cargo test`, in one process with all of `rr::tests` (164 tests), twice;
+  - under Relax (`live-test-remote --once`), once;
+  - with the journal on (`RERAIL_TAPE_CACHE` set, the observer shared), 4 runs.
+
+  `observe.rs` and the read path (`read_file`, `program_shared`, `read_shared`) are as they were where it was found.
+  The observer vouches three ways, and each was read:
+  - `Entry::holds`: the same stat, and recorded more than `RACY_NS` (2 s) after the file last changed. The edit
+    changes mtime and ctime, and a coarse file system is held by the racy rule.
+  - A clean Git blob: not a temporary directory's.
+  - `trusted`: only with the journal on, and only while a root is asked since the last flush.
+
+  If it fails again, the run's environment is the lead: which runner, whether `RERAIL_TAPE_CACHE` or
+  `RERAIL_JOURNAL` is set, and where the temporary directory is. `RERAIL_OBSERVED_PATHS=1` prints each `stat` and
+  its root.
 
 ### Q83. `front::finish`'s checks read a tree on a text's version path
 
@@ -3884,6 +3961,9 @@ chunk's dead relations (a stratum's deltas, a tail moved to a bigger block, fini
   tree's form ran beside it on the front, rr, image, cache, pack, cycle and corpus tests (770 tests, every program
   each reaches `finish` with), agreeing on each, and is deleted. The tree's `finish` encodes its tree for the
   checks until the tree lowering goes (0276 step 5).
+- **On django-bugs** (c52041356): the same checks written once over a `RuleView` of a tree or a version
+  (`front/view.rs`), the tree's kept beside them. Not taken at the hub's merge (django-bugs at cf28cfd53, merged 2026-11-18): the hub's tree
+  form is deleted (676988b08) and Typing's 0276 step 6 removed the header the version form read.
 
 ### Q153. (Q86 on Typing-support; Q80 on phased-facts at 77a9d64fc) A later guest round's derived-again native operator read kept relations it never held (done)
 
@@ -3930,7 +4010,7 @@ heap copies gone at 300 files, peak unchanged. Next on the list: the base rows f
 the memo's rows, `Relation::push` staging, `Rows::clone`/`shared` tails and `merged`, the fixpoint's host indexes,
 and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q155, 0361 step 7).
 
-### Q157. (Q90 on Typing-support) A debug build's checks of the lowering on the version fail on ep2's rules
+### Q157. (Q90 on Typing-support; Q132 at django-bugs cf28cfd53) (done) A debug build's checks of the lowering on the version fail on ep2's rules
 
 - **Found** (2026-11-17, at a1de58655 plus 0373, a debug `rerail-engine` over 3 of ep2's files with its 317 rules,
   `RERAIL_PREPARE=parts`, cold store): `the cone copied on the version is the tree's` (rr.rs, `lowered_in_version`)
@@ -3947,6 +4027,27 @@ and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q155, 
   made different requests and gates. Both ported in that merge; this item's run to be repeated on it.
 - **Done when**: the debug build lowers ep2's rules with both checks passing. A debug run of the combine's splice
   (0373) waits on it; meanwhile `RERAIL_COMBINE_LINK=check` checks the splice in the profiling build.
+- **Record** (2026-11-18): the run repeated on 4d9fad6fe's line, a debug `rerail-engine` over ep2's 317 rules and 3
+  files, cold, warm, then a rule edit (ruf048's `"."` to `","`), both `RERAIL_PREPARE=whole` and `=parts`: every
+  check passes, and the cold and warm outputs are the same rows (`rerail-engine csv`). Three faults, each fixed:
+  - **A part's prune dropped another part's requests.** The version's `prune` asked whether a request's reader is
+    needed even where the part does not have the reader (`p0_names`, in part p0, reading `rr_str_req`, made in
+    part `l`), and dropped the request. The tree's `front::reach` keeps a request whose reader the program does not
+    have (`!has(b)`); the version's prune now does too (`preparation/prune.rs`).
+  - **A pipeline's record went stale between steps.** `Pipeline` carried the request record rule by rule but wrote
+    it into a version only at `finish`. A pass reading the record between (the merge renaming its readers) read
+    rows of rules since removed: 42 entries for 39 rules. The carry then refused the merge's record and kept the
+    merged reader's old name (`rr_demand_agg_rr_agg395`), which `finish` wrote back. Each step's output now has
+    the carried record stated on it (`manager.rs`, `Pipeline::record`): the combine's tail is the tree's.
+  - **The header's check compared the record by place.** `the source's header is the tree's fields` compared
+    the request record row by row. A pass run as an edit writes its rules after the rest, so the version's record
+    is the tree's by rule in other rows. The check now leaves the record out: `same_program` compares it by rule
+    at each stage.
+  Targeted tests: the 80 named for preparation, parts, the prune, the merge, requests and pipelines pass.
+- **At the hub's merge** (django-bugs at cf28cfd53, merged 2026-11-18): the first two faults were fixed on the hub by 4dbc395b2 (0331): the prune keeps
+  a reader the version neither declares nor makes, and the pipeline carries the record by rule id (`Carry`) and
+  restates it at its end (`state_asked`). The hub's forms are kept; django-bugs' per-step statement and `has` are not
+  taken. The third (the header's check) went with the header (0276 step 6).
 
 ### Q91. A rule edit lays out every kept input, though none changed (Q18's kept inputs laziness)
 
@@ -4643,7 +4744,7 @@ in the test's inputs, it fails the same at Parser-generators' 612201517 (before 
   the interpreter, and Metal against the CPU. It samples the file explicitly (every fifth file did not reach it):
   529 files, passing.
 
-### Q204. (Q170 on cost-classifier-metal-rf; Q137 at django-bugs 42b33a424; Q100 on Typing-support-final-shape at 6ce382887, Q91 before it) A cut of a gated program keeps `node`'s projections: retain's test expects an empty part
+### Q204. (Q170 on cost-classifier-metal-rf; Q137 at django-bugs 42b33a424; Q100 on Typing-support-final-shape at 6ce382887, Q91 before it) (done) A cut of a gated program keeps `node`'s projections: retain's test expects an empty part
 
 - **Found** (2026-11-17, while making 0377's cuts): `retain::tests::unchanged_gated_programs_reuse_only_complete_retained_results`
   fails: the cut of an unchanged gated program (`Cut::program`) holds two rules, `kind($n, $k) :- node(_, $n, $k, _, _)`
@@ -4653,6 +4754,11 @@ in the test's inputs, it fails the same at Parser-generators' 612201517 (before 
   through `passes::Parts`, and the rules kept are those `clean` leaves.
 - **Done when**: either the cut counts a view of an input's columns clean with the input (the part then has no rules,
   as the test says), or the test asserts the part holds only such views; the planner's owner of Q37 decides which.
+- **Record**: done (2026-11-18), decided by Q37's owner before this item was written: 4085f6120 (2026-11-16, merged
+  here with ec3a74a87) made the test expect the views' rules left in a reused program, as 6fe55cb12 made them. It
+  asserts the part's rules are `docof` and `kind`, each a view of an input's columns (`input_view_shape`), and that
+  the part has no gates. Typing-support had not taken that merge when the item was recorded. On the farm (M3):
+  rerail-logic's `retain::` tests, 20 of 20.
 
 ### Q205. (Q171 on cost-classifier-metal-rf; Q142 at django-bugs 42b33a424; Q113 on investigate-bend-vs-datalog at 0098f4340) (done) A device relation's block is leased outside the one block policy
 
@@ -4738,13 +4844,32 @@ native join it falls back to the planner's whole-rule order.
   `bound_head_order` is gone. The mode's lines report their work: `setfix::maint_step_counts` gives the removals',
   checked adds' and rechecks' step counts by plan step (the probes' are `step_counts`'), and `maintain_mode` gives
   each line's work to `Model::ran` under its key (a removal and its add, planned alike, summed under one). A
-  recursive component's drivers (a probe's join less its delta atom) report none: their order is the probe's, run
-  another way. Tests: `a_recheck_is_priced_with_its_head_bound_and_kept_apart` (plan: alone `c(y)` leads, with the
+  recursive component's drivers (a probe's join less its delta atom) report theirs too (2026-11-18): each keeps the
+  probe it is made from, `setfix::driver_step_counts` gives its counts with that probe, and `maintain_mode` adds its
+  work to that probe's key (its order is the probe's, run another way). Test:
+  `a_recursive_components_driver_reports_its_work_under_its_probe` (setfix; the driver is made from the second
+  probe, after a seed). Tests: `a_recheck_is_priced_with_its_head_bound_and_kept_apart` (plan: alone `c(y)` leads, with the
   head bound `a(x, y)` does, its kept plan taken as it is and the rule's own order untouched) and the counts in
   `a_maintained_component_kills_the_candidates_no_rule_derives_and_adds_the_new_rows` (setfix). On the farm (M3):
   those, setfix's three maintain-mode tests, the two corpus maintain-mode tests, the session tests (19) and the plan
   budget tests. Reviewer: an ordinary body's search is unchanged (`pre` empty: every new branch is skipped, and
   its key's digest is as before).
+
+### Q240. (Q146 on django-bugs at cf28cfd53) A findings key computed whole starts from every node: its existential tail is priced at full fanout
+
+- **Seen** (2026-11-18, PostHog cold on the M3, after c6917fd26): `xk_fz…_violation_3($v) :- node($v, $n, _, _, _),
+  line($n, _), col($n, _), fzk…_violation($v)` (and `xk_…rr_diagnostic_…_2`) made 77 M + 39 M native work, 12.5 +
+  6.2 s CPU; sd1 made 0.16 + 0.13 M. Since c6917fd26 they are not demanded: `fzk` is a view of `doc`'s columns, a
+  base relation of 138 rows a chunk, so the split's bar takes `xk` as small. That is right by the bar. The cost is the
+  order: 77 of 159 chunks ran the plan `col` (every node) → `node` on `n` → `fzk` → `line`, 19 M rows a step. The other
+  82 ran `fzk` → `node` on `d` → `line` → `col`, which the engine ends at the first node of each document (14,631
+  rows in and out of every step, 0.3 ms in all). The planner priced the two near even (906,746 against a
+  posting-weighted fanout by document for the second), so which one a run keeps depends on the chunk that planned
+  first.
+- **Wanted**: once a body has bound every head variable, its remaining steps are priced as the existence tests the
+  engine runs (a row a binding at most), so `fzk`'s order wins in every chunk; then the gap to sd1 (2,589 G) is
+  measured again. Also timing-dependent still: the inline-or-store and demand choice kept per program (decision
+  0090 §5) is the first chunk's to plan at its scale.
 
 
 ### Q209. (Q175 on cost-classifier-metal-rf) (done) A rebased version's request record sat on other rules (`a_library_held_once_is_read_by_each_policy_in_its_own_scope`, half its runs)
