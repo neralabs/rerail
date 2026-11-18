@@ -253,6 +253,9 @@ pub struct Observer {
     floor: u64,
     /// The most answers a root checked by its listings may hold (`list_max`; a test of the journal sets 0).
     list_max: usize,
+    /// How long a larger root's replay may be started again for its marker before the root is checked by its
+    /// listings instead (`journal::since`): none in a run; a test of the journal sets a few seconds.
+    journal_settle: std::time::Duration,
 }
 
 /// A root a run watches.
@@ -399,7 +402,7 @@ impl Observer {
             _ => None,
         });
         let (generation, floor) = (meta_int(LISTING_GEN).unwrap_or(0), meta_int(LISTING_FLOOR).unwrap_or(0));
-        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new(), changes: BTreeMap::new(), generation, floor, list_max: list_max() }
+        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new(), changes: BTreeMap::new(), generation, floor, list_max: list_max(), journal_settle: std::time::Duration::ZERO }
     }
 
     /// Records `dir` as a directory a run writes its outputs into: rerail's own (decision 0284), for this observer
@@ -883,7 +886,10 @@ impl Observer {
                 self.check_listed(root, volume, cursor.as_deref());
                 continue;
             }
-            match super::journal::since(std::slice::from_ref(&root), cursor.as_deref(), &cookies) {
+            match super::journal::since(std::slice::from_ref(&root), cursor.as_deref(), &cookies, self.journal_settle) {
+                // The replay may not hold every change made before this run (its marker was not in its history):
+                // the root is checked by its listings, keeping the journal's cursor (decision 0399, step 2).
+                super::journal::Since::Behind { cursor: next } => self.check_behind(root, volume, &next),
                 super::journal::Since::Changed { paths, cursor: next } => {
                     // News of rerail's own files is no news (decision 0284): each run writes them.
                     let paths: Vec<PathBuf> = paths.into_iter().filter(|p| !self.is_own(p)).collect();
@@ -959,6 +965,21 @@ impl Observer {
         let next = format!("L{}", self.generation);
         self.forget_named(&root, &exact, &whole, volume, &next);
         self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: true });
+    }
+
+    /// A larger root whose replay was `Behind` (decision 0399, step 2): checked by its listings as a small root is,
+    /// what they name forgotten and logged as `check_listed` does, the root's cursor the journal's (`next`, every
+    /// change after it told to the next replay). Naming nothing writes nothing: the stored cursor stays, and the next
+    /// replay from it names again what this run found holding, a path looked at again, never one missed.
+    fn check_behind(&mut self, root: PathBuf, volume: Option<[u8; 16]>, next: &str) {
+        let (exact, whole) = self.listing_named(&root);
+        let (exact, whole): (Vec<PathBuf>, Vec<PathBuf>) = (exact.into_iter().filter(|p| !self.is_own(p)).collect(), whole.into_iter().filter(|p| !self.is_own(p)).collect());
+        self.counts.checked_named += (exact.len() + whole.len()) as u64;
+        if !(exact.is_empty() && whole.is_empty()) {
+            self.generation += 1;
+            self.forget_named(&root, &exact, &whole, volume.unwrap_or([0; 16]), next);
+        }
+        self.roots.push(Root { real: std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone()), cursor: Some(next.to_owned()), path: root, asked: self.flushes, trusted: true, pending: None, checked: Default::default(), resolved: Default::default(), listed: false });
     }
 
     /// The answers under `root` that no longer hold, by its directories' listings: those to forget alone (`exact`),
@@ -1170,12 +1191,13 @@ impl Observer {
                 named.extend(self.changes.range::<Path, _>((std::ops::Bound::Included(at.as_path()), std::ops::Bound::Unbounded)).take_while(|(k, _)| k.starts_with(&at)).filter(|(_, n)| **n > g).map(|(k, _)| k.clone()));
                 continue;
             }
-            match super::journal::since(std::slice::from_ref(root), Some(cursor), &cookies) {
+            match super::journal::since(std::slice::from_ref(root), Some(cursor), &cookies, self.journal_settle) {
                 super::journal::Since::Changed { paths, cursor } => {
                     named.extend(paths.into_iter().filter(|p| !self.is_own(p)));
                     now[i] = Some(cursor);
                 }
-                super::journal::Since::Lost { .. } => return None,
+                // What the replay names may not be all since the record: it is not answered.
+                super::journal::Since::Lost { .. } | super::journal::Since::Behind { .. } => return None,
             }
         }
         // A covered root's cursor moves with the one that covers it.
@@ -2225,6 +2247,7 @@ mod tests {
     fn journal_observer(store: &Path) -> Observer {
         let mut o = Observer::open(Some(store));
         o.list_max = 0;
+        o.journal_settle = std::time::Duration::from_secs(5);
         o
     }
 

@@ -1,8 +1,9 @@
 # 0399: A small root is checked by its directories' listings, and the observer keeps its own journal of what changed
 
 Status: decided by the user (2026-11-18, Q189's question 3, option (a): "use directory listing where possible to avoid
-bombarding with individual stat calls"); step 1 built (`content_store/observe/listing.rs`, `Observer::check_listed`). Amends decision 0105 for roots of up to
-`LIST_MAX` kept answers. Evidence: t46.
+bombarding with individual stat calls"); built: step 1 (`content_store/observe/listing.rs`, `Observer::check_listed`),
+step 2 (`journal::fsevents::start`'s marker, `Since::Behind`, `Observer::check_behind`). Amends decision 0105.
+Evidence: t46.
 
 ## Intro
 
@@ -38,8 +39,15 @@ itself also costs an edit 0.16–0.77 s of wall (Q18).
    one row a path, its latest generation), in the same transaction as the answers it forgets. A root's cursor is
    `L<generation>`; a run record made with it is answered by `changed_since` from the rows after it, after the
    root's check for this run. A check that names nothing writes nothing (a warm run's writes stay none).
-5. **A larger root keeps FSEvents**, guarded (step 2): its replay is trusted only once a marker written before the
-   stream comes in its history; else the root is checked by its listings as above.
+5. **A larger root keeps FSEvents**, guarded (step 2, fil's check): every new stream is started after a marker file
+   is written beside the cookies, and its first answer, its history's, is trusted only when the marker came in the
+   history (fseventsd had logged every change before it). Else the answer is `Behind`, and the root is checked by its
+   listings as above (`check_behind`): what they name is forgotten exactly and logged, and the root keeps the
+   journal's cursor (the cookie's id; every change after it is told to the next replay). A run starts no stream
+   again (`settle` 0): on the M3 the marker came in the history in 13 of 40 replays, and listing a root costs less
+   than another replay. A test of the journal lets it be started again for up to 5 s, waiting on the same marker
+   (one written afresh each time is as young each time, and as seldom logged). A run record made under a `Behind`
+   replay's cursor is answered by a later replay only with its marker; else it is not answered (run again).
 6. `RERAIL_JOURNAL=off` keeps its meaning: every path checked by its own `stat`.
 
 ## What it relies on
@@ -62,7 +70,19 @@ changes its directory's. ctime cannot be set from user space, so a copy that kee
 - R6 `a_run_record_is_answered_from_the_observers_own_journal`: a record made at `L<g>` is told of what changed
   after it, over two later runs, and of nothing before it.
 - R7 `the_run_after_a_cold_one_writes_nothing` passes on the M3 every time over 10 runs.
-- R8 (step 2) a large root's replay is trusted only with its marker in the history.
+- R8 `a_replay_is_trusted_only_with_its_marker_in_the_history` (journal.rs): an edit made 0.5 s before a new
+  stream (t46: missed by 6 of 10 replays that trusted the cookie) is named by every `Changed`, else the answer is
+  `Behind`. Five runs on the M3 at load 33–37: 13 trusted, 27 behind, none missed; the observer's and journal's 33
+  tests green every run, `rerails_own_files_are_outside_the_observer` (1 in 5 failing before) among them.
+
+## What stays open
+
+- **A replay filters by `id > cursor`** (`journal::since`). duscope found a history record carrying an older id than
+  a change it holds. The marker shows the log was caught up; it does not show each record's id. Recorded, not
+  fixed: a large root only.
+- **A large root's records** are not answered across a `Behind` replay, and on a loaded host most replays are
+  `Behind`: the cone rounds and `git_files` run again there. No root in ep2 or the data-layer repository is that
+  large (`LIST_MAX`).
 
 ## Steps
 
