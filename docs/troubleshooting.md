@@ -452,7 +452,9 @@ Agents load hooks and commands when a session starts. Open a new session after s
 A coding agent ran Rerail's hooks, and Rerail could not record their events. The line names the last event that
 failed, the coding agent and its version, the Rerail version and the reason, such as `no Rerail daemon answered`
 (the daemon was down; the next hook starts it), `the Rerail daemon (pid …) is running but did not answer within 12 s`
-(it was busy, for example opening a large checkout; events are recorded again once it answers),
+(it was busy, for example opening a large checkout, and the hook could not leave the event for it: the daemon is of an
+older version, or could not watch `untaken-events`; events are recorded again once it answers), `the Rerail daemon
+(pid …) is running but not reading, and 256 events already wait for it, the most Rerail keeps` (see below),
 `the Rerail daemon (pid …) refused the access capability in daemon.json` (`daemon.json` was edited or written by
 another daemon; run `rerail daemon stop`, then `rerail daemon start`) or a payload field the coding agent sent in a
 shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in the Rerail home; past 256 KB one hook
@@ -470,12 +472,15 @@ it counts from when `hook-failures.jsonl` began. When every failure it still hol
 event, hooks may have failed before the time it leads with, and the line says `as far back as the log goes` too.
 
 A daemon that runs but does not answer costs only the hooks that start in its first 12 s their wait: each leaves its
-event in `untaken-events` in the Rerail home and answers, and while such an event is still there each later hook leaves
-its own behind it at once without asking the daemon. A session's start still waits. The daemon records those events, in
-the order their hooks met them, as soon as it reads again and before any later event; it does not check them then, and
-a tool's output is not kept with them. Hooks that start in the last 12 s before the daemon answers again answer at once
-too, so their events are recorded but not checked. In Cursor, prompts and answers read from the transcript stay unread
-until the next hook the daemon answers, which checks them.
+event in `untaken-events` in the Rerail home and answers, and while such an event waits there each later hook leaves
+its own behind it at once without asking the daemon. A session's start still waits. As soon as the daemon reads again
+it checks those events as it checks any event, in the order their hooks met them and before any later event; what a
+check finds reaches the agent with the session's next answer, not with the hook that left the event. A tool's output
+is not kept with them. The folder keeps at most 256 events and 16 MB, so a daemon that reads again checks them within
+seconds; past that a hook's event is lost and the line above counts it. While events wait, `rerail status` says
+`Hooks: N hook events wait in untaken-events for the Rerail daemon, which has not read since <time>`; once the daemon
+has checked them it says how many it checked late, and how many it could not check. In Cursor, prompts and answers
+read from the transcript stay unread until the next hook the daemon answers, which checks them.
 
 With `RERAIL_AUTOSTART=0` (or `false`) hooks start no daemon, and a hook that finds none logs nothing, since that is
 what you asked for. A session that starts with no daemon running says so as it starts: Claude Code and Codex
