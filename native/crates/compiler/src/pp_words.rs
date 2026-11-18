@@ -136,12 +136,21 @@ pub struct Env<'a> {
     pub time: &'a [u8],
     pub timestamp: &'a [u8],
     pub features: &'a [(&'a [u8], &'a [u8], i64)],
+    /// `__COUNTER__`'s first value: a reading of one element (decision 0422) starts from the
+    /// count of the uses before it.
+    pub counter: u32,
+    /// Record each name a lookup does not find (`Expanded::missed`): an element read alone is
+    /// given the definitions it reaches, and asks for a name it was not given (one a paste made).
+    pub asks: bool,
 }
 
 impl Env<'static> {
     /// The lean pass's defaults (`rerail_c_pp::Config::new`).
-    pub const DEFAULT: Env<'static> = Env { cpp: false, date: b"Jan  1 1970", time: b"00:00:00", timestamp: b"Thu Jan  1 00:00:00 1970", features: &[] };
+    pub const DEFAULT: Env<'static> = Env { cpp: false, date: b"Jan  1 1970", time: b"00:00:00", timestamp: b"Thu Jan  1 00:00:00 1970", features: &[], counter: 0, asks: false };
 }
+
+/// The built-in index of an `Asked` row that is a name a lookup missed (`Env::asks`).
+pub(crate) const MISS: u32 = BUILTINS.len() as u32;
 
 /// A file of the TU: its bytes, its token tape (`buf` its index + 1), its conditionals' chains
 /// (each conditional's `#`, a token's index, and its chain's next directive's, rising), and
@@ -364,6 +373,10 @@ pub struct Expanded {
     pub exps: Vec<(Tok, Tok)>,
     /// The `__has_feature` family's tests `Env` does not answer: built-in and operand.
     pub unanswered: Vec<(Vec<u8>, Vec<u8>)>,
+    /// The names lookups did not find, in order, where the run asks (`Env::asks`).
+    pub missed: Vec<Vec<u8>>,
+    /// `__COUNTER__`'s next value.
+    pub counter: u32,
 }
 
 impl Expanded {
@@ -932,7 +945,7 @@ impl<'a> Machine<'a> {
         exps: Vec::new(),
         asked: Vec::new(),
         asked_bytes: Vec::new(),
-        counter: 0,
+        counter: env.counter,
         bi: Bi { b: 0, name: eof(0), depth: 0 },
         marker: eof(0),
         has_marker: false,
@@ -952,8 +965,10 @@ impl<'a> Machine<'a> {
         let bytes = &self.wanted_bytes;
         let wanted = self.wanted.iter().map(|w| (w.file, Named { name: bytes[w.lo as usize..w.hi as usize].to_vec(), angle: w.angle, next: w.next, embed: w.embed, pragma: w.pragma, to: NONE })).collect();
         let bytes = &self.asked_bytes;
-        let unanswered = self.asked.iter().map(|a| (BUILTINS[a.b as usize].0.as_bytes().to_vec(), bytes[a.lo as usize..a.hi as usize].to_vec())).collect();
-        Expanded { toks: self.out, scratch: self.scratch, wanted, exps: self.exps, unanswered }
+        let (miss, asked): (Vec<&Asked>, Vec<&Asked>) = self.asked.iter().partition(|a| a.b == MISS);
+        let unanswered = asked.iter().map(|a| (BUILTINS[a.b as usize].0.as_bytes().to_vec(), bytes[a.lo as usize..a.hi as usize].to_vec())).collect();
+        let missed = miss.iter().map(|a| bytes[a.lo as usize..a.hi as usize].to_vec()).collect();
+        Expanded { toks: self.out, scratch: self.scratch, wanted, exps: self.exps, unanswered, missed, counter: self.counter }
     }
 }
 
@@ -1082,6 +1097,8 @@ pub(crate) struct Ctx {
     pub ntimestamp: u64,
     pub features: *const FeatureC,
     pub nfeatures: u64,
+    /// `Env::asks`: 1, record the names lookups miss.
+    pub asks: u64,
     /// `#pragma`'s first three tokens (the compiled words' own).
     pub pragma_toks: [Tok; 3],
     /// `push_macro`'s stack: `(u32, u32)`s (`PAIR`), a slot and its definition.
@@ -1347,6 +1364,7 @@ pub fn prepare<'a>(program: &'a Words, files: &'a [File<'a>], env: &'a Env<'a>, 
         ntimestamp: env.timestamp.len() as u64,
         features: ro(place, &features) as *const FeatureC,
         nfeatures: features.len() as u64,
+        asks: u64::from(env.asks),
         room_pushed: rooms[23],
         pushed: rw(place, &mut m.pushed, rooms[23], 0) as *mut u8,
         npushed: m.pushed.len() as u64,
@@ -1632,8 +1650,32 @@ impl<'a> Machine<'a> {
                 self.d = self.table[i].def;
                 true
             }
-            _ => false,
+            _ => {
+                self.missed(self.t)?;
+                false
+            }
         })
+    }
+
+    /// Name `n` not found: recorded where the run asks (`Env::asks`), as a row of `MISS`.
+    fn missed(&mut self, n: Tok) -> R<()> {
+        if !self.env.asks {
+            return Ok(());
+        }
+        let len = (n.end - n.start) as usize;
+        if self.asked.len() >= self.bounds.output || self.asked_bytes.len() + len > self.bounds.scratch {
+            return Err("past the unanswered features' bound");
+        }
+        let lo = self.asked_bytes.len() as u32;
+        let (a, b) = (n.start as usize, n.end as usize);
+        if n.buf == 0 {
+            self.asked_bytes.extend_from_slice(&self.scratch[a..b]);
+        } else {
+            let files = self.files;
+            self.asked_bytes.extend_from_slice(&files[n.buf as usize - 1].bytes[a..b]);
+        }
+        self.asked.push(Asked { b: MISS, lo, hi: self.asked_bytes.len() as u32 });
+        Ok(())
     }
 
     fn frame(&mut self) -> R<()> {
@@ -2544,6 +2586,9 @@ impl<'a> Machine<'a> {
         let v = n.kind == IDENT && {
             matches!(self.find(self.text(&n))?, Ok(i) if self.table[i].def != NONE)
         };
+        if n.kind == IDENT && !v {
+            self.missed(n)?;
+        }
         if paren {
             self.read();
         }

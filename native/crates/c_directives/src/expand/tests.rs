@@ -1100,3 +1100,35 @@ fn the_corpus_on_metal_timed() {
     eprintln!("ON_METAL_TIMED aot {:?}: {} batches, {} jobs, {} dispatches, runs by rung {:?}, the largest arena {} MB", crate::expand::aot_build().is_some(), t.batches, t.jobs, t.dispatches, t.rungs, t.arena >> 20);
     eprintln!("ON_METAL_TIMED GPU {:.1} ms; CPU words {:.1} M instructions, {:.1} M cycles, {:.1} ms; the whole pass {:.0} ms", t.gpu * 1e3, i as f64 / 1e6, c as f64 / 1e6, w.as_secs_f64() * 1e3, wall.as_secs_f64() * 1e3);
 }
+
+/// A run that asks (`Env::asks`, decision 0422) records each name a lookup did not find, by
+/// `LOOKUP` and by `defined`, and starts `__COUNTER__` from `Env::counter`: on the interpreter
+/// and the compiled words alike. A run that does not ask records none.
+#[test]
+fn a_run_that_asks_records_the_names_it_missed() {
+    let src = b"#ifdef A\n#endif\n#if defined B || C\n#endif\n#define Y 1\nX __COUNTER__ Y __COUNTER__ defined\n";
+    let tape_of = |src: &[u8]| {
+        let toks = (INTERPRETED.tokens)(src, false).unwrap();
+        let read = (INTERPRETED.read)(src).unwrap();
+        let mut spelled = Vec::new();
+        let t = crate::expand::tape(src, &toks, 0, &mut spelled, 1);
+        let chains = crate::expand::chains(&read, &t).unwrap();
+        (t, chains)
+    };
+    let (toks, chains) = tape_of(src);
+    let lines: Vec<u32> = src.iter().enumerate().filter(|b| *b.1 == b'\n').map(|b| b.0 as u32).collect();
+    let files = [File { path: b"main.c", bytes: src, lines: &lines, toks: &toks, chains: &chains, ..File::default() }];
+    let bounds = Bounds::of(&files);
+    let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
+    for asks in [true, false] {
+        let env = pp_words::Env { counter: 5, asks, ..pp_words::Env::DEFAULT };
+        for (who, r) in [("interpreter", pp_words::run(program().unwrap(), &files, &env, &bounds)), ("JIT", c.run(program().unwrap(), &files, &env, &bounds))] {
+            let e = r.unwrap_or_else(|r| panic!("{who}: {r:?}"));
+            let out: Vec<&[u8]> = e.toks.iter().map(|t| e.text(&files, t)).collect();
+            assert_eq!(out, [&b"X"[..], b"5", b"1", b"6", b"defined"], "{who}");
+            let want: &[&[u8]] = if asks { &[b"A", b"B", b"C", b"X", b"defined"] } else { &[] };
+            assert_eq!(e.missed, want, "{who}, asks {asks}");
+            assert_eq!(e.counter, 7, "{who}");
+        }
+    }
+}

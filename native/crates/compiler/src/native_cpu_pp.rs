@@ -15,7 +15,7 @@
 use crate::Error;
 use crate::native_cpu_shape::Step;
 use crate::pp_expr::Value as Val;
-use crate::pp_words::{self, DIGITS, EmC, Asked, B_BASE_FILE, B_COUNTER, B_DATE, B_FILE, B_FILE_NAME, B_HAS_EMBED, B_HAS_INCLUDE, B_HAS_INCLUDE_NEXT, B_INCLUDE_LEVEL, B_LINE, B_PRAGMA, B_TIME, B_TIMESTAMP, BUILTINS, Bi, Bounds, COND_ELSE, COND_SIZE, COND_SRC, COND_TAKEN, Ctx, Ex, FeatureC, Inc, MAX_INCLUDE_DEPTH, NamedC, OPS, Want, op_index, BOL, DIGRAPH, Def, DefState, EOF, EXP, Env, Expanded, File, FileC, Frame, HASH, HASHHASH, IDENT, LEVEL, LITERAL, NO_PARAM, NOEXP, NONE, NUMBER, PAIR, PASTE, PASTE_MARK, PLACEMARKER, PUNCT, Refused, SPACE, Slot, Src, Sub, Tok, USE, VA_ARGS, VA_OPT, VA_OPT_MARK};
+use crate::pp_words::{self, DIGITS, EmC, Asked, MISS, B_BASE_FILE, B_COUNTER, B_DATE, B_FILE, B_FILE_NAME, B_HAS_EMBED, B_HAS_INCLUDE, B_HAS_INCLUDE_NEXT, B_INCLUDE_LEVEL, B_LINE, B_PRAGMA, B_TIME, B_TIMESTAMP, BUILTINS, Bi, Bounds, COND_ELSE, COND_SIZE, COND_SRC, COND_TAKEN, Ctx, Ex, FeatureC, Inc, MAX_INCLUDE_DEPTH, NamedC, OPS, Want, op_index, BOL, DIGRAPH, Def, DefState, EOF, EXP, Env, Expanded, File, FileC, Frame, HASH, HASHHASH, IDENT, LEVEL, LITERAL, NO_PARAM, NOEXP, NONE, NUMBER, PAIR, PASTE, PASTE_MARK, PLACEMARKER, PUNCT, Refused, SPACE, Slot, Src, Sub, Tok, USE, VA_ARGS, VA_OPT, VA_OPT_MARK};
 use crate::program::{ACCEPT, ARG, BUILTIN, COND, EMBED, DEFINE, DEFINED, EXPR, FRAME, GLUE, GOTO, IF, INCLUDE, IS, LINEDIR, PRAGMA, SKIP, KEEP, LINE, LOOKUP, MACRO, PAINT, PEEK, PRE, PUSH, PUT, PpTables, READ, RETURN, SKIPLINE, STOP, STR, SUB, UNDEF, Words, split};
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, BlockCall, InstBuilder, JumpTableData, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_codegen::ir::{ExtFuncData, ExternalName, FuncRef, UserExternalName};
@@ -1609,12 +1609,19 @@ impl Lower<'_, '_> {
         let (p, n) = self.text();
         let (slot, found) = self.probe(pc, p, n);
         let check = self.f.create_block();
-        let no = self.f.ins().iconst(types::I8, 0);
-        self.f.ins().brif(found, check, &[], v, &[no.into()]);
+        let miss = self.f.create_block();
+        self.f.ins().brif(found, check, &[], miss, &[]);
         self.f.switch_to_block(check);
         let def = ldu(self.f, types::I32, slot, offset_of!(Slot, def) as i32);
         let is_def = self.f.ins().icmp_imm(IntCC::NotEqual, def, i64::from(NONE));
-        self.f.ins().jump(v, &[is_def.into()]);
+        let yes = self.f.create_block();
+        self.f.ins().brif(is_def, yes, &[], miss, &[]);
+        self.f.switch_to_block(yes);
+        let one = self.f.ins().iconst(types::I8, 1);
+        self.f.ins().jump(v, &[one.into()]);
+        self.f.switch_to_block(miss);
+        let no = self.f.ins().iconst(types::I8, 0);
+        self.missed(pc, p, n, v, &[no.into()]);
         self.f.switch_to_block(v);
         let val = self.f.block_params(v)[0];
         let close = self.f.create_block();
@@ -3783,20 +3790,7 @@ impl Lower<'_, '_> {
         self.f.ins().jump(fh, &[i1.into()]);
         // Not answered: recorded; `__is_identifier`'s 1, any other's 0.
         self.f.switch_to_block(unanswered);
-        let na = self.vlen(ASKED);
-        let room = ld(self.f, types::I64, ctx, at!(room_asked));
-        let ok = self.f.ins().icmp(IntCC::UnsignedLessThan, na, room);
-        let lo_b = ld(self.f, types::I64, ctx, at!(nasked_bytes));
-        let broom = ld(self.f, types::I64, ctx, at!(room_asked_bytes));
-        let end = self.f.ins().iadd(lo_b, n);
-        let fits = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, broom);
-        let ok = self.f.ins().band(ok, fits);
-        self.check(ok, pc, R_ASKED);
-        self.append_bytes(pc, (at!(asked_bytes), at!(nasked_bytes), at!(room_asked_bytes)), R_ASKED, p, n, false);
-        let a = self.vpush(ASKED, pc);
-        st(self.f, types::I32, b, a, offset_of!(Asked, b) as i32);
-        st(self.f, types::I32, lo_b, a, offset_of!(Asked, lo) as i32);
-        st(self.f, types::I32, end, a, offset_of!(Asked, hi) as i32);
+        self.ask(pc, b, p, n);
         let is_id = BUILTINS.iter().position(|x| x.0 == "__is_identifier").unwrap() as i64;
         let ii = self.f.ins().icmp_imm(IntCC::Equal, b, is_id);
         let x = self.f.ins().uextend(types::I64, ii);
@@ -6376,6 +6370,37 @@ impl Lower<'_, '_> {
         self.f.block_params(join)[0]
     }
 
+    /// An `Asked` row (`Machine`'s `asked`): built-in `b`, and the `n` bytes at `p`.
+    fn ask(&mut self, pc: usize, b: Value, p: Value, n: Value) {
+        let ctx = self.ctx;
+        let na = self.vlen(ASKED);
+        let room = ld(self.f, types::I64, ctx, at!(room_asked));
+        let ok = self.f.ins().icmp(IntCC::UnsignedLessThan, na, room);
+        let lo_b = ld(self.f, types::I64, ctx, at!(nasked_bytes));
+        let broom = ld(self.f, types::I64, ctx, at!(room_asked_bytes));
+        let end = self.f.ins().iadd(lo_b, n);
+        let fits = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, broom);
+        let ok = self.f.ins().band(ok, fits);
+        self.check(ok, pc, R_ASKED);
+        self.append_bytes(pc, (at!(asked_bytes), at!(nasked_bytes), at!(room_asked_bytes)), R_ASKED, p, n, false);
+        let a = self.vpush(ASKED, pc);
+        st(self.f, types::I32, b, a, offset_of!(Asked, b) as i32);
+        st(self.f, types::I32, lo_b, a, offset_of!(Asked, lo) as i32);
+        st(self.f, types::I32, end, a, offset_of!(Asked, hi) as i32);
+    }
+
+    /// A name a lookup did not find (`Machine::missed`): the `n` bytes at `p`, a row of `MISS`,
+    /// where the run asks (`Env::asks`); then to `then`.
+    fn missed(&mut self, pc: usize, p: Value, n: Value, then: Block, args: &[BlockArg]) {
+        let asks = ld(self.f, types::I64, self.ctx, at!(asks));
+        let rec = self.f.create_block();
+        self.f.ins().brif(asks, rec, &[], then, args);
+        self.f.switch_to_block(rec);
+        let b = self.f.ins().iconst(types::I64, i64::from(MISS));
+        self.ask(pc, b, p, n);
+        self.f.ins().jump(then, args);
+    }
+
     /// `LOOKUP` (`Machine::lookup`): `T` an identifier not painted, and a defined macro's name:
     /// its key, then the table probed a slot a step (`Step::Probe`), at most every slot once.
     fn lookup(&mut self, pc: usize) -> Value {
@@ -6395,14 +6420,16 @@ impl Lower<'_, '_> {
         let (p, n) = self.text();
         let (slot, found) = self.probe(pc, p, n);
         let defined = self.f.create_block();
-        let no = self.f.ins().iconst(types::I8, 0);
-        self.f.ins().brif(found, defined, &[], join, &[no.into()]);
+        let miss = self.f.create_block();
+        self.f.ins().brif(found, defined, &[], miss, &[]);
         self.f.switch_to_block(defined);
         let def = ldu(self.f, types::I32, slot, offset_of!(Slot, def) as i32);
         let is_def = self.f.ins().icmp_imm(IntCC::NotEqual, def, i64::from(NONE));
         let set = self.f.create_block();
+        self.f.ins().brif(is_def, set, &[], miss, &[]);
+        self.f.switch_to_block(miss);
         let no = self.f.ins().iconst(types::I8, 0);
-        self.f.ins().brif(is_def, set, &[], join, &[no.into()]);
+        self.missed(pc, p, n, join, &[no.into()]);
         self.f.switch_to_block(set);
         st(self.f, types::I64, def, ctx, at!(d));
         let yes = self.f.ins().iconst(types::I8, 1);
