@@ -82,11 +82,17 @@ pub struct PackedBatch {
     pub header: MetalBatchHeader,
     pub source: Vec<u8>,
     pub line_starts: Vec<u32>,
-    /// The files' derived classes (`TapeDoc::with_labels`) over the batch's nodes: per class from
-    /// `DERIVED_CLASS_BASE`, `derived_words` words of bits, class after class.
+    /// The batch's rows over its nodes, `derived_words` words of bits each: the files' derived classes
+    /// (`TapeDoc::with_labels`, per class from `DERIVED_CLASS_BASE`, `derived_classes` rows), then each contains
+    /// test's row (`contains_rows`).
     pub(super) derived: Vec<u32>,
     pub(super) derived_classes: u32,
     pub(super) derived_words: u32,
+    /// Per program, the row of its first contains test's first string (past the derived classes), its tests' strings
+    /// in turn (capture programs, then strings, in order: `contains_needles`).
+    pub(super) contains_starts: Vec<u32>,
+    /// The contains tests' rows in `derived`.
+    pub(super) contains_rows: u32,
     pub files: Vec<BatchFile>,
     pub words: Vec<u32>,
     pub longs: Vec<u64>,
@@ -137,6 +143,63 @@ pub(super) struct TaskSizing {
     pub worst: u32,
 }
 
+/// ORs a file's bits (`bits`, its nodes from 0) into `row` (32-bit words over the batch's nodes) from node `at`.
+fn place_bits(row: &mut [u32], at: usize, bits: &[u64]) {
+    for (index, &word) in bits.iter().enumerate() {
+        if word == 0 {
+            continue;
+        }
+        let at = at + index * 64;
+        for (half, value) in [(0, word as u32), (32, (word >> 32) as u32)] {
+            if value == 0 {
+                continue;
+            }
+            let (slot, shift) = ((at + half) / 32, (at + half) % 32);
+            row[slot] |= value << shift;
+            if shift > 0 && value >> (32 - shift) != 0 {
+                row[slot + 1] |= value >> (32 - shift);
+            }
+        }
+    }
+}
+
+/// Each contains test's row over the batch's nodes (`rows`, `words` words a row; Q54): bit `n` of row `r`, node `n`'s
+/// text holds `needles[r]`. The text layer decides them (decision 0042, `text::scan`): one literal pass over each
+/// file's text serves every needle, and a node's bit comes from the matches its span holds, not a search of its
+/// bytes. The executors read the bit (Metal's `evaluate_assertion`, the CPU JIT's `contains`).
+fn contains_rows(needles: &[&[u8]], files: &[&TapeDoc], starts: &[usize], words: usize, rows: &mut [u32]) {
+    use crate::code_rule_dsl::text::{Domain, Source, Spelling, lower, scan};
+    use rayon::prelude::*;
+    let mut distinct = needles.to_vec();
+    distinct.sort_unstable();
+    distinct.dedup();
+    let plans = distinct
+        .iter()
+        .map(|needle| {
+            let needle = std::str::from_utf8(needle).expect("a contains test's string is text (a query's)");
+            lower(&Source::of(Spelling::Contains(needle.to_owned())), Domain::ANY).unwrap_or_else(|error| panic!("a contains test's string {needle:?} has no plan: {error:?}"))
+        })
+        .collect::<Vec<_>>();
+    let literals = scan::Batch::of(plans);
+    let per_file: Vec<Vec<Option<Vec<u64>>>> = files
+        .par_iter()
+        .map(|tape| {
+            let len = tape.transducer_len();
+            let candidates: Vec<u32> = (0..len as u32).collect();
+            let span = |node: u32| tape.transducer_span(node);
+            literals.bits(&scan::Nodes { text: tape.transducer_source(), len, candidates: &candidates, span: &span })
+        })
+        .collect();
+    for (at, needle) in needles.iter().enumerate() {
+        let plan = distinct.binary_search(needle).expect("a needle of the batch");
+        let row = &mut rows[at * words..(at + 1) * words];
+        for (file, bits) in per_file.iter().enumerate() {
+            let bits = bits[plan].as_ref().expect("a literal's plan decides every node");
+            place_bits(row, starts[file], bits);
+        }
+    }
+}
+
 fn checked_u32(value: usize) -> Result<u32, Error> {
     u32::try_from(value).map_err(|_| Error::BackendFailure)
 }
@@ -159,8 +222,13 @@ impl PackedBatch {
     /// Metal's supertypes buffer: the derived classes as the interpreter's `has_supertype` reads them (one record
     /// of the class and word counts, then the bits), or nothing without them. A node's other classes are its
     /// code's, read on the tape.
+    /// The contains tests' rows the batch holds past its derived classes.
+    pub fn contains_row_count(&self) -> u32 {
+        self.contains_rows
+    }
+
     pub fn metal_supertypes(&self) -> Vec<BatchSupertype> {
-        if self.derived_classes == 0 {
+        if self.derived.is_empty() {
             return Vec::new();
         }
         let mut supertypes = Vec::with_capacity(1 + self.derived.len().div_ceil(2));
@@ -360,36 +428,23 @@ impl PackedBatch {
         drop(stage);
         let stage = crate::code_rule_dsl::prof::Stage::start("batch.derived");
         let classes = derived.iter().map(|(_, labels)| labels.len()).max().unwrap_or(0);
+        let words = navigation[0].div_ceil(32).max(1);
         if classes > 0 {
-            let words = navigation[0].div_ceil(32).max(1);
             batch.derived = vec![0; classes * words];
             for (node_start, labels) in &derived {
                 for (class, bits) in labels.iter().enumerate() {
-                    let row = &mut batch.derived[class * words..(class + 1) * words];
-                    for (index, &word) in bits.iter().enumerate() {
-                        if word == 0 {
-                            continue;
-                        }
-                        let at = *node_start as usize + index * 64;
-                        for (half, value) in [(0, word as u32), (32, (word >> 32) as u32)] {
-                            if value == 0 {
-                                continue;
-                            }
-                            let (slot, shift) = ((at + half) / 32, (at + half) % 32);
-                            row[slot] |= value << shift;
-                            if shift > 0 && value >> (32 - shift) != 0 {
-                                row[slot + 1] |= value >> (32 - shift);
-                            }
-                        }
-                    }
+                    place_bits(&mut batch.derived[class * words..(class + 1) * words], *node_start as usize, bits);
                 }
             }
             batch.derived_classes = checked_u32(classes)?;
             batch.derived_words = checked_u32(words)?;
         }
         drop(stage);
+        // The contains tests' strings, a row each, in the programs' order (`contains_starts`).
+        let mut needles: Vec<&[u8]> = Vec::new();
         let stage = crate::code_rule_dsl::prof::Stage::start("batch.programs");
         for program in programs {
+            batch.contains_starts.push(checked_u32(classes + needles.len())?);
             let word_start = checked_u32(batch.words.len())?;
             let long_start = checked_u32(batch.longs.len())?;
             let string_start = checked_u32(batch.strings.len())?;
@@ -468,6 +523,11 @@ impl PackedBatch {
                     } => {
                         record.kind = 4;
                         record.first = u32::from(*capture);
+                        // Its strings' rows, in turn from here.
+                        record.second = checked_u32(classes + needles.len())?;
+                        for &string in strings {
+                            needles.push(program.strings.get(usize::from(string)).ok_or(Error::BackendFailure)?);
+                        }
                         record.data_start = checked_u32(batch.assertion_data.len())?;
                         record.data_count = checked_u32(strings.len())?;
                         batch
@@ -615,6 +675,14 @@ impl PackedBatch {
             });
         }
         drop(stage);
+        if !needles.is_empty() {
+            let _stage = crate::code_rule_dsl::prof::Stage::start("batch.contains");
+            batch.derived.resize((classes + needles.len()) * words, 0);
+            let starts: Vec<usize> = batch.files.iter().map(|file| file.node_start as usize).collect();
+            contains_rows(&needles, &documents, &starts, words, &mut batch.derived[classes * words..]);
+            batch.derived_words = checked_u32(words)?;
+            batch.contains_rows = checked_u32(needles.len())?;
+        }
         let _tasks = crate::code_rule_dsl::prof::Stage::start("batch.tasks");
         // Each program's measured steps per unit of size, from the cost store: read once a batch.
         let rates = if materialize_tasks {

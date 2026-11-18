@@ -2303,6 +2303,9 @@ impl Runner<'_> {
                 table.extend(rules);
                 Ok::<_, Error>(table)
             }).transpose()?;
+            // The label batch's rows are the labels' (`tapes`): W's matchers' programs have no capture predicates, so
+            // no contains test's row (`PackedBatch::contains_rows`) is left out.
+            assert_eq!(batch.contains_row_count(), 0, "a label pass's program with a contains test");
             batch.header.supertype_count = self.tapes.supertype_count;
             let (lanes, states) = if sweep.is_some() { WIDE } else { self.lanes };
             batch.state_cap = states;

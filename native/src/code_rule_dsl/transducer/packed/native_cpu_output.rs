@@ -305,28 +305,28 @@ fn byte_for(
     function.block_params(finish)[0]
 }
 
+/// Whether the JIT has code for every instruction of the output program (the caller asks before compiling).
+pub(super) fn lowered(native: &NativeModule) -> bool {
+    native.output_program.instructions.iter().all(|instruction| {
+        matches!(
+            instruction,
+            OutputInstruction::MatchProperty { .. }
+                | OutputInstruction::CaptureProperty { .. }
+                | OutputInstruction::Offset { .. }
+                | OutputInstruction::Downcase { .. }
+                | OutputInstruction::SelectAdjacent { .. }
+                | OutputInstruction::Strip { .. }
+                | OutputInstruction::LanguageFromMime { .. }
+        )
+    })
+}
+
 pub(super) fn define(
     module: &mut JITModule,
     native: &NativeModule,
     regex_find: Option<FuncId>,
 ) -> Result<FuncId, Box<cranelift_module::ModuleError>> {
-    if native
-        .output_program
-        .instructions
-        .iter()
-        .any(|instruction| {
-            !matches!(
-                instruction,
-                OutputInstruction::MatchProperty { .. }
-                    | OutputInstruction::CaptureProperty { .. }
-                    | OutputInstruction::Offset { .. }
-                    | OutputInstruction::Downcase { .. }
-                    | OutputInstruction::SelectAdjacent { .. }
-                    | OutputInstruction::Strip { .. }
-                    | OutputInstruction::LanguageFromMime { .. }
-            )
-        })
-    {
+    if !lowered(native) {
         return Err(Box::new(cranelift_module::ModuleError::Undeclared(
             "output instruction is not lowered".into(),
         )));

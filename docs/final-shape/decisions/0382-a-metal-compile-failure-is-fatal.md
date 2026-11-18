@@ -28,21 +28,37 @@ not compile. Its guard, `the_label_kernels_compile_for_every_format`, was a test
      Before, the lane's failure printed a line and the lane was off: its work ran on the CPU.
    - `rerail_blocks::gpu::Gpu::on`, the blocks' join kernels.
 2. **Having no Metal device is not a compile failure.** A machine without a device runs on the CPU, as before.
-3. **Fallback paths need the user's agreement**, above all a fallback taken on an error. Agreed ones stay: 0334's
+3. **A CPU JIT compile that fails stops the run too** (the user, 2026-11-18: "JIT compilation failures should crash
+   the program"). Each Cranelift step (the builder, a declaration, a function's definition, the module's
+   finalization) and the program's lowering panics with what failed and Cranelift's message
+   (`native_cpu::compile_failed`). A program form the JIT has no code for stays `UnsupportedBackend`, decided before
+   anything compiles (an output instruction the JIT lacks, `native_cpu_output::lowered`; a structural operation it
+   lacks), and its batches are interpreted, as before. A background compile (`compilation::request`, for the CPU JIT
+   and Metal's) that fails or panics is kept with its message, and the plan's next batch stops the run with it
+   (`ready`). Before, its failure was recorded and the plan stayed on its interpreter for good: the panics of point 1
+   on Metal's background compiles were caught there too.
+4. **Fallback paths need the user's agreement**, above all a fallback taken on an error. Agreed ones stay: 0334's
    replanning of over-budget work, and the split of a batch that does not fit (`BackendCapacity`,
    `BackendLaunchLimit`, still on Metal). A new fallback, or one found and not agreed, goes to the user first.
 
-## Found, not agreed, for the user
+## Found, for the user
 
-Seen while making this change. None is changed here.
+Seen while making this change. The user's answers (2026-11-18): the CPU JIT's compile failures crash (point 3); the
+relational lane's threadgroup limit and the walks that outgrow their frames stay ("The others are okay"):
 
 - A relational-lane kernel that runs fewer threads a threadgroup than it needs (`gpu::Gpu::new`, `TG`) turns the
-  lane off, and its work runs on the CPU. This is a hardware limit, not a compile failure.
-- The CPU JIT (Cranelift, `native_cpu.rs`) maps its own compile failures to `BackendFailure`, as Metal did.
+  lane off, and its work runs on the CPU. This is a hardware limit, not a compile failure. Kept.
 - A label walk that outgrows its frames, captures or steps on Metal sets a flag, and the clause runs again with its
-  passes on the interpreter (`metal_label_passes.metal`, `label_micro`).
+  passes on the interpreter (`metal_label_passes.metal`, `label_micro`). Kept.
 - `transducer::packed::device`: "a backend with no device to run it is refused (`Error::UnsupportedBackend`), or
-  falls back to the CPU where it did before the split".
+  falls back to the CPU where it did before the split". With the user (2026-11-18). What it is:
+  - with no device registered (no Metal, or a build without the device crate), the product's choice of backend
+    (`execute_production_corpus`, `warm_production_programs`) is the CPU JIT: no device, not an error (point 2);
+  - `roots_batch` and the wave's roots asked for `Backend::MetalInterpreter` run on the CPU where no device is
+    registered, where `execute_with_backend_*` refuses the same request (`UnsupportedBackend`);
+  - the span prefilters (`device_metal`'s `span_ends`): any error of the device's run (`run_split(..).ok()?`) sends
+    the batch to the cores' interpreter. Among those errors is a program form Metal lacks (a fixed point, a back
+    fill, recorded in 0202's `metal-form` list), but also an allocation that failed or a launch past its limits.
 
 ## Evidence
 
