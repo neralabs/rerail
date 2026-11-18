@@ -1281,7 +1281,7 @@ impl LoweredWave {
             };
             active[at][tape]
         };
-        let active: &dyn Fn(&LoweredMatcher, usize) -> bool = &active;
+        let active: &(dyn Fn(&LoweredMatcher, usize) -> bool + Sync) = &active;
         let mut sets = empty_sets(tapes, self.labels);
         let most = tapes.iter().map(TapeDoc::transducer_len).max().unwrap_or(0);
         // Facts that are node sets are the formulas' (`formulas`): only the others' rows are made here.
@@ -1299,15 +1299,24 @@ impl LoweredWave {
                 continue;
             }
             if sweeps(levels) {
-                for (at, (tape, sets)) in tapes.iter().zip(sets.iter_mut()).enumerate() {
-                    let levels = levels
-                        .iter()
-                        .map(|level| level.iter().copied().filter(|&(clause, _)| active(clause, at)).collect::<Vec<_>>())
-                        .collect::<Vec<_>>();
-                    if levels.iter().any(|level| !level.is_empty()) && !sweep(&levels, tape, sets, budget)? {
-                        given.extend(levels.iter().flatten().map(|&(clause, _)| (index(clause), at)));
-                    }
-                }
+                // A file's sweep reads and marks its own labels only, so the files sweep in parallel, as on Metal
+                // (`matcher_metal`; Tim's e1e0209ae on tbelanger/final-rerail-shape-integration). Each gives back the
+                // clauses it handed to W on its file.
+                use rayon::prelude::*;
+                let handed = tapes
+                    .par_iter()
+                    .zip(sets.par_iter_mut())
+                    .enumerate()
+                    .map(crate::code_rule_dsl::logic::profile::carried("label sweep (pool)", |(at, (tape, sets)): (usize, (&TapeDoc, &mut Arc<Vec<Vec<u64>>>))| {
+                        let levels = levels
+                            .iter()
+                            .map(|level| level.iter().copied().filter(|&(clause, _)| active(clause, at)).collect::<Vec<_>>())
+                            .collect::<Vec<_>>();
+                        let to_w = levels.iter().any(|level| !level.is_empty()) && !sweep(&levels, tape, sets, budget)?;
+                        Ok::<_, Error>(if to_w { levels.iter().flatten().map(|&(clause, _)| (index(clause), at)).collect() } else { Vec::new() })
+                    }))
+                    .collect::<Result<Vec<Vec<(usize, usize)>>, Error>>()?;
+                given.extend(handed.into_iter().flatten());
                 continue;
             }
             let mut settled = false;
