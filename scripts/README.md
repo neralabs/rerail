@@ -24,8 +24,10 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   and type-check job, before each commit, on the working tree merged into the local `origin/main` when the branch is
   behind it, as CI checks the pull request merged into main; `merged-checkout.mjs` makes that throwaway checkout).
   `merge_audit.py` lists what a merge dropped from either side (docs/merging.md): run it before committing a merge.
-  `native-test-legs.mjs` is CI's engine test run: the `rust-tests-build` job compiles the Rust test binaries once and
+  `ci/native-test-legs.mjs` is CI's engine test run: the `rust-tests-build` job compiles the Rust test binaries once and
   checks that each test falls in exactly one leg, and each leg of the `rust` job runs them with its libtest filters.
+  `ci/rust-selection.mjs` maps a pull request's changed files to the Rust packages whose tests it can affect, for
+  the `changes` job.
 - `deps/`: pins that follow a dependency (`sync-pins.mjs`, `npm run deps:sync`): the OMP host and its release digests
   follow the OMP SDK, the ast-grep differential test's reference follows the ast-grep CLI, and `reviewer.yml`'s
   `reviewer_ref` follows the commit its `uses:` pins. `.github/workflows/dependabot-pins.yml` runs it on Dependabot's

@@ -1,8 +1,8 @@
-// scripts/check/native-test-legs.mjs: the Rust test legs, the check that each test is in exactly one, and what the
+// scripts/check/ci/native-test-legs.mjs: the Rust test legs, the check that each test is in exactly one, and what the
 // legs take from the build (cargo's environment for a binary, libtest's lists and summaries).
 
 import { describe, expect, it } from "vitest";
-import { LEGS, coverProblems, envDelta, legArgs, parseList, parseResult } from "../../../scripts/check/native-test-legs.mjs";
+import { LEGS, coverProblems, envDelta, legArgs, parseList, parseResult } from "../../../scripts/check/ci/native-test-legs.mjs";
 
 /** A map of binary to tests, from an object of binary to an array of tests. */
 const tests = (object) => new Map(Object.entries(object).map(([binary, names]) => [binary, new Set(names)]));

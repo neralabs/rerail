@@ -16,8 +16,8 @@
 //   - a failure of any kind.
 // A file outside every package that FORCE_ALL does not name (TypeScript, docs) selects nothing.
 //
-//   node scripts/check/rust-selection.mjs <changed-files.txt>              JSON to stdout
-//   node scripts/check/rust-selection.mjs <changed-files.txt> --github     `name=value` lines for $GITHUB_OUTPUT
+//   node scripts/check/ci/rust-selection.mjs <changed-files.txt>              JSON to stdout
+//   node scripts/check/ci/rust-selection.mjs <changed-files.txt> --github     `name=value` lines for $GITHUB_OUTPUT
 //
 // The files list holds one repository-relative path per line (a rename lists both names).
 import { spawnSync } from "node:child_process";
@@ -36,7 +36,7 @@ export const FORCE_ALL = [
   ".github/actions/**",
   "package.json",
   ".gitattributes",
-  "scripts/check/rust-selection.mjs",
+  "scripts/check/ci/rust-selection.mjs",
   "languages/**",
   "fixtures/**",
   "conformance/**",
@@ -314,7 +314,7 @@ export function outputs({ all, packages }) {
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [list, flag] = process.argv.slice(2);
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
   let selection;
   try {
     const changed = readFileSync(list, "utf8").split("\n").map((line) => line.trim()).filter(Boolean);
