@@ -278,7 +278,7 @@ describe("an engine service beside the events hooks left while its daemon did no
     writeFileSync(join(held.root, "a.py"), left);
     await leftCall(held, "left", "Edit", { file_path: "a.py", old_string: "    return 1", new_string: "    print(2)\n    return 1" }, Date.now());
     await held.service.untaken.taken();
-    // Read whole, as the session's view of the file came from a call and carries no time, it told line 2 once more.
+    // Its "before" is the text the session's own call left, so line 2, which that call wrote, is not told again.
     const told = await held.send(prompt("next"));
     expect(told.filter(steer => steer.startsWith("print in a.py"))).toEqual([printSteer("a.py", 3)]);
     expect(checkedEdits(held, "a.py").filter(read => read.generatedText === left).map(read => read.previousText)).toEqual([live]);
@@ -361,7 +361,7 @@ describe("an engine service beside the events hooks left while its daemon did no
     await leftWrite(held, "ignore", ".gitignore", "*.log\nout/\n", Date.now());
     await held.service.untaken.taken();
     await held.send(prompt("next"));
-    // Its baseline was read as its late check began, after the tool wrote it: the change was never recorded.
+    // Its baseline is the patterns Rerail read before the tool wrote the file, so the pattern the call added is recorded.
     expect(sessionFacts(held.databasePath, "ignore-rules-changed")).toEqual([{ path: ".gitignore", via: "tool", ignoresMore: ["out/"] }]);
   });
 
