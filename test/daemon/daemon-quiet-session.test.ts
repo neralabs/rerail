@@ -89,6 +89,8 @@ describe("the daemon and a session it let go of while quiet", () => {
     const [engine] = engines.started;
     engines.clock.now += 60_000;
     await engine!.closeIdleSessions();
+    // The runtime the suspended session left goes too, as the heap watch's relief closes it: the scan opens a new one.
+    await engine!.closeUnusedRuntimes();
     expect(engine!.openRuntimes()).toBe(0);
     const queued = await api<{ id: string; status: string }>(daemon, "/api/sessions/a/audit-requests", { scope: "repository" });
     expect(queued).toMatchObject({ status: 200, body: { status: "queued" } });

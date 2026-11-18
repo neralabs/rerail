@@ -2,7 +2,7 @@ import { PerformanceObserver } from "node:perf_hooks";
 import { getHeapStatistics, setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
-import { isFullCollection, memoryRoom, needsRoom, readMemory, type MemoryReading } from "../../src/engine/memory-room.js";
+import { isFullCollection, memoryRoom, needsRoom, readMemory, type MemoryReading } from "../../../src/runtime/memory/memory-room.js";
 
 const GB = 1024 ** 3;
 /** A daemon of a 16 GB machine with room to spare: a fifth of its heap limit, 300 MB resident, half the machine free. */
