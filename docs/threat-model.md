@@ -148,8 +148,8 @@ a secret token sent as `x-rerail-access`, on every request.
   - Compared by SHA-256 of both values with `timingSafeEqual` (`sameSecret` in `src/runtime/daemon-control.ts`).
   - 32 random bytes, written 0600 via a temp file and rename.
   - Kept across restarts by a loopback daemon; minted at each start by a remote or public-host daemon.
-- **Engine socket.** Hooks send events to `POST /events`, and the receipt of a steer their answer carried to
-  `POST /receipts`, on a Unix socket in a per-user 0700 folder (T14).
+- **Engine socket.** Hooks send events to `POST /events`, and, while another process holds the database's write lock,
+  the receipt of a steer their answer carried to `POST /receipts`, on a Unix socket in a per-user 0700 folder (T14).
   - The engine service (`startEngineService`, `src/runtime/engine-service.ts`) requires the capability as
     `x-rerail-access` and answers `401` before reading the body.
   - Reason: a request names where its runtime writes (`storageRoot`, `databasePath`), and the daemon runs outside every

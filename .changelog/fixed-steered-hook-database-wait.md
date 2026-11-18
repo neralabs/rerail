@@ -1,1 +1,1 @@
-A tool call whose hook delivered a steer no longer waits up to 10 s after the hook's answer while another Rerail process writes the database: the daemon records the steer's receipt itself.
+A tool call whose hook delivered a steer no longer waits after the hook's answer while another Rerail process holds the database: the hook hands the steer's receipt to the daemon, which records it once the database is free. Before, the hook waited up to 5 seconds and lost the receipt when that wait ran out.
