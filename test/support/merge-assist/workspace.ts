@@ -51,6 +51,8 @@ export interface FakeGithubOptions {
   signInEnvironment?: string;
   /** The stat of gh's hosts file never answers, as on a drive that does not. */
   signInStatStalls?: boolean;
+  /** The stat answers a turn of the event loop after it is asked, after a gh that answers with no process. */
+  signInStatSlow?: boolean;
   pullRequests?: PullRequestSummary[];
   /** Whether the listing stopped at its limit. */
   truncated?: boolean;
@@ -73,8 +75,14 @@ export class FakeGithub implements GithubClient {
   }
 
   signInStamp(): SignInStamp {
-    const file = this.options.signInStatStalls === true ? new Promise<never>(() => undefined) : Promise.resolve(this.options.signInStamp ?? "hosts.yml as first written");
-    return { environment: this.options.signInEnvironment ?? "the person's shell", file };
+    return { environment: this.options.signInEnvironment ?? "the person's shell", file: this.#hostsFile() };
+  }
+
+  #hostsFile(): Promise<string> {
+    const stamp = this.options.signInStamp ?? "hosts.yml as first written";
+    if (this.options.signInStatStalls === true) return new Promise<never>(() => undefined);
+    if (this.options.signInStatSlow === true) return new Promise(resolve => setImmediate(() => resolve(stamp)));
+    return Promise.resolve(stamp);
   }
 
   async openPullRequests(): Promise<{ pulls: PullRequestSummary[]; truncated: boolean }> {

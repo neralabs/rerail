@@ -208,6 +208,20 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect(environments.map(github => github.readinessReads)).toEqual([2, 1, 1, 1, 1]);
   });
 
+  it("keeps the stat of gh's hosts file that answers after gh did, so the statuses after run no gh", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    const now = Date.parse("2026-11-03T14:00:00Z");
+    // gh is not installed: it answers with no process, before the stat taken as it started.
+    const github = new FakeGithub({ readiness: { state: "missing", login: null, repository: "acme/app" }, signInStatSlow: true });
+    const service = ws.service({ github, now: () => now });
+    await service.setEnabled(ws.repo, true);
+    const reads = github.readinessReads;
+
+    await service.status(ws.repo);
+    await ws.service({ github, now: () => now, answersOnce: true }).status(ws.repo);
+    expect(github.readinessReads).toBe(reads);
+  });
+
   it("answers a status with the kept reading and its time when the stat of gh's hosts file does not answer", async () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
     let now = Date.parse("2026-11-03T14:00:00Z");
