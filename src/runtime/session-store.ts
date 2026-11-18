@@ -9,7 +9,7 @@ import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { isWorktreePack, WORKTREE_PACK_ID, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
-import { openRecordWriter, type RecordWriter } from "../engine/storage/record-writes.js";
+import { flushRecordWrites, openRecordWriter, type RecordWriter } from "../engine/storage/record-writes.js";
 import { listRepositoryRules, ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
@@ -229,7 +229,7 @@ export function decodeEventPayload(payload: Uint8Array): unknown {
  * configured database. Sessions are attributed to the repository key given when they open, else to the
  * store's own `repositoryId`. Every write goes through the database's record writer (`openRecordWriter`): made at
  * once, or, while another process holds the write lock, in order once it is given back, never waiting on the caller's
- * thread. Reads here see a waiting write once it is made.
+ * thread. Every read here is of what this process recorded, so it makes the waiting writes first (`#recorded`).
  */
 export class SqliteSessionStore {
   readonly path: string;
@@ -344,14 +344,14 @@ export class SqliteSessionStore {
 
   recordRuleCoverage(session: AdapterSession, coverage: RuleCoverage): void {
     // Streaming ingestion checks coverage often; persist transitions, not identical copies, read first so an unchanged
-    // coverage takes no write lock. Looking in SQLite rather than an in-memory cache also recovers after a reset. While
-    // a write waits for the lock the read goes into the write, so a coverage still waiting counts as the latest.
+    // coverage takes no write lock and never waits. Looking in SQLite rather than an in-memory cache also recovers after
+    // a reset. The write reads again, since a coverage still waiting for the lock may be the latest.
     const payloadJson = stableJsonText(coverage);
-    if (!this.#records.waiting() && latestCoverage(this.#database, session.sessionId) === payloadJson) return;
+    const unchanged = (database: RerailDatabase): boolean => latestCoverage(database, session.sessionId) === payloadJson;
     const row = eventRow({ sessionId: session.sessionId, kind: "rule-coverage", payload: coverage });
     const restore = this.#sessionRestore(session);
-    this.#records.write(database => {
-      if (latestCoverage(database, session.sessionId) !== payloadJson) insertEvent(database, row, restore);
+    this.#records.writeUnless(() => unchanged(this.#database), database => {
+      if (!unchanged(database)) insertEvent(database, row, restore);
     }, rowBytes(row));
   }
 
@@ -381,11 +381,11 @@ export class SqliteSessionStore {
   }
 
   sessions(): readonly StoredSessionSummary[] {
-    return listSessions(this.#database, { repositoryIds: this.#repositoryId ?? undefined });
+    return listSessions(this.#recorded(), { repositoryIds: this.#repositoryId ?? undefined });
   }
 
   session(sessionId: string): StoredSessionSummary | undefined {
-    return listSessions(this.#database, { sessionId })[0];
+    return listSessions(this.#recorded(), { sessionId })[0];
   }
 
   linkWork(link: WorkLink, createdAt = Date.now()): void {
@@ -400,12 +400,16 @@ export class SqliteSessionStore {
   }
 
   workLinks(sessionId: string): readonly WorkLinkRecord[] {
-    return listWorkLinks(this.#database, sessionId);
+    return listWorkLinks(this.#recorded(), sessionId);
   }
 
-  /** Resolves once every write made through this database's record writer is on disk. */
-  settled(): Promise<void> {
-    return this.#records.settled();
+  /**
+   * The connection for a read of what this process recorded, its waiting writes made first: a link just added, a row
+   * just opened, which a holder of a moment in another process would otherwise hide from the caller acting on it.
+   */
+  #recorded(): RerailDatabase {
+    flushRecordWrites(this.path);
+    return this.#database;
   }
 
   close(): void {

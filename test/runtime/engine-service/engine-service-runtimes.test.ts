@@ -12,6 +12,7 @@ import {
 } from "../../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
 import { RerailRuntime } from "../../../src/runtime/runtime.js";
+import { SqliteSessionStore } from "../../../src/runtime/session-store.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { setUpTestRepository, type TestRepositoryRules } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
@@ -554,7 +555,8 @@ describe("the engine service's idle close", () => {
     }
   }, 30_000);
 
-  // Before, the open was tried again on a 250 ms timer, each try opening a writer, for as long as the lock was held.
+  // Before, the open was tried again on a 250 ms timer, each try opening a writer, for as long as the lock was held. The
+  // open meets the lock before it reads the session's record, which would first wait for this process's waiting writes.
   it("opens a quiet session for a scan when another process gives back the write lock, with no timer trying it again", async () => {
     const { create, scans } = recordingAuditor();
     const { clock, service, start, databasePath } = await idleService({ createAuditor: create, idleRuntimeMs: 0 });
@@ -562,13 +564,18 @@ describe("the engine service's idle close", () => {
     clock.now += 60_000;
     await service.closeIdleSessions();
     const controls = new SqliteAuditControlStore(databasePath);
+    const sessions = new SqliteSessionStore(databasePath);
     const writer = new Database(databasePath);
     try {
       const request = controls.requestAudit("a", { scope: "repository" });
       const finished = requestFinished(request.id);
       writer.exec("BEGIN IMMEDIATE");
+      // Another session's record waits for the lock in this process.
+      sessions.openSession({ sessionId: "other", host: "claude-code", cwd: databasePath }, 1_000);
       vi.useFakeTimers({ toFake: ["setTimeout", "setInterval"] });
+      const resumed = process.hrtime.bigint();
       await service.resumeSession("a");
+      expect(Number(process.hrtime.bigint() - resumed) / 1e6).toBeLessThan(1_000);
       expect(vi.getTimerCount()).toBe(0);
       vi.useRealTimers();
       writer.exec("ROLLBACK");
@@ -580,6 +587,39 @@ describe("the engine service's idle close", () => {
       vi.useRealTimers();
       if (writer.inTransaction) writer.exec("ROLLBACK");
       writer.close();
+      sessions.close();
+      controls.close();
+    }
+  }, 30_000);
+
+  // In a runtime still open the service does not try the lock first: the runtime's open meets it before reading the
+  // session's record, which would first wait, on the daemon's thread, for this process's writes waiting for the lock.
+  it("tries a quiet session's open for a scan in a runtime still open without waiting for the held lock", async () => {
+    const { create, scans } = recordingAuditor();
+    const { clock, service, start, databasePath } = await idleService({ createAuditor: create, idleRuntimeMs: 60 * 60_000 });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    const controls = new SqliteAuditControlStore(databasePath);
+    const sessions = new SqliteSessionStore(databasePath);
+    const writer = new Database(databasePath);
+    try {
+      const request = controls.requestAudit("a", { scope: "repository" });
+      const finished = requestFinished(request.id);
+      writer.exec("BEGIN IMMEDIATE");
+      sessions.openSession({ sessionId: "other", host: "claude-code", cwd: databasePath }, 1_000);
+      const resumed = process.hrtime.bigint();
+      await service.resumeSession("a");
+      expect(Number(process.hrtime.bigint() - resumed) / 1e6).toBeLessThan(1_000);
+      writer.exec("ROLLBACK");
+      await finished;
+      expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
+      expect(scans).toEqual(["repository"]);
+    } finally {
+      vi.restoreAllMocks();
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      sessions.close();
       controls.close();
     }
   }, 30_000);

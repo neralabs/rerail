@@ -11,14 +11,18 @@
  *
  * What a waiting write cannot have: a caller that needs its result or its failure. A write made at once throws as
  * before; one made later reports its failure on stderr, as `CodeRuleEnforcer` reports a record it could not make.
- * Reads on other connections see a waiting write once it is made; a caller about to act on such a read makes the
- * waiting writes first (`flushRecordWrites`).
+ * A read of what this process recorded makes the waiting writes first (`flushRecordWrites`), as does a write on another
+ * connection that must not commit ahead of them (`requireRecordWritesMade`). A thread waits for a waiting write no
+ * longer than `BUSY_TIMEOUT_MS` from when the write was asked, as the write itself waited before, so the reads, the
+ * owner claim and the last close of one turn never wait that bound more than once between them.
  */
 import { resolve } from "node:path";
-import type Database from "better-sqlite3";
-import { openSqliteDatabase, type RerailDatabase } from "./database.js";
+import Database from "better-sqlite3";
+import { BUSY_TIMEOUT_MS, openSqliteDatabase, type RerailDatabase } from "./database.js";
 import { isBusy } from "./sqlite-wal.js";
 import { waitForWriteLock } from "./write-lock-wait.js";
+
+const { SqliteError } = Database;
 
 /** One record write: its statements, run on the writer's connection inside one immediate transaction. */
 export type RecordWrite = (database: RerailDatabase) => void;
@@ -29,13 +33,16 @@ export interface RecordWriter {
    * order, until the lock is given back. `bytes`, about what it holds in memory, bounds what may wait.
    */
   write(write: RecordWrite, bytes?: number): void;
-  /** Whether a write waits for the lock: a read on another connection does not see it yet. */
-  waiting(): boolean;
+  /**
+   * `write`, unless no write waits and `unchanged`, a read of what is on disk, says it would change nothing: a write of
+   * no effect takes no write lock. `write` checks again itself, since it may be made later.
+   */
+  writeUnless(unchanged: () => boolean, write: RecordWrite, bytes?: number): void;
   /** Resolves once no write waits. */
   settled(): Promise<void>;
   /**
-   * This user's end. The last one makes what waits, letting its connection wait for the lock up to `busy_timeout`
-   * once, and reports what it could not make.
+   * This user's end. The last one makes what waits, letting its connection wait for the lock while the oldest waiting
+   * write is younger than `BUSY_TIMEOUT_MS`, and reports what it could not make.
    */
   close(): void;
 }
@@ -46,6 +53,13 @@ export interface RecordWriter {
  */
 const MAX_WAITING_WRITES = 10_000;
 const MAX_WAITING_BYTES = 64 * 1024 * 1024;
+
+/** A write that waits for the lock: until when a thread may wait for it (`BUSY_TIMEOUT_MS` from when it was asked). */
+interface WaitingWrite {
+  readonly write: RecordWrite;
+  readonly bytes: number;
+  readonly deadline: number;
+}
 
 /** Every writer of this process by database file, with how many stores use it. */
 const writers = new Map<string, FileRecordWriter>();
@@ -62,19 +76,28 @@ export function openRecordWriter(path: string): RecordWriter {
 }
 
 /**
- * Makes this process's waiting record writes to the database at `path` now, on this thread, letting the connection
- * wait for the lock up to the 5 s `busy_timeout` every Rerail connection has; what it cannot make by then keeps
- * waiting. For a caller about to act on a read of what was recorded, which a holder of a moment would otherwise hide:
- * a session's owner claim, which needs the session's row, and a scan's verdict, which reads its audits.
+ * Makes this process's waiting record writes to the database at `path` now, on this thread, the connection waiting for
+ * the lock while the oldest of them is younger than `BUSY_TIMEOUT_MS`. For a read of what this process recorded, which
+ * a holder of a moment would otherwise hide: what it cannot make keeps waiting for the lock, and the read sees what is
+ * on disk, as it did once such a write had failed.
  */
 export function flushRecordWrites(path: string): void {
   writers.get(resolve(path))?.flush();
 }
 
+/**
+ * `flushRecordWrites` for a write on another connection that must not commit ahead of this process's waiting record
+ * writes, such as the session owner claim: throws SQLite's `SQLITE_BUSY`, as a statement facing the held lock does,
+ * while some still wait.
+ */
+export function requireRecordWritesMade(path: string): void {
+  if (writers.get(resolve(path))?.flush() === false) throw new SqliteError("database is locked", "SQLITE_BUSY");
+}
+
 class FileRecordWriter {
   readonly #path: string;
   readonly #ended: () => void;
-  readonly #waiting: Array<{ write: RecordWrite; bytes: number }> = [];
+  readonly #waiting: WaitingWrite[] = [];
   readonly #settled: Array<() => void> = [];
   #database: RerailDatabase | undefined;
   #users = 0;
@@ -93,13 +116,17 @@ class FileRecordWriter {
     this.#connection();
     this.#users += 1;
     let closed = false;
+    const open = (): void => {
+      // As a closed connection answers a statement.
+      if (closed) throw new TypeError("The database connection is not open");
+    };
     return {
-      write: (write, bytes = 0) => {
-        // As a closed connection answers a statement.
-        if (closed) throw new TypeError("The database connection is not open");
+      write: (write, bytes = 0) => { open(); this.#write(write, bytes); },
+      writeUnless: (unchanged, write, bytes = 0) => {
+        open();
+        if (this.#waiting.length === 0 && unchanged()) return;
         this.#write(write, bytes);
       },
-      waiting: () => this.#waiting.length > 0,
       settled: () => this.#whenSettled(),
       close: () => {
         if (closed) return;
@@ -154,7 +181,7 @@ class FileRecordWriter {
       this.#dropped += 1;
       return;
     }
-    this.#waiting.push({ write, bytes });
+    this.#waiting.push({ write, bytes, deadline: performance.now() + BUSY_TIMEOUT_MS });
     this.#waitingBytes += bytes;
     this.#awaitLock();
   }
@@ -197,13 +224,14 @@ class FileRecordWriter {
   }
 
   /** `flushRecordWrites`: the waiting writes made on this thread; once none waits, the lock wait has nothing to do. */
-  flush(): void {
-    if (this.#waiting.length === 0) return;
+  flush(): boolean {
+    if (this.#waiting.length === 0) return true;
     this.#makeOnThisThread();
-    if (this.#waiting.length > 0) return;
+    if (this.#waiting.length > 0) return false;
     this.#lockWait?.abort();
     this.#lockWait = undefined;
     this.#settle();
+    return true;
   }
 
   #shiftWaiting(): void {
@@ -259,10 +287,14 @@ class FileRecordWriter {
     this.#settle();
   }
 
-  /** Makes the waiting writes in order, the connection waiting for the lock up to the 5 s every Rerail connection has. */
+  /**
+   * Makes the waiting writes in order, the connection waiting for the lock until the oldest one's deadline: a write
+   * asked `BUSY_TIMEOUT_MS` ago or more gets one try, so this thread never waits that bound twice for the same writes.
+   */
   #makeOnThisThread(): void {
     const client = this.#connection().$client;
-    client.pragma("busy_timeout = 5000");
+    const waitMs = Math.max(0, Math.ceil(this.#waiting[0]!.deadline - performance.now()));
+    client.pragma(`busy_timeout = ${String(waitMs)}`);
     try {
       while (this.#waiting.length > 0 && this.#makeReported(this.#waiting[0]!.write)) this.#shiftWaiting();
     } finally {

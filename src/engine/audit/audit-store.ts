@@ -648,7 +648,8 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
 /**
  * Durable, local-only audit bookkeeping. It never emits session events. Every write goes through the database's record
  * writer (`openRecordWriter`): made at once, or, while another process holds the write lock, in order once it is given
- * back, never waiting on the caller's thread; its times are taken when it is asked for.
+ * back, never waiting on the caller's thread; its times are taken when it is asked for. Every read here is of what this
+ * process recorded, so it makes the waiting writes first (`#recorded`).
  */
 export class SqliteAuditStore implements AuditRecorder, AuditReader {
   readonly supportsResultPages = true;
@@ -762,43 +763,46 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
     const running = and(eq(audits.sessionId, sessionId), eq(audits.status, "running"));
     const finishedAt = Date.now();
     // Read first: an update takes the write lock even when it matches no row, and every evaluator's open asks this of a
-    // session that mostly runs nothing. Not while a write waits: a start still waiting is no row yet.
-    if (!this.#records.waiting() && this.#database.select({ auditId: audits.auditId }).from(audits).where(running).limit(1).get() === undefined) return;
-    this.#records.write(database => database.update(audits).set({ status: "interrupted", finishedAt }).where(running).run());
+    // session that mostly runs nothing. A start still waiting for the lock is no row yet, so the writer then writes.
+    const idle = (): boolean => this.#database.select({ auditId: audits.auditId }).from(audits).where(running).limit(1).get() === undefined;
+    this.#records.writeUnless(idle, database => database.update(audits).set({ status: "interrupted", finishedAt }).where(running).run());
   }
 
-  /** The audit as written: a scan's verdict reads the audits it just made, which may still wait behind a holder of a moment. */
   get(auditId: string): AuditRecord | undefined {
-    flushRecordWrites(this.path);
-    const row = this.#database.select(auditColumns(this.#database)).from(audits).where(eq(audits.auditId, auditId)).get();
+    const database = this.#recorded();
+    const row = database.select(auditColumns(database)).from(audits).where(eq(audits.auditId, auditId)).get();
     return row === undefined ? undefined : record(row);
   }
   list(query: AuditQuery = {}, repositoryIds?: readonly string[]): AuditPage {
-    return listAudits(this.#database, query, repositoryIds);
+    return listAudits(this.#recorded(), query, repositoryIds);
   }
   listRepositoryAudits(query: RepositoryAuditQuery = {}, repositoryIds?: readonly string[]): RepositoryAuditPage {
-    return listRepositoryAudits(this.#database, query, repositoryIds);
+    return listRepositoryAudits(this.#recorded(), query, repositoryIds);
   }
   listRepositoryAuditEntries(query: RepositoryAuditEntryQuery): RepositoryAuditEntryPage | undefined {
-    return listRepositoryAuditEntries(this.#database, query);
+    return listRepositoryAuditEntries(this.#recorded(), query);
   }
   ruleActivity(since: number, repositoryIds?: readonly string[]): Map<string, RuleActivityTotals> {
-    return ruleActivity(this.#database, since, repositoryIds);
+    return ruleActivity(this.#recorded(), since, repositoryIds);
   }
   listViolationHistory(query: ViolationHistoryQuery, repositoryIds?: readonly string[]): ViolationHistoryPage {
-    return listViolationHistory(this.#database, query, repositoryIds);
+    return listViolationHistory(this.#recorded(), query, repositoryIds);
   }
   sessionsWithViolations(since: number, repositoryIds?: readonly string[]): number {
-    return sessionsWithViolations(this.#database, since, repositoryIds);
+    return sessionsWithViolations(this.#recorded(), since, repositoryIds);
   }
 
   latestSummary(sessionId: string): AuditSummary | undefined {
-    return latestAuditSummary(this.#database, sessionId);
+    return latestAuditSummary(this.#recorded(), sessionId);
   }
 
-  /** Resolves once every write made through this database's record writer is on disk. */
-  settled(): Promise<void> {
-    return this.#records.settled();
+  /**
+   * The connection for a read of what this process recorded, its waiting writes made first: a scan's verdict reads the
+   * audits it just made, which a holder of a moment in another process would otherwise hide.
+   */
+  #recorded(): RerailDatabase {
+    flushRecordWrites(this.path);
+    return this.#database;
   }
 
   close(): void {
