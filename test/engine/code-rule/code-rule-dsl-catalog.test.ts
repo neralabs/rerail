@@ -244,7 +244,7 @@ describe("checkout code-rule catalog", () => {
   });
 
   it("hashes a pack rule's document once for every checkout's catalog, which all build from the daemon's one rule catalog", () => {
-    installPack("python");
+    installPack("typescript");
     const base = temporaryRoot();
     const main = join(base, "main");
     execFileSync("git", ["init", "--quiet", "-b", "main", main]);
@@ -252,7 +252,7 @@ describe("checkout code-rule catalog", () => {
     const [first, second] = ["first", "second"].map(name => join(base, name)) as [string, string];
     for (const worktree of [first, second]) execFileSync("git", ["worktree", "add", "--quiet", "--detach", worktree], { cwd: main });
     const databasePath = join(base, "rerail.sqlite");
-    setUpTestRepository(main, { packs: ["python"] }, databasePath);
+    setUpTestRepository(main, { packs: ["typescript"] }, databasePath);
     const ruleCatalog = loadRuleCatalog();
     const rules = new Set<unknown>([...ruleCatalog.documents.values()].map(document => document.rule));
     const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog });
