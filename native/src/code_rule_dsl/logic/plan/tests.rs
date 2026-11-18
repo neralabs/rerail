@@ -3164,6 +3164,7 @@ fn prepared_program() -> crate::code_rule_dsl::logic::front::Program {
            .decl kind2(n: node, k: symbol)\n.input kind2\n.layout kind2 key(n) size(per n) values(k, kinds)\n\
            .decl part(x: number, y: number)\n.input part\n\
            .decl o(c: node, k: symbol)\n.output o\no(c, k) :- child2(p, c, _), kind2(c, k), kind2(p, \"x\").\n\
+           .decl s(c: node, k: symbol)\n.output s\ns(c, k) :- child2(p, c, _), kind2(c, k), kind2(p, k).\n\
            .decl q(c: node)\n.output q\nq(c) :- child2(_, c, _), part(c, _).\n\
            .decl up(a: node, b: node)\n.layout up fanout(a -> b, ~8) values(b, many)\n.output up\n\
            up(p, c) :- child2(p, c, _).\nup(a, c) :- up(a, b), child2(b, c, _).\n").unwrap()
@@ -3176,7 +3177,9 @@ fn bodies_by_head(placed: &body::Placed) -> Vec<(String, usize)> {
 
 /// Decision 0361 step 5: a rule over relations whose facts size them and price every column it reads is planned with
 /// the program, from the facts alone; its order covers its literals. A rule reading a relation with no size (`part`)
-/// is not: it is planned at run time. A recursive rule over a declared relation is planned for its delta too.
+/// is not: it is planned at run time. A recursive rule over a declared relation is planned for its delta too. A rule
+/// that tests a constant on a column a `values` fact answers (`kind2(p, "x")`) is not either: the fact gives the
+/// column's distinct values, not this one's rows, and the order turns on them (PostHog's `param`, work queue Q242).
 #[test]
 fn a_rule_over_shaped_relations_is_planned_with_the_program() {
     let p = prepared_program();
@@ -3187,9 +3190,10 @@ fn a_rule_over_shaped_relations_is_planned_with_the_program() {
         let k = bodies_by_head(&placed).into_iter().filter(|(h, _)| h == head).nth(nth).unwrap().1;
         crate::code_rule_dsl::logic::plan::line_key(&placed.body(k), first)
     };
-    let o = prep.0.get(&line("o", 0, None)).expect("`o`'s rule is prepared");
+    let o = prep.0.get(&line("s", 0, None)).expect("`s`'s rule is prepared");
     assert_eq!(o.order.len(), 3, "{o:?}");
     assert!(o.work_per_node > 0.0);
+    assert!(!prep.0.contains_key(&line("o", 0, None)), "`o` tests a kind's constant: planned at run time");
     assert!(!prep.0.contains_key(&line("q", 0, None)), "`part` has no size: `q`'s rule is an exception");
     assert!(prep.0.contains_key(&line("up", 0, None)));
     assert!(prep.0.contains_key(&line("up", 1, None)) && prep.0.contains_key(&line("up", 1, Some(0))), "the recursive rule and its delta at `up`");

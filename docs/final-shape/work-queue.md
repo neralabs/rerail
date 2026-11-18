@@ -5186,3 +5186,18 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   Q240 (fx2) aborted too. Warm runs over qd143317 and qf143646 passed.
 - **Wanted**: the projected chunk's atoms found without SQL inside the waves (decision 0104: one read before the
   first wave), or this read moved before it; then a warm run over qe143408's store passes every time.
+
+### Q242. (done) A prepared plan priced a kind's constant as one kind in 200: PostHog's `param` read 10.4 M rows
+
+- **Seen** (2026-11-18, PostHog cold on the M3 after merging the hub at ffc390de8): join work 451 → 555 M. `param`'s
+  two rules (5.3 → 93.2 M) and `tp_decl`'s (0 → 31 M) took prepared plans (decision 0361 step 5, `search: 0
+  subsets`) with `kind($p, #k1025)` first: 10.4 M rows. Before, the search led with `field($f, #f65559, $ps)`, 253 k.
+- **Cause**: the prepared model prices a constant on a column by its `values` fact (`values(k, kinds)`: 1 in 200,
+  `values(f, ~50)`: 1 in 50). Kind 1025 holds 16 % of the nodes and field 65559 0.4 %. A check of the prepared
+  plan's counts (step 6) would not see it: the plan's own estimate of its work was near what it read.
+- **Done**: such a rule is not prepared (`prepared.rs`, `by_values`); it is planned at run time from the constant's
+  statistics. Recorded in 0361 under step 5. PostHog cold: 2,307 and 2,226 G instructions, 444–447 M join work, warm 102 G (merged, before:
+  2,500 G, 555 M; sd1 2,589 G, 546 M); 29,747 findings, fa0efeaed6ff.
+- **Open for 0361's owner**: most rules test a kind's constant, so fewer lines are prepared. A prepared order that
+  is right for every constant needs the constants' frequencies, which no fact gives; the run's statistics have them.
+

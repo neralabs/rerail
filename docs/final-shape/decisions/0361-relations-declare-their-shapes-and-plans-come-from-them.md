@@ -412,3 +412,15 @@ earlier run planned, which are written with the kept plans when the run ends.
 - `a_later_run_reads_the_prepared_plans_an_earlier_one_made`: a run keeps the plans it made by the version's
   identity; a later run of the same program, built again, reads them through the store's rows (loaded 1, computed 0).
 
+**A constant on a `values` column is planned at run time** (2026-11-18, work queue Q242). A `values(c, …)` fact gives
+column `c`'s distinct values, not how many rows hold a given one, and kinds and field names are far from even. On
+PostHog (M3, cold, 157 chunks), `param(…) :- kind($p, #k1025), child($ps, $p, _), field($f, #f65559, $ps), text($p,
+$x)` was prepared with `kind` first (one kind in 200; this one, an identifier, is 16 % of the nodes): 10.4 M rows,
+where the run's search, from the kinds' and fields' frequencies, led with `field` (0.4 %): 253 k. `param`'s two rules
+and `tp_decl`'s made 104 M rows of work where the search's orders made 5 M, about 15 s of CPU. So a rule that tests a
+constant on a column a `values` fact answers is not prepared; it is planned at run time from the constant's
+statistics, which item 5 keeps where no fact answers. Constants on other columns (`child`'s dense `i`) stay
+prepared. Measured: 2,307 and 2,226 G instructions and 444–447 M join work, against 2,500 G and 555 M with every such rule
+prepared; same findings. Test: `a_rule_over_shaped_relations_is_planned_with_the_program` (`o`, testing
+`kind2(p, "x")`, is not prepared; `s`, the same rule with no constant, is).
+

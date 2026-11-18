@@ -201,7 +201,18 @@ impl Analysis for Prepared {
                     _ => false,
                 }
             };
-            if !(0..b.len()).all(known) {
+            // A constant on a column a `values` fact answers: the fact gives the column's distinct values, not
+            // how many rows hold this one, and the plan turns on it. PostHog's `param`: `kind($p, #k1025)` (an
+            // identifier, 16 % of the nodes) priced as one kind in 200 led and read 10.4 M rows, where the search,
+            // from the kind's frequency, led with `field($f, #f65559, $ps)` (0.4 %): 253 k. Such a line is planned at
+            // run time, from the constant's statistics (decision 0361 item 5: what no fact answers).
+            let by_values = |i: usize| -> bool {
+                let Lit::Atom(a) = b.view(i) else { return false };
+                b.args(i).iter().enumerate().any(|(c, t)| {
+                    matches!(t, TermRef::Int(_) | TermRef::Str(_) | TermRef::Branded(_)) && layouts.of(a.rel()).any(|f| matches!(f, LayoutFact::Values { col, .. } if *col == c))
+                })
+            };
+            if !(0..b.len()).all(known) || (0..b.len()).any(by_values) {
                 continue;
             }
             let own = scc.get(b.rel(b.head())).copied();
