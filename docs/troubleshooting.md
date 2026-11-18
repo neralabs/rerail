@@ -484,8 +484,10 @@ certain, and checks the whole file the call left everywhere else. The file befor
 call is an Edit or MultiEdit (not a Write), its edits put back (each new text, found exactly once, replaced by its old
 text, at every place for an edit of every place) give a text on which the tool would make them again and leave
 exactly the file as it is, and that text is the file as the session last saw it. Then the call is told exactly its
-own lines, as when Rerail sees it run. Anything else is checked whole, and a finding can name lines the call did not
-write, but none of its own is missed: a Write; an Edit that created its file; an Edit whose new text the file no
+own lines, as when Rerail sees it run, but for one case: an edit of every place is also told a line holding its new
+text that another program wrote over an older line since the session last looked, one line more, never fewer.
+Anything else is checked whole, and a finding can name lines the call did not write, but none of its own is missed: a
+Write; an Edit that created its file; an Edit whose new text the file no
 longer holds once; a file another program or another such call changed since the session last saw it, or that the
 session first saw after the call ran, as in a busy spell that starts with the session. A tool's output is not kept
 with them. The folder keeps at most 256 events and 16 MiB, so what a daemon that reads again has to check

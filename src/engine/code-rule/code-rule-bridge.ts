@@ -227,7 +227,9 @@ function withheldPrior(edit: CodeRuleEdit, preimage: Preimage): string | undefin
  * Then the file held that text when the session last looked, and holds it now with this call's edits and nothing else,
  * so no other write came between: neither another program's nor another call the same hold left, whose change the
  * text left would hold besides (a later call that wrote the same text again included). A file the session first saw
- * after the call wrote it fails the last condition, as what it saw already holds the call's edits.
+ * after the call wrote it fails the last condition, as what it saw already holds the call's edits. One write gets past
+ * them: for an edit of every place, another program's write of the same new text over an older line, which undoing
+ * every place takes back too, so that line is told as the call's: one line more, never fewer.
  */
 function certainEdit(edit: CodeRuleEdit, textEdits: readonly TextEdit[] | undefined, sight: string | undefined): CodeRuleEdit | undefined {
   if (edit.generatedText === undefined || textEdits === undefined || sight === undefined) return undefined;
