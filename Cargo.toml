@@ -83,7 +83,7 @@ opt-level = 3
 [profile.dev.package.rerail-markdown-inline-lean]
 opt-level = 3
 
-# The lean `.rr` parser (`rerail-rr-syntax`), the same: a step per token of every rule file a run reads (its libraries'
+# The lean `.rerail` parser (`rerail-rr-syntax`), the same: a step per token of every rule file a run reads (its libraries'
 # too) and of every program text read back (decision 0275). Its crate is small (the parser, its tape, the statements).
 [profile.dev.package.rerail-rr-syntax]
 opt-level = 3
@@ -97,7 +97,7 @@ opt-level = 3
 opt-level = 3
 
 # The tape writer (`rerail-tape-format`) runs a step per node of every parser that writes the tape
-# directly (the lean Python parser, `.rr`'s): its non-generic code (`block`, `put`) unoptimized was
+# directly (the lean Python parser, `.rerail`'s): its non-generic code (`block`, `put`) unoptimized was
 # most of the lean parser's time in dev builds.
 [profile.dev.package.rerail-tape-format]
 opt-level = 3

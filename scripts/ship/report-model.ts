@@ -90,13 +90,13 @@ export interface CellItem {
   cost: CellCost | null;
   /** The caps the cell's runs ran under, both sides alike: the pack's `--pack-cap`, else the defaults. */
   caps: { memory: string[]; time_s: number[] };
-  /** `.rr`: the whole-pack run did not complete, so the candidate's metrics and findings are a chunked run's sums. */
+  /** `.rerail`: the whole-pack run did not complete, so the candidate's metrics and findings are a chunked run's sums. */
   chunked: { size: number; chunks: number; rules_run: number; rules_of: number; failed_chunks: { chunk: number; rules: string; reason: string }[] } | null;
-  /** `.rr`: how far the failed whole-pack run got (policies started, elapsed, peak RSS). */
+  /** `.rerail`: how far the failed whole-pack run got (policies started, elapsed, peak RSS). */
   progress: { started: number; of: number; wall_ms: number; rss_kb: number } | null;
-  /** `.rr`: whether run-policies ran the pack's policies combined (groups of several) or alone; null: not reported. */
+  /** `.rerail`: whether run-policies ran the pack's policies combined (groups of several) or alone; null: not reported. */
   grouping: { policies: number; combined: number; alone: number; largest: number } | null;
-  /** `.rr`: what the engine printed about running policies alone instead of together. */
+  /** `.rerail`: what the engine printed about running policies alone instead of together. */
   fallback: string[];
 }
 

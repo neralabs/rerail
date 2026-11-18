@@ -6,7 +6,7 @@ use super::*;
 #[test]
 fn t_programs_split_into_file_local_and_cross_file() {
     use crate::code_rule_dsl::logic::rr::parse;
-    for name in ["calls.rr", "calls_rust.rr", "workload.rr"] {
+    for name in ["calls.rerail", "calls_rust.rerail", "workload.rerail"] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs").join(name);
         let prog = parse(&crate::code_rule_dsl::logic::settings::program_text(&path).unwrap()).unwrap();
         let local = split(&prog);
@@ -24,7 +24,7 @@ fn t_programs_split_into_file_local_and_cross_file() {
         }
         // Projections of the tree are file-local; what an import binds is not.
         assert!(local.contains("kind"), "{name}");
-        assert!(!local.contains("calls") && !local.contains("res") || name == "workload.rr", "{name}");
+        assert!(!local.contains("calls") && !local.contains("res") || name == "workload.rerail", "{name}");
         eprintln!("SPLIT {name}: {} local, {} cross-file {global:?}\n  cross-file reads base {reads_base:?}\n  and local {reads_local:?}", local.len(), global.len());
     }
 }

@@ -125,11 +125,11 @@
       ],
       "programInputs": [
         {
-          "path": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/rr-migration-20261106/engine/docs/rule-syntax/lib/core.rr",
+          "path": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/rr-migration-20261106/engine/docs/rule-syntax/lib/core.rerail",
           "sha256": "7c44435f75b8018030c42f74d5dfb9078a1570f25ec2cc4935639d023b330e2c"
         },
         {
-          "path": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/packs/data-layer/candidates/rr/no-source-inspection.rr",
+          "path": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/packs/data-layer/candidates/rr/no-source-inspection.rerail",
           "sha256": "f1e1184cf3c7a49752323471bdfa41f621e625d500cfdbc58f2fdbc43ac54172"
         }
       ],
@@ -256,11 +256,11 @@
       ],
       "programInputs": [
         {
-          "path": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/rr-migration-20261106/engine/docs/rule-syntax/lib/core.rr",
+          "path": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/rr-migration-20261106/engine/docs/rule-syntax/lib/core.rerail",
           "sha256": "7c44435f75b8018030c42f74d5dfb9078a1570f25ec2cc4935639d023b330e2c"
         },
         {
-          "path": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/packs/data-layer/candidates/rr/no-source-inspection.rr",
+          "path": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/packs/data-layer/candidates/rr/no-source-inspection.rerail",
           "sha256": "f1e1184cf3c7a49752323471bdfa41f621e625d500cfdbc58f2fdbc43ac54172"
         }
       ],
@@ -279,5 +279,5 @@
     ],
     "entryPoint": "find_violations"
   },
-  "reproduction": "Write inputFiles below to a fresh corpus and options to JSON. Run each frozen engine with /usr/bin/time -lp engine run-rr packs/data-layer/candidates/rr/no-source-inspection.rr corpus output options.json. Use a separate empty RERAIL_TAPE_CACHE for each build."
+  "reproduction": "Write inputFiles below to a fresh corpus and options to JSON. Run each frozen engine with /usr/bin/time -lp engine run-rr packs/data-layer/candidates/rr/no-source-inspection.rerail corpus output options.json. Use a separate empty RERAIL_TAPE_CACHE for each build."
 }

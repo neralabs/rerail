@@ -1314,7 +1314,7 @@ pub(super) fn encode_tape(
     let image = if let Some(image) = own_image {
         Some(image)
     } else if language == GrammarDialect::Rr {
-        // A `.rr` file: the rule engine's own parser (decision 0061).
+        // A `.rerail` file: the rule engine's own parser (decision 0061).
         tape::TapeImage::parse(grammar, &file.input.source, &interrupted)
     } else {
         encode_tree_sitter_image(file, language, grammar, &interrupted, metrics)?

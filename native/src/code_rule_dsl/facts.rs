@@ -36,7 +36,7 @@ pub mod runs;
 // cratify: `set_census` is rerail-transducer's (it mounts it)
 #[allow(dead_code)]
 pub mod vtab;
-/// `core.rr`'s repository inputs (decision 0046).
+/// `core.rerail`'s repository inputs (decision 0046).
 pub mod repository;
 /// M's Y1 reference graph as copied (05 Phase 1 row 2's source; open item O19).
 #[allow(dead_code, unused_imports, clippy::all)]

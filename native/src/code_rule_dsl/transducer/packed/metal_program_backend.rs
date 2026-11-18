@@ -37,7 +37,7 @@ pub(in crate::code_rule_dsl) fn metrics() -> (usize, usize) {
 #[path = "metal_label_passes.rs"]
 pub mod label_passes;
 // Its tests run in the engine's test binary (its facade of this module mounts `metal_tape_tests.rs` as `tape_tests`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
+// engine registers as it loads (the languages, their `.rerail` libraries).
 #[path = "metal_set_steps.rs"]
 pub mod set_steps;
 // Block programs on Metal: the Metal crate's.

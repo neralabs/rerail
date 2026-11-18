@@ -1,4 +1,4 @@
-# `.rr`, step 3: declarations, `.decl r(a: number, b: flat<x>) inline`.
+# `.rerail`, step 3: declarations, `.decl r(a: number, b: flat<x>) inline`.
 #
 # The engine's parser (logic/rr/syntax.rs) is the reference. What this step adds:
 #   - `.decl`: a `.` and the word `decl` make one leaf, `.decl`, and the statement is a

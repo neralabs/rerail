@@ -1,4 +1,4 @@
-//! The authored `.rr` family through the production relational compiler.
+//! The authored `.rerail` family through the production relational compiler.
 use super::cpu_ns;
 use crate::code_rule_dsl::{logic::{plan::corpus, profile}, tools, typing::file_local::Binding};
 use serde_json::{Value, json};
@@ -6,10 +6,10 @@ use std::{collections::BTreeSet, path::{Path, PathBuf}, time::Instant};
 
 type Keys = BTreeSet<(String, String, usize)>;
 const RULES: [&str; 4] = [
-    "ruff-async210-blocking-http-call-in-async-function.rr",
-    "ruff-async221-run-process-in-async-function.rr",
-    "ruff-async222-wait-for-process-in-async-function.rr",
-    "ruff-async230-blocking-open-call-in-async-function.rr",
+    "ruff-async210-blocking-http-call-in-async-function.rerail",
+    "ruff-async221-run-process-in-async-function.rerail",
+    "ruff-async222-wait-for-process-in-async-function.rerail",
+    "ruff-async230-blocking-open-call-in-async-function.rerail",
 ];
 
 fn run(root: &Path, out: &Path) -> (Value, Keys) {
@@ -75,7 +75,7 @@ fn run(root: &Path, out: &Path) -> (Value, Keys) {
 }
 
 #[test]
-#[ignore = "controlled authored .rr corpus comparison"]
+#[ignore = "controlled authored .rerail corpus comparison"]
 fn complete_async_family_authored_rr_corpus_profile() {
     let root = PathBuf::from(std::env::var("RERAIL_SHARED_CORPUS").expect("RERAIL_SHARED_CORPUS"));
     let out = PathBuf::from(std::env::var("RERAIL_RR_OUT").expect("RERAIL_RR_OUT"));
@@ -108,7 +108,7 @@ fn complete_async_family_authored_rr_corpus_profile() {
         assert_eq!(scheduling["buildJobs"],0,"a fully memoized workload must not schedule per-document builds");
         assert_eq!(scheduling["cachedDocuments"],report["report"]["files"]);
     }
-    eprintln!("authored .rr: {} files, {} keys, {} CPU ns, {} wall ns",
+    eprintln!("authored .rerail: {} files, {} keys, {} CPU ns, {} wall ns",
         report["report"]["files"],report["keyCount"],report["cpuNs"],report["wallNs"]);
 }
 
@@ -135,7 +135,7 @@ fn authored_rr_batched_positive_documents_preserve_all_four_labels() {
         std::fs::write(path, serde_json::to_string_pretty(&report).unwrap()).unwrap();
     }
     assert_eq!(expected.len(),120);
-    assert_eq!(actual,expected,"authored .rr positive comparison: {report}");
+    assert_eq!(actual,expected,"authored .rerail positive comparison: {report}");
 }
 
 /// The async family must not build the general name-analysis universe before target filtering.
@@ -164,7 +164,7 @@ fn async_demand_uses_semantic_batches_without_global_name_derivations() {
 fn semantic_operators_do_not_claim_document_locality_for_cross_file_demands() {
     use crate::code_rule_dsl::logic::{front,rr};
     let p=rr::parse(r#"
-#include "core.rr"
+#include "core.rerail"
 .decl wanted(n:node)
 .decl targets(q:symbol)
 .decl out(n:node,q:symbol)
@@ -182,7 +182,7 @@ out(n,q) :- python_qualified(n,q,wanted,targets).
 fn semantic_helpers_share_exact_contracts_without_relation_name_collisions() {
     use crate::code_rule_dsl::logic::{front::Native,rr};
     let p=rr::parse(r#"
-#include "core.rr"
+#include "core.rerail"
 .decl a_b(n:node)
 .decl a(n:node)
 .decl c(q:symbol)
@@ -234,7 +234,7 @@ fn candidate_contract_lowers_before_projection_and_roundtrips() {
 fn candidate_dynamic_targets_remain_cross_file() {
     use crate::code_rule_dsl::logic::{front,rr};
     let p=rr::parse(r#"
-#include "core.rr"
+#include "core.rerail"
 .decl docs(d:number)
 docs(d) :- doc(d,_,_).
 .decl targets(q:symbol)
@@ -279,7 +279,7 @@ fn annotation_demand_keeps_string_membership_before_parsing() {
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.py"), "x: int\ny: list[int]\nz: \"Target\"\n").unwrap();
     let src = r#"
-#include "core.rr"
+#include "core.rerail"
 .decl qann(s:node,e:node)
 qann(s,e) :- kind(t,"type"), child(t,s,0), kind(s,"string"), parsed(s,"annotation",e).
 .decl asked(k:symbol)
@@ -298,7 +298,7 @@ asked(k) :- rr_embed_req(s,"annotation"), kind(s,k).
 fn long_text_fallback_exposes_its_candidate_keys_to_planning() {
     use crate::code_rule_dsl::{facts::vtab::syntax, logic::{rr,front::{Literal,Term}}};
     let mut p=rr::parse(r#"
-#include "core.rr"
+#include "core.rerail"
 .decl result(t:symbol)
 result(t) :- node(_,n,_,_,_), text(n,t).
 .output result
@@ -323,7 +323,7 @@ fn long_text_fallback_keeps_short_and_long_results_across_memo_replay() {
     let long = format!("[{}]", vec!["123"; 100].join(","));
     std::fs::write(root.join("a.py"), format!("a = {long}\nb = [1]\n")).unwrap();
     let src = r#"
-#include "core.rr"
+#include "core.rerail"
 .decl result(t:symbol)
 result(t) :- field(_,"right",n), text(n,t).
 .output result
@@ -344,7 +344,7 @@ result(t) :- field(_,"right",n), text(n,t).
 #[test]
 fn concurrent_runs_read_their_own_long_texts() {
     let src = r#"
-#include "core.rr"
+#include "core.rerail"
 .decl result(t:symbol)
 result(t) :- field(_,"right",n), text(n,t).
 .output result
@@ -376,7 +376,7 @@ fn demanded_component_graph_keeps_cross_file_cache_results() {
     std::fs::write(root.join("a.py"), "def f():\n    pass\n").unwrap();
     std::fs::write(root.join("b.py"), "from a import f\ndef g():\n    pass\n").unwrap();
     let src = r#"
-#include "core.rr"
+#include "core.rerail"
 .pragma "cross-memo" "uses"
 .decl def(n:node,q:symbol)
 def(n,@dot(m,x)) :- kind(n,"function_definition"), field(n,"name",c), text(c,x), docof(n,d), doc(d,_,m).

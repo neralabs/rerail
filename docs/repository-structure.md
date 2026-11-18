@@ -38,8 +38,8 @@ Some trees stay in git outside this layout, by decision, each through a named ex
 metrics it would fail, with a reason per path:
 
 - **`kept-records` / `workbench`:** the engine line's design notes (`docs/final-shape/`, `docs/rule-engine-direction/`)
-  and its `.rr` workbench (`docs/rule-syntax/`): rule translations beside their source documents, one `.rr` per rule
-  with the scripts that generate or check it, and the `.rr` library the engine embeds. They are records, kept as
+  and its `.rerail` workbench (`docs/rule-syntax/`): rule translations beside their source documents, one `.rerail` per rule
+  with the scripts that generate or check it, and the `.rerail` library the engine embeds. They are records, kept as
   written.
 - **`engine-layout`:** directories and files of the engine line (`native/`, its tests, `tools/cratify/`) whose layout,
   names or storage are settled with their owner in a follow-up, listed by exact path, never by glob.
@@ -201,7 +201,7 @@ include is test-only when it is:
 
 `#[cfg(test)] mod tests;` declares a module in another file and exempts nothing after it.
 
-Exemptions `workbench` (an include of `docs/rule-syntax/**`, the `.rr` library the engine embeds) and
+Exemptions `workbench` (an include of `docs/rule-syntax/**`, the `.rerail` library the engine embeds) and
 `engine-layout` ([Kept as they are](#kept-as-they-are)).
 
 </details>

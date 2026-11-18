@@ -1,9 +1,9 @@
-# Group 7: what `.rr` lacks for 13 data-layer checks
+# Group 7: what `.rerail` lacks for 13 data-layer checks
 
 Oracle: `scripts/` at 2b1504ad. Citations are `file:LINE` in that tree. `facts.py` is short for
 `scripts/conditional_architecture_facts.py`, and `strict_allowlist.py` and `source_lines.py` are in `scripts/lint_lib/`.
 "Production dirs" means `data_layer_production_dirs` (`lint_lib/discovery.py:32`): `api`, `impl`, `data_layer`,
-`_internal` and every top-level `lNNNN_*`. The `.scope dirs` line of plan-scope-side-effects.rr already expresses it.
+`_internal` and every top-level `lNNNN_*`. The `.scope dirs` line of plan-scope-side-effects.rerail already expresses it.
 
 Several needs come up in more than one check. Each is described in full once and named after that:
 
@@ -46,7 +46,7 @@ Several needs come up in more than one check. Each is described in full once and
     exist (`facts.py:562`, `583`, `614`, `634`). The four checks run only if one owner exists (`architecture_present`,
     `facts.py:549-552`). The nullary rule is EXISTS; the location is not.
   - POLICY: one code (CONDA-005) whose findings are filtered by message substring
-    (`lint_conditional_architecture.py:364-379`). In `.rr` this is just "do not declare the dropped rules". Six messages
+    (`lint_conditional_architecture.py:364-379`). In `.rerail` this is just "do not declare the dropped rules". Six messages
     survive: four "typed conditional contract", "must reject direct compilation" and "must define
     _lower_conditional_step". Callback-field, state-write, backend-control, child-compile and level checks are computed
     and dropped (`facts.py:660-741`), so they must not be ported.
@@ -67,7 +67,7 @@ Several needs come up in more than one check. Each is described in full once and
 - **Inputs:** Python AST and raw source lines of the files above, minus 6 excluded file names (`lint_admin_tools.py:446-453`).
   Signed baseline `.ratchet-baselines/lint_admin_tools.json` (`{"errors": 3, "warnings": 0}`).
 - **Needs:**
-  - EXISTS `attr_of`/`callee` (R1), `except_clause` children with comments counted as trivial, as swallowed-exceptions.rr
+  - EXISTS `attr_of`/`callee` (R1), `except_clause` children with comments counted as trivial, as swallowed-exceptions.rerail
     does, and `text` of the type name (R3, by spelling, not resolved). `def_name` + `match("test_.*")`, `decorator`,
     `within` and `kind` cover T1. `file_name` covers the exclusions.
   - N-SRC + LIB `src_line`: R2, R4 and R5 are per-line regexes over raw text, with per-line skips (`# noqa`, `assert `,
@@ -156,7 +156,7 @@ Several needs come up in more than one check. Each is described in full once and
 - **Needs:**
   - EXISTS `call_arg(c, 1, "", v)`, `str`, a fact set of names, `callee` + `text` (`:137-147`).
   - EXISTS for the comparison: `kind(c, "comparison_operator")`, operands by `child(c, n, i)`, and "every operator is
-    is/is not" as `!op(c, o)` for o outside `{"is","not"}` with no `"in"` token. `cmp` (names.rr) is not usable because it
+    is/is not" as `!op(c, o)` for o outside `{"is","not"}` with no `"in"` token. `cmp` (names.rerail) is not usable because it
     drops chains, and the oracle accepts chains (`:161`). The left operand is paired with every comparator, not with
     adjacent ones (`:163-179`). Use `min` over comparator index for the reported attribute.
 - **Hard parts:** `getattr` is matched by spelling, so a shadowed `getattr` still counts. `len(node.args) < 2` counts
@@ -263,7 +263,7 @@ Several needs come up in more than one check. Each is described in full once and
 - **Hard parts:** the linter's own script is a non-`.md` tracked file and names `CLAUDE.md` and
   `SERVERPLAN_ARCHITECTURE.md`, so it justifies them itself. The git-grep path and the file-reading fallback differ on
   binary files (`-I`). `.md` detection is case-sensitive, while README detection is not. `unreferenced` also counts
-  MISSING findings. The plugin runs the whole analysis once, anchored on `scripts/lint_markdown_docs.py`; in `.rr` it is
+  MISSING findings. The plugin runs the whole analysis once, anchored on `scripts/lint_markdown_docs.py`; in `.rerail` it is
   simply a project-level rule.
 
 ### eager_resolve (hard-fail, 2666 lines)
@@ -334,7 +334,7 @@ Several needs come up in more than one check. Each is described in full once and
     not ignored by `multiline_string_line_numbers`. The rule must exclude only `string` nodes without an f prefix.
   - Text sites: the text sites run on raw lines, so `.resolve()` in a one-line string literal counts. The symbol uses
     line ranges, not offsets, and `lineno` of a decorated def is the `def` line.
-  - Call graph: the call graph is per file and by spelling. It does not use `calls.rr` `call_target`; using that instead
+  - Call graph: the call graph is per file and by spelling. It does not use `calls.rerail` `call_target`; using that instead
     would change the findings.
   - Removed patterns: `_is_allowed_legacy_boundary_bound_resolve` is constantly false (`:1157-1159`), and
     `_extract_eager_lazy_wrapper_signature` removes only the `_resolve_legacy_result_*` pattern of the function itself
@@ -359,7 +359,7 @@ Several needs come up in more than one check. Each is described in full once and
     that precedes r in a block enclosing r's statement. Assignments in sibling branches, loop bodies and even a `with`
     body do not flow out; a nested def sees a copy of the outer bindings (`:1161-1420`). It uses `max` start and
     `within`, with no recursion through the aggregate. The same relation gives `callable_aliases` with a kill on
-    reassignment (`:1195-1200`). `flow.rr`'s `before` covers one block only.
+    reassignment (`:1195-1200`). `flow.rerail`'s `before` covers one block only.
   - LIB `la_leaf(n, s)`: the "callee leaf string". It follows a name → rhs chain through `scoped_rhs`, then module-level
     assignments, then the `from` imports of the module body (`:845-905`). It is recursive, with a cycle guard and depth
     caps of 32 and 64, which Datalog recursion handles (it terminates, and only differs past depth 32).
@@ -392,7 +392,7 @@ Several needs come up in more than one check. Each is described in full once and
     `None` (`:2443-2444`, `2484-2486`), and callees on the stack are skipped. On call-graph cycles the oracle can
     therefore miss a reachable target, depending on walk order. Datalog `reach` is order-independent and sound, so expect
     extra findings on cycles. Exact parity would need an ordered depth-first search with a poisoned memo, which no
-    `.rr` construct should copy.
+    `.rerail` construct should copy.
   - Function bodies: `_iter_nodes_skip_nested_funcs` skips only `ClassDef` (`:1039-1044`), so lambdas and nested defs
     in expressions count toward the outer function. Nested `def` statements are analyzed with the outer function's
     facts, except route handlers (`:1031-1037`, `:1173-1190`).

@@ -676,7 +676,7 @@ unsafe impl VTabCursor for RelCursor {
 // here, in literal order, so each step looks up one index and never re-derives the binding pattern.
 // An input relation is read once per process (`INPUTS`) with a hash index per key-column set, built on first use.
 
-/// `@dot(a, b)` (`core.rr`): `a.b`, and `b` when `a` is "".
+/// `@dot(a, b)` (`core.rerail`): `a.b`, and `b` when `a` is "".
 fn cat(syms: &mut Interner, a: i64, b: i64) -> i64 {
     if syms.names[a as usize].is_empty() {
         return b;

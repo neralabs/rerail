@@ -5,16 +5,16 @@
 //! columns are kept as they are.
 //!
 //! ```text
-//! // typing/programs/calls.rr                      // the rule (lib/python/calls.rr)
+//! // typing/programs/calls.rerail                      // the rule (lib/python/calls.rerail)
 //! .decl call_target(c: node, f: node)              .decl typing_calls__call_target(c_path: symbol, c_kind: symbol,
 //!                                                      c_start: number, c_end: number, f_path: symbol,
 //!                                                      f_kind: symbol, f_start: number, f_end: number)
 //! ```
 //!
 //! When a rule that reaches an output reads such a relation, the corpus runner runs the program
-//! (`typing/programs/<program>.rr`) first, over the same root and with the same typing inputs, in its own bounded
+//! (`typing/programs/<program>.rerail`) first, over the same root and with the same typing inputs, in its own bounded
 //! cross-file rounds. Each output row becomes a fact of the relation. The rule joins the spans back to its own nodes
-//! (`node(d, n, kind, start, end)`), so the program's facts (T's shape) and the rule's (`core.rr`'s) need not
+//! (`node(d, n, kind, start, end)`), so the program's facts (T's shape) and the rule's (`core.rerail`'s) need not
 //! number nodes alike.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -29,7 +29,7 @@ const PREFIX: &str = "typing_";
 const SEP: &str = "__";
 
 /// Whether `rel` is a bridged relation's name (`typing_<program>__<output>`). Such a relation is one fact family
-/// shared by every program of a run (`corpus::combine` does not prefix it), as `core.rr`'s are: the program's answers
+/// shared by every program of a run (`corpus::combine` does not prefix it), as `core.rerail`'s are: the program's answers
 /// are the same whichever rule reads them.
 pub fn is_bridged(rel: &str) -> bool {
     rel.strip_prefix(PREFIX).is_some_and(|rest| rest.split_once(SEP).is_some_and(|(p, o)| !p.is_empty() && !o.is_empty()))
@@ -62,8 +62,8 @@ fn wanted(prog: &Program) -> Vec<Bridged> {
 
 /// The typing program `name`'s text.
 fn source(name: &str) -> Result<String> {
-    let path = rerail_store::source_tree::native().join(format!("src/code_rule_dsl/typing/programs/{name}.rr"));
-    // Its `#include`s read in (`python/modules.rr`, …).
+    let path = rerail_store::source_tree::native().join(format!("src/code_rule_dsl/typing/programs/{name}.rerail"));
+    // Its `#include`s read in (`python/modules.rerail`, …).
     crate::code_rule_dsl::logic::settings::program_text(&path).map_err(Error::Plan)
 }
 
@@ -114,7 +114,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         let mut columns: BTreeMap<&str, Vec<bool>> = BTreeMap::new();
         for b in &bridged {
             if !program.outputs.contains(&b.output) {
-                return Err(Error::Plan(format!("{}: {name}.rr has no output {}", b.rel, b.output)));
+                return Err(Error::Plan(format!("{}: {name}.rerail has no output {}", b.rel, b.output)));
             }
             let nodes: Vec<bool> = program.decls[b.output.as_str()].iter().map(|(_, ty)| ty == "node").collect();
             // Lowered, `symbol` is `sym` and `number` is `int`.
@@ -126,7 +126,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
             let fits = have.len() == want.len() && have.iter().zip(&want).all(|((_, ty), w)| ty == w);
             if !fits {
                 return Err(Error::Plan(format!(
-                    "{}: {} columns, where {name}.rr's {} gives {} (each node as path, kind, start, end)",
+                    "{}: {} columns, where {name}.rerail's {} gives {} (each node as path, kind, start, end)",
                     b.rel,
                     have.len(),
                     b.output,

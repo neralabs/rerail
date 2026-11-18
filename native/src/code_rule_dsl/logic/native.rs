@@ -23,9 +23,9 @@ pub mod setfix;
 pub use setfix::DERIVATIONS;
 pub use setfix::{forget_engine, forget_scope};
 pub mod aggregation;
-/// `dfs_first` and `dfs_first_memo` (`core.rr`): a relation the evaluator makes from its inputs' rows.
+/// `dfs_first` and `dfs_first_memo` (`core.rerail`): a relation the evaluator makes from its inputs' rows.
 pub mod dfs_first;
-/// `components` (`core.rr`, decision 0063): each document's import component and its Merkle key.
+/// `components` (`core.rerail`, decision 0063): each document's import component and its Merkle key.
 pub mod components;
 /// The reach index (decision 0119): a transitive closure as one bitmap per start.
 pub mod reach;
@@ -137,7 +137,7 @@ impl Lattice for Min {
     fn widen(&self, old: i64, new: i64) -> i64 { if new < old { -TOP } else { new } }
 }
 
-/// `shortlex_min<symbol>`: the shortest symbol, then the least by its UTF-8 bytes (`core.rr`), over a run's atoms.
+/// `shortlex_min<symbol>`: the shortest symbol, then the least by its UTF-8 bytes (`core.rerail`), over a run's atoms.
 /// Shortlex is a well-order, so every chain of ever-smaller values is finite. A value the atoms do not hold (`TOP`)
 /// absorbs. The run declares it over its store's atoms (`declare`), as its symbols are those atoms.
 pub struct ShortlexMin(pub Arc<crate::content_store::atoms::Atoms>);

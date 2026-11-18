@@ -10,7 +10,7 @@ prof	rerail-prof
 phase_clock	rerail-prof
 logic::profile	rerail-prof
 
-# The .rr language's syntax and AST (front's types are cut into logic/front/ast.rs, below the parser)
+# The .rerail language's syntax and AST (front's types are cut into logic/front/ast.rs, below the parser)
 logic::front::ast	rerail-rr-syntax
 
 # The registry, tapes and what every crate reads
@@ -33,7 +33,7 @@ logic::strings	rerail-facts
 sql_profile	rerail-facts
 logic::plan::sketch	rerail-facts
 
-# The .rr lowering
+# The .rerail lowering
 logic::front	rerail-rr
 logic::magic	rerail-rr
 logic::rr	rerail-rr

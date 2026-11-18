@@ -1,4 +1,4 @@
-//! `.rr` statements to the engine's `Program`: the same program the engine plans whatever the syntax.
+//! `.rerail` statements to the engine's `Program`: the same program the engine plans whatever the syntax.
 //!
 //! Soufflé spellings map to the engine's forms:
 //! - `number`, `symbol` are `int`, `sym`; `span` and `loc` are `node`;
@@ -35,10 +35,10 @@
 //!   layer, which applies them;
 //! - a rule ending in `=> edits` defines a fix, and fixes are not run: it is left out;
 //! - `.input r(IO=…, filename="…")` is an input, its parameters kept as the setting `input`;
-//! - core.rr is the prelude (`rr::program` reads it before every file): the program keeps the core relations it reads
+//! - core.rerail is the prelude (`rr::program` reads it before every file): the program keeps the core relations it reads
 //!   (a relation read and not declared takes its declaration there); `next_sibling`, `precedes`, `earlier` and
 //!   `syntax_error` lower to the relations the engine has (`core`), negated through a relation of their rows;
-//!   `kind` and T's `docof` over nodes are projections of `node`, and core.rr's `docof(x: loc, d)` an input;
+//!   `kind` and T's `docof` over nodes are projections of `node`, and core.rerail's `docof(x: loc, d)` an input;
 //! - `within(n, a)` is the engine's relation read off the tree, and `within_stop(n, a, stop)` that less a stop
 //!   between (`Lowerer::within`, decision 0050), and so is its negation; `!nearest(n, a, s)` is a helper relation;
 //!   `precedes_stop(a, b, S)` is a relation over `child` (`Lowerer::precedes_stop`);
@@ -67,7 +67,7 @@ use crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY;
 use crate::code_rule_dsl::logic::strings::SET;
 pub mod findings;
 
-/// The text tests: their `.rr` names and the engine's.
+/// The text tests: their `.rerail` names and the engine's.
 pub const TESTS: [(&str, &str); 11] = [
     ("glob", "glob"),
     ("iglob", "iglob"),
@@ -215,13 +215,13 @@ struct Lowerer {
     /// Whether the clause being lowered binds a variable named `top` (`path_part(d, top)`); otherwise `top` is a
     /// lattice's top value (`v != top`), as the translated programs write it.
     top_is_var: bool,
-    /// Whether `docof` is declared over `loc`s, as `core.rr` declares it: an input that spans have rows in
+    /// Whether `docof` is declared over `loc`s, as `core.rerail` declares it: an input that spans have rows in
     /// (decision 0046), not the projection of `node`.
     docof_of_locs: bool,
     /// The relations declared `must, may`, and the rules a `must` or `may` head wrote (by index).
     three: BTreeSet<String>,
     modal: BTreeMap<usize, String>,
-    /// The relations the program derives (rules or facts): core.rr's names among them are the program's own.
+    /// The relations the program derives (rules or facts): core.rerail's names among them are the program's own.
     derived: BTreeSet<String>,
     /// The demand relations the text declares itself (O101): a printed program (`rr::print`) carries the demands
     /// it was lowered with, so reading it back makes none again.
@@ -950,7 +950,7 @@ pub fn link(modules: Vec<Module>) -> Result<Program, Error> {
 /// A library linked for the programs that include it (`rr::lower_library`, decision 0089) keeps each kind set its files
 /// declare as a relation: `kind_sets` drops a set no rule of the library reads as an atom, which holds of a whole
 /// program but not of a library, whose includers may read it (`kind(p, k), keyed_kind(k)` in
-/// react-no-access-state-in-setstate, beside `tsx/react-class.rr`'s `inside(c, m, keyed_kind)`). A program lowered in
+/// react-no-access-state-in-setstate, beside `tsx/react-class.rerail`'s `inside(c, m, keyed_kind)`). A program lowered in
 /// the library's scope reads the library's relation, so the set is the library's again: declared, its kinds its facts.
 pub fn keep_declared_kind_sets(program: &mut Program, modules: &[Module]) {
     for (set, kinds) in &program.kindsets {
@@ -964,7 +964,7 @@ pub fn keep_declared_kind_sets(program: &mut Program, modules: &[Module]) {
 
 /// A program's own module, linked in the scope of the library modules it includes (decision 0246 §2): the
 /// whole-program half runs over the module with its scope's names seeded, not over the library again, and the result
-/// holds the module's own part, as `own_part` leaves a program read with its libraries' declarations. `core.rr`'s
+/// holds the module's own part, as `own_part` leaves a program read with its libraries' declarations. `core.rerail`'s
 /// names and the kind sets stay, as there: the run's merge names each program's kind sets, and reads core's
 /// declarations from any part. Only for a module whose clauses add to no relation of its scope (it asks nothing of
 /// the library, decision 0089 §3): the scope's `.violation`s are the library's, and their findings are its rules.
@@ -982,7 +982,7 @@ pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>, library: O
     l.append(m);
     // A kind set the module reads has the kinds the whole program read alone gives it, its library's relations' kinds
     // among them. The scope seeds a library relation's declaration, not its facts or rules, so `kind_sets` found a
-    // set of the library (`nearest(f, s, scope)` over python/names.rr's `scope`, eslint-a-control.rr's
+    // set of the library (`nearest(f, s, scope)` over python/names.rerail's `scope`, eslint-a-control.rerail's
     // `breakable_kind(k) :- loop_kind(k)`), or one of the module's own over one (no-unsafe-finally's
     // `fn_stop(k) :- function_kind(k)`), without them: the program's `nearest` climbed to no kind or past a function
     // in a pack (ruff-n807, RUF033, AIR303, F406, eslint's no-extra-label found nothing; no-unsafe-finally found more).
@@ -1016,7 +1016,7 @@ fn whole(mut l: Lowerer, library: Option<&Program>) -> Result<Program, Error> {
     l.span_patterns()?;
     l.grammar_names()?;
     // The built-ins lowering writes out (`nearest`, `within`, …) and the core relations it rewrites where the program
-    // does not derive them (`next_sibling`, `precedes`) are declared in `core.rr` for the checker; they are no
+    // does not derive them (`next_sibling`, `precedes`) are declared in `core.rerail` for the checker; they are no
     // relations of the program.
     // `within` stays where a rule reads it: the lowering made it the engine's relation (decision 0050).
     let reads_within = l.prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == crate::code_rule_dsl::facts::vtab::syntax::WITHIN);
@@ -1025,7 +1025,7 @@ fn whole(mut l: Lowerer, library: Option<&Program>) -> Result<Program, Error> {
         l.prog.decls.remove(b);
         l.prog.inputs.retain(|i| i != b);
     }
-    // A program lowered without `core.rr` (its own part, `parse_own`) still declares the `within` it reads.
+    // A program lowered without `core.rerail` (its own part, `parse_own`) still declares the `within` it reads.
     if reads_within {
         use crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
         l.prog.decls.entry(WITHIN.to_owned().into()).or_insert_with(|| [("n".into(), "node".into()), ("a".into(), "node".into())].into());
@@ -1372,7 +1372,7 @@ impl Lowerer {
         Ok(())
     }
 
-    /// `.decl r(…) must, may` (core.rr 3): r is computed twice. Its may side, which keeps the name, holds what is
+    /// `.decl r(…) must, may` (core.rerail 3): r is computed twice. Its may side, which keeps the name, holds what is
     /// proven or unknown: every rule of r. Its must side (`rr_must_r`) holds what is proven: the rules with no
     /// prefix or `must`. A relation that reads a three-valued one is three-valued too, with every rule on both
     /// sides. In a must side's rule a positive atom of a three-valued relation reads its must side and a negated
@@ -1434,10 +1434,10 @@ impl Lowerer {
         }
     }
 
-    /// `core.rr`'s `kind(n, k)` is a projection of `node`, and so is `docof(n, d)` as T's programs declare it (over
+    /// `core.rerail`'s `kind(n, k)` is a projection of `node`, and so is `docof(n, d)` as T's programs declare it (over
     /// nodes): rules, which the planner reads from `node` in place, not inputs, where a rule reads them (the prelude
-    /// declares both for every program). `core.rr`'s `docof(x: loc, d)` stays an input, for spans have a document
-    /// too. (`precedes` is core.rr's tree arithmetic, `core::rewrite`.)
+    /// declares both for every program). `core.rerail`'s `docof(x: loc, d)` stays an input, for spans have a document
+    /// too. (`precedes` is core.rerail's tree arithmetic, `core::rewrite`.)
     fn projections(&mut self) {
         let v = |s: &str| Term::Var(s.to_owned().into());
         let read: BTreeSet<String> = self.prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.to_string()).collect();
@@ -1494,11 +1494,11 @@ impl Lowerer {
 
     /// The findings of the `.violation`s: `violation(policy, V, code, path, line)` for each row of V, at its first
     /// column's line (the engine's findings relation, as the converter's programs give it). A node's document is
-    /// `node`'s column; a span's is `docof` (`core.rr`), and so is its line. A `@place(path, line)` row is read from
+    /// `node`'s column; a span's is `docof` (`core.rerail`), and so is its line. A `@place(path, line)` row is read from
     /// V's place relation; a span or loc `at` that holds a `@place` value made elsewhere (`PLACE`) is found at its
     /// path and line.
     fn findings(&mut self) -> Result<(), Error> {
-        // `.on syntax_error report CODE [at line 1]` and `.on input_error report CODE` (`core.rr`).
+        // `.on syntax_error report CODE [at line 1]` and `.on input_error report CODE` (`core.rerail`).
         let on: Vec<(String, String, bool)> = self
             .prog
             .settings
@@ -1631,7 +1631,7 @@ impl Lowerer {
         Ok(())
     }
 
-    /// The `.scope` settings as a test of a finding's path `$rr_p` (`core.rr`): a document's path is in scope in one
+    /// The `.scope` settings as a test of a finding's path `$rr_p` (`core.rerail`): a document's path is in scope in one
     /// of `dirs` (each a directory or a glob of one, at the root) or `include`'s globs when there are any, in none
     /// of `exclude`'s, and with `tests false` under no `test` or `tests` path part. Findings in other documents are
     /// dropped; one at a path that is no document (a budget file) is kept. Facts still come from every file. A
@@ -1716,7 +1716,7 @@ impl Lowerer {
         vec![atom("rr_scope_drop", vec![v("rr_p")], true)]
     }
 
-    /// `guest(g, host, at, grammar)` as an input (`core.rr` declares it; a program without it has it here).
+    /// `guest(g, host, at, grammar)` as an input (`core.rerail` declares it; a program without it has it here).
     fn guest_input(&mut self) {
         let cols = [("g", "int"), ("host", "int"), ("at", "node"), ("grammar", "sym")];
         self.prog.decls.entry("guest".to_owned().into()).or_insert_with(|| cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
@@ -1743,7 +1743,7 @@ impl Lowerer {
                 }
                 continue;
             }
-            // `.scope embedded false` keeps the policy to primary documents: `.guests off` (`core.rr`).
+            // `.scope embedded false` keeps the policy to primary documents: `.guests off` (`core.rerail`).
             if key == "scope" {
                 if let ["embedded", v @ ("true" | "false")] = words.as_slice() {
                     facts.push(("library".to_owned(), if *v == "true" { "on" } else { "off" }.to_owned()));
@@ -2006,7 +2006,7 @@ impl Lowerer {
             {
                 self.node_matches(args)?
             }
-            // A text test on a node or span tests its text (`core.rr`).
+            // A text test on a node or span tests its text (`core.rerail`).
             Lit::Atom { rel, args, neg }
                 if test_of(rel).is_some() && matches!(args.as_slice(), [_, STerm::Var(v)] if self.span_container(v).is_some() || self.node_typed(v)) =>
             {
@@ -2018,7 +2018,7 @@ impl Lowerer {
                 vec![vec![Literal::Cmp { l: Term::Call("rx".into(), [self.term(s)?, Term::Str(re.clone().into())].into()), op: "=", r: Term::Int(0) }]]
             }
             Lit::Atom { rel, args, neg } => {
-                // core.rr's tree arithmetic (`earlier`, `precedes`, …) as the relations the engine has (`core`).
+                // core.rerail's tree arithmetic (`earlier`, `precedes`, …) as the relations the engine has (`core`).
                 if let Some(literals) = self.rewrite(rel, args, *neg)? {
                     return Ok(vec![literals]);
                 }
@@ -2430,7 +2430,7 @@ impl Lowerer {
         Ok(vec![Literal::Atom(Atom { rel: "node".into(), args: [Term::Wild, Term::Var(n.to_owned().into()), Term::Wild, Term::Wild, Term::Wild].into(), neg: false, gated: false })])
     }
 
-    /// The axes over a set of nodes S (`core.rr`: a set may be a relation of nodes), as climbs up the tree:
+    /// The axes over a set of nodes S (`core.rerail`: a set may be a relation of nodes), as climbs up the tree:
     /// - `inside(n, a, S)`: a is an ancestor of n, and S(a);
     /// - `nearest(n, a, S)`: the climb from n stops at the first node of S, which is a;
     /// - `has(a, n, S)`: the climb from each node of S, n, passes a;
@@ -2490,7 +2490,7 @@ impl Lowerer {
 
     /// `within(n, a)`: n is strictly below a, the engine's relation read off the tree (decision 0050): a's
     /// subtree for a bound `a`, n's ancestors for a bound `n`, made per node looked up. No range over ids and no
-    /// climb through `child` (`core.rr`: tape arithmetic, never Datalog recursion). `within_stop(n, a, stop)`: also
+    /// climb through `child` (`core.rerail`: tape arithmetic, never Datalog recursion). `within_stop(n, a, stop)`: also
     /// no node of `stop` strictly between them. The ancestors of n are ordered by id, so that is: n has no
     /// ancestor in `stop`, or its nearest one is a or above it. Negated (a named): n is not below a, or it is with
     /// its nearest ancestor in `stop` below a.
@@ -2631,7 +2631,7 @@ impl Lowerer {
         true
     }
 
-    /// `match_all("re", s)`, and `match` with named groups (`core.rr`).
+    /// `match_all("re", s)`, and `match` with named groups (`core.rerail`).
     ///
     /// - Over a `source` or `src_line` span (a sibling binds s so), the captures are spans: the batch runs the regex
     ///   over each such span and makes `rx_span(p, c, j, g, m)`, group g of match j of pattern p in span c, as span m
@@ -2742,7 +2742,7 @@ impl Lowerer {
     /// `span_patterns`, whose columns' span sets are returned (by relation) instead where `patterns` is false
     /// (`span_columns`). A library relation a module lowered in its library's scope reads, declared and not derived
     /// here, holds the spans its library rules bind it to (`library_spans`), not none: python's FAST003 matches
-    /// `match_all` over `route_path`'s `s`, a string by misc2-fastapi.rr's `plain_str`, and found nothing in a pack.
+    /// `match_all` over `route_path`'s `s`, a string by misc2-fastapi.rerail's `plain_str`, and found nothing in a pack.
     fn spans(&mut self, patterns: bool) -> Result<SpanColumns, Error> {
         // The relations by number, found by their name's address (a `Name` is interned: one name, one address), and
         // each column's spans a vector per relation: a lookup made no key and compared no text.
@@ -2764,7 +2764,7 @@ impl Lowerer {
         let rels = id.len();
         let library = self.library_spans.clone();
         // A library relation's column, as the library's rules bind it: `Some(None)` where they bind it to no span.
-        // `core.rr`'s relations are each program's own.
+        // `core.rerail`'s relations are each program's own.
         let given = |rel: u32, c: usize| -> Option<Option<BTreeSet<SpanIn>>> {
             let name = names[rel as usize];
             if is_core(name) {
@@ -2817,7 +2817,7 @@ impl Lowerer {
             })
         };
         // A declared relation no rule derives, and that is not read in, has no rows: its columns hold no nodes, and a
-        // scan over them is empty. A library a pack's rules include (`…confusables.rr`) is loaded on its own too. A
+        // scan over them is empty. A library a pack's rules include (`…confusables.rerail`) is loaded on its own too. A
         // library relation of a module lowered in its library's scope holds what the library's rules bind it to.
         {
             let heads: rustc_hash::FxHashSet<&str> = self.prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
@@ -3917,7 +3917,7 @@ impl Lowerer {
         // The body's own variables the aggregate reads: its value, and a join's keys.
         let own = |v: &str| over.as_deref() == Some(v) || by.iter().any(|b| b == v);
         let ours = |v: &str| !outer.contains(v);
-        // One plain atom: the engine's aggregate reads it. The built-ins lowering writes out (axes, core.rr's tree
+        // One plain atom: the engine's aggregate reads it. The built-ins lowering writes out (axes, core.rerail's tree
         // arithmetic, …) are no relations of the program, so a body of one of them goes through the helper.
         if let [Lit::Atom { rel, args, neg: false }] = body
             && test_of(rel).is_none()
@@ -4421,7 +4421,7 @@ pub(super) fn float_key(f: f64) -> i64 {
     crate::code_rule_dsl::logic::strings::functions::float_key(f)
 }
 
-/// The empty value `unset(x)` binds (`core.rr`): the id -1, which no node has, so no tree relation holds of it.
+/// The empty value `unset(x)` binds (`core.rerail`): the id -1, which no node has, so no tree relation holds of it.
 /// Each `unset(x)` is taken out and `x` replaced by it in the rule; `!unset(x)` is `x != -1`. Its text is "":
 /// `text(x, t)` of it is `t = ""` (O77). (A `@place` with no valid line is `unset` too: `PLACE`.)
 pub(super) const UNSET: i64 = -1;
@@ -4574,7 +4574,7 @@ pub struct OnRequest {
 }
 
 /// Whether `rel` is one the rewrite adds (`sources_on_request`): a request, its demand (decision 0291), an attribute's
-/// eager half or named children, or a widened copy. `core.rr`'s names hold them (it is read with the rewrite), and a
+/// eager half or named children, or a widened copy. `core.rerail`'s names hold them (it is read with the rewrite), and a
 /// program with a round undone (`undo_round`) has none of that round's: a check that a program declares every core
 /// name passes over them.
 pub fn made_on_request(rel: &str) -> bool {
@@ -5408,7 +5408,7 @@ pub fn merge_negated_tests(body: Vec<Literal>) -> Vec<Literal> {
     out
 }
 
-/// `@place(path, line)` (`core.rr`) outside a `.violation`'s head: a place with no node, as a `loc` value:
+/// `@place(path, line)` (`core.rerail`) outside a `.violation`'s head: a place with no node, as a `loc` value:
 /// `-2 - (path << 32 | line)`, `path` the path's symbol (its atom) and `0 <= line < 2^32`, so no node id
 /// (`d << 32 | index`, never negative), no span and not `unset` (-1). `@place_path(x)` and `@place_line(x)` take it
 /// apart; `plan`'s SQL computes all three, and the native set engine leaves rules that call them to SQL. A place with

@@ -1,6 +1,6 @@
 # sqlfluff, hand-written (batch next-sql)
 
-21 rules, 539 lines of rules, plus `lib/sql/syntax.rr` (143 lines, new) and two generated keyword tables.
+21 rules, 539 lines of rules, plus `lib/sql/syntax.rerail` (143 lines, new) and two generated keyword tables.
 
 Scores are from `tools/rrlab/rrlab score sql <id> --all`, at (path, line, code). rrlab's own-fixture subset is empty
 for this pack, because sqlfluff's fixtures sit under dialect directories (`ansi/AL04/…`, `postgres/PG01/…`). `--all`
@@ -33,8 +33,8 @@ scores every fixture, which is a superset. "ex" counts the differences that `div
 `*` marks files with tree-sitter ERROR nodes. The engine withholds findings in those files; rrlab still scores them.
 
 Data tables:
-- `gen-keywords.py` writes `sqlfluff-rf04-references-keywords.facts.rr` (836 `sql_keyword` rows) and
-  `sqlfluff-rf06-references-quoting.facts.rr` (102 `pg_reserved` rows).
+- `gen-keywords.py` writes `sqlfluff-rf04-references-keywords.facts.rerail` (836 `sql_keyword` rows) and
+  `sqlfluff-rf06-references-quoting.facts.rerail` (102 `pg_reserved` rows).
 - `check-keywords.py` round-trips both tables against the JSON.
 
 ## Deviations
@@ -68,7 +68,7 @@ Data tables:
 
 ## Library and core change requests
 
-- None for core or the existing libraries. `lib/sql/syntax.rr` is new; after review it also has `next_code`
+- None for core or the existing libraries. `lib/sql/syntax.rerail` is new; after review it also has `next_code`
   (from ST02, now used by ST01 too) and `table_function` (from AL04, now used by AL05 too).
 
 ## Harness gaps (rrlab)

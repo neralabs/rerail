@@ -151,7 +151,7 @@ pub fn own_metavariables(query: &str) -> Cow<'_, str> {
 }
 
 /// Where a dialect's kinds come from: a tree-sitter grammar's symbol table, or the kinds of a tree Rerail
-/// builds itself: `.rr` files' (`rerail_rr_syntax::tape`, decision 0061), or a registered parser's
+/// builds itself: `.rerail` files' (`rerail_rr_syntax::tape`, decision 0061), or a registered parser's
 /// (`tape::TreeParser`, Blade's Forte).
 #[derive(Clone, Copy)]
 enum OwnKinds {

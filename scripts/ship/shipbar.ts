@@ -4,8 +4,8 @@
 //
 //   ships  the candidate checkout's engine on its packs as they ship (packs/<pack>/rules/*.json), through the product's
 //          own path (conformance/languages/runner.ts evaluateWorkspace, as the candidate has it: product-run.ts);
-//   rr     the candidate's engine on the hand-written `.rr` rewrites, docs/rule-syntax/packs/<pack>/<id>.rr, through
-//          `rerail-engine run-policies <corpus> <out> <rule.rr>...`;
+//   rr     the candidate's engine on the hand-written `.rerail` rewrites, docs/rule-syntax/packs/<pack>/<id>.rerail, through
+//          `rerail-engine run-policies <corpus> <out> <rule.rerail>...`;
 //   main   the baseline: main's checkout on its shipped packs/<pack>/rules/*.json, through its own product path.
 //
 // Commands (each prints what it refuses and why; nothing is measured unpinned):
@@ -23,7 +23,7 @@
 //       [--pack-cap <pack>=<memory>,<seconds>]... [--rr-chunk 50] [--candidates ships] [--gate ships] [--confirm 1]
 //       [--drill 2] [--drill-candidates ships] [--build]
 //       Defaults are the quick run: one run per side, a failing cell run once more, the shipped packs only (add
-//       `--candidates ships,rr` for the `.rr` rewrites, `--runs 3 --confirm 3` for medians).
+//       `--candidates ships,rr` for the `.rerail` rewrites, `--runs 3 --confirm 3` for medians).
 //       Linux, macOS or Windows (platform.ts: how each pins, caps and measures, recorded in every run row): prepares what
 //       is missing, measures every pack and corpus, then writes the report. Resumable: a run already in a cell's logs is
 //       not made again.
@@ -56,7 +56,7 @@
 // that candidate (confirm.jsonl): a metric failing again is confirmed, one passing is noisy, reported and not counted.
 // A confirmed slowdown of a candidate in --drill-candidates is then attributed to rules (rules.jsonl): each rule alone,
 // and an empty rule set, --drill cold runs per side, alternating; the product path's in-process evaluation time, or
-// process wall time on the `.rr` side. Findings come from each side's first cold run on the same corpus
+// process wall time on the `.rerail` side. Findings come from each side's first cold run on the same corpus
 // directory and are scored by one function (verdict.ts) against the tool's upstream recording with main's
 // divergences.json, on (rule, path, line, code) keys: the candidate keeps every true positive of main's and adds no
 // false positive main lacks. Real code has no truth: its agreement is reported and does not gate. Each product side
@@ -64,10 +64,10 @@
 // the report shows start-up, net times, phases and workload beside the gross figures, never judged (metric.ts). The
 // report (report-model.ts, schema ship-no-ship/report/v1) is rendered as Markdown by report.ts.
 //
-// A `.rr` pack run that does not complete is recorded with how far it got (policies started, elapsed, peak RSS); then
+// A `.rerail` pack run that does not complete is recorded with how far it got (policies started, elapsed, peak RSS); then
 // its rules run in fixed chunks of --rr-chunk (0: none), each chunk its own process under the same caps, cold then
 // warm, N times, and the pack's figures are the chunks' sums (peak RSS: the largest chunk's), labelled chunked in the
-// report; its completion still fails. Every completed `.rr` run records whether run-policies ran its policies combined
+// report; its completion still fails. Every completed `.rerail` run records whether run-policies ran its policies combined
 // (groups of several, the result's `runs[].together`) or alone, and any fallback the engine printed.
 
 import { spawnSync } from "node:child_process";
@@ -112,7 +112,7 @@ const SELF = resolve(HERE, "..", "..");
 const MANIFEST = join(HERE, "corpora.json");
 const WAITS_MANIFEST = join(HERE, "waits.json");
 
-export const CANDIDATES = { ships: "the candidate's packs as they ship, through the product's path", rr: "the hand-written .rr rewrites, through rerail-engine run-policies" } as const;
+export const CANDIDATES = { ships: "the candidate's packs as they ship, through the product's path", rr: "the hand-written .rerail rewrites, through rerail-engine run-policies" } as const;
 export type Candidate = keyof typeof CANDIDATES;
 type Side = "main" | Candidate;
 export type Corpus = "fixtures" | "real";
@@ -479,26 +479,26 @@ function requireBuilt(checkout: string, needs: { product: boolean; engine: boole
   return { engine: needs.engine ? engineBinary(checkout) : undefined };
 }
 
-// ---------------------------------------------------------------- the .rr side's rules
+// ---------------------------------------------------------------- the .rerail side's rules
 
 interface RrRules {
-  /** Per rule main ships: its `.rr` path and policy name, or why it cannot run. */
+  /** Per rule main ships: its `.rerail` path and policy name, or why it cannot run. */
   rules: Record<string, { path?: string; policy?: string; unavailable: string | null }>;
 }
 
-/** Each rule main ships, mapped to its `.rr` rewrite on the candidate, checked by the candidate's `check-rr`. */
+/** Each rule main ships, mapped to its `.rerail` rewrite on the candidate, checked by the candidate's `check-rr`. */
 function rrRules(candidate: string, engine: string, mainRules: readonly string[], pack: string): RrRules {
   const rules: RrRules["rules"] = {};
   const present: string[] = [];
   for (const rule of mainRules) {
-    const path = join(candidate, "docs", "rule-syntax", "packs", pack, `${rule}.rr`);
+    const path = join(candidate, "docs", "rule-syntax", "packs", pack, `${rule}.rerail`);
     if (!existsSync(path)) {
-      rules[rule] = { unavailable: "no .rr counterpart" };
+      rules[rule] = { unavailable: "no .rerail counterpart" };
       continue;
     }
     const policy = /^\.policy\s+"([^"]+)"/m.exec(readFileSync(path, "utf8"))?.[1];
     if (policy === undefined) {
-      rules[rule] = { path, unavailable: "the .rr has no .policy line" };
+      rules[rule] = { path, unavailable: "the .rerail has no .policy line" };
       continue;
     }
     rules[rule] = { path, policy, unavailable: null };
@@ -563,9 +563,9 @@ interface RunRow {
   timeCapS: number;
   command: string;
   started: string;
-  /** The product path's in-process evaluation time (product-run.ts evaluateMs); null on the `.rr` side or a failure. */
+  /** The product path's in-process evaluation time (product-run.ts evaluateMs); null on the `.rerail` side or a failure. */
   evaluateMs: number | null;
-  /** product-run.ts's load, compile and evaluate times (metric.ts); null on the `.rr` side or a failure. */
+  /** product-run.ts's load, compile and evaluate times (metric.ts); null on the `.rerail` side or a failure. */
   phases?: Phases | null;
   /** rules.jsonl: the rule this run timed alone, "(none)" for the empty rule set; null elsewhere. */
   drillRule: string | null;
@@ -590,7 +590,7 @@ interface Settings {
   /** Cold runs per side of each rule alone, for a confirmed slowdown (0: no drill-down). */
   drill: number;
   drillCandidates: Candidate[];
-  /** Rules per chunk when a `.rr` pack run does not complete (0: no chunked runs). */
+  /** Rules per chunk when a `.rerail` pack run does not complete (0: no chunked runs). */
   rrChunk: number;
 }
 
@@ -598,13 +598,13 @@ function readRows(path: string): RunRow[] {
   return existsSync(path) ? readFileSync(path, "utf8").split("\n").filter((line) => line !== "").map((line) => ({ method: LINUX_METHOD, ...(JSON.parse(line) as Omit<RunRow, "method">) })) : [];
 }
 
-/** <cell>/rr-excluded.json: the `.rr` rules that failed alone on this corpus, each with why, left out of its runs. */
+/** <cell>/rr-excluded.json: the `.rerail` rules that failed alone on this corpus, each with why, left out of its runs. */
 function readExcluded(cell: string): Record<string, string> {
   const path = join(cell, "rr-excluded.json");
   return existsSync(path) ? readJson(path) : {};
 }
 
-/** The `.rr` rules a cell runs: every runnable rewrite of a rule main ships, less those that failed alone here. */
+/** The `.rerail` rules a cell runs: every runnable rewrite of a rule main ships, less those that failed alone here. */
 function rrIds(rr: RrRules, cell: string): string[] {
   const excluded = readExcluded(cell);
   return Object.entries(rr.rules).filter(([id, rule]) => rule.unavailable === null && excluded[id] === undefined).map(([id]) => id);
@@ -625,7 +625,7 @@ interface Process {
   /** The store directory: emptied for a cold run, reused by the warm run after it. */
   store: string;
   /**
-   * The cell file its row goes to: runs.jsonl, confirm.jsonl, rules.jsonl, alone.jsonl for a `.rr` rule alone, or
+   * The cell file its row goes to: runs.jsonl, confirm.jsonl, rules.jsonl, alone.jsonl for a `.rerail` rule alone, or
    * chunks.jsonl for a chunk.
    */
   log: string;
@@ -682,7 +682,7 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
   let grouped: RunRow["grouping"] = null;
   if (completed) {
     try {
-      // The `.rr` side's result is the engine's stdout: its JSON, then its timing lines (engine-json.ts).
+      // The `.rerail` side's result is the engine's stdout: its JSON, then its timing lines (engine-json.ts).
       const output = engineJson<{ evaluateMs?: number; loadMs?: number; compileMs?: number; runs?: { together?: number }[] }>(readFileSync(result, "utf8"));
       if (side !== "rr" && typeof output.evaluateMs === "number") evaluateMs = Math.round(output.evaluateMs);
       if (side !== "rr") phases = readPhases(output);
@@ -703,7 +703,7 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
         : `exit ${exit}: ${lastLine(errorText)}`;
     if (side === "rr") {
       const started = existsSync(rundir) ? readdirSync(rundir).filter((name) => /^\d+$/.test(name)).length : 0;
-      const named = /[\\/]([^\\/]+)\.rr: /.exec(errorText)?.[1];
+      const named = /[\\/]([^\\/]+)\.rerail: /.exec(errorText)?.[1];
       culprit = named !== undefined && p.rules.includes(named) ? named : (p.rules[started - 1] ?? null);
       stoppedOn = `${culprit ?? "before the first policy"} (policy ${started} of ${p.rules.length})`;
       progress = { started, of: p.rules.length };
@@ -731,7 +731,7 @@ function measure(settings: Settings, cell: string, p: Process, pack: string, cor
 }
 
 /**
- * After a `.rr` cold run that exits with an error, the rule it stopped on is run alone on the same corpus under the
+ * After a `.rerail` cold run that exits with an error, the rule it stopped on is run alone on the same corpus under the
  * same caps. Failing alone too, it is left out of this corpus's runs with that reason (rr-excluded.json), and the
  * caller runs the rest again; running alone, the failure belongs to running the pack's rules together and stands. A
  * content store limit is the batch's by nature, and a run the caps killed is not tried again (each try could take the
@@ -781,14 +781,14 @@ function measureCell(settings: Settings, pack: string, corpus: Corpus, sides: re
   }
 }
 
-/** <cell>/chunks.json: the `.rr` rules of a chunked run, chunk by chunk, fixed when the first chunk runs. */
+/** <cell>/chunks.json: the `.rerail` rules of a chunked run, chunk by chunk, fixed when the first chunk runs. */
 function readChunks(cell: string): string[][] | undefined {
   const path = join(cell, "chunks.json");
   return existsSync(path) ? readJson<string[][]>(path) : undefined;
 }
 
 /**
- * A `.rr` pack run that did not complete still gets a figure: its rules in fixed chunks of --rr-chunk, in order, each
+ * A `.rerail` pack run that did not complete still gets a figure: its rules in fixed chunks of --rr-chunk, in order, each
  * chunk its own run-policies process under the same caps, cold (fresh store) then warm, N repetitions (chunks.jsonl).
  * The verdict sums the chunks per repetition and labels the figure chunked. A chunk that fails a cold run is not run
  * again and is listed with its reason; the sums then cover the other chunks' rules only.
@@ -801,7 +801,7 @@ function measureChunks(settings: Settings, cell: string, pack: string, corpus: s
     for (let i = 0; i < ids.length; i += settings.rrChunk) chunks.push(ids.slice(i, i + settings.rrChunk));
     writeFileSync(join(cell, "chunks.json"), JSON.stringify(chunks));
   }
-  console.log(`shipbar: ${pack} ${relative(settings.corpora, corpus)}: the .rr pack run did not complete; ${chunks.length} chunks of up to ${settings.rrChunk} rules`);
+  console.log(`shipbar: ${pack} ${relative(settings.corpora, corpus)}: the .rerail pack run did not complete; ${chunks.length} chunks of up to ${settings.rrChunk} rules`);
   for (let rep = 1; rep <= settings.runs; rep += 1) {
     chunks.forEach((rules, chunk) => {
       const rows = readRows(join(cell, "chunks.jsonl")).filter((row) => row.chunk === chunk);
@@ -883,7 +883,7 @@ function confirmedSlowdown(cell: string, candidate: Candidate): boolean {
 /**
  * A confirmed slowdown attributed to rules: the empty rule set (start-up) and each rule both sides have, alone, as
  * --drill cold runs per side, alternating, into rules.jsonl. The product path times its own evaluation in process;
- * the `.rr` side's run-policies takes no empty set and is timed by process wall.
+ * the `.rerail` side's run-policies takes no empty set and is timed by process wall.
  */
 function drillCell(settings: Settings, pack: string, corpus: Corpus, candidate: Candidate, rr: RrRules | undefined): void {
   if (settings.drill === 0 || !settings.drillCandidates.includes(candidate)) return;
@@ -937,7 +937,7 @@ export interface CellVerdict {
   corpus: Corpus;
   /** Why the cell is not compared; "" when it is. */
   note: string;
-  /** Why the cell fails without a measurement (the `.rr` side runs no rule on this corpus); null otherwise. */
+  /** Why the cell fails without a measurement (the `.rerail` side runs no rule on this corpus); null otherwise. */
   blocked: string | null;
   completion: (CompletionVerdict & { stoppedOn: string | null }) | null;
   ruleFailures: { rule: string; reason: string }[];
@@ -951,7 +951,7 @@ export interface CellVerdict {
   /** How the cell's runs were pinned, capped and measured, each method once. */
   methods: RunMethod[];
   runs: { main: number; candidate: number };
-  /** How many rules each side ran: main's shipped rules; the candidate's shipped rules, or the `.rr` rules that run. */
+  /** How many rules each side ran: main's shipped rules; the candidate's shipped rules, or the `.rerail` rules that run. */
   rules: { main: number; candidate: number };
   /** A confirmed slowdown's rules, each timed alone (rules.jsonl); null where none was made. */
   drill: { measure: "evaluate_ms" | "wall_ms"; reps: number; startup: { main: number | null; candidate: number | null }; rules: RuleTiming[] } | null;
@@ -961,9 +961,9 @@ export interface CellVerdict {
   caps: { memCap: string[]; timeCapS: number[] };
   /** The candidate's whole run did not complete: its metrics and findings are the sums of a chunked run, labelled so. */
   chunked: { size: number; chunks: number; rulesRun: number; rulesOf: number; failedChunks: { chunk: number; rules: string; reason: string }[] } | null;
-  /** `.rr`: how far the failed whole-pack run got (policies started, elapsed, peak RSS). */
+  /** `.rerail`: how far the failed whole-pack run got (policies started, elapsed, peak RSS). */
   progress: { started: number; of: number; wallMs: number; rssKB: number } | null;
-  /** `.rr`: how run-policies ran the pack's policies (from the completed runs, the chunks' summed), and any fallback it printed. */
+  /** `.rerail`: how run-policies ran the pack's policies (from the completed runs, the chunks' summed), and any fallback it printed. */
   grouping: { policies: number; combined: number; alone: number; largest: number } | null;
   fallback: string[];
 }
@@ -1114,14 +1114,14 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
   const main = all.filter((row) => row.side === "main");
   const mine = all.filter((row) => row.side === candidate);
   if (main.length === 0) return { ...empty, note: "not measured" };
-  if (candidate === "rr" && rr !== undefined && rrIds(rr, cell).length === 0) return { ...empty, blocked: "no rule of the pack runs on the .rr side on this corpus" };
+  if (candidate === "rr" && rr !== undefined && rrIds(rr, cell).length === 0) return { ...empty, blocked: "no rule of the pack runs on the .rerail side on this corpus" };
   if (mine.length === 0) return { ...empty, note: "candidate not measured" };
   const outcome = (rows: RunRow[]): RunOutcome[] => rows.map((row) => (row.completed ? { completed: true } : { completed: false, reason: `${row.tag}: ${row.reason ?? ""}${row.stoppedOn === null ? "" : `; stopped on ${row.stoppedOn}`}` }));
   const completion = { ...compareCompletion(outcome(main), outcome(mine), 2 * settings.runs), stoppedOn: mine.find((row) => !row.completed)?.stoppedOn ?? null };
   const ruleFailures = candidate === "rr" ? [] : newRuleFailures(ruleFailuresOf(cell, "main"), ruleFailuresOf(cell, candidate));
   const confirm = readRows(join(cell, "confirm.jsonl"));
   let metrics = measuredMetrics(main, mine, confirm.filter((row) => row.side === "main"), confirm.filter((row) => row.side === candidate));
-  // A `.rr` whole-pack run that did not complete: its figures from the chunked run, if one was made (measureChunks).
+  // A `.rerail` whole-pack run that did not complete: its figures from the chunked run, if one was made (measureChunks).
   const chunks = candidate === "rr" && !mine.every((row) => row.completed) ? readChunks(cell) : undefined;
   const chunkRows = chunks === undefined ? [] : readRows(join(cell, "chunks.jsonl"));
   let chunked: CellVerdict["chunked"] = null;
@@ -1190,7 +1190,7 @@ function cellVerdict(settings: { baseline: Checkout; candidate: Checkout; corpor
     drill: drillOf(cell, candidate),
     cost: cellCost({
       baseline: { runs: main, fixed: readRows(join(cell, "fixed.jsonl")).filter((row) => row.side === "main"), rules: ruleSet(join(settings.baseline.dir, "packs", pack, "rules")) },
-      // The .rr side has no start-up run; its rule set is main's rules it runs.
+      // The .rerail side has no start-up run; its rule set is main's rules it runs.
       candidate: { runs: mine, fixed: readRows(join(cell, "fixed.jsonl")).filter((row) => row.side === candidate), rules: candidate === "rr" ? ruleSet(join(settings.baseline.dir, "packs", pack, "rules"), new Set(ran)) : ruleSet(join(settings.candidate.dir, "packs", pack, "rules")) },
       workload: readWorkload(settings.out, relative(settings.corpora, corpusDirectory(settings.corpora, pack, corpus))),
     }),
@@ -1218,14 +1218,14 @@ function computeVerdict(settings: { baseline: Checkout; candidate: Checkout; cor
       const available = new Map<string, string | null>(
         candidate === "ships" ? shippedRules(settings.candidate.dir, pack).map((rule) => [rule, null]) : Object.entries(rr?.rules ?? {}).map(([rule, r]) => [rule, r.unavailable]),
       );
-      // A `.rr` rule that failed alone on a corpus is left out of that corpus's runs: it does not run there.
+      // A `.rerail` rule that failed alone on a corpus is left out of that corpus's runs: it does not run there.
       for (const corpus of candidate === "rr" ? corpusKinds : []) {
         for (const [rule, reason] of Object.entries(readExcluded(join(settings.out, "runs", pack, corpus)))) {
           const before = available.get(rule);
           available.set(rule, `${before === null || before === undefined ? "" : `${before}; `}fails to run on ${corpus}: ${reason}`);
         }
       }
-      const missing = candidate === "rr" && rr === undefined ? [{ rule: "*", reason: "the .rr side was not measured" }] : missingRules(mainRules, available);
+      const missing = candidate === "rr" && rr === undefined ? [{ rule: "*", reason: "the .rerail side was not measured" }] : missingRules(mainRules, available);
       const extra = candidate === "ships" ? [...available.keys()].filter((rule) => !mainRules.includes(rule)) : [];
       return { pack, noBaseline: false, missing, extra, cells: corpusKinds.map((corpus) => cellVerdict(settings, lock, pack, corpus, candidate, rr)) };
     });

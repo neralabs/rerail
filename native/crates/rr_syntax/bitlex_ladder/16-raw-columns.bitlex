@@ -1,4 +1,4 @@
-# `.rr`, step 16: a column in braces that is no single name.
+# `.rerail`, step 16: a column in braces that is no single name.
 #
 #   .violation v(at: loc) code {at.code} tag { } "m"
 #

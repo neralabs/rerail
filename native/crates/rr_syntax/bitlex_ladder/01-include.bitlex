@@ -1,4 +1,4 @@
-# `.rr`, step 1: `//` comments and `#include "…"` lines.
+# `.rerail`, step 1: `//` comments and `#include "…"` lines.
 #
 # The engine's parser (logic/rr/syntax.rs) is the reference: kinds and fields are its tape's
 # (logic/rr/tape.rs). What it lexes:

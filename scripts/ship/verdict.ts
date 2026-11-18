@@ -198,7 +198,7 @@ export function newRuleFailures(main: ReadonlyMap<string, string>, candidate: Re
 
 /**
  * Every rule main ships needs a runnable counterpart on the candidate. `candidate` maps a rule id to null (runnable)
- * or the reason it cannot run (its `.rr` fails `check-rr`, …); a rule main ships that `candidate` lacks has none.
+ * or the reason it cannot run (its `.rerail` fails `check-rr`, …); a rule main ships that `candidate` lacks has none.
  */
 export function missingRules(mainRules: readonly string[], candidate: ReadonlyMap<string, string | null>): { rule: string; reason: string }[] {
   const missing: { rule: string; reason: string }[] = [];

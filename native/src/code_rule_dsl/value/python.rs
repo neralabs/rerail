@@ -333,7 +333,7 @@ fn concatenated<D: Doc>(node: &Node<'_, D>) -> Value {
     }
 }
 
-/// A string literal's value from its source text (`core.rr`'s `value`): its body decoded, escapes and all; none for
+/// A string literal's value from its source text (`core.rerail`'s `value`): its body decoded, escapes and all; none for
 /// bytes, templates, or a literal Python refuses.
 pub(crate) fn str_value(text: &str) -> Option<String> {
     match piece(text)? {

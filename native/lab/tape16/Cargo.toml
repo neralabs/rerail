@@ -18,7 +18,7 @@ libc = "0.2"
 # E18: LZ4 as the reference library builds it (fast and HC, with dictionaries), for disk sizes and match coverage.
 lz4-sys = "=1.11.1"
 rerail-tape-format = { path = "../../crates/tape_format" }
-# E6: the lean `.rr` parser, whose writer is the engine's (`tape16 writer`). Heavy, so a feature.
+# E6: the lean `.rerail` parser, whose writer is the engine's (`tape16 writer`). Heavy, so a feature.
 rerail-rr-syntax = { path = "../../crates/rr_syntax", optional = true }
 
 # E25: the code table from the grammar (`tape16 gcodes`): node types generated as the build generates them.

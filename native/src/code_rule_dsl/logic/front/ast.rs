@@ -312,12 +312,12 @@ pub struct Program {
     pub gates: Vec<(String, Gate)>,
     /// `.policy { … }`: lint-rule documents, each without its matchers, which are the rules' `ast` atoms (`yaml`).
     pub policies: Vec<serde_json::Value>,
-    /// `.rr` setting directives (`.mode block`, `.scope include "…"`, …), by name, as written (`logic::rr`).
+    /// `.rerail` setting directives (`.mode block`, `.scope include "…"`, …), by name, as written (`logic::rr`).
     pub settings: Vec<(String, String)>,
     /// Relations the evaluator makes from their inputs' rows rather than from rules (`dfs_first`), by name. Each
     /// has one rule over its inputs, which orders it after them; its rows are the native operator's.
     pub natives: BTreeMap<String, Native>,
-    /// The regexes `match_all` and `match` run over `source` or `src_line` spans (`core.rr`: their captures are
+    /// The regexes `match_all` and `match` run over `source` or `src_line` spans (`core.rerail`: their captures are
     /// spans), and over which: the batch makes `rx_span(p, c, j, g, m)` for them, each match's groups as spans.
     pub rx_spans: std::collections::BTreeSet<(SpanIn, String)>,
     pub ast_patterns: std::collections::BTreeSet<String>,
@@ -546,7 +546,7 @@ pub const RESERVED: &str = "rr_";
 pub const AXIS: &str = "rr_inside_";
 
 /// The prefix of the descendant axis's relation: `rr_has_<set>(n, a)`, n of a kind in the set and a any strict
-/// ancestor of n (`core.rr`'s `has(a, n, set)`: the set tests the descendant).
+/// ancestor of n (`core.rerail`'s `has(a, n, set)`: the set tests the descendant).
 pub const DESCENDANTS: &str = "rr_has_";
 
 /// The prefix of a `nearest(n, a, set)` literal's relation: `rr_nearest_<set>(n, a)` (`plan::lower`).
@@ -568,7 +568,7 @@ pub fn axis(rel: &str) -> Option<(&str, bool)> {
     rel.strip_prefix(DESCENDANTS).map(|set| (set, true)).or_else(|| rel.strip_prefix(AXIS).map(|set| (set, false)))
 }
 
-/// A kind set's one member meaning every kind of the dialect: core.rr's `within(n, a)` is the tree axis over it
+/// A kind set's one member meaning every kind of the dialect: core.rerail's `within(n, a)` is the tree axis over it
 /// (`rr::lower::core`); lowering for a dialect makes it the dialect's kinds (`plan::lower`).
 pub const EVERY_KIND: &str = "*";
 

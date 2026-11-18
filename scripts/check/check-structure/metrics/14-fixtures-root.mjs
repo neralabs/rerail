@@ -22,7 +22,7 @@
 // expected findings with paths relative to themselves.
 // Exemption `structure-gate`: this gate (`scripts/check-structure*`) and its tests in `test/structure/`
 // name layout paths to classify them; they never read fixture data through them.
-// Exemption `workbench` (the `.rr` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they are"):
+// Exemption `workbench` (the `.rerail` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they are"):
 // `docs/rule-syntax/site/upstream_check.py` and `docs/rule-syntax/tools/rrlab/rrlab.py` join `fixtures` onto a
 // tool-pack's directory (`packs/<id>/upstream/<tool>/fixtures/`, pulled pack test data), never the fixtures root.
 

@@ -5,7 +5,7 @@
 //!              (A: codec, layout, cut, dict, k, extras, dictcut; all = every one but codec and dictcut)
 //! tape16 text  <cap>                                    T6, E5: text levels against the stored source
 //! tape16 edits <pairs.cap>                              T7, E4: blocks and rows an edit changes, per identity
-//! tape16 writer <cap> (--features lean for A)           E6: format 16's writer against format 15's, on .rr files
+//! tape16 writer <cap> (--features lean for A)           E6: format 16's writer against format 15's, on .rerail files
 //! tape16 keys  <cap>                                    E8: widths every key and count needs
 //! tape16 scan  <cap>                                    T5 on Metal: positions, depth, parents, ends from events
 //! tape16 dicts <cap>                                    T4: the dictionary size training gives per size asked
@@ -654,7 +654,7 @@ fn columns_row(name: &str, corpus: &Corpus, test: &[&solution::Prepared], ins: &
     println!(" {:.0} | {:.2} | {:.1} | {:.1} | {ok} |", total * 1e6, total * 1e9 / nodes as f64, cpu_nanos as f64 / 1e6, cpu_nanos as f64 / nodes as f64);
 }
 
-/// E6: format 16's writer against format 15's on the captured `.rr` files (tag 13); with `--features lean`,
+/// E6: format 16's writer against format 15's on the captured `.rerail` files (tag 13); with `--features lean`,
 /// the lean parse too (A), else A is left out.
 fn cmd_writer(path: &str) {
     use rerail_tape_lab::measure::cost;
@@ -686,7 +686,7 @@ fn cmd_writer(path: &str) {
         }
     }
     let m = |x: &rerail_tape_lab::measure::Cost| x.instructions as f64 / 1e6;
-    println!("{path}: {} .rr files, {nodes} nodes, {} KB of source; images equal to the capture: {same}\n", files.len(), bytes / 1024);
+    println!("{path}: {} .rerail files, {nodes} nodes, {} KB of source; images equal to the capture: {same}\n", files.len(), bytes / 1024);
     println!("| part | M instructions | instructions/node | ms |");
     println!("|---|---|---|---|");
     if cfg!(feature = "lean") {

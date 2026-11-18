@@ -7,8 +7,8 @@ The rules share two new libraries:
 
 | file | lines | what |
 |---|---|---|
-| `lib/python/typing.rr` | 515 | stub files; `sys.version_info` and `sys.platform` tests; typing names and TypeVar calls; stub bodies and docstrings; type expressions (both tree-sitter subscript shapes, unions, Literals, Ruff's type context); the values a stub may keep; unused private declarations; method kinds, metaclasses, enum bodies, class ancestors (same file), `__all__` exports |
-| `lib/python/typing-context.rr` | 43 | `typing_only_ctx(n)`: code Ruff's execution context calls typing, not runtime: deferred annotations (stub, future import, 3.14+, local variables), string annotations, `type X = …` values, PEP 695 bounds and defaults, `if TYPE_CHECKING:` bodies |
+| `lib/python/typing.rerail` | 515 | stub files; `sys.version_info` and `sys.platform` tests; typing names and TypeVar calls; stub bodies and docstrings; type expressions (both tree-sitter subscript shapes, unions, Literals, Ruff's type context); the values a stub may keep; unused private declarations; method kinds, metaclasses, enum bodies, class ancestors (same file), `__all__` exports |
+| `lib/python/typing-context.rerail` | 43 | `typing_only_ctx(n)`: code Ruff's execution context calls typing, not runtime: deferred annotations (stub, future import, 3.14+, local variables), string annotations, `type X = …` values, PEP 695 bounds and defaults, `if TYPE_CHECKING:` bodies |
 
 The rules are 14 to 92 lines long, 1,212 lines in all, comments and directives included. The longest is PYI036
 (92 lines), which has six kinds of message.
@@ -185,7 +185,7 @@ def f(): ...
 
 These are Ruff behaviours that the rules model. I could not tell from the JSON whether it intends them:
 - PYI002, 003, 004, 005, 007 and 008 read only an `if` test, not its elifs. Each operand of a top-level
-  `and`/`or` is checked on its own (typing.rr's `stub_test`). PYI006 and PYI066 read the if and the elif tests,
+  `and`/`or` is checked on its own (typing.rerail's `stub_test`). PYI006 and PYI066 read the if and the elif tests,
   with one level of `and`/`or`.
 - PYI003 reads an int in a tuple through parentheses: `(3, (8))` is fine. PYI005 checks the tuple's length
   whatever its elements are: `sys.version_info[:2] == (3, "8", 1)` is reported.
@@ -228,24 +228,24 @@ These are Ruff behaviours that the rules model. I could not tell from the JSON w
 
 ## Library and core changes
 
-1. **python/ast `docstring` depends on `str_part`.** Under rrlab it finds nothing. typing.rr adds `doc_stmt(s, e)`
+1. **python/ast `docstring` depends on `str_part`.** Under rrlab it finds nothing. typing.rerail adds `doc_stmt(s, e)`
    and `py_docstring(o, e)`, which read `plain_str`. The fix is either that `docstring` falls back to
    `plain_str`, or that rrlab models `str_part`.
 2. **python/names: bind `type X = …` statements.** PYI047 reads them with a text-based `type_alias_read`,
    because names has no binding for a PEP 695 type alias. The proposal: `binding(scope, "X", <X>, …)` for the
    `left` name of a `type_alias_statement`, and `look` for its uses.
-3. **python/names `class_base` resolves only unsubscripted bases.** typing.rr's `class_base_sym` and
+3. **python/names `class_base` resolves only unsubscripted bases.** typing.rerail's `class_base_sym` and
    `class_ancestor` read through `Base[T]`. The proposal is that `class_base` / `subclass` do the same, as
    Ruff's `map_subscript` does. `metaclass`, `abc_base` and `in_enum` could then use `subclass`.
 4. **python/names `capture_parent`.** While I worked, the working tree had `.decl capture_parent(k: symbol)`,
    which broke every rule that includes names. It is now `p: node`. I note it only as observed.
 5. **rrlab:** model `parsed` (G1), decode `\U` and `\N{…}` escapes in `value` (G2), and implement
    `@tree_digest` (G3).
-6. **Name clash: `typing_only`.** The review asked for a library relation `typing_only(n)`, but upgrade.rr
+6. **Name clash: `typing_only`.** The review asked for a library relation `typing_only(n)`, but upgrade.rerail
    already declares `typing_only(n)` with another meaning (n is in an annotation). Mine is
-   `typing_only_ctx(n)`, in lib/python/typing-context.rr. It uses upgrade.rr's `future_annotations` and
-   `up_stub`, version.rr's `targets`, and misc2-typecheck.rr's `tc_block` and `tc_ann_owner`.
-7. **lib/python/security.rr:** its qualified-call vocabulary follows Bandit's view, not Ruff's resolution, so
+   `typing_only_ctx(n)`, in lib/python/typing-context.rerail. It uses upgrade.rerail's `future_annotations` and
+   `up_stub`, version.rerail's `targets`, and misc2-typecheck.rerail's `tc_block` and `tc_ann_owner`.
+7. **lib/python/security.rerail:** its qualified-call vocabulary follows Bandit's view, not Ruff's resolution, so
    these rules use names' `sym_of` instead. No change is needed for this batch.
 
 ## Duplicates to merge
@@ -253,26 +253,26 @@ These are Ruff behaviours that the rules model. I could not tell from the JSON w
 These are relations with the same meaning in other batches' new libraries. Each line gives the name here, its
 equivalents elsewhere, and how they differ.
 
-- `type_bare(n, m)`: ruff-classes.rr `ann_strip(t, m)`.
+- `type_bare(n, m)`: ruff-classes.rerail `ann_strip(t, m)`.
 - `typing_sym(e, x)`:
-  - upgrade.rr `typing_ref(e, x)`, which resolves by `sym_at`;
-  - ruff-classes.rr `typing_name(q, r)`, which works on the qualified name.
-- `typing_mod(m)`: upgrade.rr `up_typing_module(m)`.
+  - upgrade.rerail `typing_ref(e, x)`, which resolves by `sym_at`;
+  - ruff-classes.rerail `typing_name(q, r)`, which works on the qualified name.
+- `typing_mod(m)`: upgrade.rerail `up_typing_module(m)`.
 - `tsub(s, h, i, a)`, `tsub_n(s, k)`, `typing_subscript(s, x)`:
-  - upgrade-typing.rr `sub_item` / `type_arg`, `up_type_nargs`, `up_typing_sub`, `sub_of`;
-  - typing.rr skips comments between arguments and reads both tree-sitter shapes.
-- `stub_file(d)`: upgrade.rr `up_stub(d)`.
-- `plain_target(t, x)`, a name or `(x)`: bugbear-loops.rr `assign_name(r, x)`, which also takes names inside tuple
+  - upgrade-typing.rerail `sub_item` / `type_arg`, `up_type_nargs`, `up_typing_sub`, `sub_of`;
+  - typing.rerail skips comments between arguments and reads both tree-sitter shapes.
+- `stub_file(d)`: upgrade.rerail `up_stub(d)`.
+- `plain_target(t, x)`, a name or `(x)`: bugbear-loops.rerail `assign_name(r, x)`, which also takes names inside tuple
   targets. Mine was renamed from `assign_name` to avoid the clash.
-- `pyi_int(e)`: ruff.rr `ruff_int(e, v)`.
-- `doc_stmt` / `py_docstring`: upgrade.rr `docstring_stmt(m, st)`.
-- `typing_only_ctx(n)` / `deferred_ann(r)` (typing-context.rr):
-  - misc2-typecheck.rr `tc_runtime_typedef`, the complement for annotations;
-  - upgrade-typing.rr `runtime_annotation` / `local_ann`;
-  - upgrade.rr `late_annotation`.
+- `pyi_int(e)`: ruff.rerail `ruff_int(e, v)`.
+- `doc_stmt` / `py_docstring`: upgrade.rerail `docstring_stmt(m, st)`.
+- `typing_only_ctx(n)` / `deferred_ann(r)` (typing-context.rerail):
+  - misc2-typecheck.rerail `tc_runtime_typedef`, the complement for annotations;
+  - upgrade-typing.rerail `runtime_annotation` / `local_ann`;
+  - upgrade.rerail `late_annotation`.
 
   One "is this evaluated" library should serve all of them.
 - `in_dunder_all(n)`: python/names or pyflakes may already model `__all__`. If one does, PYI053 and the unused
   private rules should read it.
-- `pyi_method(c, f, x)`: calls.rr `method_of(f, c)`, which has no name column, and names' `method(cq, x, f)`.
-- `class_base_sym(c, q)`: ruff-classes.rr `class_base_expr(c, e)` and names' `class_base` (see change 3).
+- `pyi_method(c, f, x)`: calls.rerail `method_of(f, c)`, which has no name column, and names' `method(cq, x, f)`.
+- `class_base_sym(c, q)`: ruff-classes.rerail `class_base_expr(c, e)` and names' `class_base` (see change 3).

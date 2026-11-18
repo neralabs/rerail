@@ -275,7 +275,7 @@ pub(super) fn analyze(i: &Input) -> Vec<Finding> {
                     steps.join(" "),
                     worst.plan
                 ),
-                "Read the rule's body in its .rr file: a literal that binds nothing the next one reads (a cross product), a test that could be dropped or bound first, or a plan made before its relation had rows. Fix the rule or its plan.",
+                "Read the rule's body in its .rerail file: a literal that binds nothing the next one reads (a cross product), a test that could be dropped or bound first, or a plan made before its relation had rows. Fix the rule or its plan.",
             );
         }
     }

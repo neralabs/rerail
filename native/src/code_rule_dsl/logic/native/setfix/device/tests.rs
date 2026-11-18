@@ -757,7 +757,7 @@
             }
         }
         assert_eq!(seen, 8);
-        // core.rr's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
+        // core.rerail's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
             use crate::code_rule_dsl::facts::vtab::syntax::{Projection, shaped};
             let core_views = shaped(&store, make(), &Projection::core()).unwrap();

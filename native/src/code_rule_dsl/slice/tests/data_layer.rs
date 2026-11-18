@@ -3,7 +3,7 @@
 //! time and memory, and (`RERAIL_DL_W=1`) its keys against W's engine on the same files.
 //!
 //!   RERAIL_DL_POLICY=<policy.json>[:<policy.json>…] RERAIL_DL_ROOT=<dir>
-//!   [RERAIL_DL_LOGIC=<program.rr>] [RERAIL_DL_BACKEND=cpu|metal] [RERAIL_DL_W=1] [RERAIL_PROF=1]
+//!   [RERAIL_DL_LOGIC=<program.rerail>] [RERAIL_DL_BACKEND=cpu|metal] [RERAIL_DL_W=1] [RERAIL_PROF=1]
 //!   cargo test --profile profiling --lib -- slice::tests::data_layer::data_layer_bench --ignored --nocapture
 //!
 //! A clause the path cannot run is reported with its reason, and left out of the policy the slice

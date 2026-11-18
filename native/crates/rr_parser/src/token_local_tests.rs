@@ -1,11 +1,11 @@
-//! `token_local`'s facts on the `.rr` grammar: every claim checked on its corpus, and two
+//! `token_local`'s facts on the `.rerail` grammar: every claim checked on its corpus, and two
 //! censuses run by hand, of tier 1's operations by their facts and of its values' sparsity
 //! (docs/parser-generators/25-token-local-work.md §5, 26 §1).
 
 use rerail_compiler::bitlex_masks::Named;
 use rerail_compiler::token_local;
 
-/// Every claim on the `.rr` grammar's tier 1 holds on its corpus (a sample of files, every
+/// Every claim on the `.rerail` grammar's tier 1 holds on its corpus (a sample of files, every
 /// claim on each), with each token kind's first bytes as the anchors.
 #[test]
 fn rr_facts_hold_on_the_corpus() {
@@ -42,7 +42,7 @@ fn rr_facts_hold_on_the_corpus() {
     assert!(checked.local > 100 && checked.anchored >= 8, "too few claims: {checked:?}");
 }
 
-/// How much of the `.rr` grammar's tier 1 is token-level: each operation by its facts, and the
+/// How much of the `.rerail` grammar's tier 1 is token-level: each operation by its facts, and the
 /// share in the cones of values that only marks and the fallback read. A census for the plan's
 /// payoff (doc 25 §5); run by hand.
 #[test]
@@ -108,7 +108,7 @@ fn rr_census() {
     }
 }
 
-/// How sparse `.rr`'s tier 1 values are: for each named value, the share of the corpus's
+/// How sparse `.rerail`'s tier 1 values are: for each named value, the share of the corpus's
 /// 64-byte blocks where it has a bit, and, for each sparse one, the operations that are zero
 /// wherever it is (by `zero_with`). The measure of simdjson's skip-when-absent branches
 /// (doc 26); run by hand.
@@ -131,7 +131,7 @@ fn rr_sparsity() {
     }
 }
 
-/// Tier 1's outputs and totals on `.rr`, and its passes' machine code: the measurement of
+/// Tier 1's outputs and totals on `.rerail`, and its passes' machine code: the measurement of
 /// doc 26 §1.5.
 #[test]
 #[ignore = "a measurement: run by hand"]

@@ -1,6 +1,6 @@
 # Data-layer rules
 
-New ports use the `.rr` format from `More-ergonomic-rule-syntax`.
+New ports use the `.rerail` format from `More-ergonomic-rule-syntax`.
 The [format migration](../../docs/data-layer-rr-migration.md) records the engine target, imported drafts, and full assertion requirements.
 Drafts live in `candidates/rr/`; they do not replace the executable JSON policies until they pass those requirements.
 Do not author new JSON rule ports or treat reader success as parity.

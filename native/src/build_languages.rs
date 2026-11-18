@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 const FORMAT: &str = "rerail.language/v1";
 /// The parser implementations a dialect may name: tree-sitter, Forte (Rerail's port,
-/// `code_rule_dsl::blade::forte`), the rule engine's own `.rr` parser (`logic::rr::syntax`), or a
+/// `code_rule_dsl::blade::forte`), the rule engine's own `.rerail` parser (`logic::rr::syntax`), or a
 /// Bitlex grammar compiled by the transducer, with its tree-sitter grammar's ids, and tree-sitter
 /// for a file it refuses (JSON's: `transducer::packed::json_parser`).
 const PARSERS: &[&str] = &["tree-sitter", "forte", "rr", "bitlex", "literal"];

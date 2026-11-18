@@ -20,7 +20,7 @@
     fn retained_semantic_results_support_sql_outputs_and_isolate_targets_and_runs() {
         let p = rr::parse(
             r#"
-#include "core.rr"
+#include "core.rerail"
 .decl py_call_site(d:number,report:node,call:node,ref:node)
 .input py_call_site
 .decl wanted(n:node)

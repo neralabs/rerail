@@ -13,7 +13,7 @@
 // `conformance/languages/pending.json`, the not-gated rules and pending tool-packs it reads; and
 // `scripts/pack-data/runtimes/**`, the manifests that pin each runtime the derivation runs upstream on) and, for
 // code-rule documents only, the shipped rule directories `packs/<id>/rules/` and `code-rule-dsl/rules/`.
-// Two more declared exemptions list each path with its reason (KEPT below): `kept-records`, the `.rr` workbench's and
+// Two more declared exemptions list each path with its reason (KEPT below): `kept-records`, the `.rerail` workbench's and
 // the design notes' records, kept in git as they are (docs/repository-structure.md, "Kept as they are"), and
 // `engine-layout`, the engine line's test inputs beside the code that reads them, until that layout is settled with
 // its owner.
@@ -81,8 +81,8 @@ function fixtureKind(repo, path) {
 /** Exemptions `kept-records` and `engine-layout`: a directory (ending in `/`) or file, and why it stays where it is. */
 const KEPT = new Map([
   // kept-records
-  ["docs/rule-syntax/packs/python-main/source/", "main's 537 Python rules as the workbench translated them: the source of each `.rr` rule beside it"],
-  ["docs/rule-syntax/nested-routers.json", "the source rule of the workbench's nested-routers drafts beside it (nested-routers.b1.rr, .b2.rr)"],
+  ["docs/rule-syntax/packs/python-main/source/", "main's 537 Python rules as the workbench translated them: the source of each `.rerail` rule beside it"],
+  ["docs/rule-syntax/nested-routers.json", "the source rule of the workbench's nested-routers drafts beside it (nested-routers.b1.rerail, .b2.rerail)"],
   ["docs/rule-engine-direction/experiments/m2m7/", "an experiment record: the rules its measurements were taken on, as they were"],
   // engine-layout
   ["accel/src/ane/fixtures/", "the 2 KB coremltools outputs the Neural Engine writer's test embeds (`include_bytes!`), and the script that wrote them"],

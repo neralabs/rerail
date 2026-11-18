@@ -1,4 +1,4 @@
-//! Tests of this module that read what the engine registers as it loads (the languages, their `.rr` libraries,
+//! Tests of this module that read what the engine registers as it loads (the languages, their `.rerail` libraries,
 //! the ECMA crate's functions): the engine's facade of the module mounts them.
 
 /// `@to_precision` is JavaScript's toPrecision of the numeral's value; no value past its range or for a non-number.

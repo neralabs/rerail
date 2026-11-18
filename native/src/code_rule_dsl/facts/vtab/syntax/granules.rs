@@ -33,7 +33,7 @@
 //! (home, key), each in the first free slot from its home. So the slots are a function of the set of keys, not of
 //! the order the definitions appear in, and adding one moves at most a granule it clashes with. Slot 0 is the
 //! document's own (its root); the top `SPAN_SLOTS` slots are its spans' (its text, lines and tokens, which are
-//! positions, in order), and the `EXTRA_SLOTS` below them `Extra`'s spans' (`ExtraSpan`: core.rr's source, lines,
+//! positions, in order), and the `EXTRA_SLOTS` below them `Extra`'s spans' (`ExtraSpan`: core.rerail's source, lines,
 //! comments and matches made beside the projection), a slot range for each kind.
 //!
 //! **Overflow** never falls back to preorder: up to `SPAN_SLOTS << INDEX_BITS` positions (4 M), each `ExtraSpan`
@@ -68,7 +68,7 @@ const EXTRA_FIRST: u32 = SPAN_FIRST - EXTRA_SLOTS;
 /// Slots granules take: `1..EXTRA_FIRST`.
 const GRANULE_SLOTS: u32 = EXTRA_FIRST - 1;
 
-/// The kinds of `Extra`'s spans (core.rr's `span`s made beside the projection: `super::Extra::document`), each in slots
+/// The kinds of `Extra`'s spans (core.rerail's `span`s made beside the projection: `super::Extra::document`), each in slots
 /// of its own between the granules' and the positions', so no node, position or other kind has its id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExtraSpan {
