@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// The Rust files scripts/check/rustfmt-files.txt lists are formatted as rustfmt (edition 2024) lays them out. The list
-// holds main's own files and those written for this repository since; the engine line's files keep their author's
+// The Rust files scripts/check/check-rustfmt/files.txt lists are formatted as rustfmt (edition 2024) lays them out.
+// The list holds main's own files and those written for this repository since; the engine line's files keep their author's
 // layout. `cargo fmt --all` cannot draw that line: the workspace's crates mount native/src through `#[path]` modules,
 // and rustfmt follows every `mod` into the files it declares. Each listed file goes to rustfmt on stdin, where rustfmt
 // formats that file alone. A listed file that is gone fails too: take it off the list.
@@ -13,7 +13,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-export const LIST = "scripts/check/rustfmt-files.txt";
+export const LIST = "scripts/check/check-rustfmt/files.txt";
 
 /** The paths a list's text names: a path per line; blank lines and `#` comments are skipped. */
 export function listedFiles(text) {

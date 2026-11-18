@@ -1,5 +1,5 @@
-// scripts/check/check-rustfmt.mjs: the Rust files scripts/check/rustfmt-files.txt lists are formatted as rustfmt lays
-// them out, each checked alone.
+// scripts/check/check-rustfmt.mjs: the Rust files scripts/check/check-rustfmt/files.txt lists are formatted as
+// rustfmt lays them out, each checked alone.
 
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
