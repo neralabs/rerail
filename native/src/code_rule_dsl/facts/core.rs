@@ -174,10 +174,13 @@ pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Opti
     let Some(image) = TapeImage::parse(&grammar, file.source(), &|| false) else { return Ok((Built::Unparsed, None)); };
     let image = image?;
     drop(parse);
+    // Where the device reads tapes, the parse's in a slab's room too (decision 0353 step 4a): a guest's, a run's
+    // without a store.
+    let primary = placed_where_read(image.primary, &grammar)?;
     let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
-    let doc = kept_tape(keep, file, &grammar, &image.primary, &lines)?;
+    let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
-    let facts = read_off(doc.as_ref(), file, &grammar, image.primary, lines)?;
+    let facts = read_off(doc.as_ref(), file, &grammar, primary, lines)?;
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Node, facts.len() as u64);
     Ok((Built::Facts(facts), doc))
 }
@@ -205,6 +208,31 @@ fn queued_tape(source: &[u8; 32], tag: i64, gv: i64, fv: i64) -> crate::content_
 /// or the pool refused the room) keeps the parser's image, and the writer its bytes.
 // copy (0353 step 4a): the parsers write their columns into a vector of their own, which goes once its stored bytes
 // are in their room. It goes when a parser writes into the room (decision 0353).
+/// A tape still queued for the writer, read where it is: the room this process placed it in (decision 0353 step 4a),
+/// else its bytes read into a tape of its own.
+// copy (0353 step 4a): a queued tape not in a room (a frame of a gathered segment, decompressed) is read into a vector.
+fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>) -> Result<crate::code_rule_dsl::tape::TapeImage, String> {
+    use crate::code_rule_dsl::tape::TapeImage;
+    if let crate::content_store::ObjectBytes::Tape(held) = stored
+        && let Ok(home) = (Arc::clone(held) as Arc<dyn std::any::Any + Send + Sync>).downcast::<rerail_tape_format::home::Home>()
+        && home.placed()
+    {
+        return TapeImage::from_home((*home).clone(), grammar);
+    }
+    crate::code_rule_dsl::prof::count("tape.queued_read_apart", 1);
+    TapeImage::from_bytes(stored, grammar)
+}
+
+/// A parse's tape in a slab's room where a device reads tapes (`placed_parse`), else as the parser made it.
+fn placed_where_read(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>) -> Result<crate::code_rule_dsl::tape::TapeImage, String> {
+    #[cfg(target_os = "macos")]
+    if crate::code_rule_dsl::tape::placed::device().is_some() {
+        return placed_parse(image, grammar).map(|(_, image)| image);
+    }
+    let _ = grammar;
+    Ok(image)
+}
+
 fn placed_parse(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>) -> Result<(crate::content_store::TapeBytes, crate::code_rule_dsl::tape::TapeImage), String> {
     use crate::code_rule_dsl::tape::TapeImage;
     let home = image.place_stored()?;
@@ -282,7 +310,7 @@ pub fn build_in_wave_with_tape(
         (None, Some(stored)) => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "hit".into());
             let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decode".into());
-            TapeImage::from_bytes(&stored, &grammar)?
+            queued_image(&stored, &grammar)?
         }
         (None, None) => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "miss".into());
@@ -343,7 +371,7 @@ pub(crate) fn build_cached_with_tape(
         if let Some(held) = cache.queued_tape(&queued_tape(&digest, tag, gv, fv)) {
             let held = held.map_err(|e| e.to_string())?;
             let grammar = Arc::new(tape::Grammar::new(language)?);
-            let primary = TapeImage::from_bytes(&held, &grammar)?;
+            let primary = queued_image(&held, &grammar)?;
             let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
             let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
             return Ok((Built::Facts(read_off(doc.as_ref(), file, &grammar, primary, lines)?), known, doc));

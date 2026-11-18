@@ -28,22 +28,38 @@ impl Room for SlabRoom {
         // again; the slab is held.
         unsafe { std::slice::from_raw_parts(self.slab.host().add(self.at), self.len) }
     }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
+/// The device the slabs are on, if there is one.
 #[cfg(target_os = "macos")]
-impl SlabRoom {
-    /// The slab and the room's offset in it, for the device's descriptors.
-    #[allow(dead_code)]
-    fn place(&self) -> (&std::sync::Arc<rerail_metal::slabs::Slab>, usize) {
-        (&self.slab, self.at)
+pub fn device() -> Option<&'static metal::Device> {
+    rerail_metal::METAL_DEVICE.as_ref()
+}
+
+/// Where the device reads `bytes` of a tape placed in `room` (decision 0353 step 4d): their GPU address, and the
+/// slab's buffer, which a pass that reads them makes resident. `None` for a room that is no slab's, or bytes outside
+/// it.
+#[cfg(target_os = "macos")]
+pub fn on_device(room: &std::sync::Arc<dyn Room>, bytes: &[u8]) -> Option<(u64, metal::Buffer)> {
+    let slab = &room.as_any().downcast_ref::<SlabRoom>()?.slab;
+    let held = room.bytes().as_ptr_range();
+    if bytes.as_ptr() < held.start || bytes.as_ptr_range().end > held.end {
+        return None;
     }
+    let buffer = slab.buffer();
+    let at = bytes.as_ptr() as usize - slab.host() as usize;
+    Some((buffer.gpu_address() + at as u64, buffer.to_owned()))
 }
 
 /// `len` bytes written by `fill` into their home: a slab's room where the device's pool gives one, else a vector.
 pub fn place(len: usize, fill: impl FnOnce(&mut [u8]) -> std::io::Result<()>) -> std::io::Result<Home> {
     #[cfg(target_os = "macos")]
     if rerail_metal::METAL_DEVICE.is_some()
-        && let Ok((slab, at)) = rerail_metal::slabs::tape_room(len.max(1))
+        // A word of room past the tape: the device's reads load a whole word where a value ends (`clif_word`).
+        && let Ok((slab, at)) = rerail_metal::slabs::tape_room(len + 16)
     {
         // SAFETY: `at..at + len` is this room's alone, inside the slab's mapping; nothing reads it before `fill`
         // returns.
@@ -51,6 +67,12 @@ pub fn place(len: usize, fill: impl FnOnce(&mut [u8]) -> std::io::Result<()>) ->
         fill(out)?;
         crate::code_rule_dsl::prof::count("tape.placed", 1);
         return Ok(Home::Placed(std::sync::Arc::new(SlabRoom { slab, at, len })));
+    }
+    // A device that refused the room (its budget spent): the tape is read apart, and a batch of it makes its views
+    // (`device_chunk::views_in_place`).
+    #[cfg(target_os = "macos")]
+    if rerail_metal::METAL_DEVICE.is_some() {
+        crate::code_rule_dsl::prof::count("tape.room_refused", 1);
     }
     let mut v = vec![0u8; len];
     fill(&mut v)?;

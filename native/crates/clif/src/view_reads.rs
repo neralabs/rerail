@@ -39,6 +39,36 @@ pub struct ViewDoc {
 }
 const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4);
 
+/// A document of a batch, as a kernel finds its views' rows (decision 0353 step 4d): its entry's offset in the
+/// batch's block, its tape's GPU address and view (the reads' own), and its first row in each view (`node`, `child`,
+/// `field`, `core_node`).
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ViewRow {
+    pub entry: u64,
+    /// A device address: `device const uchar*` in the kernels.
+    pub tape: u64,
+    pub rows: [u32; 4],
+    pub view: crate::view::TapeView,
+    pub pad: u32,
+}
+const _: () = assert!(std::mem::size_of::<ViewRow>() == 8 + 8 + 16 + 116 + 4);
+
+/// A batch's documents as its views' reads find them: the batch's block's GPU address (the entries' base), its
+/// documents' rows (their GPU address), how many.
+#[repr(C)]
+#[derive(Debug, Default)]
+pub struct ViewDir {
+    pub chunk: u64,
+    pub ndocs: u32,
+    pub pad: u32,
+    pub rows: u64,
+}
+const _: () = assert!(std::mem::size_of::<ViewDir>() == 24);
+
+/// A view's number in a kernel's reads (`ViewDir`'s rows' and `vread`'s): `node`, `child`, `field`, `core_node`.
+pub const VIEWS: [&str; 4] = ["view_node", "view_child", "view_field", "view_core"];
+
 /// A field's byte offset in the entry.
 pub mod at {
     use super::ViewDoc;
@@ -74,7 +104,15 @@ pub fn msl() -> String {
         ("Run", "fields", offset_of!(ViewDoc, fields)),
         ("Run", "places", offset_of!(ViewDoc, places)),
     ];
-    let mut s = String::from("struct ViewDoc {\n");
+    let mut s = String::from(
+        "struct ViewRow {\n    ulong entry;\n    device const uchar* tape;\n    uint rows[4];\n    uint view[29];\n    uint pad;\n};\n\
+         struct ViewDir {\n    device const uchar* chunk;\n    uint ndocs;\n    uint pad;\n    device const ViewRow* rows;\n};\n",
+    );
+    s += &format!("static_assert(sizeof(ViewRow) == {}, \"ViewRow: size\");\n", std::mem::size_of::<ViewRow>());
+    s += &format!("static_assert(__builtin_offsetof(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));
+    s += &format!("static_assert(sizeof(ViewDir) == {}, \"ViewDir: size\");\n", std::mem::size_of::<ViewDir>());
+    s += &format!("static_assert(__builtin_offsetof(ViewDir, rows) == {}, \"ViewDir.rows\");\n", std::mem::offset_of!(ViewDir, rows));
+    s += "struct ViewDoc {\n";
     for (ty, name, _) in fields.iter() {
         s += &format!("    {ty} {name};\n");
     }

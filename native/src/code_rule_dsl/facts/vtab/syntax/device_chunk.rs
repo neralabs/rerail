@@ -129,6 +129,79 @@ pub struct Chunk {
     locs: std::sync::OnceLock<bool>,
     /// Whether the facts' line starts are in the block (`fill_lines`), once asked.
     lines: std::sync::OnceLock<bool>,
+    /// The views' directory (`views_in_place`), once asked; `None` when a document's tape is not where the device
+    /// reads it.
+    #[cfg(target_os = "macos")]
+    views: std::sync::OnceLock<Option<ViewsInPlace>>,
+}
+
+/// A batch's documents as the views' reads find them on the device (decision 0353 step 4d, `ViewDir`): each one's
+/// entry, beside its projection's numbering in the batch's block, and its tape where it lies in its slab. A stage
+/// reads a view through them; nothing makes the view's rows.
+#[cfg(target_os = "macos")]
+pub struct ViewsInPlace {
+    /// The directory's GPU address, which a stage's constants point at (`Stage::v_dir`).
+    pub dir: u64,
+    /// The buffers the reads reach by address, which a pass that reads a view makes resident: the batch's block's
+    /// (the one the addresses are of), and each slab a tape lies in.
+    pub buffers: Vec<metal::Buffer>,
+    _entries: Vec<super::view_docs::ViewEntry>,
+}
+
+/// The batch's views' directory (`ViewsInPlace`), made on its first ask: `None` when a document's tape is not in a
+/// slab (a tape held in a vector of its own, a 16z tape laid out apart: decision 0353 step 4b), or the batch has no
+/// device.
+#[cfg(target_os = "macos")]
+pub fn views_in_place<'a>(batch: &Batch, chunk: &'a Chunk) -> Option<&'a ViewsInPlace> {
+    chunk.views.get_or_init(|| build_views(batch, chunk)).as_ref()
+}
+
+#[cfg(target_os = "macos")]
+fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
+    use rerail_clif::view_reads::{ViewDir, ViewRow};
+    let _span = crate::code_rule_dsl::logic::profile::span(|| "the views' directory".into());
+    let device = crate::code_rule_dsl::tape::placed::device()?;
+    let b = &chunk.block;
+    let n = batch.docs.len();
+    let rows: *mut ViewRow = b.alloc_t(n.max(1));
+    let dir: *mut ViewDir = b.alloc_t(1);
+    let mut slabs: Vec<metal::Buffer> = Vec::new();
+    let mut entries = Vec::with_capacity(n);
+    for (i, p) in batch.docs.iter().enumerate() {
+        // Each refusal counted by why: what step 4b (16z laid out apart) and the loads not yet placed leave.
+        let refused = |why: &'static str| {
+            crate::code_rule_dsl::prof::count(why, 1);
+            None
+        };
+        if !Arc::ptr_eq(p.block(), b) {
+            return refused("views.refused.block");
+        }
+        let mut row = ViewRow { rows: [batch.nodes[i] as u32, batch.children[i] as u32, batch.fields[i] as u32, batch.nodes[i] as u32], ..Default::default() };
+        if p.len() > 0 {
+            let Some(tape) = p.facts.tape.as_ref() else { return refused("views.refused.no_tape") };
+            let Ok((bytes, view)) = tape.in_place() else { return refused("views.refused.not_in_place") };
+            let Some(room) = tape.image().room() else { return refused(if tape.image().format() == crate::code_rule_dsl::tape::formats::Format::F16Z { "views.refused.unplaced_16z" } else { "views.refused.unplaced" }) };
+            let Some((address, slab)) = crate::code_rule_dsl::tape::placed::on_device(room, bytes) else { return refused("views.refused.not_in_room") };
+            if !slabs.iter().any(|s| s.gpu_address() == slab.gpu_address()) {
+                slabs.push(slab);
+            }
+            let entry = super::view_docs::ViewEntry::new(b, p, &batch.dialects[p.tag]);
+            row.entry = b.offset_of(entry.desc()) as u64;
+            row.tape = address;
+            row.view = view;
+            entries.push(entry);
+        }
+        // SAFETY: row `i` of the rows just allocated in `b`.
+        unsafe { rows.add(i).write(row) };
+    }
+    // The block's buffer made after the last allocation, so it covers them: the addresses are its.
+    let buffer = b.gpu_buffer(device);
+    let base = buffer.gpu_address();
+    // SAFETY: the directory just allocated in `b`.
+    unsafe { dir.write(ViewDir { chunk: base, ndocs: n as u32, pad: 0, rows: base + b.offset_of(rows) as u64 }) };
+    let mut buffers = vec![buffer];
+    buffers.extend(slabs);
+    Some(ViewsInPlace { dir: base + b.offset_of(dir) as u64, buffers, _entries: entries })
 }
 
 /// Copies `src` into the block and points `span` at it.
@@ -255,7 +328,14 @@ pub fn build(batch: &Batch) -> Chunk {
     }
     let at = b.offset_of(root);
     b.set_root(root);
-    Chunk { block: b, root: at, locs: std::sync::OnceLock::new(), lines: std::sync::OnceLock::new() }
+    Chunk {
+        block: b,
+        root: at,
+        locs: std::sync::OnceLock::new(),
+        lines: std::sync::OnceLock::new(),
+        #[cfg(target_os = "macos")]
+        views: std::sync::OnceLock::new(),
+    }
 }
 
 /// Puts each document's facts' line starts into `batch`'s chunk, once, for the `line` view made on the device (decision

@@ -243,6 +243,9 @@ struct SlabEntry {
     slab: Arc<Slab>,
     /// The admission clock when a document of it was last asked for.
     last_use: u64,
+    /// Whether it holds a loaded tape's home (`tape_room`, decision 0353 step 4a): the tape holds the slab, so
+    /// retiring it would free nothing, only lose its count. Never retired.
+    tapes: bool,
 }
 
 #[derive(Default)]
@@ -300,7 +303,7 @@ impl State {
                     Ok(slab) => {
                         self.next_slab += 1;
                         let offset = slab.room(bytes).ok_or(Error::BackendCapacity)?;
-                        self.slabs.push(SlabEntry { slab: Arc::new(slab), last_use: self.clock });
+                        self.slabs.push(SlabEntry { slab: Arc::new(slab), last_use: self.clock, tapes: false });
                         rerail_prof::count("residency.slabs", 1);
                         return Ok((self.slabs.len() - 1, offset));
                     }
@@ -320,7 +323,7 @@ impl State {
             .slabs
             .iter()
             .enumerate()
-            .filter(|(_, entry)| !keep.contains(&entry.slab.id))
+            .filter(|(_, entry)| !keep.contains(&entry.slab.id) && !entry.tapes)
             .min_by_key(|(_, entry)| entry.last_use)
             .map(|(at, _)| at)
         else {
@@ -448,6 +451,7 @@ pub fn tape_room(bytes: usize) -> Result<(Arc<Slab>, usize), Error> {
     let (at, offset) = state.room(bytes, &[])?;
     let clock = state.clock;
     state.slabs[at].last_use = clock;
+    state.slabs[at].tapes = true;
     Ok((Arc::clone(&state.slabs[at].slab), offset))
 }
 

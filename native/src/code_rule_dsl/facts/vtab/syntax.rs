@@ -3831,7 +3831,21 @@ impl Source for Viewed {
         if matches!(self.view, View::Line) && !device_chunk::fill_lines(&self.batch, chunk) {
             return None;
         }
-        Some(crate::code_rule_dsl::facts::vtab::DeviceView { block: &chunk.block, root: chunk.root, view, rows: self.len(), pairs: 0 })
+        // The views the views' reads answer are read in place where every tape is on the device.
+        #[cfg(target_os = "macos")]
+        let in_place = matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE)
+            .then(|| device_chunk::views_in_place(&self.batch, chunk))
+            .flatten()
+            .map(|v| crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir, kind: view + 1, buffers: v.buffers.clone(), keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> });
+        Some(crate::code_rule_dsl::facts::vtab::DeviceView {
+            block: &chunk.block,
+            root: chunk.root,
+            view,
+            rows: self.len(),
+            pairs: 0,
+            #[cfg(target_os = "macos")]
+            in_place,
+        })
     }
     fn columns(&self) -> Vec<String> {
         Self::columns(self.view).iter().map(|c| (*c).to_owned()).collect()

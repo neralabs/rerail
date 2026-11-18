@@ -791,8 +791,10 @@
         let store_path = std::env::temp_dir().join(format!("rerail-refused-view-{}-{nonce}.sqlite", std::process::id()));
         let store = crate::content_store::ContentStore::open(&store_path).unwrap();
         let all = sources(&store, docs).unwrap();
-        let src = Arc::clone(&all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).expect("node").1);
-        assert!(src.device_view().is_some(), "made on the device");
+        // `line`, a view the device still makes (`node` is read in place, decision 0353 step 4d: nothing a refusal
+        // could lose).
+        let src = Arc::clone(&all.iter().find(|(n, s)| *n == "line" && s.python_batch().is_some()).expect("line").1);
+        assert!(src.device_view().is_some_and(|d| d.in_place.is_none()), "made on the device");
         let rel = InRel::over_source(Arc::clone(&src), vec![b'i'; src.columns().len()]);
         // Encoded into a batch the refusal drops uncommitted: nothing ran it.
         let mut refused = mj::Batch::new().expect("the device");
@@ -840,7 +842,7 @@
         let store = crate::content_store::ContentStore::open(&store_path).unwrap();
         let all = sources(&store, docs).unwrap();
         let device = rerail_accel::gpu::join::device().expect("the device");
-        let mut seen = 0;
+        let (mut seen, mut in_place) = (0, 0);
         // `line` (`View::Line`, decision 0325 step 3): the view, not a relation of that name.
         for name in ["node", "child", "field", "core_node", "line"] {
             let src = &all.iter().find(|(n, s)| *n == name && s.python_batch().is_some()).unwrap_or_else(|| panic!("{name}")).1;
@@ -859,9 +861,25 @@
                     assert_eq!(out.column(j), &host[..], "{name}: column {c}");
                 }
                 seen += 1;
+                // Read in place (decision 0353 step 4d): the views' reads over the batch's directory, copied out of
+                // the view by `rows_copy`, are the same rows; nothing made them.
+                if let Some(v) = d.in_place.clone() {
+                    let view = mj::DevRel::view(k, n, v).unwrap();
+                    let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                    let mut batch = mj::Batch::new().expect("the device");
+                    let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
+                    batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
+                    batch.finish().unwrap();
+                    for (j, &c) in cols.iter().enumerate() {
+                        let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                        assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");
+                    }
+                    in_place += 1;
+                }
             }
         }
         assert_eq!(seen, 10);
+        assert_eq!(in_place, 8, "node, child, field and core_node read in place");
         // core.rr's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
             use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};

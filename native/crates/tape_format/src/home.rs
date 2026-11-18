@@ -7,6 +7,8 @@ use std::sync::Arc;
 /// A room holding a tape's bytes, read in place (`Home::Placed`): the engine's slab room.
 pub trait Room: Send + Sync + std::fmt::Debug {
     fn bytes(&self) -> &[u8];
+    /// The room itself, for its holder to find where the device reads it (the engine's slab and offset).
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 /// A tape's bytes: its own, or placed in a room.
@@ -28,6 +30,14 @@ impl Home {
     /// Whether the bytes are in a room (not the tape's own).
     pub fn placed(&self) -> bool {
         matches!(self, Home::Placed(_))
+    }
+
+    /// The room the bytes are in, if they are placed.
+    pub fn room(&self) -> Option<&Arc<dyn Room>> {
+        match self {
+            Home::Own(_) => None,
+            Home::Placed(r) => Some(r),
+        }
     }
 }
 

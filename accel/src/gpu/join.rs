@@ -440,6 +440,14 @@ impl<'a> Pass<'a> {
         self.dispatches.set(self.dispatches.get() + 1);
     }
 
+    /// Makes `buffers` resident for the dispatches after it, to be read: buffers a kernel reaches by address (a
+    /// view's directory and tapes, decision 0353 step 4d), bound by none.
+    pub fn use_read(&self, buffers: &[&BufferRef]) {
+        for b in buffers {
+            self.encoder.use_resource(b, metal::MTLResourceUsage::Read);
+        }
+    }
+
     pub fn end(mut self) {
         self.encoder.end_encoding();
         self.ended = true;

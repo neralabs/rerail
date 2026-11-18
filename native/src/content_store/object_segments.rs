@@ -28,7 +28,12 @@ pub(super) fn object_dir(database: &Path) -> PathBuf {
 
 /// A tape's bytes where they live, which the writer takes as they are (decision 0353 step 4a: a tape's home, a
 /// slab's room).
-pub type TapeBytes = Arc<dyn AsRef<[u8]> + Send + Sync>;
+pub type TapeBytes = Arc<dyn TapeHeld>;
+
+/// What holds a tape's bytes: any byte owner, which its maker can find again (`Any`: the engine's tape home, whose
+/// room a later read of the queued tape reads in place).
+pub trait TapeHeld: AsRef<[u8]> + std::any::Any + Send + Sync {}
+impl<T: AsRef<[u8]> + std::any::Any + Send + Sync> TapeHeld for T {}
 
 /// A stored object's bytes: decompressed into memory (a row of its own), or where they are in a segment, mapped.
 #[derive(Clone)]

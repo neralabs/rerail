@@ -2,7 +2,8 @@
 //! `metal_tape.metal`'s hand port.
 //!
 //! A read's function takes the tape (`device const uchar* t`, where the view's offsets count from: the
-//! document's first byte in its batch's block) and its view as u32s (`thread const uint* v`, the device's
+//! document's first byte in its batch's block) and its view as u32s (`CLIF_VIEW_SPACE const uint* v`: `thread` unless a kernel source defines it `device`, as the
+//! join kernels do, which read each document's view where the batch's directory holds it; the device's
 //! `DocView`), then its own parameters. In the body the tape and the view are byte offsets from those pointers, 0 where they come in, so
 //! an address the read computes is an offset: a load of the view (marked aligned: its fields) reads `v`, a load of
 //! the tape reads `t`, at any alignment (two aligned words shifted together where it is not aligned to its size;
@@ -41,6 +42,9 @@ fn ty(t: ir::Type) -> Result<(&'static str, &'static str), String> {
 /// kernel source may define before the reads, as the label passes' does to make the format a constant). Guarded,
 /// so a kernel may include the reads of several families.
 pub const HELPERS: &str = "\
+#ifndef CLIF_VIEW_SPACE
+#define CLIF_VIEW_SPACE thread
+#endif
 #ifndef CLIF_HELPERS
 #define CLIF_HELPERS 1
 #ifndef clif_view
@@ -84,9 +88,9 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family
 /// The pointers a read of `family` takes, as MSL's parameters and as a call passes them on.
 fn pointers(family: Family) -> (&'static str, &'static str) {
     match family {
-        Family::Tape => ("device const uchar* t,thread const uint* v", "t,v"),
+        Family::Tape => ("device const uchar* t,CLIF_VIEW_SPACE const uint* v", "t,v"),
         Family::Relation => ("device const uchar* t,ulong a0", "t"),
-        Family::View => ("device const uchar* t,ulong a0,device const uchar* tt,thread const uint* v", "t"),
+        Family::View => ("device const uchar* t,ulong a0,device const uchar* tt,CLIF_VIEW_SPACE const uint* v", "t"),
     }
 }
 

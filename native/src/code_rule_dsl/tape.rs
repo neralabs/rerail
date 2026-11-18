@@ -1264,10 +1264,15 @@ impl TapeImage {
 
     /// Whether its bytes are placed in a room (a slab's, decision 0353 step 4a), not its own.
     pub fn placed(&self) -> bool {
+        self.room().is_some()
+    }
+
+    /// The room the tape is placed in (`placed`), which says where the device reads it.
+    pub fn room(&self) -> Option<&std::sync::Arc<dyn rerail_tape_format::home::Room>> {
         match &self.held {
-            Held::F15(c) => c.bytes.placed(),
-            Held::F16(t) => t.home().placed(),
-            Held::F16Z(t) => t.home().placed(),
+            Held::F15(c) => c.bytes.room(),
+            Held::F16(t) => t.home().room(),
+            Held::F16Z(t) => t.home().room(),
         }
     }
 

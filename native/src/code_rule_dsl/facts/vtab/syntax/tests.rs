@@ -1811,10 +1811,13 @@ fn the_view_reads_are_the_hosts_rows() {
     use rerail_clif::view::TapeView;
     const WIDE: usize = 14;
     const KERNEL: &str = r#"
+// The tape is reached by its GPU address (a pointer in the stage's constants, the buffer made resident): no binding.
+struct Tapes { device const uchar* tt; };
 kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[buffer(1)]], constant uint& n [[buffer(2)]],
-                       device const uchar* tt [[buffer(3)]], constant uint* tv [[buffer(4)]], device long* out [[buffer(5)]],
+                       constant Tapes& tapes [[buffer(3)]], constant uint* tv [[buffer(4)]], device long* out [[buffer(5)]],
                        constant uint& nf [[buffer(6)]], uint l [[thread_position_in_grid]]) {
     if (l >= n) return;
+    device const uchar* tt = tapes.tt;
     uint v[29];
     for (uint k = 0u; k < 29u; k++) v[k] = tv[k];
     device long* o = out + l * 14u;
@@ -1912,7 +1915,9 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
                     enc.set_buffer(0, Some(&block.gpu_buffer(device)), 0);
                     enc.set_bytes(1, 8, (&raw const d).cast());
                     enc.set_bytes(2, 4, (&raw const n).cast());
-                    enc.set_buffer(3, Some(&tt), 0);
+                    let address = tt.gpu_address();
+                    enc.set_bytes(3, 8, (&raw const address).cast());
+                    enc.use_resource(&tt, metal::MTLResourceUsage::Read);
                     enc.set_bytes(4, std::mem::size_of::<TapeView>() as u64, (&raw const view).cast());
                     enc.set_buffer(5, Some(&out), 0);
                     enc.set_bytes(6, 4, (&raw const nf).cast());
