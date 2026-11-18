@@ -771,11 +771,14 @@ async function poll() {
 
 /**
  * One poll: everything the current view needs, in parallel. A call during a poll joins it and
- * asks for one more afterwards, since what to fetch (the range) may have changed meanwhile.
+ * asks for one more afterwards, since what to fetch (the range) may have changed meanwhile. Whoever asked (a change,
+ * the person, a retry), the page holds a read out from its start until it answers (`data.readingSince`), so a read
+ * that hangs ends Live as a missed poll did.
  */
 export async function refresh() {
   if (inFlight) { queued = true; return inFlight; }
   const asked = Date.now();
+  data.readingSince = asked;
   windowRead = sinceFor();
   inFlight = poll();
   try { await inFlight; } finally { inFlight = null; }
@@ -789,6 +792,7 @@ export async function refresh() {
  * (`atPace`); one that answered holds what the daemon had when it began.
  */
 function afterRead(asked) {
+  data.readingSince = 0;
   if (!data.disconnected && data.behindSince <= asked) data.behindSince = 0;
   if (data.disconnected || atPace) retryLater();
 }

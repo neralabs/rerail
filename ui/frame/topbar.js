@@ -34,9 +34,16 @@ function updatedAgo(at) {
 const heardAt = () => Math.max(data.updatedAt, data.heardAt);
 /**
  * Until when the page is known to show what the daemon holds: the moment it learned of something it has not read yet,
- * else when the daemon was last heard. A read that hangs while the daemon beats leaves the page behind from then on.
+ * or started a read that has not answered, whichever came first; else when the daemon was last heard. A read that
+ * hangs while the daemon beats leaves the page behind from then on, whoever asked for it.
  */
-const currentAt = () => data.behindSince || heardAt();
+const currentAt = () => earliest(data.behindSince, data.readingSince) || heardAt();
+
+/** The earliest of `moments` that is set (not 0), or 0 when none is. */
+function earliest(...moments) {
+  const set = moments.filter(at => at > 0);
+  return set.length === 0 ? 0 : Math.min(...set);
+}
 
 /* Labels stay short and leave out the repo (it is in the pill); the tooltip says what is known and what to do. Any
  * failed poll that is not the repository's 404 counts as disconnected, so the words claim only that the daemon did not

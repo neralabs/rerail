@@ -41,7 +41,7 @@ beforeEach(() => {
   setScope({ repository: "A" });
   Object.assign(data, {
     loaded: true, disconnected: false, accessRequired: false, missing: false, health: { version: "1" },
-    repository: { setUp: true, state: "running" }, updatedAt: NOW, heardAt: NOW, behindSince: 0,
+    repository: { setUp: true, state: "running" }, updatedAt: NOW, heardAt: NOW, behindSince: 0, readingSince: 0,
   });
 });
 
@@ -70,6 +70,22 @@ describe("the status pill", () => {
 
   it("stops saying Live once a read has hung for two beats, though the daemon still beats", () => {
     data.behindSince = NOW - LIVE_MS - 1_000;
+
+    renderStatus();
+
+    expect(words.textContent).toBe("Updated just now");
+  });
+
+  it("stops saying Live once any read the page started, a view or range the person asked for among them, hangs for two beats", () => {
+    data.readingSince = NOW - LIVE_MS - 1_000;
+
+    renderStatus();
+
+    expect(words.textContent).toBe("Updated just now");
+  });
+
+  it("goes by the earlier of a change it has not read and a read still out", () => {
+    Object.assign(data, { behindSince: NOW - 2_000, readingSince: NOW - LIVE_MS - 1_000 });
 
     renderStatus();
 

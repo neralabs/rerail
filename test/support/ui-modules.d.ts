@@ -161,6 +161,7 @@ declare module "*/ui/state.js" {
     updatedAt: number;
     heardAt: number;
     behindSince: number;
+    readingSince: number;
     accessRequired: boolean;
     health: { version: string; model?: { ok: boolean; message?: string } } | null;
     missing: boolean;

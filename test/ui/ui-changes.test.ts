@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { setNeeds, startPolling } from "../../ui/poll.js";
+import { refreshNow, setNeeds, startPolling } from "../../ui/poll.js";
 import { data, setScope, ui } from "../../ui/state.js";
 import { currentNeeds } from "../../ui/views/index.js";
 import type { MergeAssistStatus } from "../../src/engine/index.js";
@@ -403,6 +403,29 @@ describe("the dashboard following the daemon's change stream", () => {
     for (const reply of unanswered) reply();
     await settle();
     expect(data.behindSince).toBe(0);
+  });
+
+  it("counts the page behind from a read the person asks for until it answers, whatever the beats say", async () => {
+    stream().send("t1");
+    await settle();
+    vi.stubGlobal("fetch", async (input: URL, init: { signal?: AbortSignal } = {}) => {
+      const url = new URL(input);
+      if (url.pathname === "/api/changes") return openStream(init.signal!);
+      reads.push(url.pathname);
+      return new Promise<Response>(() => {});
+    });
+    await after(1_000);
+    const asked = Date.now();
+    void refreshNow();
+    await settle();
+
+    for (let beat = 0; beat < 3; beat += 1) {
+      await after(5_000);
+      stream().send("t1");
+      await settle();
+    }
+
+    expect(data.readingSince).toBe(asked);
   });
 
   it("reads at the first beat past the activity window's own boundary, as Today's at local midnight", async () => {
