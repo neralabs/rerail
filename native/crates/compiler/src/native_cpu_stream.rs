@@ -3674,7 +3674,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         // the code's top half. At a token, `Live` is those bits (each mark that holds there),
         // the others all set (tested by their masks); at the stream's end, the bits of the
         // marks the end has. A mark the record holds is then one bit test.
-        let in_code = native.block_programs.first().and_then(|b| b.records.as_ref()).map_or(0, |r| r.marks.len());
+        let in_code = native.block_programs.first().and_then(|b| b.records.as_ref()).map_or(0, |r| r.mark_bits());
         let mut end_bits: i64 = if in_code >= 64 { 0 } else { -1i64 << in_code };
         for b in words {
             if let Op::Mark { order, end: true, .. } = b.operation
@@ -4308,7 +4308,9 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     // stream's end, the mark is there when the end has it.
                     let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
                     let skip = goto(pc + 2);
-                    if usize::from(order) < in_code {
+                    // A token mark past the code's (decision 0407): its bit in `Live` set at every
+                    // token, as a mark's in the record is where it holds; its tokens tested below.
+                    if usize::from(order) < in_code || pattern.is_some() {
                         // In the record: its bit in `Live`, one test. Taken, it and the marks
                         // before it are done at this token.
                         let live = mget(&mut f, Mem::Live);
@@ -4366,7 +4368,8 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             let follows = f.create_block();
                             let ask = f.create_block();
                             let at_end = mget(&mut f, Mem::AtEnd);
-                            f.ins().brif(at_end, follows, &[], ask, &[]);
+                            let ended = if end { follows } else { skip };
+                            f.ins().brif(at_end, ended, &[], ask, &[]);
                             f.switch_to_block(ask);
                             let m = native.token_marks[usize::from(i)].clone();
                             let bit = native.extras.first().map(|e| e.0);
@@ -4402,10 +4405,6 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                         }
                         f.ins().jump(fall, &[]);
                         continue;
-                    }
-                    // A token mark is in the record (`validate_token_marks`).
-                    if pattern.is_some() {
-                        return Err(Error::UnsupportedBackend);
                     }
                     let (at_end, live) = (mget(&mut f, Mem::AtEnd), mget(&mut f, Mem::Live));
                     let lit = f.ins().ushr_imm(live, i64::from(order));

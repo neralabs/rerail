@@ -527,11 +527,15 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     None => true,
                 };
                 // A mark the record has (`Records::marks`): its bit in the code.
-                let in_code = (k as usize) < records.map_or(0, |r| r.marks.len());
+                let in_code = (k as usize) < records.map_or(0, |r| r.mark_bits());
+                let token_mark = program.token_marks.iter().any(|m| u32::from(m.order) == k);
                 let here = if at_end {
                     mode & 32 != 0
                 } else if in_code {
                     code >> (crate::records::MARK_SHIFT + k) & 1 == 1
+                } else if token_mark {
+                    // Past the code's (decision 0407): its tokens alone, tested below.
+                    true
                 } else {
                     mask_bit(operand, start) && word_ok()
                 };
@@ -923,8 +927,14 @@ pub fn validate_local_checks(program: &Words) -> Result<(), Error> {
 /// (its bit gates it), with extras taken in the token step (they are skipped by their bit);
 /// its elements rising by offset, the mark's own (0) among them, the words the program's.
 pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
-    let marks = program.block_programs.first().and_then(|b| b.records.as_ref()).map_or(0, |r| r.marks.len());
+    // A token mark past the code's (decision 0407) is a bit of `live`, which holds 32; one that
+    // refuses is tested once a token by its code bit, so in the code.
+    let marks = 32;
+    let bits = program.block_programs.first().and_then(|b| b.records.as_ref()).map_or(0, |r| r.mark_bits());
     for (i, m) in program.token_marks.iter().enumerate() {
+        if m.refuses && usize::from(m.order) >= bits {
+            return Err(Error::InvalidOperand(i));
+        }
         let rising = i == 0 || program.token_marks[i - 1].order < m.order;
         let offsets = m.elems.windows(2).all(|w| w[0].offset < w[1].offset) && m.elems.iter().any(|e| e.offset == 0) && m.elems.first().is_some_and(|e| e.offset >= -1);
         // A `not` or an `end` only after the mark's token, but for the token before's `not`,

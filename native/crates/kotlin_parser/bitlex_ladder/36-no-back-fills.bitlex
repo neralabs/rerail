@@ -472,8 +472,6 @@ mask ann_go     = kw_start & (text("if") & ~next(w, 2) | text("when") & ~next(w,
 mask ann_tail   = code & text(")") & next(back_fill(ann_go, solid))
 mask ann_expr   = code & at_sign & next(back_fill(ann_tail, code & (at_sign | lf | lbrace | text(";"))))
 mark dotted     = wild_at | recv_at | obj_at | del_brace | ft_dot
-# A modifier word where a declaration follows it, not a name.
-mark decl_mod   = tokens after ~("." | "?." | "::") "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" | "fun" | "val" | "var" | "class" | "interface" | "object" | "get" | "set" | "companion" | "constructor" | "enum" | "typealias" | "@"
 # A parameter's modifier word, before its name.
 mark acc        = acc_at
 # A name before `::`, but `this` (a navigation's receiver): a callable reference's receiver, at
@@ -487,11 +485,6 @@ mark blk        = tokens after ")" | "else" | "do" | "try" | "finally" | "->" "{
 # A lambda's parameters, and a lambda with none before its `->`.
 mark lam_params = lam_to_arrow & ~lam_bare_at
 mark lam_bare   = lam_bare_at
-# An annotation's use-site target (`@get:`), and a file annotation's `@` (`@file:`).
-mark use_site   = tokens after "@" "field" | "property" | "get" | "set" | "receiver" | "param" | "setparam" | "delegate" ":"
-mark file_at    = tokens "@" "file" ":"
-# A list's trailing comma, before its closer.
-mark trail      = tokens "," ")" | ">" | "]" | "}" | "->"
 # A name and `=` (or an assignment's operator): an assignment to it, or a named argument.
 mask asg_op     = code & (text("=") & ~text("==") | text("+=") | text("-=") | text("*=") | text("/=") | text("%="))
 mask aid_at     = word_start & back_fill(w & ~next(w) & next(back_fill(asg_op, solid)), ~w)
@@ -521,6 +514,15 @@ mask ft_run     = back_fill(ft_dot, ~(w | dot | text("<") | text(">")))
 mask frecv      = w & ft_run & ~prev(ft_run)
 mask suspend_ty = code & text("suspend") & ~next(w, 7) & prev(fill(prev(colon_ty), solid)) & next(back_fill(code & text("("), solid), 7)
 mark generic    = gen_lt | ptype_at | frecv | suspend_ty | ann_expr
+# The token marks that tier 2 tests alone, after the marks the code holds (decision 0407): no
+# bit of the code, no mask; each its tokens, read at the token as the lean parser peeks.
+# A modifier word where a declaration follows it, not a name.
+mark decl_mod   = tokens after ~("." | "?." | "::") "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" | "fun" | "val" | "var" | "class" | "interface" | "object" | "get" | "set" | "companion" | "constructor" | "enum" | "typealias" | "@"
+# An annotation's use-site target (`@get:`), and a file annotation's `@` (`@file:`).
+mark use_site   = tokens after "@" "field" | "property" | "get" | "set" | "receiver" | "param" | "setparam" | "delegate" ":"
+mark file_at    = tokens "@" "file" ":"
+# A list's trailing comma, before its closer.
+mark trail      = tokens "," ")" | ">" | "]" | "}" | "->"
 
 tree kotlin {
   node source_file whole = (file_at file_annotation semi)* [package_header] [import_list] (statement (semi | ';'))*

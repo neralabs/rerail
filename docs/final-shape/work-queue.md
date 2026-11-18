@@ -1829,3 +1829,12 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   which agree with the compiled side, so nothing caught it.
 - **Done when**: the reference places a settling mark's extras as tier 2 does, and the test's
   grammar says `settles` again.
+
+### Q221. The C directives' Metal reads refuse with `UnsupportedBackend` in this worktree
+
+- **What**: `rerail-c-directives`' `directives_read_as_the_lean_scan_reads_them` and
+  `a_file_past_64_kib_is_read_at_wide_columns` fail at their Metal step: `run_resident` returns
+  `UnsupportedBackend` (seen 2026-11-18 after the merge of Parser-generators-final-shape, with and
+  without 0407's change to the marks the code holds). The cause is one of `starts_late` (an
+  `Early` or a prefix in the program), no device in the process, or a single-program check.
+- **Done when**: the cause is named and the two tests pass on a Mac with Metal.

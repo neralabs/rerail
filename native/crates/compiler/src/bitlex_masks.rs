@@ -3138,7 +3138,14 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // which tells its leaf's kind (Kotlin's line and block comments); so a mark for each kind,
     // within `records::MARKS`. Else an arm in every state, which tells an extra from a token
     // beginning with the same byte by their rows' start masks (`ROW`).
-    let token_extras = !low.extra.is_empty() && mark_kinds.len() + low.extra.len() <= crate::records::MARKS;
+    // The marks the code holds (decision 0407): each up to the last that tier 1 makes, or that
+    // refuses wherever it holds (tested once a token by its bit, `TokenMark::refuses`). A token
+    // mark after them holds no bit: tier 2 tests its tokens alone, as the lean parser peeks.
+    let refuses_alone = |k: usize| !low.hidden.contains(&low.marks[k].0) && arms.iter().all(|a| a.token != mark_kinds[k]);
+    // Without the token loop's records, every mark is a mask tier 2 reads (`any_mark` below).
+    let records = (!low.token_rules.is_empty() || !low.token_reads.is_empty()) && low.skip.is_some();
+    let code_marks = if records { (0..low.marks.len()).rev().find(|&k| !low.token_marks.contains_key(&k) || refuses_alone(k)).map_or(0, |k| k + 1) } else { low.marks.len() };
+    let token_extras = !low.extra.is_empty() && code_marks.min(crate::records::MARKS) + low.extra.len() <= crate::records::MARKS;
     let (states, arms) = {
         let extras = low.extra.iter().map(|k| id(k)).collect::<Result<Vec<u16>, String>>()?;
         let apart = |_: u16, _: u16| true;
@@ -3196,7 +3203,11 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         // A token mark: its bit at every grammar token (its first element's word's, where it is
         // one word), the rest tier 2's; its bytes, its first element's.
         if let Some((before, seq)) = low.token_marks.get(&k).cloned() {
-            if looped && matches!(seq[0].as_slice(), [TokenElem::Word(_)]) {
+            if k >= code_marks {
+                // Past the code's: no bit, no mask.
+                let none = low.leaf(BlockOp::Const(0), false);
+                mark_masks.push(none);
+            } else if looped && matches!(seq[0].as_slice(), [TokenElem::Word(_)]) {
                 alone[k] = true;
                 let none = low.leaf(BlockOp::Const(0), false);
                 mark_masks.push(none);
@@ -3672,11 +3683,11 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     }
     // The marks in the code, by order (the first `MARKS`): each its mask (an index into the
     // program's masks here, its output once they are placed) and its word's code.
-    let mut in_code: Vec<(u16, u16)> = marks.iter().take(crate::records::MARKS).enumerate().map(|(k, m)| (m.mask, lowered.mark_words.iter().find(|&&(x, _)| usize::from(x) == k).map_or(0, |&(_, s)| s + 1))).collect();
+    let mut in_code: Vec<(u16, u16)> = marks.iter().take(code_marks.min(crate::records::MARKS)).enumerate().map(|(k, m)| (m.mask, lowered.mark_words.iter().find(|&&(x, _)| usize::from(x) == k).map_or(0, |&(_, s)| s + 1))).collect();
     // A token mark of one first word: its mask is every grammar token's start, so where no
     // extra's token can begin with the word's first byte, its bit is the word's alone
     // (`records::WORD_ALONE`): no mask read a token.
-    for (k, m) in marks.iter().take(crate::records::MARKS).enumerate() {
+    for (k, m) in marks.iter().take(in_code.len()).enumerate() {
         let (Some(w), true) = (&m.word, m.tokens.is_some()) else { continue };
         let extra_first = (0..rows.len()).any(|r| low.extra.contains(&token_rows[r].0) && rows[r].first[usize::from(w[0]) / 64] >> (w[0] % 64) & 1 == 1);
         if in_code[k].1 != 0 && !extra_first {

@@ -692,7 +692,8 @@ fn corpus() {
 #[ignore = "a tool: set RERAIL_KOTLIN_SHOW"]
 fn show() {
     let c = compiled().expect("compiles");
-    eprintln!("tier 2: {} words", c.program.words.len());
+    let r = c.program.block_programs[0].records.as_ref();
+    eprintln!("tier 2: {} words; the code holds {:?} marks and {:?} bits in all", c.program.words.len(), r.map(|r| r.mark_bits()), r.map(|r| r.marks.len()));
     // `RERAIL_KOTLIN_WORDS=PC`: tier 2's words from 20 lines before its to 20 after.
     if let Ok(pc) = std::env::var("RERAIL_KOTLIN_WORDS") {
         let lines: Vec<&str> = c.words.lines().collect();

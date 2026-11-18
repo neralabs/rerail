@@ -323,6 +323,13 @@ pub enum Split {
 }
 
 impl Records {
+    /// The marks the code holds, by order: the first `mark_bits` marks (decision 0407). The
+    /// extras' bits come after them; a mark of a later order (a token mark that tier 2 tests
+    /// alone, a mark past `MARKS`) holds no bit of the code.
+    pub fn mark_bits(&self) -> usize {
+        self.extra.map_or(self.marks.len(), usize::from)
+    }
+
     /// Where the stream starts in `bytes`: past the prefix, where the file starts with it.
     pub fn start(&self, bytes: &[u8]) -> usize {
         if !self.prefix.is_empty() && bytes.starts_with(&self.prefix) { self.prefix.len() } else { 0 }
