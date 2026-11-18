@@ -108,7 +108,7 @@ describe("the daemon lock of a Rerail home", () => {
     expect(homeDaemonHolder(home)).toBe(process.pid);
   });
 
-  it("is handed the lock as its holder ends, as the next daemon is when one restarts at its heap ceiling", async () => {
+  it("is handed the lock as its holder ends, as when a daemon is killed or one of an earlier release restarts", async () => {
     const home = await temporaryHome();
     const predecessor = await holdInAnotherProcess(home);
     const exited = once(predecessor, "exit");
