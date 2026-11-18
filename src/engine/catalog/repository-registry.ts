@@ -83,6 +83,8 @@ function contextOf<C extends string | null>(
  * The key Rerail 0.1.4 and earlier recorded a folder outside git under on Windows, where it is not `checkoutPath`: the
  * JS realpath of the folder as the caller spelt it, which keeps a mapped or `subst` drive letter and the letter case
  * typed, where this build keys it by the spelling the disk stores. A git checkout is keyed by git's top level in both.
+ * Undefined, never a throw, where that realpath fails ({@link earlierKeyAt}), so a record or lookup goes on under the
+ * stored key alone.
  */
 function earlierKeyOf(location: Pick<RepositoryIdentityLocation, "git" | "workspaceRoot">, checkoutPath: string): string | undefined {
   if (location.git || process.platform !== "win32" || location.workspaceRoot === checkoutPath) return undefined;
@@ -97,13 +99,7 @@ function earlierKeyOf(location: Pick<RepositoryIdentityLocation, "git" | "worksp
  */
 export function spelledCheckout(checkout: CheckoutContext | undefined, spelling: string): CheckoutContext | undefined {
   if (checkout === undefined) return undefined;
-  const { git, checkoutPath } = checkout;
-  let earlierCheckoutPath: string | undefined;
-  try {
-    earlierCheckoutPath = earlierKeyOf({ git, workspaceRoot: spelling }, checkoutPath);
-  } catch {
-    return checkout;
-  }
+  const earlierCheckoutPath = earlierKeyOf({ git: checkout.git, workspaceRoot: spelling }, checkout.checkoutPath);
   return earlierCheckoutPath === undefined ? checkout : { ...checkout, earlierCheckoutPath };
 }
 
@@ -114,10 +110,20 @@ export function spelledCheckout(checkout: CheckoutContext | undefined, spelling:
  */
 const earlierKeys = new Map<string, string>();
 
-function earlierKeyAt(folder: string): string {
+/**
+ * {@link earlierPhysicalPath} of `folder`, kept in {@link earlierKeys}; undefined where it throws. The earlier key is a
+ * fallback, so a realpath that throws, for any reason, must never break the lookup under the stored key: the catch
+ * gives no earlier key. No volume is known where the JS realpath throws and the native one, which forms the stored
+ * key, works. A spelling that threw is not kept, so its next lookup tries again.
+ */
+function earlierKeyAt(folder: string): string | undefined {
   let key = earlierKeys.get(folder);
   if (key === undefined) {
-    key = earlierPhysicalPath(folder);
+    try {
+      key = earlierPhysicalPath(folder);
+    } catch {
+      return undefined;
+    }
     earlierKeys.set(folder, key);
   }
   return key;

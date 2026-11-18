@@ -5,13 +5,15 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // The JS realpath counted, the one the key Rerail 0.1.4 recorded a folder under goes through, and each lstat; the
-// native realpath, which every key of this build goes through, is passed on as it is.
-const jsRealpaths = vi.hoisted(() => ({ calls: 0, inWrite: 0, writing: false, lstats: 0 }));
+// native realpath, which every key of this build goes through, is passed on as it is. With `failing`, the JS realpath
+// throws, standing for a realpath that throws for any reason, while the native one still resolves the folder.
+const jsRealpaths = vi.hoisted(() => ({ calls: 0, inWrite: 0, writing: false, lstats: 0, failing: false }));
 vi.mock("node:fs", async importOriginal => {
   const original = await importOriginal<typeof import("node:fs")>();
   const realpathSync = Object.assign((...parameters: Parameters<typeof original.realpathSync>) => {
     jsRealpaths.calls += 1;
     if (jsRealpaths.writing) jsRealpaths.inWrite += 1;
+    if (jsRealpaths.failing) throw Object.assign(new Error("EISDIR: illegal operation on a directory, realpath"), { code: "EISDIR" });
     return original.realpathSync(...parameters);
   }, { native: original.realpathSync.native });
   const lstatSync = ((...parameters: Parameters<typeof original.lstatSync>) => {
@@ -72,6 +74,21 @@ describe.runIf(process.platform === "win32")("On Windows, the key Rerail 0.1.4 r
     jsRealpaths.inWrite = 0;
     expect(recordCheckout(database, spelled).earlierCheckoutPath).toBe(realpathSync(spelled));
     expect(jsRealpaths.inWrite).toBe(0);
+  });
+
+  it("is left out where the JS realpath throws on the folder, so recording and looking it up answer as without that key", async () => {
+    const { database, stored, spelled } = await plainFolder("Scratch");
+    jsRealpaths.failing = true;
+    try {
+      const recorded = recordCheckout(database, spelled);
+      expect(recorded).toMatchObject({ checkoutPath: stored, git: false });
+      expect(recorded).not.toHaveProperty("earlierCheckoutPath");
+      const found = createCheckoutResolver(database)(spelled);
+      expect(found).toEqual(recorded);
+      expect(checkoutStatus(database, found).started).toBe(false);
+    } finally {
+      jsRealpaths.failing = false;
+    }
   });
 
   it("is looked for in a Git checkout's audit settings once per spelling, not on each read", async () => {
