@@ -93,8 +93,13 @@ export const data = {
   mergeAssistExperiment: null,
   /** Why the coding agents could not be checked, when `GET /api/coding-agents` failed. */
   agentsError: null,
-  /** Freshness: last successful poll, and whether the last attempt failed. */
+  /**
+   * Freshness: the last successful poll (views that read more after each poll key on it), the last time the daemon was
+   * heard (a poll's answer or a message of its change stream, which the status reads), and whether the last attempt
+   * failed.
+   */
   updatedAt: 0,
+  heardAt: 0,
   disconnected: false,
   /** The daemon answered that it does not know the scoped repository or checkout. */
   missing: false,

@@ -138,17 +138,22 @@ describe("the dashboard following the daemon's change stream", () => {
     expect(vi.getTimerCount()).toBe(1);
   });
 
-  it("renders at a beat that brings nothing new, and reads nothing", async () => {
+  it("renders at a beat that brings nothing new and reads nothing, nor moves the poll's time views read more after", async () => {
     stream().send("t1");
     await settle();
     const before = reads.length;
+    const polledAt = data.updatedAt;
     renders = [];
+    await after(1_000);
 
     stream().send("t1");
     await settle();
 
     expect(reads.length).toBe(before);
     expect(renders).toEqual([false]);
+    // Settings reads every repository's rule count after each poll, keyed on this time: a beat must not start that.
+    expect(data.updatedAt).toBe(polledAt);
+    expect(data.heardAt).toBeGreaterThan(polledAt);
   });
 
   it("reads once when the stream ends, and a daemon gone shows as disconnected in that render", async () => {

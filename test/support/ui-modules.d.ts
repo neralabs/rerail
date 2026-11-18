@@ -152,6 +152,8 @@ declare module "*/ui/state.js" {
     followGitignore: boolean | null;
     sessionDetail: Map<string, SessionDetail>;
     repositories: Array<{ repositoryKey: string; [k: string]: unknown }>;
+    updatedAt: number;
+    heardAt: number;
     missing: boolean;
     disconnected: boolean;
     /** Whether a poll has answered for the scope: the sidebar's Merge Assist count waits for it. */

@@ -738,7 +738,7 @@ async function poll() {
     const results = await Promise.all(ui.scope === null ? shared : [...shared, ...await scopedJobs(since)]);
     if (started !== generation) return;
     if (since === 0) { data.activityAll = data.activity; data.activityAllSessions = data.activitySessions; }
-    data.updatedAt = Date.now();
+    data.updatedAt = data.heardAt = Date.now();
     data.disconnected = false;
     data.accessRequired = false;
     data.missing = false;
@@ -794,7 +794,7 @@ function readSoon() {
  * nothing new renders, so relative times and the status move as they did with each poll, or retries a failed count.
  */
 function onMessage({ event, data: next }, first) {
-  data.updatedAt = Date.now();
+  data.heardAt = Date.now();
   if (event === "conflicts") mergeAssistCountDue = true;
   if (first) startOver(next);
   else if (asksRead(event, next)) {

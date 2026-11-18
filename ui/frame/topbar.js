@@ -35,15 +35,15 @@ function updatedAgo(at) {
  * answer, not why. Only running sessions lose steering: the hook that starts a session may start the daemon. */
 function status() {
   if (!data.loaded && !data.disconnected && !data.accessRequired) return { cls: "", text: "Connecting…", title: `Waiting for the local daemon at ${location.origin}.` };
-  const rel = data.updatedAt ? updatedAgo(data.updatedAt) : "never";
+  const rel = data.heardAt ? updatedAgo(data.heardAt) : "never";
   const version = data.health ? ` ${data.health.version}` : "";
   if (data.accessRequired) {
     return { cls: "down", text: "Needs the dashboard link",
       title: `${location.origin} answers only a browser that has opened its dashboard link once. Run rerail manage, or rerail daemon start --open, on this computer.` };
   }
   if (data.disconnected) {
-    if (!data.updatedAt || Date.now() - data.updatedAt > DOWN_AFTER_MS) {
-      const since = data.updatedAt ? ` since ${new Date(data.updatedAt).toLocaleTimeString()}` : "";
+    if (!data.heardAt || Date.now() - data.heardAt > DOWN_AFTER_MS) {
+      const since = data.heardAt ? ` since ${new Date(data.heardAt).toLocaleTimeString()}` : "";
       return { cls: "down", text: "Daemon not responding",
         title: `No answer from ${location.origin}${since}. Running sessions aren't steered until it's back; a new session starts it, or run rerail daemon start.` };
     }
@@ -63,8 +63,8 @@ function status() {
   if (stateHere() === "stopped") {
     return { cls: "warn", text: "Stopped", title: "No rules run here, and nothing is logged. Start it from Overview or Settings, or run /rerail-start." };
   }
-  if (Date.now() - data.updatedAt < LIVE_MS) return { cls: "", text: "Live", title: `Connected to daemon${version} · up to date.` };
-  return { cls: "", text: `Updated ${rel}`, title: `Last refreshed ${new Date(data.updatedAt).toLocaleString()}. Refreshing pauses while the tab is hidden.` };
+  if (Date.now() - data.heardAt < LIVE_MS) return { cls: "", text: "Live", title: `Connected to daemon${version} · up to date.` };
+  return { cls: "", text: `Updated ${rel}`, title: `Last refreshed ${new Date(data.heardAt).toLocaleString()}. Refreshing pauses while the tab is hidden.` };
 }
 
 /**
@@ -72,8 +72,8 @@ function status() {
  * message, Reconnecting turns red, an age moves to its next minute; `null` when time alone does not change it.
  */
 function untilStatusMoves(s) {
-  if (!data.updatedAt) return null;
-  const age = Date.now() - data.updatedAt;
+  if (!data.heardAt) return null;
+  const age = Date.now() - data.heardAt;
   if (s.text === "Live") return LIVE_MS - age;
   if (data.disconnected && s.cls === "warn") return DOWN_AFTER_MS - age;
   return s.text.startsWith("Updated ") ? (Math.floor(age / MINUTE + 0.5) + 0.5) * MINUTE - age : null;
