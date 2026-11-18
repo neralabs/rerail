@@ -416,29 +416,21 @@ impl Rewrite for Renamed<'_> {
     }
 }
 
-/// The copies `unfold` makes of `reader`'s read at `at` of a relation whose rules are `defs`, decoded: for tests of
-/// rules of no program. `None` where it makes none.
+/// The copies `unfold` makes of `reader`'s read `at` through `defs` (rules of `v`), the read's variables named apart
+/// with `fresh`: the version they are in, and their ids there. `None` where it refuses.
 #[cfg(test)]
-pub(super) fn unfold_rules(reader: &crate::code_rule_dsl::logic::front::Rule, at: usize, defs: &[&crate::code_rule_dsl::logic::front::Rule], fresh: usize) -> Option<Vec<crate::code_rule_dsl::logic::front::Rule>> {
-    let rules: Vec<_> = std::iter::once(reader).chain(defs.iter().copied()).cloned().collect();
-    let v = super::super::body::made(&rules).ok()?;
-    let ds: Vec<RuleRef<'_>> = (1..rules.len()).map(|k| v.rule(RuleId(k as u32)).expect("a def")).collect();
-    let r = v.rule(RuleId(0)).expect("the reader");
-    let Lit::Atom(read) = r.body().nth(at)?.view() else { return None };
-    let mut b = Builder::on(&v);
-    let made = unfold(&mut b, &v, r, at, read, &ds, fresh, super::RULE_COPIES).ok()??;
+pub(super) fn unfolded(v: &Arc<Version>, reader: RuleRef<'_>, at: usize, defs: &[RuleRef<'_>], fresh: usize) -> Option<(Arc<Version>, Vec<RuleId>)> {
+    let Lit::Atom(read) = reader.body().nth(at)?.view() else { return None };
+    let mut b = Builder::on(v);
+    let made = unfold(&mut b, v, reader, at, read, defs, fresh, super::RULE_COPIES).ok()??;
     let (out, m) = b.finish().ok()?;
-    let order = renumbered(&v, &[], &made, m);
-    let lists = crate::code_rule_dsl::logic::front::Lists::default();
-    let mut tree = crate::code_rule_dsl::logic::program_image::Tree::new(&out, &lists);
-    Some(made.iter().map(|id| tree.rule(out.rule(order.as_ref().map_or(*id, |o| o[id])).expect("a copy"))).collect())
+    let order = renumbered(v, &[], &made, m);
+    Some((Arc::clone(&out), made.iter().map(|id| order.as_ref().map_or(*id, |o| o[id])).collect()))
 }
 
-/// `count` of rules of no program, as `unfold_rules` reads them.
+/// `unfolded`'s copies, shown.
 #[cfg(test)]
-pub(super) fn count_rules(reader: &crate::code_rule_dsl::logic::front::Rule, at: usize, defs: &[&crate::code_rule_dsl::logic::front::Rule]) -> Option<usize> {
-    let rules: Vec<_> = std::iter::once(reader).chain(defs.iter().copied()).cloned().collect();
-    let v = super::super::body::made(&rules).ok()?;
-    let ds: Vec<RuleRef<'_>> = (1..rules.len()).map(|k| v.rule(RuleId(k as u32)).expect("a def")).collect();
-    count(&v, v.rule(RuleId(0)).expect("the reader"), at, &ds)
+pub(super) fn unfolded_shown(v: &Arc<Version>, reader: RuleRef<'_>, at: usize, defs: &[RuleRef<'_>], fresh: usize) -> Option<Vec<String>> {
+    let (out, ids) = unfolded(v, reader, at, defs, fresh)?;
+    Some(ids.iter().map(|&id| out.show_rule(out.rule(id).expect("a copy"))).collect())
 }
