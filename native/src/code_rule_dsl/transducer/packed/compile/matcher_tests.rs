@@ -304,6 +304,79 @@ fn a_recursive_utility_inside_another_settles() {
     assert_eq!(program.roots(&tape).unwrap(), expected);
 }
 
+/// The lowerings of t45's plan (decision 0396), each a clause: a bare `$X` is the named-node test, not a pattern
+/// label; a clause that is one `inside … end` copies its label; an `all` that tests a neighbor (`inside` or `has`, by
+/// a field or not) and a lone neighbor walk start at the seed label of the nodes it holds at. Each finds W's roots.
+fn seeded_clauses() -> (crate::code_rule_dsl::CompiledCodeRuleDsl, TapeDoc) {
+    let clause = |id: &str, rule: &str| {
+        format!(
+            r#"{{"id": "{id}", "forbid": {{"ast": {{"language": "python", "rule": {rule}}}}}, "violation": {{"anchor": "witness.span", "code": "X", "message": "x"}}}}"#
+        )
+    };
+    let clauses = [
+        clause("named", r#"{"all": [{"pattern": "$X"}, {"kind": "identifier"}, {"inside": {"kind": "parameters", "stopBy": "neighbor"}}]}"#),
+        clause("in-function", r#"{"inside": {"kind": "function_definition", "stopBy": "end"}}"#),
+        clause("top", r#"{"kind": "expression_statement", "inside": {"kind": "module", "stopBy": "neighbor"}, "not": {"has": {"kind": "call", "stopBy": "neighbor"}}}"#),
+        clause("named-function", r#"{"kind": "function_definition", "has": {"field": "name", "kind": "identifier", "stopBy": "neighbor"}}"#),
+        clause("function-name", r#"{"kind": "identifier", "inside": {"kind": "function_definition", "field": "name", "stopBy": "neighbor"}}"#),
+        clause("lone", r#"{"not": {"inside": {"kind": "argument_list", "stopBy": "neighbor"}}}"#),
+    ];
+    let policy = format!(
+        r#"{{"format": "rerail.policy/v1", "id": "seeded", "revision": 1, "mode": "steer", "description": "t45's lowerings.",
+            "scope": {{"include": ["**/*"], "exclude": []}}, "clauses": [{}]}}"#,
+        clauses.join(", ")
+    );
+    let compiled = CodeRuleDslRuntime::compile(policy, "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let tape = python_tape("import os\nx = 1\nprint(x)\n\ndef f(a, b=2, *c):\n    g(a, b)\n    return a\n\nclass K:\n    def m(self):\n        x\n");
+    (compiled, tape)
+}
+
+#[test]
+fn seeded_and_copied_labels_find_ws_roots() {
+    let (compiled, tape) = seeded_clauses();
+    let root = Root::doc(tape.clone());
+    let mut seen = BTreeSet::new();
+    for (clause, grammar) in python_matchers(&compiled) {
+        let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
+        let mut work = usize::MAX;
+        let expected = (0..tape.transducer_len() as u32)
+            .filter(|&ordinal| grammar.match_root(node_at(&root, ordinal), &mut work).ok().flatten().is_some())
+            .collect::<BTreeSet<_>>();
+        assert!(!expected.is_empty(), "{clause}: W's matcher finds a root");
+        assert_eq!(program.roots(&tape).unwrap(), expected, "{clause}");
+        let seeded = matches!(program.domain, super::compile_matcher::Domain::Label(_));
+        let patterns = program.census().iter().filter(|(kind, _)| *kind == "pattern").count();
+        match clause {
+            "named" => {
+                assert!(seeded, "named: starts at the parameters' children");
+                assert_eq!(patterns, 0, "named: `$X` is a node test, not a pattern pass");
+            }
+            "in-function" => assert!(program.label_copy().is_some(), "in-function: its roots copy the descendant label"),
+            "top" | "named-function" | "function-name" => assert!(seeded, "{clause}: starts at its seed"),
+            "lone" => {}
+            other => panic!("an unexpected clause {other}"),
+        }
+        seen.insert(clause.to_owned());
+    }
+    assert_eq!(seen.len(), 6);
+}
+
+/// The same clauses on Metal: a label-domain pass starts only at the label's members, read from its row on the
+/// device (`root_mask_label`), and a clause that copies a label reads its row (decision 0396).
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn seeded_and_copied_labels_match_on_metal() {
+    use super::compile_matcher::Backend;
+    let (compiled, tape) = seeded_clauses();
+    let tapes = vec![tape.clone(), tape];
+    for (clause, grammar) in python_matchers(&compiled) {
+        let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
+        let cpu = program.roots_batch(Backend::Cpu, &tapes).unwrap();
+        let (metal, _) = program.roots_metal(&tapes).unwrap();
+        assert_eq!(metal, cpu, "{clause}");
+    }
+}
+
 /// S2's parity gate (O23, F1): every lowered clause's passes run on Metal over the whole batch of
 /// fixtures, in one command buffer (plus one per extra round of a recursive group), and give the
 /// CPU interpreter's root sets on every fixture.
@@ -597,12 +670,14 @@ fn spilled_walks_find_the_cpus_roots() {
     let mut tapes = fixtures();
     tapes.truncate(24);
     let mut lowered = Vec::new();
-    for (_, compiled) in &clauses() {
-        for (_, grammar) in python_matchers(compiled) {
+    let mut names = Vec::new();
+    for (policy, compiled) in &clauses() {
+        for (clause, grammar) in python_matchers(compiled) {
             if let Ok(tree) = match_tree(grammar)
                 && let Ok(matcher) = LoweredMatcher::lower(&tree)
             {
                 lowered.push(matcher);
+                names.push(format!("{policy}/{clause}"));
             }
         }
     }
@@ -620,7 +695,11 @@ fn spilled_walks_find_the_cpus_roots() {
         assert!(run.metal, "the wave ran on Metal");
         waves += 1;
         found += cpu.iter().flatten().map(BTreeSet::len).sum::<usize>();
-        differ.extend(cpu.iter().zip(&metal).enumerate().filter(|(_, (c, m))| c != m).map(|(c, _)| (at, c)));
+        // By name, with the first tape where it differs and both root sets there.
+        for (c, (cpu, metal)) in cpu.iter().zip(&metal).enumerate().filter(|(_, (c, m))| c != m) {
+            let tape = cpu.iter().zip(metal).position(|(c, m)| c != m).unwrap_or(0);
+            differ.push(format!("{} (tape {tape}: cpu {:?}, metal {:?})", names[at * 12 + c], cpu[tape], metal[tape]));
+        }
     }
     eprintln!("spilled: {waves} waves of {} clauses, {found} roots, {shared} walks of a shared sibling scan", lowered.len());
     assert!(shared > 0, "some walk's sibling scan is shared (the device's `sibling_pass`)");

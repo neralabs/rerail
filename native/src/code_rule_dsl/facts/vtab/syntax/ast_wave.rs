@@ -15,17 +15,18 @@ pub(crate) struct Compiler;
 impl AstCompiler for Compiler {
     /// Each relation's matcher lowered for the transducer, over the program's first `.policy` (its utils). A matcher
     /// that does not lower fails the run, naming it.
-    fn compile(&self, matchers: &[(String, String, Vec<String>)], policies: &[serde_json::Value]) -> Result<Matchers, String> {
-        compiled(matchers, policies)
+    fn compile(&self, matchers: &[(String, String, Vec<String>)], demand: &[Option<Vec<usize>>], policies: &[serde_json::Value]) -> Result<Matchers, String> {
+        compiled(matchers, demand, policies)
     }
 }
 
-fn compiled(matchers: &[(String, String, Vec<String>)], policies: &[serde_json::Value]) -> Result<crate::code_rule_dsl::facts::vtab::syntax::Matchers, String> {
+fn compiled(matchers: &[(String, String, Vec<String>)], demand: &[Option<Vec<usize>>], policies: &[serde_json::Value]) -> Result<crate::code_rule_dsl::facts::vtab::syntax::Matchers, String> {
     let base = policies.first();
     let base_text = base.map(|b| b.to_string()).unwrap_or_default();
     matchers
         .iter()
-        .map(|(rel, text, captures)| {
+        .enumerate()
+        .map(|(k, (rel, text, captures))| {
             let key = (text.clone(), base_text.clone());
             let got = {
                 let mut kept = LOWERED.lock().unwrap_or_else(|p| p.into_inner());
@@ -34,7 +35,7 @@ fn compiled(matchers: &[(String, String, Vec<String>)], policies: &[serde_json::
                     .clone()
             };
             let (lowered, gates, captor) = got.map_err(|why| format!("{rel}: the matcher {text} does not lower: {why}"))?;
-            Ok(Matcher { rel: rel.clone(), lowered, gates, captures: captures.clone(), captor })
+            Ok(Matcher { rel: rel.clone(), lowered, gates, captures: captures.clone(), captor, demanded_by: demand.get(k).cloned().flatten() })
         })
         .collect::<Result<Vec<_>, String>>()
         .and_then(Wave::new)
@@ -51,6 +52,9 @@ pub(crate) struct Matcher {
     /// The metavariables the atom captures, in its relation's column order after `n` (decision 0107).
     pub(crate) captures: Vec<String>,
     pub(in crate::code_rule_dsl) captor: Arc<crate::code_rule_dsl::waves::policies::Captor>,
+    /// The matchers (by place in the wave) whose roots hold every node this one's rows are read at
+    /// (`matchers::demanded_by_roots`, decision 0396): its rows are made only there. `None`: at every root.
+    pub(crate) demanded_by: Option<Vec<usize>>,
 }
 
 /// A program's matchers (decision 0106) and the wave they run as: every matcher's labels and roots in one run per
@@ -234,6 +238,27 @@ fn matched(
         (found, run.limited)
     };
     profile::work(profile::Unit::Node, nodes);
+    // A matcher read only where other matchers' roots are (decision 0396): its roots there alone, before any capture.
+    let mut demanded: Vec<Option<Vec<BTreeSet<u32>>>> = matchers
+        .list
+        .iter()
+        .map(|m| {
+            let by = m.demanded_by.as_ref()?;
+            Some((0..held.len()).map(|t| by.iter().flat_map(|&b| found[b].get(t)).flatten().copied().collect::<BTreeSet<u32>>()).collect())
+        })
+        .collect();
+    let found: Vec<Vec<BTreeSet<u32>>> = found
+        .into_iter()
+        .zip(&mut demanded)
+        .map(|(roots, demand)| match demand.take() {
+            Some(demand) => {
+                let kept: Vec<BTreeSet<u32>> = roots.iter().zip(&demand).map(|(roots, demand)| roots.intersection(demand).copied().collect()).collect();
+                crate::code_rule_dsl::prof::count("ast.demanded_dropped", roots.iter().map(BTreeSet::len).sum::<usize>() - kept.iter().map(BTreeSet::len).sum::<usize>());
+                kept
+            }
+            None => roots,
+        })
+        .collect();
     let mut out = Vec::new();
     for (c, (m, found)) in matchers.list.iter().zip(found).enumerate() {
         let columns = crate::code_rule_dsl::logic::plan::corpus::ast_columns(&m.rel);

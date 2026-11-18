@@ -1727,6 +1727,19 @@ impl Program {
         )
     }
 
+    /// Whether `pattern` is a bare metavariable (`$X`, `$_`, `$$X`), and if so whether it wants a named node. At its
+    /// root such a pattern holds at every node (a named one for `$X`), its one capture the node itself: a node test,
+    /// not a pattern to match (t45 §3).
+    pub fn bare_metavariable(pattern: &Pattern) -> Option<bool> {
+        if !matches!(pattern.strictness, MatchStrictness::Smart) {
+            return None;
+        }
+        match &pattern.node {
+            PatternNode::MetaVar { meta_var: MetaVariable::Capture(_, named) | MetaVariable::Dropped(named) } => Some(*named),
+            _ => None,
+        }
+    }
+
     pub fn compile_ast_grep_pattern(pattern: &Pattern) -> Result<Self, Error> {
         if !matches!(pattern.strictness, MatchStrictness::Smart) {
             return Err(Error::UnsupportedPattern);

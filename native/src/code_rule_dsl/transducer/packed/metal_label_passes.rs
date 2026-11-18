@@ -73,8 +73,11 @@ pub(in crate::code_rule_dsl) enum Pass<'a> {
 #[derive(Debug)]
 pub(in crate::code_rule_dsl) enum Roots {
     /// The nodes whose kind is one of `kinds` (any where `None`) and whose code passes `entry`
-    /// (`(KIND, kind)` or `(SUPERTYPE, class)`), in the files `active` marks.
-    Codes { kinds: Option<Vec<u16>>, entry: Vec<(u8, u16)>, active: Vec<bool> },
+    /// (`(KIND, kind)` or `(SUPERTYPE, class)`), in the files `active` marks. With a `label` (its row), a micro walk
+    /// starts only at the label's members (`root_mask_label`): a pass whose domain is a label launched at every node
+    /// its kinds allow, 877,009 walks for a label of 7,270 (t45 §1). Other readers take the codes' rule, a superset
+    /// that the walk's first test, the label, narrows.
+    Codes { kinds: Option<Vec<u16>>, entry: Vec<(u8, u16)>, active: Vec<bool>, label: Option<u32> },
     /// Per file, its listed nodes (document-local, ascending).
     Listed(Vec<Vec<u32>>),
 }
@@ -102,7 +105,7 @@ impl Roots {
     pub(in crate::code_rule_dsl) fn nodes<'a>(&'a self, file: usize, tape: &'a TapeDoc) -> Box<dyn Iterator<Item = u32> + 'a> {
         match self {
             Self::Listed(lists) => Box::new(lists.get(file).into_iter().flatten().copied()),
-            Self::Codes { kinds, entry, active } => {
+            Self::Codes { kinds, entry, active, .. } => {
                 if !active.get(file).copied().unwrap_or(false) {
                     return Box::new(std::iter::empty());
                 }
@@ -123,13 +126,17 @@ impl Roots {
     }
 
     /// This rule as the device reads it (`root_mask`), appended to `words`: its kind (0 over codes,
-    /// 1 listed); over codes, a bit per file it runs in, then its test (`device_rule`); listed,
+    /// 1 listed, 2 over codes within a label, then the label's row); over codes, a bit per file it runs in, then its test (`device_rule`); listed,
     /// its nodes as a row of bits over the batch's nodes (two words past the last, which a 64-bit
     /// window at the end reads).
     fn table(&self, files: &[TapeDoc], words: &mut Vec<u32>) -> Result<(), Error> {
         match self {
-            Self::Codes { active, .. } => {
-                words.push(0);
+            Self::Codes { active, label, .. } => {
+                // 0, or 2 and the label's row before the codes' rule.
+                match label {
+                    Some(row) => words.extend([2, *row]),
+                    None => words.push(0),
+                }
                 let mut bits = vec![0_u32; files.len().div_ceil(32)];
                 for file in (0..files.len()).filter(|&file| active.get(file).copied().unwrap_or(false)) {
                     bits[file / 32] |= 1 << (file % 32);

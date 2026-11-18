@@ -8,7 +8,13 @@ use crate::code_rule_dsl::transducer::packed::device::{ClauseRoots, Outcome, Roo
 /// (`metal_program_backend::label_passes`), pattern leaves included (`MatcherDevice::matcher_roots`).
 pub(in crate::code_rule_dsl) fn matcher_roots(this: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error> {
     let no_labels = empty_sets(tapes, this.labels.defs.len());
-    let roots = tapes.iter().zip(&no_labels).map(|(tape, sets)| domain(&this.domain, tape, sets).collect()).collect();
+    // A seeded clause's domain is a label not yet known: its kinds' nodes, which its program's first test, the seed,
+    // narrows (0396).
+    let listed = match &this.domain {
+        Domain::Label(_) => this.labels.bound(&this.domain, &mut Vec::new()).map_or(Domain::All, |kinds| Domain::Kinds(kinds.into_iter().collect())),
+        other => other.clone(),
+    };
+    let roots = tapes.iter().zip(&no_labels).map(|(tape, sets)| domain(&listed, tape, sets).collect()).collect();
     let (mut found, outcome) = metal(&[this], this.labels.defs.len(), tapes, Some(ClauseRoots::Listed(&[roots])), None, None)?;
     Ok((found.pop().expect("one clause"), outcome))
 }
@@ -73,13 +79,15 @@ fn metal<'a>(
         .collect::<Vec<_>>();
     let nodes = tapes.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let words = nodes.div_ceil(32).max(1);
-    // A pass's roots: its domain's nodes. A label domain's program tests the label first, so on
-    // Metal, where the label is not known before the command buffer runs, it starts at the nodes
-    // of the kinds the label can have (`Labels::bound`). They are a rule over each document's
+    // A pass's roots: its domain's nodes. A label domain's program tests the label first. On Metal
+    // the label is not known before the command buffer runs, so the rule names the kinds the label
+    // can have (`Labels::bound`) and the label's row, and a micro walk starts only at the label's
+    // members, read from its row as the walk runs (0396). They are a rule over each document's
     // codes (`Roots::Codes`, decision 0033), not a list: the device reads each root in place.
     // Shared by (domain, entry, the tapes the clause is active on), so passes of one domain have
     // one rule (06 S7: 605 passes, 70 M roots as lists, of 264 such keys).
-    let mut shared = HashMap::<(Domain, Option<Vec<(u8, u16)>>, Vec<bool>), Arc<Roots>>::new();
+    let mut shared = HashMap::<(Domain, Option<Vec<(u8, u16)>>, Vec<bool>, Option<u32>), Arc<Roots>>::new();
+    let index = |label: u16| u32::from(label - LABEL_BASE);
     let mut roots = |clause: &LoweredMatcher, starts: &Domain, program: Option<&'a Program>| -> Arc<Roots> {
         let entry = program.map(Entry::of);
         let bound = match starts {
@@ -90,18 +98,21 @@ fn metal<'a>(
         };
         let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
         let active = (0..tapes.len()).map(|tape| active.is_none_or(|active| active[at][tape])).collect::<Vec<_>>();
+        let label = match starts {
+            Domain::Label(label) => Some(index(*label)),
+            _ => None,
+        };
         let starts = bound.unwrap_or_else(|| starts.clone());
-        let key = (starts.clone(), entry.as_ref().map(|entry| entry.0.clone()), active.clone());
+        let key = (starts.clone(), entry.as_ref().map(|entry| entry.0.clone()), active.clone(), label);
         Arc::clone(shared.entry(key).or_insert_with(|| {
             let kinds = match starts {
                 Domain::All => None,
                 Domain::Kinds(kinds) => Some(kinds),
                 Domain::Label(_) => unreachable!("a label domain is bounded by its kinds"),
             };
-            Arc::new(Roots::Codes { kinds, entry: entry.map(|entry| entry.0).unwrap_or_default(), active })
+            Arc::new(Roots::Codes { kinds, entry: entry.map(|entry| entry.0).unwrap_or_default(), active, label })
         }))
     };
-    let index = |label: u16| u32::from(label - LABEL_BASE);
     // The facts' rows, before any pass: made on the host, tested on the device (`Pass::Fact`).
     let facts = fact_rows(clauses.iter().flat_map(|clause| clause.labels.facts()), tapes);
     let mut slots = 0_u32;
@@ -187,6 +198,10 @@ fn metal<'a>(
                 },
                 entry: Vec::new(),
                 active: active[at].clone(),
+                label: match clause.domain {
+                    Domain::Label(label) => Some(index(label)),
+                    _ => None,
+                },
             },
         };
         steps.push((
@@ -195,7 +210,11 @@ fn metal<'a>(
                 clauses
                     .iter()
                     .enumerate()
-                    .map(|(at, clause)| Pass::Program { target: (labels + at) as u32, program: &clause.program, roots: Arc::new(root(at, clause)), captured: false })
+                    .map(|(at, clause)| match (clause.label_copy(), clause_roots) {
+                        // Its roots are a label's members in its domain: read from the label's row below, not walked.
+                        (Some(_), ClauseRoots::Rule(_)) => Pass::Empty { target: (labels + at) as u32 },
+                        _ => Pass::Program { target: (labels + at) as u32, program: &clause.program, roots: Arc::new(root(at, clause)), captured: false },
+                    })
                     .collect(),
             ],
         ));
@@ -212,20 +231,38 @@ fn metal<'a>(
     // Each clause's roots: its label's set bits, a word at a time, as each tape's local nodes.
     let found = (0..clauses.len())
         .map(|at| {
-            let row = &outcome.labels[(labels + at) * words..(labels + at + 1) * words];
+            let clause = clauses[at];
+            let row_of = |label: usize| &outcome.labels[label * words..(label + 1) * words];
+            // A clause that copies a label (`label_copy`): that label's row, where the clause is active, in its domain.
+            let copied = match clause_roots {
+                Some(ClauseRoots::Rule(active)) => clause.label_copy().map(|label| (index(label) as usize, active)),
+                _ => None,
+            };
+            let row = row_of(copied.map_or(labels + at, |(label, _)| label));
+            let within = match &clause.domain {
+                Domain::Label(label) if copied.is_some() => Some(row_of(index(*label) as usize)),
+                _ => None,
+            };
             tapes
                 .iter()
                 .zip(&bases)
-                .map(|(tape, &base)| {
-                    let (from, to) = (base as usize, base as usize + tape.transducer_len());
+                .enumerate()
+                .map(|(file, (tape, &base))| {
                     let mut set = BTreeSet::new();
+                    if copied.is_some_and(|(_, active)| !active[at][file]) {
+                        return set;
+                    }
+                    let (from, to) = (base as usize, base as usize + tape.transducer_len());
                     for w in from / 32..to.div_ceil(32) {
-                        let mut bits = row[w];
+                        let mut bits = row[w] & within.map_or(u32::MAX, |within| within[w]);
                         while bits != 0 {
                             let global = 32 * w + bits.trailing_zeros() as usize;
                             bits &= bits - 1;
                             if (from..to).contains(&global) {
-                                set.insert((global - from) as u32);
+                                let local = (global - from) as u32;
+                                if copied.is_none() || !matches!(&clause.domain, Domain::Kinds(kinds) if kinds.binary_search(&tape.transducer_kind(local)).is_err()) {
+                                    set.insert(local);
+                                }
                             }
                         }
                     }

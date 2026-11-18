@@ -3944,7 +3944,8 @@ impl Matchers {
 /// What compiles a program's `ast` matchers (`rel`, the matcher's text, its captures) over its first `.policy`: the
 /// engine's (`waves::policies`), registered at load.
 pub trait AstCompiler: Send + Sync {
-    fn compile(&self, matchers: &[(String, String, Vec<String>)], policies: &[serde_json::Value]) -> Result<Matchers, String>;
+    /// `demand`: per matcher, the matchers whose roots hold every node its rows are read at (`None`: everywhere).
+    fn compile(&self, matchers: &[(String, String, Vec<String>)], demand: &[Option<Vec<usize>>], policies: &[serde_json::Value]) -> Result<Matchers, String>;
 }
 
 static AST_COMPILER: std::sync::OnceLock<&'static dyn AstCompiler> = std::sync::OnceLock::new();
@@ -3955,12 +3956,12 @@ pub fn install_ast_compiler(compiler: &'static dyn AstCompiler) {
 }
 
 /// `matchers` compiled; a program with matchers and no registered compiler fails, naming the first.
-pub fn compile_matchers(matchers: &[(String, String, Vec<String>)], policies: &[serde_json::Value]) -> Result<Matchers, String> {
+pub fn compile_matchers(matchers: &[(String, String, Vec<String>)], demand: &[Option<Vec<usize>>], policies: &[serde_json::Value]) -> Result<Matchers, String> {
     if matchers.is_empty() {
         return Ok(Matchers::default());
     }
     match AST_COMPILER.get() {
-        Some(compiler) => compiler.compile(matchers, policies),
+        Some(compiler) => compiler.compile(matchers, demand, policies),
         None => Err(format!("{}: no compiler of `ast` matchers is registered", matchers[0].0)),
     }
 }

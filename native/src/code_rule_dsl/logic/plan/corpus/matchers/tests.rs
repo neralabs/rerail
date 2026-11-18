@@ -35,6 +35,34 @@ b(c, f) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute").
         assert_eq!(body("b").len(), 3, "a field the head reads stays a join");
     }
 
+    /// A matcher whose every read joins its node with a column only another matcher's roots fill is bound only at
+    /// those roots (decision 0396); one read anywhere else, under a negation or with no such join, everywhere.
+    #[test]
+    fn a_matcher_read_only_at_another_matchers_roots_is_bound_there() {
+        let src = r#"
+.decl ident(w: node, d: number)
+.decl inner(w: node, f: node)
+.decl free(w: node)
+.decl mixed(w: node)
+.decl unjoined(w: node)
+.output inner, free, mixed, unjoined
+ident(w, d) :- ast(d, w, {"language": "python", "rule": {"kind": "identifier"}}).
+inner(w, f) :- ident(w, _), ast(d, w, {"language": "python", "rule": {"inside": {"all": [{"kind": "function_definition"}, {"pattern": "$F"}], "stopBy": "end"}}}, F: f).
+free(w) :- ast(d, w, {"language": "python", "rule": {"kind": "call"}}).
+mixed(w) :- ident(w, _), ast(d, w, {"language": "python", "rule": {"inside": {"kind": "class_definition", "stopBy": "end"}}}).
+unjoined(w) :- ast(d, w, {"language": "python", "rule": {"inside": {"kind": "class_definition", "stopBy": "end"}}}).
+"#;
+        let mut prog = crate::code_rule_dsl::logic::rr::parse(src).unwrap();
+        let matchers = lower(&mut prog);
+        let at = |needle: &str| matchers.iter().position(|(_, text, _)| text.contains(needle)).unwrap();
+        let demand = demanded_by_roots(&prog, &matchers);
+        let word = at("identifier");
+        assert_eq!(demand[at("function_definition")], Some(vec![word]), "inner's node is ident's, which only the identifier matcher fills");
+        assert_eq!(demand[at("\"call\"")], None, "free joins with nothing");
+        assert_eq!(demand[word], None, "the identifier matcher is read where nothing bounds it");
+        assert_eq!(demand[at("class_definition")], None, "a matcher one rule reads unjoined is bound everywhere");
+    }
+
     /// `any`'s arms bind into the environment only when they match, so two arms binding one name share nothing; a
     /// name two parts of one `all` bind is a join the labels do not carry, and stays refused.
     // O-split-logic-tests: reads a crate above rerail-logic; compiled only once the split hosts it in the engine.

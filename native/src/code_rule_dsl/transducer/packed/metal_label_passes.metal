@@ -195,7 +195,7 @@ static void micro_walk(device const ChunkTape* docs,device const uchar* chunk,de
   if(tid<shape.itemCount&&atomic_load_explicit(&flags[2],memory_order_relaxed)==0u){
     uint low=0u,high=shape.targetCount;while(high-low>1u){uint middle=(low+high)/2u;if(passes[middle].threadStart<=tid)low=middle;else high=middle;}
     pass=low;group=tid-passes[low].threadStart;file=roots_file(items,group);group-=roots_first_group(items,file);
-    mask=root_mask_in(chunk,docs[file],items,passes[low].itemStart,file,group,part*(ROOT_GROUP/lanes),(part+1u)*(ROOT_GROUP/lanes));
+    mask=root_mask_label(chunk,docs[file],items,passes[low].itemStart,file,group,part*(ROOT_GROUP/lanes),(part+1u)*(ROOT_GROUP/lanes),head);
   }
   SimdRoots r=simd_roots(mask);
   for(uint round=0u;round<r.total;round+=32u){
@@ -338,7 +338,7 @@ static bool scan_fixed(thread const Tree& t,WalkRead r,ScanTail x,uint node){
 // reaches it so, its saved nodes the start), whose one mark is the start (an emit of the start, or of the start loaded
 // and captured, its tests then the start's). Its answer at a sibling s is whether a sibling after s passes. The walk
 // at the parent's first child, the siblings' leader, answers for all of them in one pass over the parent's children:
-// it finds the last that passes, and marks each sibling before it that is a start of the pass (`root_admits`) and
+// it finds the last that passes, and marks each sibling before it that is a start of the pass (`root_admits_label`) and
 // passes the tests of the loaded node. Every other sibling's walk, where the leader is a start, leaves the scan to it.
 // Each of a block's n starts scanned the siblings after it: n² hops, against the n of one pass. A step is a window.
 static uint sibling_pass(thread const Tree& t,thread MicroFrame& f,WalkRead r,ScanTail x,MicroPass pass,device atomic_uint* row,constant Shape& shape,uint start,uint label,bool pack,uint route,thread uint& fired,thread uint& steps,MicroQ q){
@@ -356,7 +356,7 @@ static uint sibling_pass(thread const Tree& t,thread MicroFrame& f,WalkRead r,Sc
     if(++steps>shape.steps)return 2u;
     uint b=hop&~63u;ulong marks=0ul;
     while(hop<b+64u&&hop<last){
-      if(root_admits(t.s,t.d,q.roots,pass.itemStart,q.doc,tree_local(t,hop))&&scan_fixed(t,r,x,hop))marks|=1ul<<(hop-b);
+      if(root_admits_label(t.s,t.d,q.roots,pass.itemStart,q.doc,tree_local(t,hop),r.head)&&scan_fixed(t,r,x,hop))marks|=1ul<<(hop-b);
       hop=tree_end(t,hop);
     }
     uint w0=uint(marks),w1=uint(marks>>32u);
@@ -401,7 +401,7 @@ static uint scan_marks(thread const Tree& t,thread MicroFrame& f,WalkRead r,Micr
      &&(x.load==MICRO_NONE?route==0u:f.cursors[x.load]==start)){
     uint first=parent+1u;
     if(start==first)return sibling_pass(t,f,r,x,pass,row,shape,start,label,pack,route,fired,steps,q);
-    if(root_admits(t.s,t.d,q.roots,pass.itemStart,q.doc,tree_local(t,first))){f.next=f.end;return 0u;}
+    if(root_admits_label(t.s,t.d,q.roots,pass.itemStart,q.doc,tree_local(t,first),r.head)){f.next=f.end;return 0u;}
   }
   bool closure=f.resume==4u,chain=f.resume==5u;
   uint fixed=MICRO_NONE;
@@ -627,7 +627,7 @@ static void label_group_run(Stack stack,device const ChunkTape* docs,device cons
         // lanes (`simd_roots`). The loop runs while the SIMD group's first lane has a group, so its lanes go round
         // together.
         for(uint group=lane,groups=roots_file_groups(items,file);group-simdLane<groups;group+=width){
-          ulong mask=group<groups?root_mask(chunk,own,items,pass.itemStart,file,group):0ul;
+          ulong mask=group<groups?root_mask_label(chunk,own,items,pass.itemStart,file,group,0u,ROOT_GROUP,head):0ul;
           SimdRoots r=simd_roots(mask);
           for(uint round=0u;round<r.total;round+=32u){
             uint i=round+simdLane;ushort owner=ushort(simd_root_lane(r,i));

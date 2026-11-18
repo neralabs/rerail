@@ -68,12 +68,16 @@ inline bool code_admits(device const uint* rule,device const DeviceCode& code){
 }
 // The roots of the rule at `at` among document `d`'s nodes 64*group + lo .. 64*group + hi (file `file` of the batch),
 // as bits of the group's 64.
+// A rule over codes is 0 then the rule, or 2, a label's row, then the rule (`Roots::Codes::label`); a list is 1.
 inline ulong root_mask_in(device const uchar* s,ChunkTape d,device const uint* roots,uint at,uint file,uint group,uint lo,uint hi){
  uint from=group*ROOT_GROUP;if(from>=d.nodes)return 0ul;
  uint count=min(ROOT_GROUP,d.nodes-from);hi=min(hi,count);if(lo>=hi)return 0ul;
  ulong keep=hi-lo==64u?~0ul:(((1ul<<(hi-lo))-1ul)<<lo);
  ulong mask=0ul;
- if(roots[at]!=0u){
+ // A label's row (2) sits where the codes' kind word does: the rule's file bits and test follow it as they follow 0.
+ bool listed=roots[at]==1u;
+ if(roots[at]==2u)at++;
+ if(listed){
   device const uint* row=roots+at+1u;uint b=d.node_base+from,w=b/32u,sh=b%32u;
   mask=ulong(row[w])|(ulong(row[w+1u])<<32u);
   if(sh!=0u)mask=(mask>>sh)|(ulong(row[w+2u])<<(64u-sh));
@@ -88,10 +92,32 @@ inline ulong root_mask_in(device const uchar* s,ChunkTape d,device const uint* r
 // Whether document `d`'s node `local` (file `file` of the batch) is a root of the rule at `at`: one node of
 // `root_mask_in`'s test.
 inline bool root_admits(device const uchar* s,ChunkTape d,device const uint* roots,uint at,uint file,uint local){
- if(roots[at]!=0u){device const uint* row=roots+at+1u;uint b=d.node_base+local;return ((row[b/32u]>>(b%32u))&1u)!=0u;}
+ bool listed=roots[at]==1u;
+ if(roots[at]==2u)at++;
+ if(listed){device const uint* row=roots+at+1u;uint b=d.node_base+local;return ((row[b/32u]>>(b%32u))&1u)!=0u;}
  uint files=roots[0];
  if(((roots[at+1u+file/32u]>>(file%32u))&1u)==0u)return false;
  return code_admits(roots+at+1u+(files+31u)/32u,tape_code(s,d,local));
+}
+// `root_mask_in`, and where the rule names a label (2), only the label's members: its row's bits over the group, from
+// the labels (`head`: words a row, then the rows, a bit a batch node).
+inline ulong root_mask_label(device const uchar* s,ChunkTape d,device const uint* roots,uint at,uint file,uint group,uint lo,uint hi,device const uint* head){
+ ulong mask=root_mask_in(s,d,roots,at,file,group,lo,hi);
+ if(mask==0ul||roots[at]!=2u)return mask;
+ uint words=head[1];device const uint* row=head+2u+roots[at+1u]*words;
+ uint b=d.node_base+group*ROOT_GROUP,w=b/32u,sh=b%32u;
+ // A row has no words past the batch's last node: the window reads only those it has.
+ ulong bits=ulong(row[w])|(w+1u<words?ulong(row[w+1u])<<32u:0ul);
+ if(sh!=0u)bits=(bits>>sh)|(w+2u<words?ulong(row[w+2u])<<(64u-sh):0ul);
+ return mask&bits;
+}
+// `root_admits`, and where the rule names a label (2), only a member of it: a walk that leaves its scan to another
+// start (a sibling pass's leader) needs that start to be launched, which `root_mask_label` decides.
+inline bool root_admits_label(device const uchar* s,ChunkTape d,device const uint* roots,uint at,uint file,uint local,device const uint* head){
+ if(!root_admits(s,d,roots,at,file,local))return false;
+ if(roots[at]!=2u)return true;
+ uint b=d.node_base+local;
+ return ((head[2u+roots[at+1u]*head[1]+b/32u]>>(b%32u))&1u)!=0u;
 }
 // The roots among all the group's nodes.
 inline ulong root_mask(device const uchar* s,ChunkTape d,device const uint* roots,uint at,uint file,uint group){return root_mask_in(s,d,roots,at,file,group,0u,ROOT_GROUP);}

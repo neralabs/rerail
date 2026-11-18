@@ -1393,6 +1393,15 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
   @qualname($f)` has no native step; function @qualname". Without strict it would fall back to SQLite.
 - **Done when**: `@qualname` has a native step, and the program runs strict at s1000.
 
+### Q187. The label kernels' time follows dispatches and group scans, not steps
+
+- **Found** (2026-11-18, 0396): the label passes' walk steps fell from 65.8 M to 19.8 M (internal_dead_code)
+  and 19.3 M to 7.4 M (public_api_triples). `label_micro_8` + `label_micro` went from 80.9 to 66.7 ms and from
+  61.1 to 68.2 ms. Each seeded `all` adds a level its readers wait for (public_api_triples' `label_micro_8`
+  dispatches 96 → 144), and a pass still visits every 64-node group to read its root mask.
+- **Done when**: a pass launches over only the groups its domain has members in, and the levels seeds add are
+  merged where their readers allow, with the kernels' time measured pinned before and after.
+
 ### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
 
 - **Found** (2026-11-16, t41): over 32 GPU launches, 1.76 s of host CPU and 1.28 s of GPU time ran one after the

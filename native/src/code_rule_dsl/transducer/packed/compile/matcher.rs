@@ -329,8 +329,10 @@ impl Labels {
             Domain::All | Domain::Kinds(_) => None,
         };
         match self.def(id) {
-            Label::Pattern(_, _) | Label::Empty => Vec::new(),
-            Label::Constrained(_, _, constraints) => constraints.iter().map(|(_, label)| *label).collect(),
+            // A pattern's starts are a label where it is made inside a seeded `all` (0396): it waits for the seed.
+            Label::Pattern(_, domain) => starts(domain).into_iter().collect(),
+            Label::Empty => Vec::new(),
+            Label::Constrained(_, domain, constraints) => constraints.iter().map(|(_, label)| *label).chain(starts(domain)).collect(),
             Label::Roots(program, domain)
             | Label::Targets(program, domain)
             | Label::Count { program, domain, .. } => {
@@ -343,18 +345,32 @@ impl Labels {
 }
 
 impl LoweredMatcher {
+    /// The label this clause's program only reads, where it is `SUPERTYPE T; CAPTURE; EMIT`: its roots are `T`'s
+    /// members in its domain, read from the label, not walked (t45 §1: eight such clauses walked every node at s1000).
+    pub fn label_copy(&self) -> Option<u16> {
+        match self.program.words.as_slice() {
+            &[read, capture, emit] => match (split(read), split(capture).0, split(emit).0) {
+                ((SUPERTYPE, 0, label), CAPTURE, EMIT) if label >= LABEL_BASE => Some(label),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     pub fn lower(tree: &MatchTree) -> Result<Self, Error> {
         let mut labels = Labels::default();
         // Set mode (list step 14): the clause's matches are its roots, read as keys (the wave's
         // `match(c, d, n)` and spans), so the root program stops at its first emit per start.
-        let program = Builder::new(&mut labels).roots(tree)?.in_set_mode();
+        let (program, seed) = Builder::new(&mut labels).roots(tree)?;
+        let program = program.in_set_mode();
         if labels.defs.len() > usize::from(u16::MAX - LABEL_BASE) {
             return Err(Error::InvalidOperand(0));
         }
         Ok(Self {
             labels,
             program,
-            domain: Domain::of(tree),
+            // An `all` that tests a neighbor holds only at its seed's members (0396).
+            domain: seed.map_or_else(|| Domain::of(tree), Domain::Label),
         })
     }
 
@@ -1034,6 +1050,7 @@ impl LoweredWave {
     /// program outruns the work limit on a tape gives every candidate root there, listed in [`WaveRun::limited`], so
     /// one large file does not fail the wave: the caller confirms those roots with W's matcher.
     pub fn roots_batch(&self, backend: Backend, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
+        crate::code_rule_dsl::prof::count("clauses.label_copies", self.clauses.iter().filter(|clause| clause.label_copy().is_some()).count());
         if let Backend::MetalInterpreter = backend
             && super::device::matcher().is_some()
         {
@@ -1051,6 +1068,11 @@ impl LoweredWave {
             for (t, (view, sets)) in views.iter().enumerate() {
                 if !active[c][t] {
                     per.push(BTreeSet::new());
+                    continue;
+                }
+                // A program that only reads a label: its roots are the label's members in the domain.
+                if let Some(copied) = clause.label_copy() {
+                    per.push(members(sets, copied).filter(|&node| in_domain(&clause.domain, view, sets, node)).collect());
                     continue;
                 }
                 let candidates = || domain(&clause.domain, view, sets).filter(|&node| entry.admits(view, node));
@@ -1203,6 +1225,31 @@ pub fn empty_sets(tapes: &[TapeDoc], labels: usize) -> Vec<Arc<Vec<Vec<u64>>>> {
         .iter()
         .map(|tape| Arc::new(vec![vec![0_u64; tape.transducer_len().div_ceil(64)]; labels]))
         .collect()
+}
+
+/// The members of `label`, in node order.
+fn members(sets: &[Vec<u64>], label: u16) -> impl Iterator<Item = u32> + '_ {
+    sets.get(usize::from(label - LABEL_BASE)).into_iter().flat_map(|bits| {
+        bits.iter().enumerate().flat_map(|(at, &word)| {
+            let mut word = word;
+            std::iter::from_fn(move || {
+                (word != 0).then(|| {
+                    let bit = word.trailing_zeros();
+                    word &= word - 1;
+                    at as u32 * 64 + bit
+                })
+            })
+        })
+    })
+}
+
+/// Whether `node` is in `domain`.
+fn in_domain(domain: &Domain, view: &TapeDoc, sets: &[Vec<u64>], node: u32) -> bool {
+    match domain {
+        Domain::All => true,
+        Domain::Kinds(kinds) => kinds.binary_search(&view.transducer_kind(node)).is_ok(),
+        Domain::Label(label) => has(sets, *label, node),
+    }
 }
 
 fn has(sets: &[Vec<u64>], label: u16, node: u32) -> bool {
@@ -2144,7 +2191,18 @@ struct Builder<'a> {
     /// only (`narrowed`, work queue Q65): `not: {precedes: …}` beside `inside: parameters` ran its sibling scan from
     /// all 877,007 nodes at s1000, a module's statements included. A walk moves the node, so its rules are made with
     /// none.
-    demand: Option<BTreeSet<u16>>,
+    demand: Demand,
+}
+
+/// Where a label read at the node under test is needed (`Builder::demand`).
+#[derive(Clone, Default)]
+struct Demand {
+    /// The kinds the node can have (`None`: any).
+    kinds: Option<BTreeSet<u16>>,
+    /// A label the node is a member of wherever it matters: an `all` with a conjunct that tests a neighbor
+    /// (`inside X` or `has X` by `neighbor`) holds only at X's children or parents, a label made by walking once
+    /// from each X (`Builder::seed`, decision 0396). A label made here starts at its members.
+    seed: Option<u16>,
 }
 
 /// Where the label census goes (`RERAIL_LABEL_CENSUS=<file>`): a line per label pass a host level evaluates, its
@@ -2197,40 +2255,108 @@ impl<'a> Builder<'a> {
             predicates: Vec::new(),
             cursors: 0,
             labels,
-            demand: None,
+            demand: Demand::default(),
         }
     }
 
     /// `domain` within the kinds the node under test can have where it matters (`demand`).
+    /// Where a seed is demanded, its members (a program read there tests the seed anyway); else
+    /// within the demanded kinds.
     fn narrowed(&self, domain: Domain) -> Domain {
         match (domain, &self.demand) {
-            (Domain::All, Some(demand)) => Domain::Kinds(demand.iter().copied().collect()),
-            (Domain::Kinds(kinds), Some(demand)) => Domain::Kinds(kinds.into_iter().filter(|kind| demand.contains(kind)).collect()),
+            (Domain::All | Domain::Kinds(_), Demand { seed: Some(seed), .. }) => Domain::Label(*seed),
+            (Domain::All, Demand { kinds: Some(demand), .. }) => Domain::Kinds(demand.iter().copied().collect()),
+            (Domain::Kinds(kinds), Demand { kinds: Some(demand), .. }) => {
+                Domain::Kinds(kinds.into_iter().filter(|kind| demand.contains(kind)).collect())
+            }
             (domain, _) => domain,
         }
     }
 
     /// `f` with `demand` in place of the builder's, which is restored after.
-    fn demanding<T>(&mut self, demand: Option<BTreeSet<u16>>, f: impl FnOnce(&mut Self) -> T) -> T {
+    fn demanding<T>(&mut self, demand: Demand, f: impl FnOnce(&mut Self) -> T) -> T {
         let outer = std::mem::replace(&mut self.demand, demand);
         let result = f(self);
         self.demand = outer;
         result
     }
 
-    /// The demand where `tree` holds too: the kinds both allow.
-    fn within(&self, tree: &MatchTree) -> Option<BTreeSet<u16>> {
-        match (self.demand.as_ref(), tree.kinds()) {
+    /// The demand where `tree` holds too: the kinds both allow, and the seed.
+    fn within(&self, tree: &MatchTree) -> Demand {
+        let kinds = match (self.demand.kinds.as_ref(), tree.kinds()) {
             (Some(demand), Some(kinds)) => Some(demand.intersection(&kinds).copied().collect()),
             (Some(demand), None) => Some(demand.clone()),
             (None, kinds) => kinds,
-        }
+        };
+        Demand { kinds, seed: self.demand.seed }
     }
 
-    /// A program emitting each root `tree` matches.
-    fn roots(mut self, tree: &MatchTree) -> Result<Program, Error> {
-        self.test(tree)?;
-        self.finish(&[word(CAPTURE, 0, 0), word(EMIT, 0, 1)])
+    /// A program emitting each root `tree` matches, and the label its roots lie in where `tree`
+    /// is an `all` that tests a neighbor (`seed`).
+    fn roots(mut self, tree: &MatchTree) -> Result<(Program, Option<u16>), Error> {
+        let seed = match tree {
+            MatchTree::All(all) => {
+                let seed = self.seed(all)?;
+                self.all(tree, all, seed)?;
+                seed.map(|(_, label)| label)
+            }
+            _ => {
+                self.test(tree)?;
+                None
+            }
+        };
+        Ok((self.finish(&[word(CAPTURE, 0, 0), word(EMIT, 0, 1)])?, seed))
+    }
+
+    /// An `all`'s first conjunct that tests a neighbor, `inside X` or `has X` by `neighbor`, and the
+    /// label of the nodes where it holds: X's children (through the field, where one is named) or
+    /// X's parents, a walk of one step from each node X matches. The `all` holds only there, so
+    /// its labels start there (`Demand::seed`) and the conjunct is the label's bit. A pass that
+    /// started at every node for `inside module` (877,007 at s1000) starts at 10,274 (t45 §1).
+    fn seed(&mut self, all: &[MatchTree]) -> Result<Option<(usize, u16)>, Error> {
+        let Some((at, axis, field, rule)) = all.iter().enumerate().find_map(|(at, tree)| match tree {
+            // Only from a selective X: from every node the seed is one more pass, not fewer starts.
+            MatchTree::Walk { axis: axis @ (Axis::Inside | Axis::Has), field, rule, stop: Stop::Neighbor }
+                if rule.walks() || rule.kinds().is_some() =>
+            {
+                Some((at, *axis, *field, &**rule))
+            }
+            _ => None,
+        }) else {
+            return Ok(None);
+        };
+        let mut builder = Builder::new(self.labels);
+        let starts = builder.start(rule)?;
+        match (axis, field) {
+            (Axis::Inside, field) => {
+                builder.push(CHILD, 0, 0);
+                if let Some(field) = field {
+                    builder.push(FIELD, 0, field);
+                }
+            }
+            (_, field) => {
+                if let Some(field) = field {
+                    builder.push(FIELD, 0, field);
+                }
+                builder.push(PARENT, 0, 0);
+            }
+        }
+        let program = builder.finish(&[word(CAPTURE, 0, 0), word(EMIT, 0, 1)])?;
+        let id = self.label(Label::Targets(program, starts));
+        self.note(id, || format!("seed {axis:?}{} of {}", field.map_or(String::new(), |f| format!(" field {f}")), sketch(rule)));
+        Ok(Some((at, id)))
+    }
+
+    /// `all`'s conjuncts at the node, the one `seed` names first, as its label's bit.
+    fn all(&mut self, tree: &MatchTree, all: &[MatchTree], seed: Option<(usize, u16)>) -> Result<(), Error> {
+        let mut demand = self.within(tree);
+        if let Some((_, label)) = seed {
+            self.push(SUPERTYPE, 0, label);
+            demand.seed = Some(label);
+        }
+        self.demanding(demand, |b| {
+            all.iter().enumerate().filter(|(at, _)| seed.is_none_or(|(seed, _)| seed != *at)).try_for_each(|(_, tree)| b.test(tree))
+        })
     }
 
     fn finish(mut self, tail: &[u32]) -> Result<Program, Error> {
@@ -2277,14 +2403,15 @@ impl<'a> Builder<'a> {
 
     fn label_of_tree(&mut self, tree: &MatchTree) -> Result<u16, Error> {
         match tree {
-            MatchTree::Pattern(pattern) => {
+            // A bare metavariable is a node test: its label is a roots label of that test, below.
+            MatchTree::Pattern(pattern) if Program::bare_metavariable(pattern).is_none() => {
                 let program = Program::compile_ast_grep_pattern(pattern)?;
                 let starts = self.narrowed(Domain::of(tree));
                 return Ok(self.label(Label::Pattern(program, starts)));
             }
             MatchTree::Constrained(pattern, constraints) => {
                 // A constraint is tested at its capture's node, not this one.
-                let constraints = self.demanding(None, |b| {
+                let constraints = self.demanding(Demand::default(), |b| {
                     constraints.iter().map(|(name, rule)| Ok((name.clone(), b.label_of(rule)?))).collect::<Result<Vec<_>, Error>>()
                 })?;
                 let program = Program::compile_ast_grep_pattern(pattern)?;
@@ -2295,17 +2422,25 @@ impl<'a> Builder<'a> {
             MatchTree::Recur(id) => {
                 return self.labels.recursive.get(id).copied().ok_or(Error::InvalidOperand(0));
             }
+            // A neighbor walk alone is its seed: the nodes it holds at.
+            MatchTree::Walk { stop: Stop::Neighbor, .. } => {
+                if let Some((_, seed)) = self.seed(std::slice::from_ref(tree))? {
+                    return Ok(seed);
+                }
+            }
             MatchTree::Fact(fact) => {
                 // A slot is tested at its target's node, not this one.
-                let slots = self.demanding(None, |b| fact.slots.iter().map(|slot| b.label_of(slot)).collect::<Result<Vec<_>, Error>>())?;
+                let slots = self.demanding(Demand::default(), |b| fact.slots.iter().map(|slot| b.label_of(slot)).collect::<Result<Vec<_>, Error>>())?;
                 return Ok(self.label(Label::Fact(Arc::clone(fact), slots)));
             }
             _ => {}
         }
         // A roots label is the starts that emit: set mode.
-        let starts = self.narrowed(Domain::of(tree));
-        let program = Builder::new(self.labels).roots(tree)?.in_set_mode();
-        Ok(self.label(Label::Roots(program, starts)))
+        let narrowed = self.narrowed(Domain::of(tree));
+        let (program, seed) = Builder::new(self.labels).roots(tree)?;
+        // Its own seed where it has one: the label holds only there.
+        let starts = seed.map_or(narrowed, Domain::Label);
+        Ok(self.label(Label::Roots(program.in_set_mode(), starts)))
     }
 
     /// A recursive utility's label: its program and the labels compiled for it form one group,
@@ -2318,7 +2453,7 @@ impl<'a> Builder<'a> {
         let label = self.labels.reserve(Label::Empty);
         self.labels.recursive.insert(id, label);
         let start = self.labels.steps.len();
-        let program = Builder::new(self.labels).roots(tree)?.in_set_mode();
+        let program = Builder::new(self.labels).roots(tree)?.0.in_set_mode();
         self.labels.defs[usize::from(label - LABEL_BASE)] = Label::Roots(program, Domain::of(tree));
         // Only the labels that read the utility's, directly or through each other, are evaluated
         // round after round; the others are passes of their own ahead of the group. A recursive
@@ -2350,6 +2485,12 @@ impl<'a> Builder<'a> {
     /// Tests `tree` at the cursor's node: the paths that pass continue there, at that node.
     fn test(&mut self, tree: &MatchTree) -> Result<(), Error> {
         match tree {
+            // `$X`: a named node; `$$X`: any node (t45 §3).
+            MatchTree::Pattern(pattern) if let Some(named) = Program::bare_metavariable(pattern) => {
+                if named {
+                    self.push(FLAGS, NAMED, 0);
+                }
+            }
             MatchTree::Kind(kind) => {
                 self.push(KIND, 0, *kind);
             }
@@ -2381,7 +2522,8 @@ impl<'a> Builder<'a> {
                 self.push(SUPERTYPE, 0, label);
             }
             MatchTree::All(all) => {
-                self.demanding(self.within(tree), |b| all.iter().try_for_each(|tree| b.test(tree)))?;
+                let seed = self.seed(all)?;
+                self.all(tree, all, seed)?;
             }
             MatchTree::Any(trees) => {
                 let Some((last, alternatives)) = trees.split_last() else {
@@ -2431,11 +2573,11 @@ impl<'a> Builder<'a> {
     fn count(&mut self, axis: Axis, rule: &MatchTree, stop: &Stop, min: usize, max: Option<usize>) -> Result<u16, Error> {
         // Its rule and stop are tested at the nodes it reaches.
         // A forward count is read at its start, so it starts where that is needed (`narrowed`).
-        let demand = self.demand.clone();
-        self.demanding(None, |b| b.count_moved(axis, rule, stop, min, max, demand))
+        let starts = self.narrowed(Domain::All);
+        self.demanding(Demand::default(), |b| b.count_moved(axis, rule, stop, min, max, starts))
     }
 
-    fn count_moved(&mut self, axis: Axis, rule: &MatchTree, stop: &Stop, min: usize, max: Option<usize>, demand: Option<BTreeSet<u16>>) -> Result<u16, Error> {
+    fn count_moved(&mut self, axis: Axis, rule: &MatchTree, stop: &Stop, min: usize, max: Option<usize>, starts: Domain) -> Result<u16, Error> {
         let counted = census().map(|_| sketch(rule)).unwrap_or_default();
         let rule = self.label_of(rule)?;
         let bound = match stop {
@@ -2470,7 +2612,7 @@ impl<'a> Builder<'a> {
         let (domain, by) = if backward {
             (Domain::Label(rule), Tally::Capture)
         } else {
-            (demand.map_or(Domain::All, |demand| Domain::Kinds(demand.into_iter().collect())), Tally::Start)
+            (starts, Tally::Start)
         };
         let id = self.label(Label::Count { program, domain, by, min, max });
         self.note(id, || format!("count {axis:?} of {counted} by {} in {min}..{max:?}", sketch_stop(stop)));
@@ -2502,7 +2644,7 @@ impl<'a> Builder<'a> {
     }
 
     fn walk(&mut self, axis: Axis, field: Option<u16>, rule: &MatchTree, stop: &Stop) -> Result<(), Error> {
-        self.demanding(None, |b| b.walk_moved(axis, field, rule, stop))
+        self.demanding(Demand::default(), |b| b.walk_moved(axis, field, rule, stop))
     }
 
     fn walk_moved(&mut self, axis: Axis, field: Option<u16>, rule: &MatchTree, stop: &Stop) -> Result<(), Error> {
