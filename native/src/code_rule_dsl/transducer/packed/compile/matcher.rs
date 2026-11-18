@@ -392,9 +392,8 @@ impl LoweredMatcher {
         backend: Backend,
         tapes: &[TapeDoc],
     ) -> Result<Vec<BTreeSet<u32>>, Error> {
-        if let Backend::MetalInterpreter = backend
-            && super::device::matcher().is_some()
-        {
+        // Metal asked for: the device's, refused where none is registered (decision 0382), as `execute_with_backend_*`.
+        if let Backend::MetalInterpreter = backend {
             return self.roots_metal(tapes).map(|(roots, _)| roots);
         }
         let mut sets = empty_sets(tapes, self.labels.defs.len());
@@ -1118,9 +1117,8 @@ impl LoweredWave {
         active: &[Vec<bool>],
         budget: crate::code_rule_dsl::transducer::packed::WorkBudget,
     ) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
-        if let Backend::MetalInterpreter = backend
-            && super::device::matcher().is_some()
-        {
+        // Metal asked for: the device's, refused where none is registered (decision 0382), as `execute_with_backend_*`.
+        if let Backend::MetalInterpreter = backend {
             let roots: Vec<Vec<Vec<u32>>> = (0..self.clauses.len())
                 .map(|c| tapes.iter().enumerate().map(|(t, tape)| if active[c][t] { (0..tape.transducer_len() as u32).filter(|&n| self.starts(c, tape, n)).collect() } else { Vec::new() }).collect())
                 .collect();

@@ -60,6 +60,22 @@ relational lane's threadgroup limit and the walks that outgrow their frames stay
     the batch to the cores' interpreter. Among those errors is a program form Metal lacks (a fixed point, a back
     fill, recorded in 0202's `metal-form` list), but also an allocation that failed or a launch past its limits.
 
+5. **A device asked for and missing is refused, and only a form Metal lacks goes to the cores** (the user,
+   2026-11-18: "make the second case refuse like the other entry points do, and in the third case send only the
+   recorded unsupported forms to the CPU and let every other error through"):
+   - `roots_batch` and the wave's `roots_batch` asked for `Backend::MetalInterpreter` take the device's run
+     (`device::required`), `UnsupportedBackend` where none is registered, as `execute_with_backend_*` do;
+   - `MatcherDevice::span_ends` is `Result<Option<_>, Error>`: `Ok(None)` is a form Metal lacks, which the block
+     program refuses before anything runs and records in 0202's `metal-form` list (`block_program::run_batch`); the
+     cores run that batch. Every other error (an allocation, a launch past its limits once the split is down to one
+     file) is the span prefilter launch's error.
+
+## Found since, for the user
+
+- The ast matcher wave's GPU lane (`facts::vtab::syntax::ast_wave`, `run`): a Metal run that fails for any reason
+  is named in the profile (`metal-form`, `METAL_FELL_BACK`) and the CPU's wave runs instead. A fallback on an error,
+  not yet agreed.
+
 ## Evidence
 
 - The hub's t41 and Q57: label tests passed on MSL that did not compile, because the run fell back to the CPU.
