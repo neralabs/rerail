@@ -326,4 +326,13 @@ describe("the location read off the thread", () => {
     for (const folder of folders) expect(await repositoryIdentityLocationAsync(folder), folder).toEqual(repositoryIdentityLocation(folder));
     expect(vi.mocked(runGitAsync).mock.calls.filter(([cwd]) => cwd === outside)).toEqual([]);
   });
+
+  it("starts no Git once its signal is aborted, so even a checkout reads as outside Git", async () => {
+    const root = await plainRoot();
+    const main = checkout(root, "main");
+
+    const location = await repositoryIdentityLocationAsync(main, AbortSignal.abort());
+
+    expect({ git: location.git, workspaceRoot: location.workspaceRoot }).toEqual({ git: false, workspaceRoot: resolve(main) });
+  });
 });
