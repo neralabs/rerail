@@ -1001,7 +1001,7 @@ impl F16Z<'_> {
         let at = layout(nb, t.widths, t.cw, t.sides[b]);
         let end = at[REGIONS];
         slot.raw.resize(end + 32, 0);
-        lz4::decompress(&t.buf[t.comp + t.at[b] as usize..t.comp + t.at[b + 1] as usize], &mut slot.raw[..end]);
+        decode_block(&t.buf, t.comp + t.at[b] as usize, t.comp + t.at[b + 1] as usize, &mut slot.raw, end);
         // Each side list's one part: from 0 to its length.
         for k in 0..4 {
             slot.raw[end + 8 * k..end + 8 * k + 4].copy_from_slice(&0u32.to_le_bytes());
@@ -1083,7 +1083,18 @@ impl Tape for F16Z<'_> {
     }
 }
 
-/// LZ4's block format (the lab's `lz4-sys`, `LZ4_compress_default` and `LZ4_decompress_safe`).
+/// The LZ4 block at `buf[from..to]` decoded into `dst[..len]` by the reads' decoder (`tape_lz4`, the one the JIT
+/// and the kernels decode with, decision 0353 step 4b); `dst` has 8 bytes of room after `len`, which a match's
+/// copies may write. A block that does not decode to its length is a corrupt tape.
+fn decode_block(buf: &[u8], from: usize, to: usize, dst: &mut [u8], len: usize) {
+    assert!(from <= to && to <= buf.len() && to <= u32::MAX as usize, "a block's bytes within its tape");
+    assert!(dst.len() >= len + 8, "a block's room: its bytes and 8 after them");
+    // SAFETY: `dst` holds `len` bytes and the 8 the decoder may write past them; its loads of the tape are checked.
+    let n = unsafe { reads::tape_lz4(buf, &rerail_clif::view::TapeView::default(), from as u32, to as u32, dst.as_mut_ptr() as u64, len as u64) };
+    assert_eq!(n as usize, len, "a block decodes to its length: a corrupt tape");
+}
+
+/// LZ4's block format, compressed (the lab's `lz4-sys`, `LZ4_compress_default`); decoded by `decode_block`.
 mod lz4 {
     use std::os::raw::c_char;
 
@@ -1098,13 +1109,6 @@ mod lz4 {
             out.truncate(k as usize);
             out
         }
-    }
-
-    /// `src` into `dst`, which is exactly the block's length.
-    pub fn decompress(src: &[u8], dst: &mut [u8]) {
-        // SAFETY: LZ4 reads at most `src.len()` bytes and writes at most `dst.len()`.
-        let k = unsafe { lz4_sys::LZ4_decompress_safe(src.as_ptr() as *const c_char, dst.as_mut_ptr() as *mut c_char, src.len() as i32, dst.len() as i32) };
-        assert_eq!(k as usize, dst.len(), "a block decodes to its length");
     }
 }
 
@@ -1554,5 +1558,48 @@ mod tests {
         let t = sixteen(&lang, &f15, &numbers(&lang, &table).unwrap(), 2_000);
         let other = Lang::new(table.clone(), [1, 1, 1], 2).unwrap();
         assert!(t.reader(&other).is_err());
+    }
+
+    /// The one decoder (`tape_lz4`, the reads' in CLIF) decodes what LZ4 compressed: literal runs of every length
+    /// mod 8, matches at every offset under 8 (which it widens as LZ4's reference decoder does) and far ones, and
+    /// lengths past 15 (their extension bytes); a block cut short decodes to less than its length.
+    #[test]
+    fn the_reads_decoder_decodes_what_lz4_compressed() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for case in 0..400 {
+            let mut raw = Vec::new();
+            while raw.len() < 64 + case * 37 {
+                match next() % 4 {
+                    // A run repeating its last `off` bytes (a match at an offset under 8, or far).
+                    0 | 1 if raw.len() > 16 => {
+                        let off = if next() % 2 == 0 { 1 + (next() % 7) as usize } else { 8 + (next() % 9) as usize };
+                        let off = off.min(raw.len());
+                        for _ in 0..(4 + next() % 300) {
+                            raw.push(raw[raw.len() - off]);
+                        }
+                    }
+                    // Literals.
+                    _ => raw.extend((0..1 + next() % 40).map(|_| next() as u8)),
+                }
+            }
+            let packed = lz4::compress(&raw);
+            let mut buf = vec![0xaau8; 5];
+            buf.extend_from_slice(&packed);
+            let mut dst = vec![0u8; raw.len() + 8];
+            decode_block(&buf, 5, buf.len(), &mut dst, raw.len());
+            assert_eq!(&dst[..raw.len()], &raw[..], "case {case}");
+            // Cut short: fewer bytes, never past them.
+            let cut = 5 + packed.len() / 2;
+            let mut dst = vec![0u8; raw.len() + 8];
+            // SAFETY: `dst` holds the block's length and 8 more.
+            let n = unsafe { reads::tape_lz4(&buf[..cut], &rerail_clif::view::TapeView::default(), 5, cut as u32, dst.as_mut_ptr() as u64, raw.len() as u64) };
+            assert!((n as usize) < raw.len(), "case {case}: a block cut short decodes less");
+        }
     }
 }
