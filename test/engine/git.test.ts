@@ -1450,6 +1450,8 @@ describe("ProcessGit", () => {
     await new Promise(setImmediate);
     const other = { ...env, HOMEDRIVE: String.raw`\\server\other` };
     expect(homes(git.startEnvironment(ucrt, other))).toEqual([win32.join(other.HOMEDRIVE, other.HOMEPATH), env.USERPROFILE]);
+    // No look is in flight once that one has answered, so only the share itself keeps the next start from asking.
+    await new Promise(setImmediate);
     asked.length = 0;
     expect([homes(git.startEnvironment(ucrt, { ...env, HOMEDRIVE: "" })), asked]).toEqual([[env.USERPROFILE], []]);
   });
