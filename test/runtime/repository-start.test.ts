@@ -501,13 +501,25 @@ describe.runIf(process.platform === "win32")("On Windows, a folder outside Git t
     for (const letter of letters.splice(0)) execFileSync("subst", [letter, "/d"], { stdio: "ignore" });
   });
 
-  /** `folder` reached through a free drive letter mapped to its parent, as a mapped drive reaches it; the letter goes after the test. */
+  /**
+   * `folder` reached through a free drive letter mapped to its parent, as a mapped drive reaches it; the letter goes after
+   * the test. Vitest runs test files at once and every file shares the user's drive letters, so this file takes only
+   * U to W (the status line's earlier-spelling test takes X to Z, and the registry's tests count on Q being free), and
+   * the next one where `subst` refuses a letter.
+   */
   function throughLetter(folder: string): string {
-    const letter = [..."QRSTUVWXYZ"].map(name => `${name}:`).find(name => !existsSync(`${name}\\`));
-    if (letter === undefined) throw new Error("no free drive letter");
-    execFileSync("subst", [letter, dirname(folder)]);
-    letters.push(letter);
-    return `${letter}\\${basename(folder)}`;
+    for (const name of "UVW") {
+      const letter = `${name}:`;
+      if (existsSync(`${letter}\\`)) continue;
+      try {
+        execFileSync("subst", [letter, dirname(folder)], { stdio: "ignore" });
+      } catch {
+        continue; // Taken since the check above: the next one.
+      }
+      letters.push(letter);
+      return `${letter}\\${basename(folder)}`;
+    }
+    throw new Error("no free drive letter from U to W");
   }
 
   /** `folder` as VS Code or a typed `cd` can spell it: the drive letter and the folder's own name in lower case. */

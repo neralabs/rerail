@@ -18,6 +18,25 @@ describe.runIf(process.platform === "win32")("On Windows, the status line in a f
   });
 
   /**
+   * `target` reached through a free drive letter. Vitest runs test files at once and every file shares the user's drive
+   * letters, so this file takes only X to Z (the start state's earlier-spelling tests take U to W, and the registry's
+   * tests count on Q being free), and the next one where `subst` refuses a letter.
+   */
+  function substLetter(target: string): string {
+    for (const name of "XYZ") {
+      const letter = `${name}:`;
+      if (existsSync(`${letter}\\`)) continue;
+      try {
+        execFileSync("subst", [letter, target], { stdio: "ignore" });
+        return letter;
+      } catch {
+        // Taken since the check above: the next one.
+      }
+    }
+    throw new Error("no free drive letter from X to Z");
+  }
+
+  /**
    * A set-up, started repository of one folder outside Git, stored as `…\share\Stopped` and reached through a free drive
    * letter mapped to `…\share`, holding the checkout row Rerail 0.1.4's store writes when `rerail stop` runs there: keyed
    * by the JS realpath of the folder as spelt, which keeps the letter, and stopped. This build recorded no row of its own.
@@ -26,9 +45,7 @@ describe.runIf(process.platform === "win32")("On Windows, the status line in a f
     const root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-status-earlier-")));
     made.roots.push(root);
     mkdirSync(join(root, "share", "Stopped"), { recursive: true });
-    const letter = [..."QRSTUVWXYZ"].map(name => `${name}:`).find(name => !existsSync(`${name}\\`));
-    if (letter === undefined) throw new Error("no free drive letter");
-    execFileSync("subst", [letter, join(root, "share")]);
+    const letter = substLetter(join(root, "share"));
     made.letters.push(letter);
     const spelled = `${letter}\\Stopped`;
     expect(repositoryIdentityLocation(spelled).git).toBe(false);
