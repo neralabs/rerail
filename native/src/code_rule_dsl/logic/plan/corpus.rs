@@ -5943,7 +5943,7 @@ fn run_observed(
     let demand = matchers::demanded_by_roots(head, source, matchers);
     let narrowed = demand.iter().filter(|by| by.is_some()).count();
     if narrowed > 0 {
-        crate::code_rule_dsl::logic::profile::decision("ast matchers bound only at other matchers' roots (decision 0401)", || {
+        crate::code_rule_dsl::logic::profile::decision("ast matchers bound only at other matchers' roots (decision 0424)", || {
             demand.iter().zip(matchers.iter()).filter_map(|(by, (rel, _, _))| Some(format!("{rel} by {}", by.as_ref()?.iter().map(|k| matchers[*k].0.as_str()).collect::<Vec<_>>().join("+")))).collect::<Vec<_>>().join(", ")
         });
     }

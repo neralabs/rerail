@@ -1,10 +1,10 @@
 # 0419. `label_formula`'s time is latency, a level per chunk: a chain's reach by blocks, chunks grow until measured
 
-Status: accepted (2026-11-18). Follows 0406 and Q218.
+Status: accepted (2026-11-18). Follows 0425 and Q218.
 
 ## Intro
 
-0406 removed about a quarter of `label_formula`'s (file, formula) pairs and half its formula images, and the kernel's
+0425 removed about a quarter of `label_formula`'s (file, formula) pairs and half its formula images, and the kernel's
 time did not fall. The user asked: "1. identify why the GPU time didn't drop 2. do Q218: evaluating each level's
 formulas together per file." Asked which way to go (evaluating per file together looked slower than what it replaced),
 they said: "I want both, and I also want you to survey the code for existing lauch-delay and chunking affordances and
@@ -20,7 +20,7 @@ A trace switch (`RERAIL_FORMULA_TRACE=<file>` with `RERAIL_GPU_KERNEL_TIMES`, on
 opcodes, the files, its µs; `RERAIL_FORMULA_ONE` dispatches one formula at a time) showed this on internal_dead_code,
 s1000, at load 18:
 
-- **The pairs 0406 removed were cheap.** A seed was a one-step image. A dispatch of plain formulas (leaves, AND, OR)
+- **The pairs 0425 removed were cheap.** A seed was a one-step image. A dispatch of plain formulas (leaves, AND, OR)
   takes about 140 µs whatever it holds: 224 such dispatches took 40 ms. The time goes to the step formulas: 872
   dispatches, 245 ms (each committed and waited for apart in trace mode, so the sums are larger than a run's).
 - **One formula shape was the long pole:** a chain's reach (`REACH_CHAIN`, e.g. `13.6.4.5.4.25`). Each member's
@@ -85,7 +85,7 @@ s1000, at load 18:
 - **Gathering concurrent chunks' label runs is not built.** Its prize is fewer label runs, and fewer runs (one chunk
   at a time, larger chunks) did not lower the GPU time measurably. Decision 0386 keeps each job's wave its own, so
   gathering would also make chunks wait on each other.
-- 0406's GPU numbers were taken under the default memory line (`RUN_MB` 1024), which cut its chunks smaller. Its
+- 0425's GPU numbers were taken under the default memory line (`RUN_MB` 1024), which cut its chunks smaller. Its
   before-and-after comparison stands, since both sides ran under the same line. Its absolute times are those of
   14–17 chunks.
 

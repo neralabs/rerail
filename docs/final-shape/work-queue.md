@@ -1919,13 +1919,13 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
 
 ### Q218. (Q187 where written; the hub's Q187 is `parser_tests`) The label kernels' time follows `label_formula`'s (file, formula) pairs
 
-- **Found** (2026-11-18, 0401): the label passes' walk steps fell from 65.8 M to 19.8 M (internal_dead_code)
+- **Found** (2026-11-18, 0424): the label passes' walk steps fell from 65.8 M to 19.8 M (internal_dead_code)
   and 19.3 M to 7.4 M (public_api_triples). `label_micro_8` + `label_micro` went from 80.9 to 66.7 ms and from
   61.1 to 68.2 ms. Each seeded `all` adds a level its readers wait for (public_api_triples' `label_micro_8`
   dispatches 96 → 144), and a pass still visits every 64-node group to read its root mask.
 - **Done when**: a pass launches over only the groups its domain has members in, and the levels seeds add are
   merged where their readers allow, with the kernels' time measured pinned before and after.
-- **Done** (2026-11-18, decision 0406), in part:
+- **Done** (2026-11-18, decision 0425), in part:
   - The levels seeds added are gone. Demand is a formula a pass's anchor reads (`Domain::Within`), not a seed
     label. Formula groups fell 28,622 → 20,786–22,520 (internal_dead_code) and 16,874–17,616 → 12,109
     (public_api_triples). Formula images fell 584–624 → 280–320 and 244–376 → 96–136. Rows are the same.
@@ -1941,7 +1941,7 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   from 71–79 to 105–112 ms. The groups of one file's formulas overlap their latency, and the shared tests are shared
   already (`label_leaves`, identical formulas once). The time was latency: the step formulas, with a chain's reach as
   the long pole (now read by blocks: 96.8 → 54.6 ms), and every level once per chunk (now a chunk below the credible
-  growth makes the next 4×: 82–98 → 77–84 ms, 89–94 → 67–82 ms). 0406's times were taken under the default memory
+  growth makes the next 4×: 82–98 → 77–84 ms, 89–94 → 67–82 ms). 0425's times were taken under the default memory
   line (14–17 chunks).
 - **Closed** (2026-11-18, 0419's follow-up): with the line lifted, fewer or larger chunks did not lower the label GPU
   time beyond noise (one chunk at a time with a 1M-node cap: 84–107 ms against 70–130 ms). A chunk's measured growth
@@ -1964,7 +1964,7 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
 ### Q219. A level's fact constraints are uploaded rows
 
 - **Found** (2026-11-18, Q218's measurements): `Runner::level` uploaded the facts' `(node, label)` pairs once per
-  pattern kernel group, the same buffer each time: 32 MB (8.1 M words) on 15 fixtures. Fixed: once a level (0406).
+  pattern kernel group, the same buffer each time: 32 MB (8.1 M words) on 15 fixtures. Fixed: once a level (0425).
 - **Left**: the upload itself is a copy of the facts' rows (AGENTS.md, 0353).
 - **Done when**: `Pass::Fact` reads the fact's relation in its block, and the upload is gone.
 

@@ -322,7 +322,7 @@ fn formula_leaf(word: u32) -> bool {
 ///
 /// A label `unknown` names (a recursive group's own, Q133) is read as every node, as on the CPU (`anchor_bits`).
 ///
-/// A pass that starts within a demand's set (`Domain::Within`, decision 0406) has it in its anchor, as on the CPU.
+/// A pass that starts within a demand's set (`Domain::Within`, decision 0425) has it in its anchor, as on the CPU.
 pub(in crate::code_rule_dsl) fn device_anchor(program: &Program, demand: Option<&compile_sets::Set>, unknown: &dyn Fn(u16) -> bool) -> Option<std::sync::Arc<DeviceFormula>> {
     let walk = Micro::of(program)?;
     let anchor = compile_sets::Set::anchor(&walk.words, &|_| true);

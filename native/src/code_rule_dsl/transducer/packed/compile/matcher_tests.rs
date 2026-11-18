@@ -313,7 +313,7 @@ fn a_recursive_utility_inside_another_settles() {
     assert_eq!(program.roots(&tape).unwrap(), expected);
 }
 
-/// The lowerings of t45's plan (decisions 0401, 0406), each a clause: a bare `$X` is the named-node test, not a
+/// The lowerings of t45's plan (decisions 0424, 0425), each a clause: a bare `$X` is the named-node test, not a
 /// pattern label; a clause that is one `inside … end` copies its label; the labels made inside an `all` that tests a
 /// neighbor (`inside` or `has`, by a field or not) start within the set of the nodes it holds at, a formula, not a
 /// seed label. Each finds W's roots.
@@ -331,7 +331,7 @@ fn seeded_clauses() -> (crate::code_rule_dsl::CompiledCodeRuleDsl, TapeDoc) {
         clause("function-name", r#"{"kind": "identifier", "inside": {"kind": "function_definition", "field": "name", "stopBy": "neighbor"}}"#),
         clause("lone", r#"{"not": {"inside": {"kind": "argument_list", "stopBy": "neighbor"}}}"#),
         // A neighbor tested by text (ruff F541's shape): its set has no text test, since a text slot is its own
-        // program's (0406).
+        // program's (0425).
         clause(
             "fstring",
             r#"{"kind": "string", "has": {"kind": "string_start", "regex": "^[fF]", "stopBy": "neighbor"}, "not": {"has": {"kind": "interpolation", "stopBy": "neighbor"}}}"#,
@@ -362,7 +362,7 @@ fn seeded_and_copied_labels_find_ws_roots() {
         assert_eq!(program.roots(&tape).unwrap(), expected, "{clause}");
         let census = program.census();
         let patterns = census.iter().filter(|(kind, _)| *kind == "pattern").count();
-        // A neighbor's set is a formula a pass's anchor reads (0406), not a targets label of its own (0401's seed).
+        // A neighbor's set is a formula a pass's anchor reads (0425), not a targets label of its own (0424's seed).
         assert!(!census.iter().any(|(kind, _)| *kind == "targets"), "{clause}: no seed label");
         let within = program.labels.defs.iter().any(|label| matches!(label, Label::Roots(_, super::compile_matcher::Domain::Within(..))));
         match clause {
@@ -378,7 +378,7 @@ fn seeded_and_copied_labels_find_ws_roots() {
 }
 
 /// The same clauses on Metal: a label-domain pass starts only at the label's members, read from its row on the
-/// device (`root_mask_label`), and a clause that copies a label reads its row (decision 0401).
+/// device (`root_mask_label`), and a clause that copies a label reads its row (decision 0424).
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
 #[test]
 fn seeded_and_copied_labels_match_on_metal() {

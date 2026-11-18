@@ -1026,7 +1026,7 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
         // descendant image does, and decides its nodes in order: a parent in the block is decided already (this
         // word's bits, or an earlier word's row), and a node whose parent is before the block climbs while its
         // ancestors are in `through` and not members. (Walking each member's subtree on its thread left a member's
-        // whole reach to one thread, a read of device memory a node: 2-3 ms a dispatch, 0406.)
+        // whole reach to one thread, a read of device memory a node: 2-3 ms a dispatch, 0425.)
         device atomic_uint* through=SLOT(src+1u);
         uint block=(fw+width-1u)/width,low=min(lane*block,fw),high=min(low+block,fw),first=low*32u;
         for(uint w=low;w<high;w++){

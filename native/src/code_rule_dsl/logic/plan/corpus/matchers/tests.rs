@@ -36,7 +36,7 @@ b(c, f) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute").
     }
 
     /// A matcher whose every read joins its node with a column only another matcher's roots fill is bound only at
-    /// those roots (decision 0401); one read anywhere else, under a negation or with no such join, everywhere.
+    /// those roots (decision 0424); one read anywhere else, under a negation or with no such join, everywhere.
     #[test]
     fn a_matcher_read_only_at_another_matchers_roots_is_bound_there() {
         let src = r#"

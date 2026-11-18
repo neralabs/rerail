@@ -122,7 +122,7 @@ Separately, `local`'s 0.9–1.8 s of unnamed CPU wants spans before anything is 
 
 ## Outcome (2026-11-18)
 
-All five items were done (decision 0401), and rows were the same throughout. Captures fell from 1.95 s to 0.36 s
+All five items were done (decision 0424), and rows were the same throughout. Captures fell from 1.95 s to 0.36 s
 of CPU, and walk steps from 65.8 M to 19.8 M (internal_dead_code) and 19.3 M to 7.4 M (public_api_triples). The
 GPU's label time barely moved: it now follows dispatches and group scans (Q187). The "59 s anomaly" was the
 first run of a new binary compiling the device's shaders.

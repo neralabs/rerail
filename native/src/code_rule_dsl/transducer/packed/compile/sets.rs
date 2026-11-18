@@ -349,7 +349,7 @@ impl Set {
     }
 
     /// This set with each text test read as every node: a superset, with no slot of the program it came from (a
-    /// slot is its program's, so another walk's anchor would read its own row there; decision 0406).
+    /// slot is its program's, so another walk's anchor would read its own row there; decision 0425).
     pub fn texts_dropped(self) -> Self {
         self.map_tests(&|test| match test {
             Set::Text(_) => Set::All,

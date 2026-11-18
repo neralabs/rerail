@@ -348,7 +348,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 10 | A device fixpoint's total copied into a run's block at its end | `device.rs` (0325 step 4) | Each recursive stratum's rows | Step 6 |
 | 11 | The transducer's packed batch: 44 bytes a node, and its child lists | `PackedBatch::nodes` (0293 "Interim") | Each matched batch | Step 7 |
 | 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
-| 13 | A label level's fact rows as `(node, label)` pairs, uploaded for the pattern kernels (`Pass::Fact`). Found unlisted on 2026-11-18 (0406, Q219), not added then | `metal_label_passes.rs`, `Runner::level` | 32 MB (8.1 M words) on 15 fixtures while it went up once per pattern group; once a level since 0406 | Step 4 (Q219: the device reads the fact's relation in its block) |
+| 13 | A label level's fact rows as `(node, label)` pairs, uploaded for the pattern kernels (`Pass::Fact`). Found unlisted on 2026-11-18 (0425, Q219), not added then | `metal_label_passes.rs`, `Runner::level` | 32 MB (8.1 M words) on 15 fixtures while it went up once per pattern group; once a level since 0425 | Step 4 (Q219: the device reads the fact's relation in its block) |
 
 ## The plan
 
