@@ -1812,8 +1812,59 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   A long scan's spill halves its range at a node both halves reach. A `desc` or closure followed by
   `capture; emit` marks its range in place, 32 nodes a word op. At s1000, the time was one closure pass's single
   136,902-node scan, whose spills ran one after another. `label_micro_8` + `label_micro` went from 265–340 ms to
-  93–120 ms, with the same findings. Open: the longest walk is 4,106 counted steps in the loop tier and 2,149 in
-  t0, not under 100, and a spilled piece walks a frame at a time.
+  93–120 ms, with the same findings.
+- **Progress** (2026-11-17, 0380 item 3): such a scan is a segmented pass over 64-node windows. Its pieces are halved
+  into the queue before it starts, and a frame taken from the queue scans the same way. The longest closure or
+  `desc` walk went from 4,106 steps to 63, and the loop tier's steps from 7.1 M to 4.0 M. The longest walk of any
+  kind is now 509, a `following` scan (Q182).
+
+### Q182. (Q65 on final-rerail-shape until 2026-11-18) A `following` scan for a kind hops one sibling at a time
+
+- **Found** (2026-11-17, 0380): `save0 after kind=238 load0 capture emit0` (877,007 walks, 12.6 steps on average,
+  the longest 509) is s1000's longest walk. It scans the start's following siblings for one of kind 238. Each hop
+  over a sibling's subtree reads its size, so each read waits on the one before. A block of n statements makes n
+  such scans, n² hops in all.
+- **Done when**: the longest walk at s1000 is under 100 steps (Q56's bound), with nothing precomputed: for
+  example, the siblings' scan as one pass over the parent's children, its answer shared by every start among them.
+- **Progress** (2026-11-17, 0380 item 3, "Q182"): `child` and `after` scan by their tail's shape: hops within windows
+  of slots, stopping at the first output where one output makes every mark. The longest walk went from 509 to 290
+  steps, at s1000 too, with `label_micro_8` at 43.5–46.8 ms and `label_micro` at 24.6–33.1 ms (load 13–14). Halving
+  the scan wanted once brought it to 74 steps but cost 40–60 ms in the short tier's queue. That was measured four
+  ways, and it is not kept. Left: the n² hops of a block's starts. Sharing them needs a pass over the parent's
+  children, which a per-start walk is not.
+- **Done** (2026-11-17, 0380 "one pass over a parent's children"): `sibling_pass` matches the shape generically:
+  - an `after` that is the walk's first move straight from its start;
+  - a tail that marks the start alone.
+
+  The parent's first child answers for every sibling in one pass, and the others leave the scan to it. The spill
+  test checks the shape in 9 fixture walks on Metal. At s1000 the pack's steps fell by 5.4% (10.12 M to 9.57 M),
+  with the same findings: the n² hops were a small part there. The longest walk is a leader's 288 steps, its two
+  passes serial.
+- **Done** (2026-11-17, 0390 item 1): the 288 steps were the scan started at nodes nothing reads. A label made in
+  an `all` now starts from the kinds its conjuncts allow. At s1000 the longest walk is 63 (internal_dead_code) and
+  78 (public_api_triples), under Q56's bound.
+
+### Q142. Three relations of internal_dead_code have 0 rows unless an unread copy of their rule exists
+
+- **Found** (2026-11-17, 0390): `raw_base`, `raw_parameter` and `raw_decorator` have 0 rows at s1000, natively and
+  on Metal. `sg scan` over the policy's 339 files finds 913, 14,717 and 2,272. Add an identical rule into a new
+  relation that nothing reads (`twin_raw_base(c, b, name) :- <the same body>`), and both relations get the rows
+  (913, 14,717, 2,271). A copy with no capture, or with `text` only, finds 913 as well. So the matching and
+  captures are right. Adding `.output` alone changes nothing.
+- What the three share: each is read by rules that bind its first column, a capture rather than the matched
+  node (`base_name(…) :- raw_base(c, r, name), declarations(id, c, …)`). `raw_class`, keyed by its matched
+  node, is right (1,083). The suspect is the demand of the readers (`waves/policies.rs` `demand_program`,
+  `magic::magic_sets`) restricting the atom by a capture column.
+- **Done when**: the three relations' rows match ast-grep's on the 339 files without a twin (the decorator's one
+  row apart explained), with a test of a relation read through a captured column.
+- Side note: decorator 2,271 against ast-grep's 2,272 with the twin.
+
+### Q143. execution_authority_bypass aborts at s1000
+
+- **Found** (2026-11-17, 0390's runs): the program aborts (rc=134) on Metal, with and without 0390's narrowing.
+  `RERAIL_SQL_STRICT` stops it: "stratum site_context: the native engine declined: rule #0025: `$q =
+  @qualname($f)` has no native step; function @qualname". Without strict it would fall back to SQLite.
+- **Done when**: `@qualname` has a native step, and the program runs strict at s1000.
 
 ### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
 

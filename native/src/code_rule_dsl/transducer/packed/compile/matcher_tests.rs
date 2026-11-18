@@ -1303,6 +1303,39 @@ fn micro_walks_are_the_interpreters_label_outputs() {
     assert!(compared > 100_000 && overflowed * 100 < compared);
 }
 
+/// Whether a walk's first move, reached from its start through saves, forks and jumps only, is `after` with a tail
+/// that marks the start alone (tests, a `load` and its tests, a capture, the emit): the shape the device answers once
+/// for a parent's children (`metal_label_passes.metal`'s `sibling_pass`, work queue Q182).
+fn sibling_shape(words: &[u32]) -> bool {
+    let (mut pc, mut seen) = (0, 0);
+    while pc < words.len() && seen <= words.len() {
+        seen += 1;
+        let (op, _, arg) = split(words[pc]);
+        match op {
+            0x15 | 0x30 => pc += 1,
+            0x31 => pc = arg as usize,
+            0x14 => break,
+            _ => return false,
+        }
+    }
+    let test = |op: u8| matches!(op, 0x01 | 0x02 | 0x03 | 0x04 | 0x0a);
+    let mut at = pc + 1;
+    while at < words.len() && test(split(words[at]).0) {
+        at += 1;
+    }
+    if at >= words.len() || split(words[at]).0 != 0x16 {
+        return at < words.len() && split(words[at]).0 == 0x40;
+    }
+    at += 1;
+    while at < words.len() && test(split(words[at]).0) {
+        at += 1;
+    }
+    if at < words.len() && split(words[at]).0 == 0x20 {
+        at += 1;
+    }
+    at < words.len() && split(words[at]).0 == 0x40
+}
+
 /// A long walk spills its frames to other threads (decision 0125): with a budget of one step, nearly every walk
 /// gives frames away (a descendant range halved, a move frame whole), and the wave's findings on Metal are still the
 /// CPU's (each side's roots, or W's matcher at its candidates where it gave the clause to W: a backend may stop at
@@ -1332,9 +1365,10 @@ fn spilled_walks_find_the_cpus_roots() {
         candidates.iter().copied().filter(|&n| grammar.match_root(node_at(&root, n), &mut work).ok().flatten().is_some()).collect()
     };
     // Waves of a dozen clauses, as the engine's are (the whole set is over the launch bound).
-    let (mut found, mut differ, mut waves) = (0, Vec::new(), 0);
+    let (mut found, mut differ, mut waves, mut shared) = (0, Vec::new(), 0, 0);
     for (at, clauses) in lowered.chunks(12).enumerate() {
         let wave = LoweredWave::new(&clauses.iter().collect::<Vec<_>>()).unwrap();
+        shared += wave.label_programs().iter().filter_map(|(program, _)| Micro::of(program)).filter(|walk| sibling_shape(&walk.words)).count();
         let active = vec![vec![true; tapes.len()]; clauses.len()];
         let (mut cpu, cpu_run) = wave.roots_batch(Backend::Cpu, &tapes, &active).unwrap();
         SPILL_BUDGET_TEST.set(Some(1));
@@ -1364,7 +1398,8 @@ fn spilled_walks_find_the_cpus_roots() {
             ));
         }
     }
-    eprintln!("spilled: {waves} waves of {} clauses, {found} roots", lowered.len());
+    eprintln!("spilled: {waves} waves of {} clauses, {found} roots, {shared} walks of a shared sibling scan", lowered.len());
+    assert!(shared > 0, "some walk's sibling scan is shared (the device's `sibling_pass`)");
     assert!(waves * 2 > lowered.len() / 12 && found > 1000, "most waves ran on Metal and found roots ({waves} waves, {found} roots)");
     assert!(differ.is_empty(), "{} clauses differ on Metal with every walk spilling: {differ:?}", differ.len());
 }
