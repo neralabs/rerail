@@ -8,6 +8,9 @@
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../c_directives/expand/expand.rir");
+    // The compiler makes the code: a change of it makes the build again (cargo reruns the
+    // script when a build-dependency changes; this says so to every builder, Relax's too).
+    println!("cargo:rerun-if-changed=../compiler/src");
     #[cfg(feature = "generated")]
     generate();
 }
@@ -22,6 +25,7 @@ fn generate() {
     // The words' text it was made from, by fingerprint: the host runs the build only for the
     // words it has (`rerail_c_directives::expand::native`).
     let words_fp = rerail_compiler::clif_rust::fingerprint(&rir);
-    let body = format!("{body}/// The words' text it was made from (`clif_rust::fingerprint` of `expand.rir`).\npub const WORDS: u64 = {words_fp:#x};\n");
+    let abi = rerail_compiler::native_cpu_pp::ABI;
+    let body = format!("{body}/// The words' text it was made from (`clif_rust::fingerprint` of `expand.rir`).\npub const WORDS: u64 = {words_fp:#x};\n/// The harness's interface it was made for (`native_cpu_pp::ABI`).\npub const ABI: u64 = {abi:#x};\n");
     std::fs::write(out.join("pp.rs"), body).expect("writes the source");
 }

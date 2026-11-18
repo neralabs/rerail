@@ -433,8 +433,9 @@ need a profiler run, which is open.
   rustc 487 M, the lean pass 1,876 M.
 
 - **The stall found (Q36).** Cranelift's Arm jump tables carry a speculation barrier (`csdb`) on
-  every dispatch, and every `RETURN` dispatched through one. The dispatches are now trees of
-  compares (`Lower::switch`), and the shape test refuses a `br_table`. With two smaller
+  every dispatch, and every `RETURN` dispatched through one. Cranelift's code has its jump
+  tables as trees of compares (`native_cpu_codegen::tables_as_compares`, every backend's, Q38),
+  and the shape test refuses a `csdb` in the words' code; rustc's keeps the tables. With two smaller
   changes (extending loads, branches on each test of a combination), Cranelift's code went
   from 1,235 M cycles to 550 M: 0.50× the interpreter's, 1.14× rustc's (t44).
 - **rustc's build is the CPU path** (the user's choice, t44 step 5). `rerail-c-directives`'

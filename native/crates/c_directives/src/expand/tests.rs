@@ -537,7 +537,7 @@ fn the_corpus_compiled_is_the_interpreters() {
 }
 
 /// The compiled words' shape (decision 0348, stage 4d): no call but of their own functions (the
-/// large words', `OUTLINE`), no indirect or tail call, no jump table, no function over 128 KB, and the returns
+/// large words', `OUTLINE`), no indirect or tail call, no speculation barrier, no function over 128 KB, and the returns
 /// their stated dispatches (`Step::Return`).
 #[test]
 fn the_compiled_words_have_their_shape() {
@@ -564,8 +564,14 @@ fn the_compiled_words_have_their_shape() {
     eprintln!("  by word: {}", ops.iter().take(25).map(|(k, (n, c))| format!("{k} {n}/{c}")).collect::<Vec<_>>().join(", "));
     let functions = c.clif.matches("function ").count();
     assert!(!c.clif.contains("call_indirect") && !c.clif.contains("return_call"));
-    // No jump table: Cranelift's carries a speculation barrier on every dispatch (`switch`).
-    assert!(!c.clif.contains("br_table"));
+    // No speculation barrier in Cranelift's code (`csdb`, which its Arm jump tables carry):
+    // its tables are trees of compares (`native_cpu_codegen::tables_as_compares`).
+    let kept = rerail_compiler::native_cpu_pp::disassemble(p).unwrap();
+    let csdb = kept.code.iter().flat_map(|f| f.chunks_exact(4)).filter(|w| u32::from_le_bytes([w[0], w[1], w[2], w[3]]) == 0xd503_229f).count();
+    assert!(kept.code.len() == c.code_bytes.len() && kept.code.iter().all(|f| !f.is_empty()));
+    if cfg!(target_arch = "aarch64") {
+        assert_eq!(csdb, 0, "a speculation barrier in Cranelift's code");
+    }
     let calls = c.clif.lines().filter(|l| l.contains(" = call ") || l.trim_start().starts_with("call ")).count();
     assert_eq!(functions, c.code_bytes.len());
     assert!(calls > 0);

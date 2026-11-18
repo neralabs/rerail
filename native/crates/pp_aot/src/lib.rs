@@ -21,11 +21,13 @@ pub struct Build {
     pub structured: (usize, usize),
     /// The fingerprint of the words' text it was made from (`expand.rir`).
     pub words: u64,
+    /// The harness's interface it was made for (`native_cpu_pp::ABI`).
+    pub abi: u64,
 }
 
 /// The build (none without the `generated` feature).
 #[cfg(feature = "generated")]
-pub const BUILD: Option<Build> = Some(Build { run: generated::pp_run, source: generated::SOURCE, structured: generated::STRUCTURED, words: generated::WORDS });
+pub const BUILD: Option<Build> = Some(Build { run: generated::pp_run, source: generated::SOURCE, structured: generated::STRUCTURED, words: generated::WORDS, abi: generated::ABI });
 
 #[cfg(not(feature = "generated"))]
 pub const BUILD: Option<Build> = None;

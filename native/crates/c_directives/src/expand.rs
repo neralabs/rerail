@@ -220,11 +220,12 @@ pub fn expand_tu<F: rerail_c_pp::files::Files>(main: &str, io: &mut F, cpp: bool
 }
 
 /// Whether the ahead-of-time build (`rerail_pp_aot::BUILD`) is the words this process has: made
-/// from the same text (its `words` fingerprint, `EXPAND`'s), checked once.
+/// from the same text (its `words` fingerprint, `EXPAND`'s) for the harness's interface now
+/// (`native_cpu_pp::ABI`), checked once.
 pub fn aot_build() -> Option<rerail_pp_aot::Build> {
     static SAME: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let b = rerail_pp_aot::BUILD?;
-    SAME.get_or_init(|| b.words == rerail_compiler::clif_rust::fingerprint(EXPAND)).then_some(b)
+    SAME.get_or_init(|| b.words == rerail_compiler::clif_rust::fingerprint(EXPAND) && b.abi == rerail_compiler::native_cpu_pp::ABI).then_some(b)
 }
 
 /// The words' CPU path: rustc's build of their compiled code (`rerail-pp-aot`, decision 0348 and

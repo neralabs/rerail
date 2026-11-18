@@ -885,9 +885,9 @@ pass.
   interpreter 1,098 M. Steps 1–3 and the user's choice (step 5) are open.
 - **Done** (2026-11-18): the cause was Cranelift's jump tables. Its Arm `br_table` carries a
   speculation barrier (`csel`, `csdb`) on every dispatch, and every rir `RETURN` dispatched
-  through one; LLVM's tables have none. Dispatches are now trees of compares
-  (`Lower::switch`), and the shape test refuses a `br_table`: 1,197 M cycles to 550 M, 1.14×
-  rustc's. With it, extending loads (`uload8`/`16`/`32`) and branches on combined tests split
+  through one; LLVM's tables have none. Dispatches are now trees of compares in Cranelift's
+  code (since Q38 the shared `native_cpu_codegen::tables_as_compares`), and the shape test
+  refuses a `csdb`: 1,197 M cycles to 550 M, 1.14× rustc's. With it, extending loads (`uload8`/`16`/`32`) and branches on combined tests split
   into branches on each test (`branch_on_tests`): 2,134 M instructions to 1,966 M. The user
   chose to ship rustc's build as the CPU path (t44, step 5): `expand::native`, the
   `generated` feature on by default.
@@ -909,6 +909,18 @@ pass.
 - **Done when**: each is measured on its own benchmark with the dispatch as a tree of compares
   (as `native_cpu_pp`'s `Lower::switch`), and kept where it is faster, with a guard as the pp
   words' shape test has.
+- **Done** (2026-11-18): one pass for every Cranelift backend,
+  `native_cpu_codegen::tables_as_compares`, run inside `define_function` and
+  `define_functions` and before the pp words' defines, after the IR `clif_rust` takes (rustc's
+  code keeps its tables, which carry no barrier). A bounds test, then a balanced tree over the
+  table's runs of one target. `rr_against_rust` (M1 Max, quiet run, two runs each): tier 1
+  127.0–127.3 M cycles to 112.7–112.8 M (−11%, IPC 3.1 to 3.5); tier 2 148 M either way (no
+  table on its path; `Pick::Table` is only an experiment's). The pp words with the shared pass
+  in place of their own trees: Cranelift 0.52× the interpreter's cycles (0.50× with their own),
+  at the edge of the noise, so one mechanism kept. Guards: `a_table_as_compares_is_the_table`
+  (every index, a gap, a block argument, past the end; no `csdb` in the code) and the pp shape
+  test (no `csdb` in the words' code). `parser_tests`' four red tests (Q33 and three more) fail
+  the same at the base commit.
 
 ## Questions for the user
 

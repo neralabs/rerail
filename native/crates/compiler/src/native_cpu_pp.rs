@@ -17,7 +17,7 @@ use crate::native_cpu_shape::Step;
 use crate::pp_expr::Value as Val;
 use crate::pp_words::{self, DIGITS, EmC, Asked, B_BASE_FILE, B_COUNTER, B_DATE, B_FILE, B_FILE_NAME, B_HAS_EMBED, B_HAS_INCLUDE, B_HAS_INCLUDE_NEXT, B_INCLUDE_LEVEL, B_LINE, B_PRAGMA, B_TIME, B_TIMESTAMP, BUILTINS, Bi, Bounds, COND_ELSE, COND_SIZE, COND_SRC, COND_TAKEN, Ctx, Ex, FeatureC, Inc, MAX_INCLUDE_DEPTH, NamedC, OPS, Want, op_index, BOL, DIGRAPH, Def, DefState, EOF, EXP, Env, Expanded, File, FileC, Frame, HASH, HASHHASH, IDENT, LEVEL, LITERAL, NO_PARAM, NOEXP, NONE, NUMBER, PAIR, PASTE, PASTE_MARK, PLACEMARKER, PUNCT, Refused, SPACE, Slot, Src, Sub, Tok, USE, VA_ARGS, VA_OPT, VA_OPT_MARK};
 use crate::program::{ACCEPT, ARG, BUILTIN, COND, EMBED, DEFINE, DEFINED, EXPR, FRAME, GLUE, GOTO, IF, INCLUDE, IS, LINEDIR, PRAGMA, SKIP, KEEP, LINE, LOOKUP, MACRO, PAINT, PEEK, PRE, PUSH, PUT, PpTables, READ, RETURN, SKIPLINE, STOP, STR, SUB, UNDEF, Words, split};
-use cranelift_codegen::ir::{AbiParam, Block, BlockArg, BlockCall, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
+use cranelift_codegen::ir::{AbiParam, Block, BlockArg, BlockCall, InstBuilder, JumpTableData, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_codegen::ir::{ExtFuncData, ExternalName, FuncRef, UserExternalName};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -308,36 +308,26 @@ impl Lower<'_, '_> {
         st(self.f, types::I64, end, ctx, at!(nreturns));
     }
 
-    /// To `cases`' block whose key `x` is (the keys rising), else to `default`: a balanced tree
-    /// of compares, never a `br_table`. Cranelift's Arm jump table carries a speculation barrier
-    /// (`csel`, then `csdb`) on every dispatch, which LLVM's does not: on the return dispatches
-    /// it was most of the compiled words' cycles (Q36, t44). Ends the current block.
+    /// To `cases`' block whose key `x` is (the keys rising, small), else to `default`: a jump
+    /// table. Cranelift's code has it as a tree of compares
+    /// (`native_cpu_codegen::tables_as_compares`, its jump tables' barrier); `clif_rust`'s keeps
+    /// the table. Ends the current block.
     fn switch(&mut self, x: Value, cases: &[(u64, Block)], default: Block) {
         debug_assert!(cases.windows(2).all(|w| w[0].0 < w[1].0));
-        let here = self.f.current_block().expect("a block to end");
-        let mut work = vec![(here, 0usize, cases.len())];
-        while let Some((b, lo, hi)) = work.pop() {
-            if b != here {
-                self.f.switch_to_block(b);
-            }
-            match hi - lo {
-                0 => {
-                    self.f.ins().jump(default, &[]);
-                }
-                1 => {
-                    let eq = self.f.ins().icmp_imm(IntCC::Equal, x, cases[lo].0 as i64);
-                    self.f.ins().brif(eq, cases[lo].1, &[], default, &[]);
-                }
-                _ => {
-                    let mid = (lo + hi) / 2;
-                    let (left, right) = (self.f.create_block(), self.f.create_block());
-                    let below = self.f.ins().icmp_imm(IntCC::UnsignedLessThan, x, cases[mid].0 as i64);
-                    self.f.ins().brif(below, left, &[], right, &[]);
-                    work.push((right, mid, hi));
-                    work.push((left, lo, mid));
-                }
-            }
+        let n = cases.last().map_or(0, |c| c.0 as usize + 1);
+        let mut entries = vec![default; n];
+        for &(k, b) in cases {
+            entries[k as usize] = b;
         }
+        let calls: Vec<BlockCall> = entries.iter().map(|&b| self.f.func.dfg.block_call(b, &[])).collect();
+        let dflt = self.f.func.dfg.block_call(default, &[]);
+        let jt = self.f.create_jump_table(JumpTableData::new(dflt, &calls));
+        let x = match self.f.func.dfg.value_type(x).bits() {
+            32 => x,
+            b if b > 32 => self.f.ins().ireduce(types::I32, x),
+            _ => self.f.ins().uextend(types::I32, x),
+        };
+        self.f.ins().br_table(x, jt);
     }
 
     /// A return to the return point of rank `to`, its block `targets[to]`: through a dispatch
@@ -6713,6 +6703,26 @@ pub fn rust_source(program: &Words) -> Result<String, String> {
     Ok(format!("{one}\n/// This source's fingerprint (`clif_rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"))
 }
 
+/// The interface an ahead-of-time build shares with the harness that runs it (`run_aot`): the
+/// sizes of the context and of the records it points at, and the refusal reasons. A build
+/// records it, and the host runs a build only where it is the compiler's now, so a build left
+/// stale by a change of the compiler is never handed a context of another layout.
+pub const ABI: u64 = {
+    use std::mem::size_of;
+    let parts = [
+        size_of::<Ctx>(), size_of::<Tok>(), size_of::<Inc>(), size_of::<Want>(), size_of::<EmC>(), size_of::<Bi>(), size_of::<Asked>(),
+        size_of::<FeatureC>(), size_of::<NamedC>(), size_of::<Src>(), size_of::<Def>(), size_of::<Slot>(), size_of::<Frame>(),
+        size_of::<Ex>(), size_of::<DefState>(), size_of::<Sub>(), size_of::<FileC>(), REASONS.len(),
+    ];
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    let mut i = 0;
+    while i < parts.len() {
+        h = (h ^ parts[i] as u64).wrapping_mul(0x100_0000_01b3);
+        i += 1;
+    }
+    h
+};
+
 /// `pp_words::run`'s work, by an ahead-of-time build of the words (`rust_source`'s `pp_run`).
 ///
 /// # Safety
@@ -6796,6 +6806,7 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
             ir.push((fid.as_u32(), context.func.clone()));
             context.set_disasm(true);
         }
+        crate::native_cpu_codegen::tables_as_compares(&mut context.func);
         module.define_function(fid, &mut context).map_err(|e| Error::RefusedShape(format!("word {pc}: {e:?}")))?;
         if keep {
             disasm.push(context.compiled_code().and_then(|c| c.vcode.clone()).unwrap_or_default());
@@ -6877,6 +6888,7 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
         ir.push((id.as_u32(), context.func.clone()));
         context.set_disasm(true);
     }
+    crate::native_cpu_codegen::tables_as_compares(&mut context.func);
     module.define_function(id, &mut context).map_err(|e| Error::RefusedShape(format!("pp_run: {e:?}")))?;
     if keep {
         disasm.insert(0, context.compiled_code().and_then(|c| c.vcode.clone()).unwrap_or_default());

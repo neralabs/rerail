@@ -136,8 +136,10 @@ profile of step 1. Each change was timed alone on the corpus (M1 Max, quiet run)
   (`JTSequence`), whatever the settings. `csdb` is a speculation barrier: the jump waits for
   its index to be known. Every rir `RETURN` dispatched through a table, so every return of
   `#if`'s evaluator and the expansion's calls waited. LLVM's jump tables have no barrier.
-- **The fix.** `Lower::switch`: a balanced tree of compares, for the return dispatches and the
-  two former `cranelift_frontend::Switch`es. The shape test refuses a `br_table`.
+- **The fix.** A balanced tree of compares for every dispatch in Cranelift's code: first the
+  words' own (`Lower::switch`), since Q38 the pass every backend shares
+  (`native_cpu_codegen::tables_as_compares`), run after the IR `clif_rust` takes, so rustc's
+  code keeps its tables. The shape test refuses a `csdb` in the words' code.
 - Cranelift's code is now at 0.50× the interpreter's cycles and 1.14× rustc's.
 - The same barrier is in tier 1's and tier 2's jump tables (work queue Q38).
 
