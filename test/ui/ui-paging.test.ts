@@ -148,7 +148,7 @@ describe("a poll", () => {
     expect(requested.filter(url => url.pathname === "/api/repository/rules")).toHaveLength(1);
   });
 
-  it("is not scheduled while the tab is hidden, and is while it shows", async () => {
+  it("reads again by itself neither while the tab is hidden nor while it shows: the daemon's change stream says when", async () => {
     ui.view = "settings";
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     vi.stubGlobal("document", { hidden: true });
@@ -161,8 +161,8 @@ describe("a poll", () => {
     vi.stubGlobal("document", { hidden: false });
     await refreshNow();
     const visible = requested.length;
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(requested.length).toBeGreaterThan(visible);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(requested.length).toBe(visible);
   });
 });
 

@@ -81,7 +81,8 @@ describe("the database's change feed", () => {
 
     await vi.advanceTimersByTimeAsync(10_000);
 
-    expect(heard).toEqual(["beat", "beat"]);
+    // The second beat's turn may end just past the time moved to: the next timer is either that turn or a third beat.
+    expect(await heardAfterTurn(heard)).toEqual(["beat", "beat"]);
   });
 
   it("tries a watch that could not start again at the next beat, and tells commits once it runs", async () => {
