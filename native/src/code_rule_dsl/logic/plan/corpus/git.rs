@@ -2,7 +2,7 @@
 
 use super::front::{Program, Value};
 use gix::bstr::ByteSlice as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(super) const REVISION: &str = "git_revision_request";
 pub(super) const OBJECT: &str = "git_object_request";
@@ -24,6 +24,7 @@ pub(super) struct Git {
     repository: Option<(String, gix::Repository)>,
     tree: Option<gix::ObjectId>,
     commit: Option<gix::ObjectId>,
+    snapshot_root: Option<PathBuf>,
 }
 
 /// A decoded object's records share one acquisition. The library gives them their public schemas.
@@ -70,6 +71,7 @@ impl Git {
             repository,
             tree,
             commit,
+            snapshot_root: tree.map(|_| root.to_owned()),
         }
     }
 
@@ -105,6 +107,21 @@ impl Git {
     fn object(&self, key: &str, oid: &str) -> Result<Vec<Record>, &'static str> {
         let repo = self.repo(key)?;
         let id = Self::object_id(repo, oid)?;
+        if let Some(root) = &self.snapshot_root
+            && let Some(records) = crate::git_workspace::snapshot::with_inventory_tree(root, &id, |tree| {
+                let mut records = Vec::with_capacity(tree.entries.len() + 1);
+                records.push(Record::text("kind", "tree"));
+                for entry in &tree.entries {
+                    let mut record = Record::text("entry", &entry.name);
+                    record.second = hex(&entry.target.key_bytes()[8..8 + id.as_slice().len()]);
+                    record.number = i64::from(entry.mode);
+                    records.push(record);
+                }
+                records
+            })
+        {
+            return repo.has_object(id).then_some(records).ok_or("missing");
+        }
         let object = repo
             .try_find_object(id)
             .map_err(|_| "unreadable")?

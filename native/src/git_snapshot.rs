@@ -479,6 +479,19 @@ pub fn source_language(path: &Path) -> Option<Option<String>> {
     Some(inventory.languages.get(full.to_str()?).cloned())
 }
 
+/// A tree already read and checked by this view's source inventory.
+pub fn with_inventory_tree<T>(
+    root: &Path,
+    id: &gix::hash::oid,
+    read: impl FnOnce(&crate::content_store::GitTree) -> T,
+) -> Option<T> {
+    let view = view(root)?;
+    let id = super::hash_key(id).ok()?;
+    let trees = &view.inventory.get()?.trees;
+    let index = trees.binary_search_by_key(&id, |tree| tree.id).ok()?;
+    Some(read(&trees[index]))
+}
+
 pub struct InventoryFilter {
     prefix: PathBuf,
     paths: Option<Vec<String>>,

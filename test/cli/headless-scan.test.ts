@@ -775,6 +775,50 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     expect(labels(explicit)).toEqual(labels(configured));
   });
 
+  it("shares cold tree facts between source discovery and explicit policy requests", () => {
+    const root = checkout();
+    const home = `${root}-home`;
+    mkdirSync(home);
+    for (const path of ["src", "ignored"]) {
+      mkdirSync(join(root, path));
+      writeFileSync(join(root, path, "call.py"), "x = f(1)\n");
+    }
+    writeFileSync(join(root, ".rerailignore"), "ignored/\n");
+    git(root, "add", ".rerailignore", "src/call.py", "ignored/call.py");
+    git(root, "commit", "-qm", "source and ignored tree");
+    const policy = join(home, "walk.rr");
+    writeFileSync(policy, `
+#include "git.rr"
+.policy "walk-source" revision 1
+.language python
+.violation Call(at: node) "call"
+Call(n) :- kind(n, "call").
+.violation Seen(at: span) "file in the tree"
+git_tree_walk_request(r, t) :- git_source_tree(r, t).
+Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _).
+`);
+    const script = `
+      import { join } from "node:path";
+      import { runHeadlessScan } from "./src/cli/headless-scan.ts";
+      const [repo, home, policy] = process.argv.slice(2);
+      const report = await runHeadlessScan({
+        repo, databasePath: join(home, "rerail.sqlite"), rr: [policy], revision: "HEAD",
+        analysisScope: "walk", scope: "repository", packs: [], version: "test",
+      });
+      console.log(JSON.stringify(report));
+    `;
+    const profile = join(home, "profile");
+    const report = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, home, policy], {
+      input: script, encoding: "utf8", env: { ...process.env, RERAIL_PROFILE: profile },
+    })) as ScanReport;
+    expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+    expect(report.violations.filter(row => row.code === "Call").map(row => row.path)).toEqual(["src/call.py"]);
+    expect(report.violations).toContainEqual(expect.objectContaining({ code: "Seen", path: "ignored/call.py" }));
+    const uniqueSubtrees = new Set(git(root, "ls-tree", "-d", "-r", "HEAD").split("\n").map(row => row.split(/\s+/u)[2]));
+    const trace = readFileSync(join(profile, "profile.txt"), "utf8");
+    expect(Number(trace.match(/^\s*count\s+(\d+)\s+git\.tree_decodes$/mu)?.[1])).toBe(1 + uniqueSubtrees.size);
+  });
+
   it("reopens the store after registry and parser version changes", () => {
     const root = checkout();
     const home = `${root}-home`;

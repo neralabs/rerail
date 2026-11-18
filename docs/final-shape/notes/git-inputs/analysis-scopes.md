@@ -54,6 +54,8 @@ reachable trees is therefore a bound even when multiple paths share one tree.
 If a referenced tree cannot be read, `git_tree_walk_error` reports the failure.
 `git_tree_walk_complete(repo, root)` holds after a successful explicit walk.
 The source inventory requires every tree that passes its filter to be readable.
+When a policy asks for a tree that the inventory read, it receives those same
+decoded entries. The request can still reach trees outside the inventory.
 
 ## Retention and invalidation
 
