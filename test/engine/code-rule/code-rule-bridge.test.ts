@@ -3346,6 +3346,27 @@ describe("CodeRuleBridge and Git's own writes", () => {
     ]);
   });
 
+  // Claude Code runs a turn's commands side by side: here one writes files and commits them as the other's result walks
+  // the folder and reads Git. A file the session has seen waits for the writing command's own result, which measures it
+  // from the tree before the commit. A file new to the session is that walk's to check: read as the commit landed, it
+  // was taken for one Git wrote, and no later walk found it changed.
+  it("keeps auditing a file new to the session that a command still running commits as another command's result reads Git", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await bridge.begin("shell-1", "shell", { command: "./commit.sh" });
+    await writeFile(join(root, "src", "a.py"), "old\nmine\n");
+    await writeFile(join(root, "src", "mine.py"), "mine\n");
+    git(root, "add", "src/a.py", "src/mine.py");
+    await bridge.begin("shell-2", "shell", { command: "ls" });
+    whileVerdictsRead(listsBranches, () => git(root, "commit", "--quiet", "-m", "mine"));
+    await bridge.finish("shell-2");
+    await bridge.finish("shell-1");
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/mine.py", language: "python", generatedText: "mine\n" }],
+      [{ path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" }],
+    ]);
+  });
+
   // A command that commits again as the second reading of Git is made: the third reading, made once `HEAD` holds, finds
   // the files of both commits the command's own.
   it("keeps auditing a file its command committed in each of the walk's first two readings of Git", async () => {
