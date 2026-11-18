@@ -451,7 +451,7 @@ mod tests {
     #[test]
     #[ignore = "a measurement: run by name with RERAIL_TAPE_RUN"]
     fn tape_cost() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
         let (mut files, mut work) = (Vec::new(), vec![root]);
         while let Some(dir) = work.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };
@@ -596,7 +596,7 @@ mod tests {
         assert!(same(long.as_bytes()));
         let wide = format!("[\"{}\", 1]", "x".repeat(70_000));
         assert!(same(wide.as_bytes()));
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
         let (mut checked, mut work) = (0, vec![root]);
         while let Some(dir) = work.pop() {
             let Ok(entries) = std::fs::read_dir(&dir) else { continue };

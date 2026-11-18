@@ -979,7 +979,10 @@ mod tests {
 
     #[test]
     fn discovers_current_repository_without_a_git_process() {
-        let workspace = discover(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let workspace = discover(&std::path::PathBuf::from(
+            std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+        ))
+        .unwrap();
         assert!(workspace.worktree_root.is_absolute());
         assert!(workspace.common_directory.is_absolute());
         assert!(!workspace.trees.is_empty());

@@ -5,7 +5,7 @@ use crate::code_rule_dsl::logic::rr::parse;
 use std::path::{Path, PathBuf};
 
 fn programs() -> PathBuf {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/logic/programs/data_layer")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..").join("src/code_rule_dsl/logic/programs/data_layer")
 }
 
 /// The rules with recursion (E0's eight, t17), each with a program `<rule>.rerail` (`_` for `-`).

@@ -391,7 +391,7 @@ fn packs_ledger(all: &[Probe], matrix: &str) {
 
 /// The ledger's place.
 fn ledger() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/executor-coverage/matrix.tsv")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../gate/executor-coverage/matrix.tsv")
 }
 
 /// One cell, on one line: the explanation's own detail (rule numbers, slots; the rule a SQL error was in) left
@@ -566,7 +566,7 @@ fn ops_of(items: &[rerail_rr_syntax::syntax::Statement], out: &mut BTreeMap<Stri
 
 /// The shipped `.rerail` files: the packs and the engine's own programs.
 fn shipped() -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let mut out = Vec::new();
     let mut walk = vec![root.join("../docs/rule-syntax"), root.join("src/code_rule_dsl")];
     while let Some(d) = walk.pop() {
