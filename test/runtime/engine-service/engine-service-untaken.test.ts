@@ -181,6 +181,22 @@ describe("an engine service beside the events hooks left while its daemon did no
     ]);
   });
 
+  it("reads a second Write left for a file whole, as the first, since the session's read of the file came after both", async () => {
+    const opening = Promise.withResolvers<void>();
+    const held = await serviceWithUntaken(opening.promise);
+    const ran = Date.now();
+    await leftWrite(held, "first", "w3.py", "def w3():\n    print(1)\n", ran);
+    await leftWrite(held, "second", "w3.py", "def w3():\n    print(1)\n    print(2)\n", ran + 1);
+    opening.resolve();
+    await held.firstView;
+    await held.service.untaken.taken();
+    // The first call's read of the file holds what the second wrote: taken as the second's "before", it was no change,
+    // and the first call's steer, overtaken by the second's check of the file, never reached the agent.
+    expect(await held.send(prompt("next"))).toContain(printSteer("w3.py"));
+    const edits = held.batches.filter(batch => batch.mode !== "log").flatMap(batch => batch.edits).filter(edit => edit.path === "w3.py");
+    expect(edits.map(edit => edit.previousReadError === undefined ? edit.previousText : "unknown")).toEqual(["unknown", "unknown"]);
+  });
+
   it("takes what a shell command left untaken wrote as the session's own, from when its hooks met it", async () => {
     const held = await serviceWithUntaken();
     const tool = { sessionId: SESSION, toolCallId: "shell-1", toolName: "Bash" } as const;
