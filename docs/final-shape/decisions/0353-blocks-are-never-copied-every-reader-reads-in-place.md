@@ -493,8 +493,25 @@ Each step ends with:
            entry of fixed size (a power of two), written once in CLIF for the JIT and the kernels. The CPU's
            reader is the same cache, small and of one thread.
          - A spare generation, cleared ahead: of G, G − 1 are live; a rotation is one compare-and-swap of the
-           epoch, and the thread that wins clears the next spare. A miss never waits for another thread: two
-           threads that miss one key both compute it, and the later index entry is never found.
+           epoch, and the thread that wins clears the next spare.
+         - Misses on the device, decided (user, 2026-11-18, superseding "a miss never waits"): claim first, a
+           bounded wait. Without waiting, the device's threads that miss one block at once each decoded it (57
+           decodes for a tape of a few blocks in the view probe); at four blocks a generation their copies filled
+           the head, the cache turned on itself, and 75 lookups found no room. Now a miss claims an entry, writes
+           its key and indexes it before it decodes; a lookup that finds its block being written waits for it
+           (`SPIN` loads at most), then decodes it too (a duplicate, counted). A writer whose index slot is taken
+           by the same key gives its entry back and looks again, so it finds the other's and waits. No wait is
+           unbounded: lanes of one SIMD group are not promised to make progress apart, so a wait may run out.
+           The user's further asks: a cache of a reasonable size, so its hit ratio is good (the device's is sized
+           from the budget, to hold the batch's blocks where it can); if that is not enough, the threads' start
+           points randomized, so they do not all miss one block at once; and a mode in which the cache keeps its
+           statistics, for tuning (`Spec::with_stats`: hits, waits, duplicates, beside the misses, copies, turns
+           and failures it always counts; `cache::Counts`).
+           Measured on the device's view probe (statistics on): each tape decoded once (1 miss, against up to 57
+           before), no failure and no duplicate at 1, 4 and 64 blocks a generation, hit ratio 0.993–0.999 (16–542
+           lookups waited, every wait answered), the rows the host's in every case. On the CPU, eight threads over
+           a cache far too small for their tape (four blocks a generation): hit ratio 0.77, 0.77 M lookups waited
+           instead of decoding, a read wrong only where a failure was counted.
          - A read from a frozen generation that is dropped while it reads is caught: the read checks its
            generation's stamp after it, and reads again. An entry's loads are masked to the entry, so a read of
            one being rewritten reads nothing outside the cache.

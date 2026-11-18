@@ -1258,15 +1258,27 @@ fn cache_add(b: &mut B<'_, '_>, p: Value, offset: i32, value: Value) -> Value {
     let p = b.f.ins().iadd_imm(p, i64::from(offset));
     b.f.ins().atomic_rmw(I32, MemFlags::trusted(), ir::AtomicRmwOp::Add, p, value)
 }
+/// The statistics mode's count at `at` (`view::cache::STATS`), added to where the cache keeps them.
+fn cache_stat(b: &mut B<'_, '_>, cache: Value, at: i32) {
+    let on = cache_load(b, cache, crate::view::cache::STATS);
+    let (count, after) = (b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(on, count, &[], after, &[]);
+    b.f.switch_to_block(count);
+    cache_count(b, cache, at);
+    b.f.ins().jump(after, &[]);
+    b.f.switch_to_block(after);
+}
+
 fn cache_count(b: &mut B<'_, '_>, cache: Value, offset: i32) {
     let one = b.c32(1);
     cache_add(b, cache, offset, one);
 }
 
 /// The entry of `key` in the rolling cache at `cache` (`view::cache`): looked up in its live generations, head
-/// first, a hit in the oldest copied into the head; on a miss, an entry of the head taken and `fill`ed (its payload:
-/// `fill` gives whether it fits), completed and indexed. A full head turns the spare into the head. After `TRIES`
-/// tries without room, a failure counted and the dead entry given.
+/// first, a hit in the oldest copied into the head, an entry another thread writes waited for (`SPIN` times at most);
+/// on a miss, an entry of the head claimed, indexed, `fill`ed (its payload: `fill` gives whether it fits) and
+/// completed. A full head turns the spare into the head. After `TRIES` tries without room, a failure counted and the
+/// dead entry given.
 fn cache_get(b: &mut B<'_, '_>, cache: Value, key: Value, fill: &dyn Fn(&mut B<'_, '_>, Value) -> Value) -> Value {
     use crate::view::cache as c;
     let gens = cache_load(b, cache, c::GENS);
@@ -1352,7 +1364,40 @@ fn cache_get(b: &mut B<'_, '_>, cache: Value, key: Value, fill: &dyn Fn(&mut B<'
     b.f.append_block_param(found, I64);
     b.f.append_block_param(found, I32);
     b.f.append_block_param(found, I32);
-    b.f.ins().brif(hit, found, &[e.into(), k.into(), stamp.into()], probe_on, &[]);
+    let (counted_hit, not_complete) = (b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(hit, counted_hit, &[], not_complete, &[]);
+    b.f.switch_to_block(counted_hit);
+    cache_stat(b, cache, c::HITS);
+    b.f.ins().jump(found, &[e.into(), k.into(), stamp.into()]);
+    // Its block being written by another thread (claimed first, indexed before it is decoded): waited for, a
+    // bounded number of times, else decoded here too (a duplicate).
+    b.f.switch_to_block(not_complete);
+    let writing = b.f.ins().bor_imm(stamp, i64::from(c::WRITING));
+    let pending = b.f.ins().icmp(IntCC::Equal, ready, writing);
+    let pending = b.f.ins().band(same, pending);
+    let (wait, waiting, waited, run_out) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(wait, I32);
+    b.f.ins().brif(pending, wait, &[zero.into()], probe_on, &[]);
+    b.f.switch_to_block(wait);
+    let spin = b.f.block_params(wait)[0];
+    let left = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, spin, i64::from(c::SPIN));
+    b.f.ins().brif(left, waiting, &[], run_out, &[]);
+    b.f.switch_to_block(waiting);
+    b.f.ins().fence();
+    let now = cache_load(b, e, c::READY);
+    let done_now = b.f.ins().icmp(IntCC::Equal, now, stamp);
+    let still = b.f.ins().icmp(IntCC::Equal, now, writing);
+    let spin = b.f.ins().iadd_imm(spin, 1);
+    let again = b.f.create_block();
+    b.f.ins().brif(done_now, waited, &[], again, &[]);
+    b.f.switch_to_block(again);
+    b.f.ins().brif(still, wait, &[spin.into()], probe_on, &[]);
+    b.f.switch_to_block(waited);
+    cache_stat(b, cache, c::WAITED);
+    b.f.ins().jump(found, &[e.into(), k.into(), stamp.into()]);
+    b.f.switch_to_block(run_out);
+    cache_stat(b, cache, c::DUPLICATES);
+    b.f.ins().jump(miss, &[]);
     b.f.switch_to_block(probe_on);
     let p = b.f.ins().iadd_imm(p, 1);
     b.f.ins().jump(probe, &[p.into()]);
@@ -1470,27 +1515,21 @@ fn cache_take(
     let free = b.f.ins().icmp_imm(IntCC::Equal, busy, 0);
     let ours = b.f.ins().band(claimed, free);
     b.f.ins().brif(ours, write, &[], take, &[]);
-    // Its key and payload (a fence after the claim), then (a fence after them) its completion and its index.
+    // Its key (a fence after the claim) and its index (a fence after the key), so a thread that looks for the same
+    // block finds it being written and waits; then its payload and (a fence after it) its completion. An index lost
+    // to an entry of the same key (another thread missed it at once): the entry given back, and the lookup tried
+    // again, which finds the other's.
     b.f.switch_to_block(write);
     b.f.ins().fence();
     b.f.ins().store(rw, key, e, c::KEY);
-    let fits = fill(b, e);
-    let (complete, unfit) = (b.f.create_block(), b.f.create_block());
-    b.f.ins().brif(fits, complete, &[], unfit, &[]);
-    // Too large for an entry: the entry given back.
-    b.f.switch_to_block(unfit);
-    cache_store(b, e, c::READY, zero);
-    b.f.ins().jump(done, &[none.into()]);
-    b.f.switch_to_block(complete);
     b.f.ins().fence();
-    cache_store(b, e, c::READY, epoch);
-    let (probe, place, next, placed) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    let (probe, place, check, lost, next, indexed) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.append_block_param(probe, I32);
     b.f.ins().jump(probe, &[zero.into()]);
     b.f.switch_to_block(probe);
     let p = b.f.block_params(probe)[0];
     let in_range = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, p, i64::from(c::PROBES));
-    b.f.ins().brif(in_range, place, &[], placed, &[]);
+    b.f.ins().brif(in_range, place, &[], indexed, &[]);
     b.f.switch_to_block(place);
     let j = b.f.ins().iadd(h, p);
     let j = b.f.ins().band(j, slot_mask);
@@ -1501,11 +1540,31 @@ fn cache_take(
     let number = b.f.ins().iadd_imm(n, 1);
     let was = b.f.ins().atomic_cas(MemFlags::trusted(), at, zero, number);
     let won = b.f.ins().icmp_imm(IntCC::Equal, was, 0);
-    b.f.ins().brif(won, placed, &[], next, &[]);
+    b.f.ins().brif(won, indexed, &[], check, &[]);
+    b.f.switch_to_block(check);
+    let other = b.f.ins().iadd_imm(was, -1);
+    let other = entry_of(b, head, other);
+    let theirs = b.f.ins().load(I64, rw, other, c::KEY);
+    let same = b.f.ins().icmp(IntCC::Equal, theirs, key);
+    b.f.ins().brif(same, lost, &[], next, &[]);
+    b.f.switch_to_block(lost);
+    cache_store(b, e, c::READY, zero);
+    b.f.ins().jump(done, &[none.into()]);
     b.f.switch_to_block(next);
     let p = b.f.ins().iadd_imm(p, 1);
     b.f.ins().jump(probe, &[p.into()]);
-    b.f.switch_to_block(placed);
+    // Indexed (or no slot free in its probes: the entry this thread's alone).
+    b.f.switch_to_block(indexed);
+    let fits = fill(b, e);
+    let (complete, unfit) = (b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(fits, complete, &[], unfit, &[]);
+    // Too large for an entry: the entry given back.
+    b.f.switch_to_block(unfit);
+    cache_store(b, e, c::READY, zero);
+    b.f.ins().jump(done, &[none.into()]);
+    b.f.switch_to_block(complete);
+    b.f.ins().fence();
+    cache_store(b, e, c::READY, epoch);
     b.f.ins().jump(done, &[e.into()]);
     // The head full: the spare (cleared ahead, stamped `epoch + 1`) turned into the head.
     b.f.switch_to_block(full);

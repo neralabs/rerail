@@ -137,6 +137,13 @@ pub mod cache {
     pub const MISSES: i32 = 36;
     pub const PROMOTED: i32 = 40;
     pub const ROTATED: i32 = 44;
+    /// The statistics mode (1: the counts below kept too, for tuning a cache's size), and its counts: lookups that
+    /// found their entry complete, ones that found it being written and waited for it, and blocks decoded while
+    /// another thread decoded the same one (a wait run out, or an index lost to it).
+    pub const STATS: i32 = 48;
+    pub const HITS: i32 = 52;
+    pub const WAITED: i32 = 56;
+    pub const DUPLICATES: i32 = 60;
     pub const HEAD: usize = 64;
     /// A generation's u32s: the epoch it holds (0 while it is cleared) and its entries taken; its index after.
     pub const STAMP: i32 = 0;
@@ -148,9 +155,10 @@ pub mod cache {
     pub const PAYLOAD: i32 = 16;
     /// An entry's completion while a writer of that epoch writes it (the epoch's bit 31 set).
     pub const WRITING: u32 = 1 << 31;
-    /// A lookup's probes of a generation's index, and its tries.
+    /// A lookup's probes of a generation's index, its tries, and its waits for an entry another thread writes.
     pub const PROBES: u32 = 16;
     pub const TRIES: u32 = 4;
+    pub const SPIN: u32 = 1024;
     /// The room past the dead entry: an entry's masked loads reach at most an entry and a word past it.
     pub const SLACK: usize = 256;
 
@@ -164,13 +172,19 @@ pub mod cache {
         pub shift: u32,
         /// Index slots a generation, a power of two of at least twice the entries.
         pub slots: u32,
+        /// Whether its lookups keep the statistics mode's counts (`STATS`).
+        pub stats: bool,
     }
 
     impl Spec {
         /// The smallest index for `entries`.
         pub fn new(gens: u32, entries: u32, entry_bytes: usize) -> Spec {
             let shift = entry_bytes.next_power_of_two().trailing_zeros();
-            Spec { gens: gens.max(3), entries: entries.max(1), shift, slots: (2 * entries.max(1)).next_power_of_two().max(8) }
+            Spec { gens: gens.max(3), entries: entries.max(1), shift, slots: (2 * entries.max(1)).next_power_of_two().max(8), stats: false }
+        }
+        /// The same cache in the statistics mode.
+        pub fn with_stats(self) -> Spec {
+            Spec { stats: true, ..self }
         }
         pub fn entry_bytes(&self) -> usize {
             1 << self.shift
@@ -206,12 +220,42 @@ pub mod cache {
             put(GEN_STRIDE as usize, word(self.gen_stride())?);
             put(FIRST_ENTRY as usize, word(self.first_entry())?);
             put(DEAD as usize, word(self.dead())?);
+            put(STATS as usize, u32::from(self.stats));
             for k in 0..self.gens {
                 // Live at `epoch - k` for k < gens - 1; the spare at `epoch + 1`.
                 let stamp = if k + 1 < self.gens { epoch - k } else { epoch + 1 };
                 put(HEAD + (stamp % self.gens) as usize * self.gen_stride() + STAMP as usize, stamp);
             }
             Ok(())
+        }
+    }
+
+    /// A cache's counts, read from its header (`cache` the cache's first byte): after the threads that use it are
+    /// done, or as a sample while they run.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct Counts {
+        pub misses: u32,
+        pub promoted: u32,
+        pub rotated: u32,
+        pub failed: u32,
+        /// The statistics mode's (0 without it).
+        pub hits: u32,
+        pub waited: u32,
+        pub duplicates: u32,
+    }
+
+    impl Counts {
+        /// # Safety
+        /// `cache` is a cache's first byte (a `Spec::init`ed buffer), readable for its header.
+        pub unsafe fn read(cache: *const u8) -> Counts {
+            // SAFETY: the header's words, 4-aligned in a buffer the caller vouches for.
+            let word = |at: i32| unsafe { (*cache.add(at as usize).cast::<std::sync::atomic::AtomicU32>()).load(std::sync::atomic::Ordering::Relaxed) };
+            Counts { misses: word(MISSES), promoted: word(PROMOTED), rotated: word(ROTATED), failed: word(FAILED), hits: word(HITS), waited: word(WAITED), duplicates: word(DUPLICATES) }
+        }
+        /// Lookups that found their block (complete or waited for) of all lookups that kept counts.
+        pub fn hit_ratio(&self) -> f64 {
+            let found = f64::from(self.hits) + f64::from(self.waited);
+            found / (found + f64::from(self.misses) + f64::from(self.failed)).max(1.0)
         }
     }
 }

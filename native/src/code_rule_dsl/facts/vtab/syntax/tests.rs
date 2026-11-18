@@ -1921,7 +1921,7 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
                     // A 16z tape's blocks through a cache every thread shares (0353 step 4b): one of a block a
                     // generation, which turns all the time and may find no room (a failure counted: the device
                     // refuses the batch), and one with room.
-                    for room in [1u32, 64] {
+                    for room in [1u32, 4, 64] {
                     let cmd = queue.new_command_buffer();
                     let enc = cmd.new_compute_command_encoder();
                     enc.set_compute_pipeline_state(pipe);
@@ -1932,7 +1932,7 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
                     let lb = device.new_buffer_with_data(words.as_ptr().cast(), 4 * words.len() as u64, MTLResourceOptions::StorageModeShared);
                     let address = [tt.gpu_address(), lb.gpu_address()];
                     let mut view = view;
-                    let spec = rerail_clif::view::cache::Spec::new(3, room, view.columns[3] as usize);
+                    let spec = rerail_clif::view::cache::Spec::new(3, room, view.columns[3] as usize).with_stats();
                     let cache = device.new_buffer(spec.bytes() as u64, MTLResourceOptions::StorageModeShared);
                     if view.format == rerail_clif::view::F16Z_FORMAT {
                         // SAFETY: the buffer's bytes, shared with the host, not yet read by the device.
@@ -1956,8 +1956,9 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
                     // SAFETY: the cache's header, its command completed.
                     let word = |at: i32| unsafe { *cache.contents().cast::<u8>().add(at as usize).cast::<u32>() };
                     if view.format == rerail_clif::view::F16Z_FORMAT {
-                        let c = rerail_clif::view::cache::MISSES;
-                        eprintln!("{at}, {room} a generation: the device's cache: {} misses, {} turns, {} failed", word(c), word(rerail_clif::view::cache::ROTATED), word(rerail_clif::view::cache::FAILED));
+                        // SAFETY: the cache's header, its command completed.
+                        let counts = unsafe { rerail_clif::view::cache::Counts::read(cache.contents().cast::<u8>()) };
+                        eprintln!("{at}, {room} a generation: the device's cache: {counts:?}, hit ratio {:.3}", counts.hit_ratio());
                     }
                     let failed = word(rerail_clif::view::cache::FAILED);
                     assert!(room == 1 || failed == 0, "{at}: the device's cache with room failed {failed} times");

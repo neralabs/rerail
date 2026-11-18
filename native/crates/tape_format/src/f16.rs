@@ -1366,7 +1366,7 @@ mod tests {
         let n = t.len();
         let want: Vec<[u32; 4]> = (0..n).map(|i| [t.code(i), t.start(i) as u32, t.end(i) as u32, t.parent(i).map_or(u32::MAX, |p| p as u32)]).collect();
         let mut view = z.view(&lang).unwrap();
-        let spec = cache::Spec::new(3, 4, view.columns[3] as usize);
+        let spec = cache::Spec::new(3, 4, view.columns[3] as usize).with_stats();
         let mut buf = vec![0u128; spec.bytes().div_ceil(16)];
         // SAFETY: the buffer's bytes, 16-aligned.
         let bytes = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), spec.bytes()) };
@@ -1403,10 +1403,10 @@ mod tests {
                 .collect();
             threads.into_iter().map(|t| t.join().unwrap()).sum()
         });
-        let word = |at: i32| unsafe { *((cache_at + at as usize) as *const u32) };
-        let (misses, promoted, rotated) = (word(cache::MISSES), word(cache::PROMOTED), word(cache::ROTATED));
-        eprintln!("misses {misses}, promoted {promoted}, turned {rotated}, failed {}, wrong {wrong}", failed());
-        assert!(rotated > 100 && promoted > 0, "the cache turned: {rotated}, {promoted}");
+        // SAFETY: the cache's header, its threads done.
+        let counts = unsafe { cache::Counts::read(cache_at as *const u8) };
+        eprintln!("{counts:?}, hit ratio {:.3}, wrong {wrong}", counts.hit_ratio());
+        assert!(counts.rotated > 100 && counts.promoted > 0 && counts.hits > 0, "the cache turned: {counts:?}");
         assert!(wrong <= failed() as usize, "{wrong} reads wrong, {} failures", failed());
         drop(buf);
     }
