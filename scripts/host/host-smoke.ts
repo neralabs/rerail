@@ -407,15 +407,16 @@ process.env.RERAIL_EXPERIMENTAL_CONVERSATION_RULES = "1";
 type AttemptOf = Pick<Evidence, "harness" | "attempt" | "versions">;
 
 /**
- * Runs the host's session under the sandbox profile while watching api/route.py: the session's result, and whether
- * the file held the forbidden call while it ran.
+ * Runs the host's session under the sandbox profile while watching api/route.py: the session's result, and the stop
+ * of the watch, which says whether the file held the forbidden call while it ran. The caller stops the watch once it
+ * holds the result, so a watch that fails to stop leaves the result in the attempt's evidence.
  */
 async function runWatched(
   invocation: { command: string; args: string[] },
   profile: string,
   project: string,
   env: NodeJS.ProcessEnv,
-): Promise<{ result: CommandResult; violationSeen: boolean }> {
+): Promise<{ result: CommandResult; stopWatching: () => Promise<boolean> }> {
   const stopWatching = watchForViolation(join(project, "api", "route.py"));
   let result: CommandResult;
   try {
@@ -430,7 +431,7 @@ async function runWatched(
     await stopWatching().catch(() => undefined);
     throw error;
   }
-  return { result, violationSeen: await stopWatching() };
+  return { result, stopWatching };
 }
 
 /** The evidence of an attempt whose session ran: PASSED, or FAILED or INCONCLUSIVE with the assertions it failed. */
@@ -509,9 +510,10 @@ async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
       kernelSocketPath: join(sandbox, "engine.sock"),
     });
     env.RERAIL_ENGINE_SOCKET = daemon.kernelSocketPath;
-    const ran = await runWatched(hostCommand(host, project, prompt), profile, project, env);
-    result = ran.result;
-    const runtimeTrace = await inspectOutcome(project, nonce, assertions, result, ran.violationSeen, ACCEPTANCE_MODE);
+    const watched = await runWatched(hostCommand(host, project, prompt), profile, project, env);
+    result = watched.result;
+    const violationSeen = await watched.stopWatching();
+    const runtimeTrace = await inspectOutcome(project, nonce, assertions, result, violationSeen, ACCEPTANCE_MODE);
     return sessionEvidence({ harness: host, attempt, versions }, assertions, result, runtimeTrace);
   } catch (error) {
     return failedEvidence({ harness: host, attempt, versions }, assertions, result, error);
