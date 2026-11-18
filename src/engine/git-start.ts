@@ -171,7 +171,12 @@ function environment(env: NodeJS.ProcessEnv): string[] {
   return Object.entries(env).flatMap(([name, value]) => (value === undefined ? [] : [`${name}=${value}`]));
 }
 
-const SIGNAL_NAMES = new Map(Object.entries(constants.signals).map(([name, number]) => [number, name as NodeJS.Signals]));
+/**
+ * Each signal number's name as Node reports a child's end by it: the first name `os.constants.signals` lists for it.
+ * Linux gives two numbers a second name (SIGIOT for 6, SIGPOLL for 29), listed after SIGABRT and SIGIO, and Node names
+ * a child's end by the first. A Map keeps the last entry for a key, so the entries go in from the last.
+ */
+const SIGNAL_NAMES = new Map(Object.entries(constants.signals).reverse().map(([name, number]) => [number, name as NodeJS.Signals]));
 
 /** The exit code, or the signal's name, of a reaped child; both null when it was not this process's to reap. */
 function endOf({ code, signal }: EngineGitExit): [number | null, NodeJS.Signals | null] {

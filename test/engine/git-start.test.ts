@@ -11,7 +11,13 @@ vi.mock("../../src/engine/child-process.js", { spy: true });
 
 import { spawn, spawnSync } from "../../src/engine/child-process.js";
 import { gitCrlfPaths, gitHead, gitModifiedOrUntrackedPaths, readGitBlobIds, readGitBlobs, runGit, runGitAsync } from "../../src/engine/git.js";
-import { startGit, startGitThroughNode, startGitWithoutCopying, type GitProcess } from "../../src/engine/git-start.js";
+import {
+  runGitSync,
+  startGit,
+  startGitThroughNode,
+  startGitWithoutCopying,
+  type GitProcess,
+} from "../../src/engine/git-start.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { blockingRuns, blockingRunsThroughEngine } from "./support/blocking-git-runs.js";
@@ -192,6 +198,35 @@ describe.runIf(LINUX)("Git started through the engine, on Linux", () => {
     expect((await ended(startGit("sh", ["-c", "echo bare"], process.env, "ignore"))).stdout).toBe("bare\n");
     expect(spawn).toHaveBeenCalledTimes(2);
   }, 30_000);
+});
+
+/**
+ * Scripts that end themselves: by signal 6, as a Git that aborts does (made undumpable first, so no core is written),
+ * and by signal 29.
+ */
+const SELF_ENDINGS = [
+  ["-c", "exec python3 -c 'import ctypes, os; ctypes.CDLL(None).prctl(4, 0); os.kill(os.getpid(), 6)'"],
+  ["-c", "kill -29 $$"],
+];
+
+/** The signal each of {@link SELF_ENDINGS} ended with: started to be read, then run to its end while the thread waits. */
+async function selfEndings(): Promise<unknown> {
+  const ends: unknown[] = [];
+  for (const args of SELF_ENDINGS) ends.push([(await ended(startGit("/bin/sh", args, process.env, "ignore"))).signal, runGitSync("/bin/sh", args, process.env).signal]);
+  return ends;
+}
+
+describe.runIf(LINUX)("Git started through the engine in the states where it and Node's start could part, on Linux", () => {
+  it("names the signal that ended Git as Node names it: SIGABRT for 6 and SIGIO for 29", async () => {
+    const throughNode = await selfEndings();
+    vi.mocked(spawn).mockClear();
+    vi.mocked(spawnSync).mockClear();
+    expect(startGitWithoutCopying(loadNativeBinding)).toBe(true);
+    const throughEngine = await selfEndings();
+    expect([vi.mocked(spawn).mock.calls.length, vi.mocked(spawnSync).mock.calls.length]).toEqual([0, 0]);
+    expect(throughEngine).toEqual(throughNode);
+    expect(throughEngine).toEqual([["SIGABRT", "SIGABRT"], ["SIGIO", "SIGIO"]]);
+  });
 });
 
 describe("Git started through Node, off Linux or without the engine", () => {
