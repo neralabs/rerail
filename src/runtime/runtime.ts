@@ -1947,8 +1947,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /**
    * What this runtime holds of `event`'s session once it has taken the event, for the facts of its answer: the checkout
    * the session works in and, at a session's start, what the note says of its rules. Undefined for a session not open
-   * here. Read from memory, but for the checkout's start state, which every event reads, and at a start the
-   * configuration signature, which every tool call reads (`#sessionNoteRules`).
+   * here. Read from memory, but for the checkout's start state, which every event reads (`#heldState`).
    */
   heldSession(event: AdapterEvent): HeldSession | undefined {
     const state = this.#heldState(event);
@@ -1983,14 +1982,17 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * The rules `state`'s session runs while its coverage is current as the footer reads it: the configuration signature
-   * it records is the configuration's now. A session whose code and conversation rules were loaded from different
-   * configurations records none, so it reads no count either. Null otherwise.
+   * it records is the configuration's as the session's start has just read it. The start's ingest reads it once, as its
+   * conversation rules load or refresh (`LiveConversationRules.sourceSignature`), in this session's lane, so the count
+   * reads nothing more; only a runtime with no conversation rules (no model) reads it here. A session whose code and
+   * conversation rules were loaded from different configurations records none, so it reads no count either. Null
+   * otherwise.
    */
   #currentRuleCount(state: RuntimeSessionState): number | null {
     const coverage = this.#ruleCoverage(state);
     if (coverage === undefined) return null;
-    const now = configurationSignatureOf(this.#catalogs.catalog(state.checkout.root).sourceSignature());
-    return coverage.ruleSignature === now ? coverage.activeRuleCount : null;
+    const read = state.ruleSync?.sourceSignature ?? this.#catalogs.catalog(state.checkout.root).sourceSignature();
+    return coverage.ruleSignature === configurationSignatureOf(read) ? coverage.activeRuleCount : null;
   }
 
   #repositoryKey(checkout: StartingCheckout): string | null {
