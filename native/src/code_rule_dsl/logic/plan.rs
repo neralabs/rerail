@@ -9900,11 +9900,6 @@ pub fn identities(f: Fields<'_>, vs: &body::Versions, sccs: &[BTreeSet<String>],
     out
 }
 
-/// `identities` of a program the caller holds as a tree: its version made for them (`Placed::of_program`).
-pub fn identities_of(prog: &Program, sccs: &[BTreeSet<String>], by_stratum: &[Vec<&Rule>]) -> Result<HashMap<String, [u8; 32]>> {
-    Leaves::of(prog).identities(sccs, by_stratum)
-}
-
 /// The identity of a relation no rule of `prog` derives (an input, the program's facts): its name, its declaration
 /// and its facts (`identities`).
 pub fn leaf_identity(f: Fields<'_>, rel: &str) -> [u8; 32] {
@@ -9916,32 +9911,19 @@ pub fn leaf_identity(f: Fields<'_>, rel: &str) -> [u8; 32] {
     h.finalize().into()
 }
 
-/// `leaf_identity` of the relations of a program a caller holds as a tree, read from its version, made at the first
-/// ask (`Placed::of_program`); `None` for a program with no image.
-pub struct Leaves<'p> {
-    /// The tree, where the caller holds the program as one (`of`); `None` for one held as its version (`of_placed`).
-    prog: Option<&'p Program>,
-    placed: std::cell::OnceCell<std::result::Result<body::Placed, String>>,
+/// `leaf_identity` of the relations of a program, read from its version.
+pub struct Leaves {
+    placed: body::Placed,
 }
 
-impl<'p> Leaves<'p> {
-    pub fn of(prog: &'p Program) -> Leaves<'p> {
-        Leaves { prog: Some(prog), placed: std::cell::OnceCell::new() }
-    }
-    /// The leaves of a program the caller holds as its version: none is made.
-    pub fn of_placed(placed: body::Placed) -> Leaves<'static> {
-        let cell = std::cell::OnceCell::new();
-        let _ = cell.set(Ok(placed));
-        Leaves { prog: None, placed: cell }
-    }
-    /// The program's version, made at the first ask and shared by every identity read after it.
-    fn placed(&self) -> Result<&body::Placed> {
-        self.placed.get_or_init(|| body::Placed::of_program(self.prog.expect("a tree or its version")).map_err(|e| e.to_string())).as_ref().map_err(|e| Error::Plan(e.clone()))
+impl Leaves {
+    pub fn of_placed(placed: body::Placed) -> Leaves {
+        Leaves { placed }
     }
     /// `identities` of the program, each stratum's rules found by their heads in the version (`front::rules_by_stratum`'s
-    /// order, the program's): for a caller that holds no tree.
+    /// order, the program's).
     pub fn identities_by_heads(&self, sccs: &[BTreeSet<String>]) -> Result<HashMap<String, [u8; 32]>> {
-        let p = self.placed()?;
+        let p = &self.placed;
         let at: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.as_str(), i))).collect();
         let mut keys: Vec<Vec<body::RuleKey>> = vec![Vec::new(); sccs.len()];
         for k in 0..p.len() {
@@ -9954,15 +9936,7 @@ impl<'p> Leaves<'p> {
         Ok(identities(f, &vs, sccs, &keys))
     }
     pub fn identity(&self, rel: &str) -> Option<[u8; 32]> {
-        Some(leaf_identity(self.placed().ok()?.fields().ok()?, rel))
-    }
-    /// `identities` of the program, read from the same version as its leaves. Its strata's rules are trees the caller
-    /// holds, the program's: their keys are found once, here.
-    pub fn identities(&self, sccs: &[BTreeSet<String>], by_stratum: &[Vec<&Rule>]) -> Result<HashMap<String, [u8; 32]>> {
-        let vs = body::Versions::with(self.prog.ok_or_else(|| Error::Plan("the program's rules are its version's: `identities_by_heads`".into()))?, self.placed()?.clone());
-        let f = vs.fields(0).ok_or_else(|| Error::Plan("the program has no image: its identities are read from its version".into()))?;
-        let keys = by_stratum.iter().map(|rules| vs.keys_of(rules)).collect::<Result<Vec<_>>>()?;
-        Ok(identities(f, &vs, sccs, &keys))
+        Some(leaf_identity(self.placed.fields().ok()?, rel))
     }
 }
 
@@ -10406,18 +10380,8 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
         let _span = super::profile::span(|| "the program's version".into());
         program.normalized(apart)?
     };
-    // The normalized program as the tree, decoded only for the version trace (a measurement aid).
-    let lists = super::front::Lists::default();
-    let normal_tree: std::cell::OnceCell<Program> = std::cell::OnceCell::new();
-    let normal_tree = || -> Result<&Program> {
-        if let Some(t) = normal_tree.get() {
-            return Ok(t);
-        }
-        let t = normal_v.program(&lists)?;
-        Ok(normal_tree.get_or_init(|| t))
-    };
     if super::version_trace::on() {
-        super::version_trace::note("plan.normalize", &program.program(&lists)?, normal_tree()?);
+        super::version_trace::note("plan.normalize", &program.v, &normal_v.v);
     }
     // The lowering's domains, with the columns normalizing added: a sentinel's presence column first, and a relation's
     // stated facts apart under its own domains.
@@ -10561,15 +10525,15 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             let inlined = match choice {
                 Some((done, v)) => {
                     if super::version_trace::on() {
-                        super::version_trace::note("plan.inline", normal_tree()?, &v.program(&lists)?);
+                        super::version_trace::note("plan.inline", &normal_v.v, &v.v);
                     }
                     super::profile::decision("inline or store (decision 0099)", || format!("{} relations recomputed in their readers: {}", done.len(), done.join(", ")));
                     // A measurement aid: `RERAIL_INLINE_DUMP=<file>` appends the rules as inlining left them.
                     if let Some(path) = std::env::var_os("RERAIL_INLINE_DUMP") {
                         use std::io::Write;
                         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-                            for r in &v.program(&lists)?.rules {
-                                let _ = writeln!(f, "{r}");
+                            for r in v.v.rules() {
+                                let _ = writeln!(f, "{}", v.v.show_rule(r));
                             }
                         }
                     }
@@ -10589,11 +10553,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             let split = match split_neg {
                 Some((demanded, v)) => {
                     if super::version_trace::on() {
-                        let from = match &inlined {
-                            Some(i) => i.program(&lists)?,
-                            None => normal_tree()?.clone(),
-                        };
-                        super::version_trace::note("plan.demand", &from, &v.program(&lists)?);
+                        super::version_trace::note("plan.demand", &inlined.as_ref().unwrap_or(&normal_v).v, &v.v);
                     }
                     super::profile::decision("demand (decision 0048)", || {
                         format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
@@ -10631,12 +10591,12 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     if let Some(path) = std::env::var_os("RERAIL_RUN_DUMP") {
         use std::io::Write as _;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-            let prog = p0.program(&lists)?;
-            let _ = writeln!(f, "== run of {} rules", prog.rules.len());
+            let v = &p0.v;
+            let _ = writeln!(f, "== run of {} rules", v.rules().count());
             for scc in sccs.iter() {
                 let _ = writeln!(f, "-- stratum {scc:?}");
-                for r in prog.rules.iter().filter(|r| scc.contains(r.head.rel.as_str())) {
-                    let _ = writeln!(f, "{r}");
+                for r in v.rules().filter(|r| scc.contains(v.rel_name(r.head().rel()))) {
+                    let _ = writeln!(f, "{}", v.show_rule(r));
                 }
             }
         }
@@ -11274,9 +11234,8 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                     // The driver writes the form over the run's version (decision 0241): a derivation of it.
                     let v0 = run.versions.placed(0).clone();
                     let (form_v, adopted) = m.form(&v0, &rules, scc, &moved, &mut run.model)?;
-                    if std::env::var_os("RERAIL_VERSION_TRACE").is_some() {
-                        let lists = super::front::Lists::default();
-                        super::version_trace::note("plan.form", &p0.program(&lists)?, &form_v.v.program(&lists).map_err(Error::Plan)?);
+                    if super::version_trace::on() {
+                        super::version_trace::note("plan.form", &p0.v, &form_v.v);
                     }
                     let k = run.add_form(form_v)?;
                     let form_v = run.versions.placed(k).clone();

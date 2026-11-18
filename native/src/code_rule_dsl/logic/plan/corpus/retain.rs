@@ -469,7 +469,7 @@ impl Cut {
             }
             let outputs: Vec<String> = v.outputs().map(|a| v.text(a)).filter(|o| dirty(o)).map(str::to_owned).collect();
             let part = v.part(&dirty, &inputs, &outputs, PartFields { natives: &dirty, lattice: &all, gates }).map_err(super::Error::Plan)?;
-            crate::code_rule_dsl::logic::version_trace::note_versions("session.cut", v, &part);
+            crate::code_rule_dsl::logic::version_trace::note("session.cut", v, &part);
             Ok(cross.with_version(part))
         }
     }

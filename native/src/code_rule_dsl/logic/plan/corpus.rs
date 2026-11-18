@@ -4226,8 +4226,8 @@ fn run_observed(
         let _ = shared_parts.set((once_made, (local.clone(), cross.clone(), run_constants.clone())));
     }
     if crate::code_rule_dsl::logic::version_trace::on() {
-        crate::code_rule_dsl::logic::version_trace::note_versions("run.local", &shared_split.versions.local, &local.version);
-        crate::code_rule_dsl::logic::version_trace::note_versions("run.cross", &shared_split.versions.cross, &cross.version);
+        crate::code_rule_dsl::logic::version_trace::note("run.local", &shared_split.versions.local, &local.version);
+        crate::code_rule_dsl::logic::version_trace::note("run.cross", &shared_split.versions.cross, &cross.version);
     }
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "guests and the tree's projection".into()));
     let slice = embed_slice(&prepared_placed.v)?.map(part_of);
@@ -11689,7 +11689,7 @@ fn maintained_cross(cross: &lower::Lowered) -> Result<lower::Lowered> {
         }
     })?;
     if crate::code_rule_dsl::logic::version_trace::on() {
-        crate::code_rule_dsl::logic::version_trace::note_versions("session.maintained", &cross.version, &stored.version);
+        crate::code_rule_dsl::logic::version_trace::note("session.maintained", &cross.version, &stored.version);
     }
     Ok(stored)
 }
