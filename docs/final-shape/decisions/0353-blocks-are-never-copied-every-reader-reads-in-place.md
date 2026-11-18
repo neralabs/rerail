@@ -451,6 +451,23 @@ Each step ends with:
        descriptors are in its chunk block, the tapes in their slabs, reached by GPU address (no `gather`).
        `expand_view`, `VIEW_EXPAND`, the chunk block's node columns (row 3) and the residency's view entries go.
        Check: `device::parity` for every view.
+       Done for `node`, `child`, `field` and `core_node` (2026-11-17, 4c and 4d):
+       - The reads: `view_node`, `view_child`, `view_field`, `view_core` (`rerail_clif::view_reads`, a third family
+         of reads: the entry, the tape's base, its view). A row is a point read: its tape node by `num_select`,
+         its columns off the tape, a kind or field by the entry's derived table of the tape's codes, a child's
+         place by the walk's places (the derived column the host's point reads read, 0353 step 3). Checked on the
+         JIT and the device against the host's rows, in all three formats, whole and narrowed
+         (`the_view_reads_are_the_hosts_rows`).
+       - The stages: a thread a row, its document by bisection of the batch's directory (`ViewDir`, `vread`); a
+         probe by key reads an index built over the view's rows, in a relation of no columns (an index in its
+         relation's block). Every reader of a relation reads a view the same way: a stage, a witness probe, an index
+         build, `rows_copy`. Checked: `views_made_on_the_device_are_the_hosts_rows`, hogql's findings.
+       - Not yet: the scans over 64-node groups and the probes by parent (first child, next sibling); the Rust
+         backend of the view reads (the host's `Viewed` reads the same columns through `Facts`, by hand).
+       - Left made (the copies 4d removes next): `line` and the `Loc` views (`line`, `end_line`, `col`, `docof`),
+         whose line starts and spans live in no block (the facts' `LineTable`, Q123's spans); the axis (step 5).
+         `expand_view`, `VIEW_EXPAND` and ChunkDoc's node columns stay for them.
+       - hogql cold, 3 pairs: views made 347–503 MB against 597–788 MB; `node` and `child` 0.
      - **4e.** Measured: the 660.8 MB is 0; refusals and strata apart, against Q68's.
    - A stage's input may be a tape view: the kernels read the chunk block's placed tapes through the generated MSL
      (`metal_tape.metal`'s reads, 0293 §9).
