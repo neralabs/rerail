@@ -46,6 +46,8 @@ export class DatabaseApiStores implements RerailApiStores {
   #preferences: SqlitePresentationPreferenceStore | undefined;
   #auditControls: SqliteAuditControlStore | undefined;
   #database: RerailDatabase | undefined;
+  /** {@link dataVersion}'s statement on {@link database}'s connection, once asked for. */
+  #dataVersion: { get(): number | undefined } | undefined;
   #startStates: ((workspace: string) => RepositoryStartState) | undefined;
   #checkouts: ((workspace: string) => CheckoutContext | undefined) | undefined;
   #mergeAssist: MergeAssistService | undefined;
@@ -127,7 +129,10 @@ export class DatabaseApiStores implements RerailApiStores {
   }
 
   dataVersion(): string {
-    const sqliteVersion = this.database().$client.pragma("data_version", { simple: true }) as number;
+    // Prepared once on the connection and stepped at each call, which reads the version anew: preparing it again at
+    // every call cost more than the answer, and the change stream asks at each notice and each look.
+    this.#dataVersion ??= this.database().$client.prepare<[], number>("PRAGMA data_version").pluck();
+    const sqliteVersion = this.#dataVersion.get() as number;
     return `${sqliteVersion}:${this.#localRevision}`;
   }
 

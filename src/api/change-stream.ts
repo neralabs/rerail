@@ -52,6 +52,12 @@ const lastFiles = new Map<string, string>();
 function streamToken(stores: RerailApiStores, salt: string, checkout: string | undefined): StreamToken {
   let installed: RuleCatalog | undefined;
   let files = checkout === undefined ? "" : lastFiles.get(checkout) ?? "";
+  /** The digest of the catalog and the checkout's files, and what it was taken of: hashed again only when that moved. */
+  let hashed = { of: "", digest: "" };
+  const digestOf = (input: string): string => {
+    if (input !== hashed.of) hashed = { of: input, digest: createHash("sha256").update(input).digest("hex").slice(0, 32) };
+    return hashed.digest;
+  };
   let reading: Promise<boolean> | undefined;
   const read = async (): Promise<boolean> => {
     const before = files;
@@ -62,8 +68,7 @@ function streamToken(stores: RerailApiStores, salt: string, checkout: string | u
   return {
     now(notice) {
       if (installed === undefined || notice === "files") installed = stores.ruleCatalog();
-      const digest = createHash("sha256").update(installed.digest).update("\u0000").update(files).digest("hex").slice(0, 32);
-      return `${salt}.${stores.historyVersion() ?? "none"}.${digest}`;
+      return `${salt}.${stores.historyVersion() ?? "none"}.${digestOf(`${installed.digest}\u0000${files}`)}`;
     },
     refresh() {
       reading ??= read().finally(() => { reading = undefined; });
