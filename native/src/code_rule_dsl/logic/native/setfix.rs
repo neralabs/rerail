@@ -5451,6 +5451,14 @@ impl InRel {
     pub fn levels_shape(&self) -> (usize, usize, bool) {
         (self.n, self.level.len(), self.view.is_some())
     }
+    /// Each row's level, every row's (dead ones too), when it has them (`has_levels`); none otherwise.
+    pub fn levels(&self) -> &[u32] {
+        if self.has_levels() { &self.level } else { &[] }
+    }
+    /// Its dead rows' bits (bit `id`); none when no row is dead.
+    pub fn dead_bits(&self) -> &[u64] {
+        if self.ndead > 0 { &self.dead } else { &[] }
+    }
     /// Whether every row has its level (a relation the native engine derived; decision 0090's levels).
     /// Whether it is read through a view (`Some`), not rows of its own.
     pub fn view_kind(&self) -> Option<()> {

@@ -204,7 +204,6 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/waves/relational/producer.rs", "READERS", Call, "the state of one call in progress on this thread"),
     ("src/code_rule_dsl/waves/relational/syntax.rs", "POOL", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/content_store/atoms.rs", "RESERVING", Thread, "this thread's store write in progress"),
-    ("src/content_store/atoms.rs", "SEGMENT_BYTES_TEST", Thread, "this thread's store write in progress"),
     ("src/content_store/atoms/map.rs", "MAPPED", Call, "a write in progress whose symbols are mapped (`atoms::map::mapped`)"),
     ("src/content_store/compression.rs", "DECODERS", Thread, "this thread's codecs"),
     ("src/content_store/compression.rs", "DICT_ENCODERS", Thread, "this thread's codecs"),

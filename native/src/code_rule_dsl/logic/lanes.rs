@@ -251,10 +251,11 @@ pub mod wave {
         deferred_since(mark) || FLUSHES.get() > mark.2 || JOINED.get() > mark.3
     }
 
-    /// A mark at `queued` launches and no deferred submission (for tests).
+    /// A mark at `queued` launches, no deferred submission, and this thread's flushes and joins as they are now (for
+    /// tests).
     #[cfg(test)]
     pub fn mark_at(queued: usize) -> Mark {
-        Mark(queued, 0, 0, 0)
+        Mark(queued, 0, FLUSHES.get(), JOINED.get())
     }
 
     /// The launches queued on this thread since `mark`, taken off it.

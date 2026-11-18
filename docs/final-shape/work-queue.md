@@ -1759,6 +1759,9 @@ pass.
 
 ### Q45. A warm run on the m3 records observer answers, where the same check on the m1max records none
 
+- **Again** (2026-11-18): `the_run_after_a_cold_one_writes_nothing` fails 2 of 4 on the m3 under load, a cause
+  other than the racy window: the journal's timing (Q189). Fixed by decision 0400 step 1: 10 of 10 on the M3.
+
 - **Found** (2026-11-16, at 28d25b6a8 plus a change since reverted): the 317 rules over fixtures/python, a strict cold
   run and then a strict warm run with `RERAIL_WARM=list`, on the m3: the warm run exits 3 with "the observer recorded
   answers in a warm run" and "a SQLite write committed to a file in a warm run" (thread `rerail-observer-writer`),
@@ -2670,54 +2673,6 @@ thread waited on it (and spun, fixed in af32e3c4c). There is no binary archive o
   maintenance after a run and in upkeep, `rerail-engine kernels`, shipped kernels for the interpreters. Measured
   in 0395 § Measured.
 
-### Q189. (Q179 on benchmarks-on-integration, Q54 before; the item rr-align's Q189 joins with bend's Q117) An edit made right after a run is sometimes missed by the next run (the journal)
-
-Seen 2026-11-18 (the M3, t44, `bench-shapes.sh full` on Metal, three runs A/B/C): in each run one edit step read
-0 components and the step after it read both edits (A: `comment` 0, then `import`; B: `body` 0, then `comment`;
-C: `import` 0, then `rule` 3875 components where a rule edit reads 1). The bench edits the file within
-milliseconds of the previous step's end, and every edit changes the file's size, so a stat would see it: the run
-trusted the journal (decision 0105, `observe.rs` `trusted`), which named no change. Not seen in the t43 runs of
-2026-11-17 (every step read its edit). The findings came out right in the end (464 at every later step), but a
-missed edit is a wrong answer for the step that missed it.
-
-- **Done when**: a test edits a file at once after a run (no sleep) and the next run reads it, many times over;
-  the bench's full shape shows every edit step's components.
-- **Record**: fixed (6c7467af5). Traced on the M3 (t47, `RERAIL_JOURNAL_TRACE` lists each event against the cursor):
-  the missed edit's event was absent after the cursor in both runs asked from it, and the edit before it on the
-  same file had an id just before that cursor (…392974 against …393028). FSEvents' history merges a path's events
-  within a window, under the first one's id. An answer recorded within `JOURNAL_SETTLE_NS` (120 s) is now checked
-  by its `stat` though the journal names nothing; the same stat keeps it with no read and no write. A test moves
-  the cursor past an edit's event: missed with no window, read with it. Not covered: `changed_since`'s records
-  (the cone rounds', Git's file list), which read no answer.
-
-**From bend's Q117** (investigate-bend-vs-datalog at fe948c394, the same item, found over the O125 replay):
-
-Found 2026-11-18, measuring 0364 over the O125 replay (`scripts/profiling/o125/maintain-measure.sh`, kept mode: a
-process per step, each step's files written by `rsync` just before the step's run). On one farm host (M3 Max) some
-steps finished in 0.2 s CPU with the last step's findings. Their findings differed from a cold run's (step 05:
-2,757 extra, 2,907 missing). On the M1 Max host none did, over several runs. On the M3 it is intermittent: a step
-that ran right in one pass was stale in the next.
-
-- **Seen** (probes since removed: the paths `journal::since` named per root, the cutoff's digest per document):
-  - In a stale step, the replay for the corpus's root names the earlier run's own writes (outputs, store, logs), but
-    no path under `work/`, the corpus, though `rsync` had just rewritten files there. One of them is
-    `l2050_transaction/transaction.py`, 141,547 → 142,340 bytes.
-  - The observer then answers that file's digest from its trusted entry, unstatted: the step-00 digest. The whole-run
-    cutoff (`reuse::reused`) finds every document as recorded and writes the last run's outputs.
-  - In a step that ran right, the same replay names `work/l2050_transaction` and the others.
-  - The stale step's stream starts from the cursor of the run before it (the cursor taken when that run started).
-    Later runs start from cursors past the missing events, so the edit is never named.
-  - It is not the corpus root's form: relative and absolute roots both go stale on the M3.
-- **Likely**: FSEvents' history replay (`since` a cursor) does not include events written in the last moment before
-  the stream starts, perhaps those `fseventsd` had not yet logged. The cookie that `sync` waits for proves the
-  stream has caught up with what it was given, not that the replay held every event since the cursor.
-- **Until fixed**: the 0364 measurement runs with `RERAIL_JOURNAL=off` (every consulted path statted).
-- **Done when**: a run started right after an edit always sees it. Either the journal's answer is checked for that
-  window (a path whose stat is newer than the cursor's time is not trusted: Git's racy-index rule turned around), or
-  the replay is confirmed complete some other way. A test edits a file and starts the next run within
-  milliseconds, many times over, on the host where it fails.
-- **Record**: —
-
 ### Q203. (Q180 on benchmarks-on-integration, Q55 before) Device-budget refusals are reported as `BackendFailure`
 
 Seen 2026-11-18 (t45, with `From<String> for Error` now saying its message): every bare `BackendFailure` refusal of
@@ -2729,6 +2684,50 @@ submitted" now hold device memory at once.
 - **Done when**: a budget refusal says so, with its numbers, in the profile's refusals (an error kind of its own);
   the 512 MB budget's refusals measured against the strata a wave holds at once.
 - **Record**: —
+
+### Q189. (bend's Q117, benchmarks-on-integration's Q54, then Q179 there) The journal's answer across processes is not a guarantee FSEvents makes
+
+- **Found** (2026-11-18, the same day on two branches): a run started just after an edit is not told of it. Bend's
+  O125 replay wrote a step's files by `rsync` just before the step: the replay named none of them, and the whole-run
+  cutoff answered the last step's findings. The bench's edit steps (`bench-shapes.sh full`) read 0 components for
+  one step, then both edits in the next. Both trusted the journal (decision 0105).
+- **Seen on benchmarks-on-integration too** (their Q179, joined here in the hub merge): the M3, t44,
+  `bench-shapes.sh full` on Metal, three runs: in each one edit step read 0 components and the step after it read
+  both edits. The bench edits within milliseconds of the previous step's end; every edit changes the file's size,
+  so a stat would have seen it. Their done-when is kept: the bench's full shape shows every edit step's components.
+- **Cause, measured** (t46, `scripts/profiling/fsevents-history-probe.py` on the m3 at load 31–60): a change made
+  before a stream starts reaches it only through fseventsd's on-disk log, and the log is written late under load.
+  In 12 of 40 trials a new stream from the last run's cursor named neither the edited file nor a new one, though
+  the cookie and `HistoryDone` came (the sync answered "complete"). The missing events never came later on that
+  stream; a replay from the same cursor 2.5 s later named every one. `FullHistory` does not fix it. A marker
+  written before the stream came in its history in 2 of 40 trials, so fil's check (accept a replay only when the
+  marker is in it) would replay again or scan nearly every time on this host. Watchman documents the same: cookie
+  sync on macOS is unsupported under load.
+- **Its mirror image, the same day**: `the_run_after_a_cold_one_writes_nothing` fails 2 of 4 on the m3 at load 30–56
+  (same binary, after the hub's merge 586ae50d6, which touches no observer code). A cold run takes its cursor from
+  `FSEventsGetCurrentEventId`, which is read before fseventsd has numbered the test's just-written sources; the
+  warm run is told of them, and forgets and records answers (RERAIL_WARM faults: "forgot answers the journal named
+  changed", "settled a root the journal could not speak for", "recorded answers").
+- **Also found reading the code against t46**: `journal::since` keeps only events with `id > cursor`; a history
+  record can carry an id older than a change it holds (duscope), so that filter can drop a change.
+- **Done when**: a test edits a file and starts the next run within milliseconds, many times over on the m3, and
+  every run is told; `the_run_after_a_cold_one_writes_nothing` passes every time there. The design is the user's
+  (Questions for the user, 3). Until then the 0364 measurement runs with `RERAIL_JOURNAL=off`, as bend does.
+- **Record**: decided by the user, option (a) with (b) for large roots: decision 0400. Step 1 (6b66151a1): a root
+  of at most 20,000 answers is checked by its directories' bulk listings (`getattrlistbulk`), and the observer keeps
+  its own journal for run records. R7 passes 10 of 10 on the M3 (2 of 4 before). Step 2 (f523157f2): a larger
+  root's new stream is trusted only with its pre-marker in the history, else it is checked by listings. R8 has
+  none missed in 40 trials; the observer's and journal's 33 tests are green in 5 of 5 runs. ep2's edit: 1.92–1.98 s
+  wall against e134's 5.47 s, CPU unchanged (2.24–2.27 s), 1,334 rows, 0 differing. Open: the data-layer
+  repository's warm listing cost; `id > cursor` and a large root's records across a `Behind` replay (0400,
+  "What stays open"). The 0364 measurement no longer needs `RERAIL_JOURNAL=off` for roots this small.
+- **Record (benchmarks-on-integration, its Q179)**: fixed (6c7467af5), beside 0400. Traced on the M3 (t47, `RERAIL_JOURNAL_TRACE` lists each event against the cursor):
+  the missed edit's event was absent after the cursor in both runs asked from it, and the edit before it on the
+  same file had an id just before that cursor (…392974 against …393028). FSEvents' history merges a path's events
+  within a window, under the first one's id. An answer recorded within `JOURNAL_SETTLE_NS` (120 s) is now checked
+  by its `stat` though the journal names nothing; the same stat keeps it with no read and no write. A test moves
+  the cursor past an edit's event: missed with no window, read with it. Not covered: `changed_since`'s records
+  (the cone rounds', Git's file list), which read no answer.
 
 ### Q218. (Q181 on benchmarks-on-integration) The requests narrowed on the version differ from the tree's on the bench's 317 rules (debug builds)
 
@@ -2898,6 +2897,17 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
    than removing its cause; (c) leave it until the cache evicts those entries (LRU at the 100 GiB cap).
    Recommended: (a), run once at nice 19.
    **Answered (2026-11-16): (c), leave it.** The cause is fixed in the farm; the replays end as the entries age out.
+
+3. **Answered (2026-11-18): (a) with listings, (b) for large roots; decision 0400.** **Q189: what the observer
+   trusts between processes.** FSEvents does not guarantee that a new process is told of
+   a change made just before it (t46: 12 of 40 trials missed one on the m3, with the cookie and `HistoryDone` in
+   hand). Options: (a) `stat` every path the run would trust from the journal, for a root of a few hundred files
+   (ep2's 300: about 1 ms CPU, and no 0.16–0.77 s replay wait), the journal kept for large roots with (b) or (c);
+   (b) a replay is trusted only once a marker written before the stream comes in its history, else replayed
+   again, then `stat` (fil's fix; on the loaded m3 it would fall back nearly always); (c) a settle period
+   (Watchman's): nothing changed under the root for N ms before the run; (d) a stream that outlives the process
+   (a daemon, which 0105 ruled out). Each keeps decision 0105's within-process journal, where a stream that was
+   running when the change was made is told of it.
 
 ### Q55. (Q66 at Native-and-GPU-strata e0a0362b9) Relations are blocks the CPU and GPU read in place (0325): steps 4–7
 
@@ -4846,3 +4856,35 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   Tests: `a_later_run_reads_the_prepared_plans_an_earlier_one_made` (loaded 1, computed 0) and
   `kept_plans_read_back_from_the_store_by_rule_and_scale` (the entry's round trip). The plan-cache counts line says
   how many versions' plans a run read and made.
+
+### Q229. (Q213 on final-rerail-shape-rr-align) The FSEvents journal answers `Changed` with no paths while the store's whole lib suite runs
+
+- **Found** (2026-11-18, step 3 of 0401, on m3): in one run of `content_store::`, two tests failed together.
+  `a_replay_is_trusted_only_with_its_marker_in_the_history` got `Changed { paths: [] }` for a write made 500 ms
+  before the replay. `the_journal_names_what_changed_since_its_cursor` got the same for `sub/edited.py`. Run alone, both
+  pass three times out of three. Decision 0400 R8 says a `Changed` answer is trusted only with its marker in the
+  history, so an empty `Changed` means the marker check passed on a history that did not yet hold the edit's event.
+- **Next**: find what the marker check reads under load: the cookie's event id compared with the edit's, or the
+  history's flush. Record it in 0400, and add a test that loads the machine while it replays.
+
+### Q230. (Q214 on final-rerail-shape-rr-align) ep2's warm peak footprint rose 65 MB with the atoms on blocks, while the heap and RSS fell
+
+- **Found** (2026-11-18, 0401 step 4): a2 against e152. The jemalloc heap fell from 251.8 to 169.0 MB and the
+  maximum RSS from 690 to 541 MB, but the peak footprint rose from 505 to 570 MB, which is above the RSS. The stores
+  differ (a fresh v6 store against an older v5 one), and the warm run opens the atoms writer's writable shared
+  mapping of `d4.blk` (50 MB) to append one atom.
+- **Next**: the writer opens only to append, and each warm run appended one atom. Compare a warm run that appends
+  none on the same store. `vmmap` and `footprint` cannot attach over the farm's ssh, so take the footprint from
+  inside the process (`task_info(TASK_VM_INFO)`) before and after the append.
+
+### Q231. (Q215 on final-rerail-shape-rr-align) `rerail-logic`'s test target did not compile, so its table and map guards had stopped checking
+
+- **Found** (2026-11-18, 0401 step 6): `cargo test -p rerail-logic --lib` failed to compile. `lanes::mark_at` built
+  a `Mark` of 2 fields, where it has 4. A test in `hide.rs` built `Hide` without `kept`. Both are fixed in the
+  0401 step 6 commit. With the target compiling again, three guards fail on tables and maps no list names:
+  - `every_table_is_facts_or_listed`: `frame_segments`, `guest_keys`, `object_segments`, `observed_changes`;
+  - `every_stored_table_is_a_relations_the_stores_own_or_a_cache_not_yet_moved`: `guest_keys`, `observed_changes`;
+  - `every_kept_map_is_state_or_listed`: `lanes.rs OPEN`, `setfix/device.rs OWN_TEXTS`, `keptstats.rs`
+    `COUNTING`, `KEPT_DOCS` and `KEPT_ROWS`, and more.
+- **Next**: classify each by its decision (0103, 0104), or move it where the guard says. A table or map that is a
+  cache is to be rules, not a list entry ([[caches-are-ordinary-rules]]).
