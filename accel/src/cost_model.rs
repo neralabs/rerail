@@ -213,7 +213,7 @@ mod on {
                 if let Some(r) = rates.iter().find(|r| r.lane == s.lane && r.name == name) {
                     let f = prices.fixed[s.lane.index()];
                     rated.0.push((p.wall, s.wall));
-                    rated.1.push((f.submission + f.launch * f64::from(s.launches) + r.per_unit * s.units, s.wall));
+                    rated.1.push((f.submission + (f.launch + r.per_launch) * f64::from(s.launches) + r.per_unit * s.units, s.wall));
                     rated.2.push((s.estimate, s.wall));
                 }
             }

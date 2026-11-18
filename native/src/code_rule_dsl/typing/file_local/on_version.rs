@@ -457,6 +457,8 @@ impl<'v> Program<'v> {
         let cross_native = |rel: &str| {
             self.f.native(rel).is_some_and(|nat| match &nat.spec {
                 NativeSpec::TextTest { .. } => false,
+                // A rank's rows are its groups' (`rank_form`): its rule's join on the group is judged as any rule's.
+                NativeSpec::Rank { .. } => false,
                 NativeSpec::PythonCandidates { targets, .. } => !constants.contains(self.v.rel_name(*targets)) && !fact_not_input(*targets),
                 NativeSpec::Python { targets, .. } => targets.is_some_and(|t| !constants.contains(self.v.rel_name(t)) && !fact_not_input(t)),
                 _ => true,

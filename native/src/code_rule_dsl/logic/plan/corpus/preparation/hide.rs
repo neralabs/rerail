@@ -108,7 +108,7 @@ type Facts = BTreeMap<Slot, Fact>;
 /// `hiding::hide` on the version, with `bound` (`hiding::bound`).
 pub(in crate::code_rule_dsl::logic::plan::corpus) struct Hide {
     bound: u32,
-    /// What `again` reads back (decision 0380, `ProgramPass::plan`).
+    /// What `again` reads back (decision 0393, `ProgramPass::plan`).
     kept: Vec<Row>,
 }
 
@@ -401,7 +401,7 @@ impl ProgramPass for Hide {
             }
         }
         // Each helper named by its rank among the helpers' texts: two of one text are one helper, and an edit that moves a
-        // rule leaves every other helper's name (decision 0380).
+        // rule leaves every other helper's name (decision 0393).
         let names = helper_names(helpers.iter().map(|h| h.name.clone()));
         for fin in &mut finals {
             for (name, _) in fin.aggs.values_mut() {
@@ -452,7 +452,7 @@ impl ProgramPass for Hide {
         self.kept.clone()
     }
 
-    /// Over an edit (decision 0380): the edit's added rules hidden alone, onto the last output, where the edit leaves
+    /// Over an edit (decision 0393): the edit's added rules hidden alone, onto the last output, where the edit leaves
     /// the rounds' fixpoint as it was. That holds when no rule of the edit reads or defines what the guests' copies
     /// and helpers are made of (a view, a context or the guest demand, a relation copied for a grammar, an
     /// aggregate over a base relation), none is recursive, an added rule reaches only a relation reached already and
@@ -664,7 +664,7 @@ fn bases(prog: &Program) -> (BTreeSet<String>, HashMap<String, Vec<usize>>) {
 }
 
 /// One rule of the output: `rule` copied from its source with its edits and its last stage's additions (`fin`), its
-/// source recorded (so an edit's removed rule finds what it made, `Version::derived`, decision 0380).
+/// source recorded (so an edit's removed rule finds what it made, `Version::derived`, decision 0393).
 fn write_rule(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, v: &Version, rule: &W, fin: &Final) -> Result<()> {
     let src = v.rule(rule.src).expect("a rule of the input");
     let mut rw = Writing::new(b, v, rule, fin);

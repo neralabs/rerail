@@ -1,10 +1,10 @@
 # 0385: The tail's last whole costs go over the edit
 
-Status: built (2026-11-17), measured on ep2 below. Follows 0380 ("What it does not do").
+Status: built (2026-11-17), measured on ep2 below. Follows 0393 ("What it does not do").
 
 ## Intro
 
-0380 runs the combine's tail again over an edit of the link, each pass onto its last output. Five costs were left
+0393 runs the combine's tail again over an edit of the link, each pass onto its last output. Five costs were left
 whole, about 0.13 s of an edit's 0.33 s `combine`:
 
 - Opening the last tail run from the store read and decoded all of it: every version's image, and every analysis's
@@ -53,11 +53,11 @@ whole, about 0.13 s of an edit's 0.33 s `combine`:
    kept again only when it was made whole, or when the edit from the kept run's input reaches 64 rules. Below that,
    each edit is an edit of the kept run's input, and nothing is written.
 7. **A program pass runs over an edit of rules alone** (`Pipeline::program_step`). Its last output holds the last
-   input's declarations, facts, inputs and outputs, which a pass writing onto it does not state again. 0380's
+   input's declarations, facts, inputs and outputs, which a pass writing onto it does not state again. 0393's
    `DropRepeated::again` checked no part, and fact spaces only the declarations: over an edit that changed facts,
    the output kept the last run's facts. The engine's program_image tests found it (12 of them failed on "the
    version's program is the tree's after the merges", another program's `env` facts in the output). These tests run
-   in `rerail-engine`'s library, not `rerail-logic`'s, so 0380's targeted run had not run them.
+   in `rerail-engine`'s library, not `rerail-logic`'s, so 0393's targeted run had not run them.
 8. **What a program pass says when it runs whole, it says again over an edit** (`Kept::said`). The profile's
    decisions a pass makes in `run` are taken with its step (`profile::Deciding`) and kept with the stored run
    (`pipeline_run_step_said`). A pass run over the edit, where its decisions stand, restates them
@@ -67,9 +67,9 @@ whole, about 0.13 s of an edit's 0.33 s `combine`:
 ## Measured
 
 ep2 on the m3 (300 files, 317 rules, `RERAIL_PREPARE=parts`, an edit of B101's body, profiled). Per edit, against
-0380 (e86):
+0393 (e86):
 
-| part | 0380 | now |
+| part | 0393 | now |
 |---|---|---|
 | `combine` | 0.33 s | 0.26 s (e89: the split, the three passes, what passes say) |
 | fact spaces' split | 0.025 s | 0.012 s |
@@ -86,5 +86,5 @@ ep2 on the m3 (300 files, 317 rules, `RERAIL_PREPARE=parts`, an edit of B101's b
 ## What it does not do
 
 - A stored run's images are read whole when it is opened: each is decompressed, hashed and checked by the store
-  and the image's open.
+  and the image's open. 0394 reads them in place.
 - The congruence classes and the split still read every relation once per maintain (their `Program` and `Rels`).

@@ -74,15 +74,32 @@ This decision is one of its two read forms, chosen by the source:
 Either way the view's statistics are a copy's: exact counts in place, sketches over the flat rows. `node_projection`
 and the run loop's own dispatch are gone; `RERAIL_COPY_VIEWS` derives every view as a stratum, both forms included.
 
-## A probe of a kind reads the batch's kind index (2026-11-17)
+## Probes by kind (2026-11-17)
 
-The held `kind` answered a probe by its code (`kind($r, #k)`, `$r` unbound) by asking each document's tape for the
-nodes of each of the code's raw codes (`Facts::of_kind`, a scan of the tape), once per value probed. With exact
-counts, a kind no file holds counts 0, so the planner probes it first: `assign_name`'s delta (27 rows) then probed it
-27 times per chunk. On a 10-file cold run that took 20 s of the strata's CPU per stratum (`assign_name`,
-`p290_name_at`), and the run 53 s against about 5 s before.
+Held in place, `kind(n, k)` probed by `k` read every document of the batch, and it did so for each probe. A batch's
+guests are documents too. B-now on 50 Python files has 4,081 documents in one batch, nearly all guests of other
+languages. That batch made about 100k probes of a few kinds (kind 1204 alone 25,581 times), and its run went from
+287 G instructions to 451 G. Two changes:
 
-Now the batch keeps `node`'s rows grouped by kind (`Batch::kinds`): each node's kind read once, as the column reads it
-(`Dialect::kind`), placed by a counting pass into one array of rows with a sorted key array and offsets. A probe reads
-its kind's run (a document's part of it by its row range), and the column's exact counts (2. above) are the runs'
-lengths, from the same pass. The same strata now take under 0.8 s, and the findings are the same.
+- **A probe reads its language's documents alone** (`Batch::of_tag`, documents by tape tag).
+- **A join step answers a repeated key from its last probe** (`setfix` `Ctx::last`). A step's probes come sorted
+  by key where they can (0112). When a key is the one the step probed just before, the step takes the source's
+  candidates it got then. This is the join's own flow, one entry a step, not a memo of the source.
+
+A probe that binds the document as well as the kind reads that document alone (`View::find_keyed` through
+`Source::lookup_in`). B-now does not bind it. The 50-file run is 316 G now.
+
+At the hub's merge of Typing-support (2026-11-18), the two met, and a probe by kind read the batch's kind index
+(`Batch::of_kind_rows`). At the hub's merge of django-bugs the same day, the index was removed (below). It made
+`node`'s rows into a `Vec`, a copy that 0353 refuses. The reads in place (`of_tag`) are kept, with the join's reuse of
+its last probe (`Ctx::last`).
+
+
+## The kind index not taken (merge of final-rerail-shape-phased-facts, 2026-11-17)
+
+That line answered the same probes with a kind index of the batch (`Batch::kinds`): `node`'s rows read once, placed
+by kind in a `Vec` of their own, and a probe read its run. Measured there, the probes had been 20 s of a 10-file
+cold run's 53 s (`assign_name`'s delta probing a kind no file holds 27 times a chunk). The index is `node`'s rows
+made: 0353 holds that a view is a read of the tape and nothing makes its rows, so the merge keeps this record's
+reads in place (`of_tag`, the step's last probe) and not the index. Whether they cover that line's case (a kind
+counted 0, probed per delta row) is Q167.

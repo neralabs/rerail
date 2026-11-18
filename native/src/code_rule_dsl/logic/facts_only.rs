@@ -66,6 +66,12 @@ const FACT_STORE: &[&str] = &[
     // The kernels' forms per machine (decision 0202): each compiled or interpreted, its compile time, what it missed;
     // measurements of the machine, as `samples`, ranked for the upkeep job that compiles them.
     "kernel_forms",
+    // Each program's measured steps per unit of size, and its overruns (decision 0334): what a task's budgets are
+    // predicted from (`evaluation_costs`); measurements, as `samples`.
+    "program_steps",
+    // The join steps' estimates and what they made (decision 0354, `costs::join_steps`): the learned correction's
+    // data, measurements, as `samples`.
+    "join_steps",
     "{p}_out in code_rule_dsl/logic/native.rs",
     "{p}_out in code_rule_dsl/logic/native/extension.rs",
     "{} in code_rule_dsl/logic/plan.rs",
@@ -211,6 +217,8 @@ const STATE: &[(&str, &str)] = &[
     // The SQL executor's plan model, fitted from `sql_plan_observations`, and the observations queued for writing.
     ("code_rule_dsl/logic/costs/sql_plans.rs", "MODEL"),
     ("code_rule_dsl/logic/costs/sql_plans.rs", "QUEUE"),
+    // The join steps submitted at their lines' ends, queued for the cost statistics' writer (decision 0354).
+    ("code_rule_dsl/logic/costs/join_steps.rs", "QUEUE"),
     // The SQL lane's executor, and the work a thread's device wave runs when flushed (`lanes::wave`).
     ("code_rule_dsl/logic/lanes.rs", "SQL"),
     ("code_rule_dsl/logic/lanes.rs", "DEFERRED"),

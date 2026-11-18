@@ -95,10 +95,54 @@ fn at_case_region_width(prev: i16, width: i16) -> bool {
     prev != -1 && (prev & CASE_INDENT_FLAG) != 0 && width == indent_width(prev)
 }
 
+/// The indentation stack's room: deeper nesting is refused (`deep`), never seen in code.
+const INDENTS: usize = 48;
+
+/// The indentation stack, inline: the scanner is copied at each question (`layout`), so it holds
+/// no allocation.
+#[derive(Clone, Copy, Debug)]
+pub struct Indents {
+    v: [i16; INDENTS],
+    n: u8,
+    /// A push past the room: the parse is refused.
+    pub deep: bool,
+}
+
+impl Indents {
+    #[inline]
+    pub fn last(&self) -> Option<&i16> {
+        self.v[..usize::from(self.n)].last()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.n == 0
+    }
+
+    #[inline]
+    pub fn pop(&mut self) -> Option<i16> {
+        if self.n == 0 {
+            return None;
+        }
+        self.n -= 1;
+        Some(self.v[usize::from(self.n)])
+    }
+
+    #[inline]
+    pub fn push(&mut self, x: i16) {
+        if usize::from(self.n) == INDENTS {
+            self.deep = true;
+            return;
+        }
+        self.v[usize::from(self.n)] = x;
+        self.n += 1;
+    }
+}
+
 /// The scanner's state, as tree-sitter serializes it after each external token.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Scanner {
-    pub indents: Vec<i16>,
+    pub indents: Indents,
     last_indentation_size: i16,
     last_newline_count: i16,
     last_column: i16,
@@ -108,7 +152,7 @@ pub struct Scanner {
 
 impl Default for Scanner {
     fn default() -> Self {
-        Scanner { indents: Vec::new(), last_indentation_size: -1, last_newline_count: 0, last_column: -1, last_char: 0, after_colon_eol: false }
+        Scanner { indents: Indents { v: [0; INDENTS], n: 0, deep: false }, last_indentation_size: -1, last_newline_count: 0, last_column: -1, last_char: 0, after_colon_eol: false }
     }
 }
 
@@ -252,22 +296,49 @@ fn scan_word(l: &mut Lx, word: &[u8]) -> bool {
 
 /// One identifier-like word (`[A-Za-z0-9_$]*`); `None` where it cannot be one of the keywords
 /// (longer than `cap - 1`). The whole word is consumed.
-fn read_word(l: &mut Lx, cap: usize) -> Option<Vec<u8>> {
-    let mut buf = Vec::new();
+fn read_word(l: &mut Lx, cap: usize) -> Option<Word> {
+    let mut buf = Word { b: [0; 16], n: 0 };
     let mut not_keyword = false;
     while is_alnum(l.la()) || l.la() == b'_' as i32 || l.la() == b'$' as i32 {
-        if buf.len() >= cap - 1 {
+        if usize::from(buf.n) >= cap.min(16) - 1 {
             not_keyword = true;
         } else {
-            buf.push(l.la() as u8);
+            buf.b[usize::from(buf.n)] = l.la() as u8;
+            buf.n += 1;
         }
         l.advance();
     }
     if not_keyword { None } else { Some(buf) }
 }
 
-fn word_in(word: &Option<Vec<u8>>, words: &[&[u8]]) -> bool {
-    word.as_ref().is_some_and(|w| !w.is_empty() && words.iter().any(|x| *x == w.as_slice()))
+/// A word `read_word` read: its bytes inline (no allocation a word).
+#[derive(Clone, Copy)]
+struct Word {
+    b: [u8; 16],
+    n: u8,
+}
+
+impl std::ops::Deref for Word {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.b[..usize::from(self.n)]
+    }
+}
+
+impl<const N: usize> PartialEq<&[u8; N]> for Word {
+    fn eq(&self, o: &&[u8; N]) -> bool {
+        **self == o[..]
+    }
+}
+
+impl PartialEq<&[u8]> for Word {
+    fn eq(&self, o: &&[u8]) -> bool {
+        **self == **o
+    }
+}
+
+fn word_in(word: &Option<Word>, words: &[&[u8]]) -> bool {
+    word.as_ref().is_some_and(|w| !w.is_empty() && words.iter().any(|x| *x == &w[..]))
 }
 
 fn skip_blanks_and_block_comments(l: &mut Lx) {
@@ -983,7 +1054,7 @@ impl Scanner {
                     }
                     return None;
                 }
-                if outdent_arm && matches!(w.as_slice(), b"else" | b"catch" | b"finally") {
+                if outdent_arm && matches!(&w[..], b"else" | b"catch" | b"finally") {
                     self.indents.pop();
                     return Some(Ext::Outdent);
                 }

@@ -11,7 +11,7 @@ use super::rows::{generation, intern_hash};
 use super::segments::{ALIGN, Place, SealedSegments, SegmentBytes, SegmentMaps, SegmentWriter, segment_path};
 use super::write_back::{Closed, Gather, Held, Key, Kind, Syms, Work};
 use super::{CODEC_ZSTD, ContentStore, HashKey, SourceId, StoreError, StoreResult, TapeId, TapePayload};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -50,6 +50,19 @@ impl ObjectBytes {
             ObjectBytes::Heap(b) => Arc::try_unwrap(b).unwrap_or_else(|b| (*b).clone()),
             ObjectBytes::Mapped(b) => b.bytes().to_vec(),
         }
+    }
+}
+
+impl AsRef<[u8]> for ObjectBytes {
+    fn as_ref(&self) -> &[u8] {
+        self
+    }
+}
+
+impl ObjectBytes {
+    /// Whether they are read where a segment holds them, mapped: not decompressed, hashed or copied.
+    pub fn in_place(&self) -> bool {
+        matches!(self, ObjectBytes::Mapped(_))
     }
 }
 
@@ -355,6 +368,121 @@ impl ContentStore {
         Ok(ids)
     }
 
+    /// Keeps `sources` (each its bytes, its sha256 and its aliases) placed in one new segment of the store's
+    /// objects, uncompressed, to be read there in place (decision 0394): one write of the segment, one transaction
+    /// for their rows, the segment named once it commits. A source the store holds inline is moved there; one it
+    /// holds placed keeps its place. Their ids, in order.
+    pub fn put_sources_placed(&self, sources: &[(&[u8], HashKey, &[HashKey])]) -> StoreResult<Vec<SourceId>> {
+        self.require_write_capacity()?;
+        let held = self.sources_placed(&sources.iter().map(|s| s.1).collect::<Vec<_>>())?;
+        let new: Vec<usize> = (0..sources.len()).filter(|&i| held[i].is_none()).collect();
+        let digests: Vec<[u8; 32]> = new.iter().map(|&i| sources[i].1.sha256_bytes().ok_or_else(|| StoreError::Invalid("a placed source's hash is not a sha256".into()))).collect::<StoreResult<_>>()?;
+        let dir = object_dir(&self.database_path);
+        let mut segments = if new.is_empty() {
+            None
+        } else {
+            let entries: Vec<(&[u8], i64, &[u8; 32])> = new.iter().zip(&digests).map(|(&i, d)| (sources[i].0, 0, d)).collect();
+            Some(super::segments::write_segments(&dir, &entries)?)
+        };
+        let files = segments.as_ref().map_or_else(Vec::new, SealedSegments::files);
+        let segs = segments.as_ref();
+        let (ids, numbers) = self.immediate_transaction(|t| {
+            let created = generation(t)?;
+            let mut numbers: Vec<i64> = Vec::with_capacity(files.len());
+            for _ in &files {
+                let seg: i64 = t.query_row("SELECT coalesce(max(seg), 0) + 1 FROM object_segments", [], |r| r.get(0))?;
+                t.execute("INSERT INTO object_segments(seg) VALUES (?1)", [seg])?;
+                numbers.push(seg);
+            }
+            let mut ids = Vec::with_capacity(sources.len());
+            let mut k = 0;
+            for (i, (bytes, canonical, aliases)) in sources.iter().enumerate() {
+                let id = match held[i] {
+                    Some(id) => id,
+                    None => {
+                        let (s, at, len) = segs.expect("a segment for the new sources").placed(k);
+                        k += 1;
+                        put_source_placed_tx(t, *canonical, bytes.len(), Place { seg: numbers[s], at: at as u64, len }, created)?
+                    }
+                };
+                for alias in *aliases {
+                    let alias_id = intern_hash(t, *alias)?;
+                    let was: Option<i64> = t.prepare_cached("SELECT source_id FROM source_aliases WHERE alias_hash_id = ?1")?.query_row([alias_id], |r| r.get(0)).optional()?;
+                    if was.is_some_and(|was| was != id.0) {
+                        return Err(StoreError::Corrupt("an alias maps to different source bytes".to_owned()));
+                    }
+                    t.prepare_cached("INSERT INTO source_aliases(alias_hash_id, source_id) VALUES (?1, ?2) ON CONFLICT(alias_hash_id) DO NOTHING")?.execute(params![alias_id, id.0])?;
+                }
+                ids.push(id);
+            }
+            Ok((ids, numbers))
+        })?;
+        if let Some(segments) = &mut segments {
+            segments.name(&dir, &numbers)?;
+        }
+        Ok(ids)
+    }
+
+    /// Each of `hashes`' source, where the store holds it placed in a segment: its id, else `None` (inline, or not
+    /// held).
+    fn sources_placed(&self, hashes: &[HashKey]) -> StoreResult<Vec<Option<SourceId>>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut st = connection.prepare_cached(
+            "SELECT s.source_id FROM hashes h JOIN source_objects s ON s.canonical_hash_id = h.hash_id \
+             WHERE h.algorithm_id=?1 AND h.lane0=?2 AND h.lane1=?3 AND h.lane2=?4 AND h.lane3=?5 AND s.seg > 0",
+        )?;
+        hashes.iter().map(|h| st.query_row(super::rows::hash_params(*h), |r| r.get::<_, i64>(0)).optional().map(|v| v.map(SourceId)).map_err(StoreError::from)).collect()
+    }
+
+    /// The source each of `aliases` names, in their order, in one read (decision 0394): one placed in a segment is
+    /// read there, mapped (`ObjectBytes::in_place`): not decompressed, hashed or copied, its segment's check (when
+    /// mapped) the check; one held inline is decompressed and checked against its hash, as `get_source` does.
+    /// `None` where no source has the alias, or its segment is gone.
+    pub fn sources_by_alias_in_place(&self, aliases: &[HashKey]) -> StoreResult<Vec<Option<ObjectBytes>>> {
+        let rows: Vec<Option<(i64, i64, Vec<u8>, HashKey, [i64; 3])>> = {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            let mut st = connection.prepare_cached(
+                "SELECT s.raw_length, s.codec_id, s.frame, c.algorithm_id, c.lane0, c.lane1, c.lane2, c.lane3, s.seg, s.seg_at, s.seg_len \
+                 FROM hashes h JOIN source_aliases a ON a.alias_hash_id = h.hash_id JOIN source_objects s ON s.source_id = a.source_id \
+                 JOIN hashes c ON c.hash_id = s.canonical_hash_id \
+                 WHERE h.algorithm_id=?1 AND h.lane0=?2 AND h.lane1=?3 AND h.lane2=?4 AND h.lane3=?5",
+            )?;
+            aliases
+                .iter()
+                .map(|alias| {
+                    st.query_row(super::rows::hash_params(*alias), |r| {
+                        Ok((r.get(0)?, r.get(1)?, r.get(2)?, HashKey { algorithm: r.get(3)?, lanes: [r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?] }, [r.get(8)?, r.get(9)?, r.get(10)?]))
+                    })
+                    .optional()
+                    .map_err(StoreError::from)
+                })
+                .collect::<StoreResult<_>>()?
+        };
+        let mut maps = SegmentMaps::new(object_dir(&self.database_path));
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let Some((raw_length, codec, frame, key, [seg, seg_at, seg_len])) = row else {
+                out.push(None);
+                continue;
+            };
+            let length = usize::try_from(raw_length).map_err(|_| StoreError::Corrupt("invalid source length".into()))?;
+            let Some(frame) = row_frame(&mut maps, codec, frame, seg, seg_at, seg_len)? else {
+                out.push(None);
+                continue;
+            };
+            let bytes = frame.bytes(length).map_err(|e| StoreError::Corrupt(format!("a source's frame: {e}")))?;
+            if bytes.len() != length {
+                return Err(StoreError::Corrupt("source length does not match metadata".to_owned()));
+            }
+            // Inline: its frame decompressed here, checked against the hash it is stored under.
+            if !bytes.in_place() && key != HashKey::sha256(&bytes) {
+                return Err(StoreError::Corrupt("source hash does not match metadata".to_owned()));
+            }
+            out.push(Some(bytes));
+        }
+        Ok(out)
+    }
+
     /// The tape and source segments' bytes, and the bytes their rows name: what compaction would leave.
     pub fn object_segment_bytes(&self) -> StoreResult<(u64, u64)> {
         let (segs, named): (Vec<i64>, i64) = {
@@ -469,6 +597,45 @@ mod tests {
 
     fn tape_of(store: &ContentStore, source: SourceId) -> Option<Vec<u8>> {
         store.tape_frames_for(&[source], 7, 1, 1).unwrap().remove(0).map(|f| f.bytes().unwrap().to_vec())
+    }
+
+    /// Decision 0394: sources put placed are kept in one new segment, uncompressed, and read there by alias, mapped:
+    /// not decompressed, hashed or copied. One the store held inline is moved there and keeps its id; one held placed
+    /// keeps its place (no new segment); an alias of other bytes is refused. An inline source is still read
+    /// decompressed and checked.
+    #[test]
+    fn sources_put_placed_are_read_in_place_by_alias() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
+        let alias = |n: u8| HashKey::sha256(&[b"a test's alias ", &[n][..]].concat());
+        let (old, new) = (vec![7u8; 5000], b"a run's rows".repeat(300));
+        let old_id = store.put_source(&old, &[alias(0)]).unwrap();
+        let read = |aliases: &[HashKey]| store.sources_by_alias_in_place(aliases).unwrap();
+        let inline = read(&[alias(0)]).remove(0).expect("held");
+        assert!(!inline.in_place() && *inline == old[..], "inline: decompressed and checked");
+        let segs = |store: &ContentStore| store.connection.lock().unwrap().query_row("SELECT count(*) FROM object_segments", [], |r| r.get::<_, i64>(0)).unwrap();
+        let ids = store.put_sources_placed(&[(&old, HashKey::sha256(&old), &[]), (&new, HashKey::sha256(&new), &[alias(1)])]).unwrap();
+        assert_eq!(ids[0], old_id, "moved, its id kept");
+        assert_eq!(segs(&store), 1, "one segment for both");
+        let got = read(&[alias(0), alias(1), alias(2)]);
+        assert!(got[2].is_none(), "no source has that alias");
+        for (b, want) in got.iter().zip([&old[..], &new[..]]) {
+            let b = b.as_ref().expect("placed");
+            assert!(matches!(b, ObjectBytes::Mapped(_)) && b.in_place(), "read in place, mapped");
+            assert_eq!(&**b, want);
+            assert_eq!(b.as_ptr() as usize % 16, 0, "at 16 bytes, as an image is read");
+        }
+        let rows: Vec<(i64, i64, i64)> = store.connection.lock().unwrap().prepare("SELECT codec_id, seg, length(frame) FROM source_objects").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().collect::<Result<_, _>>().unwrap();
+        assert!(rows.iter().all(|&(codec, seg, frame)| codec == CODEC_RAW && seg > 0 && frame == 0), "pointers, no frames: {rows:?}");
+        // Put again: the same ids, no new segment.
+        assert_eq!(store.put_sources_placed(&[(&new, HashKey::sha256(&new), &[alias(1)])]).unwrap(), vec![ids[1]]);
+        assert_eq!(segs(&store), 1, "held placed: no new segment");
+        // An alias of other bytes.
+        assert!(store.put_sources_placed(&[(&old, HashKey::sha256(&old), &[alias(1)])]).is_err(), "an alias of other bytes is refused");
+        // A new process reads them in place too.
+        drop(store);
+        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
+        assert!(store.sources_by_alias_in_place(&[alias(0), alias(1)]).unwrap().iter().all(|b| b.as_ref().is_some_and(ObjectBytes::in_place)));
     }
 
     /// Decision 0295 step 5: a run's parsed files are gathered, placed in one segment once the gather is full or the

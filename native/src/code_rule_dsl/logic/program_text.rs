@@ -37,6 +37,7 @@ const ABOUT: &str = "a";
 pub mod from_tape;
 
 use from_tape::{Parts, REL_WORDS, VAR_WORDS};
+use crate::code_rule_dsl::logic::program_image::manager::VersionAnalyses as _;
 
 fn bad(what: impl std::fmt::Display) -> String {
     format!("program text: {what}")
@@ -397,15 +398,6 @@ pub fn store_packed<'b>(store: &ContentStore, packed: &Packed, bytes: &'b [u8]) 
     Ok((sources, &bytes[at..]))
 }
 
-/// Image `bytes` kept in `store` under the digest of its bytes (decision 0246 §6), on the store's writer (an item's apply,
-/// decision 0306): the digest, and the source, which the item names so collection keeps it. No pin (0306 step 4).
-fn store_image(store: &ContentStore, bytes: &[u8]) -> StoreResult<([u8; 32], Vec<SourceId>)> {
-    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
-    let digest: [u8; 32] = Sha256::digest(bytes).into();
-    let ids = store_encoded(store, &digest, true, bytes)?;
-    Ok((digest, ids))
-}
-
 /// Keeps a program `encode` made in `store`, a source by its bytes' sha256 (an image by `image_key` too): the sources
 /// written, which the caller names so collection keeps them.
 pub fn store_encoded(store: &ContentStore, digest: &[u8; 32], image: bool, bytes: &[u8]) -> StoreResult<Vec<SourceId>> {
@@ -502,7 +494,7 @@ pub fn load_image(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_r
 /// step is two relations in 0103's form, its key and the step it names: `pipeline_step_key(key, pass, version)` (the
 /// pass's version is the tag) and `pipeline_step(key, image, size, digest)`, with its decisions
 /// (`pipeline_step_decision(key, k, pass, what, detail)`, 0269). They are one source under its key's alias, and the
-/// output is an image as a prepared program's is (`store_image`), so a step whose output another step or program
+/// output is an image as a prepared program's is (`store_encoded`), so a step whose output another step or program
 /// stored already shares its image. A run's collection lease keeps what it reads and writes (decision 0306 step 4), and
 /// a step is written by the store's writer, an item of the run's record (0306 step 2).
 pub struct StoredSteps<'s>(pub &'s ContentStore);
@@ -643,7 +635,7 @@ fn text_ids(v: &Value) -> Result<Vec<u32>, String> {
 struct KeptRun {
     /// The images it holds no copy of yet.
     images: Vec<Vec<u8>>,
-    /// The digests of those it was opened from: named, not copied (decision 0380).
+    /// The digests of those it was opened from: named, not copied (decision 0393).
     held: Vec<[u8; 32]>,
     /// Its analyses' rows, one source apart from its facts, each analysis's encoded on its own (decision 0385): a run
     /// opened decodes those a pass asks for, not all.
@@ -706,6 +698,11 @@ fn kept_run(run: &crate::code_rule_dsl::logic::program_image::manager::Run) -> K
         let head = int(j as i64);
         facts.entry("pipeline_run_step_plan".into()).or_default().extend(s.plan.iter().map(|r| std::iter::once(head.clone()).chain(r.iter().cloned()).collect::<Vec<_>>().into()));
         facts.entry("pipeline_run_step_said".into()).or_default().extend(s.said.iter().map(|((topic, text), n)| [head.clone(), str_value(topic), str_value(text), int(*n as i64)].into()));
+        // The request record after the step (decision 0393): its requests, and each request rule's readers.
+        if let Some(a) = &s.asked {
+            facts.entry("pipeline_run_step_req".into()).or_default().extend(a.reqs.iter().map(|r| [head.clone(), str_value(r)].into()));
+            facts.entry("pipeline_run_step_asked".into()).or_default().extend(a.by.iter().flat_map(|(id, rs)| rs.iter().map(|r| [head.clone(), int(i64::from(*id)), str_value(r)].into()).collect::<Vec<_>>()));
+        }
     }
     for (j, d) in parts.decided.iter().enumerate() {
         facts.entry("pipeline_run_decision".into()).or_default().push([int(j as i64), str_value(&d.pass), str_value(&d.what), str_value(&d.detail)].into());
@@ -728,27 +725,36 @@ fn kept_run(run: &crate::code_rule_dsl::logic::program_image::manager::Run) -> K
 
 /// Keeps a run (`kept_run`'s images and facts) under `key`: each image under its digest, the facts under the run's
 /// alias (once). The sources, which the caller names so collection keeps them (decision 0306 step 4: no pins).
+///
+/// Every image, the rows and the facts are placed in one segment of the store's objects, uncompressed, so `open`
+/// reads them there, mapped (decision 0394); an image the store holds already (`held`, or the same bytes kept by
+/// another path) inline is moved there, its bytes read once.
 fn store_run(store: &ContentStore, key: &[u8; 32], images: &[&[u8]], held: &[[u8; 32]], rows: &[u8], facts: &[u8]) -> StoreResult<Vec<SourceId>> {
-    let mut ids = Vec::new();
-    for bytes in images {
-        ids.extend(store_image(store, bytes)?.1);
+    let held_bytes = store.sources_by_alias_in_place(&held.iter().map(image_key).collect::<Vec<_>>())?;
+    let inline: Vec<crate::content_store::ObjectBytes> = held_bytes.into_iter().flatten().filter(|b| !b.in_place()).collect();
+    let mut items: Vec<(&[u8], [u8; 32], HashKey)> = Vec::new();
+    for bytes in images.iter().copied().chain(inline.iter().map(|b| &**b)) {
+        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, bytes.len() as u64);
+        let digest: [u8; 32] = Sha256::digest(bytes).into();
+        items.push((bytes, digest, image_key(&digest)));
     }
     if !rows.is_empty() {
         let digest: [u8; 32] = Sha256::digest(rows).into();
-        let alias = rows_alias(&digest);
-        ids.push(match store.source_by_alias(alias)? {
-            Some(id) => id,
-            None => store.put_source_hashed(rows, HashKey::from_sha256_digest(digest), &[alias])?,
-        });
+        items.push((rows, digest, rows_alias(&digest)));
     }
+    // A key's facts are kept once (`run_alias`): a run kept again under it leaves the first.
+    let kept_facts = store.source_by_alias(run_alias(key))?;
+    if kept_facts.is_none() {
+        let digest: [u8; 32] = Sha256::digest(facts).into();
+        items.push((facts, digest, run_alias(key)));
+    }
+    let aliases: Vec<[HashKey; 1]> = items.iter().map(|i| [i.2]).collect();
+    let placed: Vec<(&[u8], HashKey, &[HashKey])> = items.iter().zip(&aliases).map(|(i, a)| (i.0, HashKey::from_sha256_digest(i.1), &a[..])).collect();
+    let mut ids = store.put_sources_placed(&placed)?;
     for d in held {
         ids.extend(store.source_by_alias(image_key(d))?);
     }
-    let alias = run_alias(key);
-    ids.push(match store.source_by_alias(alias)? {
-        Some(id) => id,
-        None => store.put_source(facts, &[alias])?,
-    });
+    ids.extend(kept_facts);
     Ok(ids)
 }
 
@@ -805,14 +811,20 @@ impl crate::code_rule_dsl::logic::program_image::manager::Runs for StoredRuns<'_
     }
 
     fn open(&self, key: &[u8; 32], name: &'static str) -> Result<Option<crate::code_rule_dsl::logic::program_image::manager::Run>, String> {
+        Ok(self.open_counted(key, name)?.map(|(run, _)| run))
+    }
+}
+
+impl StoredRuns<'_> {
+    /// `Runs::open`, with how the run was read (`Opened`).
+    pub fn open_counted(&self, key: &[u8; 32], name: &'static str) -> Result<Option<(crate::code_rule_dsl::logic::program_image::manager::Run, Opened)>, String> {
         use crate::code_rule_dsl::logic::program_image::manager::{Decided, Form, Run, StoredRule, StoredStep};
         use crate::code_rule_dsl::logic::program_image::Version;
         let e = |e: crate::content_store::StoreError| e.to_string();
         let store = self.0;
-        let Some(id) = store.source_by_alias(run_alias(key)).map_err(e)? else { return Ok(None) };
         let span = |what: &'static str| crate::code_rule_dsl::logic::profile::span(move || format!("a stored run: {what}"));
         let s = span("its facts read and decoded");
-        let blob = store.get_source(id).map_err(e)?;
+        let Some(blob) = store.sources_by_alias_in_place(&[run_alias(key)]).map_err(e)?.pop().flatten() else { return Ok(None) };
         let facts = program_facts::decode(&blob)?;
         drop(s);
         // Read in place, not copied: the analyses' rows are most of a run (decision 0385).
@@ -828,38 +840,53 @@ impl crate::code_rule_dsl::logic::program_image::manager::Runs for StoredRuns<'_
         let s = span("its versions opened");
         let mut by_index: Vec<&crate::code_rule_dsl::logic::front::List<Value>> = rows("pipeline_run_version").iter().collect();
         by_index.sort_by_key(|r| int(&r[0]).unwrap_or(i64::MAX));
+        // Every image, and the analyses' rows, in one read: where the store placed them (`store_run`), read there,
+        // mapped, and opened over the mapping, not decompressed, hashed or copied (decision 0394).
+        let digests: Vec<Option<[u8; 32]>> = by_index
+            .iter()
+            .map(|r| if matches!(r[1], Value::Int(2)) { Ok(None) } else { text(&r[3]).and_then(|t| unhex32(&t).ok_or_else(|| bad("a stored run's image is not a digest"))).map(Some) })
+            .collect::<Result<_, String>>()?;
+        let rows_digest = match rows("pipeline_run_rows").first() {
+            Some(r) => Some(unhex32(&text(&r[0])?).ok_or_else(|| bad("a stored run's rows are not a digest"))?),
+            None => None,
+        };
+        let mut wanted: Vec<HashKey> = digests.iter().flatten().map(image_key).collect();
+        wanted.extend(rows_digest.as_ref().map(rows_alias));
+        let mut read = {
+            let _s = span("its images and rows read");
+            store.sources_by_alias_in_place(&wanted).map_err(e)?.into_iter()
+        };
+        let mut opened_in_place = 0;
         let mut versions: Vec<std::sync::Arc<Version>> = Vec::new();
-        for r in &by_index {
+        for (r, image) in by_index.iter().zip(&digests) {
             let (kind, parent) = (int(&r[1])?, int(&r[2])?);
             let parent = || usize::try_from(parent).ok().and_then(|p| versions.get(p).cloned()).ok_or_else(|| bad("a stored run's version names no parent before it"));
-            let image = if kind == 2 { None } else { Some(unhex32(&text(&r[3])?).ok_or_else(|| bad("a stored run's image is not a digest"))?) };
-            let bytes = || -> Result<Option<Vec<u8>>, String> {
-                let Some(image) = image else { return Ok(None) };
-                let _s = span("an image read");
-                let Some(image_id) = store.source_by_alias(image_key(&image)).map_err(e)? else { return Ok(None) };
-                Ok(Some(store.get_source(image_id).map_err(e)?))
+            let bytes = match image {
+                Some(_) => match read.next().flatten() {
+                    Some(b) => Some(b),
+                    None => return Ok(None),
+                },
+                None => None,
             };
             let opened = || span("an image opened");
-            let v = match kind {
-                0 => match bytes()? {
-                    Some(b) => {
-                        let _s = opened();
-                        Version::open(&b)?
-                    }
-                    None => return Ok(None),
-                },
-                1 => match bytes()? {
-                    Some(b) => {
-                        let _s = opened();
-                        Version::over(&parent()?, &b)?
-                    }
-                    None => return Ok(None),
-                },
-                2 => Version::view_without(&parent()?, &text_ids(&r[4])?)?,
+            let v = match (kind, bytes) {
+                (0 | 1, Some(b)) => {
+                    let _s = opened();
+                    let in_place = b.in_place();
+                    let v = match (kind, in_place) {
+                        (0, true) => Version::open_shared(std::sync::Arc::new(b))?,
+                        (0, false) => Version::open(&b)?,
+                        (_, true) => Version::over_shared(&parent()?, std::sync::Arc::new(b))?,
+                        (_, false) => Version::over(&parent()?, &b)?,
+                    };
+                    opened_in_place += usize::from(in_place);
+                    v
+                }
+                (2, None) => Version::view_without(&parent()?, &text_ids(&r[4])?)?,
                 _ => return Err(bad("a stored run's version is of no kind")),
             };
             if let Some(d) = image {
-                v.analyses().set_kept_image(d);
+                v.analyses().set_kept_image(*d);
             }
             versions.push(v);
         }
@@ -874,18 +901,27 @@ impl crate::code_rule_dsl::logic::program_image::manager::Runs for StoredRuns<'_
             let (from, len) = (usize::try_from(int(&r[3])?).map_err(|e| bad(e))?, usize::try_from(int(&r[4])?).map_err(|e| bad(e))?);
             analyses.entry(at).or_default().insert((name, tag), (from, len));
         }
-        let all_rows: std::sync::Arc<Vec<u8>> = std::sync::Arc::new(match rows("pipeline_run_rows").first() {
-            Some(r) => {
-                let digest = unhex32(&text(&r[0])?).ok_or_else(|| bad("a stored run's rows are not a digest"))?;
-                let Some(id) = store.source_by_alias(rows_alias(&digest)).map_err(e)? else { return Ok(None) };
-                store.get_source(id).map_err(e)?
-            }
-            None => Vec::new(),
+        let all_rows: std::sync::Arc<crate::content_store::ObjectBytes> = std::sync::Arc::new(match rows_digest {
+            Some(_) => match read.next().flatten() {
+                Some(b) => b,
+                None => return Ok(None),
+            },
+            None => crate::content_store::ObjectBytes::Heap(std::sync::Arc::new(Vec::new())),
         });
+        let images = digests.iter().flatten().count();
+        let opened = Opened { images, in_place: opened_in_place, facts_in_place: blob.in_place(), rows_in_place: rows_digest.is_none() || all_rows.in_place() };
         crate::code_rule_dsl::logic::profile::decision("a stored run, opened", || {
-            let images = by_index.iter().filter(|r| !matches!(r[1], Value::Int(2))).count();
             let deepest = versions.iter().map(|v| v.depth()).max().unwrap_or(0);
-            format!("{} versions ({images} images, deepest {deepest}), its facts {} bytes, its analyses' rows {} bytes", versions.len(), blob.len(), all_rows.len())
+            let place = |b: bool| if b { "in place" } else { "decompressed" };
+            format!(
+                "{} versions ({images} images, {} read in place, deepest {deepest}), its facts {} bytes ({}), its analyses' rows {} bytes ({})",
+                versions.len(),
+                opened.in_place,
+                blob.len(),
+                place(opened.facts_in_place),
+                all_rows.len(),
+                place(opened.rows_in_place)
+            )
         });
         for (at, held) in analyses {
             let v = usize::try_from(at).ok().and_then(|i| versions.get(i)).ok_or_else(|| bad("a stored analysis names no version"))?;
@@ -908,7 +944,7 @@ impl crate::code_rule_dsl::logic::program_image::manager::Runs for StoredRuns<'_
                 })
             });
             let form = Form::of_code(u8::try_from(int(&r[4])?).map_err(|e| bad(e))?).ok_or_else(|| bad("a stored step's form is not one"))?;
-            steps.push((int(&r[0])?, StoredStep { pass: text(&r[1])?, input: int(&r[2])? as usize, output: int(&r[3])? as usize, form, rule: rule.transpose()?, plan: Vec::new(), said: Vec::new() }));
+            steps.push((int(&r[0])?, StoredStep { pass: text(&r[1])?, input: int(&r[2])? as usize, output: int(&r[3])? as usize, form, rule: rule.transpose()?, plan: Vec::new(), said: Vec::new(), asked: None }));
         }
         steps.sort_by_key(|(j, _)| *j);
         for r in rows("pipeline_run_step_plan") {
@@ -923,6 +959,22 @@ impl crate::code_rule_dsl::logic::program_image::manager::Runs for StoredRuns<'_
                 steps[at].1.said.push(((text(&r[1])?, text(&r[2])?), u64::try_from(int(&r[3])?).map_err(|e| bad(e))?));
             }
         }
+        for r in rows("pipeline_run_step_req") {
+            let j = int(&r[0])?;
+            if let Ok(at) = steps.binary_search_by_key(&j, |(k, _)| *k) {
+                steps[at].1.asked.get_or_insert_with(Default::default).reqs.push(text(&r[1])?);
+            }
+        }
+        for r in rows("pipeline_run_step_asked") {
+            let j = int(&r[0])?;
+            let Ok(at) = steps.binary_search_by_key(&j, |(k, _)| *k) else { continue };
+            let a = steps[at].1.asked.as_mut().ok_or_else(|| bad("a stored step's request record has readers and no requests"))?;
+            let id = u32::try_from(int(&r[1])?).map_err(|e| bad(e))?;
+            match a.by.iter_mut().find(|(at, _)| *at == id) {
+                Some((_, rs)) => rs.push(text(&r[2])?),
+                None => a.by.push((id, vec![text(&r[2])?])),
+            }
+        }
         let mut decided: Vec<(i64, Decided)> = Vec::new();
         for r in rows("pipeline_run_decision") {
             decided.push((int(&r[0])?, Decided { pass: text(&r[1])?.into(), what: text(&r[2])?.into(), detail: text(&r[3])? }));
@@ -930,6 +982,25 @@ impl crate::code_rule_dsl::logic::program_image::manager::Runs for StoredRuns<'_
         decided.sort_by_key(|(j, _)| *j);
         let Some(head) = rows("pipeline_run").first() else { return Ok(None) };
         // No pin (0306 step 4): the run that reads it keeps its own run, which its record names (`record_runs`).
-        Run::assemble(name, &versions, int(&head[0])? as usize, int(&head[1])? as usize, steps.into_iter().map(|(_, s)| s).collect(), decided.into_iter().map(|(_, d)| d).collect()).map(Some)
+        Run::assemble(name, &versions, int(&head[0])? as usize, int(&head[1])? as usize, steps.into_iter().map(|(_, s)| s).collect(), decided.into_iter().map(|(_, d)| d).collect()).map(|run| Some((run, opened)))
     }
+}
+
+/// How a stored run was read (`StoredRuns::open_counted`, decision 0394): its images, how many were read where the
+/// store placed them (mapped, not decompressed, hashed or copied), and whether its facts and its analyses' rows were.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Opened {
+    pub images: usize,
+    pub in_place: usize,
+    pub facts_in_place: bool,
+    pub rows_in_place: bool,
+}
+
+/// `facts` as a `.rr` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
+/// same rows.
+pub fn document(facts: &super::program_facts::Facts, extra: &std::collections::BTreeMap<super::front::name::Name, crate::code_rule_dsl::logic::front::name::List<(super::front::name::Name, super::front::name::Name)>>) -> Result<String, String> {
+    let mut decls = super::program_facts::schema();
+    decls.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
+    let prog = super::front::ast::Program { decls, facts: facts.clone(), ..super::front::ast::Program::default() };
+    super::rr::print(&prog).map_err(|e| format!("program facts: {e:?}"))
 }

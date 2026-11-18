@@ -40,6 +40,63 @@ pub fn steps(nodes: usize, words: usize) -> u32 {
 
 const NONE: u32 = u32::MAX;
 
+/// A micro walk's own word (not the interpreter's): a loop of child steps through nodes that pass a test, read as one
+/// move over the start's subtree (work queue Q56). `Micro::of` writes it in place of the loop's `CHILD`:
+///
+/// ```text
+/// i    CHILD              ->  CLOSURE j        the start's subtree, in preorder
+/// i+1  FORK i+3                (kept, never run)
+/// i+2  GOTO k                  k: where each node reached continues
+/// i+3  tests ...               the test a node passes to be entered
+/// j    GOTO i                  (kept, never run)
+/// ```
+///
+/// Each node the loop reached continues at `k`, once, with the path's state at `i`: every child of the start, and
+/// every child of a node reached that passes the tests. In preorder that is a scan of the start's subtree that enters
+/// a node passing the tests (its first child is the next node) and skips the subtree of one that does not. A named
+/// `CHILD` neither reaches nor enters an unnamed node. The walk holds one frame for the scan, not one a level, and
+/// takes a step a node reached, not the loop's five (a loop tier walk of 411 steps on average at s1000, up to 2,345).
+/// The words between `i` and `j` stay, so what reads them (label rows, set mode's reach) reads the loop as before.
+pub const CLOSURE: u8 = 0x17;
+
+/// Whether `op` with `mode` is a test of the node alone, which a closure's body may hold.
+fn node_test(op: u8, mode: u8) -> bool {
+    matches!(op, KIND | FIELD | SUPERTYPE | TEXT) && mode == 0 || op == FLAGS
+}
+
+/// The loops of `words` a closure reads in one move (`CLOSURE`), as (i, j, k): none whose body a jump from outside
+/// enters.
+fn closures(words: &[u32]) -> Vec<(usize, usize, usize)> {
+    let len = words.len();
+    let mut found = Vec::new();
+    for i in 0..len {
+        let (op, mode, _) = split(words[i]);
+        if op != CHILD || i + 3 >= len {
+            continue;
+        }
+        let (fork, _, fork_to) = split(words[i + 1]);
+        let (goto, _, k) = split(words[i + 2]);
+        if fork != FORK || usize::from(fork_to) != i + 3 || goto != GOTO || mode > NAMED {
+            continue;
+        }
+        let Some(j) = (i + 3..len).find(|&pc| !node_test(split(words[pc]).0, split(words[pc]).1)) else { continue };
+        let (back, _, back_to) = split(words[j]);
+        let k = usize::from(k);
+        if back != GOTO || usize::from(back_to) != i || (i + 1..=j).contains(&k) || k >= len {
+            continue;
+        }
+        // No jump from outside the body lands inside it.
+        let entered = words.iter().enumerate().any(|(pc, &word)| {
+            let (op, _, to) = split(word);
+            matches!(op, FORK | GOTO) && !(i + 1..=j).contains(&pc) && (i + 1..=j).contains(&usize::from(to))
+        });
+        if !entered {
+            found.push((i, j, k));
+        }
+    }
+    found
+}
+
 /// A walk outgrew its frames, captures or steps, or read a cursor it never saved.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Overflow(pub(in crate::code_rule_dsl) &'static str);
@@ -91,6 +148,9 @@ enum Resume {
     Children { next: u32, named: bool },
     Descend { next: u32, end: u32, named: bool },
     Following { next: u32, named: bool },
+    /// A closure's scan (`CLOSURE`): the next node in preorder up to `end`, entered where it passes the words
+    /// `tests`.
+    Closure { next: u32, end: u32, named: bool, tests: (u16, u16) },
 }
 
 /// What a walk marks at each path that emits.
@@ -205,7 +265,12 @@ impl Micro {
             });
             words[pc] = u32::from(op) | u32::from(mode) << 8 | (slot as u32) << 16;
         }
+        // Set mode's reach reads the loop's words as they were (`CLOSURE` keeps them): one from the loop's `CHILD`.
         let reach = if program.set_mode { super::set_mode::Reach::of(&words) } else { None };
+        for (i, j, _) in closures(&words) {
+            let (_, mode, _) = split(words[i]);
+            words[i] = u32::from(CLOSURE) | u32::from(mode) << 8 | (j as u32) << 16;
+        }
         Some(Self { words, texts, reach })
     }
 
@@ -213,6 +278,11 @@ impl Micro {
     /// read this, `metal_label_passes`).
     pub fn key_stop(&self) -> bool {
         self.reach.as_ref().is_some_and(|reach| reach.labels().len() == 1)
+    }
+
+    /// Whether the walk reads a closure (`CLOSURE`): its length follows its start's subtree.
+    pub fn closes(&self) -> bool {
+        self.words.iter().any(|&word| split(word).0 == CLOSURE)
     }
 
     /// The walk's words as (op, mode, arg), for diagnostics.
@@ -224,15 +294,23 @@ impl Micro {
     /// at increasing words: a path goes back only by a jump whose loop holds no pushing word (an
     /// axis step or a fork), so it never returns before a word that pushed. Each pushing word
     /// then holds at most one frame. `None` where a loop pushes.
+    /// A closure's body (`CLOSURE`) is never run: its words are not counted.
     pub fn depth(&self) -> Option<usize> {
-        let pushes = |word: u32| matches!(split(word).0, FORK | CHILD | DESCEND | FOLLOWING);
+        let mut run = vec![true; self.words.len()];
+        for (pc, &word) in self.words.iter().enumerate() {
+            let (op, _, j) = split(word);
+            if op == CLOSURE {
+                run[pc + 1..=usize::from(j)].fill(false);
+            }
+        }
+        let pushes = |pc: usize| run[pc] && matches!(split(self.words[pc]).0, FORK | CHILD | DESCEND | FOLLOWING | CLOSURE);
         for (pc, &word) in self.words.iter().enumerate() {
             let (op, _, arg) = split(word);
-            if matches!(op, FORK | GOTO) && usize::from(arg) <= pc && self.words[usize::from(arg)..=pc].iter().any(|&word| pushes(word)) {
+            if run[pc] && matches!(op, FORK | GOTO) && usize::from(arg) <= pc && (usize::from(arg)..=pc).any(pushes) {
                 return None;
             }
         }
-        Some(self.words.iter().filter(|&&word| pushes(word)).count())
+        Some((0..self.words.len()).filter(|&pc| pushes(pc)).count())
     }
 
     /// Each text slot's bits on `tape` (bit `n` of slot `s`: node `n` passes text test `s`), by the
@@ -428,6 +506,22 @@ impl Micro {
                 tape.transducer_has_supertype(node, class)
             }
         };
+        // A test of the node alone (`node_test`), as the walk's words read it.
+        let passes = |word: u32, node: u32| {
+            let (op, mode, arg) = split(word);
+            match op {
+                KIND => tape.transducer_kind(node) == arg,
+                FIELD => tape.transducer_field(node) == arg,
+                FLAGS => {
+                    let flags = tape.transducer_flags(node);
+                    flags & mode == mode && flags & arg as u8 == 0
+                }
+                SUPERTYPE => has(node, arg),
+                TEXT => texts[usize::from(arg)][node as usize / 64] >> (node % 64) & 1 != 0,
+                _ => false,
+            }
+        };
+        let enters = |node: u32, (from, to): (u16, u16)| (from..to).all(|pc| passes(self.words[usize::from(pc)], node));
         let mut state = State {
             pc: 0,
             node: start,
@@ -450,14 +544,25 @@ impl Micro {
                 let named = mode == NAMED;
                 let alive = match op {
                     STOP => false,
-                    KIND => tape.transducer_kind(state.node) == arg,
-                    FIELD => tape.transducer_field(state.node) == arg,
-                    FLAGS => {
-                        let flags = tape.transducer_flags(state.node);
-                        flags & mode == mode && flags & arg as u8 == 0
+                    KIND | FIELD | FLAGS | SUPERTYPE | TEXT => passes(self.words[usize::from(state.pc)], state.node),
+                    CLOSURE => {
+                        let range = tape.transducer_descendants(state.node);
+                        let mut resume = Resume::Closure { next: range.start, end: range.end, named, tests: (state.pc + 3, arg) };
+                        // Each node reached continues where the loop's exit jumps.
+                        let exit = split(self.words[usize::from(state.pc) + 2]).2;
+                        match candidate(tape, &mut resume, &enters) {
+                            Some(node) => {
+                                if stack.len() == FRAMES {
+                                    return Err(Overflow("frames"));
+                                }
+                                stack.push((State { pc: exit, ..state }, resume));
+                                state.node = node;
+                                state.pc = exit;
+                                continue;
+                            }
+                            None => false,
+                        }
                     }
-                    SUPERTYPE => has(state.node, arg),
-                    TEXT => texts[usize::from(arg)][state.node as usize / 64] >> (state.node % 64) & 1 != 0,
                     PARENT => tape.transducer_parent(state.node).map(|parent| state.node = parent).is_some(),
                     NEXT => tape.transducer_next_sibling(state.node, named).map(|next| state.node = next).is_some(),
                     CHILD | DESCEND | FOLLOWING => {
@@ -469,7 +574,7 @@ impl Micro {
                             }
                             _ => Resume::Following { next: tape.transducer_next_sibling(state.node, named).unwrap_or(NONE), named },
                         };
-                        match candidate(tape, &mut resume) {
+                        match candidate(tape, &mut resume, &enters) {
                             Some(node) => {
                                 if stack.len() == FRAMES {
                                     return Err(Overflow("frames"));
@@ -554,7 +659,7 @@ impl Micro {
                     state = frame;
                     break;
                 }
-                if let Some(node) = candidate(tape, &mut resume) {
+                if let Some(node) = candidate(tape, &mut resume, &enters) {
                     stack.push((frame, resume));
                     state = State { node, ..frame };
                     break;
@@ -564,8 +669,8 @@ impl Micro {
     }
 }
 
-/// A move's next candidate, advancing past it.
-fn candidate(tape: &TapeDoc, resume: &mut Resume) -> Option<u32> {
+/// A move's next candidate, advancing past it; a closure's enters a node that `enters` passes.
+fn candidate(tape: &TapeDoc, resume: &mut Resume, enters: &dyn Fn(u32, (u16, u16)) -> bool) -> Option<u32> {
     let named_ok = |node: u32, named: bool| !named || tape.transducer_flags(node) & 1 != 0;
     match resume {
         Resume::Path => None,
@@ -595,6 +700,19 @@ fn candidate(tape: &TapeDoc, resume: &mut Resume) -> Option<u32> {
                 *next = tape.transducer_next_sibling(node, *named).unwrap_or(NONE);
                 node
             })
+        }
+        Resume::Closure { next, end, named, tests } => {
+            while *next < *end {
+                let node = *next;
+                let subtree = tape.transducer_descendants(node).end;
+                if !named_ok(node, *named) {
+                    *next = subtree;
+                    continue;
+                }
+                *next = if enters(node, *tests) { node + 1 } else { subtree };
+                return Some(node);
+            }
+            None
         }
     }
 }

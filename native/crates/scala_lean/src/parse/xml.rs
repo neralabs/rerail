@@ -85,10 +85,6 @@ fn letter(c: char) -> bool {
     matches!(u, 0xc0..=0x24f | 0x370..=0x3ff | 0x400..=0x4ff | 0x3040..=0x30ff | 0x4e00..=0x9fff | 0xac00..=0xd7a3) && u != 0xd7 && u != 0xf7
 }
 
-fn is_blank(c: u8) -> bool {
-    matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
-}
-
 impl P<'_> {
     /// Whether an XML literal starts at the next token: a lone `<` touching a name's start.
     pub(super) fn xml_ahead(&mut self) -> bool {

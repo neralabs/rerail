@@ -737,7 +737,10 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
         }
         if let Some(why) = why {
             let name = scc.iter().max_by_key(|r| count_of(r)).cloned().unwrap_or_default();
-            again.push((format!("{name} ({} relations)", scc.len()), why));
+            // The changed read with no old rows, named beside the stratum.
+            let read = mine.iter().flat_map(|r| r.lits.iter().filter_map(move |l| l.atom().map(|a| r.rel(a)))).find(|r| changed.contains(*r) && !scc.contains(*r) && !old(r));
+            let read = read.map(|r| format!(", reads {r}")).unwrap_or_default();
+            again.push((format!("{name} ({} relations{read})", scc.len()), why));
             derived_again += 1;
             rules.extend(at.iter().map(|&k| Ir::Copy(k)));
             changed.extend(scc.iter().cloned());
@@ -1304,7 +1307,7 @@ pub(in crate::code_rule_dsl) struct Form {
 
 /// The about rows of the run's version a form keeps of its stratum's relations (its lattices and natives: few
 /// rows, each a relation's).
-const STRATUM_ABOUT: [&str; 14] = [
+const STRATUM_ABOUT: [&str; 15] = [
     "lattice",
     "lattice_merge",
     "lattice_widen",
@@ -1317,6 +1320,7 @@ const STRATUM_ABOUT: [&str; 14] = [
     "native_components",
     "native_reach",
     "native_reach_through",
+    "native_rank",
     "native_text_test",
     "native_text_pattern",
 ];

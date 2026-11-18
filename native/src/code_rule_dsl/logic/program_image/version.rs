@@ -9,9 +9,8 @@
 //! less what the edit removes or replaces, plus what it adds.
 use super::handles::{AtomRef, RuleRef};
 use super::{AtomId, Cell, Image, RelId, RuleId, bad};
-use crate::code_rule_dsl::logic::front::{Lists, Program};
+use crate::code_rule_dsl::logic::front::{ast::Program, name::Lists};
 use std::collections::{BTreeMap, HashSet};
-use super::manager::Store;
 use std::sync::Arc;
 
 /// Fewest ranges a view may have; it may have up to a quarter of its parent's rules (`max_ranges`, decision 0244).
@@ -23,12 +22,24 @@ pub fn max_ranges(rules: usize) -> usize {
     (rules / 4).max(MAX_RANGES)
 }
 
-/// Each form holds its analyses (`analyses`, decision 0281 §2), made as they are asked for and dropped with it.
+/// A version's slot for what a layer above keeps of it, dropped with it: the pass manager's analyses
+/// (`manager::Store`), of a type this crate does not know.
+#[derive(Default)]
+pub struct Held(pub std::sync::OnceLock<Box<dyn std::any::Any + Send + Sync>>);
+
+/// Each form holds its analyses (in its `held` slot, decision 0281 §2), made as they are asked for and dropped with it.
 pub enum Version {
-    Base { image: Arc<Image>, digest: u64, analyses: Store },
+    Base { image: Arc<Image>, digest: u64, analyses: Held },
     /// Ranges of `parent`'s rule ids, ascending; `parent` is never a view (a view of a view is of its parent).
-    View { parent: Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64, analyses: Store },
-    Overlay { parent: Arc<Version>, delta: Arc<Image>, size: usize, depth: usize, digest: u64, analyses: Store },
+    View { parent: Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64, analyses: Held },
+    Overlay { parent: Arc<Version>, delta: Arc<Image>, size: usize, depth: usize, digest: u64, analyses: Held },
+}
+
+/// A version as its size and digest: what tells two apart (`differences` shows them).
+impl std::fmt::Debug for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Version {{ rules: {}, digest: {:#x} }}", self.size(), self.digest())
+    }
 }
 
 /// What a version is made of over its parent (`Version::layer`).
@@ -116,18 +127,39 @@ impl<'v> Iterator for Down<'v> {
 impl Version {
     /// The base `bytes` hold.
     pub fn open(bytes: &[u8]) -> Result<Arc<Version>, String> {
-        let image = Image::open(bytes)?;
+        Version::base_of(Image::open(bytes)?)
+    }
+
+    /// The base `bytes` hold, read where they are, not copied (`Image::open_shared`, decision 0394).
+    pub fn open_shared(bytes: super::SharedBytes) -> Result<Arc<Version>, String> {
+        Version::base_of(Image::open_shared(bytes)?)
+    }
+
+    fn base_of(image: Image) -> Result<Arc<Version>, String> {
         if image.is_delta() {
             return Err(bad("a delta is opened over its parent (`Version::over`)"));
         }
         let digest = image.own_sum();
-        Ok(Arc::new(Version::Base { image: Arc::new(image), digest, analyses: Store::default() }))
+        Ok(Arc::new(Version::Base { image: Arc::new(image), digest, analyses: Held::default() }))
+    }
+
+    /// The overlay of `parent` and the delta `bytes` hold, read where they are (`Image::open_shared`, decision 0394).
+    pub fn over_shared(parent: &Arc<Version>, bytes: super::SharedBytes) -> Result<Arc<Version>, String> {
+        Version::overlay_of(parent, Image::open_shared(bytes)?)
+    }
+
+    /// Whether its own image (a base's, or an overlay's delta) is read where a store holds it, not copied.
+    pub fn is_shared(&self) -> bool {
+        self.top().is_shared()
     }
 
     /// The overlay of `parent` and the delta `bytes` hold: the delta's bases must be `parent`'s id spaces, and what
     /// it removes `parent`'s rules.
     pub fn over(parent: &Arc<Version>, bytes: &[u8]) -> Result<Arc<Version>, String> {
-        let delta = Image::open(bytes)?;
+        Version::overlay_of(parent, Image::open(bytes)?)
+    }
+
+    fn overlay_of(parent: &Arc<Version>, delta: Image) -> Result<Arc<Version>, String> {
         if !delta.is_delta() || delta.atom_base() != parent.atom_end() || delta.rel_base() != parent.rel_end() || delta.rule_base() != parent.rule_end() {
             return Err(bad("a delta over another parent"));
         }
@@ -173,13 +205,13 @@ impl Version {
         }
         d = d.wrapping_add(delta.own_sum());
         let size = parent.size() - removed.len() + delta.rules();
-        Ok(Arc::new(Version::Overlay { parent: parent.clone(), size, depth: parent.depth() + 1, digest: d, delta: Arc::new(delta), analyses: Store::default() }))
+        Ok(Arc::new(Version::Overlay { parent: parent.clone(), size, depth: parent.depth() + 1, digest: d, delta: Arc::new(delta), analyses: Held::default() }))
     }
 
     /// A view of `parent`'s rules in `ranges` (of its rule ids), of `size` rules and digest `digest` (the builder's).
-    pub(crate) fn view(parent: &Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64) -> Arc<Version> {
+    pub fn view(parent: &Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64) -> Arc<Version> {
         debug_assert!(!matches!(**parent, Version::View { .. }), "a view of a view is of its parent");
-        Arc::new(Version::View { parent: parent.clone(), ranges, size, digest, analyses: Store::default() })
+        Arc::new(Version::View { parent: parent.clone(), ranges, size, digest, analyses: Held::default() })
     }
     /// Whether rule id `k` is in `ranges`.
     fn in_ranges(ranges: &[(u32, u32)], k: u32) -> bool {
@@ -195,19 +227,20 @@ impl Version {
         self.down().next().expect("a version has an image")
     }
     /// The base image this version is over, at the bottom of its stack.
-    pub(crate) fn root(&self) -> &Arc<Image> {
+    pub fn root(&self) -> &Arc<Image> {
         match self {
             Version::Base { image, .. } => image,
             Version::View { parent, .. } | Version::Overlay { parent, .. } => parent.root(),
         }
     }
     /// Whether `im` is one of this version's images: its ids are this version's.
-    pub(crate) fn holds_image(&self, im: &Image) -> bool {
+    pub fn holds_image(&self, im: &Image) -> bool {
         self.down().any(|x| std::ptr::eq(x, im))
     }
 
-    /// Its analyses (decision 0281 §2): asked for through a pipeline's `Cx`, or `manager::analysis`.
-    pub fn analyses(&self) -> &Store {
+    /// The slot its analyses are kept in (decision 0281 §2): the pass manager's store, which it puts there on first use
+    /// (`manager::VersionAnalyses`).
+    pub fn held(&self) -> &Held {
         match self {
             Version::Base { analyses, .. } | Version::View { analyses, .. } | Version::Overlay { analyses, .. } => analyses,
         }
@@ -459,10 +492,10 @@ impl Version {
     pub fn outputs(&self) -> impl ExactSizeIterator<Item = AtomId> + '_ {
         self.owner(2).outputs().iter().map(|&a| AtomId(a))
     }
-    pub(crate) fn inputs_hash(&self) -> u64 {
+    pub fn inputs_hash(&self) -> u64 {
         self.owner(1).inputs_hash()
     }
-    pub(crate) fn outputs_hash(&self) -> u64 {
+    pub fn outputs_hash(&self) -> u64 {
         self.owner(2).outputs_hash()
     }
 

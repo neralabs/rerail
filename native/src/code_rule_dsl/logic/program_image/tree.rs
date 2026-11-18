@@ -1,8 +1,8 @@
-//! A version read as today's tree (`front::Program`), by its handles: every caller not yet moved to ids reads this.
+//! A version read as today's tree (`front::ast::Program`), by its handles: every caller not yet moved to ids reads this.
 //! Each atom is made a `Name` once; lists are interned from scratch stacks, so a read allocates no list of its own.
 use super::handles::{AggRef, Lit, RuleRef, TermRef, Terms};
 use super::{AtomId, Cell, Version, assemble};
-use crate::code_rule_dsl::logic::front::{AggOp, Atom, List, Literal, Lists, Name, Program, Rule, Term, Value};
+use crate::code_rule_dsl::logic::front::{ast::{AggOp, Atom, Literal, Program, Rule, Term, Value}, name::{List, Lists, Name}};
 use crate::code_rule_dsl::logic::program_facts::Facts;
 use std::collections::BTreeMap;
 

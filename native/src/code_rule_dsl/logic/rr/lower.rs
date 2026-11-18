@@ -181,6 +181,8 @@ fn place_relation(v: &str) -> String {
 
 #[derive(Clone, Default)]
 struct Lowerer {
+    /// Where the walk writes its rules: the tree's `prog.rules`, or a text's version (`Written`, decision 0377 step 3).
+    out: Out,
     prog: Program,
     /// `.lattice` declarations: name → (base type, its `Lub` functor).
     lattices: BTreeMap<String, (String, String)>,
@@ -242,6 +244,73 @@ struct Lowerer {
     /// lowering added. Linking keeps every module's stated inputs before the added ones, as one lowering of them all
     /// would order them.
     stated: usize,
+    /// The rules linked as versions so far (`link`), which `prog` does not hold: a `must` or `may` rule's place.
+    appended: usize,
+}
+
+/// Where `Lowerer::write` puts a rule.
+#[derive(Clone, Default)]
+enum Out {
+    /// `prog.rules`: a module kept as parts, the unseeded link, `lower`.
+    #[default]
+    Tree,
+    /// A text's own program, written as a version in the walk (decision 0377 step 3): `prog` holds its header alone.
+    Version(Box<Written>),
+}
+
+/// A text's rules as the walk writes them: the builder, and what the walk reads back of what it wrote.
+#[derive(Clone)]
+pub struct Written {
+    b: crate::code_rule_dsl::logic::program_image::Builder<'static>,
+    /// How many rules it wrote: a `must` or `may` head's rules are known by their place (`modal`).
+    n: usize,
+    /// Each rule's content, by a 128-bit hash: a demand is written once (`demand`, `world_demand`).
+    seen: std::collections::HashSet<u128>,
+    /// The rules of the relations a `.shape` names, which the module checks once its clauses are written.
+    shaped: BTreeSet<String>,
+    kept: Vec<Rule>,
+    /// The first rule the builder refused.
+    error: Option<String>,
+}
+
+impl Written {
+    fn new(shaped: BTreeSet<String>) -> Self {
+        Written { b: crate::code_rule_dsl::logic::program_image::Builder::base(), n: 0, seen: Default::default(), shaped, kept: Vec::new(), error: None }
+    }
+
+    fn hash(rule: &Rule) -> u128 {
+        use std::hash::{BuildHasher, Hash, Hasher};
+        let half = |seed: u64| {
+            let mut h = foldhash::fast::FixedState::with_seed(seed).build_hasher();
+            rule.hash(&mut h);
+            h.finish() as u128
+        };
+        half(0x9e37_79b9_7f4a_7c15) << 64 | half(0xc2b2_ae3d_27d4_eb4f)
+    }
+
+    fn write(&mut self, rule: Rule) {
+        self.seen.insert(Written::hash(&rule));
+        self.n += 1;
+        if let Err(e) = self.b.add(&rule) {
+            self.error.get_or_insert(e);
+        }
+        if self.shaped.contains(rule.head.rel.as_str()) {
+            self.kept.push(rule);
+        }
+    }
+
+    /// The version written, its header set from `header` (a program of no rules), as
+    /// `Builder::of_program_less_maintenance` sets one.
+    fn version(self, header: &Program) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
+        debug_assert!(header.rules.is_empty(), "a written program's header holds no rules");
+        if let Some(e) = self.error {
+            return Err(Error::Syntax(e));
+        }
+        let mut b = self.b;
+        b.set_program_header(header);
+        let bytes = b.finish_bytes().map_err(Error::Syntax)?;
+        crate::code_rule_dsl::logic::program_image::Version::open(&bytes).map_err(Error::Syntax)
+    }
 }
 
 /// A helper relation's stem, column types and rules (their templates: variables numbered in order, so the fresh
@@ -346,6 +415,9 @@ pub struct Module {
     docof: Option<bool>,
     /// The `.violation`s of its includes that its rules give a `@place` (`Lowerer::clause`).
     places: BTreeSet<String>,
+    /// Its rules, where its walk wrote them as a version (decision 0377 step 3), or its image holds them: then
+    /// `l.prog` is its header alone.
+    version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
 }
 
 /// The lowering half that reads one clause and the declarations in scope (decision 0246 §1, "per clause"), for a
@@ -385,6 +457,16 @@ pub fn lower_module_in(statements: Vec<Statement>, scope: &[&Module]) -> Result<
 
 /// `lower_module_in`, in a scope seeded already.
 pub fn lower_module_seeded(statements: Vec<Statement>, seeds: &Seeds) -> Result<Module, Error> {
+    lower_module_seeded_as(statements, seeds, false)
+}
+
+/// `lower_module_seeded`, its rules written as a version in the walk (decision 0377 step 3): a text's own program,
+/// which `link_seeded_parts` links without editing its rules and `rr::link_seeded_version` appends onto its scope.
+pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) -> Result<Module, Error> {
+    lower_module_seeded_as(statements, seeds, true)
+}
+
+fn lower_module_seeded_as(statements: Vec<Statement>, seeds: &Seeds, as_version: bool) -> Result<Module, Error> {
     let typing = crate::code_rule_dsl::logic::profile::span(|| "type the tapes' terms".to_owned());
     let written: BTreeMap<String, Vec<String>> = statements
         .iter()
@@ -484,6 +566,14 @@ pub fn lower_module_seeded(statements: Vec<Statement>, seeds: &Seeds) -> Result<
     // stated. A demand an include's lowering made is not one: this module makes its own.
     l.printed_demands = DEMANDS.iter().chain(WORLD.iter().map(|(_, d)| d)).filter(|d| l.prog.decls.contains_key(**d) && !seeded.decls.contains(**d)).map(|d| (*d).to_owned()).collect();
     l.printed_demands.extend(seeds.printed.iter().cloned());
+    if as_version {
+        // From here the rules go to the version; what the statements wrote before goes first, in its order.
+        let mut w = Written::new(shapes.iter().map(|(shape, _)| shape.head.clone()).collect());
+        for rule in std::mem::take(&mut l.prog.rules) {
+            w.write(rule);
+        }
+        l.out = Out::Version(Box::new(w));
+    }
     for (heads, body, edits, line) in clauses {
         // A rule ending in `=> edits` defines a fix; fixes are not run, so it is left out.
         if !edits.is_empty() {
@@ -497,7 +587,7 @@ pub fn lower_module_seeded(statements: Vec<Statement>, seeds: &Seeds) -> Result<
     // Each directive names what its rules read: a relation of their body, and the variables it waits for.
     for (shape, line) in shapes {
         use crate::code_rule_dsl::logic::front::{ShapeWait, shape_base};
-        let rules: Vec<&crate::code_rule_dsl::logic::front::Rule> = l.prog.rules.iter().filter(|r| r.head.rel == shape.head).collect();
+        let rules: Vec<&crate::code_rule_dsl::logic::front::Rule> = l.written_of(&shape.head);
         let reads = |rel: &str| rules.iter().any(|r| r.body.iter().filter_map(|x| x.atom()).any(|a| shape_base(&a.rel) == rel));
         let missing = match &shape.wait {
             _ if !reads(&shape.lit) => Some(format!("no rule of `{}` reads `{}`", shape.head, shape.lit)),
@@ -515,7 +605,16 @@ pub fn lower_module_seeded(statements: Vec<Statement>, seeds: &Seeds) -> Result<
     l.stated = l.prog.inputs.iter().take_while(|r| stated.contains(*r)).count();
     l.deps = own_deps;
     let docof = declares_docof.then_some(l.docof_of_locs);
-    Ok(Module { l, written, docof, places })
+    let version = match std::mem::take(&mut l.out) {
+        Out::Tree => None,
+        Out::Version(w) => Some(w.version(&l.prog)?),
+    };
+    Ok(Module { l, written, docof, places, version })
+}
+
+/// `lower_module_in`, its rules written as a version in the walk: a library's module (`rr::lower_library`).
+pub fn lower_module_in_written(statements: Vec<Statement>, scope: &[&Module]) -> Result<Module, Error> {
+    lower_module_seeded_written(statements, &seeds(scope))
 }
 
 /// A module's parts as its image keeps them (decision 0246 §6): its program, and what lowering's whole-program half
@@ -547,6 +646,8 @@ pub struct ModuleParts {
     pub places: BTreeSet<String>,
     /// The demands its text, or an include's, states (`Lowerer::printed_demands`).
     pub printed: BTreeSet<String>,
+    /// Its rules as a version, where `prog` holds its header alone (`Module::version`).
+    pub version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -598,7 +699,24 @@ impl Module {
             docof: self.docof,
             places: self.places.clone(),
             printed: l.printed_demands.clone(),
+            version: self.version.clone(),
         }
+    }
+
+    /// The module with its rules as a version (`version`), its program its header alone.
+    pub fn as_version(mut self) -> Result<Module, Error> {
+        if self.version.is_none() {
+            self.version = Some(rules_version(&std::mem::take(&mut self.l.prog.rules))?);
+        }
+        Ok(self)
+    }
+
+    /// The module with its rules in its program: decoded from its version, where it holds one.
+    pub fn tree(mut self) -> Result<Module, Error> {
+        if let Some(v) = self.version.take() {
+            self.l.prog.rules = v.program(&Default::default()).map_err(Error::Syntax)?.rules;
+        }
+        Ok(self)
     }
 
     /// The module its image's parts are.
@@ -618,7 +736,7 @@ impl Module {
         for (r, x) in p.deps {
             l.deps.entry(r).or_default().insert(x);
         }
-        Ok(Module { l, written: p.written.into_iter().collect(), docof: p.docof, places: p.places })
+        Ok(Module { l, written: p.written.into_iter().collect(), docof: p.docof, places: p.places, version: p.version })
     }
 }
 
@@ -717,7 +835,27 @@ impl Lowerer {
 
     /// `m` after the modules linked so far: its helpers numbered after theirs, its parts added to theirs.
     fn append(&mut self, m: Module) {
-        let Module { l: mut m, docof, places, .. } = m;
+        let (b, b_stated, own) = self.link(m).expect("a module of rules links");
+        debug_assert!(own.is_none(), "a tree's link appends trees");
+        append_parts(&mut self.prog, b, &mut self.stated, b_stated);
+    }
+
+    /// `append` but the union of the programs: `m`'s helpers numbered after the modules linked so far, and what the
+    /// lowerer knows of them added to theirs. `m`'s program, so renamed, is returned with the count of its inputs
+    /// stated first, for `append_parts`.
+    ///
+    /// A module whose rules are a version (`Module::version`) is linked by the same steps over its helpers' rules
+    /// alone, decoded (what the helpers' keys read): the renames and the merged helpers' rules dropped are then written
+    /// over its version's rules (`relinked`), and the program returned is its header alone, with that version.
+    fn link(&mut self, m: Module) -> Result<(Program, usize, Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>), Error> {
+        let Module { l: mut m, docof, places, version, .. } = m;
+        if let Some(v) = &version {
+            let helpers: BTreeSet<&str> = m.once.iter().map(|(name, _, _)| name.as_str()).collect();
+            let lists = Default::default();
+            let mut tree = crate::code_rule_dsl::logic::program_image::Tree::new(v, &lists);
+            m.prog.rules = v.rules().filter(|r| helpers.contains(v.rel_name(r.head().rel()))).map(|r| tree.rule(r)).collect();
+        }
+        let mut merged: Vec<(String, String, usize)> = Vec::new();
         let mut rename: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         for (stem, n) in &m.made {
             if self.next > 0 {
@@ -751,6 +889,7 @@ impl Lowerer {
             match self.helpers.get(&key) {
                 Some(made) => {
                     let made = made.clone();
+                    merged.push((name.clone(), made.clone(), k));
                     m.prog.decls.remove(name.as_str());
                     let mut seen = 0;
                     m.prog.rules.retain(|r| r.head.rel != name.as_str() || {
@@ -766,7 +905,7 @@ impl Lowerer {
             }
         }
         self.next += m.next;
-        let at = self.prog.rules.len();
+        let at = self.prog.rules.len() + self.appended;
         self.modal.extend(m.modal.into_iter().map(|(i, s)| (i + at, s)));
         for v in self.violations.iter_mut().filter(|v| places.contains(&v.name)) {
             v.places = true;
@@ -778,49 +917,183 @@ impl Lowerer {
         if let Some(d) = docof {
             self.docof_of_locs = d;
         }
-        let (a, b) = (&mut self.prog, m.prog);
-        a.rules.extend(b.rules);
-        a.decls.extend(b.decls);
-        a.nullary.extend(b.nullary);
-        a.lattice.extend(b.lattice);
-        for (rel, rows) in b.facts {
-            a.facts.entry(rel).or_default().extend(rows);
-        }
-        for (k, rel) in b.inputs.into_iter().enumerate() {
-            if a.inputs.contains(&rel) {
-                continue;
+        let own = match version {
+            None => None,
+            Some(v) => {
+                m.prog.rules.clear();
+                let own = relinked(&v, &m.prog, &rename, &merged)?;
+                self.appended += own.size();
+                Some(own)
             }
-            if k < m.stated {
-                a.inputs.insert(self.stated, rel);
-                self.stated += 1;
-            } else {
-                a.inputs.push(rel);
-            }
-        }
-        for (list, more) in [(&mut a.outputs, b.outputs), (&mut a.demand, b.demand)] {
-            for rel in more {
-                if !list.contains(&rel) {
-                    list.push(rel);
-                }
-            }
-        }
-        a.kindsets.extend(b.kindsets);
-        a.demand_dropped.extend(b.demand_dropped);
-        a.gates.extend(b.gates);
-        a.policies.extend(b.policies);
-        a.settings.extend(b.settings);
-        a.natives.extend(b.natives);
-        a.rx_spans.extend(b.rx_spans);
-        a.ast_patterns.extend(b.ast_patterns);
-        a.answers.extend(b.answers);
-        for (rel, q) in b.qualifiers {
-            a.qualifiers.entry(rel).or_default().extend(q);
-        }
-        for (rel, cols) in b.tapes {
-            a.tapes.entry(rel).or_default().extend(cols);
-        }
-        a.shapes.extend(b.shapes);
+        };
+        Ok((m.prog, m.stated, own))
     }
+}
+
+/// A module's rules, from version `v`, as `Lowerer::link` leaves them, under its linked `header`: each relation
+/// renamed by `rename`, then the first `k` rules of each helper `merged` into another (`(name, made, k)`, in order)
+/// dropped and the helper read as that one. One definition with the tree's (`rename_relations`, then each merge's
+/// `retain` and rename), over the version: no rule is decoded.
+pub fn relinked(v: &crate::code_rule_dsl::logic::program_image::Version, header: &Program, rename: &std::collections::HashMap<String, String>, merged: &[(String, String, usize)]) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
+    use crate::code_rule_dsl::logic::program_image::{AtomId, AtomRef, Builder, Rewrite, Slot};
+    let into: std::collections::HashMap<&str, &str> = merged.iter().map(|(n, m, _)| (n.as_str(), m.as_str())).collect();
+    let to = |rel: &str| -> Option<String> {
+        let renamed = rename.get(rel).map(String::as_str);
+        let r = renamed.unwrap_or(rel);
+        into.get(r).map(|m| (*m).to_owned()).or_else(|| renamed.map(str::to_owned))
+    };
+    struct Renamed<'a, F: Fn(&str) -> Option<String>> {
+        v: &'a crate::code_rule_dsl::logic::program_image::Version,
+        to: &'a F,
+        vars: BTreeMap<Slot, AtomId>,
+    }
+    impl<F: Fn(&str) -> Option<String>> Rewrite for Renamed<'_, F> {
+        fn atom_as(&mut self, a: AtomRef<'_>) -> Option<(String, bool, bool)> {
+            (self.to)(self.v.rel_name(a.rel())).map(|r| (r, a.neg(), a.gated()))
+        }
+        fn head_as(&mut self, a: AtomRef<'_>) -> Option<String> {
+            (self.to)(self.v.rel_name(a.rel()))
+        }
+        fn kindset(&mut self, set: AtomId) -> Option<String> {
+            (self.to)(self.v.text(set))
+        }
+        fn var(&mut self, s: Slot) -> Option<AtomId> {
+            self.vars.get(&s).copied()
+        }
+    }
+    let mut left: std::collections::HashMap<&str, usize> = merged.iter().map(|(n, _, k)| (n.as_str(), *k)).collect();
+    let mut b = Builder::base();
+    let edits = !rename.is_empty() || !merged.is_empty();
+    for r in v.rules() {
+        let head = v.rel_name(r.head().rel());
+        let renamed = rename.get(head).map(String::as_str).unwrap_or(head);
+        if let Some(k) = left.get_mut(renamed)
+            && *k > 0
+        {
+            *k -= 1;
+            continue;
+        }
+        if !edits {
+            b.copy(v, r);
+            continue;
+        }
+        // A variable named as a renamed relation is renamed too, as `rename_relations` renames it.
+        let mut vars = BTreeMap::new();
+        for (i, a) in r.vars().enumerate() {
+            if let Some(new) = to(v.text(a)) {
+                vars.insert(Slot(i as u32), b.atom(&new));
+            }
+        }
+        let mut rw = Renamed { v, to: &to, vars };
+        b.rewrite(v, r, &mut rw).finish().map_err(Error::Syntax)?;
+    }
+    b.set_program_header(header);
+    let bytes = b.finish_bytes().map_err(Error::Syntax)?;
+    crate::code_rule_dsl::logic::program_image::Version::open(&bytes).map_err(Error::Syntax)
+}
+
+/// `rules` as a version of no header (what `relinked` reads of a module's rules).
+fn rules_version(rules: &[Rule]) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
+    let mut b = crate::code_rule_dsl::logic::program_image::Builder::base();
+    for r in rules {
+        b.add(r).map_err(Error::Syntax)?;
+    }
+    crate::code_rule_dsl::logic::program_image::Version::open(&b.finish_bytes().map_err(Error::Syntax)?).map_err(Error::Syntax)
+}
+
+/// A library's modules linked as versions (`link`'s steps, the rules kept as versions): the first module's program,
+/// each module after it as `link` leaves it with the inputs stated before it and its own stated count (what
+/// `lowering_tail::AppendModule` appends), and what the lowerer knows of them all (`whole_front`), for the
+/// lowering's tail on the version (`rr::lower_library`).
+pub struct LinkedVersions {
+    pub first: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    pub appended: Vec<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, usize, usize)>,
+    pub lowered: Lowered,
+}
+
+/// `link` with the modules' rules kept as versions (`LinkedVersions`).
+pub fn link_versions(modules: Vec<Module>) -> Result<LinkedVersions, Error> {
+    let mut modules = modules.into_iter();
+    let Some(Module { mut l, version, .. }) = modules.next() else {
+        let lowered = whole_front(Lowerer::default())?;
+        let first = relinked(rules_version(&[])?.as_ref(), &Program::default(), &Default::default(), &[])?;
+        return Ok(LinkedVersions { first, appended: Vec::new(), lowered });
+    };
+    let v = match version {
+        Some(v) => v,
+        None => rules_version(&std::mem::take(&mut l.prog.rules))?,
+    };
+    // The first module's helpers by their keys (read from an image, it has none), as `link` keys them.
+    l.helpers.clear();
+    {
+        let helpers: BTreeSet<&str> = l.once.iter().map(|(name, _, _)| name.as_str()).collect();
+        let lists = Default::default();
+        let mut tree = crate::code_rule_dsl::logic::program_image::Tree::new(&v, &lists);
+        let mut keyed = l.prog.clone();
+        keyed.rules = v.rules().filter(|r| helpers.contains(v.rel_name(r.head().rel()))).map(|r| tree.rule(r)).collect();
+        for (name, stem, k) in l.once.clone() {
+            let key = l.once_key(&keyed, &name, &stem, k);
+            l.helpers.entry(key).or_insert(name);
+        }
+    }
+    let first = relinked(&v, &l.prog, &Default::default(), &[])?;
+    l.appended = first.size();
+    let mut appended = Vec::new();
+    for m in modules {
+        let (header, b_stated, own) = l.link(m.as_version()?)?;
+        let own = own.expect("a module linked as a version");
+        appended.push((own, l.stated, b_stated));
+        append_parts(&mut l.prog, header, &mut l.stated, b_stated);
+    }
+    let lowered = whole_front(l)?;
+    Ok(LinkedVersions { first, appended, lowered })
+}
+
+/// `b`, a module's program (`Lowerer::link`), added to `a`, the modules linked so far: its rules after theirs, its
+/// parts added to theirs; its first `b_stated` inputs after `a`'s first `stated`, which counts them. `a` and `b` may be
+/// headers alone (a version's: `lowering_tail::AppendModule`).
+pub fn append_parts(a: &mut Program, b: Program, stated: &mut usize, b_stated: usize) {
+    a.rules.extend(b.rules);
+    a.decls.extend(b.decls);
+    a.nullary.extend(b.nullary);
+    a.lattice.extend(b.lattice);
+    for (rel, rows) in b.facts {
+        a.facts.entry(rel).or_default().extend(rows);
+    }
+    for (k, rel) in b.inputs.into_iter().enumerate() {
+        if a.inputs.contains(&rel) {
+            continue;
+        }
+        if k < b_stated {
+            a.inputs.insert(*stated, rel);
+            *stated += 1;
+        } else {
+            a.inputs.push(rel);
+        }
+    }
+    for (list, more) in [(&mut a.outputs, b.outputs), (&mut a.demand, b.demand)] {
+        for rel in more {
+            if !list.contains(&rel) {
+                list.push(rel);
+            }
+        }
+    }
+    a.kindsets.extend(b.kindsets);
+    a.demand_dropped.extend(b.demand_dropped);
+    a.gates.extend(b.gates);
+    a.policies.extend(b.policies);
+    a.settings.extend(b.settings);
+    a.natives.extend(b.natives);
+    a.rx_spans.extend(b.rx_spans);
+    a.ast_patterns.extend(b.ast_patterns);
+    a.answers.extend(b.answers);
+    for (rel, q) in b.qualifiers {
+        a.qualifiers.entry(rel).or_default().extend(q);
+    }
+    for (rel, cols) in b.tapes {
+        a.tapes.entry(rel).or_default().extend(cols);
+    }
+    a.shapes.extend(b.shapes);
 }
 
 /// A name's place in a helper's columns: its text, a helper's (`rr_<stem><n>`) as its stem and number.
@@ -919,6 +1192,7 @@ fn rename_relations(prog: &mut Program, rename: &std::collections::HashMap<Strin
 /// rules, `declare_core`, projections, kind sets, boolean relations, `front::finish`, aggregate demand, removing
 /// repeated rules and literals, and widening cyclic contexts, over `modules` together.
 pub fn link(modules: Vec<Module>) -> Result<Program, Error> {
+    let modules = modules.into_iter().map(Module::tree).collect::<Result<Vec<_>, _>>()?;
     let mut modules = modules.into_iter();
     let Some(Module { mut l, .. }) = modules.next() else { return Ok(Program::default()) };
     // The first module's helpers by their keys (read from an image, it has none).
@@ -947,7 +1221,7 @@ pub fn link_in(m: Module, scope: &[&Module], core: &BTreeSet<String>) -> Result<
 pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>) -> Result<Program, Error> {
     let mut l = seeds.l.clone();
     l.violations.clear();
-    l.append(m);
+    l.append(m.tree()?);
     let mut program = whole(l)?;
     crate::code_rule_dsl::logic::front::declared(&program)?;
     unseed(&mut program, seeds, core);
@@ -966,28 +1240,43 @@ pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
     program.qualifiers.retain(|r, _| !(seeded.qualifiers.contains(r) && gone(r)));
 }
 
-/// `link_seeded` up to `findings`, `core_and_projections`, `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`, `unit`, `whole_back`, `front::finish` and `whole()`'s tail (aggregate demand, `unit`, `sets`,
-/// `widen_cyclic_contexts`): the program `rr::link_seeded_version`
-/// makes a version of, with what the lowerer knows of it; `declared` checked. `builtins_out` takes out declarations
-/// of relations no rule reads (the built-ins are written out), but `within`, which it declares where read. `kind_sets` takes out only sets no rule
-/// reads, and declares the axes' helpers it writes. `whole_back` adds a column to nullary relations, in their declarations
-/// and reads alike, and the requests' relations it declares. `finish` declares only the axes (transduced, which `declared` passes)
-/// and `node_order` with the helpers it reads. Aggregate demand adds only relations it declares. The tail drops repeats (a literal or rule another copy keeps), a rule
-/// whose body is its own head, and literals of relations the program derives, and adds `node` only where it is
-/// declared: the check before it refuses what the check after it does, but for a relation read only by its own
-/// copy-rule, which the lowering does not declare apart.
-pub fn link_seeded_front(m: Module, seeds: &Seeds) -> Result<Lowered, Error> {
+/// `link_seeded` up to the program's analyses, apart: the scope's program (its seeds' header: no rules), the
+/// module's own program linked into it (`Lowerer::link`), and what the lowerer knows of them (`Lowered`, its program
+/// the scope's). `rr::link_seeded_version` makes the scope's version once (`Scoped`), appends the module's onto it
+/// (`append_parts`, `lowering_tail::AppendModule`), checks it is `declared`, and runs the analyses on it.
+pub fn link_seeded_parts(m: Module, seeds: &Seeds) -> Result<Linked, Error> {
     let mut l = seeds.l.clone();
     l.violations.clear();
-    l.append(m);
+    let (own, own_stated, version) = l.link(m)?;
+    let stated = l.stated;
     let lowered = whole_front(l)?;
-    crate::code_rule_dsl::logic::front::declared(&lowered.program)?;
-    Ok(lowered)
+    debug_assert!(lowered.program.rules.is_empty(), "a scope's seeds hold no rules");
+    Ok(Linked { lowered, own, version, stated, own_stated })
+}
+
+/// `link_seeded_parts`'s parts.
+pub struct Linked {
+    pub lowered: Lowered,
+    /// The module's own program, linked: with its rules, or its header alone where the walk wrote them (`written`).
+    pub own: Program,
+    /// Its rules, as `Lowerer::link` leaves them, where its walk wrote them as a version (`own` its header then).
+    pub version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
+    /// The scope's inputs stated first, and the module's (`append_parts`).
+    pub stated: usize,
+    pub own_stated: usize,
+}
+
+impl Seeds {
+    /// The scope's program: its seeds' header, which every module linked in it starts from (`link_seeded_parts`).
+    pub fn program(&self) -> &Program {
+        &self.l.prog
+    }
 }
 
 /// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.
 fn whole(l: Lowerer) -> Result<Program, Error> {
-    let Lowered { mut program, sets: named, rewritten, docof_of_locs, findings: pending } = whole_front(l)?;
+    let Lowered { mut program, sets: named, rewritten, docof_of_locs, findings: pending, three, modal } = whole_front(l)?;
+    three_valued(&mut program, &three, &modal);
     findings(&mut program, &pending)?;
     core_and_projections(&mut program, docof_of_locs)?;
     span_patterns_into(&mut program)?;
@@ -1055,17 +1344,16 @@ pub fn sets(program: &mut Program) {
     }
 }
 
-/// `whole` up to the lowerer's analyses before its findings, with what the lowerer knows of the program
-/// (`Lowered`): what `findings`, `core_and_projections`, `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`,
+/// `whole` but the lowerer's analyses, with what the lowerer knows of the program
+/// (`Lowered`): what `three_valued`, `findings`, `core_and_projections`, `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`,
 /// `unit`, `whole_back`, `front::finish` and the tail (aggregate demand, `unit`,
 /// `sets`, `widen_cyclic_contexts`) make of it `rr::link_seeded_version` makes on the version.
 fn whole_front(mut l: Lowerer) -> Result<Lowered, Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
-    l.three_valued();
     let rewritten: Vec<String> = self::core::REWRITTEN.into_iter().filter(|r| l.rewritten(r)).map(str::to_owned).collect();
     drop(analyses);
     let findings = PendingFindings { violations: std::mem::take(&mut l.violations), next: l.next };
-    Ok(Lowered { program: l.prog, sets: l.sets, rewritten, docof_of_locs: l.docof_of_locs, findings })
+    Ok(Lowered { program: l.prog, sets: l.sets, rewritten, docof_of_locs: l.docof_of_locs, findings, three: l.three, modal: l.modal })
 }
 
 /// The program `whole_front` leaves, with what the lowerer knows of it that the passes after read: the sets its
@@ -1078,6 +1366,9 @@ pub struct Lowered {
     pub docof_of_locs: bool,
     /// The `.violation`s the clauses declared, for `findings`.
     pub findings: PendingFindings,
+    /// The relations declared `must, may`, and the rules' `must`/`may` prefixes by index, for `three_valued`.
+    pub three: BTreeSet<String>,
+    pub modal: BTreeMap<usize, String>,
 }
 
 /// The `.violation`s a program's clauses declared, and the lowerer's count of fresh names, with which `findings` writes
@@ -1430,6 +1721,91 @@ pub fn core_and_projections(prog: &mut Program, docof_of_locs: bool) -> Result<(
     Ok(())
 }
 
+/// `.decl r(…) must, may` (core.rr 3): r is computed twice. Its may side, which keeps the name, holds what is
+/// proven or unknown: every rule of r. Its must side (`rr_must_r`) holds what is proven: the rules with no
+/// prefix or `must`. A relation that reads a three-valued one is three-valued too, with every rule on both
+/// sides. In a must side's rule a positive atom of a three-valued relation reads its must side and a negated
+/// one its may side; a may side's rule reads the other way. A finding is the may side: a definite one and a
+/// possible one have the same key, and the possible tag is not made yet.
+/// `three` the relations declared `must, may`, `modal` the rules' prefixes by index; the tree's form of
+/// `lowering_tail::ThreeValued`, both built of `three_closure`, `must_name`, `reads_must` and `three_valued_header`.
+pub fn three_valued(prog: &mut Program, three: &BTreeSet<String>, modal: &BTreeMap<usize, String>) {
+    if three.is_empty() {
+        return;
+    }
+    let shape: Vec<(&str, Vec<&str>)> = prog.rules.iter().map(|r| (r.head.rel.as_str(), r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str()).collect())).collect();
+    let three = three_closure(three, &shape);
+    drop(shape);
+    let side = |body: &[Literal], must_side: bool| -> Vec<Literal> {
+        body.iter()
+            .cloned()
+            .map(|mut l| {
+                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = &mut l
+                    && reads_must(&three, &a.rel, a.neg, must_side)
+                {
+                    a.rel = must_name(&a.rel).into();
+                }
+                l
+            })
+            .collect()
+    };
+    let mut rules = Vec::new();
+    for (i, rule) in std::mem::take(&mut prog.rules).into_iter().enumerate() {
+        if !three.contains(rule.head.rel.as_str()) {
+            rules.push(rule);
+            continue;
+        }
+        if modal.get(&i).map(String::as_str) != Some("may") {
+            let mut head = rule.head.clone();
+            head.rel = must_name(&head.rel).into();
+            rules.push(Rule { head, body: side(&rule.body, true).into() });
+        }
+        rules.push(Rule { head: rule.head.clone(), body: side(&rule.body, false).into() });
+    }
+    prog.rules = rules;
+    three_valued_header(prog, &three);
+}
+
+/// The three-valued relations: those declared so, and every relation a rule of which reads one (`rules`: each rule's
+/// head and the relations its body's atoms read), to a fixed point.
+pub fn three_closure(declared: &BTreeSet<String>, rules: &[(&str, Vec<&str>)]) -> BTreeSet<String> {
+    let mut three = declared.clone();
+    loop {
+        let before = three.len();
+        for (head, reads) in rules {
+            if reads.iter().any(|r| three.contains(*r)) {
+                three.insert((*head).to_owned());
+            }
+        }
+        if three.len() == before {
+            return three;
+        }
+    }
+}
+
+/// A three-valued relation's must side.
+pub fn must_name(rel: &str) -> String {
+    format!("{RESERVED}must_{rel}")
+}
+
+/// Whether an atom of `rel` (negated: `neg`) in a rule of the must side (`must_side`) or the may side reads `rel`'s
+/// must side: a positive atom on the must side, a negated one on the may side.
+pub fn reads_must(three: &BTreeSet<String>, rel: &str, neg: bool, must_side: bool) -> bool {
+    three.contains(rel) && neg != must_side
+}
+
+/// Each three-valued relation's must side declared, and given its facts, as the relation is.
+pub fn three_valued_header(prog: &mut Program, three: &BTreeSet<String>) {
+    for rel in three {
+        if let Some(cols) = prog.decls.get(rel.as_str()).cloned() {
+            prog.decls.insert(must_name(rel).into(), cols);
+        }
+        if let Some(rows) = prog.facts.get(rel).cloned() {
+            prog.facts.insert(must_name(rel), rows);
+        }
+    }
+}
+
 /// `span_patterns` on a program, what it finds added to it.
 pub fn span_patterns_into(prog: &mut Program) -> Result<(), Error> {
     let SpanPatterns(rx, ast) = span_patterns(&SpanProgram::of_tree(prog))?;
@@ -1744,6 +2120,38 @@ impl Lowerer {
     /// a rule's two aggregates over the same variables were `rr_ctx7` and `rr_ctx8` in most of dl1's 44 policies, and
     /// `congruence` merged them back after lowering (decision 0225 §6). An aggregate's helper, which demand narrows
     /// by its readers, has its readers' heads in its stem (`aggregate`).
+    /// A rule the walk made, written where it writes (`out`).
+    fn write(&mut self, rule: Rule) {
+        match &mut self.out {
+            Out::Tree => self.prog.rules.push(rule),
+            Out::Version(w) => w.write(rule),
+        }
+    }
+
+    /// How many rules the walk has written.
+    fn written(&self) -> usize {
+        match &self.out {
+            Out::Tree => self.prog.rules.len(),
+            Out::Version(w) => w.n,
+        }
+    }
+
+    /// Whether the walk wrote `rule` already.
+    fn wrote(&self, rule: &Rule) -> bool {
+        match &self.out {
+            Out::Tree => self.prog.rules.contains(rule),
+            Out::Version(w) => w.seen.contains(&Written::hash(rule)),
+        }
+    }
+
+    /// The rules written of `rel`, a relation a `.shape` names.
+    fn written_of(&self, rel: &str) -> Vec<&Rule> {
+        match &self.out {
+            Out::Tree => self.prog.rules.iter().filter(|r| r.head.rel == rel).collect(),
+            Out::Version(w) => w.kept.iter().filter(|r| r.head.rel == rel).collect(),
+        }
+    }
+
     fn helper_once(&mut self, name: String, stem: &str, cols: Vec<(String, String)>, rules: Vec<(Vec<Term>, Vec<Literal>)>) -> String {
         let rules: Vec<Rule> = rules.into_iter().map(|(args, body)| Rule { head: Atom { rel: name.clone().into(), args: args.into(), neg: false, gated: false }, body: body.into() }).collect();
         let names = self.template_names.get_or_insert_with(crate::code_rule_dsl::logic::front::template::CanonicalNames::new);
@@ -1753,7 +2161,9 @@ impl Lowerer {
         }
         self.prog.decls.insert(name.clone().into(), cols.into_iter().map(|(c, t)| (c.into(), t.into())).collect());
         self.once.push((name.clone(), stem.to_owned(), rules.len()));
-        self.prog.rules.extend(rules);
+        for rule in rules {
+            self.write(rule);
+        }
         self.helpers.insert(key, name.clone());
         name
     }
@@ -1820,68 +2230,6 @@ impl Lowerer {
         }
         self.prog.decls.insert(name.into(), out.iter().map(|(c, t)| (c.into(), t.into())).collect());
         Ok(())
-    }
-
-    /// `.decl r(…) must, may` (core.rr 3): r is computed twice. Its may side, which keeps the name, holds what is
-    /// proven or unknown: every rule of r. Its must side (`rr_must_r`) holds what is proven: the rules with no
-    /// prefix or `must`. A relation that reads a three-valued one is three-valued too, with every rule on both
-    /// sides. In a must side's rule a positive atom of a three-valued relation reads its must side and a negated
-    /// one its may side; a may side's rule reads the other way. A finding is the may side: a definite one and a
-    /// possible one have the same key, and the possible tag is not made yet.
-    fn three_valued(&mut self) {
-        if self.three.is_empty() {
-            return;
-        }
-        let must = |rel: &str| format!("{RESERVED}must_{rel}");
-        let mut three = self.three.clone();
-        loop {
-            let before = three.len();
-            for rule in &self.prog.rules {
-                if rule.body.iter().any(|l| l.atom().is_some_and(|a| three.contains(a.rel.as_str()))) {
-                    three.insert(rule.head.rel.to_string());
-                }
-            }
-            if three.len() == before {
-                break;
-            }
-        }
-        let side = |body: &[Literal], must_side: bool| -> Vec<Literal> {
-            body.iter()
-                .cloned()
-                .map(|mut l| {
-                    if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = &mut l
-                        && three.contains(a.rel.as_str())
-                        && (a.neg != must_side)
-                    {
-                        a.rel = must(&a.rel).into();
-                    }
-                    l
-                })
-                .collect()
-        };
-        let mut rules = Vec::new();
-        for (i, rule) in std::mem::take(&mut self.prog.rules).into_iter().enumerate() {
-            if !three.contains(rule.head.rel.as_str()) {
-                rules.push(rule);
-                continue;
-            }
-            let modal = self.modal.get(&i).map(String::as_str);
-            if modal != Some("may") {
-                let mut head = rule.head.clone();
-                head.rel = must(&head.rel).into();
-                rules.push(Rule { head, body: side(&rule.body, true).into() });
-            }
-            rules.push(Rule { head: rule.head.clone(), body: side(&rule.body, false).into() });
-        }
-        self.prog.rules = rules;
-        for rel in &three {
-            if let Some(cols) = self.prog.decls.get(rel.as_str()).cloned() {
-                self.prog.decls.insert(must(rel).into(), cols);
-            }
-            if let Some(rows) = self.prog.facts.get(rel).cloned() {
-                self.prog.facts.insert(must(rel), rows);
-            }
-        }
     }
 
     /// `.violation V(at, …)`: V is an output relation, and each of its rows is a finding (`findings`). Its
@@ -1982,7 +2330,7 @@ impl Lowerer {
             } else {
                 vec![atom("docof", vec![v("rr_v0"), v("rr_d")]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), atom("line", vec![v("rr_v0"), v("rr_l")]), atom("col", vec![v("rr_v0"), v("rr_c")])]
             };
-            self.prog.rules.push(Rule { head: head.clone(), body: std::iter::once(atom(&f.name, cols.clone())).chain(at).chain(scoped.iter().cloned()).collect() });
+            self.write(Rule { head: head.clone(), body: std::iter::once(atom(&f.name, cols.clone())).chain(at).chain(scoped.iter().cloned()).collect() });
             if !f.node && place_values {
                 let of = |g: &str| Term::Call(g.to_owned().into(), [v("rr_v0")].into());
                 let mut found = head.clone();
@@ -1995,14 +2343,14 @@ impl Lowerer {
                     body.push(Literal::Cmp { l: v("rr_p"), op: "=", r: of(PLACE_PATH) });
                     body.extend(scoped.iter().cloned());
                 }
-                self.prog.rules.push(Rule { head: found, body: body.into() });
+                self.write(Rule { head: found, body: body.into() });
             }
             if f.places {
                 let mut args = vec![v("rr_p"), v("rr_l")];
                 args.extend(cols.into_iter().skip(1));
                 let mut head = head;
                 head.args.make_mut()[5] = Term::Int(0);
-                self.prog.rules.push(Rule { head, body: std::iter::once(atom(&place_relation(&f.name), args)).chain(scoped.iter().cloned()).collect() });
+                self.write(Rule { head, body: std::iter::once(atom(&place_relation(&f.name), args)).chain(scoped.iter().cloned()).collect() });
             }
         }
         // A syntax error at its line (or line 1), in its document; an input error at line 1 of the input's path.
@@ -2030,7 +2378,7 @@ impl Lowerer {
             if what == "syntax_error" {
                 self.guest_input();
             }
-            self.prog.rules.push(Rule { head, body: body.into() });
+            self.write(Rule { head, body: body.into() });
         }
         // A guest that does not parse, reported at its host's line (`syntax_error` of a guest is a file line).
         for (grammar, code) in guest_errors {
@@ -2048,7 +2396,7 @@ impl Lowerer {
             }
             self.guest_input();
             self.error_diagnostic(&policy, "guest_error", &code, body.clone())?;
-            self.prog.rules.push(Rule { head, body: body.into() });
+            self.write(Rule { head, body: body.into() });
         }
         Ok(true)
     }
@@ -2109,31 +2457,31 @@ impl Lowerer {
         if !within.is_empty() {
             self.prog.decls.insert("rr_scope_in".to_owned().into(), [("d".into(), "int".into())].into());
             for g in &within {
-                self.prog.rules.push(Rule { head: head("rr_scope_in", "d"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
+                self.write(Rule { head: head("rr_scope_in", "d"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
             }
-            self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: [doc.clone(), atom("rr_scope_in", vec![v("d")], true)].into() });
+            self.write(Rule { head: head("rr_scope_drop", "p"), body: [doc.clone(), atom("rr_scope_in", vec![v("d")], true)].into() });
         }
         for g in &out {
-            self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
+            self.write(Rule { head: head("rr_scope_drop", "p"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
         }
         // rr_scope_not(d): a document out of the scope, which a combined run's guards negate (decision 0091): in a
         // pack that reads more documents than this policy's scope, the policy's rules see only the others' rows.
         if !within.is_empty() || !out.is_empty() {
             self.prog.decls.insert(SCOPE_NOT.to_owned().into(), [("d".into(), "int".into())].into());
             if !within.is_empty() {
-                self.prog.rules.push(Rule { head: head(SCOPE_NOT, "d"), body: [doc.clone(), atom("rr_scope_in", vec![v("d")], true)].into() });
+                self.write(Rule { head: head(SCOPE_NOT, "d"), body: [doc.clone(), atom("rr_scope_in", vec![v("d")], true)].into() });
             }
             for g in &out {
-                self.prog.rules.push(Rule { head: head(SCOPE_NOT, "d"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
+                self.write(Rule { head: head(SCOPE_NOT, "d"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
             }
         }
         // `.scope report dirs`: a finding in a document under none of them is dropped too.
         if !report.is_empty() {
             self.prog.decls.insert("rr_report_in".to_owned().into(), [("d".into(), "int".into())].into());
             for g in &report {
-                self.prog.rules.push(Rule { head: head("rr_report_in", "d"), body: [doc.clone(), glob(g)].into() });
+                self.write(Rule { head: head("rr_report_in", "d"), body: [doc.clone(), glob(g)].into() });
             }
-            self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: [doc.clone(), atom("rr_report_in", vec![v("d")], true)].into() });
+            self.write(Rule { head: head("rr_scope_drop", "p"), body: [doc.clone(), atom("rr_report_in", vec![v("d")], true)].into() });
         }
         vec![atom("rr_scope_drop", vec![v("rr_p")], true)]
     }
@@ -2268,9 +2616,9 @@ impl Lowerer {
             for body in &bodies {
                 let (args, body) = unset(args.clone(), body.clone())?;
                 if let Some(m) = &head.modal {
-                    self.modal.insert(self.prog.rules.len(), m.clone());
+                    self.modal.insert(self.written(), m.clone());
                 }
-                self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: args.into(), neg: false, gated: false }, body: body.into() });
+                self.write(Rule { head: Atom { rel: rel.clone().into(), args: args.into(), neg: false, gated: false }, body: body.into() });
             }
         }
         Ok(())
@@ -2619,8 +2967,8 @@ impl Lowerer {
             body.push(Literal::Atom(Atom { rel: "doc".into(), args: [Term::Var("rr_demand_doc".into()), Term::Wild, Term::Wild].into(), neg: false, gated: false }));
         }
         let rule = Rule { head, body: body.into() };
-        if !self.prog.rules.contains(&rule) {
-            self.prog.rules.push(rule);
+        if !self.wrote(&rule) {
+            self.write(rule);
         }
         Ok(())
     }
@@ -2670,8 +3018,10 @@ impl Lowerer {
         let saved = self.siblings.clone();
         let mut keep = keep.into_iter();
         self.siblings.retain(|_| keep.next().unwrap_or(false));
-        // Bound by an atom, or computed from what atoms bind (`d = cat(r, "/", p)`).
+        // Bound by an atom, or computed from what atoms bind (`d = cat(r, "/", p)`, or a `match`'s named group: `match("(?<d>.*)/[^/]*", p)`
+        // is `d = @rx_group(p, …)` once lowered).
         let binds = self.siblings.iter().any(|l| match l {
+            Lit::Atom { rel, neg: false, args, .. } if matches!(rel.as_str(), "match" | "match_all") => matches!(args.first(), Some(STerm::Str(re)) if groups(re).contains(s)),
             Lit::Atom { rel, neg: false, .. } => test_of(rel).is_none() && rel != "earlier" && body_vars(std::slice::from_ref(l)).contains(s),
             Lit::Cmp { l, op: "=", r } => matches!(l, STerm::Var(v) if v == s) || matches!(r, STerm::Var(v) if v == s),
             _ => false,
@@ -2680,8 +3030,8 @@ impl Lowerer {
         self.siblings = saved;
         let Some(ctx) = ctx.transpose()? else { return Ok(()) };
         let rule = Rule { head: head(Term::Var(s.clone().into())), body: [Literal::Atom(ctx)].into() };
-        if !self.prog.rules.contains(&rule) {
-            self.prog.rules.push(rule);
+        if !self.wrote(&rule) {
+            self.write(rule);
         }
         Ok(())
     }
@@ -2711,7 +3061,7 @@ impl Lowerer {
         self.prog.decls.insert(name.as_str().into(), cols);
         let head = Atom { rel: name.into(), args: shared.iter().map(|c| Term::Var(c.as_str().into())).collect(), neg: false, gated: false };
         for body in out {
-            self.prog.rules.push(Rule { head: head.clone(), body: merge_negated_tests(body).into() });
+            self.write(Rule { head: head.clone(), body: merge_negated_tests(body).into() });
         }
         keep.into_iter().chain([vec![Literal::Atom(head)]]).collect()
     }
@@ -2744,7 +3094,7 @@ impl Lowerer {
         self.prog.decls.insert(name.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         let head = Atom { rel: name.into(), args: args.into(), neg: false, gated: false };
         for body in bodies {
-            self.prog.rules.push(Rule { head: head.clone(), body: body.into() });
+            self.write(Rule { head: head.clone(), body: body.into() });
         }
         Ok(Literal::Atom(Atom { neg: true, ..head }))
     }
@@ -2779,8 +3129,8 @@ impl Lowerer {
         let head = |rel: &str, args: Vec<Term>| Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false };
         let mut body = vec![atom("child", vec![v("p"), v("a"), v("i")], false), atom("child", vec![v("p"), v("s"), v("k")], false), cmp("i", "k")];
         body.extend(member);
-        self.prog.rules.push(Rule { head: head(&after, vec![v("a"), v("k")]), body: body.into() });
-        self.prog.rules.push(Rule {
+        self.write(Rule { head: head(&after, vec![v("a"), v("k")]), body: body.into() });
+        self.write(Rule {
             head: head(&first, vec![v("a"), v("j")]),
             body: vec![
                 atom(&after, vec![v("a"), Term::Wild], false),
@@ -2790,11 +3140,11 @@ impl Lowerer {
         let pair = || vec![atom("child", vec![v("p"), v("a"), v("i")], false), atom("child", vec![v("p"), v("b"), v("l")], false), cmp("i", "l")];
         let mut none = pair();
         none.push(atom(&after, vec![v("a"), Term::Wild], true));
-        self.prog.rules.push(Rule { head: head(&name, vec![v("a"), v("b")]), body: none.into() });
+        self.write(Rule { head: head(&name, vec![v("a"), v("b")]), body: none.into() });
         let mut upto = pair();
         upto.push(atom(&first, vec![v("a"), v("j")], false));
         upto.push(Literal::Cmp { l: v("l"), op: "<=", r: v("j") });
-        self.prog.rules.push(Rule { head: head(&name, vec![v("a"), v("b")]), body: upto.into() });
+        self.write(Rule { head: head(&name, vec![v("a"), v("b")]), body: upto.into() });
         name
     }
 
@@ -2826,13 +3176,13 @@ impl Lowerer {
         let real = |q: &str| Literal::Cmp { l: v(q), op: ">=", r: Term::Int(0) };
         let mut first = seed;
         first.extend([up(x, "rr_p"), real("rr_p")]);
-        self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: [v(x), v("rr_p")].into(), neg: false, gated: false }, body: first.into() });
+        self.write(Rule { head: Atom { rel: rel.clone().into(), args: [v(x), v("rr_p")].into(), neg: false, gated: false }, body: first.into() });
         let mut next = vec![atom(&rel, vec![v("rr_n"), v("rr_p")], false)];
         if let Some(stop) = stop {
             next.push(atom(stop, vec![v("rr_p")], true));
         }
         next.extend([up("rr_p", "rr_q"), real("rr_q")]);
-        self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: [v("rr_n"), v("rr_q")].into(), neg: false, gated: false }, body: next.into() });
+        self.write(Rule { head: Atom { rel: rel.clone().into(), args: [v("rr_n"), v("rr_q")].into(), neg: false, gated: false }, body: next.into() });
         rel
     }
 
@@ -2962,7 +3312,7 @@ impl Lowerer {
         self.prog.decls.insert(name.as_str().into(), [("n".into(), "node".into()), ("a".into(), "node".into())].into());
         let head = Atom { rel: name.as_str().into(), args: [Term::Var("n".into()), Term::Var("a".into())].into(), neg: false, gated: false };
         for body in bodies {
-            self.prog.rules.push(Rule { head: head.clone(), body: body.into() });
+            self.write(Rule { head: head.clone(), body: body.into() });
         }
         Ok(name)
     }
@@ -2984,7 +3334,7 @@ impl Lowerer {
             // The native producer replaces these seed values. They establish dependency and numeric types.
             head_args.extend([Term::Int(0), Term::Int(0), Term::Int(0)]);
         }
-        self.prog.rules.push(Rule { head: Atom { rel: name.to_owned().into(), args: head_args.into(), neg: false, gated: false }, body: body.into() });
+        self.write(Rule { head: Atom { rel: name.to_owned().into(), args: head_args.into(), neg: false, gated: false }, body: body.into() });
         self.prog.natives.insert(name.to_owned(), Native::MatchAll { input: input.to_owned(), pattern: re.to_owned(), groups: gs.to_vec(), positions });
     }
 
@@ -3397,7 +3747,7 @@ impl Lowerer {
                 let native=Native::PythonCandidates{input:input.clone(),targets:targets.clone(),context,member};
                 let rel=if let Some((name,_))=self.prog.natives.iter().find(|(_,n)|**n==native) {name.clone()}else {
                     let mut serial=self.prog.natives.len();
-                    let rel=loop {let name=format!("rr_python_candidates_{serial}");if !self.prog.decls.contains_key(name.as_str()){break name;}serial+=1;};
+                    let rel=loop {let name=format!("rr_python_candidates_{serial}");if !self.prog.decls.contains_key(name.as_str()) && !self.prog.natives.contains_key(name.as_str()){break name;}serial+=1;};
                     self.python_candidates_native(&rel, native);
                     rel
                 };
@@ -3444,7 +3794,7 @@ impl Lowerer {
             body.push(a("node", vec![v("d"), v(n), Term::Wild, Term::Wild, Term::Wild]));
         }
         self.prog.decls.insert(name.to_owned().into(), ["c", "f", "r", "o"].into_iter().map(|n| (n.into(), "node".into())).collect());
-        self.prog.rules.push(Rule { head: Atom { rel: name.to_owned().into(), args: ["c", "f", "r", "o"].into_iter().map(v).collect(), neg: false, gated: false }, body: body.into() });
+        self.write(Rule { head: Atom { rel: name.to_owned().into(), args: ["c", "f", "r", "o"].into_iter().map(v).collect(), neg: false, gated: false }, body: body.into() });
         self.prog.natives.insert(name.to_owned(), native);
     }
 
@@ -3472,7 +3822,7 @@ impl Lowerer {
             }
         }
         self.prog.decls.insert(rel.clone().into(),vars.iter().map(|(n,t)|(n.to_string(),t.to_string())).map(|(c, t)| (c.into(), t.into())).collect());
-        self.prog.rules.push(Rule{head:Atom{rel:rel.clone().into(),args:vars.iter().map(|(n,_)|v(n)).collect(),neg:false,gated:false},body: body.into()});
+        self.write(Rule{head:Atom{rel:rel.clone().into(),args:vars.iter().map(|(n,_)|v(n)).collect(),neg:false,gated:false},body: body.into()});
         self.prog.natives.insert(rel.clone(),native);
         rel
     }
@@ -3494,7 +3844,7 @@ impl Lowerer {
         if let Some(roots) = roots {
             body.push(atom(roots, vec![v("r"), Term::Wild]));
         }
-        self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: [v("r"), v("hit"), v("first")].into(), neg: false, gated: false }, body: body.into() });
+        self.write(Rule { head: Atom { rel: rel.clone().into(), args: [v("r"), v("hit"), v("first")].into(), neg: false, gated: false }, body: body.into() });
         // The edge relation's column types (a node, a number, a symbol); nodes where it is declared later.
         let ty = |c: usize, or: &str| self.prog.decls.get(edge).and_then(|cols| cols.get(c)).map_or_else(|| or.to_owned(), |(_, t)| t.to_string());
         let cols = vec![("r".to_owned(), ty(0, "node")), ("hit".to_owned(), ty(1, "node")), ("first".to_owned(), ty(2, "int"))];
@@ -3514,7 +3864,7 @@ impl Lowerer {
         let v = |n: &str| Term::Var(n.to_owned().into());
         let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false });
         let body = vec![atom(own, vec![v("d"), v("k")]), atom(edge, vec![v("d"), v("e")]), atom(own, vec![v("e"), Term::Wild])];
-        self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: [v("d"), v("e"), v("k")].into(), neg: false, gated: false }, body: body.into() });
+        self.write(Rule { head: Atom { rel: rel.clone().into(), args: [v("d"), v("e"), v("k")].into(), neg: false, gated: false }, body: body.into() });
         let cols = vec![("d".to_owned(), "int".to_owned()), ("c".to_owned(), "int".to_owned()), ("k".to_owned(), "sym".to_owned())];
         self.prog.decls.insert(rel.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         self.prog.natives.insert(rel.clone(), Native::Components { edge: edge.to_owned(), own: own.to_owned() });
@@ -4588,6 +4938,8 @@ pub const ON_REQUEST: [&[OnRequest]; 2] = [
     &[
         OnRequest { rel: "node_text", req: "rr_node_text_req", answer: Answer::Function("rr_node_text_any"), eager: None },
         OnRequest { rel: "value", req: "rr_value_req", answer: Answer::Function("rr_node_value"), eager: Some("rr_value_lit") },
+        // A string literal's content: a derived value, computed where a rule asks for it (decision 0353 step 3).
+        OnRequest { rel: "str", req: "rr_str_req", answer: Answer::Function("rr_node_str"), eager: None },
     ],
 ];
 
@@ -5231,10 +5583,37 @@ fn rename_literal(l: &Literal, name: &dyn Fn(&str) -> String) -> Literal {
     }
 }
 
-pub const WORLD: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
+/// The file system's answers and their requests (t21 E1).
+pub const FILE_SYSTEM: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
 
+/// Every answer of a file and its request: the file system's (`FILE_SYSTEM`), then each language's
+/// (`answerers`), one row an answer's relation. A request of several relations has a row for each.
+pub static WORLD: World = World;
+
+/// `WORLD`'s rows. Made once the languages are installed, and not before: a process whose languages install after
+/// its first program is lowered (a test runner with no load hook, where the first store opened installs them) kept
+/// the file system's alone, and answered no language's request.
+pub struct World;
+
+impl World {
+    pub fn iter(&self) -> std::slice::Iter<'static, (&'static str, &'static str)> {
+        static FS: [(&str, &str); 3] = FILE_SYSTEM;
+        static ALL: std::sync::OnceLock<Vec<(&'static str, &'static str)>> = std::sync::OnceLock::new();
+        if !crate::code_rule_dsl::language::answerers_installed() {
+            return FS.iter();
+        }
+        ALL.get_or_init(|| {
+            let languages = crate::code_rule_dsl::language::answerers().iter().flat_map(|a| a.produces().iter().map(|r| (*r, a.request())));
+            FILE_SYSTEM.into_iter().chain(languages).collect()
+        })
+        .iter()
+    }
+}
+
+/// The request an answer's relation asks by its first column: the file system's, and a language's of one column. A
+/// request of several columns is made by rules (`c_pp_tu_req(tu, spec)`).
 fn world_demand(rel: &str) -> Option<&'static str> {
-    WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d)
+    WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d).filter(|d| crate::code_rule_dsl::language::answerer(d).is_none_or(|a| a.key_width() == 1))
 }
 
 fn body_vars(lits: &[Lit]) -> BTreeSet<String> {

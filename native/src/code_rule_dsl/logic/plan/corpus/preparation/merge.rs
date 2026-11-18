@@ -39,7 +39,7 @@ impl ProgramPass for DropRepeated {
         }
         Ok(())
     }
-    /// Over an edit (decision 0380): a removed rule that repeated none is gone from the last output, and an added rule
+    /// Over an edit (decision 0393): a removed rule that repeated none is gone from the last output, and an added rule
     /// is written unless a rule of the input before it repeats it. A removed rule that another repeated (the other
     /// would now be the first) runs it whole.
     fn again(&mut self, cx: &Cx<'_>, last: &Last<'_>, w: &mut ProgramW<'_>) -> Result<bool, String> {
@@ -83,7 +83,7 @@ impl ProgramPass for DropRepeated {
 pub struct MergeIdentical {
     pub merged: usize,
     pub shared: usize,
-    /// What `again` reads back (decision 0380): the renames and the classes' firsts, where it merged any.
+    /// What `again` reads back (decision 0393): the renames and the classes' firsts, where it merged any.
     kept: Option<(BTreeMap<String, String>, BTreeSet<String>)>,
 }
 
@@ -207,6 +207,70 @@ impl ProgramPass for MergeIdentical {
                 b.set_about_rows(name, rows);
             }
         }
+        // The request record (decision 0331) as the tree's `merge_identical` leaves it: a renamed reader is read by its
+        // class's name, and a request's copy merged into it leaves the record with its rules.
+        {
+            let mut rows = b.about_rows("asked");
+            // A request's copy merged into it: each of the request's rules serves the readers of the copy's equal
+            // rule too (the tree's `merge_identical`), before the copy's rows go.
+            let asked = input.asked();
+            let class = |r: RelId| { let n = input.rel_name(r); rename.get(n).map_or(n, String::as_str) };
+            for (from, to) in &rename {
+                let (Some(copy), Some(_)) = (asked.get(from), asked.get(to)) else { continue };
+                let canon = |rel: &str| -> Vec<(Vec<Tok<'_>>, Vec<&str>)> {
+                    input.rel(rel).into_iter().flat_map(|id| input.heads(id)).map(|r| { let (t, read) = Canon::of(&input, r, false); (t, read.into_iter().map(class).collect()) }).collect()
+                };
+                let (theirs, ours) = (canon(from), canon(to));
+                if theirs.len() != copy.len() {
+                    continue;
+                }
+                let p = rows.iter().find_map(|r| r.first().copied());
+                for (t, by) in theirs.iter().zip(copy) {
+                    let (Some(j), Some(p)) = (ours.iter().position(|o| o == t), p) else { continue };
+                    for reader in by {
+                        rows.push(vec![p, Cell::Str(b.atom(to)), Cell::Int(j as i64), Cell::Str(b.atom(reader))]);
+                    }
+                }
+            }
+            let n = rows.len();
+            let mut seen = HashSet::new();
+            let key = |row: &[Cell]| format!("{row:?}");
+            let mut changed = false;
+            let mut kept = Vec::with_capacity(n);
+            for mut row in rows {
+                if let Some(Cell::Str(a)) = row.get(1).copied()
+                    && rename.contains_key(b.text(a))
+                {
+                    changed = true;
+                    continue;
+                }
+                if let Some(Cell::Str(a)) = row.get(3).copied()
+                    && let Some(t) = rename.get(b.text(a))
+                {
+                    row[3] = Cell::Str(b.atom(t));
+                    changed = true;
+                }
+                if seen.insert(key(&row)) {
+                    kept.push(row);
+                } else {
+                    changed = true;
+                }
+            }
+            if changed || kept.len() != n {
+                // In the order the tree's record writes them (`about_of`): by request, place and reader.
+                let text = |b: &crate::code_rule_dsl::logic::program_image::Builder<'_>, c: Option<&Cell>| match c {
+                    Some(&Cell::Str(a)) => b.text(a).to_owned(),
+                    _ => String::new(),
+                };
+                let num = |c: Option<&Cell>| match c {
+                    Some(&Cell::Int(k)) => k,
+                    _ => 0,
+                };
+                let mut keyed: Vec<((String, i64, String), Vec<Cell>)> = kept.into_iter().map(|r| ((text(b, r.get(1)), num(r.get(2)), text(b, r.get(3))), r)).collect();
+                keyed.sort_by(|x, y| x.0.cmp(&y.0));
+                b.set_about_rows("asked", keyed.into_iter().map(|(_, r)| r).collect());
+            }
+        }
         // The declarations and facts, each class's held by its name: the first member's where the name is new; an
         // output merged keeps its own declaration.
         let mut declared: HashSet<String> = taken.iter().filter(|t| f.declared(t)).cloned().collect();
@@ -244,7 +308,7 @@ impl ProgramPass for MergeIdentical {
         rows
     }
 
-    /// Over an edit (decision 0380): the edit's added rules renamed alone, onto the last output, where the classes
+    /// Over an edit (decision 0393): the edit's added rules renamed alone, onto the last output, where the classes
     /// come out named as the last run's (the same renames and firsts). Otherwise it runs whole.
     fn again(&mut self, cx: &Cx<'_>, last: &Last<'_>, w: &mut ProgramW<'_>) -> Result<bool, String> {
         use crate::code_rule_dsl::logic::front::Value;
@@ -271,6 +335,16 @@ impl ProgramPass for MergeIdentical {
         let classes = cx.get::<Congruence>()?;
         let Some((rename, firsts, shared)) = Self::renames(v, f, &classes.groups) else { return Ok(false) };
         if rename != was || firsts != was_firsts {
+            return Ok(false);
+        }
+        // The request record (decision 0331) reads a merged request's and copy's rules: an edit of either writes it
+        // again, whole.
+        let asked = v.asked();
+        let recorded = |of: &Version, r: RuleRef<'_>| {
+            let h = of.rel_name(r.head().rel());
+            asked.contains_key(h) && (rename.contains_key(h) || rename.values().any(|t| t == h))
+        };
+        if last.delta.removed.iter().any(|id| last.input.rule(id).is_none_or(|r| recorded(last.input, r))) || last.delta.added.iter().any(|&id| v.rule(id).is_none_or(|r| recorded(v, r))) {
             return Ok(false);
         }
         let renamed_rel: Vec<bool> = (0..v.rel_end()).map(|r| rename.contains_key(v.rel_name(RelId(r)))).collect();
@@ -485,9 +559,27 @@ fn fx<T: std::hash::Hash>(t: &T) -> u64 {
     BuildHasherDefault::<rustc_hash::FxHasher>::default().hash_one(t)
 }
 
-/// What keeps a relation its own (`simplify::fixed`).
-fn fixed(f: Fields<'_>, rel: &str) -> bool {
-    f.is_input(rel) || f.native(rel).is_some() || f.lattice(rel) || f.demanded(rel) || f.gate(rel) || !f.qualifiers_of(rel).is_empty()
+/// What keeps a relation its own (`simplify::fixed`): its kind, or being a request (decision 0174) with no widened
+/// copy of its own to join (`rr_wide_<attr>_<req>`, the tree's `simplify::congruence`); a request is read by name by
+/// its answer.
+fn fixed(v: &Version, f: Fields<'_>, rel: &str) -> bool {
+    let own = f.is_input(rel) || f.native(rel).is_some() || f.lattice(rel) || f.demanded(rel) || f.gate(rel) || !f.qualifiers_of(rel).is_empty();
+    own || (request(rel) && !copied(v, rel))
+}
+
+/// A request's name (decision 0174).
+fn request(rel: &str) -> bool {
+    crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.req == rel)
+}
+
+/// `copy` is a lowering's widened copy of `of` (`rr_wide_<attr>_<of>`).
+fn copy_of(copy: &str, of: &str) -> bool {
+    crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| copy == format!("rr_wide_{}_{of}", a.rel))
+}
+
+/// A request has a widened copy of its own with rules.
+fn copied(v: &Version, rel: &str) -> bool {
+    crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| v.rel(&format!("rr_wide_{}_{rel}", a.rel)).is_some_and(|id| v.heads(id).next().is_some()))
 }
 
 /// A candidate's first key (`refine`): its column types, its distinct rules' count, and its facts, by text.
@@ -536,7 +628,7 @@ impl<'v> Refined<'v> {
     }
 }
 
-/// `congruence` (constants kept) as an analysis of the version (decision 0380): its classes, each candidate's class
+/// `congruence` (constants kept) as an analysis of the version (decision 0393): its classes, each candidate's class
 /// and signature (`Refined::classed`), and each head's rules' key. Maintained over an edit of rules: a relation that
 /// reads no changed head, through any others, keeps its class; one that does (the edit's cone, up) is classed again
 /// from its rules over the classes of what it reads, and joins the class of that signature. Where the cone is
@@ -585,6 +677,11 @@ impl crate::code_rule_dsl::logic::program_image::manager::Analysis for Congruenc
         changed.extend(self.keys.keys().filter(|r| !keys.contains_key(*r)).cloned());
         if changed.is_empty() {
             return Some(Congruence { groups: self.groups.clone(), classed: self.classed.clone(), keys });
+        }
+        // A request's copy or the request changed: whether the request is its own (`fixed`) may change, though it
+        // reads no changed head.
+        if changed.iter().any(|r| request(r) || crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| r.starts_with(&format!("rr_wide_{}_", a.rel)))) {
+            return None;
         }
         // The cone: the changed heads and every relation reading one, through any others.
         let mut cone: BTreeSet<String> = changed.clone();
@@ -644,7 +741,7 @@ impl crate::code_rule_dsl::logic::program_image::manager::Analysis for Congruenc
         for rel in &order {
             let id = v.rel(rel);
             let rules: &[RuleRef<'_>] = id.and_then(|id| rules_of.get(&id)).map_or(&[][..], |rs| rs.as_slice());
-            if (rules.is_empty() && !with_facts.contains(rel.as_str())) || fixed(f, rel) {
+            if (rules.is_empty() && !with_facts.contains(rel.as_str())) || fixed(v, f, rel) {
                 continue;
             }
             let label = |x: RelId| -> String {
@@ -714,11 +811,24 @@ impl crate::code_rule_dsl::logic::program_image::manager::Analysis for Congruenc
     }
 }
 
-/// `congruence`'s last filter: an unread relation joins a class only with a lowering's widened copy of it
-/// (`rr_wide_<attr>_<r>`, decision 0174); any other stays apart.
+/// `congruence`'s last filter: a request's class is the request and its copies alone, the rest a class without it;
+/// an unread relation joins a class only with a lowering's widened copy of it (`rr_wide_<attr>_<r>`, decision 0174);
+/// any other stays apart.
 fn filter_classes(groups: impl Iterator<Item = Vec<String>>, read: &BTreeSet<&str>) -> Vec<Vec<String>> {
     groups
+        .flat_map(|g| {
+            let (with_request, g): (Vec<String>, Vec<String>) = match g.iter().find(|r| request(r)).cloned() {
+                Some(req) => g.into_iter().partition(|r| *r == req || copy_of(r, &req)),
+                None => (Vec::new(), g),
+            };
+            [(with_request.len() > 1).then_some(with_request), (!g.is_empty()).then_some(g)].into_iter().flatten()
+        })
         .filter_map(|g| {
+            if g.iter().any(|r| request(r)) {
+                let mut g = g;
+                g.sort();
+                return Some(g);
+            }
             let (mut kept, unread): (Vec<String>, Vec<String>) = g.into_iter().partition(|r| read.contains(r.as_str()));
             let copies = |u: &str| crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| kept.iter().any(|k| *k == format!("rr_wide_{}_{u}", a.rel)));
             let own = unread.into_iter().find(|u| copies(u));
@@ -740,7 +850,7 @@ fn refine<'v>(v: &'v Version, f: Fields<'v>, abstract_constants: bool) -> Refine
         .chain(f.fact_rels().into_iter().filter(|r| !r.about() && r.rows().len() > 0).map(|r| v.text(r.name())))
         .collect::<BTreeSet<&str>>()
         .into_iter()
-        .filter(|r| !fixed(f, r))
+        .filter(|r| !fixed(v, f, r))
         .collect();
     // Each candidate's number, by relation; every other relation a label of its own (its id).
     let mut number: Vec<Option<u32>> = vec![None; v.rel_end() as usize];
@@ -849,6 +959,35 @@ mod tests {
         p.finish().unwrap();
         let (m, _, _) = crate::code_rule_dsl::logic::plan::corpus::merge_and_drop_repeats(&mut tree);
         assert_eq!(merge.merged, m);
+    }
+
+    /// A request and its widened copy left with the request's own rules merge into the request (decision 0174's copy,
+    /// Q3): the request's rules serve the copy's readers too (decision 0331), and the version is the tree's. Another
+    /// relation equal to the request stays apart.
+    #[test]
+    fn a_request_merges_with_its_own_copy_only() {
+        let text = ".decl k(x: number)\n.input k\n.decl rr_token_req(x: number)\n.decl rr_wide_node_text_rr_token_req(x: number)\n\
+                    .decl other(x: number)\n.decl a(x: number)\n.decl b(x: number)\n\
+                    rr_token_req(x) :- k(x), x < 3.\nrr_wide_node_text_rr_token_req(x) :- k(x), x < 3.\nother(x) :- k(x), x < 3.\n\
+                    a(x) :- rr_token_req(x).\nb(x) :- rr_wide_node_text_rr_token_req(x), other(x).\n.output a, b\n";
+        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        let by = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<std::collections::BTreeSet<String>>();
+        tree.asked_by.insert("rr_token_req".into(), vec![by(&["a"])]);
+        tree.asked_by.insert("rr_wide_node_text_rr_token_req".into(), vec![by(&["b"])]);
+        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        let mut p = Pipeline::new("test", v);
+        let mut merge = super::MergeIdentical::default();
+        p.program(&mut merge);
+        let (out, _) = p.finish().unwrap();
+        let (m, _) = crate::code_rule_dsl::logic::simplify::merge_identical(&mut tree);
+        assert_eq!(m, 1, "the copy merges into the request, `other` stays apart");
+        assert!(tree.rules.iter().any(|r| r.head.rel == "other"));
+        assert_eq!(tree.asked_by.get("rr_token_req"), Some(&vec![by(&["a", "b"])]));
+        assert!(!tree.asked_by.contains_key("rr_wide_node_text_rr_token_req"));
+        assert_eq!(merge.merged, m);
+        let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        assert_eq!(out.asked(), want.asked());
+        assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
     }
 
     /// A rule's branded atoms (decision 0270, a lowered program's names) compare as `canonical` writes them, the atom

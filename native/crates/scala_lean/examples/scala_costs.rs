@@ -14,6 +14,17 @@ fn main() {
     let files: Vec<Vec<u8>> = list.lines().filter(|l| !l.is_empty()).filter_map(|p| std::fs::read(p).ok()).collect();
     let (mut n, mut bytes) = (0usize, 0usize);
     let mut h = std::collections::hash_map::DefaultHasher::new();
+    if args.get(3).is_some_and(|m| m == "lex") {
+        let mut toks = 0;
+        for _ in 0..passes {
+            for f in &files {
+                toks += rerail_scala_lean::lex_only(f);
+                bytes += f.len();
+            }
+        }
+        eprintln!("{} files, {passes} passes, {toks} tokens, {bytes} bytes lexed", files.len());
+        return;
+    }
     for pass in 0..passes {
         for f in &files {
             if let Ok(t) = rerail_scala_lean::tape(f) {

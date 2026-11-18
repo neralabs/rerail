@@ -63,16 +63,44 @@ pub trait Backing: Send + Sync {
     }
 }
 
+/// The bytes zeroed as blocks' memory was handed out again (a free list's chunk, a dirty block's allocation).
+pub fn zeroed_bytes() -> u64 {
+    ZEROED.load(Relaxed)
+}
+
+static ZEROED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Zeroes `len` bytes at `p`, counted (`zeroed_bytes`).
+///
+/// # Safety
+/// `p..p + len` is writable memory of a block.
+unsafe fn zero(p: *mut u8, len: usize) {
+    unsafe { std::ptr::write_bytes(p, 0, len) };
+    ZEROED.fetch_add(len as u64, Relaxed);
+}
+
+/// What a block has used, and holds free (its free list's bytes): shared with a ledger that counts live blocks
+/// (`meter`), which reads it while the block lives.
+#[derive(Default)]
+pub struct Extent {
+    pub top: AtomicUsize,
+    pub free: AtomicUsize,
+}
+
 pub struct Block {
     base: *mut u8,
     reserved: usize,
-    top: AtomicUsize,
+    ext: Arc<Extent>,
     file: Option<File>,
     writable: bool,
     /// A slab's owner, when the block lives in one: dropped with the block, which never unmaps it.
     backing: Option<Box<dyn Backing>>,
     /// Its memory is not fresh (a recycled slab): every allocation is zeroed as it is made.
     dirty: bool,
+    /// The offset of its free list's heads (`free`, decision 0342), when it keeps one: 0 for a bump block.
+    free: usize,
+    /// It kept a free list until its freeze: its reservation past its length is released then.
+    was_free_listed: bool,
     /// The device buffer this block is read through, kept: a buffer's first use maps it into the GPU's address
     /// space at about 20 ms a GiB (0266 §12), so it is made once and remade only when the block outgrows it.
     #[cfg(target_os = "macos")]
@@ -125,14 +153,107 @@ impl Block {
         Block {
             base,
             reserved,
-            top: AtomicUsize::new(top),
+            ext: Arc::new(Extent { top: AtomicUsize::new(top), free: AtomicUsize::new(0) }),
             file,
             writable,
             backing,
             dirty,
+            free: 0,
+            was_free_listed: false,
             #[cfg(target_os = "macos")]
             gpu: std::sync::Mutex::new(None),
         }
+    }
+
+    /// This block, keeping a free list (decision 0342): chunks given back (`free_chunk`) are taken again by the
+    /// next of their size (`try_alloc_chunk`). Its heads are allocated in it, so they are mapped with it.
+    pub fn with_free_list(mut self) -> Block {
+        if self.free == 0 {
+            let heads = self.alloc(crate::free::CLASSES * 8, 64);
+            self.free = heads;
+        }
+        self
+    }
+
+    fn heads(&self) -> *const std::sync::atomic::AtomicU64 {
+        self.ptr::<std::sync::atomic::AtomicU64>(self.free)
+    }
+
+    /// Its extent, for a ledger of live blocks: gone once the block is.
+    pub fn meter(&self) -> std::sync::Weak<Extent> {
+        Arc::downgrade(&self.ext)
+    }
+
+    /// Whether it keeps a free list.
+    pub fn has_free_list(&self) -> bool {
+        self.free != 0
+    }
+
+    /// The bytes its free list holds.
+    pub fn free_bytes(&self) -> usize {
+        self.ext.free.load(Relaxed)
+    }
+
+    /// A chunk of `bytes` at `align`: in a block with a free list, of `bytes`' class (a power of two of at least
+    /// 64), taken from the list when one is there (zeroed); else from the front.
+    pub fn try_alloc_chunk(&self, bytes: usize, align: usize) -> Option<usize> {
+        self.chunk(bytes, align, true)
+    }
+
+    fn chunk(&self, bytes: usize, align: usize, zeroed: bool) -> Option<usize> {
+        if self.free == 0 {
+            return self.alloc_filled(bytes, align, zeroed);
+        }
+        let (class, size) = crate::free::class_of(bytes);
+        // SAFETY: the block's own heads; its chunks lie in it.
+        if let Some(at) = unsafe { crate::free::pop(self.base, self.heads(), class) } {
+            self.ext.free.fetch_sub(size, Relaxed);
+            if let Some((p, len)) = self.spare_pages(at, size) {
+                // SAFETY: the chunk's pages past its link, which `free_chunk` gave back; it is ours now.
+                unsafe { crate::mem::reuse_pages(p, len) };
+            }
+            if zeroed {
+                unsafe { zero(self.base.add(at), size) };
+            }
+            return Some(at);
+        }
+        self.alloc_filled(size, align.max(64), zeroed)
+    }
+
+    /// `try_alloc_chunk` for a chunk written before it is read (a relation's rows): a chunk taken again is left as
+    /// it was, and a dirty block's is not zeroed.
+    pub fn try_alloc_chunk_any(&self, bytes: usize, align: usize) -> Option<usize> {
+        self.chunk(bytes, align, false)
+    }
+
+    /// Gives back a chunk `try_alloc_chunk` gave (`bytes` as asked): to the free list, when the block keeps one;
+    /// else nothing. Nothing may read it after. In an anonymous block its whole pages past the list's link go back to
+    /// the OS too (Q76: a dead relation's pages otherwise stayed in the footprint until its chunks were taken again),
+    /// and are marked in use again when the list hands the chunk out. Returns the bytes given to the OS.
+    pub fn free_chunk(&self, at: usize, bytes: usize) -> usize {
+        if self.free == 0 || !self.writable {
+            return 0;
+        }
+        let (class, size) = crate::free::class_of(bytes);
+        // SAFETY: the chunk is the caller's and nothing reads it after; its first page, which holds the link, stays.
+        let given = self.spare_pages(at, size).map_or(0, |(p, len)| unsafe { crate::mem::give_back(p, len) });
+        // SAFETY: the block's own heads; the chunk is the caller's, of this class.
+        unsafe { crate::free::push(self.base, self.heads(), class, at) };
+        self.ext.free.fetch_add(size, Relaxed);
+        given
+    }
+
+    /// The whole pages of a free chunk past its link (its first 32 bits): what goes back to the OS while it is on the
+    /// free list. Only an anonymous block's: a pooled slab's pages are the device buffer's, and a file's are written
+    /// back.
+    fn spare_pages(&self, at: usize, size: usize) -> Option<(*mut u8, usize)> {
+        if self.backing.is_some() || self.file.is_some() {
+            return None;
+        }
+        let p = self.base as usize + at;
+        let (start, end) = ((p + 8).next_multiple_of(PAGE), (p + size) / PAGE * PAGE);
+        // A chunk within one page has none to give (a `then_some` would compute `end - start` anyway).
+        (end > start).then(|| (start as *mut u8, end - start))
     }
 
     /// A block in memory it does not own: `backing`'s, which may be dirty. Freezing it does not protect it (a
@@ -200,13 +321,18 @@ impl Block {
     }
 
     fn init(&self, kind: u32) {
-        self.top.store(round_up(size_of::<Header>(), 64), Relaxed);
+        self.ext.top.store(round_up(size_of::<Header>(), 64), Relaxed);
         let h = unsafe { &mut *(self.base as *mut Header) };
         h.magic = MAGIC;
         h.kind = kind;
         h.format = 1;
         h.state = OPEN;
         h.reserved = self.reserved as u64;
+    }
+
+    /// Whether it lies in a slab of a pool's (`rerail_accel::gpu::shared::lease_block`), not memory of its own.
+    pub fn in_slab(&self) -> bool {
+        self.backing.is_some()
     }
 
     pub fn header(&self) -> &Header {
@@ -228,28 +354,26 @@ impl Block {
 
     /// `size` bytes at `align`, or `None` when the block's reservation cannot hold them.
     pub fn try_alloc(&self, size: usize, align: usize) -> Option<usize> {
-        let start = self.try_alloc_raw(size, align)?;
-        if self.dirty {
-            // SAFETY: `start..start + size` was just allocated to this call alone.
-            unsafe { std::ptr::write_bytes(self.base.add(start), 0, size) };
-        }
-        Some(start)
+        self.alloc_filled(size, align, true)
     }
 
-    /// `try_alloc`, its bytes as the backing left them (a dirty block's earlier bytes): for what every reader finds
-    /// written first, as a relation's chunks (a value is read only below `len`, and written before it is claimed).
-    /// A device relation's chunks of a pooled block then cost no memset (decision 0325 step 5).
-    pub fn try_alloc_raw(&self, size: usize, align: usize) -> Option<usize> {
+    /// `try_alloc`; a dirty block's memory is zeroed only when `zeroed` asks it.
+    fn alloc_filled(&self, size: usize, align: usize, zeroed: bool) -> Option<usize> {
         assert!(self.writable, "alloc in a frozen block");
-        let mut cur = self.top.load(Relaxed);
+        let mut cur = self.ext.top.load(Relaxed);
         loop {
             let start = round_up(cur, align);
             let end = start + size;
             if end > self.reserved {
                 return None;
             }
-            match self.top.compare_exchange_weak(cur, end, AcqRel, Relaxed) {
-                Ok(_) => return Some(start),
+            match self.ext.top.compare_exchange_weak(cur, end, AcqRel, Relaxed) {
+                Ok(_) => {
+                    if self.dirty && zeroed {
+                        unsafe { zero(self.base.add(start), size) };
+                    }
+                    return Some(start);
+                }
                 Err(c) => cur = c,
             }
         }
@@ -260,7 +384,7 @@ impl Block {
     /// allocation of a block that is not dirty is zero, as the mapping gave it.
     pub fn shrink_last(&self, at: usize, size: usize, keep: usize) -> bool {
         assert!(keep <= size);
-        self.top.compare_exchange(at + size, at + keep, AcqRel, Relaxed).is_ok()
+        self.ext.top.compare_exchange(at + size, at + keep, AcqRel, Relaxed).is_ok()
     }
 
     /// `n` zeroed `T`s, or `None` when the block cannot hold them.
@@ -293,7 +417,7 @@ impl Block {
 
     /// Bytes used so far (the frozen length, once frozen).
     pub fn used(&self) -> usize {
-        self.top.load(Acquire)
+        self.ext.top.load(Acquire)
     }
 
     pub fn set_root<T>(&self, p: *const T) {
@@ -325,7 +449,8 @@ impl Block {
 
     /// Freezes: the length, then the state, written last. A file block is truncated to its length. An anonymous
     /// block is made read-only, so a write after freeze faults instead of changing what readers see.
-    pub fn freeze(self) -> Frozen {
+    pub fn freeze(mut self) -> Frozen {
+        self.drop_free_list();
         let len = self.used();
         unsafe {
             let h = self.header_mut();
@@ -336,11 +461,42 @@ impl Block {
         if let Some(f) = &self.file {
             f.set_len(len as u64).expect("truncate a journal block");
         } else if self.backing.is_none() {
+            // A free-listed block's reservation past its length goes back: nothing is written there now.
+            // Whole MBs, and never under a device buffer made over it (`gpu_buffer`'s extent).
+            #[allow(unused_mut)]
+            let mut keep = round_up(len.max(1 << 20), 1 << 20);
+            #[cfg(target_os = "macos")]
+            if let Some((_, l)) = self.gpu.lock().unwrap().as_ref() {
+                keep = keep.max(*l);
+            }
+            if self.was_free_listed && keep < self.reserved {
+                unsafe { crate::mem::release(self.base.add(keep), self.reserved - keep) };
+                self.reserved = keep;
+            }
             unsafe { crate::mem::protect_read(self.base, self.reserved) };
         }
         let mut b = self;
         b.writable = false;
         Frozen(Arc::new(b))
+    }
+
+    /// Drops the free list (a freeze's): its chunks of whole pages are given back to the OS, and none is taken
+    /// again.
+    fn drop_free_list(&mut self) {
+        if self.free == 0 {
+            return;
+        }
+        for class in 0..crate::free::CLASSES {
+            let size = 1usize << (crate::free::MIN_LOG as usize + class);
+            if size < PAGE || self.backing.is_some() {
+                continue;
+            }
+            // SAFETY: the block's own heads, and no one takes or gives chunks during a freeze (its one owner's).
+            unsafe { crate::free::each(self.base, self.heads(), class, |at| crate::mem::free_pages(self.base.add(at), size)) };
+        }
+        self.free = 0;
+        self.ext.free.store(0, Relaxed);
+        self.was_free_listed = true;
     }
 
     /// Seals a block whose state is written later, by someone else (a deferrable slab, decision 0295 §1): its length
@@ -387,30 +543,6 @@ impl Block {
             return Err(format!("{}: header says {} bytes, the file has {len}", path.display(), at.length));
         }
         Ok(Frozen(Arc::new(b)))
-    }
-}
-
-impl Block {
-    /// Gives the whole pages of the rows' chunks back to the OS, for a relation of this block that nothing will read
-    /// or write again (its last holder gone). Only an anonymous block's (`anon`): a pooled slab's pages are the
-    /// device buffer's, and a file's are written back. The block's room is not reused: what was given back stays
-    /// out of the footprint until the block goes.
-    ///
-    /// # Safety
-    /// `rows` is a relation's of this block, and nothing reads or writes its chunks after.
-    pub unsafe fn give_back_rows(&self, rows: &crate::rows::Rows) -> usize {
-        if self.backing.is_some() || self.file.is_some() || !self.writable {
-            return 0;
-        }
-        let mut bytes = 0;
-        for (p, len) in rows.chunk_spans() {
-            if len >= PAGE {
-                // SAFETY: the chunk lies in this block's reservation, and nothing reads it after (the caller's).
-                unsafe { crate::mem::give_back(p, len) };
-                bytes += len;
-            }
-        }
-        bytes
     }
 }
 

@@ -9,7 +9,7 @@ use super::{AtomId, Cell, RelId};
 
 /// The columns of each about relation that name a relation (column 0 is the program's name). The builder gives each
 /// such cell's atom a relation id.
-pub(crate) const RELATION_COLUMNS: &[(&str, &[usize])] = &[
+pub const RELATION_COLUMNS: &[(&str, &[usize])] = &[
     ("answer", &[1, 3]),
     ("asked", &[1, 3]),
     ("native_dfs", &[1, 2, 3]),
@@ -23,6 +23,7 @@ pub(crate) const RELATION_COLUMNS: &[(&str, &[usize])] = &[
     ("native_components", &[1, 2, 3]),
     ("native_reach", &[1, 2, 3]),
     ("native_reach_through", &[1, 2, 3]),
+    ("native_rank", &[1, 2, 3]),
     ("lattice", &[1]),
     ("lattice_merge", &[1]),
     ("lattice_widen", &[1]),
@@ -36,11 +37,11 @@ pub(crate) const RELATION_COLUMNS: &[(&str, &[usize])] = &[
 ];
 
 /// The relation columns of about relation `rel`.
-pub(crate) fn relation_columns(rel: &str) -> &'static [usize] {
+pub fn relation_columns(rel: &str) -> &'static [usize] {
     RELATION_COLUMNS.iter().find(|(r, _)| *r == rel).map_or(&[], |(_, c)| c)
 }
 
-/// A native relation's kind (`front::Native`'s variants).
+/// A native relation's kind (`front::ast::Native`'s variants).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeKind {
     DfsFirst,
@@ -51,9 +52,10 @@ pub enum NativeKind {
     Components,
     Reach,
     ReachThrough,
+    Rank,
 }
 
-/// A native relation: its kind, the relations it reads (`front::Native::reads`, in its order) and its every field.
+/// A native relation: its kind, the relations it reads (`front::ast::Native::reads`, in its order) and its every field.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeRef {
     pub rel: RelId,
@@ -62,7 +64,7 @@ pub struct NativeRef {
     pub spec: NativeSpec,
 }
 
-/// A native relation's fields (`front::Native`'s, variant by variant): each relation by its id, each other name by
+/// A native relation's fields (`front::ast::Native`'s, variant by variant): each relation by its id, each other name by
 /// its atom.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NativeSpec {
@@ -76,6 +78,8 @@ pub enum NativeSpec {
     Components { edge: RelId, own: RelId },
     Reach { seed: RelId, edge: RelId },
     ReachThrough { reach: RelId, map: RelId },
+    /// Its op's text.
+    Rank { query: RelId, counted: RelId, group: usize, op: AtomId },
 }
 
 /// A lattice relation's declaration, as the analyses read it.
@@ -123,7 +127,7 @@ pub struct About {
     pub shapes: Vec<ShapeRef>,
 }
 
-/// A gate (`front::Gate`): its key, its relation, its level, its source, and the relations it quiets and depends on,
+/// A gate (`front::ast::Gate`): its key, its relation, its level, its source, and the relations it quiets and depends on,
 /// in order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GateRef {
@@ -135,7 +139,7 @@ pub struct GateRef {
     pub deps: Vec<RelId>,
 }
 
-/// A join shape directive (`front::Shape`), each part by its atom.
+/// A join shape directive (`front::ast::Shape`), each part by its atom.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShapeRef {
     pub head: AtomId,
@@ -144,7 +148,7 @@ pub struct ShapeRef {
     pub text: AtomId,
 }
 
-/// When a shape's literal may join (`front::ShapeWait`).
+/// When a shape's literal may join (`front::ast::ShapeWait`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShapeWaitRef {
     After(AtomId),
@@ -234,6 +238,14 @@ impl About {
                     "native_python" => about.natives.extend(native(NativeKind::Python, &[3, 4], a(2).zip(r(3)).map(|(kind, input)| NativeSpec::Python { kind, input, targets: opt(4) }))),
                     "native_components" => about.natives.extend(native(NativeKind::Components, &[2, 3], r(2).zip(r(3)).map(|(edge, own)| NativeSpec::Components { edge, own }))),
                     "native_reach" => about.natives.extend(native(NativeKind::Reach, &[2, 3], r(2).zip(r(3)).map(|(seed, edge)| NativeSpec::Reach { seed, edge }))),
+                    "native_rank" => about.natives.extend(native(
+                        NativeKind::Rank,
+                        &[2, 3],
+                        match (r(2), r(3), int(row.get(4).copied()), a(5)) {
+                            (Some(query), Some(counted), Some(group), Some(op)) => Some(NativeSpec::Rank { query, counted, group: group as usize, op }),
+                            _ => None,
+                        },
+                    )),
                     "native_reach_through" => about.natives.extend(native(NativeKind::ReachThrough, &[2, 3], r(2).zip(r(3)).map(|(reach, map)| NativeSpec::ReachThrough { reach, map }))),
                     "lattice" => {
                         if let (Some(rel), Some(Cell::Int(keys)), Some(ty)) = (r(1), row.get(2).copied(), row.get(3).copied().and_then(atom)) {
@@ -385,6 +397,38 @@ impl About {
 }
 
 /// The about rows' program name (`program_image::ABOUT`): each row's first cell.
+/// The request record (`Program::asked_by`, decision 0174: the `asked` rows): each request relation's rules, in its
+/// order among the program's, each with the relations whose readers it serves.
+pub type Asked = std::collections::BTreeMap<String, Vec<std::collections::BTreeSet<String>>>;
+
+impl Version {
+    /// The request record, as the `asked` rows state it.
+    pub fn asked(&self) -> Asked {
+        let mut asked = Asked::new();
+        for f in self.about_facts().into_iter().filter(|f| self.text(f.name()) == "asked") {
+            for row in f.rows() {
+                let cells: Vec<Cell> = row.collect();
+                let (Some(Cell::Str(req)), Some(&Cell::Int(k)), Some(Cell::Str(b))) = (cells.get(1), cells.get(2), cells.get(3)) else { continue };
+                let Ok(k) = usize::try_from(k) else { continue };
+                let readers = asked.entry(self.text(*req).to_owned()).or_default();
+                if readers.len() <= k {
+                    readers.resize(k + 1, Default::default());
+                }
+                readers[k].insert(self.text(*b).to_owned());
+            }
+        }
+        asked
+    }
+    /// Each request relation of the record with how many readers' entries it holds and how many rules it has: the
+    /// record holds where the two are equal.
+    pub fn asked_against_rules(&self) -> Vec<(String, usize, usize)> {
+        self.asked().into_iter().map(|(req, readers)| {
+            let rules = self.rel(&req).map_or(0, |id| self.heads(id).count());
+            (req, readers.len(), rules)
+        }).collect()
+    }
+}
+
 fn program_cell(b: &mut Builder<'_>) -> Cell {
     Cell::Str(b.atom(super::ABOUT))
 }
@@ -527,6 +571,30 @@ impl Builder<'_> {
             .map(|(req, i, b)| vec![p, Cell::Str(self.atom(req)), Cell::Int(i as i64), Cell::Str(self.atom(b))])
             .collect();
         self.set_about_rows("answer", rows);
+    }
+    /// States the request record (`Program::asked_by`, `Version::asked`): each request relation's rules, in order, each
+    /// with the relations whose readers it serves. Replaces the program's.
+    pub fn set_asked(&mut self, asked: &Asked) {
+        let p = program_cell(self);
+        let mut rows = Vec::new();
+        for (req, by) in asked {
+            for (k, readers) in by.iter().enumerate() {
+                for b in readers {
+                    rows.push(vec![p, Cell::Str(self.atom(req)), Cell::Int(k as i64), Cell::Str(self.atom(b))]);
+                }
+            }
+        }
+        self.set_about_rows("asked", rows);
+    }
+    /// Keeps the request record (`asked`) of the request relations `keep` takes: a part's, of the relations whose
+    /// rules it holds.
+    pub fn keep_asked(&mut self, keep: &dyn Fn(&str) -> bool) {
+        let rows = self.about_rows("asked");
+        let n = rows.len();
+        let kept: Vec<Vec<Cell>> = rows.into_iter().filter(|r| !matches!(r.get(1), Some(&Cell::Str(a)) if !keep(self.text(a)))).collect();
+        if kept.len() != n {
+            self.set_about_rows("asked", kept);
+        }
     }
     /// Adds gates (`Program::gates`' entries, after the program's): each its key, relation, level, the relations
     /// that must be quiet and the gates it waits on, as `program_facts` writes them.

@@ -1,4 +1,4 @@
-//! `file_local::requests_file_local` on the version (decision 0281's path, step 7b; work queue Q52): each request of
+//! `file_local::requests_file_local` on the version (decision 0281's path, step 7b; work queue Q149): each request of
 //! decision 0174 (`rr_<a>_req(n)`) that the split finds cross-file narrowed to literals over the asked node's own
 //! document, one for one with the tree's `Narrower`. See there for what a narrowed request keeps and why.
 //!
@@ -232,7 +232,7 @@ impl ProgramPass for RequestsFileLocal {
     fn settings(&self) -> Vec<u8> {
         self.requests.join("\n").into_bytes()
     }
-    /// Over an edit (decision 0380): the edit as it is, onto the last output, where no rule of it is a request and
+    /// Over an edit (decision 0393): the edit as it is, onto the last output, where no rule of it is a request and
     /// none defines what a request reads, down (so the file-local split places what a request is narrowed by as it
     /// did). Otherwise it runs whole.
     fn again(&mut self, cx: &Cx<'_>, last: &Last<'_>, w: &mut ProgramW<'_>) -> Result<bool, String> {

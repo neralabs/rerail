@@ -2,7 +2,7 @@
 //! `metal_tape.metal`'s hand port.
 //!
 //! A read's function takes the tape (`device const uchar* t`, where the view's offsets count from: the
-//! document's first byte in its batch's block) and its view as u32s (`thread const uint* v`, the device's `ChunkTape` past its `at`), then its own
+//! document's first byte in its batch's block) and its view as u32s (`thread const uint* v`, the device's `DocView`, `at` first), then its own
 //! parameters. In the body the tape and the view are byte offsets from those pointers, 0 where they come in, so
 //! an address the read computes is an offset: a load of the view (marked aligned: its fields) reads `v`, a load of
 //! the tape reads `t`, at any alignment (two aligned words shifted together where it is not aligned to its size;

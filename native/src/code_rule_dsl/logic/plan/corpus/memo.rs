@@ -1131,6 +1131,21 @@ pub(super) fn document_of(value: i64) -> i64 {
 
 #[cfg(test)]
 pub mod tests {
+    /// A relation of facts with no rows (a constant folded empty, `constants::fold`) survives its facts: a stored
+    /// program read back is the program written, so its digests (the memo's key, the relations' identities) are the
+    /// same. Without it, the first run after a rebuild and the second keyed the memo apart.
+    #[test]
+    fn an_empty_relation_of_facts_reads_back_as_present() {
+        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(s: symbol)\n.decl b(s: symbol)\nb(\"x\").\n.output a\n").unwrap();
+        prog.facts.insert("a".to_owned(), Vec::new());
+        let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
+        crate::code_rule_dsl::logic::program_facts::write(&mut facts, "p", &prog);
+        let back = crate::code_rule_dsl::logic::program_facts::program(&facts, "p").unwrap();
+        assert_eq!(back.facts, prog.facts);
+        let key = |p: &crate::code_rule_dsl::logic::front::Program| super::program_digest(&crate::code_rule_dsl::logic::plan::body::Placed::of_program(p).unwrap().v);
+        assert_eq!(key(&back), key(&prog));
+    }
+
     use super::*;
     use crate::code_rule_dsl::logic::plan::output::{Cell, col};
 

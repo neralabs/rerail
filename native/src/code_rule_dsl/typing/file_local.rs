@@ -192,6 +192,7 @@ pub use passes::{FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, Reques
 pub mod export_demand;
 pub use export_demand::{DemandExports, demand_exports};
 pub use split_memo::forget as forget_splits;
+use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
 // cratify: `tests` is rerail-device-metal's (it mounts it)
 
 /// The relations a program derives within one document (list step 29's split, R0): a relation is file-local when
@@ -553,13 +554,14 @@ pub fn requests_file_local(prog: &mut crate::code_rule_dsl::logic::front::Progra
     let narrower = Narrower { same: &same, local: &local, by_head: &by_head, fresh: std::cell::Cell::new(0) };
     let mut narrowed = Vec::new();
     let mut every_node = false;
-    let mut rules: Vec<Rule> = Vec::with_capacity(prog.rules.len());
-    for rule in &prog.rules {
+    // Each rule with the rule it came from, so the request record follows (`Program::set_rules_from`).
+    let mut rules: Vec<(Rule, Vec<usize>)> = Vec::with_capacity(prog.rules.len());
+    for (i, rule) in prog.rules.iter().enumerate() {
         let req = rule.head.rel.as_str();
         let n = match rule.head.args.first() {
             Some(Term::Var(n)) if requests.contains(&req) && !local.contains(req) => n.to_string(),
             _ => {
-                rules.push(rule.clone());
+                rules.push((rule.clone(), vec![i]));
                 continue;
             }
         };
@@ -572,23 +574,33 @@ pub fn requests_file_local(prog: &mut crate::code_rule_dsl::logic::front::Progra
                 vec![vec![Literal::Atom(Atom { rel: "node".into(), args: args.into(), neg: false, gated: false })]]
             }
             (None, None) => {
-                rules.push(rule.clone());
+                rules.push((rule.clone(), vec![i]));
                 continue;
             }
         };
         if let [body] = bodies.as_slice() && body.as_slice() == &rule.body[..] {
-            rules.push(rule.clone());
+            rules.push((rule.clone(), vec![i]));
             continue;
         }
         let shown: Vec<String> = bodies.iter().map(|b| b.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", ")).collect();
         narrowed.push((req.to_owned(), format!("`{}` asks {}", rule.body.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", "), shown.join(" ; "))));
-        rules.extend(bodies.into_iter().map(|body| Rule { head: rule.head.clone(), body: body.into() }));
+        rules.extend(bodies.into_iter().map(|body| (Rule { head: rule.head.clone(), body: body.into() }, vec![i])));
     }
     drop(by_head);
-    // Two rules narrowed to one body are one rule.
-    let mut seen = std::collections::HashSet::new();
-    rules.retain(|r| !requests.contains(&r.head.rel.as_str()) || seen.insert(r.clone()));
-    prog.rules = rules;
+    // Two rules narrowed to one body are one rule, serving both rules' readers.
+    let mut first: std::collections::HashMap<Rule, usize> = std::collections::HashMap::new();
+    let mut kept: Vec<(Rule, Vec<usize>)> = Vec::with_capacity(rules.len());
+    for (rule, from) in rules {
+        if !requests.contains(&rule.head.rel.as_str()) {
+            kept.push((rule, from));
+        } else if let Some(&k) = first.get(&rule) {
+            kept[k].1.extend(from);
+        } else {
+            first.insert(rule.clone(), kept.len());
+            kept.push((rule, from));
+        }
+    }
+    prog.set_rules_from(kept);
     if every_node && !prog.inputs.iter().any(|i| i == "node") {
         prog.inputs.push("node".to_owned());
     }
@@ -823,11 +835,14 @@ fn split_in(
     }
     let constants: BTreeSet<String> = (0..n).filter(|&r| constant[r]).map(|r| rels.names[r].to_owned()).collect();
     let filters: BTreeSet<String> = (0..n).filter(|&r| filtering[r]).map(|r| rels.names[r].to_owned()).collect();
-    // Python fact operators preserve each demanded node's document, and a text test's rows are its input's rows.
+    // Python fact operators preserve each demanded node's document, a text test's rows are its input's rows, and a
+    // rank's are its groups'.
     // Their rules must still pass the ordinary dependency/location checks below. Other native operators remain
     // cross-file.
     let cross_native = |r: &str| prog.natives.get(r).is_some_and(|n| match n {
         crate::code_rule_dsl::logic::front::Native::TextTest { .. } => false,
+        // A rank's rows are its groups' (`rank_form`): its rule's join on the group is judged as any rule's.
+        crate::code_rule_dsl::logic::front::Native::Rank { .. } => false,
         crate::code_rule_dsl::logic::front::Native::PythonCandidates { targets, .. } => !constants.contains(targets) && !(prog.facts.contains_key(targets) && !prog.inputs.contains(targets)),
         crate::code_rule_dsl::logic::front::Native::Python { targets, .. } => targets.as_ref().is_some_and(|t|
             !constants.contains(t) && !(prog.facts.contains_key(t) && !prog.inputs.contains(t))),

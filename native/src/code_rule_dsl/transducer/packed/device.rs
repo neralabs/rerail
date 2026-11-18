@@ -32,7 +32,8 @@ pub enum ClauseRoots<'r> {
 /// What the transducer runs on a device.
 pub trait MatcherDevice: Send + Sync {
     /// The batch's programs on `engine`, from `anchors` (per file, per program), at most `result_limits` results each.
-    fn execute_packed(&self, engine: Engine, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>) -> Result<PackedExecution, Error>;
+    /// The batch with each task held to `budget` (decision 0334).
+    fn execute_packed(&self, engine: Engine, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>, budget: super::Budget) -> Result<PackedExecution, Error>;
     /// The batch's outcomes on `backend` (one of the device's: `MetalInterpreter` or `MetalJit`).
     fn execute_outcomes(&self, backend: ExecutionBackend, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>]) -> Result<BatchOutcome, Error>;
     /// The production programs compiled, so the first batch need not wait for them.
@@ -110,4 +111,10 @@ pub struct Outcome {
     pub records: RootsFound,
     /// The command buffers' seconds on the GPU (`GPUStartTime` to `GPUEndTime`), summed.
     pub device: f64,
+    /// How many times the run went again with twice the step budget after a task ran over it (decision 0334).
+    pub replanned: usize,
+    /// The (label, file) whose pass went to W's matcher (decision 0334): over its budget where W is predicted
+    /// cheaper, or at the ceiling. Its label there is as far as it got; the clause that owns it, and every clause that
+    /// reads it, are W's on that file. A label past the plan's (`labels + c`) is clause `c`'s roots.
+    pub unfinished: Vec<(u32, usize)>,
 }

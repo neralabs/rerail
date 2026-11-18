@@ -273,6 +273,7 @@ impl State {
             s.planned_work += t.planned_work;
             s.planned_scanned += t.planned_scanned;
             s.steps += t.steps;
+            s.rules += t.rules;
             s.work += t.work;
             s.cpu_estimate += t.cpu_estimate;
             s.gpu_estimate += t.gpu_estimate;
@@ -286,6 +287,9 @@ impl State {
                 a.3 += b.3;
             }
             s.gpu.add(&t.gpu);
+            for (a, b) in s.gpu_terms.iter_mut().zip(t.gpu_terms) {
+                *a += b;
+            }
             if t.refused.is_some() {
                 s.refused = t.refused;
             }
@@ -327,6 +331,8 @@ pub struct PlacedTotal {
     /// Of the planned work, the rows its scans read (`Shape::scanned`), and its rules' steps, over its runs.
     pub planned_scanned: f64,
     pub steps: u64,
+    /// Its rules, over its runs.
+    pub rules: u64,
     pub work: u64,
     pub cpu_estimate: f64,
     pub gpu_estimate: f64,
@@ -343,6 +349,9 @@ pub struct PlacedTotal {
     /// refused it, when it was placed there and did not run there.
     pub gpu: GpuTotal,
     pub refused: Option<String>,
+    /// The device price's terms over its runs on the device, as priced (`placement::DeviceTerms::array`: rules,
+    /// steps, sorts, values read, rows made, joins' device seconds, other work, views read).
+    pub gpu_terms: [f64; 8],
 }
 
 #[derive(Default, Clone)]

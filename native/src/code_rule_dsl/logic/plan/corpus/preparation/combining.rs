@@ -21,7 +21,7 @@ type Result<T> = std::result::Result<T, String>;
 pub(in crate::code_rule_dsl::logic::plan::corpus) struct FactSpaces<'a> {
     pub(in crate::code_rule_dsl::logic::plan::corpus) policies: &'a [Policy],
     pub(in crate::code_rule_dsl::logic::plan::corpus) report: Report,
-    /// What `again` reads back (decision 0380): the canonical and shared relations, when guards were written.
+    /// What `again` reads back (decision 0393): the canonical and shared relations, when guards were written.
     kept: Option<(BTreeSet<String>, BTreeSet<String>)>,
 }
 
@@ -189,7 +189,7 @@ impl ProgramPass for FactSpaces<'_> {
         rows
     }
 
-    /// Over an edit (decision 0380): the guards of the edit's added rules alone, onto the last output, where its
+    /// Over an edit (decision 0393): the guards of the edit's added rules alone, onto the last output, where its
     /// decisions over the whole are the last run's. The canonical relations are made again from the congruence
     /// classes and must be the last run's; no rule of the edit may have a shared head (so the shared relations are
     /// the last run's); the file-local split must place every relation as it did; and a head the edit changed must

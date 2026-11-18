@@ -1,4 +1,4 @@
-//! A guest's key, the store's: one per identity (decision 0323).
+//! A guest's key, the store's: one per identity (decision 0391).
 //!
 //! A guest document (an annotation, an embedded program, a parsed value) has a key hashed from what it is, in its
 //! range. Two guests can hash alike; the second takes the next key free. "Free" is the store's: `guest_keys` holds

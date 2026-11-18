@@ -353,7 +353,7 @@ pub struct Atoms {
     /// path has another, and atoms of its own (`for_store`).
     identity: Option<i64>,
     state: rerail_accel::sharded::Sharded<State>,
-    /// The store's guest keys as this process holds them (decision 0323), shared as the atoms are.
+    /// The store's guest keys as this process holds them (decision 0391), shared as the atoms are.
     guest_keys: Arc<super::guest_keys::GuestKeys>,
     /// Held (the lock file, exclusively locked) while this process may give out pending ids.
     /// Lock order: `lease`, then `reader`, then `state`.
@@ -648,7 +648,7 @@ impl Atoms {
     /// store): those it holds for the path, unless they are of a store that was there before (deleted and created
     /// again, by this process or another: it has another identity). A store has atoms of its own; another database
     /// (a run's scratch) may borrow a store's (`share`).
-    /// The store's guest keys as this process holds them (decision 0323).
+    /// The store's guest keys as this process holds them (decision 0391).
     pub(crate) fn guest_keys(&self) -> Arc<super::guest_keys::GuestKeys> {
         Arc::clone(&self.guest_keys)
     }

@@ -649,3 +649,193 @@ fn learned_rates_come_from_warm_samples_of_one_kernel() {
     assert_eq!((fitted[0].name.as_str(), fitted[0].lane, fitted[0].samples), ("test-learned-span", Lane::Gpu, MIN_SAMPLES));
     assert!((fitted[0].per_unit - 2e-9).abs() < 1e-12, "{}", fitted[0].per_unit);
 }
+
+/// A program that holds its lane's host for `hold` (a wave's encoding and its wait on the device), and says which
+/// thread ran it.
+struct Holds(std::time::Duration);
+
+impl rerail_accel::kernel::Program for Holds {
+    fn name(&self) -> &'static str {
+        "a test's holding program"
+    }
+    fn units(&self) -> f64 {
+        1.0
+    }
+    fn per_unit(&self, lane: Lane) -> Option<f64> {
+        matches!(lane, Lane::Gpu).then_some(1e-3)
+    }
+    fn run(&self, _: Lane) -> Result<rerail_accel::kernel::ProgramOutput, String> {
+        std::thread::sleep(self.0);
+        Ok(Arc::new(std::thread::current().id()))
+    }
+}
+
+/// Two batches of programs on the GPU lane run side by side (decision 0344): its worker begins the second while
+/// the first runs on the lanes' pool, so one's host part runs beside the other's command buffers. Before, a
+/// program ran as it began and the lane took one at a time.
+#[test]
+fn the_gpu_lane_runs_a_program_beside_the_one_before() {
+    let ex = Executor::new();
+    if !ex.lanes().contains(&Lane::Gpu) {
+        return;
+    }
+    let hold = std::time::Duration::from_millis(300);
+    let program = || Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(Holds(hold))));
+    let t0 = std::time::Instant::now();
+    let ra = ex.begin(Batch(vec![Launch::on(program(), Lane::Gpu)])).unwrap();
+    let rb = ex.begin(Batch(vec![Launch::on(program(), Lane::Gpu)])).unwrap();
+    let (da, _) = ra.wait().unwrap();
+    let (db, _) = rb.wait().unwrap();
+    let took = t0.elapsed();
+    assert!(da[0].lane == Lane::Gpu && db[0].lane == Lane::Gpu);
+    let thread = |d: &rerail_accel::exec::Done| match &d.out {
+        rerail_accel::kernel::Output::Program(r) => *r.0.downcast_ref::<std::thread::ThreadId>().expect("a thread id"),
+        other => panic!("not a program's result: {other:?}"),
+    };
+    assert_ne!(thread(&da[0]), thread(&db[0]), "each ran on a thread of the lanes' pool");
+    assert!(took < hold * 2 - hold / 3, "the two ran side by side: {took:?} for two of {hold:?}");
+}
+
+/// A program's price learns from the run's own launches (`price::observe`): before `RUN_MIN_SAMPLES` of them, its
+/// prior; after, its launches' median wall and host CPU a unit, which a stored rate read later does not replace.
+#[test]
+fn a_programs_price_learns_from_the_runs_own_launches() {
+    use rerail_accel::price::{MIN_SAMPLES, Prices, RUN_MIN_SAMPLES, learn_from, observe};
+    struct Priced;
+    impl rerail_accel::kernel::Program for Priced {
+        fn name(&self) -> &'static str {
+            "test-observed-program"
+        }
+        fn units(&self) -> f64 {
+            1e6
+        }
+        fn per_unit(&self, lane: Lane) -> Option<f64> {
+            matches!(lane, Lane::Gpu).then_some(5e-8)
+        }
+        fn run(&self, _: Lane) -> Result<rerail_accel::kernel::ProgramOutput, String> {
+            Ok(Arc::new(()))
+        }
+    }
+    let prices = Prices::default();
+    let k = Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(Priced)));
+    let fixed = prices.fixed[Lane::Gpu.index()];
+    let prior = prices.wall(&k, Lane::Gpu).unwrap();
+    assert!((prior - (fixed.launch + 5e-8 * 1e6)).abs() < 1e-9, "the prior: {prior}");
+    // A launch measured: 1e-8 s a unit of wall, 2e-9 of host CPU.
+    let measured = |n: usize| {
+        for _ in 0..n {
+            observe(Lane::Gpu, "test-observed-program", 1, 1e6, fixed.submission + fixed.launch + 1e-8 * 1e6, 2e-9 * 1e6, 3.0, false, true);
+        }
+    };
+    measured(RUN_MIN_SAMPLES - 1);
+    assert_eq!(prices.wall(&k, Lane::Gpu).unwrap(), prior, "too few of the run's samples: still the prior");
+    measured(1);
+    let wall = prices.wall(&k, Lane::Gpu).unwrap();
+    assert!((wall - (fixed.launch + 1e-8 * 1e6)).abs() < 1e-9, "the run's rate: {wall}");
+    let host = prices.host(&k, Lane::Gpu, true).unwrap();
+    let host_fixed = prices.host[Lane::Gpu.index()];
+    assert!((host - (host_fixed.launch + 2e-9 * 1e6)).abs() < 1e-9, "the run's host CPU: {host}");
+    // A stored rate read after does not replace the run's.
+    let stored = rerail_accel::score::Sample {
+        lane: Lane::Gpu,
+        forms: "test-observed-program".into(),
+        launches: 1,
+        units: 1e6,
+        estimate: 0.0,
+        host_estimate: 0.0,
+        wall: fixed.submission + fixed.launch + 9e-8 * 1e6,
+        cpu: 0.0,
+        waited: 0.0,
+        phases: String::new(),
+        cold: false,
+        ok: true,
+        load: 1.0,
+        threads: 1,
+    };
+    learn_from(&vec![stored; MIN_SAMPLES]);
+    assert_eq!(prices.wall(&k, Lane::Gpu).unwrap(), wall, "the run's rate stays");
+    // The lane's host ratio corrects priors, not a learned line.
+    let mut load = rerail_accel::price::Load { open: [true; Lane::COUNT], ..Default::default() };
+    load.host_scale[Lane::Gpu.index()] = 50.0;
+    let cost = prices.cost(&k, Lane::Gpu, &load).unwrap();
+    assert!((cost.host - host).abs() < 1e-12, "a learned host CPU is not scaled: {} against {host}", cost.host);
+}
+
+/// A program's launches cost a fixed part and a part a unit: the fit finds both (the GPU's matcher wave: about 10 ms
+/// a launch, 1e-8 s a unit), and a few outliers (a launch that waited on a busy machine) do not move it.
+#[test]
+fn a_rate_is_a_launchs_fixed_cost_and_a_units() {
+    let (a, b) = (0.010, 1e-8);
+    let mut points: Vec<(f64, f64)> = [1e5, 3e5, 1e6, 2e6, 4e6, 6e6, 8e6, 1.2e7].iter().map(|&x| (x, a + b * x)).collect();
+    points.push((1e6, 0.5));
+    points.push((2e5, 0.3));
+    let (fa, fb) = rerail_accel::price::line(&points);
+    assert!((fa - a).abs() < 1e-3 && (fb - b).abs() < 1e-9, "{fa} + {fb} x");
+    // One size of launch: a rate a unit through the origin.
+    let (fa, fb) = rerail_accel::price::line(&[(1e6, 0.02); 8]);
+    assert!(fa == 0.0 && (fb - 2e-8).abs() < 1e-15, "{fa} + {fb} x");
+}
+
+/// A cores sample is fitted net of the load it ran under: the price multiplies by the load when it prices, so the
+/// rate is the unloaded one.
+#[test]
+fn a_cores_rate_is_fitted_net_of_the_load_it_ran_under() {
+    use rerail_accel::price::{Prices, RUN_MIN_SAMPLES, observe};
+    let k = program(1e6, Some(1e-6), None);
+    let prices = Prices::default();
+    let fixed = prices.fixed[Lane::Cpu.index()];
+    for _ in 0..RUN_MIN_SAMPLES {
+        // 4e-8 s a unit of wall, run under a slowdown of 4.
+        observe(Lane::Cpu, "a test's program", 1, 1e6, fixed.submission + fixed.launch + 4e-8 * 1e6, 0.0, 4.0, false, true);
+    }
+    let wall = prices.wall(&k, Lane::Cpu).unwrap();
+    assert!((wall - (fixed.launch + 1e-8 * 1e6)).abs() < 1e-9, "the unloaded rate: {wall}");
+}
+
+/// Launches of one size cannot tell a rate's slope. The cores' matcher waves at s1000 ran six small launches first
+/// (6.7e4–8.3e4 units), whose line had a slope of about nothing: a wave 80 times larger was priced at 6.5 ms and took
+/// 200. Past the samples' reach (`SPREAD`), a price runs from what was measured at the largest sample, with the
+/// prior's slope or that sample's own rate a unit, the less.
+#[test]
+fn a_rate_past_its_samples_takes_the_priors_slope() {
+    use rerail_accel::price::{Prices, RUN_MIN_SAMPLES, learned_rates, observe};
+    let prices = Prices::default();
+    let fixed = prices.fixed[Lane::Cpu.index()];
+    // Small launches at 1e-8 s a unit, with noise that leaves their line flat: 0.7 to 0.8 ms each.
+    let small = [(7.0e4, 7.6e-4), (7.5e4, 7.0e-4), (8.0e4, 7.4e-4), (7.2e4, 7.8e-4), (7.8e4, 7.2e-4)];
+    for (units, busy) in small.iter().take(RUN_MIN_SAMPLES.max(4)) {
+        observe(Lane::Cpu, "a test's program", 1, *units, fixed.submission + fixed.launch + busy, 0.0, 1.0, false, true);
+    }
+    let rate = learned_rates().into_iter().find(|l| l.name == "a test's program" && l.lane == Lane::Cpu).expect("a rate");
+    assert!(!rate.spread && rate.largest == 8e4, "the samples span under SPREAD: {rate:?}");
+    // A prior steeper than the samples: the samples' own rate a unit, about 1e-8, through the origin.
+    let k = program(6e6, Some(4e-8), None);
+    let wall = prices.wall(&k, Lane::Cpu).unwrap() - fixed.launch;
+    assert!((wall - 6e6 * 1e-8).abs() < 0.2 * 6e-2, "the samples' rate: {wall}");
+    // A prior gentler than the samples: the fixed part the samples leave over the prior's slope, then that slope.
+    let k = program(6e6, Some(2e-9), None);
+    let wall = prices.wall(&k, Lane::Cpu).unwrap() - fixed.launch;
+    let want = (7.6e-4 - 2e-9 * 8e4) + 2e-9 * 6e6;
+    assert!((wall - want).abs() < 0.1 * want, "the prior's slope past the anchor: {wall} against {want}");
+}
+
+/// A line of launches that spread prices up to `SPREAD` times its largest; past that, a launch far larger than any
+/// sample grows from the largest by the prior's slope where the line's is steeper (the GPU's first small waves).
+#[test]
+fn a_spread_line_prices_within_its_reach() {
+    use rerail_accel::price::{Prices, RUN_MIN_SAMPLES, SPREAD, observe};
+    let prices = Prices::default();
+    let fixed = prices.fixed[Lane::Cpu.index()];
+    // 1 ms a launch and 3e-8 s a unit, from 5e4 to 1.5e5 units.
+    let units = [5e4, 7.5e4, 1e5, 1.25e5, 1.5e5];
+    for u in units.iter().take(RUN_MIN_SAMPLES.max(5)) {
+        observe(Lane::Cpu, "a test's program", 1, *u, fixed.submission + fixed.launch + 1e-3 + 3e-8 * u, 0.0, 1.0, false, true);
+    }
+    let within = prices.wall(&program(SPREAD * 1.5e5, Some(1e-8), None), Lane::Cpu).unwrap() - fixed.launch;
+    let want = 1e-3 + 3e-8 * SPREAD * 1.5e5;
+    assert!((within - want).abs() < 1e-6, "within reach, the line: {within} against {want}");
+    // Far past it: from the largest sample (5.5 ms) by the prior's 1e-8 a unit.
+    let far = prices.wall(&program(3e7, Some(1e-8), None), Lane::Cpu).unwrap() - fixed.launch;
+    let want = (1e-3 + 3e-8 * 1.5e5 - 1e-8 * 1.5e5) + 1e-8 * 3e7;
+    assert!((far - want).abs() < 1e-6, "past reach, the prior's slope: {far} against {want}");
+}

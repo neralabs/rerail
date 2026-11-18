@@ -668,6 +668,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -771,6 +772,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(
@@ -881,6 +883,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -1066,6 +1069,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -1206,6 +1210,7 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                most_steps: 0,
             };
             compiled.execute(&mut context);
             assert_eq!(status.error, 0);
@@ -1327,6 +1332,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -1427,6 +1433,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 2);
@@ -1545,6 +1552,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 2);
@@ -1724,6 +1732,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         unsafe {
             assert_eq!((compiled.cursor_equal)(&mut context, 2, 3), 1);
@@ -1992,6 +2001,7 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                most_steps: 0,
             };
             compiled.execute(&mut context);
             status
@@ -2222,6 +2232,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -2431,6 +2442,7 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                most_steps: 0,
             };
             compiled.execute(&mut context);
             assert_eq!(status.error, 0, "operation {operation} mode {mode}");
@@ -3398,6 +3410,7 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                most_steps: 0,
             };
             compiled.execute(&mut context);
             assert_eq!(status.error, 0);
@@ -3501,6 +3514,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -3615,6 +3629,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 0);
@@ -3729,6 +3744,7 @@
                 derived: std::ptr::null(),
                 derived_classes: 0,
                 derived_words: 0,
+                most_steps: 0,
             };
             compiled.execute(&mut context);
             assert_eq!(status.error, 0);
@@ -3824,6 +3840,7 @@
             derived: std::ptr::null(),
             derived_classes: 0,
             derived_words: 0,
+            most_steps: 0,
         };
         compiled.execute(&mut context);
         assert_eq!(status.error, 2);

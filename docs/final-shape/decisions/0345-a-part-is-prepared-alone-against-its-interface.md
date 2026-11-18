@@ -96,7 +96,7 @@ unchanged: it already leaves inputs and outputs as they are (`kept`).
    already (decision 0246 §6); what the combine pays every edit is reading the 317 programs and texts, the include
    graphs and the rule files, and its tail over the combined program, about 0.2 s CPU: the fact spaces 0.09 s (a
    split of their own), merging identical relations 0.04 s, the sources on request 0.035 s, the requests narrowed
-   0.02 s (through the tree, Q52), and the projections, the helpers' retyping and hiding below that. Unlike stage
+   0.02 s (through the tree, Q149), and the projections, the helpers' retyping and hiding below that. Unlike stage
    2's passes these decide across programs: merging identical relations is the link itself; the fact spaces
    decide per relation whether a policy changed a library relation; the sources on request make one request
    relation from every reader of an attribute in every program; hiding is a fixpoint over every relation. Each

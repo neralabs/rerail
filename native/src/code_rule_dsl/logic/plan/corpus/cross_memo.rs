@@ -22,6 +22,7 @@ use std::sync::Arc;
 use crate::content_store::ContentStore;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
 
 pub(super) const PRAGMA: &str = "cross-memo";
 pub(super) const COMPONENT: &str = "rr_cx_component";

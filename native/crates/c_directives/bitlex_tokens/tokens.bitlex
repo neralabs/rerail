@@ -1,0 +1,216 @@
+# C's and C++'s preprocessing tokens, every one of a file (decision 0348 §1): the tape mode (b)
+# expands from, made once a file's content. Each token is a leaf of its kind: an identifier, a
+# pp-number, a literal (a string, a character constant or a raw string, its prefix and, in C++,
+# its suffix included), `#`, `##`, a punctuator by longest match (a digraph `<:` `:>` `<%` `%>`
+# its own kind) or another byte. The tokens are in `line` nodes: a line's first token has the
+# lean lexer's `BOL` flag (a line break outside a block comment before it since the token before,
+# or the file's start). Its `SPACE` flag is the byte before it, which the reader tests.
+#
+# The reference is `rerail_c_lean::pp::PpLexer` (C23 and C++26, GNU): the tokens, their bytes
+# and flags. The lines marked `C++ only` are left out of C's grammar (`TOKENS_C`).
+#
+# What it does not read goes to the lean lexer: as in the directives' grammar (`06-raw`), and a
+# byte past ASCII in code (an identifier's by its XID class), a `\u` or `\U` in code (a name in
+# an identifier; a lone `\` is a token of its own, `other`), a splice between two tokens' bytes,
+# and C++'s `<::`.
+
+lexer c_pp_tokens
+
+class dquote    = '"'
+class squote    = '\''
+class backslash = '\\'
+class lf        = '\n'
+class cr        = '\r'
+class blankc    = ' ' '\t' 0x0b 0x0c
+class slash     = '/'
+class star      = '*'
+class hash      = '#'
+class qmark     = '?'
+# The trigraphs' third bytes: a configuration may read `??=` as `#`.
+class tri       = '=' '/' '\'' '(' ')' '!' '<' '>' '-'
+class percent   = '%'
+class colon     = ':'
+class c_r       = 'R'
+class c_pre     = 'L' 'U' 'u'
+class c_u       = 'u'
+class c_8       = '8'
+class rparen    = ')'
+class bom1      = 0xef
+class bom2      = 0xbb
+class bom3      = 0xbf
+class digit     = '0'..'9'
+class lparen    = '('
+class dot       = '.'
+# ASCII only: a byte past it in code is refused (below), a byte order mark's included.
+class idstart   = 'a'..'z' 'A'..'Z' '_' '$'
+class wordc     = 'a'..'z' 'A'..'Z' '0'..'9' '_' '$'
+
+mask last_byte  = ~next(~empty)
+mask first_byte = ~prev(~empty)
+
+# --- What the step hands over ------------------------------------------------------------------
+
+escape "a carriage return not before a line break" when cr & ~next(lf)
+escape "a trigraph" when qmark & next(qmark) & next(tri, 2)
+escape "a digraph `%:`" when percent & next(colon)
+
+# --- Splices and regions -----------------------------------------------------------------------
+
+# A `\` right before a line break splices the two lines (phase 2): neither byte is in a token.
+# Or a `\` before `\r\n`: the three bytes.
+mask splice_bs  = backslash & (next(lf) | (next(cr) & next(lf, 2)))
+mask splice_cr  = cr & prev(backslash) & next(lf)
+mask splice_lf  = lf & (prev(backslash) | (prev(cr) & prev(backslash, 2)))
+mask splice     = splice_bs | splice_cr | splice_lf
+# A line's end: a line break no `\` splices.
+mask nl         = lf & ~splice_lf
+# A `\`, blanks, then a line break: clang's and GCC's splice too, which this step does not read.
+mask bs_blanks  = fill(backslash & next(blankc), blankc)
+escape "a splice with blanks before its line break" when (lf & prev(bs_blanks) & prev(blankc)) | (lf & prev(cr) & prev(bs_blanks, 2) & prev(blankc, 2))
+escape "a splice inside a word" when splice_bs & prev(wordc) & (next(wordc, 2) | (next(cr) & next(wordc, 3)))
+escape "a splice inside a comment's opener" when slash & next(backslash) & (next(lf, 2) | (next(cr, 2) & next(lf, 3)))
+
+# A raw string's `"`: after an `R` that starts its word, or after `L`, `U`, `u` or `u8` that do,
+# with a `(` next (no delimiter).
+mask r_alone    = c_r & ~prev(wordc)
+mask r_pre      = c_r & prev(c_pre) & ~prev(wordc, 2)
+mask r_u8       = c_r & prev(c_8) & prev(c_u, 2) & ~prev(wordc, 3)
+mask raw_open   = dquote & next(lparen) & prev(r_alone | r_pre | r_u8)
+# Its end: the first `)"` (a `\` is no escape in it).
+mask raw_close  = dquote & prev(rparen)
+mask escaped    = escaped(backslash)
+mask q          = dquote & ~escaped
+mask sq         = squote & ~escaped
+mask line_open  = slash & next(slash)
+mask block_open = slash & next(star)
+# `*/`'s `/`, but not the `/` of `/*/`.
+mask block_end  = slash & prev(star) & ~prev(block_open, 2)
+# The regions, left to right: strings, character constants and comments hide each other's
+# openers. A line comment's line break ends its line; a spliced one does not end the comment.
+regions hidden {
+  raw   = raw_open .. raw_close
+  str   = q .. q | nl
+  chr   = sq .. sq | nl
+  line  = line_open .. nl outside
+  block = block_open .. block_end
+}
+# A string or a character constant a line break closes (`don't`): the lean scan ends its token
+# before the break.
+escape "a string or a character constant open at a line's end" when nl & prev(f_str | f_chr)
+escape "a block comment open at the end of the file" when f_block & last_byte
+escape "a raw string open at the end of the file" when f_raw & last_byte
+# Phase 2's splices are undone inside a raw string: not read here.
+escape "a splice inside a raw string" when splice_bs & f_raw
+escape "a string open at the end of the file" when (f_str | f_chr) & last_byte
+
+mask region     = hidden | o_raw | o_str | o_chr | o_line | o_block
+mask code       = ~region
+escape "a raw string with a delimiter" when o_str & prev(c_r)
+escape "a digit separator" when o_chr & prev(digit)
+
+# A comment's bytes, its `*/` too: a blank, as the lexer reads it.
+mask comment    = f_line | f_block | (block_end & prev(f_block))
+# A UTF-8 byte order mark at the file's start, which the lean scan skips: a blank.
+mask bom        = first_byte & bom1 & next(bom2) & next(bom3, 2)
+mask bom_bytes  = bom | prev(bom) | prev(bom, 2)
+# A `\r` before a line break: a blank (phase 1 makes the pair one new-line).
+mask blank      = (code & blankc) | (cr & next(lf)) | comment | splice | bom_bytes
+
+# --- What this grammar hands over too ------------------------------------------------------------
+
+class high      = 0x80..0xff
+escape "a byte past ASCII in code" when code & high & ~bom_bytes
+class ucn_u     = 'u' 'U'
+mask lone_bs    = code & backslash & ~splice_bs
+escape "a `\u` or `\U` in code" when lone_bs & next(ucn_u)
+# A splice with code right before it and right after it: the lean lexer reads the two as one text.
+mask solid      = code & ~blank & ~lf & ~cr
+escape "a splice between two tokens' bytes" when splice_bs & prev(solid) & (next(solid, 2) | (next(cr) & next(solid, 3)))
+escape "C++'s `<::`" when code & lt & next(colon) & next(colon, 2)   # C++ only
+
+# --- Numbers -------------------------------------------------------------------------------------
+
+class lt        = '<'
+class c_exp     = 'e' 'E' 'p' 'P'
+class sign      = '+' '-'
+# A pp-number goes on over word bytes, `.`, and a sign after `e`, `E`, `p` or `P`.
+mask num_cont   = code & (wordc | dot | (sign & prev(c_exp)))
+# It starts at a digit after no word byte or `.`, or at a `.` before a digit that no number
+# before reaches (`a.5` is `a` and `.5`; `1.5.6` one number): twice, then settled or refused.
+# A digit after an exponent's sign is no start where the sign is a number's (`1e+3`), and is one
+# where it is not (`e+3`).
+mask dig_cand   = code & digit & ~prev(code & (wordc | dot))
+mask num_c      = fill(dig_cand, ~num_cont)
+mask dig_head   = dig_cand & ~prev(num_c & sign)
+mask dot_cand   = code & dot & next(digit)
+mask num0       = fill(dig_head, ~num_cont)
+mask dot_head1  = dot_cand & ~prev(num0)
+mask num1       = fill(dig_head | dot_head1, ~num_cont)
+mask dot_head   = dot_cand & ~prev(num1)
+mask number_b   = fill(dig_head | dot_head, ~num_cont)
+mask dot_head3  = dot_cand & ~prev(number_b)
+escape "a run of numbers and dots past the bound" when dot_head ^ dot_head3
+mask num_start  = dig_head | dot_head
+
+# --- Literals ------------------------------------------------------------------------------------
+
+# A literal's prefix starts a word and ends at its opener: `L`, `u`, `U`, `u8`, then `R` before a
+# raw string's.
+mask o_q        = o_str | o_chr
+mask p_one      = c_pre & next(o_q) & ~prev(wordc)
+mask p_u8       = c_u & next(c_8) & next(o_q, 2) & ~prev(wordc)
+mask p_r        = c_r & next(o_raw) & ~prev(wordc)
+mask p_one_r    = c_pre & next(c_r) & next(o_raw, 2) & ~prev(wordc)
+mask p_u8_r     = c_u & next(c_8) & next(c_r, 2) & next(o_raw, 3) & ~prev(wordc)
+mask pre_start  = code & (p_one | p_u8 | p_r | p_one_r | p_u8_r)
+mask opener     = o_q | o_raw
+mask pre_bytes  = fill(pre_start, opener)
+mask lit_start  = pre_start | (opener & ~prev(pre_bytes))
+# Its closer: a string's or a character constant's quote, a raw string's `"`.
+mask closer     = (q & prev(f_str)) | (sq & prev(f_chr)) | (raw_close & prev(f_raw))
+mask lit_body   = pre_bytes | f_str | f_chr | f_raw | closer
+# C++'s user-defined suffix: a word right after its closer.
+mask suffix     = empty   # C only
+mask suffix     = code & wordc & fill(closer & next(idstart), ~(code & wordc)) & ~closer   # C++ only
+mask lit_bytes  = lit_body | suffix
+
+# --- Tokens --------------------------------------------------------------------------------------
+
+mask word       = code & wordc
+mask id_start   = word & idstart & ~prev(word) & ~number_b & ~pre_bytes & ~suffix
+token identifier = start id_start run word
+token number     = start num_start run num_cont
+# Its own kind's next start ends it (`"a""b"` is two): a run holds no start of its kind.
+token literal    = start lit_start run lit_bytes & ~lit_start
+
+class opc       = '(' ')' '[' ']' '{' '}' ';' ',' '~' '?' ':' '.' '=' '!' '+' '-' '*' '/' '%' '^' '&' '|' '<' '>' '#'
+munch op over code & opc & ~number_b {
+  "<<=" -> punct ">>=" -> punct "..." -> punct
+  "->*" -> punct "<=>" -> punct   # C++ only
+  "->" -> punct "++" -> punct "--" -> punct "<<" -> punct ">>" -> punct "<=" -> punct ">=" -> punct "==" -> punct "!=" -> punct
+  "&&" -> punct "||" -> punct "*=" -> punct "/=" -> punct "%=" -> punct "+=" -> punct "-=" -> punct "&=" -> punct "^=" -> punct "|=" -> punct "::" -> punct
+  ".*" -> punct   # C++ only
+  "<:" -> digraph ":>" -> digraph "<%" -> digraph "%>" -> digraph
+  "##" -> hashhash "#" -> hash
+  "(" -> punct ")" -> punct "[" -> punct "]" -> punct "{" -> punct "}" -> punct ";" -> punct "," -> punct "~" -> punct "?" -> punct ":" -> punct "." -> punct "=" -> punct "!" -> punct "+" -> punct "-" -> punct "*" -> punct "/" -> punct "%" -> punct "^" -> punct "&" -> punct "|" -> punct "<" -> punct ">" -> punct
+}
+
+class otherc    = 0x00..0x08 0x0e..0x1f '@' '`' 0x7f
+token other      = start (code & otherc) | lone_bs
+
+skip blank | (nl & code)
+
+# --- Flags ---------------------------------------------------------------------------------------
+
+mask starts     = id_start | num_start | lit_start | munch_op_win3 | (code & otherc) | lone_bs
+# A line break outside a block comment (or the file's start) since the token before.
+mask eol        = nl & ~f_block & ~f_raw
+mask gap        = blank | nl
+mark bol   = starts & (first_byte | prev(fill(eol | (first_byte & gap), ~gap)))
+
+tree c_pp_tokens {
+  # A line: from a token after a line break to the next such (a mark takes no byte).
+  node tokens whole = (bol line)*
+  node line = tok (tok)*
+  choice tok = identifier | number | literal | punct | digraph | hash | hashhash | other
+}

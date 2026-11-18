@@ -47,7 +47,7 @@ pub(super) fn about_p(b: &mut Builder<'_>) -> Cell {
     Cell::Str(b.atom(crate::code_rule_dsl::logic::program_image::ABOUT))
 }
 
-fn qualified(v: &Version, about: &About, rel: &str, word: &str) -> bool {
+pub(super) fn qualified(v: &Version, about: &About, rel: &str, word: &str) -> bool {
     about.qualifiers.iter().any(|(r, w)| v.text(*r) == rel && v.text(*w) == word)
 }
 
@@ -55,7 +55,7 @@ fn facts_nonempty(v: &Version, rel: &str) -> bool {
     v.find(rel).and_then(|a| v.facts(a)).is_some_and(|f| f.rows().len() > 0)
 }
 
-fn is_input(v: &Version, rel: &str) -> bool {
+pub(super) fn is_input(v: &Version, rel: &str) -> bool {
     v.inputs().any(|a| v.text(a) == rel)
 }
 

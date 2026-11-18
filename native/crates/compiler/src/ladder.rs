@@ -523,8 +523,12 @@ pub fn check_shape(name: &str, c: &Compiled) {
             continue;
         }
         let body = crate::clif_text::body_of(&pass.clif);
-        let want = 1 + 2 * pass.extracts + usize::from(pass.ascii_branch) + pass.gate_branches + pass.round_branches;
-        assert_eq!(branches(&body), want, "{name}: tier 1's pass {k} branches beyond its loop, its flattening, its ASCII test and its gates");
+        if body.is_empty() {
+            // No block loop (`native_cpu_block::bodiless_body`): the token loop is the pass's.
+            continue;
+        }
+        let want = 1 + 2 * pass.extracts + usize::from(pass.ascii_branch) + pass.gate_branches + pass.round_branches + pass.rare_branches;
+        assert_eq!(branches(&body), want, "{name}: tier 1's pass {k} branches beyond its loop, its flattening, its ASCII test, its gates and its rare paths");
     }
     let heads = &c.parser.tier2.heads;
     assert!(heads.iter().any(|h| h.1 == Step::Token), "{name}: tier 2 has no token loop");
@@ -534,7 +538,7 @@ pub fn check_shape(name: &str, c: &Compiled) {
             // The table's final pass (parents, extras), and the wraps' placing.
             Step::Node => true,
             // No loop over bits: a local check (`CHECK`) is word-parallel, a loop over words.
-            Step::Bits | Step::File | Step::Round | Step::Region | Step::Word | Step::Bytes => false,
+            Step::Bits | Step::File | Step::Round | Step::Region | Step::Word | Step::Bytes | Step::Pop | Step::Probe | Step::Item | Step::Halve => false,
         };
         assert!(ok, "{name}: tier 2 loops at {b} over {step:?}");
     }
@@ -542,7 +546,8 @@ pub fn check_shape(name: &str, c: &Compiled) {
     // `native_cpu_stream::outline`).
     // An indirect jump only through a jump table of its own: tier 2's shared arms
     // (`native_cpu_stream::shared_runs`) end in one, a `br` each.
-    let tables = c.parser.tier2.clif.lines().filter(|l| l.contains(" br_table ")).count();
+    // Counted as compiled: `switch_trees` (0322) makes a small one compares.
+    let tables = c.parser.tier2.tables;
     for (tier, asm, own, tables) in [("tier 1", &c.parser.tier1.disassembly, c.parser.tier1.own_calls(), 0), ("tier 2", &c.parser.tier2.disassembly, c.parser.tier2.own_calls, tables)] {
         // A jump table's sequence is one line, its `br` inside, its entries the function's labels.
         let (tables_asm, rest): (Vec<&str>, Vec<&str>) = asm.lines().partition(|l| l.contains("jt_entries"));

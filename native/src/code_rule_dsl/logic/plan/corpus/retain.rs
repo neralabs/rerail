@@ -34,6 +34,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use crate::code_rule_dsl::logic::native::component::InRel;
 use crate::content_store::{ContentStore, EncodedFrame, FramePut, FrameRel, FrameRows, FrameStored};
+use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
 
 /// A relation as the last run derived it: the engine's relation, and its decoded rows when it is an output.
 #[derive(Clone)]
@@ -347,11 +348,23 @@ pub(in crate::code_rule_dsl) fn owners_delta(rel: &str, old: &dyn Source, new: &
     if old.columns().len() != width || g >= width {
         return None;
     }
+    // The new documents' rows: a view over the batch's documents finds them itself (`Source::rows_owned`: a kind-set
+    // axis by its nodes, without its solve, which was 348 MB of a PostHog run's peak for a round's few new documents);
+    // else each row's document (`Source::documents_of`: a view's rows have their document's key, no id read).
+    let fresh = new.rows_owned(g, &|n: i64| is_new(super::memo::document_of(n))).unwrap_or_else(|| {
+        let mut fresh: Vec<usize> = Vec::new();
+        new.documents_of(g, &mut |r, d| {
+            if is_new(d) {
+                fresh.push(r);
+            }
+        });
+        fresh
+    });
     let all: Vec<usize> = (0..width).collect();
-    let made: Vec<Vec<i64>> = (0..new.len())
-        .filter(|&r| is_new(super::memo::document_of(new.value(r, g))))
+    let made: Vec<Vec<i64>> = fresh
+        .into_iter()
         .map(|r| {
-            let mut row = vec![0i64; width];
+            let mut row = vec![0; width];
             new.row_at(r, &all, &mut row);
             row
         })
@@ -537,6 +550,7 @@ pub(in crate::code_rule_dsl) fn after(
     docs: (super::input_delta::Docs, [u8; 32]),
     mut patched: HashMap<String, Patched>,
     budget: usize,
+    indexes: bool,
 ) -> Retained {
     let mut input_docs: HashMap<String, Arc<FramedDocs>> = input_docs.into_iter().map(|(rel, d)| (rel, FramedDocs::ready(d))).collect();
     // An input bound as the last run's source keeps that source's hashes: as the last run held them, decoded from
@@ -569,8 +583,9 @@ pub(in crate::code_rule_dsl) fn after(
     for (rel, width, held) in derived {
         // An index's relation (the reach index, decision 0119), or a view of an input's columns (Q37), is made again
         // in less than reading it back costs: not kept, so it never takes the budget from the relations whose rows
-        // are work.
-        if held.view.is_some() || held.viewed {
+        // are work. Kept where the part stays in memory (`indexes`: a chunk's guest rounds, decision 0331), so its
+        // next run's delta is made against it and its readers are maintained.
+        if (held.view.is_some() || held.viewed) && !indexes {
             continue;
         }
         let k = Kept { rel: held, width, output: outputs.get(&rel).cloned() };
@@ -609,17 +624,6 @@ pub(in crate::code_rule_dsl) fn kept_source(
     let columns = source.columns();
     if let Some(same) = parts.values().find_map(|p| p.input_srcs.get(rel).filter(|s| p.inputs.get(rel) == Some(&d) && s.columns() == columns).cloned()) {
         return same;
-    }
-    // Changed rows: last run's sorted columns, patched by the documents that changed, not sorted again (decision
-    // 0101 §5). `RERAIL_SORT_BASE_AGAIN` sorts them again, as before.
-    if std::env::var_os("RERAIL_SORT_BASE_AGAIN").is_none()
-        && let Some(old) = parts.values().find_map(|p| p.input_srcs.get(rel).filter(|s| s.columns() == columns))
-    {
-        let _s = crate::code_rule_dsl::logic::profile::span(|| format!("carry {rel}'s sorted columns"));
-        let (laid, _) = crate::code_rule_dsl::logic::native::component::carry_sorted(old.as_ref(), source.as_ref());
-        if let Some(laid) = laid {
-            return laid;
-        }
     }
     source
 }
@@ -1067,6 +1071,9 @@ impl Source for Renamed {
     fn complete_rows(&self) -> bool {
         self.0.complete_rows()
     }
+    fn rows_owned(&self, g: usize, owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+        self.0.rows_owned(g, owned)
+    }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.0.expect_lookups(column, keys);
     }
@@ -1095,6 +1102,9 @@ impl Source for Renamed {
     }
     fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
         self.0.sorted_rows(column, value)
+    }
+    fn sorted_range(&self, column: usize, value: i64) -> Option<std::ops::Range<u32>> {
+        self.0.sorted_range(column, value)
     }
     fn sorts_rows(&self, column: usize) -> bool {
         self.0.sorts_rows(column)
@@ -1324,16 +1334,17 @@ pub mod tests {
         let placed=reused.placed().unwrap();
         // A view of an input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _).`) is never kept: its rule stays, to
         // hold it again. Nothing else runs.
-        let left:BTreeSet<&str>=placed.v.rules().map(|r| placed.v.rel_name(r.head().rel())).collect();
-        assert_eq!(left,BTreeSet::from(["docof","kind"]));
-        assert!(placed.v.rules().all(|r| { let mut b=r.body(); matches!((b.next().and_then(|l| l.atom()), b.next()), (Some(a), None) if p.inputs.iter().any(|i| *i == placed.v.rel_name(a.rel()))) }));
+        let left:BTreeSet<String>=placed.v.rules().map(|r| placed.v.rel_name(r.head().rel()).to_owned()).collect();
+        assert_eq!(left,BTreeSet::from(["docof".to_owned(),"kind".to_owned()]));
+        assert!(placed.v.rules().all(|r| crate::code_rule_dsl::logic::plan::input_view_shape(&placed.v,r,|n| p.inputs.iter().any(|i| i==n)).is_some()));
         assert!(placed.fields().unwrap().gates().is_empty());
         let mut changed=inputs.clone();
         *changed.values_mut().next().unwrap()=8;
         for (candidate,rows) in [(key,changed),([2;32],inputs.clone())] {
             assert_eq!(cut(Some(&kept),candidate,&pl(&p),&st(&p),&rows).unwrap().strata,(strata.len(),strata.len()));
         }
-        let missing=kept.rels.keys().next().unwrap().clone();
+        // A kept relation missing (not a view's: those are not kept, so their absence changes nothing).
+        let missing=kept.rels.keys().find(|r| !left.contains(r.as_str())).unwrap().clone();
         kept.rels.remove(&missing);
         assert_eq!(cut(Some(&kept),key,&pl(&p),&st(&p),&inputs).unwrap().strata,(strata.len(),strata.len()));
     }
@@ -1433,6 +1444,13 @@ pub(in crate::code_rule_dsl) struct InFrames {
     /// The relations admitted with their statistics part at their rows' digest (decision 0120 §3): written again
     /// only if their rows change.
     stats_kept: std::collections::HashSet<String>,
+}
+
+impl InFrames {
+    /// The digest of `rel`'s stored frame, when it is stored and current.
+    pub(in crate::code_rule_dsl) fn derived_digest(&self, rel: &str) -> Option<u64> {
+        self.derived.get(rel).map(|s| s.digest)
+    }
 }
 
 /// The digest of `read` a derived relation records (t33 K4): as `known` has it (an input as the run bound it, a
@@ -1784,7 +1802,7 @@ pub(in crate::code_rule_dsl) fn kept_inputs_stored(store: &ContentStore, space: 
     let all: Vec<FrameRel> = rels.iter().map(|rel| FrameRel { name: rel.clone(), ident: input_ident(rel, prog, &binds) }).collect();
     // Past the snapshot: an earlier run of the process (phase 0's, the sources phase's) installed it without this
     // root's cross space, which is read after this check (`preload_frames_live`). Through it, no input had a frame,
-    // and every edit decoded its memo hits whole (Q69).
+    // and every edit decoded its memo hits whole (Q151).
     let stored = store.frames_stored(&space, &all, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;
     Ok(match all.iter().find(|f| !stored.contains_key(f)) {
         Some(f) => Err(format!("{}: no frame of its documents ({} of {} inputs have one)", f.name, stored.len(), all.len())),
@@ -2063,6 +2081,9 @@ impl Source for Lazy {
     fn complete_rows(&self) -> bool {
         self.inner().complete_rows()
     }
+    fn rows_owned(&self, g: usize, owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+        self.inner().rows_owned(g, owned)
+    }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.inner().expect_lookups(column, keys)
     }
@@ -2095,6 +2116,9 @@ impl Source for Lazy {
     }
     fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
         self.inner().sorted_rows(column, value)
+    }
+    fn sorted_range(&self, column: usize, value: i64) -> Option<std::ops::Range<u32>> {
+        self.inner().sorted_range(column, value)
     }
     fn sorts_rows(&self, column: usize) -> bool {
         self.inner().sorts_rows(column)
@@ -2242,6 +2266,9 @@ impl Source for Traced {
     fn complete_rows(&self) -> bool {
         self.inner.complete_rows()
     }
+    fn rows_owned(&self, g: usize, owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+        self.inner.rows_owned(g, owned)
+    }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.inner.expect_lookups(column, keys)
     }
@@ -2284,6 +2311,10 @@ impl Source for Traced {
     fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
         self.whole("sorted_rows (index)");
         self.inner.sorted_rows(column, value)
+    }
+    fn sorted_range(&self, column: usize, value: i64) -> Option<std::ops::Range<u32>> {
+        self.whole("sorted_rows (index)");
+        self.inner.sorted_range(column, value)
     }
     fn sorts_rows(&self, column: usize) -> bool {
         self.inner.sorts_rows(column)
@@ -2700,7 +2731,7 @@ impl Retained {
     /// rows changed, with the input's digests by document. The relations kept as they were stay as stored.
     /// `sccs`: `prog`'s strata, computed once by the caller.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>, input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>) -> Result<usize> {
+    pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>, input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, placer: Option<crate::content_store::FramePlacer>) -> Result<usize> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's changes, to the frames".into());
         let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(prog.clone());
         // Literal-only leaves are part of the derived relation's identity (leaf_identity), not runtime
@@ -2729,6 +2760,15 @@ impl Retained {
             now.entry(rel.clone()).or_insert(*d);
         }
         let derived: BTreeSet<&String> = sccs.iter().flatten().collect();
+        // Each derived relation's frame is encoded straight into the write's segments as its rows are read (Q89):
+        // neither a copy of the rows nor the frame's bytes are made on the heap. Copied and encoded on the heap, the
+        // frames were held whole until queued, and the cross part's were a cold PostHog run's peak (1.8 → 2.3 GB in
+        // its last second). The run's own (`placer`) when it handed relations off into it as it went; the inputs'
+        // frames have placers of their own, one an input's job (`write_input_frames`).
+        let placer = placer.unwrap_or_else(|| {
+            let bytes: usize = derived.iter().filter_map(|rel| self.framed(rel)).map(|k| k.rel.rows() * k.width * 2).sum();
+            store.frame_placer(derived.len() * 2 + 16, bytes)
+        });
         let all_reads = Reads::of(prog)?;
         let trace = std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some();
         let mut tally = [(0usize, 0usize); 2];
@@ -2750,13 +2790,18 @@ impl Retained {
         let made: HashMap<&String, Whole> = {
             use rayon::prelude::*;
             let atoms = &atoms;
+            let placer = &placer;
             // Under the span open here, on whichever thread runs it: rayon's loops open none of their own.
             let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
             whole.into_par_iter().filter_map(|(rel, k)| {
                 let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || "a relation's frame, digested and encoded".into());
+                if k.rel.levels_shape().2 {
+                    return None;
+                }
                 let types = frame_types(prog, domains, rel, k.rel.types());
                 let d = held_digest(&Cells::new(atoms, &types), &k.rel)?;
-                let bytes = was.derived.get(rel).is_none_or(|s| s.digest != d).then(|| held_bytes(&k.rel));
+                // Encoded straight into the write's segments as its rows are read where they lie (Q89).
+                let bytes = was.derived.get(rel).is_none_or(|s| s.digest != d).then(|| held_placed(&k.rel, types.len(), placer));
                 Some((rel, Whole { d, bytes }))
             }).collect()
         };
@@ -2814,11 +2859,16 @@ impl Retained {
                     if was.derived.get(rel).is_some_and(|s| s.digest == h.d && s.reads == read_digests) {
                         continue;
                     }
+                    // Its rows are the stored ones: only its reads changed.
+                    let Some(bytes) = h.bytes else {
+                        retags.push(crate::content_store::FrameRetag { rel: name.clone(), part: DOCS_PART, reads: read_digests });
+                        continue;
+                    };
                     written += h.n;
                     if let Some(level) = h.levels {
                         puts.push(FramePut { rel: name.clone(), part: LEVELS_PART, digest: h.d, reads: Vec::new(), rows: FrameRows { types: vec![b'i'], rows: level.into_iter().map(i64::from).collect(), n: h.n } }.encoded());
                     }
-                    puts.push(FramePut::encoded_as(name.clone(), DOCS_PART, h.d, read_digests, h.types, h.n, h.bytes));
+                    puts.push(derived_frame(name, h.d, read_digests, h.types, h.n, bytes));
                     continue;
                 }
                 // A relation with no rows to keep (a view) is named by its reads' digests:
@@ -2839,8 +2889,9 @@ impl Retained {
                 if was.derived.get(rel).is_some_and(|s| s.digest == d && s.reads == read_digests) {
                     continue;
                 }
-                // The frame's bytes, read from the rows where they lie; the rows copied only to trace them.
-                let bytes = bytes.or_else(|| Some(held_bytes(&k.rel)));
+                // The frame's bytes, read from the rows where they lie into the write's segments; the rows copied only
+                // to trace them.
+                let bytes = bytes.or_else(|| Some(held_placed(&k.rel, k.rel.types().len(), &placer)));
                 if trace {
                     rows = k.rel.live_rows();
                 }
@@ -2864,7 +2915,7 @@ impl Retained {
                 }
                 let types = frame_types(prog, domains, rel, k.rel.types());
                 puts.push(match (bytes, rows) {
-                    (Some(bytes), _) => FramePut::encoded_as(name.clone(), DOCS_PART, d, read_digests, types, n, bytes),
+                    (Some(bytes), _) => derived_frame(name, d, read_digests, types, n, bytes),
                     (None, Some(rows)) => FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types, rows, n } }.encoded(),
                     (None, None) => return Err(Error::Plan(format!("{rel}: its rows are not held, and its frame is to be written"))),
                 });
@@ -2889,7 +2940,7 @@ impl Retained {
         // documents' table), its digests and granules are of content, so a forked process's frames are written as the
         // store numbers them, and read back as the reader does. Keyed by this process's numbering, they were dropped
         // after a fork, and every next run derived the cross part again.
-        crate::code_rule_dsl::logic::profile::behind(|| store.queue_encoded_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key))));
+        crate::code_rule_dsl::logic::profile::behind(|| store.queue_placed_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key)), placer));
         Ok(written)
     }
 }
@@ -2984,51 +3035,70 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
             eprintln!("rerail: input {rel} (group col {g} of {width}, {} rows, docs {}, phase {:?}, layered {}): {} granules, {} owners of {} differ, {gone_n} gone; {}", source.len(), if hit { "the run's" } else { "recomputed" }, phase, source.as_any().and_then(|a| a.downcast_ref::<Layered>()).is_some(), changed.len(), differ_n, docs.len(), ex.join("; "));
         }
         // Each changed granule's rows, grouped by owner, owners ascending (`kept_inputs` reads each owner's
-        // rows as one range), each in the source's order. One granule's rows at a time are copied out, encoded
-        // and let go: a first write changes every granule, and holding every granule's copy (with a second, the
-        // granule's rows joined) made each input's job hold twice its rows, several inputs at once (the peak of
-        // a new build's first edit, 2026-11-17). A maintained input (`Layered`) gives each owner's rows from its
-        // ranges; another is read through once for its rows' places (4 bytes a row), then by them.
-        let encode = |part: i64, rows: Vec<i64>| -> (EncodedFrame, usize) {
-            let n = rows.len() / width;
-            (FramePut { rel: name.clone(), part, digest: 0, reads: Vec::new(), rows: FrameRows { types: types.clone(), rows, n } }.encoded(), n)
-        };
-        match source.as_any().and_then(|a| a.downcast_ref::<Layered>()) {
-            Some(l) => {
-                let mut by: BTreeMap<i64, Vec<i64>> = changed.iter().map(|g| (*g, Vec::new())).collect();
+        // rows as one range), each in the source's order, read a window at a time into the granule's place in the
+        // job's segments (`FramePlacer::place_rows`, Q89); copied and encoded on the heap only where no segment takes
+        // it. A maintained input (`Layered`) gives each owner's rows from its ranges; another is read through once for
+        // its rows' places (4 bytes a row), then by them.
+        let layered = source.as_any().and_then(|a| a.downcast_ref::<Layered>());
+        let all: Vec<usize> = (0..width).collect();
+        let mut owners_of: BTreeMap<i64, Vec<i64>> = changed.iter().map(|g| (*g, Vec::new())).collect();
+        let mut ids: BTreeMap<i64, BTreeMap<i64, Vec<u32>>> = BTreeMap::new();
+        match layered {
+            Some(_) => {
                 for owner in docs.keys().filter(|d| changed.contains(&granule(**d))) {
-                    by.get_mut(&granule(*owner)).expect("a changed granule").push(*owner);
-                }
-                for (part, mut owners) in by {
-                    owners.sort_unstable();
-                    let rows: Vec<i64> = owners.iter().flat_map(|o| l.owner_rows(*o)).collect();
-                    let (frame, n) = encode(part, rows);
-                    written += n;
-                    puts.push(frame);
+                    owners_of.get_mut(&granule(*owner)).expect("a changed granule").push(*owner);
                 }
             }
             None => {
-                let all: Vec<usize> = (0..width).collect();
                 let mut row = vec![0i64; width];
-                let mut at: BTreeMap<i64, BTreeMap<i64, Vec<u32>>> = changed.iter().map(|g| (*g, BTreeMap::new())).collect();
                 for r in 0..source.len() {
                     source.row_at(r, &all[g..=g], &mut row[g..=g]);
                     let owner = super::memo::document_of(row[g]);
-                    if let Some(out) = at.get_mut(&granule(owner)) {
-                        out.entry(owner).or_default().push(u32::try_from(r).expect("an input of fewer than 2^32 rows"));
+                    let gr = granule(owner);
+                    if changed.contains(&gr) {
+                        ids.entry(gr).or_default().entry(owner).or_default().push(u32::try_from(r).expect("an input of fewer than 2^32 rows"));
                     }
-                }
-                for (part, owners) in at {
-                    let mut rows: Vec<i64> = Vec::with_capacity(owners.values().map(Vec::len).sum::<usize>() * width);
-                    for r in owners.into_values().flatten() {
-                        source.row_at(r as usize, &all, &mut row);
-                        rows.extend_from_slice(&row);
-                    }
-                    let (frame, n) = encode(part, rows);
-                    written += n;
-                    puts.push(frame);
                 }
             }
+        }
+        // Each granule's frame is encoded straight into this job's segments as its rows are read (Q89): neither a copy
+        // of its rows nor its bytes are made on the heap; the job's frames are queued with them when it ends.
+        let placer = store.frame_placer(changed.len() + 2, source.len() * width * 2);
+        for part in changed.iter().copied() {
+            let by_id = ids.remove(&part).unwrap_or_default();
+            let mut owners = owners_of.remove(&part).unwrap_or_default();
+            owners.sort_unstable();
+            let n: usize = match layered {
+                Some(l) => owners.iter().map(|o| l.owner_rows(*o).len() / width).sum(),
+                None => by_id.values().map(Vec::len).sum(),
+            };
+            let each = |f: &mut dyn FnMut(&[i64])| match layered {
+                Some(l) => owners.iter().for_each(|o| f(&l.owner_rows(*o))),
+                None => {
+                    let mut buf: Vec<i64> = Vec::with_capacity(4096.min(n) * width);
+                    for r in by_id.values().flatten() {
+                        let at = buf.len();
+                        buf.resize(at + width, 0);
+                        source.row_at(*r as usize, &all, &mut buf[at..]);
+                        if buf.len() == 4096 * width {
+                            f(&buf);
+                            buf.clear();
+                        }
+                    }
+                    if !buf.is_empty() {
+                        f(&buf);
+                    }
+                }
+            };
+            written += n;
+            puts.push(match placer.place_rows(width, part, &each) {
+                Some(p) => FramePut::placed_as(name.clone(), part, 0, Vec::new(), types.clone(), n, p),
+                None => {
+                    let mut rows: Vec<i64> = Vec::with_capacity(n * width);
+                    each(&mut |w: &[i64]| rows.extend_from_slice(w));
+                    FramePut { rel: name.clone(), part, digest: 0, reads: Vec::new(), rows: FrameRows { types: types.clone(), rows, n } }.encoded()
+                }
+            });
         }
         let mut table: Vec<(i64, (u64, u64))> = docs.iter().map(|(d, v)| (*d, *v)).collect();
         table.sort_unstable();
@@ -3037,7 +3107,7 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
         // its owners admits them from this, decoding no frame (`kept_inputs`, Q91).
         let mask = table.iter().fold(0u64, |m, (d, _)| m | granule_bit(granule(*d)));
         puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: vec![(GRANULES_READ.to_owned(), mask)], rows: FrameRows { types: docs_types(atom_owner), n: table.len(), rows } }.encoded());
-        queue(puts);
+        store.queue_placed_retagged(was.space, puts, Vec::new(), Vec::new(), Vec::new(), None, placer);
         Some((digest, written))
     };
     let framed_inputs: Vec<Option<(u64, usize)>> = {
@@ -3059,7 +3129,33 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
 /// A relation written whole (`write_frames`): its digest, and its rows' bytes when its rows are not the stored ones.
 struct Whole {
     d: u64,
-    bytes: Option<Vec<u8>>,
+    bytes: Option<WholeBytes>,
+}
+
+/// A frame's bytes made in its job: placed in the write's segments, or (no segment took them) on the heap.
+pub(in crate::code_rule_dsl) enum WholeBytes {
+    Placed(crate::content_store::PlacedFrame),
+    Heap(Vec<u8>),
+}
+
+/// `held`'s live rows encoded into the write's segments (`placer`), read where they lie part by part; on the heap
+/// when no segment takes them. No copy of the rows, nor of the bytes (Q89).
+fn held_placed(held: &InRel, width: usize, placer: &crate::content_store::FramePlacer) -> WholeBytes {
+    let each = |f: &mut dyn FnMut(&[i64])| {
+        held.each_live_batch(0, held.len(), |rows| f(rows));
+    };
+    match placer.place_rows(width, DOCS_PART, &each) {
+        Some(p) => WholeBytes::Placed(p),
+        None => WholeBytes::Heap(held_bytes(held)),
+    }
+}
+
+/// A frame of a derived relation from its bytes as made (`WholeBytes`).
+fn derived_frame(name: &FrameRel, d: u64, reads: Vec<(String, u64)>, types: Vec<u8>, n: usize, bytes: WholeBytes) -> EncodedFrame {
+    match bytes {
+        WholeBytes::Placed(p) => FramePut::placed_as(name.clone(), DOCS_PART, d, reads, types, n, p),
+        WholeBytes::Heap(b) => FramePut::encoded_as(name.clone(), DOCS_PART, d, reads, types, n, b),
+    }
 }
 
 /// A derived relation the cross-file run handed off once no later stratum read it (`plan::Hooks::hand_off`), with
@@ -3070,19 +3166,22 @@ pub(in crate::code_rule_dsl) struct Handed {
     n: usize,
     types: Vec<u8>,
     d: u64,
-    bytes: Vec<u8>,
+    /// Its bytes, placed in the part's write (`placer`); none when its rows are the stored ones (`was`), whose frame
+    /// stays (its reads retagged if they changed).
+    bytes: Option<WholeBytes>,
     levels: Option<Vec<u32>>,
 }
 
 impl Handed {
-    /// `held`'s frame as `write_frames` makes one written whole; `None` for a relation of no rows of its own (a view).
-    pub(in crate::code_rule_dsl) fn of(store: &ContentStore, prog: &Placed, domains: &lower::Domains, rel: &str, held: &InRel) -> Option<Handed> {
+    /// `held`'s frame as `write_frames` makes one written whole, encoded into the part's write (`placer`, which
+    /// `write_frames` queues); `None` for a relation of no rows of its own (a view). `was`: its stored frame's digest.
+    pub(in crate::code_rule_dsl) fn of(store: &ContentStore, prog: &Placed, domains: &lower::Domains, rel: &str, held: &InRel, was: Option<u64>, placer: &crate::content_store::FramePlacer) -> Option<Handed> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "a relation handed off, its frame made".into());
         let n = held.rows();
         let types = frame_types(prog, domains, rel, held.types());
         let atoms = store.atoms_handle();
         let d = held_digest(&Cells::new(&atoms, &types), held)?;
-        let bytes = held_bytes(held);
+        let bytes = (was != Some(d)).then(|| held_placed(held, types.len(), placer));
         Some(Handed { n, types, d, bytes, levels: held.live_levels() })
     }
 }
@@ -3148,9 +3247,10 @@ pub(in crate::code_rule_dsl) fn held_digest(cells: &Cells, held: &InRel) -> Opti
     }))
 }
 
-/// `held`'s live rows encoded as a frame's (`FramePut::encode_rows`), each column read where it lies a batch at a time.
+/// `held`'s live rows encoded as a frame's (`FramePut::encode_rows`) on the heap, read where they lie part by part:
+/// for a frame no segment took (`held_placed`).
 pub(in crate::code_rule_dsl) fn held_bytes(held: &InRel) -> Vec<u8> {
-    FramePut::encode_columns(held.types().len(), &|c, f| {
-        held.each_live_column(c, |values| f(values));
+    FramePut::encode_windows(held.types().len(), &|f| {
+        held.each_live_batch(0, held.len(), |rows| f(rows));
     })
 }

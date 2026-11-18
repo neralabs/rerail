@@ -50,6 +50,11 @@ pub(crate) struct P<'a> {
     no_lambda: bool,
     /// The token index of a receiver's `.`: a user type stops before it.
     type_stop: usize,
+    /// The expression depth where a keyword no expression starts with is a `simple_identifier`
+    /// (tree-sitter lexes it so where only a name is valid: `split_operand_reads`).
+    kw_depth: u32,
+    /// The token where an expression with `kw_depth` starts (the split's operand).
+    kw_at: usize,
 }
 
 /// `src` parsed.
@@ -78,6 +83,8 @@ pub fn parse(src: &[u8]) -> R<crate::Tape> {
             asi_memo: (u32::MAX, 0, Asi::No, 0),
             no_lambda: false,
             type_stop: usize::MAX,
+            kw_depth: u32::MAX,
+            kw_at: usize::MAX,
         };
         if let Err(r) = p.source_file() {
             return Err(match r {
@@ -226,19 +233,12 @@ impl<'a> P<'a> {
             self.toks.push(t);
             return;
         }
-        self.toks.reserve(BATCH);
-        for _ in 0..BATCH {
-            let t = match self.lx.token(self.next, &mut self.t.extras) {
-                Ok(t) => t,
-                // A token the lexer refuses is refused where the parser reads it.
-                Err(Refusal::Lex(at)) | Err(Refusal::Parse(at)) => Tok { kind: T::Eof, word: u8::MAX, nl: false, tick: false, start: at, end: at },
-                Err(Refusal::TooLarge) => Tok { kind: T::Eof, word: u8::MAX, nl: false, tick: false, start: 0, end: 0 },
-            };
-            self.next = t.end as usize;
-            self.toks.push(t);
-            if t.kind == T::Eof {
-                return;
-            }
+        // A block at a time (`Lexer::lex_run`), at least a batch.
+        match self.lx.lex_run(self.next, &mut self.toks, BATCH, &mut self.t.extras) {
+            Ok(next) => self.next = next,
+            // A token the lexer refuses is refused where the parser reads it.
+            Err(Refusal::Lex(at)) | Err(Refusal::Parse(at)) => self.toks.push(Tok { kind: T::Eof, word: u8::MAX, nl: false, tick: false, start: at, end: at }),
+            Err(Refusal::TooLarge) => self.toks.push(Tok { kind: T::Eof, word: u8::MAX, nl: false, tick: false, start: 0, end: 0 }),
         }
     }
 

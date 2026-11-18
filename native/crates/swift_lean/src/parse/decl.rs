@@ -123,14 +123,29 @@ impl<'a> P<'a> {
             return self.refuse();
         }
         self.user_type()?;
-        if self.peek() == T::LParen && !self.touching() && !matches!(self.t_text_last(), b"escaping" | b"Sendable" | b"autoclosure") {
-            // `@A (…)`: a function type's parameters where `->` follows them (seen), else
-            // arguments or parameters as the GLR decides (both seen with `async throws ->`).
-            if !self.arrow_after_parens(0) {
+        // `@A (…)` with a space: a function type's parameters where `->` follows them. Where
+        // `async`, `throws` or `rethrows` follows, the attribute's arguments if they read as
+        // arguments (`A`, `A.B`, `[A]`, `a: A`, `()`), the parameters otherwise (`A<B>`,
+        // `inout A`, `any P`): the function type's are then a user type named by the keyword
+        // (probed). Else refused (not seen).
+        let mut args = self.peek() == T::LParen && self.touching();
+        if self.peek() == T::LParen && !self.touching() && !matches!(self.t_text_last(), b"escaping" | b"autoclosure") {
+            if matches!(self.word_after_parens(0), w::ASYNC | w::THROWS | w::RETHROWS) {
+                args = self.trial(|p| p.attribute_arguments());
+            } else if !self.arrow_after_parens(0) && !matches!(self.t_text_last(), b"Sendable") {
                 return self.refuse();
             }
         }
-        if self.peek() == T::LParen && self.touching() {
+        if args {
+            self.attribute_arguments()?;
+        }
+        self.close(n);
+        Ok(())
+    }
+
+    /// An attribute's arguments: `(`, the arguments, `)`.
+    fn attribute_arguments(&mut self) -> R<()> {
+        {
             self.tk(K::TLParen)?;
             self.level(false, |p| {
                 while p.peek() != T::RParen {
@@ -144,7 +159,6 @@ impl<'a> P<'a> {
             })?;
             self.expect(T::RParen)?;
         }
-        self.close(n);
         Ok(())
     }
 
@@ -367,6 +381,25 @@ impl<'a> P<'a> {
     }
 
     /// Whether `->` follows the parenthesized list opening `k` tokens ahead.
+    /// The word after the parentheses opening `k` tokens ahead.
+    fn word_after_parens(&mut self, k: usize) -> u8 {
+        let (mut d, mut j) = (0, k);
+        loop {
+            match self.kind_at(j) {
+                T::LParen | T::LBracket => d += 1,
+                T::RParen | T::RBracket => {
+                    d -= 1;
+                    if d == 0 {
+                        return self.word_at(j + 1);
+                    }
+                }
+                T::Eof => return 0,
+                _ => {}
+            }
+            j += 1;
+        }
+    }
+
     fn arrow_after_parens(&mut self, k: usize) -> bool {
         let (mut d, mut j) = (0, k);
         loop {
@@ -456,7 +489,10 @@ impl<'a> P<'a> {
                     let stmt = self.stmt;
                     let willset = self.willset_after_value();
                     let lambda = std::mem::replace(&mut self.no_lambda, willset);
+                    // Calls in right operands are counted per expression (`hack_calls`).
+                    let calls = std::mem::take(&mut self.hack_calls);
                     let r = self.expr_f(super::expr::VALUE, f::VALUE);
+                    self.hack_calls = calls;
                     self.no_lambda = lambda;
                     self.stmt = stmt;
                     r?;
@@ -981,6 +1017,10 @@ impl<'a> P<'a> {
                     }
                     T::Hash if p.directive_next() => {
                         p.directive()?;
+                        if p.cc_call {
+                            // `#if _runtime(…)` among members: not seen.
+                            return p.refuse();
+                        }
                         continue;
                     }
                     T::Hash if p.diagnostic_next() => {
@@ -1030,6 +1070,10 @@ impl<'a> P<'a> {
                     T::RBrace => return Ok(()),
                     T::Hash if p.directive_next() => {
                         p.directive()?;
+                        if p.cc_call {
+                            // `#if _runtime(…)` among members: not seen.
+                            return p.refuse();
+                        }
                         continue;
                     }
                     _ => {}
@@ -1235,7 +1279,9 @@ impl<'a> P<'a> {
             T::LParen => self.tuple_pattern()?,
             _ => {
                 let lambda = std::mem::replace(&mut self.no_lambda, true);
+                let calls = std::mem::take(&mut self.hack_calls);
                 let r = self.expr(TOP);
+                self.hack_calls = calls;
                 self.no_lambda = lambda;
                 r?;
             }

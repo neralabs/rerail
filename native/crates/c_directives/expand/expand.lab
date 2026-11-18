@@ -1,0 +1,439 @@
+; main: the TU's tokens, macros expanded, onto the output tape.
+main:   PUSH @m1
+        GOTO @one
+m1:     IS m=0 8          ; EOF
+        GOTO @end
+        PUT 0
+        GOTO @main
+end:    ACCEPT 0
+; one: T <- the next token, macros expanded (lean `Pp::next`).
+one:    PUSH @o1
+        GOTO @raw
+o1:     IS m=4 0          ; in an `#if`'s line, `defined` is an operator
+        GOTO @odef
+o2:     LOOKUP 0          ; an identifier, not painted, naming a macro
+        GOTO @found
+        RETURN 0
+odef:   DEFINED 0
+        RETURN 0
+        GOTO @o2
+found:  MACRO m=0 0       ; being expanded: painted
+        GOTO @paint
+        MACRO m=2 0       ; a built-in
+        GOTO @bi
+        MACRO m=1 0
+        GOTO @fn
+        FRAME 0           ; object-like
+        GOTO @pre
+paint:  PAINT 0
+        RETURN 0
+; A built-in: its value, its operand read raw to its `)` (and expanded where it asks).
+bi:     MACRO m=1 0
+        GOTO @bifn
+        BUILTIN m=0 0
+        RETURN 0
+bifn:   PEEK m=1 "("
+        GOTO @bical
+        RETURN 0
+bical:  BUILTIN m=1 0     ; an operator here: its operand's level opened
+        GOTO @bop
+        RETURN 0
+bop:    READ 0            ; its `(`
+bl:     PUSH @b1
+        GOTO @raw
+b1:     IS m=0 8
+        GOTO @bend
+        BUILTIN m=2 0
+        GOTO @bend
+        GOTO @bl
+bend:   BUILTIN m=3 0     ; the operand to be expanded, else T its value
+        GOTO @bx
+        RETURN 0
+bx:     PUSH @bx1
+        GOTO @one
+bx1:    IS m=0 8
+        GOTO @bxe
+        KEEP 0
+        GOTO @bx
+bxe:    BUILTIN m=4 0     ; T its value, or `_Pragma` carried out
+        RETURN 0
+        GOTO @one
+fn:     PEEK m=1 "("      ; a call only where `(` follows
+        GOTO @call
+        RETURN 0
+call:   FRAME 0
+        READ 0            ; the `(`
+; args: the call's arguments, unexpanded, to its `)`.
+args:   PUSH @a1
+        GOTO @raw
+a1:     IS m=0 8          ; EOF (or a stop source's end): no `)`
+        GOTO @unterm
+        IS m=1 "("
+        GOTO @open
+        IS m=1 ")"
+        GOTO @close
+        IS m=1 ","
+        GOTO @comma
+        ARG m=0 0
+        GOTO @args
+open:   ARG m=1 0
+        GOTO @args
+close:  ARG m=2 0         ; the call's `)`, at depth 0
+        GOTO @done
+        GOTO @args
+comma:  ARG m=3 0
+        GOTO @args
+done:   ARG m=4 0         ; the count right
+        GOTO @pre
+        RETURN 0          ; else T is the call's name, painted
+unterm: ARG m=5 0
+        GOTO @one
+; pre: each argument substitution expands, expanded in isolation, in the order it asks.
+pre:    PRE m=0 0
+        GOTO @pl
+        GOTO @subst
+pl:     PUSH @p1
+        GOTO @one
+p1:     IS m=0 8          ; the argument's end
+        GOTO @pend
+        KEEP 0
+        GOTO @pl
+pend:   PRE m=1 0
+        GOTO @pre
+; subst: the top frame's body substituted, a body token a turn (`SUB`), its `__VA_OPT__`s'
+; contents walked in place, `#`'s literals made a token a turn (`STR`), then its pastes (`GLUE`);
+; then read, its macro disabled while it is.
+subst:  SUB m=0 0
+sl:     SUB m=1 0         ; the body's next token, B
+        GOTO @sb
+        SUB m=7 0         ; a __VA_OPT__'s content ended
+        GOTO @vend
+        SUB m=9 0         ; the output's pastes
+fp:     GLUE 0
+        GOTO @fp
+        SUB m=10 0
+        GOTO @one
+sb:     SUB m=2 0         ; `#` and a parameter
+        GOTO @sstr
+        SUB m=3 0         ; `#__VA_OPT__(`
+        GOTO @sl
+        SUB m=4 0         ; `__VA_OPT__(`
+        GOTO @sl
+        SUB m=5 0         ; a parameter's argument, or B
+        GOTO @sl
+sstr:   STR m=0 0
+st:     STR m=1 0
+        GOTO @st
+        STR m=2 0
+        GOTO @sl
+vend:   SUB m=6 0         ; a `#__VA_OPT__`'s content: pasted, then stringized
+        GOTO @vp
+        GOTO @sl
+vp:     GLUE 0
+        GOTO @vp
+        SUB m=8 0
+        STR m=0 0
+vs:     STR m=1 0
+        GOTO @vs
+        STR m=3 0
+        GOTO @sl
+; raw: T <- the next token, unexpanded; directives carried out as their `#` is read.
+raw:    READ 0
+        IS m=3 0
+        GOTO @dir
+        RETURN 0
+dir:    LINE 0
+        GOTO @named
+        GOTO @raw         ; the null directive
+named:  IS m=0 1          ; a number: GNU's line marker
+        GOTO @lmark
+        IS m=1 "define"
+        GOTO @def
+        IS m=1 "undef"
+        GOTO @undef
+        IS m=1 "if"
+        GOTO @if
+        IS m=1 "ifdef"
+        GOTO @ifdef
+        IS m=1 "ifndef"
+        GOTO @ifndef
+        IS m=1 "elif"
+        GOTO @chain
+        IS m=1 "elifdef"
+        GOTO @chain
+        IS m=1 "elifndef"
+        GOTO @chain
+        IS m=1 "else"
+        GOTO @chain
+        IS m=1 "endif"
+        GOTO @endif
+        IS m=1 "include"
+        GOTO @inc
+        IS m=1 "include_next"
+        GOTO @inc
+        IS m=1 "import"
+        GOTO @inc
+        IS m=1 "pragma"
+        GOTO @pragma
+        IS m=1 "line"
+        GOTO @line
+        IS m=1 "embed"
+        GOTO @embed
+        SKIPLINE 0
+        GOTO @raw
+; `#embed`: its name (expanded where it is not spelled), then its parameters expanded, then its
+; file's bytes.
+embed:  EMBED m=0 0
+        GOTO @en
+er:     PUSH @er1
+        GOTO @one
+er1:    IS m=0 8
+        GOTO @ere
+        KEEP 0
+        GOTO @er
+ere:    EMBED m=2 0
+ep:     EMBED m=3 0       ; a parameter
+        GOTO @ea
+        EMBED m=7 0       ; the file, its first tokens
+        GOTO @eb
+        GOTO @ee
+ea:     EMBED m=4 0       ; an argument's token
+        GOTO @ea
+        EMBED m=5 0       ; `limit`
+        GOTO @el
+        GOTO @ep
+el:     PUSH @el1
+        GOTO @cond
+el1:    EMBED m=6 0
+        GOTO @ep
+eb:     EMBED m=8 0       ; a byte
+        GOTO @eb
+        EMBED m=9 0
+ee:     EMBED m=10 0
+        GOTO @raw
+en:     PUSH @en1
+        GOTO @one
+en1:    IS m=0 8
+        GOTO @ene
+        KEEP 0
+        GOTO @en
+ene:    EMBED m=1 0
+        GOTO @er
+lmark:  LINEDIR m=0 0
+line:   IF m=2 0          ; its line expanded
+ll:     PUSH @l1
+        GOTO @one
+l1:     IS m=0 8
+        GOTO @le
+        KEEP 0
+        GOTO @ll
+le:     LINEDIR m=1 0
+        GOTO @raw
+pragma: PRAGMA 0
+        GOTO @raw
+; An include: its header name as mode (a) read it, or made of its line expanded.
+inc:    INCLUDE m=0 0
+        GOTO @enter
+        IF m=2 0
+hl:     PUSH @h1
+        GOTO @one
+h1:     IS m=0 8
+        GOTO @he
+        KEEP 0
+        GOTO @hl
+he:     INCLUDE m=1 0
+        GOTO @enter
+        GOTO @raw         ; malformed, or a name the host resolves for the next round
+enter:  INCLUDE m=2 0
+        GOTO @raw
+; `#define`: its name, its parameters, its body marked, its uses walked, a token a turn.
+def:    DEFINE m=0 0      ; its name
+        GOTO @d1
+        GOTO @raw
+d1:     DEFINE m=1 0      ; `(` right after it
+        GOTO @dp
+        GOTO @db
+dp:     DEFINE m=2 0      ; a parameter list's token
+        GOTO @dp
+        DEFINE m=3 0      ; the list closed
+        GOTO @db
+        GOTO @raw
+db:     DEFINE m=4 0
+dm:     DEFINE m=5 0      ; a body token marked
+        GOTO @dm
+        DEFINE m=6 0
+du:     DEFINE m=7 0      ; a use walked
+        GOTO @du
+        DEFINE m=8 0
+        GOTO @raw
+undef:  UNDEF 0
+        GOTO @raw
+; `#ifdef` and `#ifndef`: no name is not defined (the lean pass's reading).
+ifdef:  LINE 0
+        GOTO @ifd1
+        COND m=0 0
+        GOTO @skip
+ifd1:   IS m=0 0          ; an identifier
+        GOTO @ifd2
+        GOTO @untaken
+ifd2:   LOOKUP 0
+        GOTO @taken
+        GOTO @untaken
+ifndef: LINE 0
+        GOTO @ifn1
+        COND m=1 0
+        GOTO @raw
+ifn1:   IS m=0 0
+        GOTO @ifn2
+        GOTO @taken
+ifn2:   LOOKUP 0
+        GOTO @untaken
+        GOTO @taken
+taken:  SKIPLINE 0
+        COND m=1 0
+        GOTO @raw
+untaken: SKIPLINE 0
+        COND m=0 0
+        GOTO @skip
+; `#if`: its line expanded, `defined` an operator, then evaluated.
+if:     IF m=0 0
+il:     PUSH @i1
+        GOTO @one
+i1:     IS m=0 8
+        GOTO @ie
+        KEEP 0
+        GOTO @il
+ie:     IF m=1 0
+        PUSH @ie2
+        GOTO @cond
+ie2:    EXPR m=14 0       ; whole, and true
+        GOTO @iftrue
+        COND m=0 0
+        GOTO @skip
+iftrue: COND m=1 0
+        GOTO @raw
+; An `#elif…` or `#else` read: its chain was taken, so the rest of it is passed, to its `#endif`.
+chain:  COND m=2 0
+        GOTO @ch1
+        SKIPLINE 0        ; no group open: unmatched
+        GOTO @raw
+ch1:    IS m=1 "else"
+        COND m=5 0
+        SKIPLINE 0
+        GOTO @skip
+endif:  SKIPLINE 0
+        COND m=6 0
+        GOTO @raw
+; skip: a group not taken, passed by its chain to the next directive of it (lean `skip_group`).
+skip:   SKIP 0
+        READ 0            ; its `#`
+        IS m=0 8          ; the file's end, the chain open
+        GOTO @raw
+        LINE 0
+        GOTO @sk1
+        GOTO @skip
+sk1:    IS m=1 "endif"
+        GOTO @endif
+        COND m=3 0        ; taken already, or past its `#else`: passed too
+        GOTO @skon
+        IS m=1 "else"
+        GOTO @skelse
+        IS m=1 "elif"
+        GOTO @skelif
+        IS m=1 "elifdef"
+        GOTO @skedef
+        IS m=1 "elifndef"
+        GOTO @skendef
+        GOTO @skip
+skon:   IS m=1 "else"
+        COND m=5 0
+        GOTO @skip
+skelse: SKIPLINE 0
+        COND m=5 0
+        COND m=4 0
+        GOTO @raw
+skelif: IF m=0 0
+sel:    PUSH @se1
+        GOTO @one
+se1:    IS m=0 8
+        GOTO @see
+        KEEP 0
+        GOTO @sel
+see:    IF m=1 0
+        PUSH @se2
+        GOTO @cond
+se2:    EXPR m=14 0
+        GOTO @sktake
+        GOTO @skip
+skedef: LINE 0
+        GOTO @sed1
+        GOTO @skip
+sed1:   IS m=0 0
+        GOTO @sed2
+        GOTO @skip
+sed2:   LOOKUP 0
+        GOTO @sktake
+        GOTO @skip
+skendef: LINE 0
+        GOTO @sen1
+        GOTO @sktake
+sen1:   IS m=0 0
+        GOTO @sen2
+        GOTO @sktake
+sen2:   LOOKUP 0
+        GOTO @skip
+        GOTO @sktake
+sktake: SKIPLINE 0
+        COND m=4 0
+        GOTO @raw
+; `#if`'s expression (`pp_expr`'s precedence climbing): `cond` is `ternary (, ternary)*`,
+; `ternary` is `binary(1) (? cond : ternary)?`, `binary(min)` is `unary (op binary(p+1))*` over the
+; operators of precedence `min` or more, `unary` a prefix operator's operand, `( cond )` or a
+; primary. Each value is left on the expression's stack.
+cond:   PUSH @cd1
+        GOTO @tern
+cd1:    EXPR m=6 0        ; `,`
+        GOTO @cd2
+        RETURN 0
+cd2:    PUSH @cd1
+        GOTO @tern
+tern:   EXPR m=7 0
+        PUSH @tn1
+        GOTO @bin
+tn1:    EXPR m=11 0       ; `?`
+        GOTO @tn2
+        RETURN 0
+tn2:    PUSH @tn3
+        GOTO @cond
+tn3:    EXPR m=12 0       ; `:`
+        PUSH @tn4
+        GOTO @tern
+tn4:    EXPR m=13 0
+        RETURN 0
+bin:    PUSH @bn1
+        GOTO @un
+bn1:    EXPR m=8 0        ; a binary operator
+        GOTO @bn2
+        EXPR m=10 0
+        RETURN 0
+bn2:    PUSH @bn3
+        GOTO @bin
+bn3:    EXPR m=9 0
+        GOTO @bn1
+un:     EXPR m=0 0        ; an operand's token
+        GOTO @un1
+        RETURN 0
+un1:    EXPR m=1 0        ; a prefix operator
+        GOTO @un2
+        EXPR m=3 0        ; `(`
+        GOTO @un3
+        EXPR m=5 0
+        RETURN 0
+un2:    PUSH @un4
+        GOTO @un
+un4:    EXPR m=2 0
+        RETURN 0
+un3:    PUSH @un5
+        GOTO @cond
+un5:    EXPR m=4 0        ; `)`
+        RETURN 0
