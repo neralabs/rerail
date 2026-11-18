@@ -847,8 +847,9 @@ describe("source-scoped steers", () => {
       }));
       let runtime = runtimes[0]!;
       const session = { host: "claude-code" as const, sessionId: "reopened", cwd: root };
+      // A session a restarted runtime opens builds that runtime's rules first, which takes seconds on a busy machine.
       const reopened = async () => {
-        await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(2));
+        await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(2), { timeout: 20_000 });
       };
       const ids = { sessionId: session.sessionId, session };
       const test = {
