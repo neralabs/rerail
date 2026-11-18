@@ -374,25 +374,29 @@ fn the_corpus_expands_as_the_lean_pass_does() {
     assert!(differ.is_empty());
 }
 
+/// The depths `#if`'s evaluator is compiled at in the tests (`compile_k`): none, one, and past
+/// and within the examples' nesting.
+const DEPTHS: [usize; 4] = [0, 1, 4, 16];
+
 /// The compiled words (`native_cpu_pp`, decision 0348's stage 4b) give the interpreter's tokens
-/// on every example and TU, in C and C++.
+/// on every example and TU, in C and C++, `#if`'s evaluator at each of `DEPTHS`.
 #[test]
 fn the_compiled_words_are_the_interpreters() {
-    use rerail_compiler::native_cpu_pp::compile;
+    use rerail_compiler::native_cpu_pp::compile_k;
     let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
     let mut tus: Vec<(String, Vec<(&str, &[u8])>)> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
     tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
     let (mut same, mut differ) = (0, Vec::new());
-    for cpp in [false, true] {
+    for (cpp, k) in [false, true].into_iter().flat_map(|c| DEPTHS.map(|k| (c, k))) {
         let p = program(cpp).unwrap();
-        let c = compile(p).unwrap_or_else(|e| panic!("cpp {cpp}: {e:?}"));
+        let c = compile_k(p, k).unwrap_or_else(|e| panic!("cpp {cpp} k {k}: {e:?}"));
         let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
         for (name, files) in &tus {
             let want = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &pp_words::run);
             let got = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &jit);
             match got {
                 got if got == want => same += 1,
-                got => differ.push(format!("{name} (cpp {cpp}): JIT {got:?}\n interpreter {want:?}")),
+                got => differ.push(format!("{name} (cpp {cpp}, k {k}): JIT {got:?}\n interpreter {want:?}")),
             }
         }
     }
@@ -404,16 +408,20 @@ fn the_compiled_words_are_the_interpreters() {
 #[test]
 #[ignore = "reads the corpus (~/orca/rerail-shared/lean-corpus, or RERAIL_C_CORPUS)"]
 fn the_corpus_compiled_is_the_interpreters() {
-    use rerail_compiler::native_cpu_pp::compile;
     let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
     let (mut same, mut out, mut differ) = (0, std::collections::BTreeMap::<String, usize>::new(), Vec::new());
     let (mut t_words, mut t_jit) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
+    let depths = std::cell::RefCell::new(std::collections::BTreeMap::<usize, usize>::new());
     for (dir, cpp) in [("c", false), ("cpp", true)] {
         let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
         let mut paths: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
         paths.sort();
-        let c = compile(program(cpp).unwrap()).unwrap_or_else(|e| panic!("cpp {cpp}: {e:?}"));
-        let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
+        // Each TU at its files' depth (`Compiled::depth`).
+        let c = Compiled::new();
+        let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
+            *depths.borrow_mut().entry(Compiled::depth(f)).or_default() += 1;
+            c.run(w, f, e, b)
+        };
         for p in paths {
             let src = std::fs::read(&p).unwrap();
             let files = [("main.c", src.as_slice())];
@@ -432,6 +440,7 @@ fn the_corpus_compiled_is_the_interpreters() {
             }
         }
     }
+    eprintln!("the runs by depth: {:?}", depths.borrow());
     eprintln!("the same {same}, refused by both {}, differ {}; the expanded TUs: interpreter {t_words:?}, JIT {t_jit:?} (the grammars' reads included)", out.values().sum::<usize>(), differ.len());
     for (why, n) in &out {
         eprintln!("  {n:5} {why}");
@@ -442,11 +451,23 @@ fn the_corpus_compiled_is_the_interpreters() {
     assert!(differ.is_empty());
 }
 
+/// `if_depth` on lines whose calls are counted by hand on `expand.lab`'s `cond`.
+#[test]
+fn an_ifs_depth_is_estimated_from_above() {
+    for (line, want) in [("1", 3), ("-1", 4), ("(1)", 7), ("1 + 2", 5), ("1 + 2 * 3", 7), ("a && (b || c)", 11), ("1 ? 2 : 3", 5), ("((1))", 11), ("!defined X", 4), ("1 ? 2 : 3 ? 4 : 5", 6), ("(1, 2)", 7), ("1 * 2 + 3", 7)] {
+        let src = format!("#if {line}\n#endif\n");
+        let toks = tokens::interpreted(src.as_bytes(), false).unwrap();
+        let read = crate::interpreted_read(src.as_bytes()).unwrap();
+        let tape = tape(src.as_bytes(), &toks, 0, &mut Vec::new(), u32::MAX - 1);
+        assert_eq!(if_depth(&read, src.as_bytes(), &tape), want, "{line}");
+    }
+}
+
 /// `#if`'s primaries and operators, the JIT's against the interpreter's, value by value: each
 /// case's 64 bits, whether it is unsigned, and whether it is an error, each an `#if` of its own.
 #[test]
 fn the_compiled_ifs_have_the_interpreters_values() {
-    use rerail_compiler::native_cpu_pp::compile;
+    use rerail_compiler::native_cpu_pp::compile_k;
     const CASES: &[&str] = &[
         // Numbers.
         "0", "7", "010", "0x1F", "0X1f", "0b101", "0B11", "1'000'000", "0'7", "0x'1", "18446744073709551615", "18446744073709551616", "9223372036854775808",
@@ -459,18 +480,20 @@ fn the_compiled_ifs_have_the_interpreters_values() {
         "true", "foo", "(1 and 1)", "-1 < 0u", "0 && 1/0", "1 || 1/0", "1 ? 2 : 1/0", "0 ? 1/0 : 3", "1/0", "1%0", "(-9223372036854775807-1) / -1", "(-9223372036854775807-1) % -1",
         "1 << 64", "1 << 63", "-1 >> 70", "-8 >> 1", "18446744073709551615u >> 63", "~0u", "!5", "-(0u)", "-1u", "7 / -2", "-7 % 2", "7u / 2", "3 * -4", "2 + 3 * 4 - 1",
         "1 == 1u", "2 != 3", "5 & 3 | 8 ^ 1", "-1 <= 0", "0u >= 1", "(1)", "((2))", "1 +", "(1", "1 2", "+-~!0", "1 ? 2 : 3 ? 4 : 5", "0 ? 2u : -1",
+        // Deep: past every depth compiled (16 calls), and errors met deep.
+        "((((((((((1))))))))))", "-(-(-(-(-(-(-(-(-(-1)))))))))", "!!!!!!!!!!!!!!!!!!0", "1 ? (2 ? (3 ? (4 ? 5 : 6) : 7) : 8) : 9", "1 || 2 && 3 | 4 ^ 5 & 6 == 7 < 8 << 9 + 10 * 11",
+        "((((((((((1/0))))))))))", "(1, (2, (3, (4, 5))))", "((((((((((1)))))))))", "1 * (2 + (3 * (4 + (5 * (6 + (7 * 8))))))",
     ];
     let words = |v: &[Out]| v.iter().map(|t| String::from_utf8_lossy(&t.2).into_owned()).collect::<String>();
     let mut unlexed = Vec::new();
     for cpp in [false, true] {
         let p = program(cpp).unwrap();
-        let c = compile(p).unwrap_or_else(|e| panic!("cpp {cpp}: {e:?}"));
-        let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
+        let compiled: Vec<_> = DEPTHS.iter().map(|&k| compile_k(p, k).unwrap_or_else(|e| panic!("cpp {cpp} k {k}: {e:?}"))).collect();
         let mut differ = Vec::new();
         for case in CASES {
             let mut src = format!("#if ({case}) == ({case})\nok\n#else\nerr\n#endif\n#if ({case}) * 0 - 1 > 0\nu\n#else\ns\n#endif\n");
-            for k in (0..64).rev() {
-                src.push_str(&format!("#if (({case}) >> {k}) & 1\n1\n#else\n0\n#endif\n"));
+            for bit in (0..64).rev() {
+                src.push_str(&format!("#if (({case}) >> {bit}) & 1\n1\n#else\n0\n#endif\n"));
             }
             let files = [("main.c", src.as_bytes())];
             let want = match expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &pp_words::run) {
@@ -481,9 +504,12 @@ fn the_compiled_ifs_have_the_interpreters_values() {
                 }
                 Err(e) => panic!("{case} (cpp {cpp}): {e}"),
             };
-            let got = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &jit).unwrap_or_else(|e| panic!("{case} (cpp {cpp}): {e}"));
-            if got != want {
-                differ.push(format!("{case}: interpreter {} JIT {}", words(&want), words(&got)));
+            for (c, k) in compiled.iter().zip(DEPTHS) {
+                let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
+                let got = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &jit).unwrap_or_else(|e| panic!("{case} (cpp {cpp}, k {k}): {e}"));
+                if got != want {
+                    differ.push(format!("{case} (k {k}): interpreter {} JIT {}", words(&want), words(&got)));
+                }
             }
         }
         assert!(differ.is_empty(), "cpp {cpp}:\n{}", differ.join("\n"));

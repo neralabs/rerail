@@ -156,6 +156,10 @@ pub struct File<'a> {
     pub chains: &'a [(u32, u32)],
     pub includes: &'a [(u32, u32)],
     pub named: &'a [Named],
+    /// The most calls an `#if` or `#elif` of it takes `#if`'s evaluator to, as the host
+    /// estimates it on the line's tokens: what the compiled words' depth is chosen by
+    /// (`native_cpu_pp::compile_k`). The interpreter does not read it.
+    pub if_depth: u32,
 }
 
 /// An include whose header name is made by expanding its line: the name (its quotes or brackets
@@ -336,7 +340,7 @@ pub(crate) const VA_ARGS: &[u8] = b"__VA_ARGS__";
 pub(crate) const VA_OPT: &[u8] = b"__VA_OPT__";
 
 /// Whether a word is a test (it runs the next word where it holds, skips it where not).
-fn is_test(opcode: u8, mode: u8) -> bool {
+pub(crate) fn is_test(opcode: u8, mode: u8) -> bool {
     matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == INCLUDE && mode <= 1) || (opcode == EMBED && matches!(mode, 0 | 3 | 4 | 5 | 7 | 8)) || (opcode == SUB && matches!(mode, 1..=4 | 6 | 7)) || (opcode == STR && mode == 1) || opcode == GLUE || (opcode == DEFINE && matches!(mode, 0..=3 | 5 | 7)) || (opcode == EXPR && matches!(mode, 0 | 1 | 3 | 6 | 8 | 11 | 14)) || (opcode == BUILTIN && mode >= 1) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) 
 }
 

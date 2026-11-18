@@ -18,7 +18,8 @@ use crate::pp_expr::Value as Val;
 use crate::pp_words::{self, DIGITS, EmC, Asked, B_BASE_FILE, B_COUNTER, B_DATE, B_FILE, B_FILE_NAME, B_HAS_EMBED, B_HAS_INCLUDE, B_HAS_INCLUDE_NEXT, B_INCLUDE_LEVEL, B_LINE, B_PRAGMA, B_TIME, B_TIMESTAMP, BUILTINS, Bi, Bounds, COND_ELSE, COND_SIZE, COND_SRC, COND_TAKEN, Ctx, Ex, FeatureC, Inc, MAX_INCLUDE_DEPTH, NamedC, OPS, Want, op_index, BOL, DIGRAPH, Def, DefState, EOF, EXP, Env, Expanded, File, FileC, Frame, HASH, HASHHASH, IDENT, LEVEL, LITERAL, NO_PARAM, NOEXP, NONE, NUMBER, PAIR, PASTE, PASTE_MARK, PLACEMARKER, PUNCT, Refused, SPACE, Slot, Src, Sub, Tok, USE, VA_ARGS, VA_OPT, VA_OPT_MARK};
 use crate::program::{ACCEPT, ARG, BUILTIN, COND, EMBED, DEFINE, DEFINED, EXPR, FRAME, GLUE, GOTO, IF, INCLUDE, IS, LINEDIR, PRAGMA, SKIP, KEEP, LINE, LOOKUP, MACRO, PAINT, PEEK, PRE, PUSH, PUT, PpTables, READ, RETURN, SKIPLINE, STOP, STR, SUB, UNDEF, Words, split};
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, BlockCall, InstBuilder, JumpTableData, MemFlags, Value, condcodes::IntCC, types};
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch};
+use cranelift_codegen::ir::{ExtFuncData, ExternalName, FuncRef, UserExternalName};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch, Variable};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, default_libcall_names};
 use std::mem::{offset_of, size_of};
@@ -265,9 +266,112 @@ struct Lower<'a, 'b> {
     exit: Block,
     heads: Vec<(Block, Step)>,
     pp: &'a PpTables,
+    /// Each word's rank among the return points (`PUSH`'s operands), `NONE` for none: what the
+    /// return stack holds, so a `RETURN`'s table has a target a return point.
+    ranks: &'a [u32],
+    /// The return points, by rank.
+    rets: &'a [usize],
 }
 
 impl Lower<'_, '_> {
+    /// `rs` pushed on the return stack, the first lowest (refusing past its bound).
+    fn push_returns(&mut self, pc: usize, rs: &[Value]) {
+        let ctx = self.ctx;
+        let n = ld(self.f, types::I64, ctx, at!(nreturns));
+        let room = ld(self.f, types::I64, ctx, at!(room_returns));
+        let end = self.f.ins().iadd_imm(n, rs.len() as i64);
+        let ok = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, room);
+        self.check(ok, pc, R_CALLS);
+        let r = ld(self.f, types::I64, ctx, at!(returns));
+        let slot = elem(self.f, r, n, 4);
+        for (i, &v) in rs.iter().enumerate() {
+            self.f.ins().store(flags(), v, slot, 4 * i as i32);
+        }
+        st(self.f, types::I64, end, ctx, at!(nreturns));
+    }
+
+    /// A return to the return point of rank `to`, its block `targets[to]`: through a dispatch
+    /// block of the `RETURN`'s own (`Step::Return`), a table over the ranks.
+    fn dispatch(&mut self, pc: usize, to: Value, targets: &[Block]) {
+        let dispatch = self.f.create_block();
+        self.heads.push((dispatch, Step::Return));
+        self.f.ins().jump(dispatch, &[]);
+        self.f.switch_to_block(dispatch);
+        let bad = self.f.create_block();
+        let targets: Vec<BlockCall> = targets.iter().map(|&b| self.f.func.dfg.block_call(b, &[])).collect();
+        let default = self.f.func.dfg.block_call(bad, &[]);
+        let jt = self.f.create_jump_table(JumpTableData::new(default, &targets));
+        self.f.ins().br_table(to, jt);
+        self.f.switch_to_block(bad);
+        self.refuse(pc, R_NO_CALL);
+    }
+
+    /// Word `pc` of `#if`'s evaluator at static depth `d` (`Spec`): `d` calls' return points
+    /// in SSA variables, not on the return stack. A `PUSH` below the depth `K` keeps its return
+    /// point in a variable and goes on at depth `d + 1`; at `K`, the `K` kept are moved to the
+    /// return stack with it, and it goes on at depth 0. A `RETURN` returns to its variable's
+    /// return point at depth `d - 1`, at depth 0 to the return stack's. An `EXPR` word calls its
+    /// outlined function (one for every depth).
+    fn spec_word(&mut self, sp: &Spec, pc: usize, d: usize) {
+        let ctx = self.ctx;
+        let (op, mode, operand) = split(self.words[pc]);
+        let at = |sp: &Spec, l: &Self, p: usize, d: usize| if d == 0 { l.blocks[p] } else { sp.copies[d - 1][p] };
+        match op {
+            GOTO => {
+                let b = at(sp, self, usize::from(operand), d);
+                self.f.ins().jump(b, &[]);
+            }
+            PUSH => {
+                let r = self.f.ins().iconst(types::I32, i64::from(self.ranks[usize::from(operand)]));
+                if d < sp.k {
+                    self.f.def_var(sp.vars[d], r);
+                    let b = at(sp, self, pc + 1, d + 1);
+                    self.f.ins().jump(b, &[]);
+                } else {
+                    let mut rs: Vec<Value> = sp.vars.iter().map(|&v| self.f.use_var(v)).collect();
+                    rs.push(r);
+                    self.push_returns(pc, &rs);
+                    let b = self.blocks[pc + 1];
+                    self.f.ins().jump(b, &[]);
+                }
+            }
+            RETURN if d > 0 => {
+                let to = self.f.use_var(sp.vars[d - 1]);
+                let bad = self.f.create_block();
+                let targets: Vec<Block> = self.rets.iter().map(|&p| if sp.region[p] { at(sp, self, p, d - 1) } else { bad }).collect();
+                self.dispatch(pc, to, &targets);
+                self.f.switch_to_block(bad);
+                self.refuse(pc, R_NO_CALL);
+            }
+            RETURN => {
+                let _ = self.word(pc);
+            }
+            _ => {
+                // `EXPR`: its function's result: 0 the next word, 1 the one after, else refused.
+                let r = self.f.ins().call(sp.calls[pc].expect("an outlined word"), &[ctx]);
+                let r = self.f.inst_results(r)[0];
+                let next = at(sp, self, pc + 1, d);
+                let skip = if pp_words::is_test(op, mode) { at(sp, self, pc + 2, d) } else { next };
+                let step = pp_words::steps_where_held(op, mode).then(|| self.f.create_block());
+                let held = step.unwrap_or(next);
+                let other = self.f.create_block();
+                let zero = self.f.ins().icmp_imm(IntCC::Equal, r, 0);
+                self.f.ins().brif(zero, held, &[], other, &[]);
+                self.f.switch_to_block(other);
+                let one = self.f.ins().icmp_imm(IntCC::Equal, r, 1);
+                let refused = self.f.create_block();
+                self.f.ins().brif(one, skip, &[], refused, &[]);
+                self.f.switch_to_block(refused);
+                self.f.ins().jump(self.exit, &[r.into()]);
+                if let Some(step) = step {
+                    self.heads.push((step, Step::Token));
+                    self.f.switch_to_block(step);
+                    self.f.ins().jump(next, &[]);
+                }
+            }
+        }
+    }
+
     /// Refuse at word `pc` for `reason`.
     fn refuse(&mut self, pc: usize, reason: u64) {
         let r = self.f.ins().iconst(types::I64, ((pc as u64 + 1) | (reason << 32)) as i64);
@@ -5922,20 +6026,11 @@ impl Lower<'_, '_> {
             }
             STOP => self.refuse(pc, R_STOPPED),
             PUSH => {
-                let n = ld(self.f, types::I64, ctx, at!(nreturns));
-                let room = ld(self.f, types::I64, ctx, at!(room_returns));
-                let ok = self.f.ins().icmp(IntCC::UnsignedLessThan, n, room);
-                self.check(ok, pc, R_CALLS);
-                let r = ld(self.f, types::I64, ctx, at!(returns));
-                let slot = elem(self.f, r, n, 4);
-                let to = self.f.ins().iconst(types::I32, i64::from(operand));
-                self.f.ins().store(flags(), to, slot, 0);
-                let n1 = self.f.ins().iadd_imm(n, 1);
-                st(self.f, types::I64, n1, ctx, at!(nreturns));
+                let r = self.f.ins().iconst(types::I32, i64::from(self.ranks[usize::from(operand)]));
+                self.push_returns(pc, &[r]);
                 self.next(pc);
             }
             RETURN => {
-                // One dispatch block for every `RETURN` (`Step::Return`).
                 let n = ld(self.f, types::I64, ctx, at!(nreturns));
                 let some = self.f.ins().icmp_imm(IntCC::NotEqual, n, 0);
                 self.check(some, pc, R_NO_CALL);
@@ -5944,17 +6039,8 @@ impl Lower<'_, '_> {
                 let r = ld(self.f, types::I64, ctx, at!(returns));
                 let slot = elem(self.f, r, n1, 4);
                 let to = self.f.ins().load(types::I32, flags(), slot, 0);
-                let dispatch = self.f.create_block();
-                self.heads.push((dispatch, Step::Return));
-                self.f.ins().jump(dispatch, &[]);
-                self.f.switch_to_block(dispatch);
-                let bad = self.f.create_block();
-                let targets: Vec<BlockCall> = self.blocks.iter().map(|&b| self.f.func.dfg.block_call(b, &[])).collect();
-                let default = self.f.func.dfg.block_call(bad, &[]);
-                let jt = self.f.create_jump_table(JumpTableData::new(default, &targets));
-                self.f.ins().br_table(to, jt);
-                self.f.switch_to_block(bad);
-                self.refuse(pc, R_NO_CALL);
+                let targets: Vec<Block> = self.rets.iter().map(|&p| self.blocks[p]).collect();
+                self.dispatch(pc, to, &targets);
             }
             READ => {
                 let next = self.blocks[pc + 1];
@@ -6544,19 +6630,141 @@ impl Lower<'_, '_> {
     }
 }
 
+/// `#if`'s evaluator lowered at each static depth (`Lower::spec_word`).
+struct Spec {
+    /// The depth `K`: the calls whose return points are kept in variables.
+    k: usize,
+    /// Whether each word is the evaluator's.
+    region: Vec<bool>,
+    /// The evaluator's words' blocks at depths 1 to `K` (depth 0's are the program's).
+    copies: Vec<Vec<Block>>,
+    /// The return points of the calls at depths 0 to `K - 1`, as ranks.
+    vars: Vec<Variable>,
+    /// Each `EXPR` word's outlined function.
+    calls: Vec<Option<FuncRef>>,
+}
+
+/// The largest depth `compile_k` takes.
+pub const MAX_K: usize = 16;
+
+/// Each word's rank among the return points, and the return points by rank.
+fn return_points(words: &[u32]) -> (Vec<u32>, Vec<usize>) {
+    let mut ranks = vec![NONE; words.len()];
+    let mut rets = Vec::new();
+    for &w in words {
+        let (op, _, operand) = split(w);
+        if op == PUSH && ranks[usize::from(operand)] == NONE {
+            ranks[usize::from(operand)] = rets.len() as u32;
+            rets.push(usize::from(operand));
+        }
+    }
+    (ranks, rets)
+}
+
+/// `#if`'s evaluator: the words a call made for `EXPR m=14` (`PUSH` to it, then the callee's
+/// `GOTO`) reaches before its `RETURN`s. `None` unless they are all `EXPR`, `PUSH`, `GOTO` and
+/// `RETURN`, so they can be lowered at each depth.
+fn evaluator(words: &[u32]) -> Option<Vec<bool>> {
+    let mut region = vec![false; words.len()];
+    let mut work = Vec::new();
+    for pc in 0..words.len().saturating_sub(1) {
+        let (op, _, operand) = split(words[pc]);
+        let (rop, rmode, _) = split(words[usize::from(operand)]);
+        let (gop, _, callee) = split(words[pc + 1]);
+        if op == PUSH && rop == EXPR && rmode == 14 && gop == GOTO {
+            work.push(usize::from(callee));
+        }
+    }
+    while let Some(pc) = work.pop() {
+        if std::mem::replace(&mut region[pc], true) {
+            continue;
+        }
+        let (op, mode, operand) = split(words[pc]);
+        match op {
+            GOTO => work.push(usize::from(operand)),
+            PUSH => work.extend([pc + 1, usize::from(operand)]),
+            RETURN => {}
+            EXPR if mode != 14 => work.extend(if pp_words::is_test(op, mode) { vec![pc + 1, pc + 2] } else { vec![pc + 1] }),
+            _ => return None,
+        }
+    }
+    region.iter().any(|&r| r).then_some(region)
+}
+
 /// Compile `program`'s words (validated first).
 pub fn compile(program: &Words) -> Result<CompiledPp, Error> {
+    compile_k(program, 0)
+}
+
+/// `compile`, `#if`'s evaluator flattened to depth `k` (at most `MAX_K`): its first `k` calls'
+/// return points are SSA variables, its words lowered once at each depth, so a `RETURN` there
+/// is a jump by a variable's value; past `k` the return stack holds them, as at depth 0. Its
+/// `EXPR` words are functions of their own, called from every depth, so the depths repeat only
+/// the calls' small words. `k` 0: no depth, no function of its own.
+pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
     pp_words::validate(program)?;
-    let builder = JITBuilder::with_flags(&[("opt_level", "speed")], default_libcall_names()).map_err(|_| Error::BackendFailure)?;
+    if k > MAX_K {
+        return Err(Error::RefusedShape(format!("#if's depth {k} is past {MAX_K}")));
+    }
+    let mut builder = JITBuilder::with_flags(&[("opt_level", "speed")], default_libcall_names()).map_err(|_| Error::BackendFailure)?;
+    // One arena for the module's code, so a call of an outlined word is a direct branch (its
+    // `colocated`): JIT mappings apart can be past a branch's reach.
+    builder.memory_provider(Box::new(cranelift_jit::ArenaMemoryProvider::new_with_size(64 << 20).map_err(|_| Error::BackendFailure)?));
     let mut module = JITModule::new(builder);
     let pointer = module.target_config().pointer_type();
     let mut signature = module.make_signature();
     signature.params.push(AbiParam::new(pointer));
     signature.returns.push(AbiParam::new(types::I64));
     let id = module.declare_function("pp_run", Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
-    let mut context = module.make_context();
-    context.func.signature = signature;
+    let (ranks, rets) = return_points(&program.words);
+    let region = if k > 0 { evaluator(&program.words) } else { None };
     let mut fctx = FunctionBuilderContext::new();
+    let mut clif = String::new();
+    let mut all_heads = Vec::new();
+    // The evaluator's `EXPR` words, a function each: 0 its next word, 1 the one after, else the
+    // refusal.
+    let mut outlined = Vec::new();
+    for pc in (0..program.words.len()).filter(|&pc| region.as_ref().is_some_and(|r| r[pc]) && split(program.words[pc]).0 == EXPR) {
+        let fid = module.declare_function(&format!("pp_word_{pc}"), Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
+        let mut context = module.make_context();
+        context.func.signature = signature.clone();
+        let heads;
+        {
+            let mut f = FunctionBuilder::new(&mut context.func, &mut fctx);
+            let entry = f.create_block();
+            f.append_block_params_for_function_params(entry);
+            let (held, skip, exit, body) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
+            f.append_block_param(exit, types::I64);
+            f.switch_to_block(entry);
+            let ctx = f.block_params(entry)[0];
+            f.ins().jump(body, &[]);
+            let mut blocks = vec![skip; program.words.len()];
+            blocks[pc + 1] = held;
+            let mut l = Lower { f: &mut f, ctx, words: &program.words, strings: &program.strings, blocks, exit, heads: Vec::new(), pp: &program.pp, ranks: &ranks, rets: &rets };
+            l.f.switch_to_block(body);
+            l.word(pc)?;
+            for (b, r) in [(held, 0), (skip, 1)] {
+                l.f.switch_to_block(b);
+                let v = l.f.ins().iconst(types::I64, r);
+                l.f.ins().return_(&[v]);
+            }
+            l.f.switch_to_block(exit);
+            let r = l.f.block_params(exit)[0];
+            l.f.ins().return_(&[r]);
+            heads = std::mem::take(&mut l.heads);
+            f.seal_all_blocks();
+            f.finalize();
+        }
+        crate::native_cpu_shape::check(&context.func, &heads, &[]).map_err(|r| Error::RefusedShape(format!("word {pc}: {r:?}")))?;
+        clif.push_str(&context.func.display().to_string());
+        all_heads.extend(heads.iter().map(|h| h.1));
+        module.define_function(fid, &mut context).map_err(|e| Error::RefusedShape(format!("word {pc}: {e:?}")))?;
+        module.clear_context(&mut context);
+        outlined.push((pc, fid));
+    }
+    let own: Vec<UserExternalName> = outlined.iter().map(|&(_, fid)| UserExternalName::new(0, fid.as_u32())).collect();
+    let mut context = module.make_context();
+    context.func.signature = signature.clone();
     let heads;
     {
         let mut f = FunctionBuilder::new(&mut context.func, &mut fctx);
@@ -6567,11 +6775,33 @@ pub fn compile(program: &Words) -> Result<CompiledPp, Error> {
         f.append_block_param(exit, types::I64);
         f.switch_to_block(entry);
         let ctx = f.block_params(entry)[0];
+        let spec = region.map(|region| {
+            // Blocks for the evaluator's words only (another's entry is never reached).
+            let copies = (0..k).map(|_| (0..program.words.len()).map(|p| if region[p] { f.create_block() } else { blocks[p] }).collect()).collect();
+            let vars = (0..k).map(|_| f.declare_var(types::I32)).collect();
+            let mut calls = vec![None; program.words.len()];
+            let sig = f.import_signature(signature.clone());
+            for (&(pc, _), name) in outlined.iter().zip(&own) {
+                let name = f.func.declare_imported_user_function(name.clone());
+                calls[pc] = Some(f.import_function(ExtFuncData { name: ExternalName::user(name), signature: sig, colocated: true }));
+            }
+            Spec { k, region, copies, vars, calls }
+        });
         f.ins().jump(blocks[0], &[]);
-        let mut l = Lower { f: &mut f, ctx, words: &program.words, strings: &program.strings, blocks, exit, heads: Vec::new(), pp: &program.pp };
+        let mut l = Lower { f: &mut f, ctx, words: &program.words, strings: &program.strings, blocks, exit, heads: Vec::new(), pp: &program.pp, ranks: &ranks, rets: &rets };
         for pc in 0..program.words.len() {
             let b = l.blocks[pc];
             l.f.switch_to_block(b);
+            if let Some(sp) = spec.as_ref().filter(|sp| sp.region[pc]) {
+                for d in 0..=k {
+                    if d > 0 {
+                        let b = sp.copies[d - 1][pc];
+                        l.f.switch_to_block(b);
+                    }
+                    l.spec_word(sp, pc, d);
+                }
+                continue;
+            }
             // A token read is a stated step: a cycle through `READ`'s block.
             let (op, mode, _) = split(l.words[pc]);
             if op == READ {
@@ -6605,15 +6835,16 @@ pub fn compile(program: &Words) -> Result<CompiledPp, Error> {
             let _ = std::fs::write(path, cranelift_codegen::print_errors::pretty_verifier_error(&context.func, None, e));
         }
     }
-    crate::native_cpu_shape::check(&context.func, &heads, &[]).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
-    let clif = context.func.display().to_string();
+    crate::native_cpu_shape::check(&context.func, &heads, &own).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
+    clif.push_str(&context.func.display().to_string());
+    all_heads.extend(heads.iter().map(|h| h.1));
     module.define_function(id, &mut context).map_err(|e| Error::RefusedShape(format!("pp_run: {e:?}")))?;
     module.clear_context(&mut context);
     module.finalize_definitions().map_err(|_| Error::BackendFailure)?;
     let code = module.get_finalized_function(id);
     // SAFETY: `pp_run` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, unsafe extern "C" fn(*mut Ctx) -> u64>(code) };
-    Ok(CompiledPp { _module: module, entry, clif, heads: heads.iter().map(|h| h.1).collect() })
+    Ok(CompiledPp { _module: module, entry, clif, heads: all_heads })
 }
 
 #[cfg(test)]
@@ -6623,7 +6854,7 @@ mod tests {
 
     /// A file of tokens over `text`: each a word, its kind and flags.
     fn file<'a>(text: &'a [u8], toks: &'a [Tok]) -> File<'a> {
-        File { path: b"main.c", bytes: text, lines: &[], toks, chains: &[], includes: &[], named: &[] }
+        File { path: b"main.c", bytes: text, lines: &[], toks, chains: &[], includes: &[], named: &[], if_depth: 0 }
     }
 
     fn tok(kind: u8, flags: u8, start: u32, end: u32) -> Tok {

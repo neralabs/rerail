@@ -111,6 +111,120 @@ struct Lexed {
     read: crate::Read,
     tape: Vec<Tok>,
     chains: Vec<(u32, u32)>,
+    if_depth: u32,
+}
+
+/// The most calls `#if`'s evaluator (`expand.lab`'s `cond`) makes on any `#if` or `#elif` of a
+/// file (mode (a)'s `c_cond` rows, their expressions' tokens on the tape), counted on the tokens
+/// as written (an expansion's tokens can take it deeper; then the compiled words use the return
+/// stack past their depth, as at depth 0). A primary is 3 calls past its `cond` (`cond`,
+/// `ternary`, `binary`); a prefix operator 1 more; a binary operator 2 (its operand's `binary`
+/// and `unary`, at most 10 a level: the precedences), counted from above; `(` 4 past the
+/// `unary` it is in; `?`'s operand 2 past its level's primary, `:`'s 1.
+pub fn if_depth(read: &crate::Read, src: &[u8], tape: &[Tok]) -> u32 {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Open {
+        Paren,
+        Query,
+        Colon,
+    }
+    let facts = crate::Facts::of(read, src);
+    let mut most = 0;
+    for c in facts.conds.iter().filter(|c| c.kind == "if" || c.kind == "elif") {
+        let lo = tape.partition_point(|t| t.start < c.expr.0);
+        let hi = tape.partition_point(|t| t.start < c.expr.1);
+        // Each level open: its primary's calls, its binary operators met, what opened it.
+        let mut open: Vec<(u32, u32, Open)> = vec![(3, 0, Open::Paren)];
+        let (mut unary, mut operand) = (0, true);
+        for t in &tape[lo..hi] {
+            // A respelled literal's spelling is not the file's: an operand all the same.
+            let text = src.get(t.start as usize..t.end as usize).unwrap_or_default();
+            let punct = t.kind == pp_words::PUNCT;
+            let (base, ops, _) = *open.last().unwrap();
+            let at = base + 2 * ops.min(10) + unary;
+            match text {
+                b"(" if punct => {
+                    open.push((at + 4, 0, Open::Paren));
+                    (unary, operand) = (0, true);
+                }
+                b")" if punct => {
+                    while open.len() > 1 && open.pop().unwrap().2 != Open::Paren {}
+                    operand = false;
+                }
+                b"?" if punct => {
+                    let level = open.iter().rposition(|o| o.2 != Open::Query).unwrap();
+                    open.push((open[level].0 + 2, 0, Open::Query));
+                    (unary, operand) = (0, true);
+                }
+                b":" if punct => {
+                    while open.len() > 1 && open.last().unwrap().2 == Open::Colon {
+                        open.pop();
+                    }
+                    if open.len() > 1 && open.last().unwrap().2 == Open::Query {
+                        let q = open.pop().unwrap();
+                        open.push((q.0 - 1, 0, Open::Colon));
+                    }
+                    (unary, operand) = (0, true);
+                }
+                b"," if punct => {
+                    while open.len() > 1 && open.last().unwrap().2 != Open::Paren {
+                        open.pop();
+                    }
+                    open.last_mut().unwrap().1 = 0;
+                    (unary, operand) = (0, true);
+                }
+                b"+" | b"-" | b"~" | b"!" if punct && operand => unary += 1,
+                _ if punct => {
+                    open.last_mut().unwrap().1 += 1;
+                    (unary, operand) = (0, true);
+                }
+                _ => {
+                    unary = 0;
+                    operand = false;
+                }
+            }
+            let (base, ops, _) = *open.last().unwrap();
+            most = most.max(base + 2 * ops.min(10) + unary);
+        }
+    }
+    most
+}
+
+/// The compiled words, each depth `#if`'s evaluator is compiled at made the first time a TU
+/// needs it (`compile_k`); the caller keeps it, so its programs serve every TU it expands.
+pub struct Compiled {
+    by_k: std::cell::RefCell<Vec<Option<rerail_compiler::native_cpu_pp::CompiledPp>>>,
+}
+
+impl Default for Compiled {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Compiled {
+    pub fn new() -> Self {
+        Compiled { by_k: std::cell::RefCell::new((0..=rerail_compiler::native_cpu_pp::MAX_K.trailing_zeros() + 1).map(|_| None).collect()) }
+    }
+
+    /// The depth a TU's files take: their deepest `#if`'s calls, a power of two (0 for none),
+    /// at most `MAX_K`.
+    pub fn depth(files: &[File]) -> usize {
+        let d = files.iter().map(|f| f.if_depth).max().unwrap_or(0) as usize;
+        if d == 0 { 0 } else { d.next_power_of_two().min(rerail_compiler::native_cpu_pp::MAX_K) }
+    }
+
+    /// `pp_words::run`'s work by the compiled words at the files' depth.
+    pub fn run(&self, program: &rerail_compiler::program::Words, files: &[File], env: &pp_words::Env, bounds: &Bounds) -> Result<pp_words::Expanded, pp_words::Refused> {
+        let k = Self::depth(files);
+        let slot = if k == 0 { 0 } else { k.trailing_zeros() as usize + 1 };
+        let mut by_k = self.by_k.borrow_mut();
+        if by_k[slot].is_none() {
+            let c = rerail_compiler::native_cpu_pp::compile_k(program, k).map_err(|_| pp_words::Refused { pc: 0, why: "the words do not compile" })?;
+            by_k[slot] = Some(c);
+        }
+        by_k[slot].as_ref().unwrap().run(program, files, env, bounds)
+    }
 }
 
 /// The TU's files, found and read as the words need them.
@@ -148,7 +262,8 @@ impl<F: rerail_c_pp::files::Files> Tu<'_, F> {
             // The spelled buffer's index is set when the files are laid out (`expand_tu`).
             let tape = tape(src, &toks, k as u32, &mut self.spelled, u32::MAX - 1);
             let chains = chains(&read, &tape).ok_or("a directive's `#` is no token's")?;
-            self.units[k].lexed = Some(Lexed { read, tape, chains });
+            let if_depth = if_depth(&read, src, &tape);
+            self.units[k].lexed = Some(Lexed { read, tape, chains, if_depth });
         }
         Ok(k as u32)
     }
@@ -212,7 +327,7 @@ pub fn expand_tu_with<F: rerail_c_pp::files::Files>(main: &str, io: &mut F, cpp:
         let n = tu.units.len() as u32;
         // The respelled literals' buffer is the file after the last.
         let tapes: Vec<Vec<Tok>> = tu.units.iter().map(|u| u.lexed.as_ref().map_or(Vec::new(), |l| l.tape.iter().map(|t| if t.buf == u32::MAX { Tok { buf: n + 1, ..*t } } else { *t }).collect())).collect();
-        let mut files: Vec<File> = tu.units.iter().zip(&tapes).map(|(u, t)| File { path: u.path.as_bytes(), bytes: &u.src, lines: &u.lines, toks: t, chains: u.lexed.as_ref().map_or(&[][..], |l| &l.chains), includes: &u.includes, named: &u.named }).collect();
+        let mut files: Vec<File> = tu.units.iter().zip(&tapes).map(|(u, t)| File { path: u.path.as_bytes(), bytes: &u.src, lines: &u.lines, toks: t, chains: u.lexed.as_ref().map_or(&[][..], |l| &l.chains), includes: &u.includes, named: &u.named, if_depth: u.lexed.as_ref().map_or(0, |l| l.if_depth) }).collect();
         files.push(File { bytes: &tu.spelled, ..File::default() });
         let e = run(program, &files, &pp_words::Env::DEFAULT, &Bounds::of(&files)).map_err(|r| format!("refused at word {}: {}", r.pc, r.why))?;
         if e.wanted.is_empty() {
