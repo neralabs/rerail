@@ -33,6 +33,12 @@ function displayNameFor(repositoryKey: RepositoryKey, folderName: string): strin
   return repositoryKey.startsWith(CLONE_KEY_PREFIX) ? folderName : repositoryKey.slice(repositoryKey.lastIndexOf("/") + 1);
 }
 
+export function standaloneRepository(workspace: string): { key: RepositoryKey; displayName: string } {
+  const { cloneId, location } = resolveCloneId(workspace);
+  const key = remoteKeyOf(location.workspaceRoot) ?? `${CLONE_KEY_PREFIX}${cloneId}`;
+  return { key, displayName: displayNameFor(key, repositoryFolderName(location)) };
+}
+
 type RepositoryRow = typeof repositories.$inferSelect;
 
 /** The contract's view of a row: a repository nobody started or stopped yet is off. */

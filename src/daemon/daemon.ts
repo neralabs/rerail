@@ -29,6 +29,7 @@ import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
+import { collectAnalysisCaches, settleAnalysisScopeReleases } from "../engine/native/analysis-scope.js";
 
 export const DEFAULT_DAEMON_HOST = "127.0.0.1";
 export const DEFAULT_DAEMON_PORT = 4737;
@@ -390,6 +391,7 @@ async function closeAfterFailedStart({ engineService, nativeServer, server }: St
 }
 
 export class RerailDaemon {
+  #scopeReleaseTimer: ReturnType<typeof setInterval> | undefined;
   readonly host: string;
   readonly port: number;
   readonly url: string;
@@ -497,6 +499,20 @@ export class RerailDaemon {
         nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256,
       });
       await daemon.#announce(remembered);
+      let collecting = false;
+      const releaseScopes = async () => {
+        if (collecting) return;
+        collecting = true;
+        try {
+          settleAnalysisScopeReleases(databasePath);
+          await collectAnalysisCaches(databasePath);
+        }
+        catch (error) { process.stderr.write(`rerail: analysis scope release failed: ${String(error)}\n`); }
+        finally { collecting = false; }
+      };
+      void releaseScopes();
+      daemon.#scopeReleaseTimer = setInterval(releaseScopes, 5_000);
+      daemon.#scopeReleaseTimer.unref();
       return daemon;
     } catch (error) {
       await closeAfterFailedStart(started, stores);
@@ -556,6 +572,7 @@ export class RerailDaemon {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    clearInterval(this.#scopeReleaseTimer);
     try {
       await this.#remoteSink?.stop();
       await closeHttpServer(this.#server);

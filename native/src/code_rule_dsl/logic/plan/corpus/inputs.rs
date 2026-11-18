@@ -178,7 +178,7 @@ fn unreadable(detail: impl std::fmt::Display) -> Failure { Failure { kind: "unre
 
 /// The tree of `rev` in the repository that holds `root`, and `root`'s path inside it.
 fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::ObjectId, PathBuf)> {
-    let repo = gix::discover(root).map_err(|e| unreadable(format!("no repository holds {}: {e}", root.display())))?;
+    let (repo, prefix) = crate::code_rule_dsl::logic::strings::git::repository(root).map_err(unreadable)?;
     // `git_rev("base", …)`: the merge base of HEAD and `rev`, as core.rr defines it.
     let (revs, _) = crate::code_rule_dsl::logic::strings::git::revisions(root, Some(rev)).map_err(unreadable)?;
     let base = revs.iter().find(|(n, _)| n == "base").map(|(_, id)| id.clone()).unwrap_or_default();
@@ -187,9 +187,6 @@ fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::Object
         Ok(repo.find_object(commit)?.peel_to_tree()?.id)
     };
     let tree = resolve().map_err(|e| unreadable(format!("base revision {rev}: {e}")))?;
-    let workdir = repo.workdir().ok_or_else(|| unreadable("the repository has no work tree"))?;
-    let canonical = |p: &Path| p.canonicalize().map_err(|e| unreadable(format!("{}: {e}", p.display())));
-    let prefix = canonical(root)?.strip_prefix(canonical(workdir)?).map(Path::to_path_buf).map_err(unreadable)?;
     Ok((repo, tree, prefix))
 }
 
@@ -279,13 +276,10 @@ fn walk(root: &Path) -> std::io::Result<Vec<String>> {
     let mut out = Vec::new();
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
-        for entry in std::fs::read_dir(&dir)? {
-            let path = entry?.path();
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if path.is_dir() {
-                if !name.starts_with('.') && name != "target" {
-                    pending.push(path);
-                }
+        for (name, is_dir) in crate::git_workspace::snapshot::listing(&dir)? {
+            let path = dir.join(&name);
+            if is_dir {
+                if !name.starts_with('.') && name != "target" { pending.push(path); }
             } else if let Ok(relative) = path.strip_prefix(root) {
                 out.push(relative.to_string_lossy().replace('\\', "/"));
             }
@@ -309,7 +303,7 @@ pub(in crate::code_rule_dsl) fn inputs_digest(root: &Path, globs: &[String]) -> 
         if !set.is_match(&path) {
             continue;
         }
-        let bytes = std::fs::read(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
+        let bytes = crate::git_workspace::snapshot::read(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
         hash.update(path.as_bytes());
         hash.update([0]);
         hash.update(blob_id(&bytes).as_bytes());
@@ -405,14 +399,14 @@ fn of_result(result: &ReadResult<String>) -> String {
 }
 
 fn read_repository_file(root: &Path, name: &str) -> ReadResult<String> {
-    std::fs::read_to_string(root.join(name)).map_err(|e| Failure {
+    crate::git_workspace::snapshot::read_to_string(root.join(name)).map_err(|e| Failure {
         kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }, detail: e.to_string(),
     })
 }
 
 /// An artifact's reading: the stamped file's text, and the digest of its declared inputs now.
 fn read_artifact(root: &Path, declared: &BTreeMap<String, Vec<String>>, name: &str) -> (ReadResult<String>, ReadResult<String>) {
-    let text = std::fs::read_to_string(facts_dir(root).join(format!("{name}.json"))).map_err(|e| Failure {
+    let text = crate::git_workspace::snapshot::read_to_string(facts_dir(root).join(format!("{name}.json"))).map_err(|e| Failure {
         kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "malformed" },
         detail: format!("{}: {e}", facts_dir(root).join(format!("{name}.json")).display()),
     });
@@ -453,6 +447,36 @@ pub(super) fn populate(program: &mut front::Program, root: &Path) -> Result<()> 
     )?;
     consulted.extend(seen.into_inner());
     git_revisions(program, root, base, &mut consulted);
+    if let Some(identity) = super::git::observation(program, root) {
+        consulted.push(("git_root_repo".to_owned(), String::new(), identity));
+    }
+    if program.inputs.iter().any(|name| name == "source_grammar_suffix") {
+        program.inputs.retain(|name| name != "source_grammar_suffix");
+        let rows = crate::code_rule_dsl::language::source_grammar_suffixes()
+            .map(|(grammar, suffix, order, built)| [
+                Value::Str(grammar.into()), Value::Str(suffix.into()), Value::Int(order), Value::Int(i64::from(built)),
+            ].into()).collect();
+        program.facts.insert("source_grammar_suffix".to_owned(), rows);
+    }
+    if program.inputs.iter().any(|name| name == "source_grammar_registry") {
+        use sha2::Digest as _;
+        static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        let version = VERSION.get_or_init(|| {
+            let entries: Vec<_> = crate::code_rule_dsl::language::source_grammar_suffixes().collect();
+            let bytes = serde_json::to_vec(&entries).expect("grammar registry entries");
+            let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
+            crate::content_store::observe::hex(&digest)
+        });
+        program.inputs.retain(|name| name != "source_grammar_registry");
+        program.facts.insert("source_grammar_registry".to_owned(), vec![[Value::Str(version.as_str().into())].into()]);
+    }
+    if program.inputs.iter().any(|name| name == "source_tape_version") {
+        program.inputs.retain(|name| name != "source_tape_version");
+        program.facts.insert("source_tape_version".to_owned(), vec![[
+            Value::Str(crate::code_rule_dsl::build_ids::grammar().into()),
+            Value::Int(i64::from(crate::code_rule_dsl::tape::formats::stored_version())),
+        ].into()]);
+    }
     CONSULTED.lock().unwrap_or_else(|e| e.into_inner()).extend(consulted);
     if REQUIRE_FACTS.load(std::sync::atomic::Ordering::Relaxed) {
         required(program)?;
@@ -506,6 +530,7 @@ pub(super) fn still(program: &front::Program, root: &Path, consulted: &[(String,
                 let (text, inputs) = read_artifact(root, &declared, path);
                 artifact_entry(&text, &inputs)
             }
+            "git_root_repo" => return super::git::still(root, digest),
             "git_rev" | "git_index" => return crate::code_rule_dsl::logic::strings::git::still(what, path, digest),
             "base" => {
                 let Some((rev, file)) = path.split_once('\t') else { return false };
@@ -519,8 +544,8 @@ pub(super) fn still(program: &front::Program, root: &Path, consulted: &[(String,
 
 /// The file names of a `dir=` input's directory, as its reader lists them.
 fn listing(root: &Path, dir: &str) -> String {
-    let mut names: Vec<String> = std::fs::read_dir(root.join(dir)).into_iter().flatten().flatten()
-        .filter(|e| e.path().is_file()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    let mut names: Vec<String> = crate::git_workspace::snapshot::listing(root.join(dir)).into_iter().flatten()
+        .filter(|(name, _)| crate::git_workspace::snapshot::is_file(root.join(dir).join(name))).map(|(name, _)| name).collect();
     names.sort();
     sha256_hex(names.join("\n").as_bytes())
 }
@@ -609,16 +634,15 @@ fn populate_with(
         let result = if directory.is_some() {
             if io != "lines" { return Err(Error::Plan(format!("{rel}: dir is supported only by IO=lines"))); }
             consulted.push(("input_dir".to_owned(), path.clone(), listing(root, path)));
-            match std::fs::read_dir(root.join(path)) {
+            match crate::git_workspace::snapshot::listing(root.join(path)) {
                 Err(e) => Err(Failure { kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }, detail: e.to_string() }),
                 Ok(entries) => {
-                    let mut paths = entries.map(|entry| entry.map(|e| e.path())).collect::<std::io::Result<Vec<_>>>()
-                        .map_err(|e| Error::Plan(format!("{rel}: listing {path}: {e}")))?;
+                    let mut paths: Vec<_> = entries.into_iter().map(|(name, _)| root.join(path).join(name)).collect();
                     paths.sort();
                     let mut rows = Vec::new();
                     let mut failure = None;
                     for file in paths {
-                        if !file.is_file() { continue; }
+                        if !crate::git_workspace::snapshot::is_file(&file) { continue; }
                         let name = file.strip_prefix(root).unwrap().to_string_lossy().into_owned();
                         match readers.rows(&name, io, pointer, records, vec![Json::String(name.clone())], columns, read) {
                             Ok(part) => rows.extend(part), Err(e) => { failure = Some(e); break; }

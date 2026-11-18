@@ -215,6 +215,7 @@ async function runHeadlessScanCommand(args: readonly string[], options: AuditCli
 interface ScanArguments {
   readonly values: ReadonlyMap<string, string>;
   readonly packs: readonly string[];
+  readonly rr: readonly string[];
   readonly paths: readonly string[] | undefined;
   readonly flags: ReadonlySet<string>;
 }
@@ -222,6 +223,7 @@ interface ScanArguments {
 function parseScanArguments(args: readonly string[]): ScanArguments {
   const values = new Map<string, string>();
   const packs: string[] = [];
+  const rr: string[] = [];
   let paths: string[] | undefined;
   const flags = new Set<string>();
   for (let index = 0; index < args.length;) {
@@ -237,6 +239,10 @@ function parseScanArguments(args: readonly string[]): ScanArguments {
         packs.push(requireValue(args, index, argument));
         index += 2;
         break;
+      case "--rr":
+        rr.push(requireValue(args, index, argument));
+        index += 2;
+        break;
       case "--path":
         paths = [...(paths ?? []), requireValue(args, index, argument)];
         index += 2;
@@ -250,6 +256,8 @@ function parseScanArguments(args: readonly string[]): ScanArguments {
       case "--repo":
       case "--scope":
       case "--base":
+      case "--revision":
+      case "--analysis-scope":
       case "--rules-ref":
         values.set(argument, requireValue(args, index, argument));
         index += 2;
@@ -258,21 +266,26 @@ function parseScanArguments(args: readonly string[]): ScanArguments {
         throw new Error(`Unknown option: ${argument}`);
     }
   }
-  return { values, packs, paths, flags };
+  return { values, packs, rr, paths, flags };
 }
 
-function headlessScanOptions({ values, packs, paths }: ScanArguments, ruleDocuments: Map<string, RuleDocument>, options: AuditCliOptions): HeadlessScanOptions {
+function headlessScanOptions({ values, packs, rr, paths }: ScanArguments, ruleDocuments: Map<string, RuleDocument>, options: AuditCliOptions): HeadlessScanOptions {
   const scope = auditRequestScope(values.get("--scope")) ?? "repository";
   const base = values.get("--base");
   const rulesRef = values.get("--rules-ref");
+  const revision = values.get("--revision");
+  const analysisScope = values.get("--analysis-scope");
   return {
     ruleDocuments,
     repo: values.get("--repo") ?? process.cwd(),
     scope,
     packs: [...packs],
+    rr,
     version: options.version ?? "unknown",
     ...(base === undefined ? {} : { base }),
     ...(rulesRef === undefined ? {} : { rulesRef }),
+    ...(revision === undefined ? {} : { revision }),
+    ...(analysisScope === undefined ? {} : { analysisScope }),
     ...(paths === undefined ? {} : { paths: [...paths] }),
   };
 }

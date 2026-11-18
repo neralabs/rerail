@@ -127,17 +127,19 @@ impl Lowerer {
         self.diagnostic_rule(policy, &finding, &[Term::Int(0)], Term::Int(0), body, true)
     }
 
-    pub(super) fn diagnostics(&mut self, policy: &str, finding: &Violation) -> Result<(), Error> {
+    pub(super) fn diagnostics(&mut self, policy: &str, finding: &Violation, at_document: bool) -> Result<(), Error> {
         let cols: Vec<Term> = (0..finding.arity).map(|i| v(&format!("rr_v{i}"))).collect();
-        let mut body = vec![atom(&finding.name, cols.clone())];
-        if finding.node {
-            body.push(atom("node", vec![v("rr_d"), cols[0].clone(), Term::Wild, Term::Wild, Term::Wild]));
-        } else {
-            body.push(atom("docof", vec![cols[0].clone(), v("rr_d")]));
+        if at_document {
+            let mut body = vec![atom(&finding.name, cols.clone())];
+            if finding.node {
+                body.push(atom("node", vec![v("rr_d"), cols[0].clone(), Term::Wild, Term::Wild, Term::Wild]));
+            } else {
+                body.push(atom("docof", vec![cols[0].clone(), v("rr_d")]));
+            }
+            body.push(atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]));
+            body.push(atom("line", vec![cols[0].clone(), v("rr_l")]));
+            self.diagnostic_rule(policy, finding, &cols, cols[0].clone(), body, false)?;
         }
-        body.push(atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]));
-        body.push(atom("line", vec![cols[0].clone(), v("rr_l")]));
-        self.diagnostic_rule(policy, finding, &cols, cols[0].clone(), body, false)?;
         if finding.places {
             let mut args = vec![v("rr_p"), v("rr_l")];
             args.extend(cols.iter().skip(1).cloned());

@@ -144,7 +144,7 @@ export interface NativeCodeRuleDslWorkspace {
    * binding never chooses a store itself and refuses an empty path. A file `secretNames` names is evaluated but never
    * written to the store (not its source, syntax trees or results): it stays in the workspace's memory instead.
    */
-  enableStorageAsync(root: string, storePath: string, secretNames: NativeSecretNames): Promise<NativeStorageAttachment>;
+  enableStorageAsync(root: string, storePath: string, secretNames: NativeSecretNames, analysis?: NativeAnalysisScopeRun, generation?: number): Promise<NativeStorageAttachment>;
   /**
    * `placement`, when given, is a JSON `CodeRulePlacement` (repository-model.ts): this workspace runs the code rule per folder
    * at the entry's mode (`null` is off there), and a linter's suppression comment silences its violations there unless the
@@ -166,9 +166,11 @@ export interface NativeCodeRuleDslWorkspace {
   applyAsync(requestJson: string): Promise<string>;
   applyBufferAsync(request: Buffer): Promise<string>;
   /** One bounded chunk of a repository index over the attached Git worktree; call until `done`. */
+  enableRevisionStorageAsync(source: NativeGitRevisionSource, storePath: string, secretNames: NativeSecretNames, analysis?: NativeAnalysisScopeRun): Promise<NativeStorageAttachment>;
   indexRepositoryAsync(options: NativeRepositoryIndexOptions): Promise<string>;
   /** Records the current revision as reusable in the content store, off the JS thread. */
   completeStorageRevisionAsync(): Promise<void>;
+  retainAnalysisScopeAsync(): Promise<void>;
   memoryProfile(): string;
   /** One page of ordered results, computed off the JS thread; the last page releases the result index. */
   resultPageAsync(cursor: number, maximumBytes: number): Promise<string>;
@@ -188,6 +190,15 @@ export interface NativeCodeRuleDslWorkspace {
 }
 
 /** The bounds of one repository index; every chunk call carries the same. */
+export interface NativeGitRevisionSource {
+  restrictPaths(paths: string[]): void;
+  setSourceLanguages(json: string): void;
+  readonly tree: string;
+  readonly commit: string | null;
+  containsPath(path: string): boolean;
+  readSource(path: string): Buffer | null;
+}
+
 export interface NativeRepositoryIndexOptions {
   maxFiles: number;
   maxSourceBytes: number;
@@ -201,6 +212,7 @@ export interface NativeRepositoryIndexOptions {
   nestedCheckouts: string[];
   /** Leave out what Git ignores (nested `.gitignore`s, `.git/info/exclude`, `core.excludesFile`); never a tracked file. */
   followGitignore: boolean;
+  paths?: string[];
 }
 
 /** Git's exclude stack for paths below the root it was opened for; see `openGitIgnoreMatcher`. */
@@ -393,7 +405,17 @@ export interface NativeCodeRuleDslExecution {
   close(): void;
 }
 
+export interface NativeAnalysisScopeRun {
+  finish(succeeded: boolean): string | null;
+  warn(message: string): void;
+}
+
 export interface NativeBinding {
+  AnalysisScopeRun: new (store: string, scope: string, directory: boolean, id: string, generation: number) => NativeAnalysisScopeRun;
+  collectAnalysisCacheAsync(store: string): Promise<void>;
+  inspectRrPolicy(path: string, source?: NativeGitRevisionSource): string;
+  GitRevisionSource: new (root: string, revision: string, analysisScope: string) => NativeGitRevisionSource;
+  scanRrPoliciesAsync(paths: string[], root: string, store: string, output: string, analysis: NativeAnalysisScopeRun, sourcePaths: string[] | undefined, source: NativeGitRevisionSource | undefined, policySource?: NativeGitRevisionSource): Promise<string>;
   CodeRuleDslExecution: new () => NativeCodeRuleDslExecution;
   CodeRuleSqlExecutor: NativeCodeRuleSqlExecutorConstructor;
   executeSqlRequest(storePath: string, requestJson: string): string;
@@ -434,6 +456,7 @@ export interface NativeBinding {
   spawnDetached(program: string, args: string[], cwd: string | null, env: Record<string, string>, logPath: string): number;
   /** The content-store file name this binary's store schema owns (`content-v5.sqlite` at store floor 5). */
   contentStoreFileName(): string;
+  deleteAnalysisScope(storePath: string, value: string, directory: boolean, release?: string): void;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;
   /** Git's exclude stack for the worktree around `root`, re-reading the index as it changes; null outside any Git worktree. */

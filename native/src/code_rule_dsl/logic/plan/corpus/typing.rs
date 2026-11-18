@@ -89,7 +89,7 @@ pub(crate) fn facts(typing: &Typing, root: &Path, files: &[String], report: &mut
         let installed = Installed::scan(site, None).map_err(|e| Error::Plan(format!("{}: {e}", site.display())))?;
         let mut imports = Vec::new();
         for f in files.iter().filter(|f| f.ends_with(".py")) {
-            if let Ok(text) = std::fs::read_to_string(root.join(f)) {
+            if let Ok(text) = crate::git_workspace::snapshot::read_to_string(root.join(f)) {
                 imports.extend(deps::imports(&text, false));
             }
         }
@@ -199,7 +199,7 @@ pub(crate) fn outputs(
         }
     }
     for (module, id) in &installed.modules {
-        let source = std::fs::read_to_string(root.join(&id.path)).unwrap_or_default();
+        let source = crate::git_workspace::snapshot::read_to_string(root.join(&id.path)).unwrap_or_default();
         let reexported: Vec<(String, Vec<String>)> = deps::imports(&source, true).into_iter().filter(|(_, names)| !names.is_empty()).collect();
         let empty = BTreeMap::new();
         let fns = by_module.get(module.as_str()).unwrap_or(&empty);

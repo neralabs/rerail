@@ -14,6 +14,8 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
 import { worktreeRegistry } from "../catalog/repository-identity.js";
+import type { NativeAnalysisScopeRun, NativeGitRevisionSource } from "../native/native.js";
+import { readAnalysisScopeGeneration } from "../native/analysis-scope.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import type {
   AuditorCloseOptions,
@@ -45,6 +47,9 @@ export interface CheckoutCodeRuleRouterOptions {
   readonly timingLog?: (line: string) => void;
   /** Every lane leaves out what Git ignores in its checkout (`NativeCodeRuleEnforcer`'s option); off by default. */
   readonly followGitignore?: boolean;
+  readonly revisionSource?: NativeGitRevisionSource;
+  readonly analysisStore?: string;
+  readonly analysisRun?: NativeAnalysisScopeRun;
 }
 
 interface Lane {
@@ -109,7 +114,9 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
       }
       this.#lanes.delete(lane.root);
       lane.enforcer.interrupt();
-      void lane.opening.catch(() => undefined).then(() => lane.enforcer.close()).catch(() => undefined);
+      void lane.opening.catch(() => undefined).then(async () => {
+        await lane.enforcer.close();
+      }).catch(error => process.stderr.write(`rerail: cannot close the workspace: ${error instanceof Error ? error.message : String(error)}\n`));
     }
   }
 
@@ -205,6 +212,12 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   ): Promise<readonly string[]> {
     this.#assertSession(sessionId);
     const auditIds: string[] = [];
+    if (this.#options.revisionSource !== undefined && input.scope === "touched-files") {
+      const lane = this.#lane(this.#options.startingCheckout);
+      if (lane === undefined) return auditIds;
+      await lane.opening;
+      return lane.enforcer.audit(sessionId, input);
+    }
     if (input.scope === "repository") {
       if ((input.paths ?? []).length > 0) throw new Error("Repository scope always covers the full repository");
       await this.#audit(sessionId, this.#options.startingCheckout, input.mode, input.audit, auditIds, new Set());
@@ -355,7 +368,11 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
         ...(this.#options.timingLog === undefined ? {} : { timingLog: this.#options.timingLog }),
         followGitignore: this.#options.followGitignore ?? false,
         presentPath: path => relative(this.#sessionRoot, join(root, path)).split(sep).join("/"),
-        nestedCheckouts: () => this.#nestedCheckoutsOf(root),
+        nestedCheckouts: () => this.#options.revisionSource === undefined ? this.#nestedCheckoutsOf(root) : [],
+        ...(this.#options.revisionSource === undefined ? {} : { revisionSource: this.#options.revisionSource }),
+        ...(this.#options.analysisStore === undefined ? {} : { analysisStore: this.#options.analysisStore }),
+        ...(this.#options.analysisRun === undefined ? {} : { analysisRun: this.#options.analysisRun }),
+        analysisGeneration: () => readAnalysisScopeGeneration(this.#options.catalogs.databasePath),
       });
       // The enforcer registers its code rules synchronously, so the new lane answers `acceptsPath` at once.
       lane = { root, enforcer, opening: enforcer.openWorkspace(sessionId) };

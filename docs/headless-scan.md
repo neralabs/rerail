@@ -12,14 +12,14 @@
 <details>
 <summary>What it does not need or touch</summary>
 
-No daemon, no session and nothing set up first. It adds nothing to the Rerail database's session history. Its one write
-outside its temporary folder: a checkout new to Rerail gets a clone id in Git's metadata folder
+No daemon, no session and nothing set up first. It adds nothing to the Rerail database's session history. Outside its temporary folder, a checkout new to Rerail gets a clone id in Git's metadata folder
 (`<git common dir>/rerail-repository-id`), as `rerail start` would.
+Revision scans can also write to a versioned content cache beside the Rerail home database.
 
 </details>
 
 ```sh
-rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]...
+rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--revision <commit-or-tree> --analysis-scope <name>] [--rules-ref <ref>] [--pack <id>]... [--rr <file>]...
             [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]
 ```
 
@@ -28,8 +28,11 @@ rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules
 | `--repo <dir>` | Git checkout to scan (any folder in it). Default: the current folder. |
 | `--scope repository` | Default. Every file the rules read, or only the `--path`/`--paths-from` files. |
 | `--scope git-diff` | Changed, staged and untracked files against `HEAD`, or against the merge base with `--base <ref>`. |
+| `--revision <commit-or-tree>` | Read one Git snapshot in repository scope. Accepts a hash or a single revision expression. |
+| `--analysis-scope <name>` | Retain cache entries for revision scans under this name. Required with `--revision`. |
 | `--rules-ref <ref>` | Run `.rerail/rules/` **at that Git ref**, so a change cannot edit the rules judging it. |
 | `--pack <id>` | Also run an installed pack. Repeatable. |
+| `--rr <file>` | Run this local `.rr` policy. Repeatable. |
 | `--json` | Print the report. |
 | `--fail-on-violations` | Exit 3 on violations. |
 | `--no-send` | Do not queue the report for this machine's [remotes](remote-sink.md). |
@@ -61,6 +64,11 @@ The scan uses your Rerail home's configuration when it can, otherwise a throwawa
 - **Home**: the repository's packs, rules, settings and approvals. Used when Rerail is set up here and no `--pack` or
   `--rules-ref` is given.
 - **Throwaway**: the checkout's `.rerail/rules/` or the rules at `--rules-ref`, plus every `--pack`.
+- **Worktree `.rr`**: `.rr` policies in `.rerail/rules/` run alongside the configured JSON rules in a headless scan.
+  Each file declares one policy. `rerail rules approve` approves its content and includes. Until approval,
+  the scan runs it in Log mode.
+- **Explicit `.rr`**: `--rr` selects the local policy files to run. The report records these policies in Log mode
+  and marks its policy source as `rr`.
 
 Worktree, `--rules-ref` and non-npm pack rules run in **Log** until approved with `rerail rules approve`.
 
@@ -82,6 +90,44 @@ Approval binds to the content digest. Approving a rule in a base-branch checkout
 `--rules-ref`, and nothing else. Rerail's own npm packs need no approval.
 
 </details>
+
+### Scan historical source
+
+```sh
+rerail scan --revision HEAD~1 --analysis-scope review
+rerail scan --revision HEAD --analysis-scope review --path src/main.ts --json
+rerail scope delete review
+```
+
+Rerail discovers Git from the current folder or `--repo` and reads the selected tree directly.
+The scan uses today's rules, packs, and approvals. Use `--rules-ref` to select rules independently.
+The ref supplies its JSON and `.rr` policies. It also supplies local `.rr` includes.
+Approvals apply to the policy and include bytes that the scan reads.
+Paths, package configuration, and `.rerailignore` come from the selected tree.
+With `--path` or `--paths-from`, a directory selects its descendants.
+A bare repository can supply source. Select its policy with `--rules-ref` or an installed `--pack`.
+You can also supply a local policy file using `--rr`.
+
+Git symlinks and submodules do not enter the source scan.
+The runner reports missing objects and makes no fetch.
+The JSON report includes `source` for a revision scan. Its `commit` is null for a tree.
+One invocation covers one snapshot. Use a driver for repeated scans.
+Use the same analysis scope to retain cache entries across those scans.
+After the last scan, delete the scope to release its entries and start collection.
+An active scan can keep its entries while it finishes. A failed scan releases its temporary ownership.
+See [Git in rules](rule-syntax/git.md) to query history from a rule.
+
+```sh
+rerail scan --revision HEAD~1 --analysis-scope review --rr ./commit-policy.rr --json
+```
+
+By default, `rerail scan` keeps its content store beside the Rerail home database.
+If you set `RERAIL_CONTENT_STORE_PATH` for a scan, use the same path for `rerail scope delete`.
+To share this store with `rerail-engine`, set `RERAIL_TAPE_CACHE` to that path for the native command.
+
+A filesystem scan uses its current directory as the analysis scope.
+If you give `--repo`, the scan uses that directory as the scope.
+`rerail stop` releases filesystem scopes for the directories it stops.
 
 ### In CI
 
@@ -115,10 +161,11 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
   "startedAt": 1793732129819, "finishedAt": 1793732131165,   // milliseconds since the epoch
   "repository": { "key": "remote:github.com/org/repo", "displayName": "repo" },   // or "clone:<id>" without a remote
   "checkout": { "path": "/abs/checkout", "head": "<sha>|null", "ref": "refs/heads/main|null" },
+  "source": { "revision": "HEAD~1", "tree": "<tree-id>", "commit": "<commit-id>|null" },
   "scope": "repository" | "git-diff",
   "base": null | { "ref": "origin/main", "mergeBase": "<sha>" },
   "paths": null | ["src/a.ts"],          // the files scanned, when not the whole checkout
-  "rulesSource": { "kind": "home" } | { "kind": "worktree" } | { "kind": "ref", "ref": "origin/main" },
+  "rulesSource": { "kind": "home" } | { "kind": "worktree" } | { "kind": "ref", "ref": "origin/main" } | { "kind": "rr" },
   "status": "completed" | "failed",
   "rules": [
     { "ruleId": "no-todo", "payloadHash": "sha256:…", "mode": "log" | "steer" | "block",
@@ -144,8 +191,11 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
 <summary>Exact field semantics</summary>
 
 - **Positions**: `start` is the match's first character; `end` is **just past** its last. Both are null for a
-  violation without a source span.
+  violation without a source span. An explicit `.rr` `@place` gives a line, column 1, and a null `end`.
 - **`payloadHash`**: `sha256:` of the rule's canonical JSON, the same digest approvals and audits use.
+  For a `.rr` policy, it hashes the list of file digests for the policy and its includes.
+- **`cacheWarnings`** lists errors that prevented the scan from retaining its cache.
+  The report keeps the findings and scan status.
 - **`fingerprint`**: 32 hex characters, `sha256(ruleId \0 path \0 matched text)`, whitespace runs collapsed to one
   space. It is stable while the rule, path and text are, even if the text moves in the file. When one rule matches the
   same text more than once in a file, the second and later matches also hash their ordinal, so fingerprints are unique

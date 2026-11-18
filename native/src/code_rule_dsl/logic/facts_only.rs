@@ -45,6 +45,12 @@ const FACT_STORE: &[&str] = &[
     "snapshot_files",
     "workspaces",
     "workspace_overlay",
+    "analysis_scope_manifest",
+    "analysis_scope_snapshot",
+    "analysis_scope_generation",
+    "analysis_scope_workspace_snapshot",
+    "analysis_scope_collect",
+    "analysis_scope_release",
     "node",
     "tape",
     "node_type",
@@ -332,6 +338,8 @@ const STATE: &[(&str, &str)] = &[
     // Each database file's identity, read once a file: a registry, as CANONICAL is.
     ("content_store/atoms.rs", "IDENTITIES"),
     ("content_store/atoms.rs", "MEMORY"),
+    // Explicit arena ownership for open in-memory SQL connections.
+    ("content_store/atoms.rs", "MEMORY_ARENAS"),
     ("content_store/atoms.rs", "REGISTRY"),
     ("content_store/compression.rs", "ENCODER"),
     ("content_store/connection.rs", "ALL_CONNECTIONS"),
@@ -355,6 +363,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix/device.rs", "TESTS"),
     // A switch: testing mode's store (decision 0130).
     ("code_rule_dsl/logic/plan/corpus.rs", "STORE"),
+    // The invoking audit's store path while its inventory program runs.
+    ("code_rule_dsl/logic/plan/corpus.rs", "THREAD_STORE"),
     // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "BATCH"),
     // With them, the memo plans of the batch's runs so far, by root (O-store-single-program): dropped with the batch.

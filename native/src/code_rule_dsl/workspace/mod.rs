@@ -434,6 +434,7 @@ pub struct WorkspaceState {
     pub dirty_files: BTreeSet<String>,
     pub grammars: BTreeMap<String, Arc<tape::Grammar>>,
     pub storage: Option<StorageContext>,
+    pending_analysis: Option<(crate::content_store::analysis_scope::AnalysisOwner, String)>,
     /// Removed paths whose overlay rows a busy store kept (`ingest::apply_request`): the next
     /// apply that publishes deletes them before it publishes its files.
     pub pending_removals: BTreeSet<String>,

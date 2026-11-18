@@ -66,7 +66,7 @@ fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &se
     added.hash(&mut h);
     h.update(options.to_string().as_bytes());
     h.update([0]);
-    h.update(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    h.update(crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
     h.update([0]);
     h.update(modes.as_bytes());
     h.update(format!("\0{typing:?}\0").as_bytes());
@@ -255,6 +255,11 @@ pub fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
 /// The kept outputs written into `out`, when every read of the last run under this key is as it was.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value) -> Result<Option<Report>> {
+    if crate::git_workspace::snapshot::contains(root) || super::ThreadStore::owner(root).is_some_and(|owner| owner.is_staged()) {
+        // A scoped run must publish its ownership after the run, including after
+        // a scope deletion. Its relation and document caches are independent.
+        return Ok(None);
+    }
     let programs = given.programs;
     let checking = super::thread_usage();
     let key = key(programs, &settings(root, options)?, root, options, modes, typing);
@@ -325,7 +330,7 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     // The documents the run read: the workspace's and those its requests loaded, each once. Phase 1 loads a
     // workspace document by its absolute path, which the run lists by its path from the root: counted twice, a warm
     // run of one file reported two.
-    let base = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let base = crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let read: std::collections::BTreeSet<std::path::PathBuf> =
         rest.iter().filter(|c| (c.0 == "doc" && !c.2.is_empty()) || c.0 == "load").map(|c| base.join(&c.1)).collect();
     report.files = read.len();
@@ -349,6 +354,9 @@ fn miss(why: &str) {
 }
 
 pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report) -> Result<()> {
+    if crate::git_workspace::snapshot::contains(root) {
+        return Ok(());
+    }
     let programs = given.programs;
     // Every phase's program is among the rule files (`rule_files`), and what each phase consulted is the record's
     // too: a phase's exports are a function of its program and what it consulted, so a run whose every read, its

@@ -73,6 +73,11 @@ pub mod phases;
 pub mod constants;
 pub mod inputs;
 pub use inputs::parameters as input_parameters;
+mod git;
+
+pub fn install_git_inventory() {
+    crate::git_workspace::snapshot::install_inventory_reader(git::inventory);
+}
 pub mod world;
 pub mod texts;
 pub mod connections;
@@ -142,7 +147,7 @@ use crate::content_store::ContentStore;
 use rusqlite::Connection;
 use rusqlite::types::Value as SqlValue;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 fn text(v: &SqlValue) -> String {
@@ -468,7 +473,7 @@ fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&fron
     }
     // A document listed without a digest was not read (none of the run's rules reads a document): its edit changes nothing.
     let changed: Vec<String> = docs.iter().filter(|d| !d.2.is_empty() && world::bytes_digest(&root.join(&d.1)) != d.2).map(|d| d.1.clone()).collect();
-    const READERS: [&str; 6] = ["input", "input_dir", "artifact", "base", "git_rev", "git_index"];
+    const READERS: [&str; 7] = ["input", "input_dir", "artifact", "base", "git_rev", "git_index", "git_root_repo"];
     let (read, requests): (Vec<_>, Vec<_>) = consulted.iter().filter(|c| c.0 != "doc").cloned().partition(|c| READERS.contains(&c.0.as_str()));
     let mut world = world::World::new(root, &prog);
     let moved = world.changed(&requests);
@@ -1779,7 +1784,9 @@ fn bound(prog: &front::Program) -> Result<()> {
     // `env` is the run's settings (`tools::with_settings`): facts when there are any, else empty. The world's
     // relations (`dir_entry`, `file_line`, …, and `loaded`) are answered by the runner (`world`).
     let world = |rel: &str| rel == world::LOADED || crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
-    let given = |rel: &str| GIVEN.contains(&rel) || rel == "env" || world(rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
+    let given = |rel: &str| GIVEN.contains(&rel) || git::INPUTS.contains(&rel)
+        || matches!(rel, "env" | "source_grammar_suffix" | "source_grammar_registry" | "source_tape_version")
+        || world(rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
     // core.rr's literal parts are made in core.rr's shape only (`syntax::core_rr`): a program that declares its base
     // relations itself (T's shape) has none.
     let t_shape = syntax::Projection::of(prog, BTreeSet::new()).shape == syntax::Shape::T;
@@ -2030,7 +2037,12 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
 pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, set: Option<[u8; 32]>, relations: &[(String, String)], late: &Late, reading: Option<crate::content_store::CollectionLease>, outer: bool) -> Result<Option<Collecting>> {
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let owner = crate::git_workspace::snapshot::analysis_owner(root).or_else(|| ThreadStore::owner(root));
+    let scope = owner.as_ref().map(|owner| owner.scope.clone())
+        .or_else(|| crate::git_workspace::snapshot::analysis_scope(root))
+        .or_else(|| (!phase0::active()).then(|| crate::content_store::analysis_scope::directory(root)));
+    let root = crate::git_workspace::snapshot::fact_root(root)
+        .or_else(|| root.canonicalize().ok()).unwrap_or_else(|| root.to_path_buf());
     let (root, sources, also, relations) = (root.to_string_lossy().into_owned(), sources.to_vec(), also.to_vec(), relations.to_vec());
     let plan = memo::plan_digest(program);
     let batch = phases::batch_plans(&root, plan, &also);
@@ -2060,9 +2072,12 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     // takes them as the writer applies it (`take_named_sources`), with these, named on the run's side.
     let mut sources = sources;
     sources.extend(late.lock().expect("the late sources").iter().copied());
-    let key = manifest_key(&root, &plan);
+    let publisher = owner.as_ref().map(|owner| owner.membership()).or(scope.as_deref()).unwrap_or_default();
+    let key = manifest_key(&root, &plan, publisher);
     let manifest = Manifest {
         root,
+        scope,
+        owner,
         sources,
         grammar_version: crate::code_rule_dsl::build_ids::grammar_version(),
         tape_format: i64::from(crate::code_rule_dsl::tape::formats::stored_version()),
@@ -2139,14 +2154,18 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
 }
 
 /// The key a run's manifest's item is queued under: its root's and plan's.
-fn manifest_key(root: &str, plan: &[u8; 32]) -> crate::content_store::write_back::Key {
-    crate::content_store::write_back::Key::of(&[b"the run's manifest", root.as_bytes(), plan])
+fn manifest_key(root: &str, plan: &[u8; 32], scope: &str) -> crate::content_store::write_back::Key {
+    crate::content_store::write_back::Key::of(&[b"the run's manifest", root.as_bytes(), plan, scope.as_bytes()])
 }
 
 /// A run's manifest, as its record holds it (decision 0306).
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Manifest {
     root: String,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    owner: Option<crate::content_store::analysis_scope::AnalysisOwner>,
     sources: Vec<crate::content_store::SourceId>,
     grammar_version: i64,
     tape_format: i64,
@@ -2163,7 +2182,7 @@ struct Manifest {
 fn apply_manifest(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
     let mut m: Manifest = crate::content_store::record::codec::from_body("the run's manifest", body)?;
     m.sources.extend(cx.store.take_named_sources());
-    let new = cx.store.record_corpus_run_policy(&m.root, &m.sources, m.grammar_version, m.tape_format, m.plan, &m.also, m.lane, m.set, m.now)?;
+    let new = cx.store.record_corpus_run_retaining(&m.root, &m.sources, m.grammar_version, m.tape_format, m.plan, &m.also, m.lane, m.set, m.now, m.scope.as_deref(), m.owner.as_ref())?;
     // A warm run may move an identical manifest's timestamps (`profile::WARM_WRITES_ALLOWED`), never record a new one.
     if new {
         crate::code_rule_dsl::logic::profile::warm_fault("a new manifest recorded", || format!("{}, {} sources", m.root, m.sources.len()));
@@ -2289,6 +2308,47 @@ pub fn closes_done() {
 /// (decision 0130), whose runs must not read what other runs left, nor wait behind their writes.
 static STORE: std::sync::RwLock<Option<std::path::PathBuf>> = std::sync::RwLock::new(None);
 
+thread_local! {
+    static THREAD_STORE: std::cell::RefCell<Option<StoreSelection>> = const { std::cell::RefCell::new(None) };
+}
+
+struct StoreSelection {
+    path: PathBuf,
+    ownership: Option<(PathBuf, crate::content_store::analysis_scope::AnalysisOwner)>,
+}
+
+struct ThreadStore(Option<StoreSelection>);
+
+impl ThreadStore {
+    fn enter(path: &Path) -> Self {
+        Self::select(path, None)
+    }
+
+    fn select(path: &Path, ownership: Option<(PathBuf, crate::content_store::analysis_scope::AnalysisOwner)>) -> Self {
+        Self(THREAD_STORE.with(|store| store.replace(Some(StoreSelection { path: path.to_owned(), ownership }))))
+    }
+
+    fn owner(root: &Path) -> Option<crate::content_store::analysis_scope::AnalysisOwner> {
+        THREAD_STORE.with(|store| {
+            let store = store.borrow();
+            let (expected, owner) = store.as_ref()?.ownership.as_ref()?;
+            (expected == root).then(|| owner.clone())
+        })
+    }
+}
+
+impl Drop for ThreadStore {
+    fn drop(&mut self) {
+        THREAD_STORE.with(|store| store.replace(self.0.take()));
+    }
+}
+
+/// Run with an explicitly selected cache on this thread.
+pub fn with_tape_cache_path<T>(path: &Path, ownership: Option<(PathBuf, crate::content_store::analysis_scope::AnalysisOwner)>, run: impl FnOnce() -> T) -> T {
+    let _store = ThreadStore::select(path, ownership);
+    run()
+}
+
 /// While the guard lives, every run of the process (without `RERAIL_TAPE_CACHE`) uses the store at `path`.
 pub fn use_store(path: std::path::PathBuf) -> UsedStore {
     let was = STORE.write().expect("the process's store").replace(path);
@@ -2313,6 +2373,9 @@ fn names_its_store() -> bool {
 
 /// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
 pub fn tape_cache_path() -> Option<std::path::PathBuf> {
+    if let Some(path) = THREAD_STORE.with(|store| store.borrow().as_ref().map(|store| store.path.clone())) {
+        return Some(path);
+    }
     #[cfg(any(test, feature = "test-hooks"))]
     if let Some(path) = TEST_TAPE_CACHE.with(|p| p.borrow().clone()).or_else(test_store::handed) {
         return Some(path);
@@ -2439,7 +2502,7 @@ pub fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
-    run_handed(programs, None, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options)
+    run_handed(programs, None, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options, None)
 }
 
 /// `run_with_options` of a program already read (`tools::run_program`, which read the file): the run holds that
@@ -2472,7 +2535,16 @@ pub(super) fn run_read_handing(
     options: &serde_json::Value,
 ) -> Result<Report> {
     let key = read_key(read)?;
-    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options)
+    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options, None)
+}
+
+/// Evaluate a fact-only phase against the retained store and return its output image.
+fn run_fact_image(read: &front::Program, root: &Path, options: &serde_json::Value) -> Result<Vec<u8>> {
+    let key = read_key(read)?;
+    let mut image = Vec::new();
+    run_handed(&[key.as_str()], Some(read), None, root, None, Path::new(""), "program",
+        Binding::Cpu, 1 << 18, &Typing::default(), options, Some(&mut image))?;
+    Ok(image)
 }
 
 /// A handed program's key, in the place of a text: its version's digest (`choices::key`, decision 0173 §7), named so
@@ -2495,6 +2567,7 @@ fn run_handed(
     chunk_nodes: usize,
     typing: &Typing,
     options: &serde_json::Value,
+    image: Option<&mut Vec<u8>>,
 ) -> Result<Report> {
     // The `RERAIL_*` switches stay as they are until the run ends: a test sets them only while no run reads them.
     let _switches = switches::reading();
@@ -2578,7 +2651,7 @@ fn run_handed(
     drop(seeding);
     let lifecycle_seeded = usage();
     // Phase 0's cutoff (`reuse`): a run whose every read is as it was writes the outputs it wrote.
-    let reuse = reuse::wanted(options, typing, t_facts);
+    let reuse = image.is_none() && reuse::wanted(options, typing, t_facts);
     let kept = if reuse { reuse::reused(&texts, root, out, modes, typing, options) } else { Ok(None) };
     let report = match kept {
         // A profiled run that the cutoff answered writes its profile too: the lifecycle below appends to it.
@@ -2592,7 +2665,7 @@ fn run_handed(
         }
         Ok(Some(report)) => Ok(report),
         Err(e) => Err(e),
-        Ok(None) => run_observed(&texts, root, t_facts, out, modes, binding, chunk_nodes, typing, options).and_then(|report| {
+        Ok(None) => run_observed(&texts, root, t_facts, out, modes, binding, chunk_nodes, typing, options, image).and_then(|report| {
             if reuse {
                 reuse::record(&texts, root, out, modes, typing, options, &report)?;
             }
@@ -2762,7 +2835,9 @@ fn run_observed(
     chunk_nodes: usize,
     typing: &Typing,
     options: &serde_json::Value,
+    captured: Option<&mut Vec<u8>>,
 ) -> Result<Report> {
+    let in_memory = captured.is_some();
     // The run's writes are waves of its own (decision 0259): each sealed at a boundary of the run (`end_wave`), the
     // last as the run ends, and the store takes each in one transaction.
     let _waves = crate::content_store::write_back::run_waves();
@@ -2780,14 +2855,16 @@ fn run_observed(
     // command line's `--env`).
     let setting = crate::code_rule_dsl::logic::profile::span(|| "the run's settings".into());
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
-    let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
-    // The settings are `env` rows, given to each program that declares `env` once it is read (decision 0249): the
-    // program read stays the program, and the texts are the files' own.
-    let mut added = added::Added::of(&settings, options);
     let read = given.read;
     // The texts as the run's keys read them, messages masked (`texts_digest`, decision 0225 §3), each masked once.
     let masked_texts = masked(programs);
     let masked: &[&str] = &masked_texts.iter().map(|t| t.as_ref()).collect::<Vec<_>>();
+    let metadata_without_env = if crate::git_workspace::snapshot::contains(root) {
+        let (probe, _) = combine_keyed(programs, masked, &given.graphs, &added::Added::of(&[], options), read, &lists)?;
+        git::metadata_only(&probe) && !front::needed(&probe, probe.outputs.clone()).contains("env")
+    } else { false };
+    let settings = crate::code_rule_dsl::logic::settings::settings_with_file(root, &flags, !metadata_without_env).map_err(Error::Plan)?;
+    let mut added = added::Added::of(&settings, options);
     drop(setting);
     // What the run is of, whichever build runs it: its manifest's lane (`record_corpus_run_lane`).
     let lane: [u8; 32] = {
@@ -2806,10 +2883,13 @@ fn run_observed(
     // under the same options, supersedes the set's older lanes over the root, whoever runs it (the command line, a
     // session, a batch). Programs that name no policy name no set: the run's lane is its own (`record_run`).
     let policy: Option<[u8; 32]> = {
-        let names: std::collections::BTreeSet<&str> = programs
-            .iter()
-            .flat_map(|t| t.lines().filter_map(|l| l.trim_start().strip_prefix(".policy")?.trim_start().strip_prefix('"')?.split('"').next()))
-            .collect();
+        let header = read.map(crate::code_rule_dsl::logic::rr::metadata).transpose()?;
+        let names: BTreeSet<&str> = match &header {
+            Some(header) => header["policies"].as_array().into_iter().flatten().filter_map(|policy| policy["id"].as_str()).collect(),
+            None => programs.iter()
+                .flat_map(|t| t.lines().filter_map(|l| l.trim_start().strip_prefix(".policy")?.trim_start().strip_prefix('"')?.split('"').next()))
+                .collect(),
+        };
         (!names.is_empty()).then(|| {
             use sha2::Digest as _;
             let mut h = sha2::Sha256::new();
@@ -2921,6 +3001,7 @@ fn run_observed(
     }
     let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
     let (mut prog, mut texts) = combine_keyed(programs, masked, &given.graphs, &added, read, &lists)?;
+    let git_metadata_only = crate::git_workspace::snapshot::contains(root) && git::metadata_only(&prog);
     drop(combining);
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
     // They run as a job on the pool beside phase 1 (decision 0192): neither reads the other's results, each writes in
@@ -2945,6 +3026,7 @@ fn run_observed(
         let bridged_slot = &bridged_slot;
         jobs.spawn("typing programs", move |_| *bridged_slot.lock() = Some(bridge::facts(prog, root, out, modes, binding, chunk_nodes, typing)));
         Ok::<_, Error>(if t_facts.is_none()
+            && !git_metadata_only
             && options.get("inputFiles").is_none()
             && phases::declared(&prog).is_none()
             && !phases::in_phase()
@@ -2954,12 +3036,12 @@ fn run_observed(
         {
             let found = scoped(corpus_files(root)?, &prog, options);
             let label = corpus_language(language.as_deref(), typing, &found);
+            let of_label = found.by_label.get(label).cloned().unwrap_or_default();
             let files = found.of(label);
             // The observer's facts: each source file of the run's grammar, its module, and its content's digest (read
             // only where the observer cannot vouch for it).
             // A Python file's module is the name its package root gives it (`package_root_modules`), as imports name it.
             let renamed = package_root_modules(root, &files);
-            let of_label: Vec<&String> = files.iter().filter(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label)).collect();
             // The run's one read of each (decision 0300): the bytes are held for phase 1's and this run's builders.
             let digests = world::bytes_digests_held(&of_label.iter().map(|p| root.join(p)).collect::<Vec<_>>(), Some(&own_sources));
             let stated: Vec<(String, String, String, String)> = of_label
@@ -2967,8 +3049,8 @@ fn run_observed(
                 .zip(digests)
                 .filter(|(_, c)| !c.is_empty())
                 .map(|(p, c)| {
-                    let module = renamed.get(p).cloned().unwrap_or_else(|| crate::code_rule_dsl::facts::vtab::syntax::module(p));
-                    (p.clone(), module, label.to_owned(), c)
+                    let module = renamed.get(&p).cloned().unwrap_or_else(|| crate::code_rule_dsl::facts::vtab::syntax::module(&p));
+                    (p, module, label.to_owned(), c)
                 })
                 .collect();
             listing = Some((files, label));
@@ -2990,11 +3072,12 @@ fn run_observed(
     });
     let (bridged, typing_runs) = bridged_slot.into_inner().expect("the typing programs' job ran")?;
     let _phase_one = phase_one?;
-    let (phased, mut phase_runs) = if options.get(constants::OWN).is_some() {
+    let (mut phased, mut phase_runs) = if options.get(constants::OWN).is_some() {
         (Default::default(), Vec::new())
     } else {
         phases::facts(&prog, root, out, modes, binding, chunk_nodes, typing, options)?
     };
+    phased.extend(git::inputs(&prog, root));
     phase_runs.splice(0..0, phase_one_run);
     // A phase's exports are the run's inputs, not its facts: their rows are bound as relations once the program is
     // prepared, so an edit that changes them leaves the program, its prepared plans and its keys as they were.
@@ -3039,7 +3122,9 @@ fn run_observed(
             (docs, first, label)
         }
         None => {
-            let (files, label) = if let Some(supplied) = options.get("inputFiles") {
+            let (files, label) = if git_metadata_only {
+                (Vec::new(), language.as_deref().and_then(crate::code_rule_dsl::language::label_named).unwrap_or("python"))
+            } else if let Some(supplied) = options.get("inputFiles") {
                 let supplied = supplied.as_array().ok_or_else(|| Error::Plan("inputFiles must be a list of relative document paths".to_owned()))?;
                 let files = supplied.iter().map(|value| {
                     let path = value.as_str().ok_or_else(|| Error::Plan("inputFiles must contain strings".to_owned()))?;
@@ -3127,7 +3212,7 @@ fn run_observed(
     let mut typed = TypingReport::default();
     let mut declared = BTreeMap::new();
     if prog.decls.contains_key("declared_ret") {
-        let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p, label)).collect();
+        let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(root, p, label)).collect();
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
             added = added.with("declared_ret", facts.into_iter().map(|(q, t)| vec![front::Value::Str(q.into()), front::Value::Str(t.into())]));
@@ -3176,12 +3261,16 @@ fn run_observed(
     if !dialect.built() {
         return Err(Error::Plan(format!("{label} is not in this build (its `lang-{label}` feature is off)")));
     }
-    std::fs::create_dir_all(out).map_err(|e| Error::Plan(e.to_string()))?;
+    if !in_memory {
+        std::fs::create_dir_all(out).map_err(|e| Error::Plan(e.to_string()))?;
+    }
     // The outputs are rerail's own: outside the file observer, for this process and the next (decision 0284).
-    observe(|o| o.own_output(out));
+    if !in_memory {
+        observe(|o| o.own_output(out));
+    }
     // A long-lived process (the browser's engine, `session`) keeps its store, its last program compiled and each
     // file's file-local rows from run to run: an edit evaluates the files it changed and the cross-file part.
-    let session = held.as_mut().filter(|_| t.is_none() && !prog.decls.contains_key("declared_ret"));
+    let session = held.as_mut().filter(|_| !in_memory && t.is_none() && !prog.decls.contains_key("declared_ret"));
     // The run's connections, set up by their owner and passed through (`connections`): a session's are kept from run
     // to run, readied here, before the scratch files are made again; a run of its own opens its own. (A run that
     // fails leaves its session new ones to open.)
@@ -3190,6 +3279,7 @@ fn run_observed(
         connections::Handed::take(session.as_ref().map(|s| Arc::clone(&s.connections)))?
     };
     let (path, cross_path) = match &session {
+        None if in_memory => (":memory:".into(), ":memory:".into()),
         Some(s) => (s.path.clone(), out.join("cross.sqlite")),
         None => (out.join("store.sqlite"), out.join("cross.sqlite")),
     };
@@ -3198,7 +3288,7 @@ fn run_observed(
     let scratch = [&path, &cross_path].into_iter().filter(|p| session.is_none() || **p == cross_path);
     // An earlier run's connections may be closing still (`close_beside`): not on the files replaced here.
     closes_done();
-    for p in scratch.flat_map(|p| ["", "-wal", "-shm"].map(|s| std::path::PathBuf::from(format!("{}{s}", p.display())))) {
+    for p in scratch.filter(|_| !in_memory).flat_map(|p| ["", "-wal", "-shm"].map(|s| std::path::PathBuf::from(format!("{}{s}", p.display())))) {
         if p.exists() {
             std::fs::remove_file(&p).map_err(|e| Error::Plan(e.to_string()))?;
         }
@@ -3222,9 +3312,15 @@ fn run_observed(
         (Some(s), _) => &s.store,
         (None, Some(cache)) if t.is_none() => {
             // The file first: the arena is found by the database's canonical path, which a missing file has not.
-            std::fs::File::create(&path).map_err(|e| Error::Plan(format!("{}: {e}", path.display())))?;
-            cache.share_atoms_with(&path);
+            if !in_memory {
+                std::fs::File::create(&path).map_err(|e| Error::Plan(format!("{}: {e}", path.display())))?;
+                cache.share_atoms_with(&path);
+            }
             cache
+        }
+        _ if in_memory => {
+            own_store = ContentStore::open_ephemeral().map_err(|e| Error::Plan(e.to_string()))?;
+            &own_store
         }
         _ => {
             own_store = ContentStore::open(&path).map_err(|e| Error::Plan(e.to_string()))?;
@@ -3235,7 +3331,7 @@ fn run_observed(
     crate::code_rule_dsl::logic::native::declare("shortlex_min", Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
     let db = {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "open run connection".into());
-        handed.run(&path)?
+        handed.run(&path, in_memory.then(|| store.atoms_handle()))?
     };
     // The run's databases are scratch, made again by every run (removed above): a commit need not reach the disk. Set
     // when SQL first runs on it (`vtab::setup_now`).
@@ -3627,7 +3723,10 @@ fn run_observed(
     let Prepared { prog, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _, documents: _, cone: shared_cone, maintained: shared_maintained, parts: shared_parts, decided: _, memo_strata: shared_strata, general: shared_general } = &*prepared;
     let (remerged, reshared) = (*remerged, *reshared);
     // The run takes the split's programs apart (`part` below): its own copy, the kept one shared.
-    let split = shared_split.clone();
+    let mut split = shared_split.clone();
+    // Native request answers are inputs of the cone and cross-file part. No document
+    // batch binds them, even when the program declares them as inputs in core.rr.
+    split.base.retain(|rel| !WORLD.iter().any(|(answer, _)| answer == rel));
     // The prepared program's fields, read from its version (decision 0281's path, step 4): no reader below reads its
     // tree's declarations.
     let prepared_placed = lowered.placed()?;
@@ -3812,7 +3911,7 @@ fn run_observed(
     });
     // The reference graph's relations, for a program that reads them: its files are summarized as the chunks are
     // built, and linked once they all are (`references`). W's graph is Python's.
-    let references = match CROSS_FILE.get() { Some(make) => make(label, &prog, &read, &docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p, label)).collect::<Vec<_>>())?, None => None };
+    let references = match CROSS_FILE.get() { Some(make) => make(label, &prog, &read, &docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(root, p, label)).collect::<Vec<_>>())?, None => None };
     let part_of = |version| lowered.with_version(version);
     crate::code_rule_dsl::logic::profile::decision("file-local split", || {
         format!(
@@ -4309,8 +4408,8 @@ fn run_observed(
     let recording = matches!(memo, Some(memo::Memo::Stored(_)));
     // The stats the run records are as of its start: an entry is trusted only for a file last changed before then.
     let started_ns = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos() as i64);
-    let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().into_owned();
-    let stat_index = if recording {
+    let canonical_root = crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().into_owned();
+    let stat_index = if recording && !crate::git_workspace::snapshot::contains(root) {
         // An earlier run of this process may have queued the root's stats: read once they are written, before the
         // first wave (decision 0104).
         store.settle(&stats_key(&canonical_root));
@@ -4546,12 +4645,26 @@ fn run_observed(
             }
             let _stat = crate::code_rule_dsl::logic::profile::span(|| "stat".into());
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::FileStat, 1);
-            std::fs::metadata(root.join(path)).ok().map(|m| crate::content_store::FileStat::of(&m))
+            crate::git_workspace::snapshot::file_stat(root.join(path))
         };
         // The stat index (git's): a file whose stat is the one recorded when its source was last read is that
         // source, and on a memo hit is neither read nor hashed.
         let stats: Vec<Option<crate::content_store::FileStat>> = window.par_iter().map(|(_, path, _)| stat(path)).collect();
-        let known: Vec<Option<crate::content_store::SourceId>> = window.iter().zip(&stats).map(|((_, path, _), stat)| stat.and_then(|now| stat_index.source(world::store_path(path), now))).collect();
+        let mut known: Vec<Option<crate::content_store::SourceId>> = window.iter().zip(&stats).map(|((_, path, _), stat)| stat.and_then(|now| stat_index.source(world::store_path(path), now))).collect();
+        // An immutable Git source is identified by its blob, without statting or reading a checkout file.
+        // A previously seen blob's SHA-256 lets the existing content memo answer before its bytes are fetched.
+        if let (true, true, Some(memo)) = (memoised, reading, memo) {
+            let aliases: Vec<(usize, [u8; 32])> = observe(|o| window.iter().enumerate().filter_map(|(i, (_, path, _))| {
+                let blob = crate::git_workspace::snapshot::blob(&root.join(path))?;
+                o.alias(&blob.key_bytes()).map(|digest| (i, digest))
+            }).collect());
+            if !aliases.is_empty() {
+                let digests: Vec<_> = aliases.iter().map(|(_, digest)| *digest).collect();
+                for ((i, _), content) in aliases.into_iter().zip(memo.found(&digests).map_err(|e| Error::Plan(e.to_string()))?) {
+                    known[i] = content.and_then(|c| c.stored());
+                }
+            }
+        }
         let mut content: Vec<Option<memo::Content>> = known.iter().map(|k| k.map(memo::Content::Stored)).collect();
         let mut found: Vec<Option<memo::Found>> = (0..window.len()).map(|_| None).collect();
         let mut digest: Vec<Option<[u8; 32]>> = vec![None; window.len()];
@@ -4602,10 +4715,10 @@ fn run_observed(
                 if let Some(source) = source_texts.text(&root.join(path), keep) {
                     return Ok(Some(source));
                 }
-                let source = match std::fs::read_to_string(root.join(path)) {
+                let source = match crate::git_workspace::snapshot::read_to_string(root.join(path)) {
                     Ok(source) => source,
                     // A text file that is not UTF-8 (an image, an archive) is no document: its wave finds it so.
-                    Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(path, label) => return Ok(None),
+                    Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(root, path, label) => return Ok(None),
                     Err(e) => return Err(Error::Plan(format!("{path}: {e}"))),
                 };
                 crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
@@ -4808,7 +4921,7 @@ fn run_observed(
     {
         // The cone of requests' connection and store, opened before the first wave (decision 0104).
         let (slot, _) = handed.cone();
-        connections::Cone::ready(&slot, &path, durable.is_some().then(|| store.database_path()))?;
+        connections::Cone::ready(&slot, &path, durable.is_some().then(|| store.database_path()), in_memory.then(|| store.atoms_handle()))?;
         // And the kept frames (decision 0104): the waves read them from memory (`preload_frames_live`). The memo's
         // entries are not frames (decision 0240 §4); of the cross part's, not every kept run's (Q19).
         let preload_at = std::time::Instant::now();
@@ -4956,15 +5069,15 @@ fn run_observed(
                         let _read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
                         // Held from the run's digests (decision 0300), as of the stat it was read at.
                         let held = source_texts.text(&root.join(path), true);
-                        let text = match held.map_or_else(|| std::fs::read_to_string(root.join(path)), Ok) {
+                        let text = match held.map_or_else(|| crate::git_workspace::snapshot::read_to_string(root.join(path)), Ok) {
                             Ok(text) => text,
                             // A text file that is not UTF-8 (an image, an archive) is no document.
-                            Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(path, label) => return Ok(None),
+                            Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(root, path, label) => return Ok(None),
                             Err(e) => return Err(Error::Plan(format!("{path}: {e}"))),
                         };
                         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, text.len() as u64);
-                        let now = if looking { std::fs::metadata(root.join(path)).ok().map(|m| crate::content_store::FileStat::of(&m)) } else { None };
-                        if now.is_some() && now == b.stat {
+                        let now = if looking { crate::git_workspace::snapshot::file_stat(root.join(path)) } else { None };
+                        if crate::git_workspace::snapshot::contains(&root.join(path)) || (now.is_some() && now == b.stat) {
                             (text, b.content, b.digest, b.tape)
                         } else {
                             // Changed since it was found: a new content, by this text's digest.
@@ -5019,7 +5132,7 @@ fn run_observed(
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, source.len() as u64);
         // A file of no grammar is here because `.scope text` reads it (`scoped`): text only, no tree, its lines W's
         // for a file of no language (`core::text`).
-        if text_document(path, label) {
+        if text_document(root, path, label) {
             let facts = Arc::new(core::text(Arc::new(source)));
             let digest = core::digest(&facts);
             return Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape: None }));
@@ -5821,6 +5934,9 @@ fn run_observed(
     let open_worker = || -> Result<(Connection, Modules)> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "open a chunk connection".into());
         let mut wdb = Connection::open(&path)?;
+        if in_memory {
+            crate::content_store::atoms::Atoms::share_memory(&wdb, store.atoms_handle())?;
+        }
         crate::content_store::atoms::Atoms::install(&mut wdb)?;
         crate::code_rule_dsl::facts::vtab::defer_setup(&wdb, "PRAGMA synchronous=OFF;");
         super::ready_native(&wdb)?;
@@ -6718,6 +6834,9 @@ fn run_observed(
         // The loads answered and taken back, shared with the rounds (decision 0145).
         let load_ledger: Arc<std::sync::Mutex<cone_rounds::LoadLedger>> = Arc::default();
         let load_ledger_in = Arc::clone(&load_ledger);
+        let git_root = root.to_path_buf();
+        let kept_git_reads: Arc<std::sync::Mutex<Vec<(String, String)>>> = Arc::default();
+        let kept_git_reads_in = Arc::clone(&kept_git_reads);
         let rounds_journal_in = rounds_journal.clone();
         // Beside the main thread, which answers its requests: a job of the pool's that takes turns with this one.
         let modes = modes.to_owned();
@@ -6725,8 +6844,9 @@ fn run_observed(
         // Read from the run's cross part's version (`run_placed`): no tree is decoded.
         let decl_types: HashMap<String, Vec<u8>> = run_f.decls_by_name().into_iter().map(|(r, _)| (r.to_owned(), retain::types_of(&run_placed, &lowered.domains, r))).collect();
         let vocabulary_cone = Arc::clone(&vocabulary);
+        let arena = in_memory.then(|| store.atoms_handle());
         let cone = crate::threads::beside("the cone of requests", move || -> Result<(Vec<(String, Vec<Vec<i64>>)>, Option<(usize, usize)>, usize)> {
-            let db2 = connections::Cone::take_db(&cone_slot, &db_path)?;
+            let db2 = connections::Cone::take_db(&cone_slot, &db_path, arena)?;
             let statements = Statements::on_as(&db2, ".cone");
             statements.enter("cone");
             // When SQL first runs on it (`vtab::setup_now`), as the run's.
@@ -6793,16 +6913,39 @@ fn run_observed(
             // path the journal names since is it, above it, or (for a directory) an entry of it. Only over the
             // answers the record was kept with.
             let journal = rounds_journal_in.as_ref().filter(|_| std::env::var("RERAIL_CONE_STILL").map_or(true, |v| v != "off")).filter(|(_, _, world)| from_rounds.as_ref().is_some_and(|k| cone_rounds::world_digest(|rel| k.input_digest(rel)) == *world));
-            let db_text = &db2;
-            let still_fn = journal.map(|(roots, named, _)| {
-                move |req: &str, key: &[i64]| -> bool {
-                    let Some(text) = key.first().and_then(|a| crate::code_rule_dsl::logic::native::sym_text_of(db_text, *a).ok()) else { return false };
-                    let path = std::path::Path::new(&text);
-                    roots.iter().any(|(r, _)| path.starts_with(r)) && named.iter().all(|n| !path.starts_with(n) && !(req == "rr_dir_req" && n.parent() == Some(path)))
+            // Immutable object answers stay in the same retained inputs as the other world answers.
+            // Check that their object is still available. A failure is requested afresh.
+            let git = std::cell::RefCell::new(None::<git::Git>);
+            let git_selection = std::cell::OnceCell::new();
+            let sym_text = |atom| crate::code_rule_dsl::logic::native::sym_text_of(&db2, atom).ok();
+            let still_fn = |req: &str, key: &[i64], rows: &[&Vec<i64>]| -> bool {
+                if req == git::OBJECT {
+                    let [repo, id] = key else { return false };
+                    if !rows.iter().any(|row| row.get(2).and_then(|&field| sym_text(field)).as_deref() == Some("kind")) {
+                        return false;
+                    }
+                    let (Some(repo), Some(id)) = (sym_text(*repo), sym_text(*id)) else { return false };
+                    let present = git.borrow_mut().get_or_insert_with(|| git::Git::new(&git_root))
+                        .observation(req, &repo, &id).as_deref() == Some("present");
+                    if present {
+                        kept_git_reads_in.lock().unwrap_or_else(|e| e.into_inner()).push((repo, id));
+                    }
+                    return present;
                 }
-            });
-            let still_ref = still_fn.as_ref().map(|f| f as &dyn Fn(&str, &[i64]) -> bool);
-            let on = lowered_round.as_ref().zip(rounds_key).zip(cone_handle.as_ref()).map(|((lowered, key), store)| cone_rounds::On { store, space: rounds_space, db: &db2, modules: &modules, lowered, key, stats: &rounds_stats, keep: &keep_rounds, modes: &modes, still: still_ref, texts: &vocabulary_cone });
+                if req == git::REVISION {
+                    return false;
+                }
+                if req == git::INVENTORY_CHILD {
+                    return key.get(1).and_then(|&atom| sym_text(atom)).as_ref()
+                        == git_selection.get_or_init(|| crate::git_workspace::snapshot::inventory_selection(&git_root)).as_ref();
+                }
+                if req == git::INVENTORY_TRAIL { return true; }
+                let Some((roots, named, _)) = journal else { return false };
+                let Some(text) = key.first().and_then(|&atom| sym_text(atom)) else { return false };
+                let path = std::path::Path::new(&text);
+                roots.iter().any(|(r, _)| path.starts_with(r)) && named.iter().all(|n| !path.starts_with(n) && !(req == "rr_dir_req" && n.parent() == Some(path)))
+            };
+            let on = lowered_round.as_ref().zip(rounds_key).zip(cone_handle.as_ref()).map(|((lowered, key), store)| cone_rounds::On { store, space: rounds_space, db: &db2, modules: &modules, lowered, key, stats: &rounds_stats, keep: &keep_rounds, modes: &modes, still: Some(&still_fn), texts: &vocabulary_cone });
             let mut gave_up = None;
             if let (Some(r), Some(on), Some(k)) = (&round, &on, from_rounds) {
                 load_ledger_in.lock().unwrap_or_else(|e| e.into_inner()).rounds = true;
@@ -6920,6 +7063,57 @@ fn run_observed(
                 t.rows += rows.len();
                 t.total += t_call.elapsed().as_secs_f64();
             });
+            if matches!(rel, git::REVISION | git::OBJECT) {
+                let mut out = Vec::new();
+                for row in rows {
+                    let [repo, arg] = row.as_slice() else { return Err(Error::Plan(format!("{rel} takes a repository and a key"))); };
+                    let key = text(*repo)?;
+                    let arg_text = text(*arg)?;
+                    if rel == git::REVISION {
+                        let (id, status) = world.git_revision(&key, &arg_text);
+                        let values = atoms(&[&id, status])?;
+                        out.push(vec![*repo, *arg, values[0], values[1]]);
+                    } else {
+                        for record in world.git_object(&key, &arg_text) {
+                            let values = atoms(&[record.field, &record.first, &record.second])?;
+                            out.push(vec![*repo, *arg, values[0], record.position, values[1], values[2], record.number, record.offset]);
+                        }
+                    }
+                }
+                let answer = if rel == git::REVISION { "git_revision_of" } else { "git_object_of" };
+                return Ok(vec![(answer.to_owned(), out)]);
+            }
+            if rel == git::INVENTORY_CHILD {
+                let mut out = Vec::new();
+                for row in rows {
+                    let [_, _, directory, name, mode] = row.as_slice() else {
+                        return Err(Error::Plan(format!("{rel}: invalid child request")));
+                    };
+                    if let Some(path) = world.inventory_child(
+                        &text(*directory)?, &text(*name)?, *mode,
+                    ).map_err(Error::Plan)? {
+                        let mut found = row.clone();
+                        found.extend(atoms(&[&path])?);
+                        out.push(found);
+                    }
+                }
+                return Ok(vec![("git_inventory_child_of".to_owned(), out)]);
+            }
+            if rel == git::INVENTORY_TRAIL {
+                let mut out = Vec::new();
+                for row in rows {
+                    let [_, path, object, trail] = row.as_slice() else { return Err(Error::Plan(format!("{rel}: invalid tree path"))); };
+                    let object = text(*object)?;
+                    let trail = text(*trail)?;
+                    if trail.split(':').any(|ancestor| ancestor == object) {
+                        return Err(Error::Plan(format!("cycle in Git tree at {}", text(*path)?)));
+                    }
+                    let mut found = row.clone();
+                    found.extend(atoms(&[&format!("{trail}{object}:")])?);
+                    out.push(found);
+                }
+                return Ok(vec![("git_inventory_trail_of".to_owned(), out)]);
+            }
             if let Some((produced, _)) = WORLD.iter().find(|(_, req)| *req == rel) {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}"));
                 let mut out = Vec::new();
@@ -7201,6 +7395,11 @@ fn run_observed(
         finished = Some(finish()?);
         cone_inputs = cone_digests(&exports.borrow(), &per_file, &split.locations, &pf, docs.iter().chain(&loaded_docs))?;
         let summary = world.summary(pauses);
+        if let Ok(mut reads) = kept_git_reads.lock() {
+            for (repo, id) in reads.drain(..) {
+                world.consulted_git(git::OBJECT, &repo, &id, "present".to_owned());
+            }
+        }
         consulted.extend(world.consulted());
         crate::code_rule_dsl::logic::profile::decision("file system and loaded documents (t21)", || summary);
     } else {
@@ -9052,6 +9251,10 @@ fn run_observed(
         });
         let mut wrote = 0usize;
         let (depth, deltas, base) = match &over {
+            _ if in_memory => {
+                captured.expect("the in-memory destination").extend_from_slice(&bytes);
+                (1, 0, true)
+            }
             Some(h) if overlay.is_empty() => (h.depth, h.deltas, false),
             Some(h) => {
                 let image = overlay.finish();
@@ -9139,6 +9342,7 @@ fn run_observed(
         format!("{atoms} atoms appended in {segments} segments ({:.1} MB), {pending} pending at the end (decision 0049)", bytes as f64 / 1e6)
     });
     if memoised {
+        crate::code_rule_dsl::prof::count("corpus.file_memo_misses", docs.len().saturating_sub(memo_hits));
         crate::code_rule_dsl::logic::profile::decision("per-file memo use", || format!("{memo_hits} of {} files read from the memo; {memo_unattributed} chunks' rows not memoised (a row naming no document of its chunk){}", docs.len(), if memo_why.is_empty() { String::new() } else { format!(": {}", memo_why.iter().take(12).cloned().collect::<Vec<_>>().join("; ")) }));
     }
     if let Some(collecting) = collecting {
@@ -9189,7 +9393,13 @@ fn run_observed(
         if std::env::var_os("RERAIL_WRITES").is_some() {
             eprintln!("RERAIL_WRITES queue peak {:.1} MB, producers held {} times ({:.3} s); {}", peak as f64 / 1048576.0, held.0, held.1, text());
         }
-        outcome.map_err(|e| Error::Plan(e.to_string()))?;
+        if let Err(error) = outcome {
+            let warning = error.to_string();
+            let owner = crate::git_workspace::snapshot::analysis_owner(root).or_else(|| ThreadStore::owner(root));
+            if !owner.is_some_and(|owner| owner.warn(warning.clone())) {
+                return Err(Error::Plan(warning));
+            }
+        }
     }
     store.atoms_handle().run_over();
     crate::code_rule_dsl::logic::profile::decision("chunks", || format!("{chunks} chunks of about {chunk_nodes} nodes; the next chunk is parsed and batched on a worker while this one runs"));
@@ -10071,8 +10281,11 @@ impl crate::code_rule_dsl::facts::vtab::Source for Rows {
 /// Whether the corpus runner reads the file at `path` as text only in a run of `label`'s grammar: it is not of that
 /// grammar, so it is in the run only because a `.scope text` glob reads it (`scoped`), and it has `doc` and the
 /// source text's relations and no tree.
-fn text_document(path: &str, label: &str) -> bool {
-    crate::code_rule_dsl::language::label_of_path(path) != Some(label)
+fn text_document(root: &Path, path: &str, label: &str) -> bool {
+    match crate::git_workspace::snapshot::source_language(&root.join(path)) {
+        Some(grammar) => grammar.as_deref() != Some(label),
+        None => crate::code_rule_dsl::language::label_of_path(path) != Some(label),
+    }
 }
 
 /// A corpus's files by language: Python's, Rust's and `.rr` rule files, and the text-only documents.
@@ -10090,7 +10303,7 @@ impl CorpusFiles {
     /// A file of `label`'s grammar a `.scope text` glob also matches is parsed, not read as text as well.
     fn of(mut self, label: &str) -> Vec<String> {
         let mut files = self.by_label.remove(label).unwrap_or_default();
-        files.extend(self.text.into_iter().filter(|p| crate::code_rule_dsl::language::label_of_path(p) != Some(label)));
+        files.extend(self.text);
         files.sort();
         files.dedup();
         files
@@ -10142,6 +10355,9 @@ fn json_scopes(policies: &[serde_json::Value]) -> Option<Vec<(Vec<String>, Vec<S
 /// lowered for one dialect (its kind names are that grammar's ids), so each is a run of its own. Empty when the
 /// language has one dialect: the run reads it as before.
 pub fn run_dialects(root: &Path, prog: &front::Program, options: &serde_json::Value) -> Result<Vec<&'static str>> {
+    if crate::git_workspace::snapshot::contains(root) && git::metadata_only(prog) {
+        return Ok(Vec::new());
+    }
     run_dialects_in(&|| corpus_files(root), prog, options)
 }
 
@@ -10166,6 +10382,12 @@ pub fn run_dialects_in(files: &dyn Fn() -> Result<CorpusFiles>, prog: &front::Pr
 /// A scope entry taken from a policy option (`.scope dirs option("…")`) reads the option's values, from the run's
 /// `options`. A file of no grammar is read, as text only, when a `.scope text` glob matches it and a scope selects it.
 fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::Value) -> CorpusFiles {
+    if let Some(paths) = options.get("sourcePaths").and_then(serde_json::Value::as_array) {
+        let paths: Vec<&Path> = paths.iter().filter_map(serde_json::Value::as_str).map(Path::new).collect();
+        let allowed = |path: &String| paths.iter().any(|prefix| Path::new(path).starts_with(prefix));
+        found.by_label.values_mut().for_each(|files| files.retain(allowed));
+        found.text.retain(allowed);
+    }
     let text_glob = |p: &String| prog.text_globs.iter().any(|g| crate::code_rule_dsl::logic::strings::test("glob", p, g));
     found.text.retain(text_glob);
     // A glob names files of a grammar too (`"**/*.md"`): a run of another grammar reads them as text (`CorpusFiles::of`).
@@ -10278,7 +10500,7 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
 /// keeps its path's name, as does one whose names keep a dot.
 pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[String]) -> BTreeMap<String, String> {
     let mut packages: HashMap<String, bool> = HashMap::new();
-    let mut is_package = |dir: &str| *packages.entry(dir.to_owned()).or_insert_with(|| root.join(dir).join("__init__.py").is_file());
+    let mut is_package = |dir: &str| *packages.entry(dir.to_owned()).or_insert_with(|| crate::git_workspace::snapshot::is_file(root.join(dir).join("__init__.py")));
     let mut out = BTreeMap::new();
     for p in paths.iter().filter(|p| p.ends_with(".py") || p.ends_with(".pyi")) {
         let Some((dir, _)) = p.rsplit_once('/') else { continue };
@@ -10304,7 +10526,7 @@ pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[Strin
 /// (`.rr`), skipping hidden directories and `target`.
 pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     let (mut by_label, mut text): (BTreeMap<&'static str, Vec<String>>, Vec<String>) = (BTreeMap::new(), Vec::new());
-    let mut classify = |relative: String| match crate::code_rule_dsl::language::label_of_path(&relative) {
+    let mut classify = |relative: String, grammar: Option<&'static str>| match grammar {
         Some(label) => by_label.entry(label).or_default().push(relative),
         // A hidden file (`.env`, `.hidden.md`) is no text document, as in W.
         None if !relative.rsplit('/').next().is_some_and(|name| name.starts_with('.')) => text.push(relative),
@@ -10313,6 +10535,16 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     // In a Git work tree, the files Git sees under the root (HEAD's, less deleted, plus staged and untracked ones it
     // does not ignore), with no walk; the same directories skipped. Outside one, or where Git cannot read it, the walk.
     // A root Git sees no file under (one it ignores, such as fetched fixtures) is not described by Git: walked.
+    install_git_inventory();
+    if let Some(files) = crate::git_workspace::snapshot::scan_files(root) {
+        for (relative, grammar) in files.map_err(Error::Plan)? {
+            if relative.rsplit_once('/').is_some_and(|(dirs, _)| dirs.split('/').any(|d| d.starts_with('.') || d == "target")) {
+                continue;
+            }
+            classify(relative, grammar.as_deref().and_then(crate::code_rule_dsl::language::label_named));
+        }
+        return Ok(CorpusFiles { by_label, text });
+    }
     let git = git_files(root);
     if let Some((under, overlays)) = git {
         let mut listed = 0;
@@ -10323,7 +10555,7 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
                 continue;
             }
             listed += 1;
-            classify(relative.to_owned());
+            classify(relative.to_owned(), crate::code_rule_dsl::language::label_of_path(relative));
         }
         crate::code_rule_dsl::logic::profile::decision("phase 0: corpus files", || format!("{listed} files from Git ({overlays} overlays: changed, staged or untracked), no walk"));
     } else {
@@ -10345,7 +10577,8 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
             }
             let relative = path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy().into_owned();
             // The language registry's suffixes (`languages/<id>.json`): Python's include stubs (`.pyi`).
-            classify(relative);
+            let grammar = crate::code_rule_dsl::language::label_of_path(&relative);
+            classify(relative, grammar);
         }
     }
     }
@@ -11053,7 +11286,11 @@ fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], pro
         .filter(|r| cone.contains(v.rel_name(r.head().rel())))
         .flat_map(|r| r.reads())
         .map(|a| v.rel_name(a.rel()).to_owned())
-        .filter(|r| (exports.contains(r) || base.contains(r)) && !crate::code_rule_dsl::typing::file_local::run_constant(prog, r))
+        .filter(|r| {
+            (exports.contains(r) || base.contains(r))
+                && !answers.values().flatten().any(|answer| answer == r)
+                && !crate::code_rule_dsl::typing::file_local::run_constant(prog, r)
+        })
         .collect();
     if let Some(base) = per_file.iter().find(|r| base.contains(*r)) {
         return Err(Error::Plan(format!("the cone of requests reads base relation {base}: a load answers exports only (decision 0065 §2a)")));
@@ -11064,6 +11301,9 @@ fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], pro
     let gated = crate::code_rule_dsl::logic::answers::gate(cross, &answers).map_err(Error::Plan)?;
     let whole = super::body::Placed::whole(gated);
     let mut parts = crate::code_rule_dsl::logic::answers::split(&whole).expect("the program has answers");
+    // Git answers start empty and are produced by the fixpoint. Unlike a
+    // document load's exports, they have no caller-supplied seed rows.
+    parts.load_inputs.retain(|rel| !matches!(rel.as_str(), "git_revision_of" | "git_object_of" | "git_inventory_child_of" | "git_inventory_trail_of"));
     // The rest reads the answers as inputs: the runner binds what it gave.
     for rel in answers.values().flatten().filter(|r| !exports.contains(r)) {
         if !parts.rest_inputs.contains(rel) {

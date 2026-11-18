@@ -171,6 +171,7 @@ pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Opti
     let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
     let grammar = Arc::new(Grammar::new(language)?);
     let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
+    crate::code_rule_dsl::prof::count("source_tape.parses", 1);
     let Some(image) = TapeImage::parse(&grammar, file.source(), &|| false) else { return Ok((Built::Unparsed, None)); };
     let image = image?;
     drop(parse);
@@ -259,6 +260,7 @@ pub fn build_in_wave_with_tape(
         }
         None => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "miss".into());
+            crate::code_rule_dsl::prof::count("source_tape.parses", 1);
             let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source().len() as u64);
             let Some(image) = TapeImage::parse(&grammar, file.source(), &|| false) else {
@@ -345,6 +347,7 @@ pub(crate) fn build_cached_with_tape(
         }
         None => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "miss".into());
+            crate::code_rule_dsl::prof::count("source_tape.parses", 1);
             let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
             // Its own work: the source prepared for the parser (tree-sitter and the encoding charge their own).
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source().len() as u64);
@@ -743,6 +746,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "line_count" => &["d", "k"],
         "end_line" => &["n", "l"],
         "col" => &["n", "c"],
+        "rr_report_location" => &["n", "line", "column", "end_line", "end_column"],
         "docof" => &["n", "d"],
         "source" => &["d", "sp"],
         "src_line" | "src_line_lf" | "tape_line" => &["d", "l", "sp"],

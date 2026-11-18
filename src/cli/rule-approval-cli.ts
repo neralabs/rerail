@@ -5,13 +5,15 @@
  * and the command files never pre-approve it, so the agent's host asks the person before it runs.
  */
 import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { parseArguments } from "../daemon/daemon.js";
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import { approvalKey, approve, currentSubject, packSubject, readApprovals, ruleSubject, type RuleApprovalSubject } from "../engine/catalog/rule-approval.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { RERAIL_PUBLISHER } from "../engine/catalog/rule-packs.js";
-import { isWorktreePack, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
+import { isWorktreePack, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeScanCatalog } from "../engine/catalog/worktree-pack.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { libraryRules } from "../engine/storage/schema.js";
 import { ruleDocumentDigest } from "../engine/stable-json.js";
@@ -41,8 +43,9 @@ function waiting(db: RerailDatabase, catalog: RuleCatalog): Waiting[] {
     const from = pack.localSource === undefined ? by : [by, `from the ${pack.localSource.kind} ${pack.localSource.path}`].filter(Boolean).join(", ");
     return [{ subject: { ...subject, id: `${subject.id}@${pack.version ?? "?"}` }, approvalSubject: subject, from }];
   });
+  const rr = (catalog.rrPolicies ?? []).map(policy => ({ subject: ruleSubject(policy.id, policy.payloadHash), from: `this worktree's ${WORKTREE_RULES_FOLDER}` }));
   return [
-    ...[...library, ...own].filter(entry => !approvals.has(approvalKey(entry.subject))),
+    ...[...library, ...own, ...rr].filter(entry => !approvals.has(approvalKey(entry.subject))),
     ...packs.filter(entry => !approvals.has(approvalKey(entry.approvalSubject))).map(({ subject, from }) => ({ subject, from })),
   ];
 }
@@ -78,6 +81,15 @@ function approvalText(db: RerailDatabase, catalog: RuleCatalog, subject: RuleApp
     const ids = pack?.rules.map(rule => clean(rule.id)) ?? [];
     return `● pack ${clean(subject.id)}@${clean(pack?.version ?? "?")} ships ${ids.length} ${ids.length === 1 ? "rule" : "rules"}: ${ids.join(", ")}\n`;
   }
+  const rr = catalog.rrPolicies?.find(policy => policy.id === subject.id && policy.payloadHash === subject.digest);
+  if (rr !== undefined) {
+    const sources = rr.inputs.filter(input => input.sha256 !== null).map(input => {
+      const bytes = readFileSync(input.path);
+      if (createHash("sha256").update(bytes).digest("hex") !== input.sha256) throw new Error(`${input.path} changed during approval`);
+      return { path: input.path, text: bytes.toString("utf8") };
+    });
+    return `● ${clean(subject.id)} (.rr rule) has this content:\n${visibleJson(sources)}\n`;
+  }
   const document = db.select({ document: libraryRules.document }).from(libraryRules).where(eq(libraryRules.ruleId, subject.id)).get()?.document
     ?? catalog.documents.get(subject.id);
   return `● ${clean(subject.id)}${document === undefined ? "" : ` (${document.kind} rule)`} has this content:\n${visibleJson(document?.rule)}\n`;
@@ -96,7 +108,7 @@ export function runRuleApproveCommand(
   const positionals = first === -1 ? [...args] : args.slice(0, first);
   const { options } = parseArguments(first === -1 ? [] : args.slice(first), { flags: [], options: ["--repo"] }, argument => `Unknown rules approve option: ${argument}\n\n${usage()}`);
   const { workspaceRoot } = repositoryIdentityLocation(resolve(options.get("--repo") ?? process.cwd()));
-  const catalog = worktreeRuleCatalog(loadRuleCatalog(), workspaceRoot);
+  const catalog = worktreeScanCatalog(loadRuleCatalog(), workspaceRoot);
   const db = openRerailDatabase(databasePath);
   try {
     if (positionals.length === 0) {

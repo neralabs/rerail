@@ -80,6 +80,8 @@ pub struct RepositoryIndexOptions {
     /// Whether files Git ignores (nested `.gitignore`s, `.git/info/exclude`, `core.excludesFile`;
     /// never a tracked file) are left out of the walk, as the host's own walks leave them out.
     pub follow_gitignore: bool,
+    /// Optional source paths in a historical repository scan. A directory selects its descendants.
+    pub paths: Option<Vec<String>>,
 }
 
 pub struct WorkspaceIndexTask {
@@ -116,6 +118,7 @@ impl WorkspaceIndexTask {
                 nested_checkouts: Vec::new(),
                 source_names: None,
                 follow_gitignore: false,
+                paths: None,
             },
         }
     }
@@ -171,20 +174,20 @@ pub(super) fn reusable_directories(
             };
             let mut marker_bytes = b"rerail-package-markers-v1\0".to_vec();
             let mut ancestor = std::path::PathBuf::new();
-            marker_bytes.push(u8::from(
-                repository.worktree_root.join("__init__.py").exists(),
-            ));
+            let package_marker = |directory: &std::path::Path| {
+                let marker = repository.worktree_root.join(directory).join("__init__.py");
+                if repository.snapshot.is_some() {
+                    git_workspace::snapshot::is_file(marker)
+                } else {
+                    marker.exists()
+                }
+            };
+            marker_bytes.push(u8::from(package_marker(std::path::Path::new(""))));
             for component in std::path::Path::new(&prefix).components() {
                 ancestor.push(component);
                 marker_bytes.extend_from_slice(ancestor.to_string_lossy().as_bytes());
                 marker_bytes.push(0);
-                marker_bytes.push(u8::from(
-                    repository
-                        .worktree_root
-                        .join(&ancestor)
-                        .join("__init__.py")
-                        .exists(),
-                ));
+                marker_bytes.push(u8::from(package_marker(&ancestor)));
             }
             // A file directly in the tree inherits the manifest at or above it.
             let inherited = manifests.of_directory(&repository.worktree_root.join(&prefix));
@@ -347,6 +350,32 @@ impl WorkspaceIndexTask {
             .iter()
             .map(String::as_str)
             .collect::<HashSet<_>>();
+        if let Some(snapshot) = &repository.snapshot {
+            let mut files = Vec::new();
+            for entry in &repository.base_files {
+                check_closed(&self.closed)?;
+                let Some(path) = entry.path.strip_prefix(prefix) else { continue };
+                if path.rsplit_once('/').is_some_and(|(parent, _)| parent.split('/').any(|part| ignored.contains(part))) {
+                    continue;
+                }
+                if self.options.paths.as_ref().is_some_and(|paths| !paths.iter().any(|selected| {
+                    selected.is_empty() || path == selected || path.strip_prefix(selected).is_some_and(|rest| rest.starts_with('/'))
+                })) {
+                    continue;
+                }
+                let language = snapshot.host_language(&entry.path).unwrap_or_else(|| self.source_language(path));
+                let (language, unlisted) = match language {
+                    Some(language) if scoped(path, false) => (language, false),
+                    None if !secret(path) && scoped(path, true) => ("text".to_owned(), true),
+                    _ => continue,
+                };
+                if files.len() == self.options.max_files as usize {
+                    return Ok((files, Vec::new(), true));
+                }
+                files.push(PendingFile { repository_path: entry.path.clone(), path: path.to_owned(), language, unlisted });
+            }
+            return Ok((files, Vec::new(), false));
+        }
         let pruned = self
             .options
             .nested_checkouts
@@ -628,6 +657,7 @@ impl WorkspaceIndexTask {
                     // An oversized file the host lists no language for is binary, and dropped like
                     // one in budget, where its first bytes hold a NUL.
                     if file.unlisted
+                        && repository.snapshot.is_none()
                         && repository
                             .read_source_prefix(&file.repository_path, BINARY_PREFIX_BYTES)
                             .is_ok_and(|prefix| prefix.contains(&0))

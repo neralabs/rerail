@@ -304,11 +304,15 @@ impl Drop for StorageMaintenance {
 pub struct StorageRegistration {
     maintenance: StdArc<StorageMaintenance>,
     workspace_id: WorkspaceId,
+    transient_store: Option<StdArc<ContentStore>>,
 }
 
 impl Drop for StorageRegistration {
     fn drop(&mut self) {
         self.maintenance.unregister(self.workspace_id);
+        if let Some(store) = &self.transient_store {
+            let _ = store.retire_workspace(self.workspace_id);
+        }
     }
 }
 
@@ -348,7 +352,7 @@ pub fn storage_context_in(
 ) -> Result<StorageContext> {
     let discovered = git_workspace::discover(std::path::Path::new(root))
         .map_err(|error| invalid(error.to_string()))?;
-    match attach_storage(root, discovered, store_path, StdArc::default())? {
+    match attach_storage(root, discovered, store_path, StdArc::default(), false)? {
         Attached::Storage(context) => Ok(context),
         Attached::Busy(reason) => Err(invalid(reason)),
     }
@@ -370,6 +374,7 @@ pub(super) fn attach_storage(
     discovered: git_workspace::GitWorkspace,
     store_path: std::path::PathBuf,
     secret_names: StdArc<SecretNames>,
+    transient: bool,
 ) -> Result<Attached> {
     let busy = |during: &str| {
         Attached::Busy(format!(
@@ -385,18 +390,26 @@ pub(super) fn attach_storage(
         Err(StoreError::Busy) => return Ok(busy("while opening the store")),
         Err(error) => return Err(invalid(error.to_string())),
     };
-    let owner = format!(
+    let mut owner = format!(
         "rerail:{}:{}",
         std::process::id(),
         discovered.worktree_root.to_string_lossy()
     );
+    let registered = if transient {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let invocation = format!("{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
+        owner.push_str(&invocation);
+        discovered.worktree_root.join("rerail-invocations").join(invocation)
+    } else {
+        discovered.worktree_root.clone()
+    };
     let published = discovered.publish_snapshot(
         &store,
         1,
         grammar_set(),
         i64::from(tape::formats::stored_version()),
         &WorkspaceRegistration {
-            root: discovered.worktree_root.to_string_lossy().as_ref(),
+            root: registered.to_string_lossy().as_ref(),
             repository: discovered.common_directory.to_string_lossy().as_ref(),
             owner: &owner,
             generation: 1,
@@ -416,6 +429,7 @@ pub(super) fn attach_storage(
     let registration = StdArc::new(StorageRegistration {
         maintenance,
         workspace_id,
+        transient_store: transient.then(|| StdArc::clone(&store)),
     });
     Ok(Attached::Storage(StorageContext {
         store,
@@ -431,8 +445,7 @@ pub(super) fn attach_storage(
 
 /// `root` relative to `worktree` as a path prefix: `""` at the worktree root, else `dir/`.
 fn repository_prefix(root: &str, worktree: &std::path::Path) -> Result<String> {
-    let root = std::path::Path::new(root)
-        .canonicalize()
+    let root = git_workspace::snapshot::canonicalize(root)
         .map_err(|error| invalid(format!("cannot resolve workspace root: {error}")))?;
     let relative = root
         .strip_prefix(worktree)

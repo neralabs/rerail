@@ -153,7 +153,7 @@ pub fn library() -> PathBuf {
         .map(PathBuf::from)
         // From the checkout's root, with no `..` in the path: a path the engine reads is named one way, so the file
         // observer keeps one answer and one journal root for each directory (`native/../docs` and `docs` were two).
-        .unwrap_or_else(|| rerail_store::source_tree::root().map_or_else(|| PathBuf::from("docs/rule-syntax/lib"), |root| root.join("docs/rule-syntax/lib")))
+        .unwrap_or_else(rerail_store::source_tree::rule_library)
 }
 
 /// A program's `.rr` text. Its `#include`s name library files (decision 0089), read as `parse_file` reads them:
@@ -1217,6 +1217,10 @@ pub const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
 const ENGINE_FILES: [&str; 1] = ["components.rr"];
 
 pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
+    if crate::git_workspace::snapshot::contains(path) {
+        let (modules, files) = builtin_program(path)?;
+        return Ok((lower_files_dropping(path, modules, true)?, files));
+    }
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
     static PROGRAMS: OnceLock<Mutex<HashMap<PathBuf, (Vec<LibraryFile>, Program)>>> = OnceLock::new();
@@ -1339,10 +1343,10 @@ pub fn lower_files(path: &Path, statements: Files) -> Result<Program, Error> {
 
 /// `lower_files`, with the unreached clauses of included files dropped first (`drop`) or lowered too.
 pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Result<Program, Error> {
-    let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let key = crate::git_workspace::snapshot::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     check_names(&statements, false)?;
     // The file's own rules grounded (`refuse_ungrounded`), its includes' `fix` relations given.
-    let own_path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    let own_path = key.clone();
     let given: BTreeSet<String> = statements.iter().filter(|(p, _)| *p != own_path).flat_map(|(_, s)| check::fix_relations(s)).collect();
     for (_, own) in statements.iter().filter(|(p, _)| *p == own_path) {
         refuse_ungrounded(own, &given)?;
@@ -1607,6 +1611,14 @@ pub fn read(path: &Path) -> Result<(Vec<syntax::Statement>, LibraryFile), Error>
 fn read_shared(path: &Path) -> Result<(std::sync::Arc<Vec<syntax::Statement>>, LibraryFile), Error> {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, OnceLock};
+    if crate::git_workspace::snapshot::contains(path) {
+        use sha2::Digest as _;
+        let bytes = crate::git_workspace::snapshot::read_bounded(path, 1024 * 1024)
+            .map_err(|error| Error::Syntax(format!("{}: {error}", path.display())))?;
+        let file = LibraryFile { path: path.to_owned(), sha256: Some(sha2::Sha256::digest(&bytes).into()) };
+        let src = String::from_utf8(bytes).map_err(|error| Error::Syntax(format!("{}: {error}", path.display())))?;
+        return Ok((Arc::new(stored_statements(path, src)?), file));
+    }
     // Each file's statements, kept for the process by its path and bytes' digest: programs that include one library
     // (the Python pack's files) parse it once, not once per program. Phase 0's observer gives the digest by a `stat`
     // while the file is unchanged, so a kept file is not read again. Held shared: a reader copies what it keeps.
@@ -1647,7 +1659,8 @@ pub type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
 /// `path` and what it includes, each once (`seen`), includes first, added to `out`; every library file read or
 /// probed, to `read_files`. An `included` file's `.output`s are left out, as are those of what it includes.
 fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>, included: bool) -> Result<(), Error> {
-    let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    use crate::git_workspace::snapshot as source;
+    let path = source::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     if seen.contains(&path) {
         return Ok(());
     }
@@ -1660,9 +1673,20 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
     }
     for (item, line) in includes {
         let syntax::Item::Include(name) = item else { unreachable!("an include") };
+        let pinned = source::contains(&path);
+        if pinned && Path::new(&name).is_absolute() {
+            return Err(Error::Syntax(format!("{}:{line}: #include {name:?} must be relative for a Git policy", path.display())));
+        }
         let in_library = library().join(&name);
         let beside = path.parent().map(|d| d.join(&name)).unwrap_or_default();
-        let found = if in_library.exists() {
+        let bundled = if pinned {
+            in_library.canonicalize().ok().is_some_and(|file| {
+                library().canonicalize().is_ok_and(|root| file.starts_with(root))
+            })
+        } else {
+            in_library.exists()
+        };
+        let found = if bundled {
             in_library
         } else {
             let miss = LibraryFile { path: in_library, sha256: None };
@@ -1670,7 +1694,7 @@ fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: 
             read_files.push(miss);
             beside
         };
-        if !found.exists() {
+        if !source::is_file(&found) || pinned && !bundled && !source::contains(&found) {
             return Err(Error::Syntax(format!("{}:{line}: #include {name:?}: no such file", path.display())));
         }
         visit(&found, out, read_files, seen, true)?;
@@ -1795,7 +1819,7 @@ fn builtin_program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
     // `core.rr` is every program's prelude (the base relations and built-ins), included or not; except a program in
     // T's shape (decision 0046), which declares its base relations itself (`doc` among them), and whose libraries
     // read only the relations both shapes have.
-    let t_shape = read(&path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?)?
+    let t_shape = read(&crate::git_workspace::snapshot::canonicalize(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?)?
         .0
         .iter()
         .any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));

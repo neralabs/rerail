@@ -15,21 +15,27 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { eq } from "drizzle-orm";
 import type { AuditInput, AuditRecorder, AuditResult, AuditRuleProvenance } from "../engine/audit/audit.js";
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
-import { checkoutStatus, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
+import { checkoutStatus, lookupCheckout, parentCheckouts, recordCheckout, standaloneRepository } from "../engine/catalog/repository-registry.js";
+import type { RrPolicySource, RuleCatalog } from "../engine/catalog/repository-model.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { rulePackPackageOf } from "../engine/catalog/rule-packs.js";
-import { setRuleSetting, setUpRepository } from "../engine/catalog/rule-configuration.js";
+import { resolveRrModes, setRuleSetting, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
-import { isWorktreePack, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
+import { isWorktreePack, rrPayloadHash, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeScanCatalog } from "../engine/catalog/worktree-pack.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import type { CodeRuleViolation } from "../engine/code-rule/code-rule.js";
 import { CheckoutCatalogs, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
+import { loadNativeBinding, type NativeAnalysisScopeRun, type NativeGitRevisionSource } from "../engine/native/native.js";
+import { readAnalysisScopeGeneration, scanContentStore } from "../engine/native/analysis-scope.js";
+import { assertContentStoreOwner } from "../engine/native/main-instance.js";
+import { SOURCE_LANGUAGES, SOURCE_NAMES } from "../engine/code-rule/code-rule-languages.js";
 import { readGitBlobs, runGit } from "../engine/git.js";
+import { compareDeterministicStrings } from "../engine/stable-json.js";
 import { defaultRerailDatabasePath, openRerailDatabase, openRerailDatabaseAsIs, type RerailDatabase } from "../engine/storage/database.js";
 import { repositories } from "../engine/storage/schema.js";
 import { tableColumns } from "../engine/storage/table-probe.js";
@@ -83,14 +89,16 @@ export interface ScanReport {
   finishedAt: number;
   repository: { key: string; displayName: string };
   checkout: { path: string; head: string | null; ref: string | null };
+  source?: { revision: string; tree: string; commit: string | null };
   scope: "repository" | "git-diff";
   base: { ref: string; mergeBase: string } | null;
   paths: string[] | null;
-  rulesSource: { kind: "home" } | { kind: "worktree" } | { kind: "ref"; ref: string };
+  rulesSource: { kind: "home" } | { kind: "worktree" } | { kind: "ref"; ref: string } | { kind: "rr" };
   status: "completed" | "failed";
   rules: ScanRule[];
   violations: ScanViolation[];
   failures: ScanFailure[];
+  cacheWarnings?: string[];
   summary: { violations: number; failures: number };
 }
 
@@ -99,7 +107,10 @@ export interface HeadlessScanOptions {
   scope: "repository" | "git-diff";
   base?: string;
   rulesRef?: string;
+  revision?: string;
+  analysisScope?: string;
   packs: readonly string[];
+  rr?: readonly string[];
   /**
    * With `scope: "repository"`, scan only these files (relative to the checkout) instead of the whole checkout; those
    * that do not exist there are left out. Undefined scans everything.
@@ -145,11 +156,12 @@ function diffPaths(root: string, against: string): string[] {
 interface RefRules {
   readonly documents: RuleDocument[];
   readonly skipped: ScanFailure[];
+  readonly rr?: { catalog: RuleCatalog; source: NativeGitRevisionSource; root: string; ref: string };
 }
 
 /**
  * The rule documents in `.rerail/rules/` at `ref`, loaded exactly as a checkout's own rules are
- * (`worktreeRuleCatalog`): the ref's files are written to a folder of their own and read from there, so a file that is
+ * (`worktreeScanCatalog`): the ref's entries are listed in a folder of their own, so a file that is
  * not a regular file, is too large, does not parse or compile, repeats an earlier file's id (the first by file name
  * keeps it) or takes the id of an installed pack's rule is left out with why, and the others load. A ref that is not a
  * commit throws: a typo must not pass as a scan with no rules.
@@ -169,8 +181,9 @@ async function rulesAtRef(root: string, ref: string, scratch: string): Promise<R
     const [, mode, type, object, name] = match as unknown as [string, string, string, string, string];
     return name.includes("/") || name === "." || name === ".." ? [] : [{ mode, type, object, name }];
   });
-  const blobs = await readGitBlobs(root, entries.filter(entry => entry.type === "blob").map(entry => entry.object), { maxBlobBytes: MAX_REF_RULE_BYTES });
-  for (const { mode, type, object, name } of entries) {
+  const json = entries.filter(entry => entry.name.endsWith(".json"));
+  const blobs = await readGitBlobs(root, json.filter(entry => entry.type === "blob").map(entry => entry.object), { maxBlobBytes: MAX_REF_RULE_BYTES });
+  for (const { mode, type, object, name } of json) {
     const target = join(folder, name);
     const blob = blobs.get(object);
     if (type === "blob" && mode === "120000") symlinkSync(blob?.toString("utf8") ?? "missing", target);
@@ -182,7 +195,15 @@ async function rulesAtRef(root: string, ref: string, scratch: string): Promise<R
     } else mkdirSync(target);
   }
   const installed = loadRuleCatalog();
-  const catalog = worktreeRuleCatalog(installed, copy);
+  const rrEntries = entries.filter(entry => entry.name.endsWith(".rr")).sort((left, right) => compareDeterministicStrings(left.name, right.name));
+  const source = rrEntries.length > 0
+    ? new (loadNativeBinding().GitRevisionSource)(root, resolved, "rules-ref")
+    : undefined;
+  const catalog = worktreeScanCatalog(installed, copy, source === undefined ? undefined : {
+    // The native reader checks the size when it reads the Git object.
+    files: rrEntries.map(({ name, mode }) => ({ path: join(folder, name), regular: mode === "100644" || mode === "100755", size: 0 })),
+    inspect: path => loadNativeBinding().inspectRrPolicy(relative(copy, path), source),
+  });
   const pack = catalog.packs.get(WORKTREE_PACK_ID);
   const documents = pack === undefined || !isWorktreePack(pack)
     ? []
@@ -196,7 +217,7 @@ async function rulesAtRef(root: string, ref: string, scratch: string): Promise<R
     path: `${ref}:${relative(copy, entry.path).split(sep).join("/")}`,
     ruleId: null,
   }));
-  return { documents, skipped };
+  return { documents, skipped, ...(source === undefined ? {} : { rr: { catalog, source, root: copy, ref } }) };
 }
 
 /** Past the loader's own limit for a rule file (1 MiB), so a larger one is left out as it would be in a checkout. */
@@ -327,12 +348,17 @@ function repositoryOf(databasePath: string, root: string): { key: string; displa
  * fingerprint when lines move or are re-indented. Without a span, the rule's code stands in for the text.
  */
 export function violationFingerprint(violation: Pick<CodeRuleViolation, "ruleId" | "path" | "span" | "code">, readSource: (path: string) => Buffer | undefined): string {
-  let text = `code:${violation.code}`;
+  let matched: string | undefined;
   if (violation.path !== undefined && violation.span !== undefined) {
     const source = readSource(violation.path);
-    if (source !== undefined) text = source.subarray(violation.span.startByte, violation.span.endByte).toString("utf8").replace(/\s+/gu, " ").trim();
+    matched = source?.subarray(violation.span.startByte, violation.span.endByte).toString("utf8");
   }
-  return createHash("sha256").update(`${violation.ruleId}\0${violation.path ?? ""}\0${text}`).digest("hex").slice(0, 32);
+  return findingFingerprint(violation.ruleId, violation.path ?? "", violation.code, matched);
+}
+
+function findingFingerprint(ruleId: string, path: string, code: string, matched?: string): string {
+  const text = matched?.replace(/\s+/gu, " ").trim() ?? `code:${code}`;
+  return createHash("sha256").update(`${ruleId}\0${path}\0${text}`).digest("hex").slice(0, 32);
 }
 
 function ruleOf(provenance: AuditRuleProvenance, refRuleIds: ReadonlySet<string>, rulesRef: string | undefined): ScanRule {
@@ -357,10 +383,18 @@ function position(line: number, column: number): ScanPosition {
 
 /** The checkout `options.repo` is in, once the options that depend on the scope are checked. */
 function scanRoot(options: HeadlessScanOptions): string {
+  if (options.revision !== undefined && !options.analysisScope?.trim()) {
+    throw new Error("--revision requires --analysis-scope <name>");
+  }
+  if (options.revision === undefined && options.analysisScope !== undefined) {
+    throw new Error("--analysis-scope requires --revision");
+  }
   const requested = realpathSync(resolve(options.repo));
   const top = gitMaybe(requested, ["rev-parse", "--show-toplevel"]);
-  if (top === null) throw new Error(`${requested} is not inside a Git checkout`);
-  const root = realpathSync(top);
+  if (options.revision !== undefined && options.scope !== "repository") throw new Error("--revision applies only to --scope repository");
+  const bare = options.revision !== undefined && top === null && gitMaybe(requested, ["rev-parse", "--is-bare-repository"]) === "true";
+  if (top === null && !bare) throw new Error(`${requested} is not inside a Git checkout`);
+  const root = top === null ? requested : realpathSync(top);
   if (options.base !== undefined && options.scope !== "git-diff") throw new Error("--base applies only to --scope git-diff");
   if (options.paths !== undefined && options.scope !== "repository") throw new Error("--path and --paths-from apply only to --scope repository");
   return root;
@@ -375,27 +409,22 @@ function homeIsScanConfiguration(options: HeadlessScanOptions, home: RerailDatab
   }
 }
 
-/** `run` with a scratch folder that holds the scan's own content store, restoring the environment and removing the folder after. */
+/** Run with a scratch folder for the audit configuration and remove it afterward. */
 async function withScanScratch<T>(home: RerailDatabase | undefined, run: (scratch: string) => Promise<T>): Promise<T> {
   const scratch = mkdtempSync(join(tmpdir(), "rerail-scan-"));
-  const previousStore = process.env.RERAIL_CONTENT_STORE_PATH;
-  // The machine-wide content store belongs to the daemon; this process keeps its own, thrown away after.
-  if (previousStore === undefined || previousStore === "") process.env.RERAIL_CONTENT_STORE_PATH = join(scratch, "content.sqlite");
   try {
     return await run(scratch);
   } finally {
     if (home?.$client.open === true) home.$client.close();
-    if (previousStore === undefined) delete process.env.RERAIL_CONTENT_STORE_PATH;
-    else process.env.RERAIL_CONTENT_STORE_PATH = previousStore;
     rmSync(scratch, { recursive: true, force: true });
   }
 }
 
 /** What the scan covers: the paths asked for, what differs from the base or HEAD, or null for the whole repository. */
-function scanTarget(options: HeadlessScanOptions, root: string): { base: ScanReport["base"]; paths: string[] | null } {
+function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGitRevisionSource | undefined): { base: ScanReport["base"]; paths: string[] | null } {
   if (options.paths !== undefined) {
     const paths = [...new Set(options.paths.map(path => path.replace(/^\.\//u, "")).filter(path => path.length > 0))]
-      .filter(path => existsSync(join(root, path)))
+      .filter(path => source === undefined ? existsSync(join(root, path)) : source.containsPath(path))
       .sort((left, right) => left.localeCompare(right));
     return { base: null, paths };
   }
@@ -411,7 +440,7 @@ function scanTarget(options: HeadlessScanOptions, root: string): { base: ScanRep
 type ScanAudit = AuditInput & { result?: AuditResult };
 
 /** Runs the audits of one session over `paths` (or the whole repository), recording them rather than storing them. */
-async function runScanAudits(databasePath: string, root: string, sessionId: string, paths: readonly string[] | null): Promise<ScanAudit[]> {
+async function runScanAudits(databasePath: string, root: string, sessionId: string, paths: readonly string[] | null, revisionSource: NativeGitRevisionSource | undefined, analysisStore: string, analysisRun: NativeAnalysisScopeRun): Promise<ScanAudit[]> {
   const audits: ScanAudit[] = [];
   const recorder: AuditRecorder = {
     start(input) { audits.push({ ...input, paths: [...input.paths] }); return String(audits.length - 1); },
@@ -430,8 +459,15 @@ async function runScanAudits(databasePath: string, root: string, sessionId: stri
     steerDelivery: { requestSteer: async () => undefined },
     audits: recorder,
     followGitignore: catalogs.followsGitignore(root),
+    analysisStore,
+    analysisRun,
+    ...(revisionSource === undefined ? {} : { revisionSource }),
   });
   try {
+    if (revisionSource !== undefined) {
+      const catalog = catalogs.catalog(root);
+      if (catalog.status.ruleCount === 0 && catalog.quarantined().length === 0) return audits;
+    }
     await router.openWorkspace(sessionId);
     if (paths === null) await router.audit(sessionId, { scope: "repository", mode: "log" });
     else if (paths.length > 0) await router.audit(sessionId, { scope: "touched-files", mode: "log", paths: [...paths] });
@@ -449,18 +485,18 @@ function scanRules(audits: readonly ScanAudit[], refRuleIds: ReadonlySet<string>
   return rules;
 }
 
-function scanSourceReader(root: string): (path: string) => Buffer | undefined {
+function scanSourceReader(root: string, source: NativeGitRevisionSource | undefined): (path: string) => Buffer | undefined {
   const sources = new Map<string, Buffer | undefined>();
   return (path: string): Buffer | undefined => {
     if (!sources.has(path)) {
-      try { sources.set(path, readFileSync(join(root, path))); } catch { sources.set(path, undefined); }
+      try { sources.set(path, source === undefined ? readFileSync(join(root, path)) : source.readSource(path) ?? undefined); } catch { sources.set(path, undefined); }
     }
     return sources.get(path);
   };
 }
 
-function scanViolations(audits: readonly ScanAudit[], rules: ReadonlyMap<string, ScanRule>, root: string): ScanViolation[] {
-  const readSource = scanSourceReader(root);
+function scanViolations(audits: readonly ScanAudit[], rules: ReadonlyMap<string, ScanRule>, root: string, source: NativeGitRevisionSource | undefined): ScanViolation[] {
+  const readSource = scanSourceReader(root, source);
   const violations = audits.flatMap(audit => audit.result?.violations ?? []).map((violation): ScanViolation => ({
     ruleId: violation.ruleId,
     payloadHash: rules.get(violation.ruleId)?.payloadHash ?? null,
@@ -473,6 +509,10 @@ function scanViolations(audits: readonly ScanAudit[], rules: ReadonlyMap<string,
     message: violation.message,
     fingerprint: violationFingerprint(violation, readSource),
   }));
+  return distinctFingerprints(violations);
+}
+
+function distinctFingerprints(violations: ScanViolation[]): ScanViolation[] {
   // Identical matches of one rule in one file share a text: the second and later take their ordinal too, in the
   // engine's report order, so every finding of a scan has its own fingerprint.
   const seen = new Map<string, number>();
@@ -484,6 +524,57 @@ function scanViolations(audits: readonly ScanAudit[], rules: ReadonlyMap<string,
   return violations;
 }
 
+interface RrReport {
+  readonly metadata: { policies: readonly { id: string }[] };
+  readonly programInputs: readonly { path: string; sha256: string | null }[];
+  readonly diagnostics: readonly { policy: string; clause: string; code: string; path: string | null; line: number | null; message: string; span?: { start: ScanPosition; end: ScanPosition; text: string } }[];
+}
+
+async function scanRrRules(
+  policies: readonly string[], root: string, store: string, output: string, analysisRun: NativeAnalysisScopeRun,
+  paths: string[] | null, source: NativeGitRevisionSource | undefined,
+  configured?: { policies: ReadonlyMap<string, RrPolicySource>; mode: ReturnType<typeof resolveRrModes> },
+  refPolicy?: NonNullable<RefRules["rr"]>,
+): Promise<{ rules: ScanRule[]; violations: ScanViolation[] }> {
+  const inputs = policies.map(path => refPolicy === undefined ? resolve(path) : relative(refPolicy.root, path));
+  const reports = JSON.parse(await loadNativeBinding().scanRrPoliciesAsync(inputs, root, store, output, analysisRun, paths ?? undefined, source, refPolicy?.source)) as RrReport[];
+  const rules: ScanRule[] = [];
+  const violations: ScanViolation[] = [];
+  for (const [index, report] of reports.entries()) {
+    const policyPath = inputs[index]!;
+    const payloadHash = rrPayloadHash(report.programInputs);
+    const provenance = refPolicy === undefined ? { kind: "rr", id: policyPath, packId: null }
+      : { kind: "ref", id: policyPath, packId: null, ref: refPolicy.ref };
+    const modeFor = (id: string, path: string): string | null => {
+      if (configured === undefined) return "log";
+      const policy = configured.policies.get(id);
+      if (policy === undefined || policy.payloadHash !== payloadHash) throw new Error(`${policyPath} changed during the scan`);
+      return configured.mode.at(policy, path);
+    };
+    for (const policy of report.metadata.policies) {
+      const mode = modeFor(policy.id, "");
+      if (mode !== null) rules.push({ ruleId: policy.id, payloadHash, mode, source: provenance });
+    }
+    for (const finding of report.diagnostics) {
+      const path = finding.path || null;
+      const mode = modeFor(finding.policy, path ?? "");
+      if (mode === null) continue;
+      if (!rules.some(rule => rule.ruleId === finding.policy)) {
+        rules.push({ ruleId: finding.policy, payloadHash, mode, source: provenance });
+      }
+      const line = finding.line !== null && finding.line > 0 ? finding.line : null;
+      const start = finding.span?.start ?? (line === null ? null : { line, column: 1 });
+      const end = finding.span?.end ?? null;
+      const fingerprint = findingFingerprint(finding.policy, path ?? "", finding.code, finding.span?.text);
+      violations.push({
+        ruleId: finding.policy, payloadHash, mode, code: finding.code, clauseId: finding.clause,
+        path, start, end, message: finding.message, fingerprint,
+      });
+    }
+  }
+  return { rules, violations: distinctFingerprints(violations) };
+}
+
 function scanRulesSource(rulesRef: string | undefined, useHome: boolean): ScanReport["rulesSource"] {
   if (rulesRef !== undefined) return { kind: "ref", ref: rulesRef };
   return useHome ? { kind: "home" } : { kind: "worktree" };
@@ -492,28 +583,72 @@ function scanRulesSource(rulesRef: string | undefined, useHome: boolean): ScanRe
 /** Runs the scan in its scratch folder and reports it: the scan's own database, always, with the home's only read and closed before the scan runs. */
 async function scanReport(
   scratch: string, options: HeadlessScanOptions,
-  { root, home, useHome, packs, scanId, startedAt }: { root: string; home: RerailDatabase | undefined; useHome: boolean; packs: readonly string[]; scanId: string; startedAt: number },
+  { root, home, useHome, packs, scanId, startedAt, source, analysisStore, analysisRun }: {
+    root: string; home: RerailDatabase | undefined; useHome: boolean; packs: readonly string[];
+    scanId: string; startedAt: number; source: NativeGitRevisionSource | undefined;
+    analysisStore: string;
+    analysisRun: NativeAnalysisScopeRun;
+  },
 ): Promise<ScanReport> {
   const databasePath = join(scratch, "rerail.sqlite");
+  const explicitRr = (options.rr?.length ?? 0) > 0;
   const refRules = options.rulesRef === undefined ? undefined : await rulesAtRef(root, options.rulesRef, scratch);
+  const catalog = options.rulesRef !== undefined ? refRules?.rr?.catalog
+    : explicitRr ? undefined : worktreeScanCatalog(loadRuleCatalog(), root);
+  const configuredPolicies = catalog?.rrPolicies ?? [];
+  const rr = explicitRr ? options.rr! : configuredPolicies.map(policy => policy.path);
   let refRuleIds: Set<string>;
   try {
-    refRuleIds = prepareScratchDatabase(databasePath, root, home, useHome, packs, refRules, options.ruleDocuments);
+    refRuleIds = explicitRr ? new Set() : prepareScratchDatabase(databasePath, root, home, useHome, packs, refRules, options.ruleDocuments);
   } finally {
     home?.$client.close();
   }
-  const repository = repositoryOf(databasePath, root);
-  const { base, paths } = scanTarget(options, root);
-  const audits = await runScanAudits(databasePath, root, `scan-${scanId}`, paths);
+  const repository = explicitRr ? standaloneRepository(root) : repositoryOf(databasePath, root);
+  const { base, paths } = scanTarget(options, root, source);
+  if (source !== undefined && paths !== null) source.restrictPaths(paths);
+  const audits = explicitRr ? [] : await runScanAudits(databasePath, root, `scan-${scanId}`, paths, source, analysisStore, analysisRun);
   const rules = scanRules(audits, refRuleIds, options.rulesRef);
-  const violations = scanViolations(audits, rules, root);
+  const violations = scanViolations(audits, rules, root, source);
   const failures = [...refRules?.skipped ?? [], ...audits.flatMap(audit => audit.result?.failures ?? []).map((failure): ScanFailure => ({
     code: failure.code,
     message: failure.message,
     path: failure.path ?? null,
     ruleId: failure.ruleId ?? null,
   }))];
-  const completed = audits.every(audit => audit.result?.status === "completed") && (audits.length > 0 || paths?.length === 0);
+  let completed = audits.every(audit => audit.result?.status === "completed")
+    && (audits.length > 0 || paths?.length === 0 || source !== undefined);
+  for (const skipped of (refRules === undefined ? catalog?.skipped.filter(policy => policy.path?.endsWith(".rr")) : undefined) ?? []) {
+    failures.push({ code: "adapter-error", message: skipped.reason, path: skipped.path, ruleId: null });
+    completed = false;
+  }
+  if (rr.length > 0) {
+    try {
+      let configured: Parameters<typeof scanRrRules>[7];
+      if (catalog !== undefined && configuredPolicies.length > 0) {
+        const database = openRerailDatabase(databasePath, { readonly: true });
+        try {
+          const checkout = lookupCheckout(database, root)!;
+          configured = {
+            policies: new Map(configuredPolicies.map(policy => [policy.id, policy])),
+            mode: resolveRrModes(database, catalog, checkout, parentCheckouts(database, checkout).map(parent => parent.checkoutPath), refRules !== undefined),
+          };
+        } finally {
+          database.$client.close();
+        }
+      }
+      const selected = configured === undefined ? rr : configuredPolicies.filter(configured.mode.enabled).map(policy => policy.path);
+      const evaluated = await scanRrRules(selected, root, analysisStore, join(scratch, "rr"), analysisRun, paths, source, configured, refRules?.rr);
+      for (const rule of evaluated.rules) {
+        if (rules.has(rule.ruleId)) throw new Error(`duplicate policy ID ${rule.ruleId} across configured rules`);
+        rules.set(rule.ruleId, rule);
+      }
+      violations.push(...evaluated.violations);
+      if ((explicitRr || audits.length === 0) && failures.length === 0) completed = true;
+    } catch (error) {
+      failures.push({ code: "adapter-error", message: error instanceof Error ? error.message : String(error), path: null, ruleId: null });
+      completed = false;
+    }
+  }
   return {
     schema: SCAN_SCHEMA,
     scanId,
@@ -526,10 +661,11 @@ async function scanReport(
       head: gitMaybe(root, ["rev-parse", "--verify", "--quiet", "HEAD"]),
       ref: gitMaybe(root, ["symbolic-ref", "--quiet", "HEAD"]),
     },
+    ...(source === undefined || options.revision === undefined ? {} : { source: { revision: options.revision, tree: source.tree, commit: source.commit ?? null } }),
     scope: options.scope,
     base,
     paths,
-    rulesSource: scanRulesSource(options.rulesRef, useHome),
+    rulesSource: explicitRr ? { kind: "rr" } : scanRulesSource(options.rulesRef, useHome),
     status: completed ? "completed" : "failed",
     rules: [...rules.values()].sort((left, right) => left.ruleId.localeCompare(right.ruleId)),
     violations,
@@ -540,14 +676,43 @@ async function scanReport(
 
 /** Runs one headless scan. Throws on bad input (not a checkout, unknown ref); an audit that fails is `status: "failed"`. */
 export async function runHeadlessScan(options: HeadlessScanOptions): Promise<ScanReport> {
+  if (options.rr?.length && (options.packs.length > 0 || options.rulesRef !== undefined)) {
+    throw new Error("--rr selects explicit policy files. Use it without --pack or --rules-ref.");
+  }
   const startedAt = Date.now();
+  const binding = loadNativeBinding();
+  const homeDatabase = options.databasePath ?? defaultRerailDatabasePath();
+  const generation = readAnalysisScopeGeneration(homeDatabase);
   const scanId = randomUUID();
   const root = scanRoot(options);
-  const homeDatabase = options.databasePath ?? defaultRerailDatabasePath();
+  const analysisStore = scanContentStore(homeDatabase);
+  assertContentStoreOwner(analysisStore);
   const packs = installedPackIds(options.packs);
-  const home = openHomeDatabase(homeDatabase);
-  const useHome = homeIsScanConfiguration(options, home, root, packs);
-  return withScanScratch(home, scratch => scanReport(scratch, options, { root, home, useHome, packs, scanId, startedAt }));
+  mkdirSync(dirname(homeDatabase), { recursive: true, mode: 0o700 });
+  const analysisRun = new binding.AnalysisScopeRun(analysisStore, options.analysisScope ?? resolve(options.repo), options.revision === undefined, scanId, generation);
+  try {
+    const source = options.revision === undefined ? undefined : new binding.GitRevisionSource(root, options.revision, options.analysisScope!);
+    if (source !== undefined)
+      source.setSourceLanguages(JSON.stringify({ suffixes: Object.fromEntries(SOURCE_LANGUAGES), names: Object.fromEntries(SOURCE_NAMES) }));
+    const home = options.rr?.length ? undefined : openHomeDatabase(homeDatabase);
+    const useHome = homeIsScanConfiguration(options, home, root, packs);
+    const report = await withScanScratch(home, scratch => scanReport(scratch, options, { root, home, useHome, packs, scanId, startedAt, source, analysisStore, analysisRun }));
+    try {
+      const warning = analysisRun.finish(report.status === "completed");
+      if (warning !== null && warning !== undefined) report.cacheWarnings = [warning];
+    } catch (error) {
+      (report.cacheWarnings ??= []).push(error instanceof Error ? error.message : String(error));
+      try { analysisRun.finish(false); } catch { /* Collection can release any abandoned ownership. */ }
+    }
+    return report;
+  } catch (error) {
+    analysisRun.finish(false);
+    throw error;
+  } finally {
+    await binding.collectAnalysisCacheAsync(analysisStore).catch(error => {
+      process.stderr.write(`rerail: analysis cache collection failed: ${String(error)}\n`);
+    });
+  }
 }
 
 /** One line per violation, then a summary: the text `rerail scan` prints without `--json`. */
@@ -557,7 +722,11 @@ export function describeScan(report: ScanReport): string {
     return `${at}[${violation.ruleId}] ${violation.message}`;
   });
   for (const failure of report.failures) lines.push(`failure ${failure.code}${failure.path === null ? "" : ` ${failure.path}`}: ${failure.message}`);
+  for (const warning of report.cacheWarnings ?? []) lines.push(`Cache was not retained. ${warning}`);
   const scope = report.scope === "git-diff" ? `git-diff${report.base === null ? "" : ` against ${report.base.ref}`}` : "repository";
+  if (report.source !== undefined) {
+    lines.push(`Source ${report.source.commit === null ? "tree " + report.source.tree : "commit " + report.source.commit}`);
+  }
   lines.push(`Scan ${report.status}: ${report.repository.displayName} (${scope}), ${report.rules.length} rules, ${report.summary.violations} violations, ${report.summary.failures} failures`);
   return lines.join("\n");
 }

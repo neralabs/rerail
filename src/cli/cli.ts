@@ -62,6 +62,9 @@ import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-con
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
+import { scanContentStore } from "../engine/native/analysis-scope.js";
+import { assertContentStoreOwner } from "../engine/native/main-instance.js";
+import { loadNativeBinding } from "../engine/native/native.js";
 import { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
 import { RemoteOutbox } from "../runtime/remote-outbox.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
@@ -189,7 +192,8 @@ function usage(): string {
     "",
     internalTesting(`Not part of the ${packageManifest(packageRoot).version} release:`),
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
-    "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]",
+    "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--revision <commit-or-tree> --analysis-scope <name>] [--rules-ref <ref>] [--pack <id>]... [--rr <file>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]",
+    "  rerail scope delete <name>",
     "  rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content]",
     "  rerail remote list|status [--json]",
     "  rerail remote remove <name|url>",
@@ -660,6 +664,7 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "support-bundle", "feedback", "remote"].includes(command ?? "")) return true;
   // A headless `scan` (no `--session`) runs in this process, so it scans with the package invoked.
   if (command === "scan") return !commandArgs.includes("--session");
+  if (command === "scope") return true;
   if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && commandArgs[1] === "status";
 }
@@ -779,6 +784,15 @@ async function runProjectCommand(command: string, args: readonly string[], { hom
     case "stop":
       return await runRepositoryCommand(command, args, { home, packageRoot, updater });
     case "state": return runStateCommand(args);
+    case "scope": {
+      const [action, name] = args;
+      if (action !== "delete" || !name?.trim() || args.length !== 2) throw new Error("Usage: rerail scope delete <name>");
+      const store = scanContentStore(defaultRerailDatabasePath());
+      assertContentStoreOwner(store);
+      loadNativeBinding().deleteAnalysisScope(store, name, false);
+      await loadNativeBinding().collectAnalysisCacheAsync(store);
+      return 0;
+    }
     // Internal testing: `scan`, explicit full-repository and git-diff audits. Whether `settings` ships is still open.
     case "scan":
     case "settings":

@@ -228,10 +228,11 @@ pub(super) fn wanted(prog: &Program, dir: Option<&Path>) -> Result<BTreeMap<Stri
     Ok(out)
 }
 
-/// Whether `rel` names an earlier phase's export (`<phase>__<export>`): shared by every program of a run, as bridged
-/// relations are (`corpus::combine` does not prefix it).
+/// Whether the runner binds `rel` with phase inputs. These rows are shared by
+/// all programs of the run.
 pub(crate) fn is_phased(rel: &str) -> bool {
-    rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("typing_") && !p.starts_with("rr_") && !e.contains(SEP))
+    super::git::INPUTS.contains(&rel)
+        || rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("typing_") && !p.starts_with("rr_") && !e.contains(SEP))
 }
 
 /// A batch of policies run one after another over one tree (`tools::run_policies`): while it is held, phase 1's runs
@@ -520,7 +521,18 @@ pub(super) fn sources(
     }
     // The observer's facts: stated, handed down as a phase's exports are (they are its inputs, not its program).
     let stated: Vec<Vec<Value>> = files.iter().map(|(p, m, g, c)| vec![Value::Str(p.clone().into()), Value::Str(m.clone().into()), Value::Str(g.clone().into()), Value::Str(c.clone().into())]).collect();
-    let _down = HandedDown::enter(NAME, Facts::from([("observer__source_file".to_owned(), stated)]));
+    let paths = files.iter().filter_map(|(p, _, _, _)| {
+        let file = if crate::git_workspace::snapshot::contains(root) {
+            p.clone()
+        } else {
+            crate::git_workspace::snapshot::canonicalize(root.join(p)).ok()?.into_os_string().into_string().ok()?
+        };
+        Some(vec![Value::Str(p.clone().into()), Value::Str(file.into())])
+    }).collect();
+    let _down = HandedDown::enter(NAME, Facts::from([
+        ("observer__source_file".to_owned(), stated),
+        ("observer__source_path".to_owned(), paths),
+    ]));
     let out = scratch.join(format!("phase-{NAME}"));
     let report = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: run"));

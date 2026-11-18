@@ -49,6 +49,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("to_precision", &[Text, Number], Text),
     // JavaScript's `toLowerCase`: Unicode's default case mapping (SQLite's own `lower` is ASCII only).
     ("lower", &[Text], Text),
+    ("ascii_lower", &[Text], Text),
     // `.rr`'s `cat(a, b, …)`, two at a time: the native engine's concatenation (SQL concatenates with `||`).
     ("str_concat", &[Text, Text], Text),
     // `str_concat` run backwards: the text between a prefix and a suffix, none when the text has not both
@@ -347,6 +348,7 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "min" => return Value::Integer(numbers[0].min(numbers[1])),
         "mod" => return numbers[0].checked_rem(numbers[1]).map_or(Value::Null, Value::Integer),
         "lower" => Some(t(0).to_lowercase()),
+        "ascii_lower" => Some(t(0).to_ascii_lowercase()),
         "sha256" => {
             use sha2::Digest;
             Some(sha2::Sha256::digest(t(0).as_bytes()).iter().map(|b| format!("{b:02x}")).collect())

@@ -262,6 +262,7 @@ static HANDLES: std::sync::LazyLock<ParkingMutex<HashMap<PathBuf, usize>>> =
 /// store is closed (a run's store is deleted and created again at its path).
 pub(super) struct ThreadConnection {
     database_path: PathBuf,
+    memory: Option<SharedConnection>,
     /// The store's identity when opened: a thread's connection to a store since created again at the path is not
     /// this store's.
     identity: i64,
@@ -286,7 +287,11 @@ impl std::ops::DerefMut for ConnectionGuard {
 impl ThreadConnection {
     pub(super) fn new(database_path: PathBuf, identity: i64) -> Self {
         *HANDLES.lock().entry(database_path.clone()).or_default() += 1;
-        Self { database_path, identity }
+        Self { database_path, identity, memory: None }
+    }
+
+    pub(super) fn memory(connection: Connection, identity: i64) -> Self {
+        Self { database_path: PathBuf::new(), identity, memory: Some(Arc::new(ParkingMutex::new(Some(connection)))) }
     }
 
     /// The store's identity when this handle opened it (a sibling handle shares it).
@@ -297,6 +302,9 @@ impl ThreadConnection {
     /// The handle closes (`ContentStore::drop`). Returns whether it was the store's last: then every thread's idle
     /// connection to it is closed.
     pub(super) fn close(&self) -> bool {
+        if self.memory.is_some() {
+            return true;
+        }
         let last = {
             let mut handles = HANDLES.lock();
             let open = handles.get_mut(&self.database_path).expect("a handle counted when made");
@@ -314,6 +322,9 @@ impl ThreadConnection {
     }
 
     pub(super) fn lock(&self) -> Result<ConnectionGuard, String> {
+        if let Some(memory) = &self.memory {
+            return Ok(ConnectionGuard(memory.lock_arc()));
+        }
         let connection = THREAD_CONNECTIONS.with(|connections| {
             let mut connections = connections.borrow_mut();
             match connections.get(&self.database_path) {
@@ -340,7 +351,9 @@ impl ThreadConnection {
 
     /// Closes every thread's idle connection to this database; one in use stays open.
     pub(super) fn release_all(&self) {
-        release_all_at(&self.database_path);
+        if self.memory.is_none() {
+            release_all_at(&self.database_path);
+        }
     }
 }
 

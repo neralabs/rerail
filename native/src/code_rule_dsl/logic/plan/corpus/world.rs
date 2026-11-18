@@ -66,6 +66,9 @@ pub(super) struct Loaded {
 
 #[derive(Default)]
 pub(super) struct World {
+    git: Option<super::git::Git>,
+    inventory_filter: Option<crate::git_workspace::snapshot::InventoryFilter>,
+    git_observations: BTreeMap<(String, String), String>,
     roots: Vec<PathBuf>,
     root: PathBuf,
     dirs: BTreeMap<String, Vec<(String, bool)>>,
@@ -89,7 +92,7 @@ pub(super) struct World {
 impl World {
     /// The roots a request may read: the corpus root, and each setting's value that is a directory.
     pub(super) fn new(root: &Path, prog: &front::Program) -> World {
-        let canonical = |p: &Path| std::fs::canonicalize(p).ok();
+        let canonical = |p: &Path| crate::git_workspace::snapshot::canonicalize(p).ok();
         let mut roots: Vec<PathBuf> = canonical(root).into_iter().collect();
         let mut budget = BUDGET;
         for row in prog.facts.get("env").into_iter().flatten() {
@@ -97,7 +100,7 @@ impl World {
                 if k == "load.budget" {
                     budget = v.parse().unwrap_or(budget);
                 }
-                if let Some(dir) = canonical(&root.join(v.as_str())).filter(|p| p.is_dir()) {
+                if let Some(dir) = canonical(&root.join(v.as_str())).filter(|p| crate::git_workspace::snapshot::is_dir(p)) {
                     roots.push(dir);
                 }
             }
@@ -109,6 +112,40 @@ impl World {
         let watched: Vec<PathBuf> = roots.iter().filter(|r| Some(*r) != placeholder.as_ref()).cloned().collect();
         super::observe(|o| o.watch(&watched));
         World { roots, root: root.to_path_buf(), budget, ..World::default() }
+    }
+
+    fn git(&mut self) -> &super::git::Git {
+        self.git.get_or_insert_with(|| super::git::Git::new(&self.root))
+    }
+
+    pub(super) fn consulted_git(&mut self, operation: &str, repo: &str, value: &str, digest: String) {
+        let key = serde_json::to_string(&(repo, value)).expect("string tuple");
+        self.git_observations.insert((operation.to_owned(), key), digest);
+    }
+
+    pub(super) fn git_revision(&mut self, repo: &str, expression: &str) -> (String, &'static str) {
+        let (id, status) = self.git().resolve(repo, expression);
+        self.consulted_git(super::git::REVISION, repo, expression, format!("{status}:{id}"));
+        (id, status)
+    }
+
+    pub(super) fn git_object(&mut self, repo: &str, id: &str) -> Vec<super::git::Record> {
+        let records = self.git().records(repo, id);
+        let status = if records[0].field == "kind" { "present" } else { &records[0].first };
+        self.consulted_git(super::git::OBJECT, repo, id, status.to_owned());
+        records
+    }
+
+    pub(super) fn inventory_child(&mut self, directory: &str, name: &str, mode: i64) -> Result<Option<String>, String> {
+        let is_dir = mode == 16384;
+        if !is_dir && !(32768..36864).contains(&mode) {
+            return Ok(None);
+        }
+        if self.inventory_filter.is_none() {
+            self.inventory_filter = Some(crate::git_workspace::snapshot::inventory_filter(&self.root)?);
+        }
+        crate::code_rule_dsl::prof::count("git.path_filters", 1);
+        Ok(self.inventory_filter.as_ref().unwrap().child(directory, name, is_dir))
     }
 
     /// The file `asked` names, when it lies under a root: relative to the corpus root, or absolute.
@@ -167,7 +204,7 @@ impl World {
         if let Some(d) = self.digests.get(asked) {
             return Some(d.clone());
         }
-        let Some(d) = self.allowed(asked).filter(|p| p.is_file()).map(|p| bytes_digest(&p)).filter(|d| !d.is_empty()) else {
+        let Some(d) = self.allowed(asked).filter(|p| crate::git_workspace::snapshot::is_file(p)).map(|p| bytes_digest(&p)).filter(|d| !d.is_empty()) else {
             self.refused.insert(asked.to_owned());
             return None;
         };
@@ -205,7 +242,7 @@ impl World {
         if corpus.contains(asked) || self.refused.contains(asked) {
             return None;
         }
-        let Some(path) = path.filter(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned()) else {
+        let Some(path) = path.filter(|p| crate::git_workspace::snapshot::is_file(p)).map(|p| p.to_string_lossy().into_owned()) else {
             self.dropped += 1;
             self.refused.insert(asked.to_owned());
             return None;
@@ -227,7 +264,12 @@ impl World {
             self.over_budget += 1;
             return None;
         }
-        let loaded = Loaded { path: path.clone(), module: module.to_owned(), grammar: grammar.to_owned() };
+        let identity = if crate::git_workspace::snapshot::contains(&self.root) {
+            Path::new(&path).strip_prefix(&self.root).ok().and_then(Path::to_str).unwrap_or(&path)
+        } else {
+            &path
+        };
+        let loaded = Loaded { path: identity.to_owned(), module: module.to_owned(), grammar: grammar.to_owned() };
         self.beyond += usize::from(!own);
         self.loads.insert(path, loaded.clone());
         Some(loaded)
@@ -240,7 +282,7 @@ impl World {
 
     /// The documents taken back this run and not loaded again: not the run's documents.
     pub(super) fn taken_paths(&self) -> impl Iterator<Item = &String> {
-        self.taken.keys()
+        self.taken.values().map(|loaded| &loaded.path)
     }
 
     /// Whether a load is one the budget bounds, by its request's path (`resolve`): a file beyond the corpus root, not
@@ -262,9 +304,10 @@ impl World {
     /// Takes back the document loaded from `path` this run (decision 0145, a load taken back): its place in the
     /// budget is free again. Whether it was loaded.
     pub(super) fn unload(&mut self, path: &str) -> bool {
-        let Some(loaded) = self.loads.remove(path) else { return false };
-        self.beyond -= usize::from(!self.own(path));
-        self.taken.insert(path.to_owned(), loaded);
+        let path = self.root.join(path).to_string_lossy().into_owned();
+        let Some(loaded) = self.loads.remove(&path) else { return false };
+        self.beyond -= usize::from(!self.own(&path));
+        self.taken.insert(path, loaded);
         true
     }
 
@@ -291,7 +334,7 @@ impl World {
     /// loaded document's bytes, and for a path refused or missing what is there now (decision 0083 §2). A run whose
     /// consulted things are all as they were would ask, load and derive the same (`still`).
     pub(super) fn consulted(&self) -> Vec<(String, String, String)> {
-        let mut out = Vec::new();
+        let mut out: Vec<_> = self.git_observations.iter().map(|((op, key), value)| (op.clone(), key.clone(), value.clone())).collect();
         for (asked, entries) in &self.dirs {
             out.push(("dir".to_owned(), asked.clone(), listing_digest(entries)));
         }
@@ -326,6 +369,12 @@ impl World {
                 "file" | "digest" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
                 "load" => bytes_digest(Path::new(path)),
                 "refused" => self.probe(path),
+                super::git::REVISION | super::git::OBJECT => {
+                    let Ok((repo, arg)) = serde_json::from_str::<(String, String)>(path) else {
+                        return Some((c, None));
+                    };
+                    self.git().observation(what, &repo, &arg)?
+                }
                 _ => return Some((c, None)),
             };
             (now != *digest).then_some((c, Some(now)))
@@ -394,29 +443,46 @@ pub(in crate::code_rule_dsl::logic::plan) fn bytes_digests_held(paths: &[PathBuf
     use crate::content_store::observe::{DigestRead, DigestStep};
     use rayon::prelude::*;
     let steps: Vec<DigestStep> = super::observe(|o| paths.iter().map(|p| o.digest_step(p)).collect());
-    let hashed: Vec<Option<(u64, [u8; 32])>> = steps
+    let mut first_by_blob = std::collections::HashMap::new();
+    let representatives: Vec<_> = steps.iter().enumerate().map(|(i, step)| match step {
+        DigestStep::Read(read) if let Some(key) = read.blob_key() => *first_by_blob.entry(key).or_insert(i),
+        _ => i,
+    }).collect();
+    let hashed: Vec<_> = steps
         .par_iter()
         .zip(paths.par_iter())
-        .map(|(s, path)| match s {
-            DigestStep::Read(r) => {
+        .enumerate()
+        .map(|(i, (s, path))| match s {
+            DigestStep::Read(r) if representatives[i] == i => {
                 let bytes = r.read()?;
                 let hashed = DigestRead::hashed(&bytes);
+                let mut git_text = None;
                 if let Some(hold) = hold {
-                    let s = r.stat();
-                    hold.keep(path, crate::content_store::FileStat { size: s.size, mtime_ns: s.mtime_ns, inode: s.ino }, bytes);
+                    if let Some(s) = r.stat() {
+                        hold.keep(path, crate::content_store::FileStat { size: s.size, mtime_ns: s.mtime_ns, inode: s.ino }, bytes);
+                    } else {
+                        git_text = Some(bytes);
+                    }
                 }
-                Some(hashed)
+                Some((hashed, git_text))
             }
-            DigestStep::Answered(_) => None,
+            _ => None,
         })
         .collect();
+    if let Some(hold) = hold {
+        for (path, &first) in paths.iter().zip(&representatives) {
+            if let Some((_, Some(bytes))) = &hashed[first] {
+                hold.keep_git(path, bytes);
+            }
+        }
+    }
     super::observe(|o| {
         steps
             .into_iter()
-            .zip(hashed)
+            .zip(representatives)
             .map(|(s, h)| match s {
                 DigestStep::Answered(d) => d,
-                DigestStep::Read(r) => o.digest_read(r, h),
+                DigestStep::Read(r) => o.digest_read(r, hashed[h].as_ref().map(|(digest, _)| *digest)),
             })
             .map(|d| d.map(|d| hex(&d)).unwrap_or_default())
             .collect()

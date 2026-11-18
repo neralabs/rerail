@@ -22,6 +22,131 @@ fn source_ids_round_trip_as_delta_varints() {
 }
 
 #[test]
+fn analysis_scope_keeps_a_shared_manifest_until_the_last_owner_is_deleted() {
+    let (_path, store) = store("analysis-scope");
+    let grammar = 1;
+    let format = 1;
+    let now = 100;
+    let plan = [1; 32];
+    let nested = [2; 32];
+    let root = "/virtual/repository";
+    for name in ["named:review", "named:release"] {
+        store.record_scoped_corpus_run(root, &[], grammar, format, plan, &[nested], None, None, now, Some(name)).unwrap();
+    }
+    let policy = CorpusPolicy { backstop_secs: 0, missing_secs: 0, ..CorpusPolicy::default() };
+    store.keep_corpus_runs(&policy, now + 1).unwrap();
+    assert_eq!(store.live_plans().unwrap(), HashSet::from([plan, nested]));
+
+    store.delete_analysis_scope("named:review").unwrap();
+    store.keep_corpus_runs(&policy, now + 1).unwrap();
+    assert_eq!(store.live_plans().unwrap(), HashSet::from([plan, nested]));
+    assert!(store.corpus_run_of(root).unwrap().is_some());
+
+    store.delete_analysis_scope("named:release").unwrap();
+    store.keep_corpus_runs(&policy, now + 1).unwrap();
+    assert!(store.live_plans().unwrap().is_empty());
+    assert!(store.corpus_run_of(root).unwrap().is_none());
+}
+
+#[test]
+fn deleting_an_analysis_scope_rejects_an_active_runs_late_manifest() {
+    let (_path, store) = store("analysis-scope-generation");
+    let name = "named:review";
+    let active = store.begin_analysis_scope(name).unwrap();
+    store.delete_analysis_scope(name).unwrap();
+    let root = "/virtual/repository";
+    let plan = [1; 32];
+    assert!(!store.record_corpus_run_retaining(root, &[], 1, 1, plan, &[], None, None, 100, None, Some(&active)).unwrap());
+    assert!(store.corpus_run_of(root).unwrap().is_none());
+    let next = store.begin_analysis_scope(name).unwrap();
+    assert!(store.record_corpus_run_retaining(root, &[], 1, 1, plan, &[], None, None, 101, None, Some(&next)).unwrap());
+}
+
+#[test]
+fn replaying_a_directory_analysis_scope_release_keeps_a_later_run() {
+    use crate::content_store::analysis_scope;
+    let (_path, store) = store("analysis-scope-release-replay");
+    let directory = std::path::Path::new("/virtual/repository");
+    let name = analysis_scope::directory(directory);
+    let active = store.begin_analysis_scope(&name).unwrap();
+    store.delete_directory_analysis_scopes(directory, Some("stop-1")).unwrap();
+    let next = store.begin_analysis_scope(&name).unwrap();
+    store.delete_directory_analysis_scopes(directory, Some("stop-1")).unwrap();
+    let plan = [1; 32];
+    let root = "/virtual/repository";
+    assert!(!store.record_corpus_run_retaining(root, &[], 1, 1, plan, &[], None, None, 100, None, Some(&active)).unwrap());
+    assert!(store.record_corpus_run_retaining(root, &[], 1, 1, plan, &[], None, None, 101, None, Some(&next)).unwrap());
+}
+
+#[test]
+fn analysis_scope_stop_distinguishes_discovery_before_and_after_it() {
+    use crate::content_store::analysis_scope;
+    let (_path, store) = store("analysis-scope-stop-order");
+    let directory = std::path::Path::new("/virtual/repository");
+    let name = analysis_scope::directory(directory);
+    let newer = store.begin_analysis_scope_at(&name, 200).unwrap();
+    let publish = |owner| store.record_corpus_run_retaining("/virtual/repository", &[], 1, 1, [1; 32], &[], None, None, 100, None, Some(owner)).unwrap();
+    assert!(publish(&newer));
+    store.delete_directory_analysis_scopes(directory, Some("150:stop")).unwrap();
+    let old_discovery = store.begin_analysis_scope_at(&name, 100).unwrap();
+    assert!(!publish(&old_discovery));
+    assert!(store.corpus_run_of("/virtual/repository").unwrap().is_some());
+}
+
+#[test]
+fn analysis_scope_only_publishes_staged_memberships_on_success() {
+    use crate::content_store::analysis_scope::AnalysisRun;
+    let (path, store) = store("analysis-scope-publish");
+    let check = ContentStore::open(&path).unwrap();
+    let mut run = AnalysisRun::begin(store, "named:review", "test").unwrap();
+    let root = "/virtual/repository";
+    assert!(check.record_corpus_run_retaining(root, &[], 1, 1, [1; 32], &[], None, None, 100, None, Some(&run.owner)).unwrap());
+    run.finish(false).unwrap();
+    assert!(check.corpus_run_of(root).unwrap().is_none());
+    let mut run = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:review", "test-2").unwrap();
+    assert!(check.record_corpus_run_retaining(root, &[], 1, 1, [1; 32], &[], None, None, 101, None, Some(&run.owner)).unwrap());
+    run.owner.warn("injected writer failure".into());
+    run.finish(true).unwrap();
+    assert!(check.corpus_run_of(root).unwrap().is_none());
+    let mut run = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:review", "test-3").unwrap();
+    assert!(check.record_corpus_run_retaining(root, &[], 1, 1, [1; 32], &[], None, None, 102, None, Some(&run.owner)).unwrap());
+    run.finish(true).unwrap();
+    assert!(check.corpus_run_of(root).unwrap().is_some());
+    check.delete_analysis_scope("named:review").unwrap();
+    assert!(check.corpus_run_of(root).unwrap().is_none());
+}
+
+#[test]
+fn analysis_scope_keeps_each_directory_policy_sets_latest_manifest_under_pressure() {
+    let (_path, store) = store("analysis-scope-pressure");
+    let root = "/virtual/repository";
+    let old = [1; 32];
+    let latest = [2; 32];
+    let other = [3; 32];
+    let independent = [4; 32];
+    for (scope, plan, set) in [("cwd:/one", old, [0; 32]), ("cwd:/one", latest, [0; 32]), ("cwd:/two", other, [0; 32]), ("cwd:/one", independent, [9; 32])] {
+        let source = store.put_source(&plan, &[]).unwrap();
+        store.record_scoped_corpus_run(root, &[source], 1, 1, plan, &[], Some(plan), Some(set), 100, Some(scope)).unwrap();
+    }
+    let policy = CorpusPolicy { protected_runs: 0, low_water: 0, high_water: 0, backstop_secs: 0, missing_secs: 0, ..CorpusPolicy::default() };
+    store.keep_corpus_runs(&policy, 101).unwrap();
+    assert_eq!(store.live_plans().unwrap(), HashSet::from([latest, other, independent]));
+}
+
+#[test]
+fn analysis_scope_cache_keys_distinguish_parser_and_tape_versions() {
+    let (_path, store) = store("analysis-scope-tape-version");
+    let bytes = b"x = 1\n";
+    let source = store.put_source(bytes, &[]).unwrap();
+    let original = store.put_tape(source, 1, 2, 3, b"old tape").unwrap();
+    assert_eq!(store.tape_by_source(source, 1, 2, 3).unwrap(), Some(original));
+    assert_eq!(store.tape_by_source(source, 1, 4, 3).unwrap(), None);
+    assert_eq!(store.tape_by_source(source, 1, 2, 4).unwrap(), None);
+    let new = store.put_tape(source, 1, 4, 3, b"new tape").unwrap();
+    assert_ne!(original, new);
+}
+
+#[test]
 fn the_last_runs_are_protected_and_history_is_kept_to_the_low_water_mark() {
     // Root 1 churns every file each run: sources 1-2, 3-4, 5-6, 7-8, 9-10 (newest first below).
     let ms: Vec<Manifest> = (0..5).map(|k| manifest(10 - k, 1, 100, &[2 * (5 - k) - 1, 2 * (5 - k)])).collect();

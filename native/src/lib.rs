@@ -115,9 +115,15 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 pub(crate) fn install_store_functions() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), env!("RERAIL_GRAMMAR_BUILD_ID"));
+        let grammar = env!("RERAIL_GRAMMAR_BUILD_ID");
+        #[cfg(feature = "test-hooks")]
+        let grammar = std::env::var("RERAIL_TEST_GRAMMAR_BUILD_ID").ok()
+            .filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .map_or(grammar, |id| Box::leak(id.into_boxed_str()));
+        code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), grammar);
         code_rule_dsl::install_devices();
         code_rule_dsl::install_languages();
+        code_rule_dsl::logic::plan::corpus::install_git_inventory();
         content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
         content_store::set_connection_functions(|db| {
             code_rule_dsl::text::install(db)?;
@@ -263,6 +269,153 @@ pub fn validate_regex(pattern: String) -> Result<()> {
 #[napi]
 pub fn content_store_file_name() -> &'static str {
     content_store::STORE_FILE_NAME
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi]
+pub fn inspect_rr_policy(path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
+    let snapshot = source.map(|source| source.pinned_snapshot());
+    let path = rr_policy_path(&path, snapshot.as_deref())?;
+    let (program, files) = tools::read_policy(&path).map_err(Error::from_reason)?;
+    let metadata = code_rule_dsl::logic::rr::metadata(&program).map_err(|e| Error::from_reason(e.to_string()))?;
+    Ok(serde_json::json!({ "metadata": metadata, "programInputs": tools::policy_inputs(&files) }).to_string())
+}
+
+#[cfg(not(feature = "headless"))]
+fn rr_policy_path(path: &str, snapshot: Option<&git_workspace::snapshot::Snapshot>) -> Result<std::path::PathBuf> {
+    let path = Path::new(path);
+    match snapshot {
+        None => Ok(path.to_owned()),
+        Some(snapshot) if path.is_relative() && path.components().all(|part| matches!(part, std::path::Component::Normal(_))) => Ok(snapshot.root().join(path)),
+        Some(_) => Err(Error::from_reason("Expected a repository-relative policy path")),
+    }
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi]
+pub fn scan_rr_policies_async(
+    paths: Vec<String>,
+    root: String,
+    store: String,
+    output: String,
+    analysis: &rerail_w::code_rule_dsl::workspace::api::AnalysisScopeRun,
+    source_paths: Option<Vec<String>>,
+    source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
+    policy_source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
+) -> napi::bindgen_prelude::AsyncTask<ScanRrPolicies> {
+    napi::bindgen_prelude::AsyncTask::new(ScanRrPolicies {
+        paths, root, store, output, owner: analysis.owner(), source_paths,
+        snapshot: source.map(|source| source.pinned_snapshot()),
+        policy_snapshot: policy_source.map(|source| source.pinned_snapshot()),
+    })
+}
+
+#[cfg(not(feature = "headless"))]
+pub struct ScanRrPolicies {
+    paths: Vec<String>,
+    root: String,
+    store: String,
+    output: String,
+    owner: content_store::analysis_scope::AnalysisOwner,
+    source_paths: Option<Vec<String>>,
+    snapshot: Option<std::sync::Arc<git_workspace::snapshot::Snapshot>>,
+    policy_snapshot: Option<std::sync::Arc<git_workspace::snapshot::Snapshot>>,
+}
+
+#[cfg(not(feature = "headless"))]
+impl napi::Task for ScanRrPolicies {
+    type Output = String;
+    type JsValue = String;
+
+    fn compute(&mut self) -> Result<String> {
+        let path = Path::new(&self.store);
+        let ownership = if let Some(snapshot) = &self.snapshot {
+            snapshot.set_analysis_owner(self.owner.clone());
+            None
+        } else {
+            Some((self.root.clone().into(), self.owner.clone()))
+        };
+        code_rule_dsl::logic::plan::corpus::with_tape_cache_path(path, ownership, || {
+            let root = self.snapshot.as_ref().map_or_else(|| Path::new(&self.root), |snapshot| snapshot.root());
+            let options = serde_json::json!({ "sourcePaths": self.source_paths, "scanSpans": true });
+            let mut ids = std::collections::HashSet::new();
+            let mut policies = Vec::new();
+            for path in &self.paths {
+                let policy_path = rr_policy_path(path, self.policy_snapshot.as_deref())?;
+                let (program, files) = tools::read_policy(&policy_path).map_err(Error::from_reason)?;
+                let metadata = code_rule_dsl::logic::rr::metadata(&program).map_err(|err| Error::from_reason(err.to_string()))?;
+                let declared = metadata["policies"].as_array().filter(|policies| !policies.is_empty())
+                    .ok_or_else(|| Error::from_reason(format!("{path}: .policy declaration required")))?;
+                for policy in declared {
+                    let id = policy["id"].as_str().filter(|id| !id.trim().is_empty())
+                        .ok_or_else(|| Error::from_reason(format!("{path}: .policy ID must not be empty")))?;
+                    if !ids.insert(id.to_owned()) {
+                        return Err(Error::from_reason(format!("duplicate .rr policy ID {id:?} in {path}")));
+                    }
+                }
+                policies.push((program, files));
+            }
+            let mut reports = Vec::new();
+            for (i, (program, files)) in policies.into_iter().enumerate() {
+                let out = Path::new(&self.output).join(i.to_string());
+                reports.push(tools::run_program(program, &files, root, &out, &options).map_err(Error::from_reason)?);
+            }
+            serde_json::to_string(&reports).map_err(|e| Error::from_reason(e.to_string()))
+        })
+    }
+
+    fn resolve(&mut self, _env: napi::Env, output: String) -> Result<String> {
+        Ok(output)
+    }
+}
+
+#[napi]
+pub fn collect_analysis_cache_async(store_path: String) -> napi::bindgen_prelude::AsyncTask<CollectAnalysisCache> {
+    napi::bindgen_prelude::AsyncTask::new(CollectAnalysisCache(store_path))
+}
+
+pub struct CollectAnalysisCache(String);
+
+impl napi::Task for CollectAnalysisCache {
+    type Output = ();
+    type JsValue = ();
+
+    fn compute(&mut self) -> Result<()> {
+        let path = Path::new(&self.0);
+        if !path.exists() { return Ok(()); }
+        let collect = || -> content_store::StoreResult<()> {
+            let store = content_store::ContentStore::open(path)?;
+            let policy = content_store::CorpusPolicy::default();
+            let now = content_store::unix_seconds()?;
+            if store.corpus_pass_wanted(&policy, now)? {
+                let started = std::time::Instant::now();
+                for _ in 0..8 {
+                    if !store.collect_corpus_pass(&policy, now)?.did_work() || started.elapsed().as_millis() >= 200 { break; }
+                }
+            }
+            Ok(())
+        };
+        collect().map_err(|error| Error::from_reason(error.to_string()))
+    }
+
+    fn resolve(&mut self, _env: napi::Env, _: ()) -> Result<()> { Ok(()) }
+}
+
+#[napi]
+pub fn delete_analysis_scope(store_path: String, value: String, directory: bool, release: Option<String>) -> Result<()> {
+    use content_store::analysis_scope;
+    let path = std::path::Path::new(&store_path);
+    if !path.exists() && !(directory && release.as_deref().is_some_and(|id| id.contains(':'))) {
+        return Ok(());
+    }
+    let store = content_store::ContentStore::open(path).map_err(|err| Error::new(Status::GenericFailure, err.to_string()))?;
+    if directory {
+        store.delete_directory_analysis_scopes(std::path::Path::new(&value), release.as_deref())
+    } else {
+        let scope = analysis_scope::named(&value).ok_or_else(|| Error::new(Status::InvalidArg, "analysis scope name must not be empty"))?;
+        store.delete_analysis_scope(&scope)
+    }.map_err(|err| Error::new(Status::GenericFailure, err.to_string()))?;
+    Ok(())
 }
 
 /// Inspect real POSIX session identity; allocator-backed ps tokens are not ownership.

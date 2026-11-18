@@ -20,6 +20,8 @@ import { checkouts, events, repositories, sessions } from "../engine/storage/sch
 import { holdsTable } from "../engine/storage/table-probe.js";
 import { clearSetupReview } from "../engine/catalog/setup-review.js";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
+import { collectAnalysisCaches, queueAnalysisScopeReleases, settleAnalysisScopeReleases } from "../engine/native/analysis-scope.js";
+import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import type { SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
 
 const STOPPED: RepositoryStatus = { started: false, setUp: false, startedBy: "repository" };
@@ -223,6 +225,10 @@ export function setRepositoryStarted(database: RerailDatabase, repositoryKey: Re
   database.transaction(tx => {
     tx.update(repositories).set({ started, updatedAt: now }).where(eq(repositories.repositoryKey, repositoryKey)).run();
     tx.update(checkouts).set({ started: null }).where(eq(checkouts.repositoryKey, repositoryKey)).run();
+    if (!started) {
+      const directories = tx.select({ directory: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.repositoryKey, repositoryKey)).all();
+      queueAnalysisScopeReleases(tx, directories.map(({ directory }) => directory));
+    }
     clearSetupReview(tx, repositoryKey);
   }, { behavior: "immediate" });
 }
@@ -233,6 +239,7 @@ export function setCheckoutStarted(database: RerailDatabase, checkout: CheckoutC
     tx.update(checkouts).set({ started }).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).run();
     const nested = nestedCheckouts(tx, checkout).map(row => row.checkoutPath);
     if (nested.length > 0) tx.update(checkouts).set({ started: null }).where(inArray(checkouts.checkoutPath, nested)).run();
+    if (!started) queueAnalysisScopeReleases(tx, [checkout.checkoutPath]);
     clearSetupReview(tx, checkout.repositoryKey);
   }, { behavior: "immediate" });
 }
@@ -305,14 +312,23 @@ export function stopRerail(workspace: string, io: RepositorySetupIo, options: Re
   const database = openRerailDatabase(databasePath);
   let previous: RepositoryStartState;
   let steered: readonly string[];
+  const settleLocalRelease = () => {
+    if (isMainRerailBuild()) return;
+    settleAnalysisScopeReleases(databasePath, -1);
+    void collectAnalysisCaches(databasePath).catch(error => process.stderr.write(`rerail: analysis cache collection failed: ${String(error)}\n`));
+  };
   try {
     const known = lookupCheckout(database, workspace);
     previous = stateOf(checkoutStatus(database, known));
     if (known === undefined) {
+      database.transaction(tx => queueAnalysisScopeReleases(tx, [workspace]), { behavior: "immediate" });
+      settleLocalRelease();
       io.say(`○ Rerail has not been started in ${name}, so there is nothing to stop. Start it with ${startCommand}.`);
       return previous;
     }
-    setStarted(database, recordCheckout(database, workspace), false, wholeRepository);
+    const checkout = recordCheckout(database, workspace);
+    setStarted(database, checkout, false, wholeRepository);
+    settleLocalRelease();
     const session = options.session;
     steered = session?.sessionId === undefined ? [] : sessionSteeredRules(database, session.host, session.sessionId);
   } finally {

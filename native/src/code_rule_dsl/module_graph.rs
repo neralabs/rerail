@@ -97,6 +97,48 @@ thread_local! {
     pub static SUMMARIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// Server graph over the selected Git tree, with the same file and byte bounds as the disk walk.
+fn snapshot_graph(directory: &Path, folder: &str, config: &Config) -> Option<BTreeSet<String>> {
+    use crate::git_workspace::snapshot;
+    let mut pending = vec![String::new()];
+    let mut files = BTreeMap::new();
+    let mut entries = MAX_GRAPH_ENTRIES;
+    let mut budget = MAX_GRAPH_BYTES;
+    while let Some(prefix) = pending.pop() {
+        let listing = snapshot::listing(directory.join(&prefix)).ok()?;
+        entries = entries.checked_sub(listing.len())?;
+        for (name, is_directory) in listing {
+            let relative = join(&prefix, &name);
+            let file = directory.join(&relative);
+            if is_directory {
+                if !skipped_folder(&name) && !snapshot::is_file(file.join("package.json")) {
+                    pending.push(relative);
+                }
+                continue;
+            }
+            if !is_source(&relative) || name.starts_with('.') {
+                continue;
+            }
+            let source = match snapshot::read_bounded(&file, MAX_SOURCE_BYTES) {
+                Ok(bytes) => {
+                    budget = budget.checked_sub(bytes.len() as u64)?;
+                    String::from_utf8_lossy(&bytes).into_owned()
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => String::new(),
+                Err(_) => return None,
+            };
+            let path = join(folder, &relative);
+            if let Some(summary) = summarize(&path, &source) {
+                files.insert(path, summary);
+                if files.len() > MAX_GRAPH_FILES {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(server_graph(folder, &files, config, snapshot::is_dir(directory.join("app"))))
+}
+
 /// The summary of the ECMA source at `path`; `None` for a path of no ECMA dialect.
 pub fn summarize(path: &str, source: &str) -> Option<Summary> {
     let dialect = dialect_by_label(ecma_label(path)?)?;
@@ -623,6 +665,9 @@ pub fn on_disk(
     } else {
         root.join(folder)
     };
+    if crate::git_workspace::snapshot::contains(&directory) {
+        return snapshot_graph(&directory, folder, config);
+    }
     let mut sources = Vec::new();
     let mut budget = MAX_GRAPH_BYTES;
     let mut entries = MAX_GRAPH_ENTRIES;
@@ -742,7 +787,7 @@ pub(crate) fn summarize_bounded(path: &str, source: &str) -> Option<Summary> {
 /// canonical path lies below the root's, so a symlink on the way leads nowhere outside the
 /// workspace.
 pub fn config_on_disk(root: &Path, folder: &str) -> Config {
-    let Ok(canonical_root) = root.canonicalize() else {
+    let Ok(canonical_root) = crate::git_workspace::snapshot::canonicalize(root) else {
         return Config::default();
     };
     let read = |path: &str| {
@@ -755,6 +800,9 @@ pub fn config_on_disk(root: &Path, folder: &str) -> Config {
             return None;
         }
         let file = root.join(path);
+        if crate::git_workspace::snapshot::contains(root) {
+            return String::from_utf8(crate::git_workspace::snapshot::read_bounded(&file, MAX_SOURCE_BYTES).ok()?).ok();
+        }
         let metadata = std::fs::metadata(&file).ok()?;
         if !metadata.is_file() || metadata.len() > MAX_SOURCE_BYTES {
             return None;

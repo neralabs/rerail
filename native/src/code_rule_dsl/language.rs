@@ -496,6 +496,12 @@ pub fn label(lang: GrammarDialect) -> Option<&'static str> {
     dialect(lang).map(|dialect| dialect.label)
 }
 
+/// The suffix registry as input to source selection rules.
+pub fn source_grammar_suffixes() -> impl Iterator<Item = (&'static str, &'static str, i64, bool)> {
+    DIALECTS.iter().flat_map(|d| d.suffixes.iter().map(move |suffix| (d.label, *suffix, d.lang)))
+        .enumerate().map(|(order, (label, suffix, lang))| (label, suffix, order as i64, lang.built()))
+}
+
 /// The file label a path's suffix selects, as the host's table does for dialect files: the
 /// longest matching suffix. A dialect this build leaves out (`GrammarDialect::built`) selects none: its files are
 /// not read, as a planned language's are not.

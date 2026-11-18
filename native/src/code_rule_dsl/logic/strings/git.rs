@@ -19,6 +19,7 @@ struct Repo {
     repo: gix::Repository,
     /// The run root's path inside the work tree.
     prefix: PathBuf,
+    snapshot: Option<(gix::ObjectId, Option<gix::ObjectId>)>,
 }
 
 #[derive(Default)]
@@ -87,10 +88,16 @@ fn tracked(state: &mut State, path: &str) -> Option<bool> {
 }
 
 fn open(root: &Path) -> Option<Repo> {
+    if let Some((repo, prefix, tree, commit)) = crate::git_workspace::snapshot::repository(root) {
+        return Some(Repo { repo, prefix, snapshot: Some((tree, commit)) });
+    }
     let repo = gix::discover(root).ok()?;
+    if repo.workdir().is_none() {
+        return Some(Repo { repo, prefix: PathBuf::new(), snapshot: None });
+    }
     let workdir = repo.workdir()?.canonicalize().ok()?;
     let prefix = root.canonicalize().ok()?.strip_prefix(&workdir).ok()?.to_path_buf();
-    Some(Repo { repo, prefix })
+    Some(Repo { repo, prefix, snapshot: None })
 }
 
 /// The object a full or abbreviated (at least 4 digits) hex id names, if exactly one does.
@@ -113,7 +120,7 @@ fn commit(repo: &Repo, sha: &str) -> Option<bool> {
 fn has(repo: &Repo, sha: &str, path: &str) -> Option<bool> {
     let Some(id) = resolve(&repo.repo, sha) else { return Some(false) };
     let object = repo.repo.find_object(id).ok()?;
-    if object.kind != gix::object::Kind::Commit {
+    if !matches!(object.kind, gix::object::Kind::Commit | gix::object::Kind::Tree) {
         return Some(false);
     }
     let tree = object.peel_to_tree().ok()?;
@@ -177,9 +184,14 @@ fn commit_of(repo: &gix::Repository, rev: &str) -> Result<gix::ObjectId, String>
 /// merge base of HEAD and it)`, the revision a change is compared against. Also the root's path in the work tree.
 pub fn revisions(root: &Path, base: Option<&str>) -> Result<(Vec<(String, String)>, PathBuf), String> {
     let repo = open(root).ok_or_else(|| format!("no Git work tree holds {}", root.display()))?;
-    let head = commit_of(&repo.repo, "HEAD")?;
-    let mut rows = vec![("head".to_owned(), head.to_string())];
+    let head = match repo.snapshot {
+        Some((_, commit)) => commit,
+        None => Some(commit_of(&repo.repo, "HEAD")?),
+    };
+    let mut rows = head.map(|head| vec![("head".to_owned(), head.to_string())]).unwrap_or_default();
+    if let Some((tree, _)) = repo.snapshot { rows.push(("tree".to_owned(), tree.to_string())); }
     if let Some(base) = base {
+        let head = head.ok_or("a tree snapshot has no commit for --base")?;
         let other = commit_of(&repo.repo, base)?;
         let merge = repo.repo.merge_base(head, other).map_err(|e| format!("the merge base of HEAD and {base}: {e}"))?;
         // gix 0.90 answers no common ancestor as none, where 0.84 gave an error.
@@ -201,6 +213,13 @@ pub fn still(what: &str, path: &str, digest: &str) -> bool {
         _ => false,
     }
 }
+
+/// Repository and prefix used by object-backed inputs, including runs over an isolated snapshot.
+pub fn repository(root: &Path) -> Result<(gix::Repository, PathBuf), String> {
+    open(root).map(|r| (r.repo, r.prefix)).ok_or_else(|| format!("no Git repository holds {}", root.display()))
+}
+
+pub use crate::git_workspace::snapshot::Snapshot;
 
 #[cfg(test)]
 pub mod tests {
@@ -265,6 +284,33 @@ pub mod tests {
             }
             assert_eq!(git_commit(&head), Value::Integer(1), "the outer run's root again");
         }
+        // A selected commit ignores the current branch, staged files and dirty contents.
+        std::fs::write(root.join("docs/a.md"), "dirty\n").unwrap();
+        let snapshot = Snapshot::new(&root, &head).unwrap();
+        let snapshot_root = snapshot.root().to_path_buf();
+        assert_eq!(crate::git_workspace::snapshot::read(snapshot.root().join("docs/a.md")).unwrap(), b"a\n");
+        assert!(!snapshot.root().exists(), "no source directory is materialized");
+        assert!(!crate::git_workspace::snapshot::is_file(snapshot.root().join("docs/d.md")));
+        set_root(snapshot.root());
+        assert_eq!(git_tracked("docs/a.md"), Value::Integer(1));
+        assert_eq!(git_tracked("docs/d.md"), Value::Integer(1), "the tracked predicate still reads the current index");
+        assert_eq!(consulted(snapshot.root())[0].0, "git_index");
+        let (selected, prefix) = revisions(snapshot.root(), Some(&two)).unwrap();
+        assert_eq!(selected[0], ("head".to_owned(), head.clone()));
+        assert_eq!(selected.last().unwrap(), &("base".to_owned(), head.clone()));
+        assert_eq!(prefix, Path::new("sub"));
+        assert_eq!(git_has(&git(&["rev-parse", "HEAD^{tree}"]), "docs/a.md"), Value::Integer(1));
+        drop(snapshot);
+        assert!(!snapshot_root.exists());
+        let tree = git(&["rev-parse", "HEAD^{tree}"]);
+        let snapshot = Snapshot::new(&dir, &tree).unwrap();
+        assert_eq!(crate::git_workspace::snapshot::read(snapshot.root().join("sub/docs/a.md")).unwrap(), b"a\n");
+        let (selected, _) = revisions(snapshot.root(), None).unwrap();
+        assert_eq!(selected, [("tree".to_owned(), tree)]);
+        assert!(revisions(snapshot.root(), Some(&head)).is_err());
+        assert!(Snapshot::new(&dir, &blob).is_err());
+        assert!(Snapshot::new(&dir, "missing-revision").is_err());
+        drop(snapshot);
         set_root(&std::env::temp_dir().join("rerail-no-repo-here"));
         assert_eq!(git_commit(&head), Value::Null, "no repository: no value");
         std::fs::remove_dir_all(&dir).unwrap();

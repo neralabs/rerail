@@ -262,22 +262,85 @@ pub fn run_rr(
     out: &std::path::Path,
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    use super::logic::rr;
-    let (program, files) = rr::read_file(path).map_err(|e| e.to_string())?;
+    if let Some(revision) = options.get("revision") {
+        let revision = revision.as_str().ok_or("revision must be a commit or tree string")?;
+        let scope = options.get("analysisScope").and_then(|s| s.as_str()).ok_or("--revision requires --analysis-scope <name>")?;
+        let (snapshot, mut analysis) = scoped_snapshot(root, revision, scope)?;
+        let mut options = options.clone();
+        options.as_object_mut().unwrap().remove("revision");
+        options.as_object_mut().unwrap().remove("analysisScope");
+        let mut report = run_rr(path, snapshot.root(), out, &options)?;
+        finish_analysis(&mut analysis)?;
+        report["source"] = serde_json::json!({"revision": revision, "tree": snapshot.tree(), "commit": snapshot.commit()});
+        return Ok(report);
+    }
+    if options.get("analysisScope").is_some() {
+        return Err("--analysis-scope requires --revision".into());
+    }
+    let (program, files) = read_policy(path)?;
+    run_program(program, &files, root, out, options)
+}
+
+pub fn read_policy(path: &Path) -> Result<(super::logic::front::Program, Vec<super::logic::rr::LibraryFile>), String> {
+    let (program, files) = super::logic::rr::read_file(path).map_err(|e| e.to_string())?;
     if !program.outputs.iter().any(|name| super::logic::rr::is_diagnostic(name)) {
         return Err(format!("{}: no .violation declarations", path.display()));
     }
-    run_program(program, &files, root, out, options)
+    Ok((program, files))
+}
+
+pub fn policy_inputs(files: &[super::logic::rr::LibraryFile]) -> serde_json::Value {
+    serde_json::json!(files.iter().map(|file| serde_json::json!({
+        "path": file.path,
+        "sha256": file.sha256.map(|hash| crate::content_store::observe::hex(&hash)),
+    })).collect::<Vec<_>>())
+}
+
+fn scoped_snapshot(root: &Path, revision: &str, scope: &str) -> Result<(super::logic::strings::git::Snapshot, Option<crate::content_store::analysis_scope::AnalysisRun>), String> {
+    use crate::content_store::analysis_scope::{self, AnalysisRun};
+    let snapshot = super::logic::strings::git::Snapshot::scoped(root, revision, scope)?;
+    let analysis = if let Some(path) = super::logic::plan::corpus::tape_cache_path() {
+        let store = crate::content_store::ContentStore::open(&path).map_err(|err| err.to_string())?;
+        let id = format!("{}-{}", std::process::id(), analysis_scope::acquisition_time());
+        let scope = analysis_scope::named(scope).expect("validated when opening snapshot");
+        let run = AnalysisRun::begin(store, &scope, &id).map_err(|err| err.to_string())?;
+        snapshot.set_analysis_owner(run.owner.clone());
+        Some(run)
+    } else { None };
+    Ok((snapshot, analysis))
+}
+
+fn finish_analysis(analysis: &mut Option<crate::content_store::analysis_scope::AnalysisRun>) -> Result<(), String> {
+    if let Some(run) = analysis {
+        run.finish(true).map_err(|e| e.to_string())?;
+        if let Some(warning) = run.owner.cache_warning() {
+            eprintln!("rerail: cache was not retained. {warning}");
+        }
+    }
+    Ok(())
 }
 
 /// The findings of the run whose outputs are in `dir`, as the CLI reports them: every finding relation's rows
 /// (`rr::lower::findings`), each as its JSON object.
 pub fn diagnostics(dir: &std::path::Path) -> Result<Vec<serde_json::Value>, String> {
     let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(dir).map_err(|e| e.to_string())?;
+    let spans: std::collections::HashMap<_, _> = outputs.rows("rr_scan_span").iter().filter_map(|row| {
+        Some(((row.get(0).text()?, row.raw(1)), serde_json::json!({
+            "start": { "line": row.get(2).int()?, "column": row.get(3).int()? },
+            "end": { "line": row.get(4).int()?, "column": row.get(5).int()? },
+            "text": row.get(6).text()?,
+        })))
+    }).collect();
     let mut all = Vec::new();
     for rel in outputs.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
         for row in outputs.rows(rel) {
-            all.push(diagnostic(&row)?);
+            let mut finding = diagnostic(&row)?;
+            if matches!(row.get(5), crate::code_rule_dsl::logic::plan::output::Value::Node(_))
+                && let Some(span) = row.get(3).text().and_then(|path| spans.get(&(path, row.raw(5))))
+            {
+                finding["span"] = span.clone();
+            }
+            all.push(finding);
         }
     }
     Ok(all)
@@ -319,7 +382,7 @@ fn diagnostic(row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> Resul
 
 /// `run_rr` of a program already read: a file's, or a test's (decision 0130, `rr::testing`).
 pub fn run_program(
-    program: super::logic::front::Program,
+    mut program: super::logic::front::Program,
     files: &[super::logic::rr::LibraryFile],
     root: &std::path::Path,
     out: &std::path::Path,
@@ -330,6 +393,24 @@ pub fn run_program(
         typing::file_local::Binding,
     };
     let metadata = rr::metadata(&program).map_err(|e| e.to_string())?;
+    if options["scanSpans"] == true {
+        let mut rules = String::from(".decl rr_report_location(n: node, l: number, c: number, el: number, ec: number)\n.input rr_report_location\n.decl rr_scan_span(p: symbol, n: node, l: number, c: number, el: number, ec: number, matched: symbol)\n.output rr_scan_span\n");
+        let mut wanted = false;
+        for (rel, cols) in &program.decls {
+            if rr::is_diagnostic(rel) && cols.get(5).is_some_and(|col| col.1 == "node") {
+                let tail = ", _".repeat(cols.len() - 6);
+                rules.push_str(&format!("rr_scan_span(p, n, l, c, el, ec, matched) :- {rel}(_, _, _, p, _, n{tail}), rr_report_location(n, l, c, el, ec), text(n, matched).\n"));
+                wanted = true;
+            }
+        }
+        if wanted {
+            let spans = rr::parse(&rules).map_err(|e| e.to_string())?;
+            program.decls.extend(spans.decls);
+            program.inputs.extend(spans.inputs);
+            program.outputs.extend(spans.outputs);
+            program.rules.extend(spans.rules);
+        }
+    }
     // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per dialect
     // with files in scope: the first into `out`, each other into `out/<dialect>`, their findings together. A language
     // of one dialect, or none with files, runs as written. Each run holds the program read, its language the
@@ -358,10 +439,7 @@ pub fn run_program(
     Ok(
         serde_json::json!({"diagnostics": rows, "files": files_read, "nodes": nodes,
                          "metadata": metadata,
-                         "programInputs": files.iter().map(|file| serde_json::json!({
-                             "path": file.path,
-                             "sha256": file.sha256.map(|hash| hash.iter().map(|b| format!("{b:02x}")).collect::<String>())
-                         })).collect::<Vec<_>>(),
+                         "programInputs": policy_inputs(files),
                          "phases": phases.iter().map(|(phase,user,system,rss,statements)| serde_json::json!({
                              "phase": phase, "userCpuSeconds": user, "systemCpuSeconds": system,
                              "peakRssMB": rss, "submittedStatements": statements
@@ -379,6 +457,21 @@ pub fn run_policies(
     out: &std::path::Path,
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
+    if let Some(revision) = options.get("revision") {
+        let revision = revision.as_str().ok_or("revision must be a commit or tree string")?;
+        let scope = options.get("analysisScope").and_then(|s| s.as_str()).ok_or("--revision requires --analysis-scope <name>")?;
+        let (snapshot, mut analysis) = scoped_snapshot(root, revision, scope)?;
+        let mut options = options.clone();
+        options.as_object_mut().unwrap().remove("revision");
+        options.as_object_mut().unwrap().remove("analysisScope");
+        let mut report = run_policies(paths, snapshot.root(), out, &options)?;
+        finish_analysis(&mut analysis)?;
+        report["source"] = serde_json::json!({"revision": revision, "tree": snapshot.tree(), "commit": snapshot.commit()});
+        return Ok(report);
+    }
+    if options.get("analysisScope").is_some() {
+        return Err("--analysis-scope requires --revision".into());
+    }
     let (mut diagnostics, mut runs) = (Vec::new(), Vec::new());
     // One run for the file observer: each root asked of the journal once for the batch.
     let _observed = super::logic::plan::corpus::ObservedBatch::begin();
@@ -394,7 +487,10 @@ pub fn run_policies(
     // The policies of one language run as one pack (decision 0168): libraries read, lowered, hidden and evaluated once
     // (decisions 0051, 0089), each policy's findings split back by its id. The rest run alone.
     // `RERAIL_BATCH_PACK=off` runs each policy alone, as before, to compare (a measurement's switch).
-    let packed = std::env::var("RERAIL_BATCH_PACK").map_or(true, |v| v != "off");
+    // Grouping by default grammar inventories the source before the rules are
+    // available. Git policy runs determine their source demand individually.
+    let packed = paths.len() > 1 && !crate::git_workspace::snapshot::contains(root)
+        && std::env::var("RERAIL_BATCH_PACK").map_or(true, |v| v != "off");
     let texts = if packed { program_texts(&paths.iter().map(|p| p.as_path()).collect::<Vec<_>>()).ok() } else { None };
     let groups = texts.as_deref().map(|texts| policy_groups(texts, root, options)).unwrap_or_default();
     let mut done: Vec<Option<(Vec<serde_json::Value>, serde_json::Value)>> = paths.iter().map(|_| None).collect();
@@ -603,7 +699,11 @@ fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json:
         let several = named.as_deref().is_some_and(|n| CodeRuleLanguage::ALL.into_iter().any(|l| l.name() == n && l.dialects().len() > 1));
         let labels = if several {
             let prog = super::logic::rr::parse_own(text).map_err(|e| e.to_string())?;
-            corpus::run_dialects_in(&files, &prog, options).map_err(|e| e.to_string())?
+            if crate::git_workspace::snapshot::contains(root) {
+                corpus::run_dialects(root, &prog, options)
+            } else {
+                corpus::run_dialects_in(&files, &prog, options)
+            }.map_err(|e| e.to_string())?
         } else {
             Vec::new()
         };
@@ -783,7 +883,7 @@ mod settings_tests {
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine delete-scope <store.sqlite> <name>\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>... [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -812,7 +912,45 @@ pub fn cli(args: &[String]) -> Result<String, String> {
 pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
     // Done as the library loaded, except where nothing runs then (the browser's build).
     crate::install_store_functions();
-    let budgets = budget_options(args)?;
+    let mut budgets = budget_options(args)?;
+    for flag in ["--revision", "--analysis-scope"] {
+        if budgets.iter().filter(|a| *a == flag).count() > 1 {
+            return Err(format!("{flag} can be supplied only once"));
+        }
+    }
+    let mut revision = None;
+    if let Some(index) = budgets.iter().position(|a| a == "--revision").filter(|_| budgets.first().is_none_or(|a| a != "logic")) {
+        let root_index = match budgets.first().map(String::as_str) {
+            Some("run-rr") => 2,
+            Some("run-policies") => 1,
+            _ => return Err("--revision is supported by logic, run-rr and run-policies".into()),
+        };
+        if index <= root_index { return Err("place --revision after the corpus root".into()); }
+        revision = Some(budgets.get(index + 1).filter(|s| !s.starts_with("--")).ok_or("--revision requires a commit or tree")?.clone());
+        budgets.drain(index..=index + 1);
+    }
+    let mut analysis_scope = None;
+    if let Some(index) = budgets.iter().position(|a| a == "--analysis-scope").filter(|_| budgets.first().is_none_or(|a| a != "logic")) {
+        if !matches!(budgets.first().map(String::as_str), Some("run-rr" | "run-policies")) {
+            return Err("--analysis-scope is supported by logic, run-rr and run-policies".into());
+        }
+        analysis_scope = Some(budgets.get(index + 1).filter(|s| !s.starts_with("--")).ok_or("--analysis-scope requires a name")?.clone());
+        budgets.drain(index..=index + 1);
+    }
+    let with_revision = |mut options: serde_json::Value| {
+        if revision.is_some() || analysis_scope.is_some() {
+            if !options.is_object() {
+                options = serde_json::json!({});
+            }
+            if let Some(revision) = &revision {
+                options["revision"] = serde_json::json!(revision);
+            }
+            if let Some(scope) = &analysis_scope {
+                options["analysisScope"] = serde_json::json!(scope);
+            }
+        }
+        options
+    };
     let args = budgets.as_slice();
     // However the command ends, the cost samples it made are written (decision 0100 §14).
     struct Flush;
@@ -846,12 +984,12 @@ pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::cor
         Some("kind-names") => kind_names_command(&args[1..]),
         Some("run-rr") if args.len() == 4 || args.len() == 5 => {
             let options = if args.len() == 5 { serde_json::from_str(&read(&args[4])?).map_err(|e| e.to_string())? } else { serde_json::Value::Null };
-            serde_json::to_string(&crate::tools::run_rr(Path::new(&args[1]), Path::new(&args[2]), Path::new(&args[3]), &options)?).map_err(|e| e.to_string())
+            serde_json::to_string(&crate::tools::run_rr(Path::new(&args[1]), Path::new(&args[2]), Path::new(&args[3]), &with_revision(options))?).map_err(|e| e.to_string())
         }
         // Several policies over one repository, each over its own language's files (O105).
         Some("run-policies") if args.len() > 3 => {
             let paths = args[3..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
-            serde_json::to_string(&crate::tools::run_policies(&paths, Path::new(&args[1]), Path::new(&args[2]), &serde_json::Value::Null)?).map_err(|e| e.to_string())
+            serde_json::to_string(&crate::tools::run_policies(&paths, Path::new(&args[1]), Path::new(&args[2]), &with_revision(serde_json::Value::Null))?).map_err(|e| e.to_string())
         }
         Some("check-rr") if args.len() > 1 => {
             let paths = args[1..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
@@ -905,6 +1043,17 @@ pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::cor
         },
         #[cfg(feature = "tape-cache")]
         Some("gc") => gc_command(&args[1..]),
+        Some("delete-scope") => match &args[1..] {
+            [store, name] => {
+                let scope = crate::content_store::analysis_scope::named(name).ok_or("analysis scope name must not be empty")?;
+                let path = Path::new(store);
+                if path.exists() {
+                    crate::content_store::ContentStore::open(path).and_then(|store| store.delete_analysis_scope(&scope)).map_err(|err| err.to_string())?;
+                }
+                Ok(String::new())
+            }
+            _ => Err("usage: rerail-engine delete-scope <store.sqlite> <name>".into()),
+        },
         #[cfg(feature = "tape-cache")]
         Some("upkeep") => upkeep_command(&args[1..]),
         #[cfg(not(all(feature = "dump-cli", feature = "tape-cache")))]
@@ -1067,9 +1216,19 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     timeline_mark("cli start");
     let (mut positional, mut modes, mut metal, mut chunk) = (Vec::new(), None, false, 1_usize << 18);
     let (mut sql, mut env, mut full) = (false, Vec::new(), false);
+    let mut revision = None;
+    let mut analysis_scope = None;
     let mut args = args.iter();
     while let Some(argument) = args.next() {
         match argument.as_str() {
+            "--revision" => {
+                if revision.is_some() { return Err("--revision can be supplied only once".into()); }
+                revision = Some(args.next().filter(|s| !s.starts_with("--")).ok_or("--revision requires a commit or tree")?.clone());
+            }
+            "--analysis-scope" => {
+                if analysis_scope.is_some() { return Err("--analysis-scope can be supplied only once".into()); }
+                analysis_scope = Some(args.next().filter(|s| !s.starts_with("--")).ok_or("--analysis-scope requires a name")?.clone());
+            }
             "--sql" => sql = true,
             "--metal" => metal = true,
             // A full run in a session: compiled and evaluated afresh, as without one (decision 0063).
@@ -1134,8 +1293,18 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     if programs.is_empty() {
         return Err(format!("{program} has no .rr programs"));
     }
-    let run = || crate::tools::logic(&programs, Path::new(root), facts, Path::new(out), &modes, metal, chunk, &env);
-    if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() }
+    if revision.is_none() && analysis_scope.is_some() {
+        return Err("--analysis-scope requires --revision".into());
+    }
+    let (snapshot, mut analysis) = revision.as_deref().map(|rev| {
+        let scope = analysis_scope.as_deref().ok_or("--revision requires --analysis-scope <name>")?;
+        scoped_snapshot(Path::new(root), rev, scope)
+    }).transpose()?.map_or((None, None), |(snapshot, analysis)| (Some(snapshot), analysis));
+    let root = snapshot.as_ref().map_or_else(|| Path::new(root), |s| s.root());
+    let run = || crate::tools::logic(&programs, root, facts, Path::new(out), &modes, metal, chunk, &env);
+    let report = if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() }?;
+    finish_analysis(&mut analysis)?;
+    Ok(report)
 }
 
 /// `facts-stamp <raw> --out <dir> --root <repository> <policy.rr>…` (data-layer/RUN-FACTS.md section 1, `rerail facts
@@ -1470,4 +1639,163 @@ fn capture_tapes_command(args: &[String]) -> Result<String, String> {
         refused.into_inner(),
         files.len()
     ))
+}
+
+#[cfg(test)]
+mod git_revision_tests {
+    use super::*;
+
+    #[test]
+    fn revision_readers_use_git_objects_for_settings_inputs_and_world_queries() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("repo");
+        std::fs::create_dir_all(root.join("allow")).unwrap();
+        std::fs::create_dir_all(root.join("data")).unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
+                .arg("-C").arg(&root).args(args).output().unwrap();
+            assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&["init", "-q"]);
+        std::fs::write(root.join("a.py"), "committed = 1\n").unwrap();
+        std::fs::write(root.join("rerail.env"), "mark = committed\n").unwrap();
+        std::fs::write(root.join("data/value.json"), r#"{"title":"from-git"}"#).unwrap();
+        std::fs::write(root.join("allow/one.txt"), "allowed\n").unwrap();
+        git(&["add", "a.py", "rerail.env", "data/value.json", "allow/one.txt"]);
+        git(&["-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "-qm", "source"]);
+        let commit = git(&["rev-parse", "HEAD"]);
+        std::fs::write(root.join("rerail.env"), "mark = local\n").unwrap();
+        std::fs::write(root.join("data/value.json"), r#"{"title":"local"}"#).unwrap();
+        std::fs::remove_file(root.join("a.py")).unwrap();
+        std::fs::remove_file(root.join("allow/one.txt")).unwrap();
+        std::fs::write(root.join("allow/local.txt"), "local\n").unwrap();
+        let policy = fixture.path().join("rule.rr");
+        std::fs::write(&policy, r#"
+.policy "git-readers" revision 1
+.language python
+.decl title(value: symbol)
+.input title(IO=json, filename="data/value.json", path="/title")
+.decl allowed(path: symbol, line: number, text: symbol)
+.input allowed(IO=lines, dir="allow")
+.violation Seen(at: span, key: symbol, value: symbol) "{key}:{value}"
+Seen(@place("a.py", 1), "config", value) :- env("mark", value).
+Seen(@place("a.py", 1), "json", value) :- title(value).
+Seen(@place("a.py", 1), "dirinput", value) :- allowed("allow/one.txt", 1, value).
+Seen(@place("a.py", 1), "line", value) :- file_line("allow/one.txt", 1, value).
+Seen(@place("a.py", 1), "listing", value) :- dir_entry("allow", value, 0).
+Seen(@place("a.py", 1), "source", value) :- doc(d, "a.py", _), split_line(d, 1, value).
+"#).unwrap();
+        let options = serde_json::json!({"revision": commit, "analysisScope": "review"});
+        let report = run_rr(&policy, &root, &fixture.path().join("out"), &options).unwrap();
+        let mut messages: Vec<_> = report["diagnostics"].as_array().unwrap().iter()
+            .map(|row| row["message"].as_str().unwrap()).collect();
+        messages.sort();
+        assert_eq!(messages, ["config:committed", "dirinput:allowed", "json:from-git", "line:allowed", "listing:one.txt", "source:committed = 1"]);
+        let repo = gix::discover(&root).unwrap();
+        assert!(!repo.common_dir().join("rerail-object-views").exists());
+        assert!(!root.join("a.py").exists());
+    }
+
+    #[test]
+    fn revision_cli_applies_current_policy_to_committed_files_and_metadata() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path().join("repo");
+        std::fs::create_dir(&root).unwrap();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
+                .arg("-C").arg(&root).args(args).output().unwrap();
+            assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&["init", "-q"]);
+        std::fs::write(root.join("a.py"), "committed = 1\n").unwrap();
+        let policy = root.join("rule.rr");
+        std::fs::write(&policy, r#"
+.policy "historical-policy" revision 1
+.language python
+.violation Old(at: span) "historical policy ran"
+Old(@place("a.py", 1)).
+"#).unwrap();
+        git(&["add", "a.py", "rule.rr"]);
+        git(&["-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "-qm", "snapshot message"]);
+        let commit = git(&["rev-parse", "HEAD"]);
+        let tree = git(&["rev-parse", "HEAD^{tree}"]);
+        git(&["-c", "user.name=Other", "-c", "user.email=other@example.com", "commit", "--allow-empty", "-qm", "today"]);
+        std::fs::write(root.join("a.py"), "dirty = 2\n").unwrap();
+        std::fs::write(root.join("untracked.py"), "untracked = 3\n").unwrap();
+        std::fs::write(&policy, r#"
+#include "git.rr"
+.policy "git-snapshot" revision 1
+.language python
+git_revision_request(r, "HEAD") :- git_root_repo(r).
+git_object_request(r, h) :- git_revision(r, "HEAD", h).
+git_object_request(r, p) :- git_parent(r, _, _, p).
+.violation Seen(at: span, text: symbol, message: symbol, email: symbol, head: symbol) "{text}"
+Seen(@place(p, l), text, message, email, head) :- doc(d, p, _), split_line(d, l, text),
+    git_source_commit(r, c), git_message(r, c, message), git_author(r, c, _, email, _, _),
+    git_revision(r, "HEAD", h), git_parent(r, h, 0, c), git_subject(r, h, head).
+"#).unwrap();
+        let args = vec!["run-rr".to_owned(), policy.display().to_string(), root.display().to_string(),
+            fixture.path().join("commit-out").display().to_string(), "--analysis-scope".to_owned(), "review".to_owned(), "--revision".to_owned(), commit];
+        let result: serde_json::Value = serde_json::from_str(&cli(&args).unwrap()).unwrap();
+        let diagnostics = result["diagnostics"].as_array().unwrap();
+        assert_eq!(diagnostics.len(), 1, "{result}");
+        assert_eq!(diagnostics[0]["code"], "Seen");
+        assert_eq!(diagnostics[0]["path"], "a.py");
+        assert_eq!(diagnostics[0]["parameters"]["text"], "committed = 1");
+        assert_eq!(diagnostics[0]["parameters"]["message"], "snapshot message\n");
+        assert_eq!(diagnostics[0]["parameters"]["email"], "example@example.com");
+        assert_eq!(diagnostics[0]["parameters"]["head"], "today");
+        assert_eq!(result["source"]["tree"], tree);
+        std::fs::write(&policy, r#"
+.policy "git-tree" revision 1
+.language python
+.violation Seen(at: span, text: symbol, tree: symbol) "{text}"
+Seen(@place(p, l), text, tree) :- doc(d, p, _), split_line(d, l, text), git_rev("tree", tree).
+"#).unwrap();
+        let result = run_rr(&policy, &root, &fixture.path().join("tree-out"), &serde_json::json!({"revision": tree, "analysisScope": "review"})).unwrap();
+        let diagnostics = result["diagnostics"].as_array().unwrap();
+        assert_eq!(diagnostics.len(), 1, "{result}");
+        assert_eq!(diagnostics[0]["parameters"]["text"], "committed = 1");
+        assert_eq!(diagnostics[0]["parameters"]["tree"], tree);
+        assert_eq!(std::fs::read_to_string(root.join("a.py")).unwrap(), "dirty = 2\n");
+        assert!(root.join("untracked.py").exists());
+        let mut missing = args.clone();
+        missing.pop();
+        assert!(cli(&missing).unwrap_err().contains("--revision requires"));
+    }
+
+    #[test]
+    fn revision_cli_reads_commit_metadata_without_its_tree() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        let git = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
+                .current_dir(root).args(args).output().unwrap();
+            assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        };
+        git(&["init", "-q"]);
+        let object = fixture.path().join("commit-without-tree");
+        std::fs::write(&object, format!("tree {}\nauthor Test <test@example.com> 100 +0000\ncommitter Test <test@example.com> 100 +0000\n\nmessage without a tree\n", "1".repeat(40))).unwrap();
+        let commit = git(&["hash-object", "-t", "commit", "-w", object.to_str().unwrap()]);
+        let policy = root.join("metadata.rr");
+        std::fs::write(&policy, r#"
+#include "git.rr"
+.language typescript
+.decl subject(s: symbol)
+git_object_request(r, c) :- git_source_commit(r, c).
+subject(s) :- git_source_commit(r, c), git_subject(r, c, s).
+.output subject
+"#).unwrap();
+        let output = fixture.path().join("metadata-out");
+        cli(&["logic".into(), policy.display().to_string(), root.display().to_string(), output.display().to_string(),
+            "--revision".into(), commit, "--analysis-scope".into(), "review".into()]).unwrap();
+        let facts = super::super::logic::plan::output::Outputs::open(&output).unwrap();
+        assert_eq!(facts.rows("subject")[0].get(0).text(), Some("message without a tree"));
+    }
 }

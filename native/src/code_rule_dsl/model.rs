@@ -951,7 +951,14 @@ pub(crate) fn python_module_path(
 
 /// `python_module_path` over the files on disk.
 pub fn python_module_path_on_disk(file: &std::path::Path) -> Option<Value> {
-    python_module_path(file, |directory| directory.join("__init__.py").exists())
+    python_module_path(file, |directory| {
+        let marker = directory.join("__init__.py");
+        if crate::git_workspace::snapshot::contains(file) {
+            crate::git_workspace::snapshot::is_file(marker)
+        } else {
+            marker.exists()
+        }
+    })
 }
 
 /// The directory a file set's path marks as a Python package (`pkg` for `pkg/__init__.py`, `""`

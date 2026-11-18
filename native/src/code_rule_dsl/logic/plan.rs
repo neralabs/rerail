@@ -9590,6 +9590,9 @@ fn with_answers(f: Fields<'_>, db: &Connection, scc: &BTreeSet<String>, reads: O
 /// After a stratum ran: each of its relations' digest and rows, given to `ks` with what the stratum read
 /// (`reads`, each with its digest then), and its digest to this run's `fresh`.
 fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BTreeSet<String>, reads: Option<&Vec<(String, u64)>>, fresh: &mut HashMap<String, Option<u64>>) {
+    if scc.contains("source_language_result") {
+        crate::code_rule_dsl::prof::count("source_language.evaluations", 1);
+    }
     let mut members = Vec::new();
     let f = run.fields();
     for r in scc.iter().filter(|r| !run.views.contains(*r)) {
@@ -11032,6 +11035,9 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                 }
                 for (j, rules, moved) in reached_strata {
                     let scc = &sccs[j];
+                    if scc.contains("source_language_result") {
+                        crate::code_rule_dsl::prof::count("source_language.evaluations", 1);
+                    }
                     let key = stratum_key(scc);
                     reached += 1;
                     let _span = super::profile::span(|| format!("stratum {} placed", if key.len() > 80 { format!("{}…({} relations)", &key[..80], scc.len()) } else { key.clone() }));

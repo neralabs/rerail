@@ -168,6 +168,33 @@ CREATE INDEX IF NOT EXISTS workspaces_by_lease ON workspaces(state_id, lease_unt
 CREATE INDEX IF NOT EXISTS workspaces_by_repository ON workspaces(repository_string_id);
 CREATE INDEX IF NOT EXISTS workspaces_by_owner ON workspaces(owner_string_id);
 CREATE INDEX IF NOT EXISTS workspaces_by_snapshot ON workspaces(snapshot_id);
+CREATE TABLE IF NOT EXISTS analysis_scope_snapshot (
+    scope TEXT NOT NULL,
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(snapshot_id) ON DELETE CASCADE,
+    acquired_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(scope, snapshot_id)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_scope_snapshot_by_snapshot ON analysis_scope_snapshot(snapshot_id);
+CREATE TABLE IF NOT EXISTS analysis_scope_generation (
+    scope TEXT PRIMARY KEY,
+    generation INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS analysis_scope_workspace_snapshot (
+    scope TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(snapshot_id) ON DELETE CASCADE,
+    acquired_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(scope, workspace)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_scope_workspace_snapshot_by_snapshot ON analysis_scope_workspace_snapshot(snapshot_id);
+CREATE TABLE IF NOT EXISTS analysis_scope_collect (
+    snapshot_id INTEGER PRIMARY KEY REFERENCES snapshots(snapshot_id) ON DELETE CASCADE
+) STRICT;
+CREATE TABLE IF NOT EXISTS analysis_scope_release (
+    id TEXT PRIMARY KEY,
+    scope TEXT NOT NULL DEFAULT '',
+    before INTEGER NOT NULL DEFAULT 0
+) STRICT, WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS workspace_overlay (
     workspace_id INTEGER NOT NULL REFERENCES workspaces(workspace_id),
     path_id INTEGER NOT NULL REFERENCES paths(path_id),
@@ -382,6 +409,13 @@ CREATE TABLE IF NOT EXISTS corpus_manifests (
     UNIQUE (root_id, digest)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS corpus_manifests_by_run ON corpus_manifests(last_run);
+CREATE TABLE IF NOT EXISTS analysis_scope_manifest (
+    scope TEXT NOT NULL,
+    manifest_id INTEGER NOT NULL REFERENCES corpus_manifests(manifest_id) ON DELETE CASCADE,
+    acquired_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(scope, manifest_id)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_scope_manifest_by_manifest ON analysis_scope_manifest(manifest_id);
 CREATE TABLE IF NOT EXISTS corpus_live (
     source_id INTEGER NOT NULL,
     grammar_version INTEGER NOT NULL,
@@ -856,6 +890,11 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 /// TABLE IF NOT EXISTS` leaves an older store's table as it was, so applying SCHEMA adds these (`ALTER TABLE`).
 /// Each has a default, so an older binary's inserts, which do not name it, still apply.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("analysis_scope_snapshot", "acquired_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_workspace_snapshot", "acquired_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_manifest", "acquired_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_release", "scope", "TEXT NOT NULL DEFAULT ''"),
+    ("analysis_scope_release", "before", "INTEGER NOT NULL DEFAULT 0"),
     ("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0"),
     ("corpus_manifests", "policy", "BLOB CHECK(policy IS NULL OR length(policy) = 32)"),
     ("memo_entries", "over_pack", "INTEGER NOT NULL DEFAULT 0"),

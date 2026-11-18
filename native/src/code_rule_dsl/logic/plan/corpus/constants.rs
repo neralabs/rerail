@@ -48,7 +48,9 @@ pub(super) fn foldable(prog: &Program) -> BTreeSet<String> {
         heads.entry(r.head.rel.as_str()).or_default().push(r);
     }
     let inputs: std::collections::HashSet<&str> = prog.inputs.iter().map(String::as_str).collect();
-    let world = |rel: &str| crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
+    // File-system reads generate demand from the rule being folded. Explicit Git
+    // requests can be derived elsewhere, including from documents and other answers.
+    let world = |rel: &str| matches!(rel, "dir_entry" | "file_line" | "file_digest");
     let given = |rel: &str| !heads.contains_key(rel) && (option_input(rel) || world(rel) || (prog.facts.contains_key(rel) && !inputs.contains(rel)));
     let mut fold: std::collections::HashSet<&str> =
         heads.keys().copied().filter(|r| !prog.natives.contains_key(*r) && !prog.lattice.contains_key(*r) && !inputs.contains(r)).collect();
@@ -197,7 +199,7 @@ fn derive(
     own[OWN] = serde_json::Value::Array(wanted.iter().map(|r| serde_json::Value::String(r.clone())).collect());
     own["inputFiles"] = serde_json::json!([]);
     let out = scratch.join("constants");
-    let report: Report = super::run_handed(programs, read, None, root, None, &out, modes, binding, chunk_nodes, typing, &own)?;
+    let report: Report = super::run_handed(programs, read, None, root, None, &out, modes, binding, chunk_nodes, typing, &own, None)?;
     let copies: Vec<String> = wanted.iter().map(|rel| copy(rel)).collect();
     let image = crate::code_rule_dsl::logic::plan::output::base_of(&out, copies.iter().map(String::as_str)).map_err(|e| super::super::Error::Plan(format!("the run's constants: {e}")))?;
     let _ = std::fs::remove_dir_all(&out);
@@ -228,7 +230,7 @@ fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &se
     }
     h.update(options.to_string().as_bytes());
     h.update([0]);
-    h.update(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    h.update(crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
     h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }

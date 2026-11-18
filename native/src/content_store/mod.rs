@@ -4,6 +4,7 @@
 //! The code-rule runtime will call this module through coarse Rust operations.
 
 pub mod atoms;
+pub mod analysis_scope;
 #[cfg(target_os = "macos")]
 mod accel_models;
 // Publication of the prefilter is wired into the scan in a later slice; until then only tests call it.
@@ -771,9 +772,25 @@ impl ContentStore {
         }
         #[cfg(not(target_os = "macos"))]
         let _ = models;
-        Ok(Self {
-            database_path: path.to_path_buf(),
-            connection: ThreadConnection::new(path.to_path_buf(), identity),
+        Ok(Self::with_connection(
+            path.to_path_buf(), ThreadConnection::new(path.to_path_buf(), identity),
+            atoms::Atoms::for_database(path, Some(identity)), Some(write_back::register_store(path, identity)),
+        ))
+    }
+
+    /// The scratch store for fact-only evaluation with the durable cache disabled.
+    pub fn open_ephemeral() -> StoreResult<Self> {
+        let mut connection = Connection::open_in_memory()?;
+        let atoms = atoms::Atoms::ephemeral();
+        atoms::Atoms::share_memory(&connection, std::sync::Arc::clone(&atoms))?;
+        let identity = Self::initialize(&mut connection)?;
+        Ok(Self::with_connection(PathBuf::from(":memory:"), ThreadConnection::memory(connection, identity), atoms, None))
+    }
+
+    fn with_connection(database_path: PathBuf, connection: ThreadConnection, atoms: std::sync::Arc<atoms::Atoms>, write_back: Option<std::sync::Arc<write_back::Writer>>) -> Self {
+        Self {
+            database_path,
+            connection,
             compression_level: DEFAULT_COMPRESSION_LEVEL,
             decompressed_cache: Mutex::new(DecompressedReadCache::new(
                 DEFAULT_READ_CACHE_BYTES,
@@ -781,12 +798,10 @@ impl ContentStore {
             )),
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
-            // A store created again at its path, by this process or another, has atoms of its own.
-            atoms: atoms::Atoms::for_database(path, Some(identity)),
+            atoms,
             working_set: working_set::WorkingSet::default(),
             applying: parking_lot::Mutex::new((0, None)),
-            // A store created again at its path has a writer of its own too.
-            write_back: Some(write_back::register_store(path, identity)),
+            write_back,
             #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
@@ -795,7 +810,7 @@ impl ContentStore {
             git_tree_write_count: AtomicUsize::new(0),
             #[cfg(any(test, feature = "test-hooks"))]
             git_tree_transactions: AtomicUsize::new(0),
-        })
+        }
     }
 
     /// Drop process-local read caches and close every thread's idle connection to the store, with

@@ -13,6 +13,8 @@ import {
   type NativeCodeRuleDslWorkspace,
   type NativeGitIgnoreMatch,
   type NativeGitIgnoreMatcher,
+  type NativeAnalysisScopeRun,
+  type NativeGitRevisionSource,
   type NativePackageFacts,
   type NativePackageFactsReader,
   type NativeRepositoryIndexOptions,
@@ -583,6 +585,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #nestedCheckouts: () => readonly string[];
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #followGitignore: boolean;
+  readonly #revisionSource: NativeGitRevisionSource | undefined;
+  readonly #analysisStore: string | undefined;
+  readonly #analysisRun: NativeAnalysisScopeRun | undefined;
+  readonly #analysisGeneration: (() => number) | undefined;
   /** Git's exclude stack for this checkout, opened on first use; null outside Git or where it cannot be opened. */
   #gitIgnore: NativeGitIgnoreMatcher | null | undefined;
   #scope: AuditScope;
@@ -663,6 +669,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
        * repository's setting when it opens, and it holds for the session's life.
        */
       followGitignore?: boolean;
+      revisionSource?: NativeGitRevisionSource;
+      analysisStore?: string;
+      analysisRun?: NativeAnalysisScopeRun;
+      analysisGeneration?: () => number;
     },
   ) {
     this.#catalog = catalog;
@@ -675,6 +685,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#nestedCheckouts = options.nestedCheckouts ?? (() => []);
     this.#timingLog = options.timingLog;
     this.#followGitignore = options.followGitignore ?? false;
+    this.#revisionSource = options.revisionSource;
+    this.#analysisStore = options.analysisStore;
+    this.#analysisRun = options.analysisRun;
+    this.#analysisGeneration = options.analysisGeneration;
     this.#ownedAudits =
       options.audits === undefined
         ? new SqliteAuditStore(defaultRerailDatabasePath())
@@ -806,6 +820,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#scope = settings.scope;
     this.#mode = settings.mode;
   }
+
   /**
    * Synchronous, so the bridge's next `acceptsPath` already answers with the refreshed scopes: the replacement
    * registers its code rules now and attaches storage off the JS thread before its first apply. Before the workspace
@@ -1023,9 +1038,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * return; `#applyRequest` waits for the storage attach before the first apply.
    */
   #prepareWorkspace(): PreparedWorkspace {
+    const generation = this.#analysisRun === undefined ? this.#analysisGeneration?.() : undefined;
     const snapshot = this.#catalog.snapshot();
     // This build's own store; only the main daemon may open the machine-wide one.
-    const storePath = contentStorePath();
+    const storePath = this.#analysisStore ?? contentStorePath();
     assertContentStoreOwner(storePath);
     const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)();
     let storage: Promise<boolean>;
@@ -1036,7 +1052,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       const attachStartedAt = performance.now();
       // The store is a cache every checkout shares, kept on disk: a file named like one holding secrets never goes into it.
       const secretNames = { files: SENSITIVE_FILE_NAMES, folders: SENSITIVE_FOLDER_NAMES };
-      storage = workspace.enableStorageAsync(this.#workspaceRoot, storePath, secretNames).then(({ attached, reason, discoveryMilliseconds, publicationMilliseconds }) => {
+      const attachment = this.#revisionSource === undefined
+        ? workspace.enableStorageAsync(this.#workspaceRoot, storePath, secretNames, this.#analysisRun, generation)
+        : workspace.enableRevisionStorageAsync(this.#revisionSource, storePath, secretNames, this.#analysisRun);
+      storage = attachment.then(({ attached, reason, discoveryMilliseconds, publicationMilliseconds }) => {
+        if (!attached && this.#revisionSource !== undefined) throw new Error(reason ?? "Cannot attach Git source");
+        if (!attached) this.#analysisRun?.warn(reason ?? "Repository storage did not attach");
         this.#timingLog?.(
           `rerail: repository storage ${attached ? "attached" : "not attached"} in ${Math.round(performance.now() - attachStartedAt)} ms (discovery ${Math.round(discoveryMilliseconds)} ms, publication ${Math.round(publicationMilliseconds)} ms)\n`,
         );
@@ -1372,10 +1393,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       const prepared = this.#prepareWorkspace();
       workspace = prepared.workspace;
       auditId = this.#startAudit(scope, mode, revision, paths, prepared);
-      const indexed = scope === "repository" && (await prepared.storage);
+      const storage = await prepared.storage;
+      const indexed = (scope === "repository" || this.#revisionSource !== undefined) && storage;
       const indexStartedAt = performance.now();
       const walked = indexed
-        ? await this.#indexRepository(workspace, auditId, failures, nested)
+        ? await this.#indexRepository(workspace, auditId, failures, nested, scope === "touched-files" ? paths : undefined)
         : await this.#walkAuditSources(workspace, scope, auditId, paths, failures, nested);
       const indexMilliseconds = performance.now() - indexStartedAt;
       if (this.#closing) return auditId;
@@ -1433,6 +1455,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     auditId: string | undefined,
     failures: AuditFailure[],
     nested: NestedCheckoutWalk,
+    paths: readonly string[] | undefined,
   ): Promise<ScopeAuditSources> {
     const deadline = Date.now() + AUDIT_MAX_DURATION_MS;
     let files = 0;
@@ -1443,7 +1466,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       }
       await this.#waitForEvaluationIdle();
       if (this.#closing) break;
-      const chunk = repositoryIndexChunkSchema.parse(JSON.parse(await this.#indexChunk(workspace, nested)));
+      const chunk = repositoryIndexChunkSchema.parse(JSON.parse(await this.#indexChunk(workspace, nested, paths)));
       this.#workspaceRevisions.set(workspace, chunk.revision);
       files = chunk.discoveredFiles;
       failures.push(...chunk.failures.map((item) => failure("source", item.code, item.message, item.path, "read")));
@@ -1465,7 +1488,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   }
 
   /** One index chunk, retried while an interactive apply holds the evaluation slot. */
-  async #indexChunk(workspace: NativeCodeRuleDslWorkspace, nested: NestedCheckoutWalk): Promise<string> {
+  async #indexChunk(workspace: NativeCodeRuleDslWorkspace, nested: NestedCheckoutWalk, paths: readonly string[] | undefined): Promise<string> {
     let backoff = 2;
     while (!this.#closing) {
       try {
@@ -1473,6 +1496,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
           ...REPOSITORY_INDEX_OPTIONS,
           nestedCheckouts: [...nested.pruned],
           followGitignore: this.#followGitignore,
+          ...(paths === undefined ? {} : { paths: [...paths] }),
         });
       } catch (error) {
         if (!isWorkspaceBusy(error)) throw error;
@@ -1550,7 +1574,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       quiet: true,
       ...(stopped ? { deferGlobal: true } : {}),
     });
-    if (indexed && !stopped)
+    if (indexed && scope === "repository" && !stopped)
       // Reuse is a cache: a failed write (another process holding the store) costs reuse, never these results.
       await workspace.completeStorageRevisionAsync().catch((error: unknown) => {
         process.stderr.write(`rerail: repository reuse was not recorded: ${errorMessage(error)}\n`);
@@ -1574,6 +1598,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     // The paged list is capped by the same rule over the same failures, so it leaves out as many.
     const unlisted = unboundedFailures.length - allFailures.length;
     const status = failsAudit(unboundedFailures, scope) ? "failed" : "completed";
+    if (status === "completed" && !stopped && this.#analysisStore !== undefined)
+      await workspace.retainAnalysisScopeAsync().catch((error: unknown) => {
+        const message = errorMessage(error);
+        if (this.#analysisRun !== undefined) this.#analysisRun.warn(message);
+        else process.stderr.write(`rerail: analysis scope was not recorded: ${message}\n`);
+      });
     if (streamed.paged && auditId !== undefined) {
       this.#record(() => this.#audits.finishResultPages?.(auditId, status, unlisted));
       this.#runningAudits.delete(auditId);

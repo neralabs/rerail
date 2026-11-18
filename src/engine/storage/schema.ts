@@ -192,6 +192,17 @@ export const checkouts = sqliteTable(
   table => [index("checkouts_clone").on(table.cloneId), index("checkouts_repository").on(table.repositoryKey)],
 );
 
+/** A stop committed before the daemon can release the checkout's cache. */
+export const analysisScopeReleases = sqliteTable("analysis_scope_releases", {
+  id: text("id").primaryKey(),
+  directory: text("directory").notNull(),
+});
+
+export const analysisScopeGeneration = sqliteTable("analysis_scope_generation", {
+  singleton: integer("singleton").primaryKey(),
+  generation: integer("generation").notNull(),
+});
+
 /**
  * Set-up offered the dashboard's review in a repository that was not set up yet. While the row stands, the set-up
  * the person makes in the dashboard is the review's, and set-up carries on at its confirm question until Rerail is

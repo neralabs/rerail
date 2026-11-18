@@ -10,7 +10,8 @@ import { join } from "node:path";
 import { ZodError } from "zod";
 import { CodeRuleCompileError, EngineUnavailableError, storableCodeRule } from "../code-rule/code-rule-compile.js";
 import { compareDeterministicStrings } from "../stable-json.js";
-import type { RuleCatalog, SkippedRulePack } from "./repository-model.js";
+import type { RrPolicySource, RuleCatalog, SkippedRulePack } from "./repository-model.js";
+import { loadNativeBinding } from "../native/native.js";
 import { catalogDigest } from "./rule-catalog.js";
 import { parseRuleDocument, readJsonDocument } from "./rule-documents.js";
 import { compareRulePacks, type LoadedRulePack, type RulePack, type RulePackRule } from "./rule-packs.js";
@@ -51,13 +52,13 @@ interface RuleFile {
  * The `.json` entries directly in the checkout's rules folder, by name; undefined when there is no such folder. A
  * symbolic link is never followed, for the folder or a file, so the rules a checkout runs are files inside it.
  */
-function ruleFiles(checkoutRoot: string): readonly RuleFile[] | undefined {
+function ruleFiles(checkoutRoot: string, extension = ".json"): readonly RuleFile[] | undefined {
   const parent = join(checkoutRoot, ".rerail");
   const directory = worktreeRulesDirectory(checkoutRoot);
   try {
     if (!lstatSync(parent).isDirectory() || !lstatSync(directory).isDirectory()) return undefined;
     return readdirSync(directory)
-      .filter(name => name.endsWith(".json"))
+      .filter(name => name.endsWith(extension))
       .sort(compareDeterministicStrings)
       .map(name => {
         const path = join(directory, name);
@@ -206,4 +207,38 @@ export function worktreeRuleCatalog(installed: RuleCatalog, checkoutRoot: string
   const catalog = withWorktreePack(installed, loaded, skipped);
   worktreeCatalogs.set(checkoutRoot, { installed, stamp, catalog });
   return catalog;
+}
+
+export function rrPayloadHash(inputs: RrPolicySource["inputs"]): string {
+  return `sha256:${createHash("sha256").update(JSON.stringify(inputs.map(input => input.sha256))).digest("hex")}`;
+}
+
+/** The worktree catalog including its relational policies for headless scans and approvals. */
+export function worktreeScanCatalog(installed: RuleCatalog, root: string, fromRef?: {
+  files: readonly Pick<RuleFile, "path" | "regular" | "size">[];
+  inspect(path: string): string;
+}): RuleCatalog {
+  const base = worktreeRuleCatalog(installed, root);
+  const files = fromRef?.files ?? ruleFiles(root, ".rr");
+  if (!files?.length) return base;
+  const rrPolicies: RrPolicySource[] = [];
+  const skipped = [...base.skipped];
+  for (const file of files) {
+    try {
+      if (!file.regular || file.size > MAX_RULE_DOCUMENT_BYTES) throw new Error("expected a regular policy file of at most 1 MiB");
+      const { metadata, programInputs } = JSON.parse(fromRef?.inspect(file.path) ?? loadNativeBinding().inspectRrPolicy(file.path)) as {
+        metadata: { policies: { id: string }[]; settings: [string, string][] };
+        programInputs: RrPolicySource["inputs"];
+      };
+      const policy = metadata.policies[0];
+      if (metadata.policies.length !== 1 || policy === undefined) throw new Error("expected one .policy declaration");
+      if (base.documents.has(policy.id) || rrPolicies.some(rule => rule.id === policy.id)) throw new Error(`duplicate policy ID ${policy.id}`);
+      const configured = metadata.settings.find(([key]) => key === "mode")?.[1];
+      const mode = configured === "steer" || configured === "block" ? configured : "log";
+      rrPolicies.push({ id: policy.id, path: file.path, payloadHash: rrPayloadHash(programInputs), mode, inputs: programInputs });
+    } catch (error) {
+      skipped.push({ path: file.path, packageName: null, version: null, reason: String(error) });
+    }
+  }
+  return { ...base, rrPolicies, skipped };
 }

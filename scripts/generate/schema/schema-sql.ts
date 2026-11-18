@@ -2,6 +2,7 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateSQLiteDrizzleJson, generateSQLiteMigration } from "drizzle-kit/api";
+import { analysisScopeGeneration, analysisScopeReleases } from "../../../src/engine/storage/schema.js";
 import {
   events,
   presentationPreferences,
@@ -66,6 +67,8 @@ export async function renderRerailSchemaStatements(): Promise<string[]> {
   ruleCatalogIdentities,
   repositories,
   checkouts,
+  analysisScopeReleases,
+  analysisScopeGeneration,
   setupReviews,
   ruleAttachments,
   ruleSettings,

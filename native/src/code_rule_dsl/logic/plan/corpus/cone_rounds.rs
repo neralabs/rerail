@@ -125,14 +125,14 @@ impl RulePass for Rounds<'_> {
         let mut kept = Vec::new();
         for (answer, req) in crate::code_rule_dsl::logic::rr::WORLD {
             let Some(width) = produced.iter().find(|(r, _)| r == answer).map(|(_, w)| *w) else { continue };
-            if !answers.contains_key(req) || f.arity(req) != Some(1) {
+            let Some(keys) = f.arity(req).filter(|&keys| keys > 0 && keys <= width && answers.contains_key(req)) else {
                 continue;
-            }
+            };
             let input = fs_input(answer);
             b.declare(&input, &f.columns(answer).ok_or_else(|| format!("{answer} has no declaration"))?);
             let vars: Vec<String> = (0..width).map(|c| format!("rr_c{c}")).collect();
             let vars: Vec<T<'_>> = vars.iter().map(|x| T::Var(x.as_str())).collect();
-            b.rule().head(answer, &vars).atom(req, &vars[..1]).atom(input.as_str(), &vars).finish()?;
+            b.rule().head(answer, &vars).atom(req, &vars[..keys]).atom(input.as_str(), &vars).finish()?;
             // Read back by the rest of the cross part: kept, not inlined.
             kept.push(((*answer).to_owned(), "no_inline".to_owned()));
             inputs.retain(|r| r != answer);
@@ -379,7 +379,7 @@ pub(in crate::code_rule_dsl) struct On<'a> {
     pub(in crate::code_rule_dsl) modes: &'a str,
     /// Whether a carried request of the file system (`rr::WORLD`) still has the answer the last run kept: the
     /// journal names no change at its path since (decision 0105). Such a key is not asked again.
-    pub(in crate::code_rule_dsl) still: Option<&'a dyn Fn(&str, &[i64]) -> bool>,
+    pub(in crate::code_rule_dsl) still: Option<&'a dyn Fn(&str, &[i64], &[&Vec<i64>]) -> bool>,
     /// The run's text tests (`plan::Hooks::texts`).
     pub(in crate::code_rule_dsl) texts: &'a Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
 }
@@ -474,12 +474,16 @@ impl RoundProgram {
                 for (answer, req) in crate::code_rule_dsl::logic::rr::WORLD {
                     let produced = self.kept_as(answer);
                     let Some(rows) = provisional.get(&produced) else { continue };
-                    let mut by: HashMap<i64, Vec<&Vec<i64>>> = HashMap::new();
-                    for r in rows.iter().filter(|r| !r.is_empty()) {
-                        by.entry(r[0]).or_default().push(r);
+                    let width = self.width(req);
+                    let mut by: HashMap<&[i64], Vec<&Vec<i64>>> = HashMap::new();
+                    for row in rows.iter().filter(|row| row.len() >= width) {
+                        by.entry(&row[..width]).or_default().push(row);
                     }
-                    let keys: Vec<&Vec<i64>> = carried.iter().filter(|(q, k)| q == req && k.len() == 1 && still(q, k)).map(|(_, k)| k).collect();
-                    let given: Vec<Vec<i64>> = keys.iter().flat_map(|k| by.get(&k[0]).into_iter().flatten().map(|r| (*r).clone())).collect();
+                    let keys: Vec<_> = carried.iter()
+                        .filter(|(q, key)| q == req && key.len() == width
+                            && still(q, key, by.get(key.as_slice()).map_or(&[], Vec::as_slice)))
+                        .map(|(_, key)| key).collect();
+                    let given: Vec<_> = keys.iter().flat_map(|key| by.get(key.as_slice()).into_iter().flatten().map(|row| (*row).clone())).collect();
                     still_n += keys.len();
                     answers.asked.extend(keys.into_iter().map(|k| ((*req).to_owned(), k.clone())));
                     answers.rows.entry(produced).or_default().extend(given);

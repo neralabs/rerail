@@ -1498,7 +1498,11 @@ impl Lowerer {
         // Whether a rule makes a `@place` value: only then can a span or loc `at` hold one.
         let place_values = self.prog.rules.iter().any(|r| r.head.args.iter().chain(r.body.iter().flat_map(literal_terms)).any(has_place));
         for f in std::mem::take(&mut self.violations) {
-            self.diagnostics(&policy, &f)?;
+            // A violation defined entirely with direct `@place` heads cannot
+            // produce document locations. Keep that input out of the plan.
+            let at_document = !f.places || self.prog.rules.iter().any(|r| r.head.rel == f.name)
+                || self.prog.facts.contains_key(f.name.as_str()) || self.prog.inputs.contains(&f.name);
+            self.diagnostics(&policy, &f, at_document)?;
             let code_col = match f.code {
                 FindingCode::Column(i) => Some(i),
                 _ => None,
@@ -1515,8 +1519,10 @@ impl Lowerer {
             } else {
                 vec![atom("docof", vec![v("rr_v0"), v("rr_d")]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), atom("line", vec![v("rr_v0"), v("rr_l")]), atom("col", vec![v("rr_v0"), v("rr_c")])]
             };
-            self.prog.rules.push(Rule { head: head.clone(), body: std::iter::once(atom(&f.name, cols.clone())).chain(at).chain(scoped.iter().cloned()).collect() });
-            if !f.node && place_values {
+            if at_document {
+                self.prog.rules.push(Rule { head: head.clone(), body: std::iter::once(atom(&f.name, cols.clone())).chain(at).chain(scoped.iter().cloned()).collect() });
+            }
+            if at_document && !f.node && place_values {
                 let of = |g: &str| Term::Call(g.to_owned().into(), [v("rr_v0")].into());
                 let mut found = head.clone();
                 found.args.make_mut()[3] = of(PLACE_PATH);
@@ -5089,10 +5095,23 @@ fn rename_literal(l: &Literal, name: &dyn Fn(&str) -> String) -> Literal {
     }
 }
 
-pub const WORLD: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
+pub const WORLD: [(&str, &str); 7] = [
+    ("dir_entry", "rr_dir_req"),
+    ("file_line", "rr_file_req"),
+    ("file_digest", "rr_digest_req"),
+    ("git_revision_of", "git_revision_request"),
+    ("git_object_of", "git_object_request"),
+    ("git_inventory_child_of", "git_inventory_child_request"),
+    ("git_inventory_trail_of", "git_inventory_trail_request"),
+];
 
 fn world_demand(rel: &str) -> Option<&'static str> {
-    WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d)
+    match rel {
+        "dir_entry" => Some("rr_dir_req"),
+        "file_line" => Some("rr_file_req"),
+        "file_digest" => Some("rr_digest_req"),
+        _ => None,
+    }
 }
 
 fn body_vars(lits: &[Lit]) -> BTreeSet<String> {

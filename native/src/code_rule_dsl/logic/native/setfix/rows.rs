@@ -202,10 +202,10 @@ impl Rows {
 
     /// `n` rows of a relation that does not grow (an `InRel` made of them): one frozen segment, shared by a
     /// relation started from it without a copy.
-    pub(super) fn frozen(rows: Vec<i64>, n: usize) -> Rows {
-        let mut r = Rows::default();
-        if n > 0 && !rows.is_empty() {
-            r.k = rows.len() / n;
+    pub(super) fn frozen(rows: Vec<i64>, n: usize, k: usize) -> Rows {
+        debug_assert_eq!(rows.len(), n * k);
+        let mut r = Rows::new(k);
+        if !rows.is_empty() {
             r.hint = n;
             r.extend_from_slice(&rows);
         }
@@ -443,12 +443,20 @@ impl std::fmt::Debug for Row {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_kept_empty_relation_can_gain_rows() {
+        let kept = Rows::frozen(Vec::new(), 0, 3);
+        let mut next = kept.shared(0);
+        next.extend_from_slice(&[10, 20, 30]);
+        assert_eq!(*next.row(0, 3), [10, 20, 30]);
+    }
+
     /// A frozen relation's rows are shared by one started from it, which pushes its own after them; freezing that
     /// one moves its tail into a segment, and both read every row by id.
     #[test]
     fn started_rows_share_the_kept_segments_and_freeze_their_own() {
         let k = 2;
-        let kept = Rows::frozen((0..20).collect(), 10);
+        let kept = Rows::frozen((0..20).collect(), 10, k);
         let mut next = kept.shared(10);
         assert!(next.shares(&kept));
         next.extend_from_slice(&[100, 101]);
