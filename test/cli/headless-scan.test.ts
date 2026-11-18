@@ -288,6 +288,20 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     expect(report.failures).toEqual([expect.objectContaining({ code: "adapter-error", path: "gaps/a.py" })]);
   });
 
+  it.each(["commit", "tag"])("rejects a selected Git %s with a mismatched checksum", async kind => {
+    const root = checkout();
+    if (kind === "tag") git(root, "tag", "-am", "audit tag", "selected");
+    const revision = kind === "tag" ? "selected" : "HEAD";
+    const oid = git(root, "rev-parse", revision);
+    const object = join(root, ".git", "objects", oid.slice(0, 2), oid.slice(2));
+    expect((await scan(root, { revision, analysisScope: "selection" })).status).toBe("completed");
+    const old = execFileSync("git", ["cat-file", kind, oid], { cwd: root });
+    const body = Buffer.concat([old, Buffer.from("\nchanged message\n")]);
+    rmSync(object);
+    writeFileSync(object, deflateSync(Buffer.concat([Buffer.from(`${kind} ${body.length}\0`), body])));
+    await expect(scan(root, { revision, analysisScope: "selection" })).rejects.toThrow(/Git object checksum failed/u);
+  });
+
   it("uses Git byte names for selection before reporting names with invalid UTF-8", async () => {
     const root = checkout();
     const withByteName = (tree: string, suffix: string, blob: string): string => {

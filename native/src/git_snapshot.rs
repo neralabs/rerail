@@ -463,12 +463,13 @@ impl Snapshot {
     fn open(source: &Path, revision: &str, scope: Option<String>) -> Result<Self, String> {
         let repo = gix::discover(source).map_err(|e| e.to_string())?;
         let (id, commit, tree) = {
-            let object = repo
-                .rev_parse_single(revision)
-                .map_err(|e| format!("{revision}: {e}"))?
-                .object()
-                .and_then(|object| object.peel_tags_to_end())
-                .map_err(|e| e.to_string())?;
+            let mut target = repo.rev_parse_single(revision)
+                .map_err(|e| format!("{revision}: {e}"))?.detach();
+            let object = loop {
+                let object = verified_object(&repo, target).map_err(|e| format!("{target}: {e}"))?;
+                if object.kind != gix::object::Kind::Tag { break object; }
+                target = object.into_tag().target_id().map_err(|e| e.to_string())?.detach();
+            };
             let id = object.id;
             match object.kind {
                 gix::object::Kind::Commit => {
