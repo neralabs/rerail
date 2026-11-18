@@ -616,6 +616,25 @@ comment or a line break in the code is still refused.
 
 Corpus: 390 the same (step 23: 375), 101 refused, 0 differ.
 
+## Kotlin, step 25 (`25-class-delegates.bitlex`)
+
+```kotlin
+class A(d: C) : C by d {
+}
+```
+
+The lean parser ends a delegate's expression before the body's `{`, where a name and a `{` are
+a call with a trailing lambda. That `{`, after a `by` in a class's or an object's header, has
+the mark a class body takes (`class_body = [dotted] '{' …`). The mark ends the expression's
+loop, as `trail` ends a list's. It shares `dotted`: no expression's loop takes a `{` that carries it.
+
+The first corpus run read an object literal's delegate (`object : I by itr {`) as a call: the
+file differed. The escape had kept it out for the class delegate it held too. The mark now
+holds in an object's header as well.
+
+Corpus: 391 the same (step 24: 390), 100 refused, 0 differ. The six other files the escape
+refused meet other refusals further on.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment

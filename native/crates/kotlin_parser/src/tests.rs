@@ -377,6 +377,19 @@ fn strings_in_templates_are_the_lean_parsers() {
 }
 
 #[test]
+fn class_delegates_are_the_lean_parsers() {
+    same(&[
+        "class A(d: C) : C by d {\n}\n",
+        "class A(d: C) : C by d {\n    fun f() = 1\n}\n",
+        "class A(m: M) : M by m, B {\n}\n",
+        "class A : C by D() {\n}\n",
+        "class A(d: C) : C by d\n",
+        "class A {\n    val b by lazy { 1 }\n}\n",
+        "fun f() = object : I by itr {\n    override fun g() = 1\n}\n",
+    ]);
+}
+
+#[test]
 fn what_step_24_does_not_read_is_refused() {
     refused(&[
         "val s = \"${f(\"}\")}\"\n",
@@ -442,7 +455,6 @@ fn what_step_20_does_not_read_is_refused() {
         "fun String?.h() = 1\n",
         "fun f() {\n    loop@ for (i in a) break@loop\n}\n",
         "val a = b as java.util.List<Int>\n",
-        "class A(d: C) : C by d {\n}\n",
         "val s = \"a $field b\"\n",
         "abstract class A {\n    fun f() {}\n    /* c */\n    abstract fun g()\n}\n",
         "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
