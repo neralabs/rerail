@@ -630,6 +630,22 @@ function takeGaps(worktree: string, findings: WorktreeFindings, scan: SourceScan
 }
 
 /**
+ * Puts into `taken` the heads and unmerged entries a walk read of the worktree at `root` and of the checkouts inside it,
+ * and the unmerged entries of the checkouts it passed (`SourceScan.unmerged`), by physical root.
+ */
+function takeCheckouts(
+  root: string,
+  findings: WorktreeFindings,
+  taken: { readonly heads: Map<string, string>; readonly unmerged: Map<string, ReadonlyMap<string, string>>; readonly passed: SourceScan["unmerged"] },
+): void {
+  if (findings.head !== undefined) taken.heads.set(root, findings.head);
+  if (findings.unmerged !== undefined) taken.unmerged.set(root, findings.unmerged);
+  for (const [checkout, head] of findings.inner.heads) taken.heads.set(checkout, head);
+  for (const [checkout, entries] of findings.inner.unmerged) taken.unmerged.set(checkout, entries);
+  for (const [checkout, entries] of findings.inner.passed) taken.passed.set(checkout, entries);
+}
+
+/**
  * Puts what the session reads now of a changed source the walk kept no text of (`#reread`) into `scan`, and into `kept`
  * a source it leaves to the next walk: one it cannot read now, with what it saw before, and one it never saw and finds gone.
  */
@@ -2287,11 +2303,7 @@ export class CodeRuleBridge {
       const worktree = sessionPath(discovery.root, root);
       if (!start.worktrees.has(worktree)) continue;
       snapshots.set(worktree, findings.snapshot);
-      if (findings.head !== undefined) heads.set(root, findings.head);
-      if (findings.unmerged !== undefined) unmerged.set(root, findings.unmerged);
-      for (const [checkout, head] of findings.inner.heads) heads.set(checkout, head);
-      for (const [checkout, entries] of findings.inner.unmerged) unmerged.set(checkout, entries);
-      for (const [checkout, entries] of findings.inner.passed) scan.unmerged.set(checkout, entries);
+      takeCheckouts(root, findings, { heads, unmerged, passed: scan.unmerged });
       this.#takeFindings(discovery, { root, worktree }, findings, kept.get(worktree) ?? [], { previous, scan });
     }
     const walk: WalkStart = {
