@@ -243,7 +243,7 @@ describe("checkout code-rule catalog", () => {
     }
   });
 
-  it("serializes a pack rule once for every checkout's catalog, which all build from the daemon's one rule catalog", () => {
+  it("hashes a pack rule's document once for every checkout's catalog, which all build from the daemon's one rule catalog", () => {
     installPack("python");
     const base = temporaryRoot();
     const main = join(base, "main");
@@ -259,7 +259,8 @@ describe("checkout code-rule catalog", () => {
     try {
       const firstCount = catalogs.catalog(first).status.ruleCount;
       expect(firstCount).toBeGreaterThan(0);
-      // A pack rule is serialized whole, or wrapped with its kind for its digest.
+      // A pack rule's document is serialized whole, or wrapped with its kind for its digest. The build's own text of each
+      // rule is of the copy with its mode set that each checkout's rule set makes, so it is not counted here.
       const stringify = vi.spyOn(JSON, "stringify");
       const secondCount = catalogs.catalog(second).status.ruleCount;
       const serialized = stringify.mock.calls.filter(([value]) => rules.has(value) || rules.has((value as { rule?: unknown } | undefined)?.rule)).length;
@@ -393,9 +394,10 @@ describe("checkout code-rule catalog", () => {
       insert.run(join(root, "ahead"), key, Date.now() + 86_400_000);
       insert.run(join(root, "b"), key, 5);
       const before = catalogs.recordedCheckoutsVersion();
-      // Once the newest row is gone SQLite gives the next one its rowid; the clock still reads before the earlier record.
+      // Once the newest row is gone SQLite gives the next one its rowid; the clock still reads before the earlier record,
+      // and the new path is as long as the old one: the count, the newest rowid and time and the paths' lengths are as they were.
       database.$client.prepare("DELETE FROM checkouts WHERE checkout_path = ?").run(join(root, "b"));
-      insert.run(join(root, "other"), key, 6);
+      insert.run(join(root, "c"), key, 6);
       expect(catalogs.recordedCheckoutsVersion()).not.toBe(before);
     } finally {
       database.$client.close();
