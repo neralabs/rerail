@@ -345,7 +345,7 @@ impl Set {
         let map = |set: Box<Set>| Box::new(set.map_tests(f));
         match self {
             Set::And(parts) => Set::and(parts.into_iter().map(|part| part.map_tests(f)).collect()),
-            Set::Or(parts) => Set::Or(parts.into_iter().map(|part| part.map_tests(f)).collect()),
+            Set::Or(parts) => Set::or(parts.into_iter().map(|part| part.map_tests(f)).collect()),
             Set::Child { named, of } => Set::Child { named, of: map(of) },
             Set::Descendant { named, of } => Set::Descendant { named, of: map(of) },
             Set::Following { named, of } => Set::Following { named, of: map(of) },
@@ -372,6 +372,22 @@ impl Set {
         match self {
             Set::Child { of, .. } | Set::Following { of, .. } | Set::Descendant { named: false, of } => **of == Set::All,
             _ => false,
+        }
+    }
+
+    /// A disjunction, nested ones flattened; every node where a part is (a label read as every node, `labels_unknown`).
+    fn or(parts: Vec<Self>) -> Self {
+        let mut flat = Vec::new();
+        for part in parts {
+            match part {
+                Self::All => return Self::All,
+                Self::Or(inner) => flat.extend(inner),
+                other => flat.push(other),
+            }
+        }
+        match flat.len() {
+            1 => flat.pop().expect("one part"),
+            _ => Self::Or(flat),
         }
     }
 
@@ -624,6 +640,8 @@ pub struct Index {
     flags: OnceLock<Vec<u8>>,
     /// Grammar supertypes asked for, by class.
     classes: Mutex<HashMap<u16, Arc<Vec<u64>>>>,
+    /// Steps over every node asked for (`Reader::over_all`), by step.
+    over_all: Mutex<HashMap<Set, Arc<Vec<u64>>>>,
     /// Sibling positions and `nthChild` answers, for facts that are node sets.
     pub(in crate::code_rule_dsl) siblings: crate::code_rule_dsl::matcher::SiblingPositions,
 }
@@ -694,8 +712,138 @@ impl Reader<'_> {
         self.index.flags.get_or_init(|| (0..self.tape.transducer_len() as u32).map(|node| self.tape.transducer_flags(node)).collect())
     }
 
-    /// The members of `set`.
+    /// The members of `set`, a row of the tape's words.
     pub fn eval(&self, set: &Set) -> Vec<u64> {
+        let mut bits = self.row(set).into_vec();
+        bits.resize(self.words(), 0);
+        bits
+    }
+
+    /// The members of `set`: a label's or text slot's row read where it is, a column set or a step over every node as
+    /// the index keeps it, else made. A row may be shorter than the tape's words: the rest are 0 (`has`).
+    fn row(&self, set: &Set) -> Row<'_> {
+        match set {
+            Set::Class(class) if *class >= DERIVED_CLASS_BASE => Row::Borrowed(self.labels.get(usize::from(class - DERIVED_CLASS_BASE)).map_or(&[], Vec::as_slice)),
+            Set::Text(slot) => Row::Borrowed(self.texts.get(usize::from(*slot)).map_or(&[], Vec::as_slice)),
+            Set::Class(class) => Row::Shared(self.class(*class)),
+            Set::Child { of, .. } | Set::Descendant { of, .. } | Set::Following { of, .. } | Set::Parent(of) if **of == Set::All => Row::Shared(self.over_all(set)),
+            Set::Or(parts) => {
+                let mut bits = vec![0_u64; self.words()];
+                for part in parts {
+                    self.or_into(part, &mut bits);
+                }
+                Row::Owned(bits)
+            }
+            Set::And(parts) => Row::Owned(self.and(parts)),
+            set => Row::Owned(self.made(set)),
+        }
+    }
+
+    /// `bits` with `set`'s members added: a nested `or` and a column's postings into `bits` itself, no row of their own.
+    fn or_into(&self, set: &Set, bits: &mut [u64]) {
+        let postings = |nodes: &[u32], bits: &mut [u64]| nodes.iter().for_each(|&node| put(bits, node));
+        match set {
+            Set::Or(parts) => parts.iter().for_each(|part| self.or_into(part, bits)),
+            Set::Kind(kind) => postings(self.kinds().get(*kind), bits),
+            Set::Field(field) => postings(self.fields().get(*field), bits),
+            set => {
+                for (word, other) in bits.iter_mut().zip(self.row(set).iter()) {
+                    *word |= other;
+                }
+            }
+        }
+    }
+
+    /// A conjunction's members: its tests first, then its other parts, each step tested only at the members so far
+    /// (`within`, as the device's `within`), until none is left.
+    fn and(&self, parts: &[Set]) -> Vec<u64> {
+        let rank = |part: &Set| match part {
+            Set::All | Set::Kind(_) | Set::Field(_) | Set::Flags { .. } | Set::Class(_) | Set::Text(_) => 0,
+            Set::Or(_) | Set::And(_) => 1,
+            step if step.over_all() || matches!(step, Set::Parent(of) if **of == Set::All) => 1,
+            _ => 2,
+        };
+        let mut order = parts.iter().collect::<Vec<_>>();
+        order.sort_by_key(|part| rank(part));
+        let Some((first, rest)) = order.split_first() else { return self.eval(&Set::All) };
+        let mut bits = self.eval(first);
+        for part in rest {
+            if bits.iter().all(|&word| word == 0) {
+                break;
+            }
+            if self.within(part, &mut bits) {
+                continue;
+            }
+            let other = self.row(part);
+            for (at, word) in bits.iter_mut().enumerate() {
+                *word &= other.get(at).copied().unwrap_or(0);
+            }
+        }
+        bits
+    }
+
+    /// `bits` within step `step`'s members, testing the step at each member of `bits` only: whether `step` is one
+    /// tested so (a child, descendant or following-sibling step over a set that is not every node).
+    fn within(&self, step: &Set, bits: &mut [u64]) -> bool {
+        let (named, of) = match step {
+            Set::Child { named, of } | Set::Descendant { named, of } | Set::Following { named, of } if **of != Set::All => (*named, self.row(of)),
+            _ => return false,
+        };
+        let held = |node: u32| has(&of, node) && self.named_ok(node, named);
+        let members = ones(bits).collect::<Vec<_>>();
+        for node in members {
+            let keep = match step {
+                Set::Child { .. } => self.tape.transducer_children(node).any(held),
+                Set::Descendant { .. } => {
+                    let range = self.tape.transducer_descendants(node);
+                    if named { members_in(&of, range.start, range.end).any(|below| self.named_ok(below, true)) } else { any_in(&of, range.start, range.end) }
+                }
+                _ => self.tape.transducer_parent(node).is_some_and(|parent| self.tape.transducer_children(parent).skip_while(|&child| child != node).skip(1).any(held)),
+            };
+            if !keep {
+                bits[node as usize / 64] &= !(1 << (node % 64));
+            }
+        }
+        true
+    }
+
+    fn kinds(&self) -> &Postings {
+        let len = self.tape.transducer_len() as u32;
+        self.index.kinds.get_or_init(|| Postings::of(len, |node| self.tape.transducer_kind(node)))
+    }
+
+    fn fields(&self) -> &Postings {
+        let len = self.tape.transducer_len() as u32;
+        self.index.fields.get_or_init(|| Postings::of(len, |node| self.tape.transducer_field(node)))
+    }
+
+    /// A grammar supertype's members, made once a labelling (`Index::classes`).
+    fn class(&self, class: u16) -> Arc<Vec<u64>> {
+        let mut classes = self.index.classes.lock().expect("class sets");
+        Arc::clone(classes.entry(class).or_insert_with(|| {
+            let mut bits = vec![0_u64; self.words()];
+            for node in 0..self.tape.transducer_len() as u32 {
+                if self.tape.transducer_has_supertype(node, class) {
+                    put(&mut bits, node);
+                }
+            }
+            Arc::new(bits)
+        }))
+    }
+
+    /// A step over every node (a node with a child, a later sibling, a parent), made once a labelling
+    /// (`Index::over_all`): a column of the tape's shape, which every anchor whose labels were read as every node asks.
+    fn over_all(&self, step: &Set) -> Arc<Vec<u64>> {
+        if let Some(bits) = self.index.over_all.lock().expect("steps over every node").get(step) {
+            return Arc::clone(bits);
+        }
+        let bits = Arc::new(self.made(step));
+        self.index.over_all.lock().expect("steps over every node").insert(step.clone(), Arc::clone(&bits));
+        bits
+    }
+
+    /// The members of a test or step `set`, made over the tape.
+    fn made(&self, set: &Set) -> Vec<u64> {
         let words = self.words();
         let len = self.tape.transducer_len();
         match set {
@@ -708,14 +856,8 @@ impl Reader<'_> {
                 }
                 bits
             }
-            Set::Kind(kind) => {
-                let len = len as u32;
-                self.postings(self.index.kinds.get_or_init(|| Postings::of(len, |node| self.tape.transducer_kind(node))).get(*kind))
-            }
-            Set::Field(field) => {
-                let len = len as u32;
-                self.postings(self.index.fields.get_or_init(|| Postings::of(len, |node| self.tape.transducer_field(node))).get(*field))
-            }
+            Set::Kind(kind) => self.postings(self.kinds().get(*kind)),
+            Set::Field(field) => self.postings(self.fields().get(*field)),
             Set::Flags { mode, arg } => {
                 let mut bits = vec![0_u64; words];
                 for (node, &flags) in self.flags().iter().enumerate() {
@@ -725,58 +867,14 @@ impl Reader<'_> {
                 }
                 bits
             }
-            Set::Class(class) if *class >= DERIVED_CLASS_BASE => {
-                let mut bits = self.labels.get(usize::from(class - DERIVED_CLASS_BASE)).cloned().unwrap_or_default();
-                bits.resize(words, 0);
-                bits
-            }
-            Set::Class(class) => {
-                let mut classes = self.index.classes.lock().expect("class sets");
-                let bits = classes.entry(*class).or_insert_with(|| {
-                    let mut bits = vec![0_u64; words];
-                    for node in 0..len as u32 {
-                        if self.tape.transducer_has_supertype(node, *class) {
-                            bits[node as usize / 64] |= 1 << (node % 64);
-                        }
-                    }
-                    Arc::new(bits)
-                });
-                bits.to_vec()
-            }
-            Set::Text(slot) => {
-                let mut bits = self.texts.get(usize::from(*slot)).cloned().unwrap_or_default();
-                bits.resize(words, 0);
-                bits
-            }
-            Set::And(parts) => {
-                // The cheapest first would help; the parts are few.
-                let mut bits = self.eval(&parts[0]);
-                for part in &parts[1..] {
-                    if bits.iter().all(|&word| word == 0) {
-                        break;
-                    }
-                    for (word, other) in bits.iter_mut().zip(self.eval(part)) {
-                        *word &= other;
-                    }
-                }
-                bits
-            }
-            Set::Or(parts) => {
-                let mut bits = vec![0_u64; words];
-                for part in parts {
-                    for (word, other) in bits.iter_mut().zip(self.eval(part)) {
-                        *word |= other;
-                    }
-                }
-                bits
-            }
+            Set::Class(_) | Set::Text(_) | Set::And(_) | Set::Or(_) => self.eval(set),
             Set::Child { named, of } => {
-                let of = self.eval(of);
+                let of = self.row(of);
                 let mut bits = vec![0_u64; words];
                 // One pass in preorder, each node's parent the subtree open around it: no parent is searched for.
                 for (node, parent) in (0..self.tape.transducer_len() as u32).zip(self.tape.transducer_parents()) {
                     let Some(parent) = parent else { continue };
-                    if !get(&of, node) || (*named && self.flags()[node as usize] & NAMED == 0) {
+                    if !has(&of, node) || (*named && self.flags()[node as usize] & NAMED == 0) {
                         continue;
                     }
                     put(&mut bits, parent);
@@ -784,7 +882,7 @@ impl Reader<'_> {
                 bits
             }
             Set::Descendant { named, of } => {
-                let of = self.eval(of);
+                let of = self.row(of);
                 let mut bits = vec![0_u64; words];
                 // One pass in preorder: a member marks the subtrees open around it (its ancestors), up to the first
                 // already marked, whose own ancestors are.
@@ -793,7 +891,7 @@ impl Reader<'_> {
                     while open.last().is_some_and(|&(_, end)| end <= node) {
                         open.pop();
                     }
-                    if get(&of, node) && !(*named && self.flags()[node as usize] & NAMED == 0) {
+                    if has(&of, node) && !(*named && self.flags()[node as usize] & NAMED == 0) {
                         for &(ancestor, _) in open.iter().rev() {
                             if get(&bits, ancestor) {
                                 break;
@@ -806,7 +904,7 @@ impl Reader<'_> {
                 bits
             }
             Set::Parent(of) => {
-                let of = self.eval(of);
+                let of = self.row(of);
                 let mut bits = vec![0_u64; words];
                 for node in ones(&of) {
                     for child in self.tape.transducer_children(node) {
@@ -817,7 +915,7 @@ impl Reader<'_> {
             }
             Set::Following { named, of } => {
                 // Each member's parent's children, last first: a child is in once a later one is.
-                let of = self.eval(of);
+                let of = self.row(of);
                 let mut bits = vec![0_u64; words];
                 let mut parents = vec![0_u64; words];
                 let mut children = Vec::new();
@@ -834,7 +932,7 @@ impl Reader<'_> {
                         if later {
                             put(&mut bits, child);
                         }
-                        later |= get(&of, child) && self.named_ok(child, *named);
+                        later |= has(&of, child) && self.named_ok(child, *named);
                     }
                 }
                 bits
@@ -842,21 +940,21 @@ impl Reader<'_> {
             Set::Chain { named, through, to } => {
                 // In reverse preorder a node's children come before it: `has` is complete when the
                 // node is reached.
-                let (through, to) = (self.eval(through), self.eval(to));
-                let mut has = vec![0_u64; words];
+                let (through, to) = (self.row(through), self.row(to));
+                let mut reached = vec![0_u64; words];
                 for node in (0..len as u32).rev() {
-                    let ends = get(&to, node) || (get(&through, node) && get(&has, node));
+                    let ends = has(&to, node) || (has(&through, node) && get(&reached, node));
                     if ends
                         && self.named_ok(node, *named)
                         && let Some(parent) = self.tape.transducer_parent(node)
                     {
-                        put(&mut has, parent);
+                        put(&mut reached, parent);
                     }
                 }
-                has
+                reached
             }
             Set::Reached { step, named, from } => {
-                let from = self.eval(from);
+                let from = self.row(from);
                 let mut bits = vec![0_u64; words];
                 match step {
                     Step::Child => {
@@ -901,16 +999,16 @@ impl Reader<'_> {
                                 if after && self.named_ok(child, *named) {
                                     put(&mut bits, child);
                                 }
-                                after |= get(&from, child);
+                                after |= has(&from, child);
                             }
                         }
                     }
                     Step::Chain(through) => {
                         // In preorder a node's parent comes before it.
-                        let through = self.eval(through);
+                        let through = self.row(through);
                         for node in 0..len as u32 {
                             let Some(parent) = self.tape.transducer_parent(node) else { continue };
-                            if self.named_ok(node, *named) && (get(&from, parent) || (get(&bits, parent) && get(&through, parent))) {
+                            if self.named_ok(node, *named) && (has(&from, parent) || (get(&bits, parent) && has(&through, parent))) {
                                 put(&mut bits, node);
                             }
                         }
@@ -928,6 +1026,71 @@ impl Reader<'_> {
 
 fn get(bits: &[u64], node: u32) -> bool {
     bits[node as usize / 64] >> (node % 64) & 1 != 0
+}
+
+/// Whether `node` is in `bits`, a row that may be shorter than the tape's words (the rest are 0).
+fn has(bits: &[u64], node: u32) -> bool {
+    bits.get(node as usize / 64).is_some_and(|word| word >> (node % 64) & 1 != 0)
+}
+
+/// Whether any node of `from..to` is in `bits`: a word at a time.
+fn any_in(bits: &[u64], from: u32, to: u32) -> bool {
+    let (from, to) = (from as usize, (to as usize).min(bits.len() * 64));
+    if from >= to {
+        return false;
+    }
+    let (first, last) = (from / 64, (to - 1) / 64);
+    let low = !0_u64 << (from % 64);
+    let high = if to % 64 == 0 { !0_u64 } else { (1_u64 << (to % 64)) - 1 };
+    if first == last {
+        return bits[first] & low & high != 0;
+    }
+    bits[first] & low != 0 || bits[first + 1..last].iter().any(|&word| word != 0) || bits[last] & high != 0
+}
+
+/// The members of `bits` in `from..to`, a word at a time.
+fn members_in(bits: &[u64], from: u32, to: u32) -> impl Iterator<Item = u32> + '_ {
+    let to = to.min((bits.len() * 64) as u32);
+    let words = if from < to { (from as usize / 64)..((to as usize - 1) / 64 + 1) } else { 0..0 };
+    words.flat_map(move |at| {
+        let mut word = bits[at];
+        std::iter::from_fn(move || {
+            (word != 0).then(|| {
+                let bit = word.trailing_zeros();
+                word &= word - 1;
+                at as u32 * 64 + bit
+            })
+        })
+    })
+    .filter(move |&node| node >= from && node < to)
+}
+
+/// A set's members as `Reader::row` gives them: a row read where it is, one an index keeps, or one made.
+enum Row<'a> {
+    Borrowed(&'a [u64]),
+    Shared(Arc<Vec<u64>>),
+    Owned(Vec<u64>),
+}
+
+impl std::ops::Deref for Row<'_> {
+    type Target = [u64];
+    fn deref(&self) -> &[u64] {
+        match self {
+            Row::Borrowed(bits) => bits,
+            Row::Shared(bits) => bits,
+            Row::Owned(bits) => bits,
+        }
+    }
+}
+
+impl Row<'_> {
+    /// The members as a row of their own: a made one as it is, a read one as the formula's answer.
+    fn into_vec(self) -> Vec<u64> {
+        match self {
+            Row::Owned(bits) => bits,
+            row => row.to_vec(),
+        }
+    }
 }
 
 fn put(bits: &mut [u64], node: u32) {

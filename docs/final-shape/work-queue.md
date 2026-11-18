@@ -2176,7 +2176,10 @@ too, not as walks from every start.
   the groups' starts 20.9% of before, the CPU sweeps −21%, Metal's device time −36%. 0390's narrowing has nothing
   to narrow on a recursive utility (every read is under a move), and semi-naive rounds would save at most two thirds
   of the walks left, against an anchor evaluation per round: neither is built.
-- **Left**: the CPU's anchor evaluation costs about half of what it saves in the sweeps (0396, "Not yet").
+- **Done** (2026-11-18, 0396 §6): the CPU's anchor evaluation had cost about half of what it saved in the sweeps.
+  The formula reader now reads labels, texts and steps over every node in place, gathers an `or` into one row, and
+  tests a conjunction's steps within its tests. The group anchors went from about 0.9 s to 0.1 s; the sweeps are 2.78
+  s, against 4.43 s without group anchors. `formula_rows_are_the_sets_members` checks it node by node.
 - **Measured** (2026-11-18, `anchor_rows_per_answer`, 10 of corpus0's files, M1 Max, debug): the groups' roots
   passes start at 5,736,730 nodes a round (6,770 formula passes, which Metal walks in the groups, and 120 micro
   walks). Within the group anchors: 1,281,802 (22%); within anchors reading the settled labels, the best a per-round
