@@ -24,7 +24,9 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
+#[cfg(target_os = "macos")]
+use std::sync::Mutex;
 use std::time::Duration;
 
 /// A file's shared mapping: unmapped when the last of its holders (the block's backing, the hand-off) lets go.

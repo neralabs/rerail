@@ -51,6 +51,7 @@ Git read errors remain evaluation errors.
 
 On macOS the mapped block writer checks whether the GPU still holds dirty pages.
 On other Unix systems it waits for the synchronous write.
+The benchmark for APFS `clonefile` runs on macOS.
 
 For a commit, `git_rev("head", sha)` names the selected commit.
 `git_rev("tree", sha)` names its root tree.
