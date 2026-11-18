@@ -29,14 +29,13 @@ fn sources() -> BTreeMap<String, Arc<dyn Source>> {
 /// thread, and the groups wait for it (minutes, on a loaded 4-core runner). In the child, the pool is the test's own,
 /// so what it times or overlaps is the graph's alone.
 fn alone(child: &str) {
-    let mut process = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            &format!("code_rule_dsl::sql_executor::work_graph::tests::{child}"),
-            "--ignored",
-        ])
-        .spawn()
-        .unwrap();
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command.args([
+        "--exact",
+        &format!("code_rule_dsl::sql_executor::work_graph::tests::{child}"),
+        "--ignored",
+    ]);
+    let mut process = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| command.spawn()).unwrap();
     let started = Instant::now();
     let status = loop {
         if let Some(status) = process.try_wait().unwrap() {

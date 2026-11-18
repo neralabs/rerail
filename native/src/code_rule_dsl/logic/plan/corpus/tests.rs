@@ -1290,7 +1290,7 @@ fn the_run_after_a_cold_one_writes_nothing() {
         if warm {
             child.env("RERAIL_WARM", "list");
         }
-        let output = child.output().unwrap();
+        let output = super::switches::started(|| child.output()).unwrap();
         // Each fault and the line after it, which says what was written.
         let stderr = String::from_utf8_lossy(&output.stderr);
         let lines: Vec<&str> = stderr.lines().collect();
@@ -1345,7 +1345,7 @@ y = x{i} + 2
         if strict {
             child.env("RERAIL_SQL_STRICT", "1");
         }
-        let output = child.output().unwrap();
+        let output = super::switches::started(|| child.output()).unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
         let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(2).collect();
         assert!(output.status.success(), "the run's process: {}; {}", output.status, fault.join(" "));
@@ -1374,7 +1374,10 @@ fn one_corpus_run_for_a_parent() {
 
 /// A second run in one process names what the first named: no manifest of its own. Its process-memory answers (the
 /// planning choices kept, the groups of automata kept) skipped the store reads that named their sources, so its
-/// manifest left them out, and the next process's run, naming them again, recorded one more.
+/// manifest left them out, and the next process's run, naming them again, recorded one more. Each process is started
+/// holding the switches (`switches::started`): the process of two is started while another thread holds a switch, as
+/// `cross_file_rows_are_memoised_per_import_component` holds `RERAIL_INLINE_ONLY`, and takes none of it (it took it,
+/// ran another plan and recorded two manifests of its own).
 #[test]
 fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     let temp = tempfile::tempdir().unwrap();
@@ -1393,14 +1396,14 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
         rows
     };
     let run = |runs: usize| {
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
             .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::one_corpus_run_for_a_parent", "--ignored", "--test-threads", "1", "--nocapture"])
             .env("RERAIL_TAPE_CACHE", &store)
             .env("RERAIL_CHILD_RUN", &src)
             .env("RERAIL_CHILD_OUT", base.join("out"))
-            .env("RERAIL_CHILD_RUNS", runs.to_string())
-            .output()
-            .unwrap();
+            .env("RERAIL_CHILD_RUNS", runs.to_string());
+        let output = super::switches::started(|| child.output()).unwrap();
         assert!(output.status.success(), "the runs' process: {}", output.status);
     };
     // A process first keeps phase 0's graphs as images (decision 0246): every later run reads them, and so names none
@@ -1410,8 +1413,16 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     // A process of one run: what a run names.
     run(1);
     let one = manifests();
-    // A process of two: the second names the same.
+    // A process of two: the second names the same. Another test's switch is held as it is started.
+    let (held, holding) = std::sync::mpsc::channel();
+    let other = std::thread::spawn(move || {
+        let _switched = super::switches::set(&[("RERAIL_INLINE_ONLY", "near")]);
+        held.send(()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    });
+    holding.recv().unwrap();
     run(2);
+    other.join().unwrap();
     let two = manifests();
     let new: Vec<&(Vec<u8>, Vec<u8>)> = two.iter().filter(|m| !one.contains(m)).collect();
     assert!(new.is_empty(), "each run named what a process's first run names: no manifest of its own ({} new)", new.len());

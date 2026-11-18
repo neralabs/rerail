@@ -10,6 +10,12 @@
 //!
 //! A run nested in one this thread holds (phase 0's, a phase's, the constants') and the runs of a thread that holds
 //! `set` take nothing: they never wait for themselves.
+//!
+//! A process a test starts (this test binary again, its runs in a process of their own) inherits the variables as they
+//! are when it starts, and keeps them for its life: so a test starts one through `started`, which holds `reading` while
+//! it does. Started while `cross_file_rows_are_memoised_per_import_component` held `RERAIL_CROSS_MEMO=verify` or
+//! `RERAIL_INLINE_ONLY=near`, `a_second_run_in_one_process_records_the_first_runs_manifest`'s process of two ran
+//! another plan, and recorded two manifests of its own.
 
 use std::cell::Cell;
 use std::sync::{Condvar, Mutex};
@@ -79,6 +85,13 @@ impl Drop for Reading {
             CHANGED.notify_all();
         }
     }
+}
+
+/// Starts a process of the engine for a test (`start`: a `Command`'s `output`, `status` or `spawn`), the switches held
+/// as a run holds them (`reading`): it inherits the variables no other test is changing.
+pub fn started<T>(start: impl FnOnce() -> T) -> T {
+    let _reading = reading();
+    start()
 }
 
 /// Switches set for a test; each variable as it was again once dropped.

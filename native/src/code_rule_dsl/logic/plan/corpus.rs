@@ -10763,12 +10763,12 @@ pub mod tests {
         std::fs::write(work.join("ignored/pkg/a.py"), "x = 1\n").unwrap();
         git(&["add", ".gitignore"]);
         git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "a work tree with a head"]);
-        let out = std::process::Command::new(std::env::current_exe().unwrap())
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
             .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::git_seeing_no_file_under_the_root_is_kept_child", "--ignored", "--test-threads", "1", "--nocapture"])
             .env("RERAIL_TAPE_CACHE", dir.path().join("store.sqlite"))
-            .env("RERAIL_GIT_FILES_CHILD", work.join("ignored"))
-            .output()
-            .unwrap();
+            .env("RERAIL_GIT_FILES_CHILD", work.join("ignored"));
+        let out = super::switches::started(|| child.output()).unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(out.status.success() && stdout.contains("1 passed"), "{stdout}\n{}", String::from_utf8_lossy(&out.stderr));
     }

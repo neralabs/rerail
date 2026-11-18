@@ -949,12 +949,12 @@ fn open_files() -> Vec<std::path::PathBuf> {
 fn a_second_corpus_run_deletes_and_creates_its_store_again() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("restore");
     std::fs::create_dir_all(&dir).unwrap();
-    let status = std::process::Command::new(std::env::current_exe().unwrap())
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
         .args(["--ignored", "--exact", "code_rule_dsl::logic::plan::tests::corpus_store_child", "--nocapture", "--test-threads=1"])
         .env(CORPUS_STORE_CHILD, &dir)
-        .env("RERAIL_TAPE_CACHE", "off")
-        .output()
-        .unwrap();
+        .env("RERAIL_TAPE_CACHE", "off");
+    let status = super::corpus::switches::started(|| child.output()).unwrap();
     // The child's own output, shown when it fails: a failure beside other tests says nothing without it (Q42).
     assert!(
         status.status.success() && dir.join("done").exists(),
