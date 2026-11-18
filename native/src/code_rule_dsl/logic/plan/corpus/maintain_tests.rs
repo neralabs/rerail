@@ -101,7 +101,9 @@ impl Drop for Session {
 /// Every kind of stratum 0328 §6 and 0364 name, cross-file: a join with a projection (`uses`), a negation
 /// (`unused`), an aggregate over a derived relation (`fanout`) and over an input (`width`), a computed head (`named`),
 /// and recursion over the import graph, which can cycle (`reach`). Its comparison keeps it a recursive stratum: a
-/// plain transitive closure is the native reach index (decision 0119), which is not maintained by levels.
+/// plain transitive closure is the native reach index (decision 0119), which is not maintained by levels. And a
+/// relation that is a copy of an input only while its other rule's cross-file relation is empty (`defq`, as `cparam`
+/// over its file-local export in the corpus): it is derived, kept and maintained, not held as a view.
 const KINDS: &str = r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
@@ -125,13 +127,21 @@ edge(a, b) :- kind(n, "import_from_statement"), field(n, "module_name", t), text
 .decl reach(a: symbol, b: symbol)
 reach(a, b) :- edge(a, b).
 reach(a, c) :- reach(a, b), edge(b, c), b != "__none".
+.decl lonely(q: symbol)
+lonely(a) :- reach(a, a), a = "__none".
+.decl defq(n: node, q: symbol)
+defq(n, q) :- def(n, q).
+defq(n, q) :- lonely(q), def(n, q).
+.decl used_def(q: symbol)
+used_def(q) :- defq(_, q), imp(_, q).
 .output unused
 .output fanout
 .output width
 .output named
 .output reach
+.output used_def
 "#;
-const KIND_OUTPUTS: &[&str] = &["unused", "fanout", "width", "named", "reach"];
+const KIND_OUTPUTS: &[&str] = &["unused", "fanout", "width", "named", "reach", "used_def"];
 
 fn kinds(name: &str) -> Session {
     Session::new(name, KINDS, KIND_OUTPUTS, &[

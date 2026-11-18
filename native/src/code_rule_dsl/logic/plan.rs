@@ -7784,6 +7784,9 @@ impl<'a> Run<'a, '_> {
         gates.sort_by(|a, b| (a.1.level, a.0).cmp(&(b.1.level, b.0)));
         // A gate's rule only placed it here.
         let rules: Vec<RuleKey> = rules.iter().copied().filter(|&r| !gates.iter().any(|(g, _)| *g == vs.head_at(r))).collect();
+        // The rules as the program writes them, before a run leaves out those over empty relations: a view of an input
+        // is one by its program, not by a run's rows.
+        let written = rules.len();
         // A rule that joins a relation of a lower stratum holding no rows derives nothing, so it is neither planned
         // nor given to the engine. In a maintained run most delta rules read a delta that is empty this time, and
         // planning, keying and specifying them was work in the program's size, not the delta's (0090 step 5,
@@ -7854,8 +7857,11 @@ impl<'a> Run<'a, '_> {
         }
         // A copy of a bound input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _)`, 3.5 M rows a cold run of
         // hogql): its relation is the input's columns read once into flat rows (`hold_view`), and no component
-        // copies it. `RERAIL_COPY_VIEWS` derives it as before (to measure what the view saves).
+        // copies it. `RERAIL_COPY_VIEWS` derives it as before (to measure what the view saves). Only a stratum whose
+        // program makes it a view (`written`): one whose other rules join relations empty this run (`cparam`: a
+        // file-local export's copy and a cross-file rule) is derived, kept, and maintained.
         if let ([rel], [r]) = (rels.as_slice(), rules.as_slice())
+            && written == 1
             && gates.is_empty() && !asks && !facts
             && let Some((base, src, cols)) = self.input_view(*r)
         {

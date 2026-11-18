@@ -381,3 +381,12 @@ trivial case: its version is its input's, read through its columns. Its readers'
 given versions, or, for an input the engine holds with its change marked in place (the export), the input's own
 versions read through the view's columns. R3's test now allows only θ: each of its edits follows its part's first
 run.
+
+**A view by its program, not by a run's rows.** `cparam` still went past θ with 0 kept rows: it has two rules in the
+cross part, the export's copy and a cross-file rule (`gbase_at`, …) over relations empty in these runs. The native
+stratum leaves out a rule over an empty relation, and then took the copy rule left for a view of an input: held as a
+view, so never kept, so derived again at every step with no version. Now a stratum is a view only when its program's
+rules make it one (`written == 1`, before any is left out). `cparam` is derived, kept and maintained, and its
+readers are maintained (O125 steps 00–02: no stratum "changed without a version", 186 maintained against 180).
+R3's test holds the case: `defq` copies `def` and joins `lonely`, a cross-file relation that is always empty.
+Without the check it fails ("not reached, its rows not kept").
