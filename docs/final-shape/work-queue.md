@@ -1948,6 +1948,18 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   is noise (16–113 MB whatever its nodes), so no finer sizing rule was adopted. Gathering concurrent chunks' label runs
   is not built, since its prize is fewer runs and 0386 keeps each job's wave its own.
 
+### Q220. A chain's reach climbs a node at a time in each (file, formula) group
+
+- **Found** (2026-11-18, 0419): `label_formula`'s time is its steps (64–70 ms of 65–79 ms at s1000). A chain's reach
+  (`REACH_CHAIN`) takes about 1.1 ms a pass, against 23–68 µs for the other steps. Each thread decides 32 nodes in a
+  row, a tape parent read each, and climbs where a parent is before its block. Adding dispatches does not fit the
+  launch budget, so the fix stays inside the group.
+- **Direction:** reached(n) is `from` at n's nearest ancestor that is in `from` or not in `through`. With parents in
+  threadgroup memory (a file's nodes, under the 32 KB a group keeps), every node finds that ancestor by pointer
+  doubling: log(depth) rounds with barriers, and no tape read in the rounds.
+- **Done when:** `REACH_CHAIN` is node-parallel within the group, with the rows the same and the step's time measured
+  before and after.
+
 ### Q219. A level's fact constraints are uploaded rows
 
 - **Found** (2026-11-18, Q218's measurements): `Runner::level` uploaded the facts' `(node, label)` pairs once per

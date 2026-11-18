@@ -88,3 +88,26 @@ s1000, at load 18:
 - 0406's GPU numbers were taken under the default memory line (`RUN_MB` 1024), which cut its chunks smaller. Its
   before-and-after comparison stands, since both sides ran under the same line. Its absolute times are those of
   14–17 chunks.
+
+## A formula's words over the chunk: tried, not kept
+
+Asked "why are we doing many dispatches of small, latency-bound work?" (the user, 2026-11-18), I proposed evaluating
+a formula's sets, ANDs and ORs over the chunk's words: a thread per word in a new kernel, `label_formula_words`, with
+the formula's stack in registers. Only the steps would stay in the per-(file, formula) groups, run one step per
+dispatch. It was built, with the rows the same (17c18ee8), and was not kept. The patch is kept outside the tree.
+
+- **No gain.** Label GPU time, alternating, at load 25–42, before against after:
+  - internal_dead_code: 80–96 ms against 79–99 ms;
+  - public_api_triples: 79–84 ms against 76–94 ms.
+- **The steps hold the time.** Per kernel (`RERAIL_GPU_KERNEL_TIMES`): the word passes took 14 ms in all, over 217–244
+  dispatches. The step runs alone took 64–70 ms, as much as whole formulas had (65–79 ms). The sets, ANDs and ORs
+  were never the cost.
+- **It broke the launch budget.** The pack's wave went past `KERNEL_LAUNCH_LIMIT` (200) per submission:
+  `the_wave_is_one_evaluation_on_metal` and `the_wave_finds_ws_matches_on_metal` failed with `BackendLaunchLimit`. A
+  shape that adds dispatches per step does not fit the budget.
+
+The steps' time by op (one formula a dispatch, so fixed costs are inflated): a chain's reach (`REACH_CHAIN`) 68.7 ms
+over 60 passes, 1.1 ms each; the children of members (`PARENT`) 36.6 ms over 540 passes, 68 µs each; descendants
+(`REACH_DESCENDANT`) 10.7 ms over 340; a child within a conjunction 7.1 ms over 312. A chain's reach is the long
+pole: Q220.
+
