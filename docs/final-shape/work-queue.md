@@ -2330,6 +2330,9 @@ submitted" now hold device memory at once.
 
 - **Done when**: a budget refusal says so, with its numbers, in the profile's refusals (an error kind of its own);
   the 512 MB budget's refusals measured against the strata a wave holds at once.
+- **Measured** (2026-11-18, the full shape cold on Metal, t41 beside t54 at load 86-91): t41 0 refusals, 7 chunks,
+  548.6 G instructions, 33.1 s wall; t54 111 refusals (28 in another run), 10 chunks, 596.9 G instructions
+  (+8.8%), 47.1 s wall. Each refused stratum runs on the CPU. This is the Metal side's backslide since t41.
 - **Record**: —
 
 ### Q181. The requests narrowed on the version differ from the tree's on the bench's 317 rules (debug builds)
@@ -2421,6 +2424,16 @@ with the default line takes the slow pass.
   10% of the join samples, in the CLIF reads. Open.
   Not a regression: the A/B and profile runs here lower all 317 programs (4.1 s CPU), since no bundle
   (`rerail-library.images`) is beside `tmp/m3slow/bin/tNN`; the bench's `run.sh` packs one beside the engine.
+  t41 runs with m3bench2's library (the 11-16 inputs), so it was profiled beside t54 after all (`prof41.sh`, the
+  images kept in each binary's store, the M3 at load 57-60). Findings identical by value (660 relations, 30,449
+  rows). Work: t54 921.3 -> 942.4 G instructions (+2.3%), 250.6 -> 260.3 G cycles (+3.8%); span CPU 76.70 -> 78.02 s.
+  CPU seconds alone mislead on the M3: t41 took 60.8-81.2 s across runs, as its threads landed on efficiency cores
+  under other jobs' load; instructions are the measure. Wall 20.7 -> 28.9 s: chunks' wait 10.3 -> 11.2 (t54's main
+  thread runs no job while it waits, 75848623b, decision 0254 §5: 5.4 s of t41's main thread's CPU was chunk
+  work), `local` 4.7 -> 8.4 and `cross` 3.9 -> 6.2. Those two are the main thread's serial work: its own CPU
+  +1.0 s (base rows for the memo +0.35, hold the export +0.28, publishing entries +0.15) and +0.8 s, and the rest
+  its time off a core (t54's `local` 20.2 s of threads ready with no core, t41's 6.8). At a load of 57-95 all day
+  on the one farm host, the wall's remaining 1.8 s of serial CPU is the part that is the engine's.
 
 ### Q184. A warm run waits on the journal's cookies far longer than a `stat` of what it trusts would take
 
