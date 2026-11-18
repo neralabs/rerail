@@ -69,19 +69,11 @@ fn write(path: &Path, c: &Connection, puts: Vec<KeptPut>) {
     c.execute_batch("COMMIT").unwrap();
 }
 
-/// The space as a new reader opens it: each entry's (rel, part, digest, rows).
+/// The space as a new reader opens it: each entry's (rel, part, digest, rows in canonical order).
 fn read(path: &Path, c: &Connection) -> Vec<(String, i64, u64, Vec<Vec<i64>>)> {
-    let row = space_row(c, &SPACE).unwrap().unwrap();
-    let space = KeptSpace::open(path, &SPACE, &row).unwrap();
-    space
-        .view()
-        .all()
-        .map(|k| {
-            let v = k.view();
-            // In id order: a frozen relation's ids are its canonical order, and a granule's rows are as they came.
-            (k.key.rel.to_owned(), k.key.part, k.digest, (0..v.total()).map(|id| v.row(id)).collect())
-        })
-        .collect()
+    let rows = chain_rows(c, &SPACE).unwrap();
+    let space = KeptSpace::open(path, &SPACE, &rows).unwrap();
+    space.view().all().map(|k| (k.key.rel.to_owned(), k.key.part, k.digest, (0..k.rows.len()).map(|i| k.row(i)).collect())).collect()
 }
 
 fn files(path: &Path) -> Vec<String> {
@@ -90,60 +82,68 @@ fn files(path: &Path) -> Vec<String> {
     out
 }
 
-/// F2: the first write is a base; a smaller next one a delta over it, whose entries replace the base's and whose gone
-/// entries hide them; the files a commit replaced go at the next write; a delta that outgrows its base is rolled into
-/// a new one. A reader of the old files reads them still.
+/// K-R5 (decision 0402): a write appends one file of its puts only (a relation's live rows packed, a granule's
+/// rows, a reads-only entry, a gone entry), read with the chain as one; when the chain grows long the write rolls it
+/// into one file of every live entry, read the same, and a reader of the old chain reads it still; the files a
+/// commit replaced go at the next write.
 #[test]
-fn a_space_keeps_a_base_and_one_delta() {
+fn a_space_appends_and_rolls_up() {
     let (path, c) = store("space");
-    let big: Vec<i64> = (0..20_000).flat_map(|i| [i, i * 2]).collect();
+    // 20,000 rows of no pattern a column's encoding takes away: about 15 bits a value.
+    let big: Vec<i64> = (0..20_000i64).flat_map(|i| [(i * 7919) % 20_011, (i * 104_729) % 30_011]).collect();
     write(&path, &c, vec![put("p", 0, 1, KeptWhat::Rows(lent(&[(3, 30), (1, 10)]))), put("q", 0, 2, flat(&big)), put("g", 4, 3, flat(&[5, 6]))]);
-    let row = space_row(&c, &SPACE).unwrap().unwrap();
-    assert!(row.base.is_some() && row.delta.is_none(), "the first write is a base");
-    assert_eq!(read(&path, &c)[1], ("p".into(), 0, 1, vec![vec![1, 10], vec![3, 30]]), "a relation's rows in its canonical order");
-    // A reader of the base as it is now.
-    let first = KeptSpace::open(&path, &SPACE, &row).unwrap();
+    assert_eq!(chain_rows(&c, &SPACE).unwrap().len(), 1);
+    assert_eq!(read(&path, &c)[1], ("p".into(), 0, 1, vec![vec![1, 10], vec![3, 30]]), "a relation's rows in canonical order");
+    let q_bytes = std::fs::metadata(space_dir(&path, &SPACE).join(&chain_rows(&c, &SPACE).unwrap()[0].1)).unwrap().len();
+    assert!(q_bytes < 20_000 * 16 / 2, "packed: {q_bytes} bytes for 20,000 rows of two 8-byte columns");
+    // A reader of the first file as it is now.
+    let first = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
     write(&path, &c, vec![put("p", 0, 11, flat(&[9, 9])), put("g", 4, 0, KeptWhat::Gone)]);
-    let row2 = space_row(&c, &SPACE).unwrap().unwrap();
-    assert_eq!(row2.base, row.base, "the base stays");
-    assert!(row2.delta.is_some());
+    let rows = chain_rows(&c, &SPACE).unwrap();
+    assert_eq!(rows.len(), 2, "appended");
+    let second = std::fs::metadata(space_dir(&path, &SPACE).join(&rows[1].1)).unwrap().len();
+    assert!(second < q_bytes / 4, "the second file holds its puts only: {second} bytes");
     let got = read(&path, &c);
     assert_eq!(got.iter().map(|(r, p, d, _)| (r.as_str(), *p, *d)).collect::<Vec<_>>(), [("p", 0, 11), ("q", 0, 2)]);
     // Reads only: the rows as they were, with new reads.
     let mut retag = put("q", 0, 2, KeptWhat::Reads);
     retag.reads = vec![("r".into(), 99)];
     write(&path, &c, vec![retag]);
-    let row3 = space_row(&c, &SPACE).unwrap().unwrap();
-    let space = KeptSpace::open(&path, &SPACE, &row3).unwrap();
+    let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
     let view = space.view();
     let q = view.get(&FactKey { rel: "q", ident: &ID, part: 0 }).unwrap();
-    assert_eq!((q.reads().collect::<Vec<_>>(), q.view().live_len()), (vec![("r", 99)], 20_000));
-    assert!(view.get(&FactKey { rel: "g", ident: &ID, part: 4 }).is_none(), "a gone entry carried in the next delta");
-    // The delta this write replaced stays until the next write (its commit could still have rolled back).
+    assert_eq!((q.reads().collect::<Vec<_>>(), q.rows.len()), (vec![("r", 99)], 20_000));
+    assert!(view.get(&FactKey { rel: "g", ident: &ID, part: 4 }).is_none(), "gone");
     assert_eq!(files(&path).len(), 3, "{:?}", files(&path));
-    assert_eq!(first.view().all().count(), 3, "a reader of the old base reads it still");
-    // A delta that would hold more than its base: rolled into a new one.
-    let more: Vec<i64> = (0..60_000).flat_map(|i| [i, -i]).collect();
-    write(&path, &c, vec![put("r", 0, 5, flat(&more))]);
-    let row4 = space_row(&c, &SPACE).unwrap().unwrap();
-    assert!(row4.delta.is_none() && row4.base != row.base, "rolled up: {row4:?}");
-    let got = read(&path, &c);
-    assert_eq!(got.iter().map(|(r, p, d, _)| (r.as_str(), *p, *d)).collect::<Vec<_>>(), [("p", 0, 11), ("q", 0, 2), ("r", 0, 5)]);
-    write(&path, &c, vec![put("s", 0, 6, flat(&[1, 1]))]);
+    // Writes until the chain rolls up: every live entry read the same after.
+    let before = read(&path, &c);
+    let mut n = chain_rows(&c, &SPACE).unwrap().len();
+    let mut k = 0;
+    while n > 1 || k == 0 {
+        k += 1;
+        write(&path, &c, vec![put("s", k, 100 + k as u64, flat(&[k, k]))]);
+        n = chain_rows(&c, &SPACE).unwrap().len();
+        assert!(n <= MOST_FILES, "{n} files");
+    }
+    let after = read(&path, &c);
+    assert_eq!(after.iter().filter(|e| e.0 != "s").cloned().collect::<Vec<_>>(), before);
+    assert_eq!(after.iter().filter(|e| e.0 == "s").count(), k as usize);
+    assert_eq!(first.view().all().count(), 3, "a reader of the old chain reads it still");
+    write(&path, &c, vec![put("t", 0, 6, flat(&[1, 1]))]);
     assert_eq!(files(&path).len(), 2, "the roll-up's predecessors swept: {:?}", files(&path));
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
-/// A write whose transaction rolls back leaves the space as it was; its file goes at the next write.
+/// K-R6: a write whose transaction rolls back leaves the space as it was; its file goes at the next write.
 #[test]
 fn a_rolled_back_write_is_not_the_spaces() {
     let (path, c) = store("rollback");
     write(&path, &c, vec![put("p", 0, 1, flat(&[1, 2]))]);
-    let row = space_row(&c, &SPACE).unwrap();
+    let rows = chain_rows(&c, &SPACE).unwrap();
     c.execute_batch("BEGIN IMMEDIATE").unwrap();
     write_space(&path, &c, &SPACE, vec![put("p", 0, 2, flat(&[3, 4]))], None).unwrap();
     c.execute_batch("ROLLBACK").unwrap();
-    assert_eq!(space_row(&c, &SPACE).unwrap(), row);
+    assert_eq!(chain_rows(&c, &SPACE).unwrap(), rows);
     assert_eq!(read(&path, &c)[0].2, 1);
     assert_eq!(files(&path).len(), 2, "the rolled-back write's file is there until the next write");
     write(&path, &c, vec![put("q", 0, 3, flat(&[5, 6]))]);

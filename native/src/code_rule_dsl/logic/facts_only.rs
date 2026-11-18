@@ -47,8 +47,8 @@ const FACT_STORE: &[&str] = &[
     "tape",
     "node_type",
     "frames",
-    // A space's kept facts as blocks (decision 0401): which base and delta files it has.
-    "facts_blocks",
+    // A space's kept facts (decisions 0401, 0402): which files its chain has.
+    "facts_chain",
     "frame_spaces",
     // The frames' own bookkeeping (decision 0117 step 5): each space's confirmations, and each run's use of it.
     "frame_confirmed",
@@ -59,6 +59,13 @@ const FACT_STORE: &[&str] = &[
     // packs. They replace the memo's frames (`local`, `local_out`): the same entries, no new cache.
     "memo_entries",
     "memo_packs",
+    // The segments frames, sources and tapes lie in (decision 0295 step 5): where the rows are, as `memo_packs`.
+    "frame_segments",
+    "object_segments",
+    // Each guest's key by its identity (decision 0391): a name, as `strings`.
+    "guest_keys",
+    // The observer's journal of what it saw change (decision 0400): observations, not a result kept for later.
+    "observed_changes",
     // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
     "samples",
     // The SQL executor's planning observations (`costs::sql_plans`), its plan model's data: measurements, as `samples`.

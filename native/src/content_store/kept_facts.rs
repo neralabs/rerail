@@ -1,20 +1,34 @@
-//! A space's kept facts as blocks (decision 0401 F1–F6): a base and one cumulative delta in `<store>.facts/<space>/`,
-//! each a `rerail_blocks::kept` block, mapped by every process that reads the space. SQLite keeps which two files a
-//! space has (`facts_blocks`), replaced in the transaction that commits a run's writes.
+//! A space's kept facts (decisions 0401, 0402): a chain of frozen files in `<store>.facts/<space>/`, each a
+//! `rerail_blocks::kept` file whose entries' rows are packed (each column in the bits its values need), mapped by every
+//! process that reads the space. SQLite keeps only which files the chain has (`facts_chain`), replaced in the
+//! transaction that commits a run's writes.
 //!
-//! The store's writer writes a space's next block behind the run (`write_space`): the previous delta's entries not
-//! replaced are carried, the run's are put, and a base the delta has outgrown is rolled into a new one. Each file is
-//! made under a name no reader opens, frozen, renamed into place and its directory synced before its row names it.
-//! The files a committed write replaced are removed by the next write (`sweep`): the transaction may still roll back
-//! when this one returns, and a process that mapped one keeps reading it.
+//! The store's writer appends the space's next file behind the run (`write_space`): only what the run put, packed
+//! there (0402 K3: freezing is encoding). When the chain grows long, or what its newer files replaced outweighs what it
+//! still reads, the write is a roll-up instead: every live entry copied whole (one `memcpy` each) with the run's puts,
+//! into one file that replaces the chain. Each file is made under a name no reader opens, frozen, renamed into place
+//! and its directory synced before its row names it. The files a committed write replaced are removed by the next
+//! write (`sweep`): the transaction may still roll back when this one returns, and a process that mapped one keeps
+//! reading it.
 
 use super::atoms::stored::{clone_file, new_tag, private_dir, sync_dir};
 use super::{StoreError, StoreResult};
-use rerail_blocks::kept::{FactKey, KeptFacts, KeptRead, KeptView, KeptW, Meta};
-use rerail_blocks::relation::Relation;
-use rusqlite::{Connection, OptionalExtension as _};
+use rerail_blocks::kept::{FactKey, KeptChain, KeptFacts, KeptRead, KeptW, Meta};
+use rerail_blocks::relation::{Relation, View};
+use rusqlite::Connection;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+
+/// Maps a forked process's atom ids to the store's, in place.
+type MapIds<'a> = &'a dyn Fn(&mut [i64]) -> StoreResult<()>;
+
+/// A put's rows as columns: the values (`n` rows of `a`, column-major), `n`, `a`, and each row's level.
+type Columns = (Vec<i64>, usize, usize, Option<Vec<u32>>);
+
+/// The files a chain holds before a write rolls it into one (0402 K4).
+const MOST_FILES: usize = 8;
+/// The bytes of replaced rows under which a chain is not rolled up for them: a roll-up then saves less than it costs.
+const ROLL_FLOOR: usize = 1 << 20;
 
 /// A relation the keep puts, lent by its holder (the engine's run): its rows, dead bits and levels, kept alive while
 /// this lives. Nothing writes them meanwhile.
@@ -26,7 +40,7 @@ pub trait KeptRows: Send + Sync {
 
 /// What a put is.
 pub enum KeptWhat {
-    /// A relation the run derived, copied whole.
+    /// A relation the run derived: its live rows, packed.
     Rows(Box<dyn KeptRows>),
     /// Rows not held as a relation (an input's granule): `n` rows of `widths.len()` columns, flat.
     Flat { widths: Vec<u32>, rows: Vec<i64>, n: usize },
@@ -61,63 +75,47 @@ pub fn facts_dir(store: &Path) -> PathBuf {
     PathBuf::from(p)
 }
 
-fn space_dir(store: &Path, space: &[u8; 32]) -> PathBuf {
+pub fn space_dir(store: &Path, space: &[u8; 32]) -> PathBuf {
     facts_dir(store).join(space.iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
-/// A space's two files as its row names them: (name, tag).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SpaceRow {
-    pub base: Option<(String, u64)>,
-    pub delta: Option<(String, u64)>,
+/// A space's chain as its rows name it, oldest first: (seq, name, tag).
+pub type ChainRows = Vec<(i64, String, u64)>;
+
+/// The rows of `space`'s chain; empty when it keeps no facts.
+pub fn chain_rows(connection: &Connection, space: &[u8; 32]) -> StoreResult<ChainRows> {
+    let mut st = connection.prepare_cached("SELECT seq, name, tag FROM main.facts_chain WHERE space = ?1 ORDER BY seq")?;
+    let rows = st.query_map([&space[..]], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)? as u64)))?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
-/// The row of `space`, if it keeps blocks.
-pub fn space_row(connection: &Connection, space: &[u8; 32]) -> StoreResult<Option<SpaceRow>> {
-    Ok(connection
-        .prepare_cached("SELECT base, base_tag, delta, delta_tag FROM main.facts_blocks WHERE space = ?1")?
-        .query_row([&space[..]], |r| {
-            let file = |name: Option<String>, tag: Option<i64>| name.zip(tag).map(|(n, t)| (n, t as u64));
-            Ok(SpaceRow { base: file(r.get(0)?, r.get(1)?), delta: file(r.get(2)?, r.get(3)?) })
-        })
-        .optional()?)
-}
-
-/// A space's blocks, mapped.
+/// A space's files, mapped, oldest first.
 #[derive(Default)]
 pub struct KeptSpace {
-    pub base: Option<KeptFacts>,
-    pub delta: Option<KeptFacts>,
+    pub files: Vec<KeptFacts>,
 }
 
 impl KeptSpace {
-    /// The blocks `row` names, mapped, each checked against its tag.
-    pub fn open(store: &Path, space: &[u8; 32], row: &SpaceRow) -> StoreResult<KeptSpace> {
+    /// The files `rows` name, mapped, each checked against its tag.
+    pub fn open(store: &Path, space: &[u8; 32], rows: &ChainRows) -> StoreResult<KeptSpace> {
         let dir = space_dir(store, space);
-        let open = |f: &Option<(String, u64)>| -> StoreResult<Option<KeptFacts>> {
-            f.as_ref()
-                .map(|(name, tag)| KeptFacts::open(&dir.join(name), *tag).map_err(|e| StoreError::Corrupt(format!("a space's kept facts: {e}"))))
-                .transpose()
-        };
-        let space = KeptSpace { base: open(&row.base)?, delta: open(&row.delta)? };
-        if let (Some(b), Some(d)) = (&space.base, &space.delta)
-            && d.base_tag() != Some(b.tag())
-        {
-            return Err(StoreError::Corrupt("a space's kept delta is not of its base".into()));
-        }
-        Ok(space)
+        let files = rows
+            .iter()
+            .map(|(_, name, tag)| KeptFacts::open(&dir.join(name), *tag).map_err(|e| StoreError::Corrupt(format!("a space's kept facts: {e}"))))
+            .collect::<StoreResult<_>>()?;
+        Ok(KeptSpace { files })
     }
 
     /// The space as one.
-    pub fn view(&self) -> KeptView<'_> {
-        KeptView { base: self.base.as_ref(), delta: self.delta.as_ref() }
+    pub fn view(&self) -> KeptChain<'_> {
+        KeptChain { files: &self.files }
     }
 }
 
-/// Removes the files of `dir` that `row` (read in the write transaction) does not name: the blocks a committed write
+/// Removes the files of `dir` that `rows` (read in the write transaction) do not name: the files a committed write
 /// replaced, a rolled-back write's, a crashed maker's under its making name. A process mapping one keeps reading it.
-fn sweep(dir: &Path, row: &SpaceRow) {
-    let named: HashSet<&str> = row.base.iter().chain(&row.delta).map(|(n, _)| n.as_str()).collect();
+fn sweep(dir: &Path, rows: &ChainRows) {
+    let named: HashSet<&str> = rows.iter().map(|(_, n, _)| n.as_str()).collect();
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
@@ -127,112 +125,119 @@ fn sweep(dir: &Path, row: &SpaceRow) {
     }
 }
 
-/// A block's room: what its relations hold, with each chunk's alignment, and room for its directory. Its file is
-/// sparse and truncated at its freeze, so room not written costs no disk.
-fn room_for(rel: &Relation) -> usize {
-    let chunks = rel.rows.nchunks.load(std::sync::atomic::Ordering::Relaxed) as usize + rel.killed.nchunks.load(std::sync::atomic::Ordering::Relaxed) as usize;
-    rel.held_bytes() + Relation::descriptor_bytes(rel.arity as usize) + (chunks * (rel.arity as usize + 1) + rel.indexes.len() * 2 + 4) * rerail_blocks::block::PAGE
-}
-
-/// Maps a copy's atom columns (`types` `s`) through `map`, where they lie (a forked process's ids to the store's).
-fn map_copy(copy: &Relation, types: &[u8], map: &dyn Fn(&mut [i64]) -> StoreResult<()>) -> StoreResult<()> {
-    let n = copy.rows.len();
-    for (c, _) in types.iter().enumerate().filter(|(_, t)| **t == b's') {
-        let mut col = vec![0i64; n as usize];
-        copy.rows.read_col(c, n, &mut col);
-        map(&mut col)?;
-        copy.rows.write_col(c, &col);
+/// A put's rows as columns (`n` rows of `a`, column-major) and their levels: a relation's live rows (neither its own
+/// dead nor the run's), or a granule's flat rows; atom columns (`types` `s`) mapped through `map` (a forked process's
+/// ids to the store's).
+fn columns(what: &KeptWhat, types: &[u8], map: Option<MapIds>) -> StoreResult<Columns> {
+    let (mut cols, n, a, levels) = match what {
+        KeptWhat::Rows(r) => {
+            let rel = r.relation();
+            let (total, a) = (rel.rows.len() as usize, rel.arity as usize);
+            let mut all = vec![0i64; total * a];
+            for c in 0..a {
+                rel.rows.read_col(c, total as u32, &mut all[c * total..(c + 1) * total]);
+            }
+            let view = View::full(rel);
+            let dead = r.dead();
+            let live = |id: usize| view.live(id as u32) && dead.get(id / 64).is_none_or(|w| w >> (id % 64) & 1 == 0);
+            let levels = r.levels();
+            let levels = (levels.len() == total && total > 0).then_some(levels);
+            if (0..total).all(live) {
+                (all, total, a, levels.map(<[u32]>::to_vec))
+            } else {
+                let ids: Vec<usize> = (0..total).filter(|&id| live(id)).collect();
+                let n = ids.len();
+                let mut cols = vec![0i64; n * a];
+                for c in 0..a {
+                    for (o, &id) in cols[c * n..(c + 1) * n].iter_mut().zip(&ids) {
+                        *o = all[c * total + id];
+                    }
+                }
+                (cols, n, a, levels.map(|l| ids.iter().map(|&id| l[id]).collect()))
+            }
+        }
+        KeptWhat::Flat { widths, rows, n } => {
+            let a = widths.len();
+            let mut cols = vec![0i64; n * a];
+            for (r, row) in rows.chunks_exact(a.max(1)).take(*n).enumerate() {
+                for (c, &v) in row.iter().enumerate() {
+                    cols[c * n + r] = v;
+                }
+            }
+            (cols, *n, a, None)
+        }
+        KeptWhat::Reads | KeptWhat::Gone => unreachable!("a put with rows"),
+    };
+    if let Some(map) = map {
+        for (c, _) in types.iter().enumerate().filter(|(_, t)| **t == b's').take_while(|(c, _)| *c < a) {
+            map(&mut cols[c * n..(c + 1) * n])?;
+        }
     }
-    Ok(())
+    Ok((cols, n, a, levels))
 }
 
-/// Writes `space`'s next block in transaction `t`, with `puts` (each key once): a delta over its base, or a new base
-/// when there is none or the delta would outgrow it. `map` maps a forked process's atom ids to the store's.
-pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut>, map: Option<&dyn Fn(&mut [i64]) -> StoreResult<()>>) -> StoreResult<()> {
+/// The most bytes a put's packed rows take (8 a value, the sort's duplicates included), and their descriptors.
+fn room_of(what: &KeptWhat) -> usize {
+    match what {
+        KeptWhat::Rows(r) => {
+            let rel = r.relation();
+            (rel.rows.len() as usize) * (rel.arity as usize * 8 + 8) + (rel.arity as usize + 2) * 256
+        }
+        KeptWhat::Flat { widths, n, .. } => n * widths.len() * 8 + (widths.len() + 2) * 256,
+        KeptWhat::Reads | KeptWhat::Gone => 0,
+    }
+}
+
+/// Appends `space`'s next file in transaction `t`, with `puts` (each key once), or rolls the chain and the puts into
+/// one file (0402 K4). `map` maps a forked process's atom ids to the store's.
+pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut>, map: Option<MapIds>) -> StoreResult<()> {
     if puts.is_empty() {
         return Ok(());
     }
     let io = |e: std::io::Error| StoreError::Io(e);
     let dir = space_dir(store, space);
     private_dir(&dir).map_err(io)?;
-    let row = space_row(t, space)?.unwrap_or_default();
-    sweep(&dir, &row);
-    let old = KeptSpace::open(store, space, &row)?;
-    let view = old.view();
-    let replaced: HashSet<FactKey<'_>> = puts.iter().map(KeptPut::key).collect();
-    // Each put's bytes (what a delta weighs against its base), and the room its copy takes in the block.
-    let (put_bytes, put_room) = puts
-        .iter()
-        .map(|p| match &p.what {
-            KeptWhat::Rows(r) => {
-                let side = r.dead().len() * 8 + r.levels().len() * 4;
-                (r.relation().bytes() + side, room_for(r.relation()) + side)
-            }
-            KeptWhat::Flat { widths, n, .. } => (n * widths.len() * 8, n * widths.len() * 8 + (widths.len() + 1) * 40 * rerail_blocks::block::PAGE),
-            KeptWhat::Reads => view.get(&p.key()).map_or((0, 0), |k| (k.rows.bytes(), room_for(k.rows))),
-            KeptWhat::Gone => (0, 0),
-        })
-        .fold((0, 0), |(a, b), (c, d)| (a + c, b + d));
-    let carried: Vec<rerail_blocks::kept::Kept<'_>> = match (&old.base, &old.delta) {
-        (Some(_), Some(d)) => d.all().filter(|k| !replaced.contains(&k.key)).collect(),
-        _ => Vec::new(),
-    };
-    let carried_bytes: usize = carried.iter().map(|k| k.rows.bytes() + k.dead.len() * 8 + k.levels.len() * 4).sum();
-    // A new base when there is none, or when the delta would hold more than its base: every entry the space keeps.
-    let roll = old.base.as_ref().is_none_or(|b| put_bytes + carried_bytes > b.bytes());
-    let entries: Vec<rerail_blocks::kept::Kept<'_>> = if roll { view.all().filter(|k| !replaced.contains(&k.key)).collect() } else { carried };
-    let reserve = (entries.iter().map(|k| room_for(k.rows) + k.dead.len() * 8 + k.levels.len() * 4).sum::<usize>() + put_room) * 5 / 4 + (64 << 20);
+    let rows = chain_rows(t, space)?;
+    sweep(&dir, &rows);
+    let old = KeptSpace::open(store, space, &rows)?;
+    let chain = old.view();
+    let put_keys: HashSet<FactKey<'_>> = puts.iter().map(KeptPut::key).collect();
+    // What the chain would hold that newer entries replaced, once these puts are in: a roll-up drops it.
+    let replaced: usize = puts.iter().filter(|p| !matches!(p.what, KeptWhat::Reads)).filter_map(|p| chain.get(&p.key())).map(|k| k.bytes()).sum();
+    let dropped = chain.superseded_bytes() + replaced;
+    let roll = !old.files.is_empty() && (old.files.len() >= MOST_FILES || (dropped > ROLL_FLOOR && 2 * dropped > chain.bytes()));
+    let carried: Vec<rerail_blocks::kept::Kept<'_>> = if roll { chain.all().filter(|k| !put_keys.contains(&k.key)).collect() } else { Vec::new() };
+    let reads_rows: usize = puts.iter().filter(|p| matches!(p.what, KeptWhat::Reads)).filter_map(|p| chain.get(&p.key())).map(|k| k.bytes()).sum();
+    let reserve = carried.iter().map(|k| k.bytes() + 64).sum::<usize>() + puts.iter().map(|p| room_of(&p.what)).sum::<usize>() + if roll { reads_rows } else { 0 } + (64 << 20);
     let tag = loop {
         let t = new_tag();
         if t != 0 {
             break t;
         }
     };
-    let name = format!("{}{tag:016x}.blk", if roll { 'b' } else { 'd' });
+    let seq = rows.last().map_or(1, |r| r.0 + 1);
+    let name = format!("c{seq}-{tag:016x}.blk");
     let making = dir.join(format!("{name}.new"));
-    let base_tag = if roll { None } else { old.base.as_ref().map(KeptFacts::tag) };
-    let mut w = KeptW::create(&making, tag, base_tag, reserve).map_err(io)?;
-    for k in &entries {
-        w.carry(k, None).map_err(io)?;
-    }
-    // A delta carries what its predecessor recorded as gone, unless put again now.
-    if !roll && let Some(d) = &old.delta {
-        for key in d.gone_keys().filter(|k| !replaced.contains(k)) {
-            w.gone(key);
-        }
+    let mut w = KeptW::create(&making, tag, reserve).map_err(io)?;
+    for k in &carried {
+        w.copy(k, None).map_err(io)?;
     }
     for p in &puts {
         let reads: Vec<(&str, u64)> = p.reads.iter().map(|(r, d)| (r.as_str(), *d)).collect();
-        let meta = |dead, levels| Meta { key: p.key(), digest: p.digest, reads: &reads, types: &p.types, dead, levels };
+        let meta = Meta { key: p.key(), digest: p.digest, reads: &reads, types: &p.types };
         match &p.what {
-            KeptWhat::Rows(r) => {
-                let copy = w.put(meta(r.dead(), r.levels()), r.relation(), None).map_err(io)?;
-                if let Some(map) = map {
-                    map_copy(copy, &p.types, map)?;
-                }
-            }
-            KeptWhat::Flat { widths, rows, n } => {
-                let mut rows = rows.clone();
-                if let Some(map) = map
-                    && !widths.is_empty()
-                {
-                    for (c, _) in p.types.iter().enumerate().filter(|(_, t)| **t == b's') {
-                        let mut col: Vec<i64> = rows.chunks_exact(widths.len()).map(|r| r[c]).collect();
-                        map(&mut col)?;
-                        for (r, v) in rows.chunks_exact_mut(widths.len()).zip(col) {
-                            r[c] = v;
-                        }
-                    }
-                }
-                w.put_rows(meta(&[], &[]), widths, &rows, *n).map_err(io)?;
+            KeptWhat::Rows(_) | KeptWhat::Flat { .. } => {
+                let (cols, n, a, levels) = columns(&p.what, &p.types, map)?;
+                w.put_cols(meta, &cols, n, a, levels.as_deref()).map_err(io)?;
             }
             KeptWhat::Reads => {
-                if let Some(k) = view.get(&p.key()) {
-                    w.carry(&k, Some(&reads)).map_err(io)?;
+                if let Some(k) = chain.get(&p.key()) {
+                    let meta = Meta { types: k.types, ..meta };
+                    if roll { w.copy(&k, Some(meta)).map_err(io)? } else { w.same(meta) }
                 }
             }
             KeptWhat::Gone => {
-                if !roll && old.base.as_ref().is_some_and(|b| b.get(&p.key()).is_some()) {
+                if !roll && chain.get(&p.key()).is_some() {
                     w.gone(p.key());
                 }
             }
@@ -241,22 +246,14 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
     w.finish().map_err(io)?;
     std::fs::rename(&making, dir.join(&name)).map_err(io)?;
     sync_dir(&dir).map_err(io)?;
-    let (base, delta) = if roll { (Some((name, tag)), None) } else { (row.base.clone(), Some((name, tag))) };
-    t.prepare_cached(
-        "INSERT INTO main.facts_blocks(space, base, base_tag, delta, delta_tag) VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(space) DO UPDATE SET base = excluded.base, base_tag = excluded.base_tag, delta = excluded.delta, delta_tag = excluded.delta_tag",
-    )?
-    .execute(rusqlite::params![
-        &space[..],
-        base.as_ref().map(|b| b.0.as_str()),
-        base.as_ref().map(|b| b.1 as i64),
-        delta.as_ref().map(|d| d.0.as_str()),
-        delta.as_ref().map(|d| d.1 as i64),
-    ])?;
+    if roll {
+        t.prepare_cached("DELETE FROM main.facts_chain WHERE space = ?1")?.execute([&space[..]])?;
+    }
+    t.prepare_cached("INSERT INTO main.facts_chain(space, seq, name, tag) VALUES (?1, ?2, ?3, ?4)")?.execute(rusqlite::params![&space[..], seq, name, tag as i64])?;
     Ok(())
 }
 
-/// A space's next block, queued for the store's writer (`ContentStore::queue_kept`).
+/// A space's next file, queued for the store's writer (`ContentStore::queue_kept`).
 pub(super) struct KeptWrite {
     space: [u8; 32],
     puts: Vec<KeptPut>,
@@ -267,7 +264,7 @@ impl KeptWrite {
         let puts = std::mem::take(&mut self.puts);
         let path = store.database_path.clone();
         store.immediate_transaction_once(|t| {
-            // Forked (decision 0170): the copies' atom columns are mapped to the store's ids in this transaction.
+            // Forked (decision 0170): the puts' atom columns are mapped to the store's ids in this transaction.
             let map = |v: &mut [i64]| store.atoms.to_store(t, super::ProcessIds::of_process(v)).map(drop);
             write_space(&path, t, &self.space, puts, store.atoms.forked().then_some(&map as &dyn Fn(&mut [i64]) -> StoreResult<()>))
         })
@@ -275,8 +272,8 @@ impl KeptWrite {
 }
 
 impl super::ContentStore {
-    /// Writes `space`'s next kept block with `puts`, behind the run (the store's writer, in its wave's transaction). It
-    /// holds the puts' relations until their copies are made.
+    /// Writes `space`'s next kept file with `puts`, behind the run (the store's writer, in its wave's transaction). It
+    /// holds the puts' relations until they are packed.
     pub fn queue_kept(&self, space: [u8; 32], puts: Vec<KeptPut>) {
         if puts.is_empty() {
             return;
@@ -291,11 +288,14 @@ impl super::ContentStore {
 
     /// The kept facts of `space` as the store's last commit has them, mapped; `None` when it keeps none.
     pub fn kept_space(&self, space: &[u8; 32]) -> StoreResult<Option<KeptSpace>> {
-        let row = {
+        let rows = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
-            space_row(&connection, space)?
+            chain_rows(&connection, space)?
         };
-        row.map(|row| KeptSpace::open(&self.database_path, space, &row)).transpose()
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        KeptSpace::open(&self.database_path, space, &rows).map(Some)
     }
 }
 

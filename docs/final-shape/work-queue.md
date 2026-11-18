@@ -4502,5 +4502,19 @@ native join it falls back to the planner's whole-rule order.
   - `every_stored_table_is_a_relations_the_stores_own_or_a_cache_not_yet_moved`: `guest_keys`, `observed_changes`;
   - `every_kept_map_is_state_or_listed`: `lanes.rs OPEN`, `setfix/device.rs OWN_TEXTS`, `keptstats.rs`
     `COUNTING`, `KEPT_DOCS` and `KEPT_ROWS`, and more.
-- **Next**: classify each by its decision (0103, 0104), or move it where the guard says. A table or map that is a
-  cache is to be rules, not a list entry ([[caches-are-ordinary-rules]]).
+- **Tables done** (2026-11-18, 0402 steps 1–3): `frame_segments` and `object_segments` are where rows lie
+  (fact store, as `memo_packs`); `guest_keys` is names (0391); `observed_changes` is the observer's journal
+  (0400). Both table guards pass.
+- **Next**: the maps of `every_kept_map_is_state_or_listed`: classify each by its decision (0103, 0104), or move it
+  where the guard says. A map that is a cache is to be rules, not a list entry ([[caches-are-ordinary-rules]]).
+
+### Q217. Relations that declare their output sorted (decision 0402 K7)
+
+- **Asked** (the user, 2026-11-18): "we may eventually want to allow the relations to say if they output sorted
+  results or not, a lot is faster when sorted".
+- **Now**: the keep checks each put's rows for canonical order in one pass and skips the sort when they are
+  (`packed::prepare`, `Prepared::in_order`); an input's granule usually is. Nothing declares an order, and nothing
+  reads one.
+- **Next**: a relation states its output order (an input's nodes; a rule whose plan scans a sorted relation and
+  emits in its order); the keep trusts it (no check); a planner uses it (merge joins, range probes on leading
+  columns of a `Packed`). Measure how many of ep2's puts come in order (`Put::in_order`) first.

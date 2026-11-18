@@ -462,16 +462,16 @@ CREATE TABLE IF NOT EXISTS atom_blocks (
     tag INTEGER NOT NULL
 ) STRICT;
 
--- A space's kept facts (decision 0401 F2): a base block and one cumulative delta in
--- `<store>.facts/<space>/`, each with its maker's tag (a block not its row's is refused). Replaced
--- in the transaction that commits a run's writes. Additive: an older binary reads the frames.
-CREATE TABLE IF NOT EXISTS facts_blocks (
-    space BLOB PRIMARY KEY CHECK(length(space) = 32),
-    base TEXT,
-    base_tag INTEGER,
-    delta TEXT,
-    delta_tag INTEGER,
-    CHECK((base IS NULL) = (base_tag IS NULL) AND (delta IS NULL) = (delta_tag IS NULL) AND (delta IS NULL OR base IS NOT NULL))
+-- A space's kept facts (decisions 0401, 0402 K4-K5): a chain of frozen files in `<store>.facts/<space>/`,
+-- oldest first, each with its maker's tag (a file not its row's is refused). A run's write appends a
+-- row; a roll-up replaces them with one. Metadata only: the rows are in the files. Additive: an older
+-- binary reads the frames.
+CREATE TABLE IF NOT EXISTS facts_chain (
+    space BLOB NOT NULL CHECK(length(space) = 32),
+    seq INTEGER NOT NULL CHECK(seq >= 1),
+    name TEXT NOT NULL,
+    tag INTEGER NOT NULL,
+    PRIMARY KEY(space, seq)
 ) STRICT;
 
 -- The derivation graph (derivation.rs): fact names (atoms) bound to digests, and each
