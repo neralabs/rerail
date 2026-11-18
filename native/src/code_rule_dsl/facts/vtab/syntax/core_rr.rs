@@ -285,6 +285,27 @@ pub struct Literal {
     pub value: Option<(String, &'static str)>,
 }
 
+/// Whether a node of `kind` with `children` has a part other than constant text (a Python `interpolation`, a PHP
+/// `encapsed_string`'s variable).
+fn interpolated(f: &Facts, dialect: &Dialect, kind: &str, children: &[u32]) -> bool {
+    let named_child = |k: &dyn Fn(&str) -> bool| children.iter().any(|&c| f.named(c) && k(dialect.name(f, c)));
+    match (dialect.family, kind) {
+        (Family::Python, _) => named_child(&|k| k == "interpolation"),
+        (Family::Php, "encapsed_string") => named_child(&|k| !matches!(k, "string_content" | "escape_sequence")),
+        _ => false,
+    }
+}
+
+/// Tape node `id`'s string literal's content (`str(n, s)` in `core.rr`'s shape), as `CoreRows::node` reads it: none
+/// for a comment or a node that is no string. What `str`'s answer on request reads (decision 0353 step 3, 0174).
+pub fn node_str(f: &Facts, dialect: &Dialect, id: u32) -> Option<String> {
+    let kind = dialect.name(f, id);
+    if is_comment(kind) {
+        return None;
+    }
+    literal(dialect.family, kind, f.text(id), interpolated(f, dialect, kind, &f.children(id))).str
+}
+
 /// The literal facts of a node of `kind` with source `text`; `interpolated` when it has a part other than
 /// constant text (a Python `interpolation`, a PHP `encapsed_string`'s variable).
 pub fn literal(family: Family, kind: &str, text: &str, interpolated: bool) -> Literal {
@@ -655,8 +676,8 @@ pub(super) const RX_MEMO_TEXT: usize = 4096;
 
 impl CoreRows {
     /// Whether a rule reads node `id`'s `text` (`text_nodes`, `TextNodes::reads`).
-    fn reads_text(&self, p: &Projected, dialect: &Dialect, local: u32) -> bool {
-        self.text_nodes.as_ref().is_none_or(|nodes| nodes.reads(p, local, dialect))
+    fn reads_text(&self, p: &Projected, dialect: &Dialect, id: u32) -> bool {
+        self.text_nodes.as_ref().is_none_or(|nodes| nodes.reads(p, id, dialect))
     }
 
     /// The nodes `node` visits. Where it makes no row but `text`, and the rules read only some nodes' (`text_nodes`),
@@ -674,19 +695,19 @@ impl CoreRows {
     }
 
     /// Whether `visits` takes node `local` of `p`.
-    pub(super) fn visited(&self, visits: Visits, p: &Projected, dialect: &Dialect, local: u32) -> bool {
+    pub(super) fn visited(&self, visits: Visits, p: &Projected, dialect: &Dialect, id: u32) -> bool {
         match visits {
             Visits::All => true,
             Visits::None => false,
-            Visits::TextNodes => self.reads_text(p, dialect, local),
+            Visits::TextNodes => self.reads_text(p, dialect, id),
         }
     }
 
     /// Node `local`'s rows: what its anonymous children, its kind and its own text give.
-    pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) {
+    /// `id` is its tape node (`Projected::node`) and `n` its id (`Projected::global`), which the caller's walk holds.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, id: u32, n: i64, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) {
         let f = &*p.facts;
-        let id = p.core[local as usize];
-        let n = p.global(local);
         let kind = dialect.name(f, id);
         let text = f.text(id);
         let children = f.children(id);
@@ -722,7 +743,7 @@ impl CoreRows {
                 self.structural_after.push([n, string(between(end, f.source.len() as u32)) as i64]);
             }
             for (k, &c) in children.iter().enumerate() {
-                let local_c = p.local[c as usize];
+                let local_c = p.local_of_node(c as u32);
                 if local_c == crate::code_rule_dsl::facts::core::NONE {
                     continue;
                 }
@@ -734,7 +755,7 @@ impl CoreRows {
             }
         }
         let mut prev = None;
-        for c in p.children(local).filter(|_| !self.skip.next_sibling) {
+        for c in p.children_of_node(id).filter(|_| !self.skip.next_sibling) {
             if let Some(a) = prev {
                 self.next_sibling.push([p.global(a), p.global(c)]);
             }
@@ -756,12 +777,7 @@ impl CoreRows {
             } else if dialect.family == Family::Rr && kind == "variable" {
                 self.name.push([n, string(text) as i64]);
             }
-            let named_child = |k: &dyn Fn(&str) -> bool| children.iter().any(|&c| f.named(c) && k(dialect.name(f, c)));
-            let interpolated = !self.skip.literal && match (dialect.family, kind) {
-                (Family::Python, _) => named_child(&|k| k == "interpolation"),
-                (Family::Php, "encapsed_string") => named_child(&|k| !matches!(k, "string_content" | "escape_sequence")),
-                _ => false,
-            };
+            let interpolated = !self.skip.literal && interpolated(f, dialect, kind, &children);
             let mut lit = if self.skip.literal { Literal::default() } else { literal(dialect.family, kind, text, interpolated) };
             // A format string's node: its value is its parser's (an `error`'s message, a `field_name`'s argument).
             if !self.skip.literal
@@ -787,7 +803,7 @@ impl CoreRows {
             }
             if dialect.family == Family::Python
                 && (wants_parts || wants_part_starts || wants_words)
-                && (kind == "concatenated_string" || kind == "string" && p.parent_node(local as usize).is_none_or(|q| dialect.name(f, q) != "concatenated_string"))
+                && (kind == "concatenated_string" || kind == "string" && f.parent(id).is_none_or(|q| dialect.name(f, q) != "concatenated_string"))
             {
                 // A word-only reader also gets coordinates from this pass. It never interns full values.
                 let own = dialect_facts(dialect.family);
@@ -809,14 +825,14 @@ impl CoreRows {
                     if wants_part_starts {
                         // `at` is a node id: its low bits are a preorder index only under preorder ids.
                         let Some(at_local) = p.local_of(at as u32) else { continue };
-                        let absolute = f.start(p.core[at_local as usize]) + offset as u32;
+                        let absolute = f.start(p.node(at_local as u32)) + offset as u32;
                         let (line, _, col) = p.extra.as_ref().expect("core spans").lines.place([absolute, absolute]);
                         self.str_part_start.push([n, i as i64, i64::from(line), i64::from(col)]);
                     }
                 }
             }
         }
-        if wants_text && self.reads_text(p, dialect, local) && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) {
+        if wants_text && self.reads_text(p, dialect, id) && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) {
             self.text.push([n, string(text) as i64]);
         }
     }
@@ -835,7 +851,7 @@ impl CoreRows {
         let key = i64::from(p.key);
         if x.ends > 0 {
             let from = p.len() + x.ends_from();
-            self.end_point.extend((0..x.ends).map(|l| [p.global(l), p.global(from + l)]));
+            self.end_point.extend(p.node_ids().take(x.ends as usize).map(|(l, _, n)| [n, p.global(from + l)]));
         }
         let lines_span = crate::code_rule_dsl::logic::profile::span(|| "lines".into());
         if own_text {
@@ -890,23 +906,19 @@ impl CoreRows {
         let Some(dialect) = dialect.filter(|_| wants_tokens) else { return };
         let _tokens_span = crate::code_rule_dsl::logic::profile::span(|| "tokens".into());
         // Tokens: the leaves, named or anonymous, other than comments, in source order (ESLint's token store).
-        let mut toks: Vec<(u32, u32, i64)> = (0..p.len())
-            .filter_map(|l| {
-                let id = p.core[l as usize];
-                let [a, b] = p.span(l);
-                (f.children(id).is_empty() && b > a && !is_comment(dialect.name(f, id))).then(|| (a, b, p.global(l)))
+        let mut toks: Vec<(u32, u32, i64)> = p.node_ids().filter_map(|(_, id, n)| {
+                let [a, b] = [f.start(id), f.end(id)];
+                (f.children(id).is_empty() && b > a && !is_comment(dialect.name(f, id))).then_some((a, b, n))
             })
             .collect();
-        toks.extend((0..x.tokens).map(|i| {
-            let [a, b] = p.span(p.len() + i);
-            (a, b, p.global(p.len() + i))
+        toks.extend(p.token_ids().map(|(l, _, n)| {
+            let [a, b] = p.span(l);
+            (a, b, n)
         }));
         toks.sort_unstable();
         let starts: Vec<u32> = toks.iter().map(|t| t.0).collect();
         let ends: Vec<u32> = toks.iter().map(|t| t.1).collect();
-        for l in 0..p.len() + x.tokens {
-            let [a, b] = p.span(l);
-            let id = p.global(l);
+        for ((_, [a, b]), (_, id)) in p.spans().zip(p.loc_ids()).take((p.len() + x.tokens) as usize) {
             let first = starts.partition_point(|&s| s < a);
             if first < toks.len() && toks[first].1 <= b {
                 let last = ends.partition_point(|&e| e <= b) - 1;
@@ -933,8 +945,7 @@ impl CoreRows {
         }
         let f = &*p.facts;
         let mut at: std::collections::HashMap<(u32, u32, &str), u32> = std::collections::HashMap::new();
-        for local in 0..p.len() {
-            let id = p.core[local as usize];
+        for (local, id) in p.nodes() {
             at.entry((f.start(id), f.end(id), dialect.name(f, id))).or_insert(local);
         }
         // A pattern is a tape, its implied tokens left out (RER-131's `tape::pattern_doc`): it is matched over the
@@ -1053,13 +1064,12 @@ impl CoreRows {
             }
         }
         let hex = |h: &[u8; 32]| -> String { h.iter().map(|b| format!("{b:02x}")).collect() };
-        for local in 0..p.len() {
-            let id = p.core[local as usize];
+        for (local, id, n) in p.node_ids() {
             if trees {
-                self.tree_digest.push([p.global(local), string(&hex(&hash[id as usize])) as i64]);
+                self.tree_digest.push([n, string(&hex(&hash[id as usize])) as i64]);
             }
             if units && (local == 0 || unit(id)) {
-                self.def_digest.push([p.global(local), string(&hex(&own[id as usize])) as i64]);
+                self.def_digest.push([n, string(&hex(&own[id as usize])) as i64]);
             }
         }
     }

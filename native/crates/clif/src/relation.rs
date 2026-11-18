@@ -41,17 +41,17 @@ const INDEX_SIZE: i64 = size_of::<Index>() as i64;
 
 impl B<'_, '_> {
     /// The block's word of type `ty` at `p + offset` (aligned).
-    fn word_at(&mut self, ty: cranelift_codegen::ir::Type, p: Value, offset: i32) -> Value {
+    pub(crate) fn word_at(&mut self, ty: cranelift_codegen::ir::Type, p: Value, offset: i32) -> Value {
         self.f.ins().load(ty, fields(), p, offset)
     }
     /// The address a span at `p + at` refers to: its own address plus its offset.
-    fn follow(&mut self, p: Value, at: i32) -> Value {
+    pub(crate) fn follow(&mut self, p: Value, at: i32) -> Value {
         let off = self.word_at(I64, p, at + SPAN_OFF);
         let span = self.f.ins().iadd_imm(p, i64::from(at));
         self.f.ins().iadd(span, off)
     }
     /// `p + index * size` (`index` a u32).
-    fn item(&mut self, p: Value, index: Value, size: i64) -> Value {
+    pub(crate) fn item(&mut self, p: Value, index: Value, size: i64) -> Value {
         let index = self.f.ins().uextend(I64, index);
         let at = self.f.ins().imul_imm(index, size);
         self.f.ins().iadd(p, at)

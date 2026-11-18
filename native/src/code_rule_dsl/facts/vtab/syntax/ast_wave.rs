@@ -261,7 +261,7 @@ fn matched(
                 }
                 let p = at[i].expect("held");
                 for core in found {
-                    let local = p.local.get(core as usize).copied().unwrap_or(NONE);
+                    let local = p.local_of_node(core);
                     if local != NONE {
                         r.push(&[p.global(local)]);
                         rows += 1;
@@ -323,7 +323,7 @@ fn captured_rows(
             let root = ast_grep_core::AstGrep::doc(tape.clone());
             let work = m.captor.limits.visits_for(tape.transducer_len());
             let global = |core: u32| -> Option<i64> {
-                let local = p.local.get(core as usize).copied().unwrap_or(NONE);
+                let local = p.local_of_node(core);
                 (local != NONE).then(|| p.global(local))
             };
             for &n in roots {

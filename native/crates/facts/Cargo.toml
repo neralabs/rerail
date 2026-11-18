@@ -8,7 +8,7 @@ publish = false
 description = "The engine's facts: the virtual tables, text, strings, producers, SQL profiles."
 
 [features]
-default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-lang/default"]
+default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-lang/default", "rerail-clif/default"]
 all-languages = ["lang-blade", "lang-c", "lang-cpp", "lang-csharp", "lang-css", "lang-go", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue", "rerail-lang/all-languages"]
 lang-blade = ["rerail-lang/lang-blade"]
 lang-csharp = ["ast-grep-language/tree-sitter-c-sharp", "rerail-lang/lang-csharp"]
@@ -86,6 +86,8 @@ zstd = "=0.14.3"
 tempfile = { version = "=3.27.0", optional = true }
 rerail-lang = { path = "../lang", default-features = false }
 rerail-tape-format = { path = "../tape_format" }
+# A projection's numbering's descriptor (`rerail_clif::ids`); its reads are written into `id_reads.rs`.
+rerail-clif = { path = "../clif", default-features = false }
 rerail-prof = { path = "../prof" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 rerail-store = { path = "../store" }

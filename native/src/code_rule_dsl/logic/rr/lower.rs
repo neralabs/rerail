@@ -4605,6 +4605,8 @@ pub const ON_REQUEST: [&[OnRequest]; 2] = [
     &[
         OnRequest { rel: "node_text", req: "rr_node_text_req", answer: Answer::Function("rr_node_text_any"), eager: None },
         OnRequest { rel: "value", req: "rr_value_req", answer: Answer::Function("rr_node_value"), eager: Some("rr_value_lit") },
+        // A string literal's content: a derived value, computed where a rule asks for it (decision 0353 step 3).
+        OnRequest { rel: "str", req: "rr_str_req", answer: Answer::Function("rr_node_str"), eager: None },
     ],
 ];
 

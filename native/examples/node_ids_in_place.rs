@@ -84,17 +84,18 @@ fn main() {
         let (mut ids, mut granules, mut table_bytes, mut biggest) = (0usize, 0usize, 0usize, 0u32);
         for f in &facts {
             let p = Projected::new(1, Arc::clone(f), Some(&dialect), Shape::Core, false, None);
-            let (low, table) = p.numbered().expect("ids by definition");
-            let table = table.expect("a granule table");
+            let reference = p.reference(&dialect);
+            let low = &reference.low[..];
+            let table = p.table().expect("ids by definition");
             let tokens = p.token_order();
             // Every numbered item's tape node, nodes then tokens: what a reader holds when it asks for an id.
-            let items: Vec<u32> = p.core.iter().copied().chain(tokens.iter().map(|&(x, _)| x)).collect();
+            let items: Vec<u32> = p.nodes().map(|(_, x)| x).chain(tokens.iter().map(|&(x, _)| x)).collect();
             ids += items.len();
             granules += table.len();
             table_bytes += table.bytes();
             biggest = biggest.max(table.largest());
             for (k, &x) in items.iter().enumerate() {
-                let got = table.id(x).map(|(l, _)| l);
+                let got = table.id(p.ranks(), x).map(|(l, _)| l);
                 if got != Some(low[k]) {
                     let parent = f.parent(x).map(|q| (q, dialect.name(f, q), f.named(q)));
                     panic!("{}: item {k} (tape {x}, {:?} {:?}, parent {parent:?}): in place {got:x?}, numbered {:x}", files[facts.iter().position(|g| Arc::ptr_eq(g, f)).unwrap()].display(), dialect.name(f, x), f.text(x), low[k]);
@@ -104,17 +105,17 @@ fn main() {
             for _ in 0..rounds {
                 let passes: [&dyn Fn() -> u64; 6] = [
                     &|| low.iter().map(|&l| u64::from(l)).sum(),
-                    &|| items.iter().map(|&x| u64::from(table.id(x).unwrap().0)).sum(),
+                    &|| items.iter().map(|&x| u64::from(table.id(p.ranks(), x).unwrap().0)).sum(),
                     &|| {
                         let mut s = 0u64;
-                        table.scan(|_, l, _| s += u64::from(l));
+                        table.scan(p.ranks(), |_, l, _| s += u64::from(l));
                         s
                     },
                     &|| {
                         let q = Projected::new(1, Arc::clone(f), Some(&dialect), Shape::Core, false, None);
                         low.iter().map(|&l| u64::from(q.local_of(l).unwrap())).sum()
                     },
-                    &|| low.iter().map(|&l| u64::from(table.node(l).unwrap().0)).sum(),
+                    &|| low.iter().map(|&l| u64::from(table.node(p.ranks(), l).unwrap().0)).sum(),
                     &|| Projected::new(1, Arc::clone(f), Some(&dialect), Shape::Core, false, None).len() as u64,
                 ];
                 let mut sums = [0u64; 6];

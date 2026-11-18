@@ -121,6 +121,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rr_node_text_any", &[Number], Text),
     // A node's value as W reads it (`facts::vtab::syntax::LongTexts::value_any`): `value`'s answer (decision 0174).
     ("rr_node_value", &[Number], Text),
+    // A node's string literal's content (`facts::vtab::syntax::LongTexts::str_any`): `str`'s answer (decisions 0174,
+    // 0353 step 3).
+    ("rr_node_str", &[Number], Text),
     // `.rr`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
@@ -316,7 +319,7 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "rr_to_string" => Some(numbers[0].to_string()),
         "zero_pad" => Some(format!("{:0w$}", numbers[0], w = usize::try_from(numbers[1].clamp(0, 64)).unwrap_or(0))),
         // Read through the run's binding of its batch (`node_read`), never by value alone.
-        "rr_node_text" | "rr_node_text_any" | "rr_node_value" => None,
+        "rr_node_text" | "rr_node_text_any" | "rr_node_value" | "rr_node_str" => None,
         "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
         "semver_valid" => return Value::Integer(i64::from(crate::code_rule_dsl::semver::Range::parse(t(0)).is_some())),
         "semver_subset" => {

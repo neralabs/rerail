@@ -34,7 +34,7 @@ impl CandidateSpike for Batch {
             total.posting_calls += work.posting_calls; total.context_ranges += work.context_ranges; total.calls += work.calls; total.contexts += work.contexts; total.screens += work.screens;
             for [call, report, reference, receiver, flags, owner] in rows {
                 let id = |n: u32| -> Option<i64> {
-                    if n == NONE { Some(-1) } else { p.local.get(n as usize).copied().filter(|&v| v != NONE).map(|v| p.global(v)) }
+                    if n == NONE { Some(-1) } else { Some(p.local_of_node(n)).filter(|&v| v != NONE).map(|v| p.global(v)) }
                 };
                 // Match projection eligibility of the existing site/context/attribute relations.
                 if let (Some(call), Some(report), Some(reference), Some(receiver), Some(_)) = (id(call), id(report), id(reference), id(receiver), id(owner)) {

@@ -347,15 +347,23 @@ pub(in crate::code_rule_dsl) fn owners_delta(rel: &str, old: &dyn Source, new: &
     if old.columns().len() != width || g >= width {
         return None;
     }
+    // The new documents' rows: a view over the batch's documents finds them itself (`Source::rows_owned`: a kind-set
+    // axis by its nodes, without its solve, which was 348 MB of a PostHog run's peak for a round's few new documents);
+    // else each row's document (`Source::documents_of`: a view's rows have their document's key, no id read).
+    let fresh = new.rows_owned(g, &|n: i64| is_new(super::memo::document_of(n))).unwrap_or_else(|| {
+        let mut fresh: Vec<usize> = Vec::new();
+        new.documents_of(g, &mut |r, d| {
+            if is_new(d) {
+                fresh.push(r);
+            }
+        });
+        fresh
+    });
     let all: Vec<usize> = (0..width).collect();
-    // A view over the batch's documents finds the new documents' rows itself (`Source::rows_owned`): a scan of every
-    // row made a kind-set axis's whole solve, 348 MB of a PostHog run's peak, for a round's few new documents.
-    let new_owned = |n: i64| is_new(super::memo::document_of(n));
-    let owned = new.rows_owned(g, &new_owned).unwrap_or_else(|| (0..new.len()).filter(|&r| new_owned(new.value(r, g))).collect());
-    let made: Vec<Vec<i64>> = owned
+    let made: Vec<Vec<i64>> = fresh
         .into_iter()
         .map(|r| {
-            let mut row = vec![0i64; width];
+            let mut row = vec![0; width];
             new.row_at(r, &all, &mut row);
             row
         })
