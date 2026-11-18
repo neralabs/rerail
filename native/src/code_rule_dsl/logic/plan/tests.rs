@@ -2227,16 +2227,17 @@ fn join_keys_from_functions_derive_the_rules_rows() {
         .output hit
         .output rest
     "#;
-    let plain = parse(src).unwrap();
-    let mut keyed = plain.clone();
-    let report = crate::code_rule_dsl::logic::simplify::simplify(&mut keyed);
+    let plain = parse_version(src).unwrap();
+    let mut pipeline = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("test", std::sync::Arc::clone(&plain));
+    let report = super::corpus::preparation::simplify::passes(&mut pipeline).unwrap();
+    let keyed = pipeline.finish().unwrap().0;
     assert!(report.inverses >= 3, "the concatenations' parts: {report:?}");
     assert_eq!(report.keyed_by, ["want__key_head0"], "{report:?}");
-    let rows = |p: &Program, modes: Option<&str>| -> Vec<Vec<String>> {
+    let rows = |p: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, modes: Option<&str>| -> Vec<Vec<String>> {
         let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-        let lowered = lower::lower(p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let lowered = lower::lowered(std::sync::Arc::clone(p), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
         let db = Connection::open(&path).unwrap();
         super::super::native::register(&db).unwrap();
         super::super::native::register_symbols(&db).unwrap();

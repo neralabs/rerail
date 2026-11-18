@@ -1,13 +1,21 @@
 use super::*;
 
-fn compile_text(text: &str) -> (Placed, Compiled) {
-    let p = super::super::super::rr::parse(text).unwrap();
-    compile_program(p)
+/// Program text `text` as the run reads it: its version, whole.
+fn placed(text: &str) -> Placed {
+    Placed::whole(super::super::super::rr::parse_version(text).unwrap())
 }
 
-fn compile_program(p: Program) -> (Placed, Compiled) {
-    let (p, _) = sql_kernel::normalize(&p).unwrap();
-    let placed = Placed::of_program(&p).unwrap();
+/// Statistics of no rows for `p`'s relations.
+fn empty(p: &Placed) -> Stats {
+    Stats::empty_of(&p.fields().unwrap())
+}
+
+fn compile_text(text: &str) -> (Placed, Compiled) {
+    compile_program(placed(text))
+}
+
+fn compile_program(p: Placed) -> (Placed, Compiled) {
+    let placed = p.normalized(false).unwrap().placed;
     assert!(accepts(&placed).unwrap());
     let db = Connection::open_in_memory().unwrap();
     let inputs = Inputs {
@@ -16,7 +24,7 @@ fn compile_program(p: Program) -> (Placed, Compiled) {
         atoms: None,
         native: BTreeSet::new(),
         batch: HashMap::new(),
-        given: Some(Stats::empty(&p)),
+        given: Some(empty(&placed)),
         kept: BTreeSet::new(),
     };
     let mut model = make_plan(&placed, &db, inputs).unwrap();
@@ -79,10 +87,7 @@ fn relation_names_are_case_sensitive_through_joins_aggregates_and_negation() {
 
 #[test]
 fn nonlinear_recursion_requires_an_explicit_physical_plan() {
-    let p =
-        super::super::super::rr::parse(".decl r(x:number)\nr(1). r(y) :- r(x), r(y).\n.output r\n")
-            .unwrap();
-    assert!(!accepts(&Placed::of_program(&p).unwrap()).unwrap());
+    assert!(!accepts(&placed(".decl r(x:number)\nr(1). r(y) :- r(x), r(y).\n.output r\n")).unwrap());
 }
 
 #[test]
@@ -201,9 +206,9 @@ result(x) :- names(q), split_dot(q, "{prefix}", x).
         );
         // Production simplification turns constant cat operands into variables with
         // later equalities. Exercise that normalized form, including text-mode SQL.
-        let mut p = super::super::super::rr::parse(&source).unwrap();
-        super::super::super::simplify::simplify(&mut p);
-        let (p, q) = compile_program(p);
+        let mut pipeline = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("test", super::super::super::rr::parse_version(&source).unwrap());
+        super::super::corpus::preparation::simplify::passes(&mut pipeline).unwrap();
+        let (p, q) = compile_program(Placed::whole(pipeline.finish().unwrap().0));
         assert!(
             !q.sql.contains("rdl_int"),
             "a known prefix requires one string test, not a position scan"
@@ -228,12 +233,11 @@ fn exponentially_shared_ctes_use_bounded_bulk_stages() {
         prev=rel;
     }
     text+=&format!(".output {prev}\n");
-    let p=super::super::super::rr::parse(&text).unwrap();
+    let placed=placed(&text);
     let db=Connection::open_in_memory().unwrap();
-    let mut inputs=Inputs {facts:"main.".into(),stats:"main.".into(),atoms:Some([0;3]),native:BTreeSet::new(),batch:HashMap::new(),given:Some(Stats::empty(&p)),kept:BTreeSet::new()};
+    let mut inputs=Inputs {facts:"main.".into(),stats:"main.".into(),atoms:Some([0;3]),native:BTreeSet::new(),batch:HashMap::new(),given:Some(empty(&placed)),kept:BTreeSet::new()};
     use crate::code_rule_dsl::logic::native::component;
     component::retain(&db,"seed",vec![vec![1],vec![2]],vec![b'i']).unwrap();
-    let placed=Placed::of_program(&p).unwrap();
     stages::bind(&placed,&db,&mut inputs,"seed",component::derived(&db,"seed").unwrap()).unwrap();
     let mut model=make_plan(&placed,&db,inputs.clone()).unwrap();
     let unbounded=compile(&placed,&mut model).unwrap();
@@ -248,10 +252,9 @@ fn exponentially_shared_ctes_use_bounded_bulk_stages() {
 #[test]
 fn quiet_composed_maintenance_keeps_the_same_resident_fact() {
     use crate::code_rule_dsl::logic::native::component;
-    let p=super::super::super::rr::parse(".decl changed(x:number)\n.input changed\n.decl h__old(x:number)\n.input h__old\n.decl h__del(x:number)\nh__del(x) :- changed(x).\n.decl h__ins(x:number)\nh__ins(x) :- changed(x).\n.decl h(x:number)\nh(x) :- h__old(x), !h__del(x).\nh(x) :- h__ins(x).\n.output h\n").unwrap();
+    let p=placed(".decl changed(x:number)\n.input changed\n.decl h__old(x:number)\n.input h__old\n.decl h__del(x:number)\nh__del(x) :- changed(x).\n.decl h__ins(x:number)\nh__ins(x) :- changed(x).\n.decl h(x:number)\nh(x) :- h__old(x), !h__del(x).\nh(x) :- h__ins(x).\n.output h\n");
     let db=Connection::open_in_memory().unwrap();
-    let mut inputs=Inputs {facts:"main.".into(),stats:"main.".into(),atoms:Some([0;3]),native:BTreeSet::new(),batch:HashMap::new(),given:Some(Stats::empty(&p)),kept:BTreeSet::from(["h".into()])};
-    let p=Placed::of_program(&p).unwrap();
+    let mut inputs=Inputs {facts:"main.".into(),stats:"main.".into(),atoms:Some([0;3]),native:BTreeSet::new(),batch:HashMap::new(),given:Some(empty(&p)),kept:BTreeSet::from(["h".into()])};
     for (r,rows) in [("changed",vec![]),("h__old",vec![vec![7],vec![9]])] {
         component::retain(&db,r,rows,vec![b'i']).unwrap();
         stages::bind(&p,&db,&mut inputs,r,component::derived(&db,r).unwrap()).unwrap();
@@ -266,11 +269,10 @@ fn quiet_composed_maintenance_keeps_the_same_resident_fact() {
 #[test]
 fn restored_case_distinct_inputs_keep_their_own_bindings() {
     use crate::code_rule_dsl::logic::native::component;
-    let p=super::super::super::rr::parse(".decl leaf(x:number)\n.input leaf\n.decl LEAF(x:number)\n.input LEAF\n.decl missing(x:number)\nmissing(x) :- leaf(x), !LEAF(x).\n.output missing\n").unwrap();
+    let placed=placed(".decl leaf(x:number)\n.input leaf\n.decl LEAF(x:number)\n.input LEAF\n.decl missing(x:number)\nmissing(x) :- leaf(x), !LEAF(x).\n.output missing\n");
     let db=Connection::open_in_memory().unwrap();
-    let placed=Placed::of_program(&p).unwrap();
     for value in [2,1] {
-        let mut inputs=Inputs {facts:"main.".into(),stats:"main.".into(),atoms:Some([0;3]),native:BTreeSet::new(),batch:HashMap::new(),given:Some(Stats::empty(&p)),kept:BTreeSet::new()};
+        let mut inputs=Inputs {facts:"main.".into(),stats:"main.".into(),atoms:Some([0;3]),native:BTreeSet::new(),batch:HashMap::new(),given:Some(empty(&placed)),kept:BTreeSet::new()};
         for (r,rows) in [("leaf",vec![vec![1],vec![2]]),("LEAF",vec![vec![value]])] {
             component::retain(&db,r,rows,vec![b'i']).unwrap();
             stages::bind(&placed,&db,&mut inputs,r,component::derived(&db,r).unwrap()).unwrap();

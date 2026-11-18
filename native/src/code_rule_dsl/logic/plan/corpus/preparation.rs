@@ -16,7 +16,7 @@ pub(crate) mod lowering_tail;
 mod demand;
 mod magic;
 mod prune;
-mod simplify;
+pub mod simplify;
 mod nearest;
 pub mod parts;
 pub mod text;
