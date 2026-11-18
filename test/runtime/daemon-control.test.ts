@@ -1017,7 +1017,9 @@ describe("a state file Windows left behind", () => {
     engine.listen(pipe);
     await once(engine, "listening");
     try {
-      const state = stateFor({ pid: daemon.pid!, kernelSocketPath: pipe, accessToken: "capability", startedAt: Date.now() });
+      // A daemon stamps startedAt once it has started, 0.6 s or more after Windows created its process; stamped at
+      // once here, Node's clock and the one Windows stamps a creation with can differ by a tick, so it gets a second.
+      const state = stateFor({ pid: daemon.pid!, kernelSocketPath: pipe, accessToken: "capability", startedAt: Date.now() + 1_000 });
       vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "ok", pid: daemon.pid })));
       await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(state));
       const spawned = vi.mocked(childProcess.spawnSync).mock.calls.length;
