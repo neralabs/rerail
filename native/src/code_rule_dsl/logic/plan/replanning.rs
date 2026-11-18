@@ -1,7 +1,7 @@
 //! Dependency-directed invalidation of live join plans. Slot zero is a relation's row count;
 //! slot c + 1 is column c's distribution (NDV, fanout and complete value frequencies).
 use super::body::Body;
-use super::{Constant, Literal, Model, Rule, Step, Term, near};
+use super::{Constant, Model, Step, near};
 use crate::code_rule_dsl::logic::program_image::TermRef;
 use std::collections::{BTreeMap, HashMap};
 

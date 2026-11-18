@@ -160,7 +160,7 @@ pub fn needed(v: &Version, about: &About, roots: impl IntoIterator<Item = RelId>
 }
 
 /// The relations whose one rule's body is a single positive atom of distinct variables, wildcards and integers,
-/// with the integers' columns (`plan::projections`). Sorted by relation.
+/// with the integers' columns. Sorted by relation.
 pub fn projections(v: &Version) -> Vec<(RelId, Vec<(usize, i64)>)> {
     let mut seen = vec![false; v.rel_end() as usize];
     let mut out = Vec::new();

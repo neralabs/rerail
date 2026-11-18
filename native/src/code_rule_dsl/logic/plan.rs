@@ -21,7 +21,7 @@
 //! and profiles, with `timed_plan`, T's planning timer) and its 1 GB page caches (over the 500 MB budget; SQLite's
 //! defaults instead).
 
-use super::front::{AggOp, Atom, Literal, Program, Rule, Term, Value, cmp_binds, components_of, strata};
+use super::front::Value;
 use super::program_image::{AtomRef, CmpOp, Lit, Slot as VarSlot, TermRef, Version};
 use body::{Body, RuleKey, VarSet};
 use fields::Fields;
@@ -146,15 +146,6 @@ pub enum Constant {
     Str(String),
 }
 
-pub fn constant(t: &Term) -> Option<Constant> {
-    match t {
-        Term::Int(i) => Some(Constant::Int(*i)),
-        Term::Branded(a) => Some(Constant::Int(a.value())),
-        Term::Str(s) => Some(Constant::Str(s.to_string())),
-        _ => None,
-    }
-}
-
 fn sql_constant(v: &SqlValue) -> Option<Constant> {
     match v {
         SqlValue::Integer(i) => Some(Constant::Int(*i)),
@@ -257,36 +248,9 @@ fn expect_axis_lookups(db: impl crate::code_rule_dsl::facts::vtab::Scoped, plan:
 /// An atom's binding pattern: its relation, and which columns are bound, constants by value (T's `atom_sig`).
 pub type Sig = (String, Vec<(usize, Option<Constant>)>);
 
-/// The rule an observed fanout belongs to (`Stats::obs`): its head and body, digested. A fanout through a bound
-/// column depends on which values the rule's bindings bring: `docof($x, $d)` with `$d` bound reads a whole document,
-/// and one rule's bindings fall in 11-node documents while another's fall in documents of thousands of nodes. Pooled
-/// over rules, the first set the second's estimate (`up_once`: 1,285 rows a binding, priced at 10).
-pub fn obs_rule(head: &Atom, body: &[Literal]) -> u64 {
-    // The rule's digest (`digest_atom`, `digest_literal`), not its text written out: it is asked at every search.
-    let d = super::derived::digest(|d| {
-        digest_atom(d, head);
-        d.u64(body.len() as u64);
-        body.iter().for_each(|l| digest_literal(d, l));
-    });
-    (d as u64) ^ ((d >> 64) as u64)
-}
-
 /// The positive atoms of a body: a body of one has one order.
 fn positive_atoms(b: &Body<'_>) -> usize {
     (0..b.len()).filter(|&i| matches!(b.view(i), Lit::Atom(a) if !a.neg())).count()
-}
-
-fn atom_sig(a: &Atom, bound: &BTreeSet<String>) -> Sig {
-    let cols = a
-        .args
-        .iter()
-        .enumerate()
-        .filter_map(|(c, t)| match t {
-            Term::Var(v) if bound.contains(v.as_str()) => Some((c, None)),
-            _ => constant(t).map(|k| (c, Some(k))),
-        })
-        .collect();
-    (a.rel.to_string(), cols)
 }
 
 /// Bindings a step must have seen before its observed fanout replaces the estimate.
@@ -582,15 +546,12 @@ impl Stats {
         (nodes > 0.0).then(|| sizes / nodes)
     }
 
-    pub fn empty(prog: &Program) -> Self {
-        Stats::with_kindsets(prog.kindsets.clone())
-    }
-    /// `empty`, of a lowered program read through its version's fields.
+    /// No statistics, of a lowered program read through its version's fields.
     pub fn empty_of_lowered(l: &lower::Lowered) -> Result<Self> {
         let placed = l.placed()?;
         Ok(Stats::empty_of(&placed.fields()?))
     }
-    /// `empty`, of a program read through its fields (`Fields::kindsets`).
+    /// No statistics, of a program read through its fields (`Fields::kindsets`).
     pub fn empty_of(f: &fields::Fields<'_>) -> Self {
         Stats::with_kindsets(f.kindsets().iter().map(|(k, ks)| (f.text(*k).to_owned(), ks.iter().map(|&a| f.text(a).to_owned()).collect())).collect())
     }
@@ -1183,53 +1144,6 @@ fn small_batches(rel: &str) -> bool {
 fn levels_of(h: &str, scc: &BTreeSet<String>) -> Option<[String; 5]> {
     let names = ["cand", "chk", "held", "gone", "live"].map(|s| format!("{h}__{s}"));
     names.iter().all(|n| scc.contains(n)).then_some(names)
-}
-
-/// The variable `l = r` assigns from its right side: `r` an unbound variable and `l` a bound variable or a constant
-/// (`$s = $a` with `$s` bound reads as `$a = $s`). Without it, `p($s), q($a), $s = $a` could only be ordered as a
-/// cross product of `p` and `q` narrowed after by the test (decision 0099 item 4: `fl4317_typing_root`, 14 k rows,
-/// then 2.86 M, then 603). `RERAIL_EQUALITY_BINDS=off` keeps the left side the only one assigned, for comparison.
-fn binds_right<'t>(l: &Term, op: &str, r: &'t Term, bound: &BTreeSet<String>) -> Option<&'t crate::code_rule_dsl::logic::front::Name> {
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    if *OFF.get_or_init(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != "=" {
-        return None;
-    }
-    let Term::Var(y) = r else { return None };
-    let ready = match l {
-        Term::Var(x) => bound.contains(x.as_str()),
-        Term::Int(_) | Term::Branded(_) | Term::Str(_) => true,
-        _ => false,
-    };
-    (ready && !bound.contains(y.as_str())).then_some(y)
-}
-
-pub fn is_join(l: &Literal) -> bool {
-    matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Nearest { .. })
-}
-
-/// Whether a filter can run: `$x = e` assigns $x if it is unbound when `e`'s variables are bound (SQL and the native
-/// `cat`/`eq` steps bind an unbound left side); otherwise it is a test. An equality of a bound variable or constant
-/// with an unbound variable, `$s = $a`, assigns the right side as `$a = $s` would (`binds_right`).
-pub fn ready(l: &Literal, bound: &BTreeSet<String>) -> bool {
-    match l {
-        Literal::Atom(a) if a.neg => a.vars().is_subset(bound),
-        Literal::Cmp { l, op, r } => cmp_binds(l, op, r, bound).is_some() || binds_right(l, op, r, bound).is_some(),
-        Literal::Agg { var, over, atom, op } => {
-            let mut need = atom.vars();
-            need.remove(var);
-            if let Some(o) = over {
-                need.remove(o);
-            }
-            if let AggOp::Join { by, .. } = op {
-                by.iter().for_each(|b| {
-                    need.remove(b);
-                });
-            }
-            need.is_subset(bound)
-        }
-        Literal::Nearest { n, a, .. } => bound.contains(n) || bound.contains(a),
-        _ => true,
-    }
 }
 
 /// CPython's iteration order over a `frozenset` of small ints (the subset in `plan_rule`'s DP, whose ties go to the
@@ -4508,6 +4422,19 @@ fn input_stats(stats: &mut Stats, ndv: &mut table::ColMap<f64>, width: Option<us
     Ok(())
 }
 
+/// The program's join shape directives (`.shape`), by text, as the model reads them.
+pub fn shapes_of(f: &fields::Fields<'_>) -> std::sync::Arc<Vec<super::front::Shape>> {
+    std::sync::Arc::new(f.shapes().iter().map(|s| super::front::Shape {
+        head: f.text(s.head).to_owned(),
+        lit: f.text(s.lit).to_owned(),
+        wait: match &s.wait {
+            super::program_image::ShapeWaitRef::After(a) => super::front::ShapeWait::After(f.text(*a).to_owned()),
+            super::program_image::ShapeWaitRef::Bound(vs) => super::front::ShapeWait::Bound(vs.iter().map(|&a| f.text(a).to_owned()).collect()),
+        },
+        text: f.text(s.text).to_owned(),
+    }).collect::<Vec<_>>())
+}
+
 /// Reads the statistics and the input relations' cardinalities, distinct counts, fanouts and indexes, for the
 /// program whose whole version `p` is (its rules by handle, its fields).
 pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Result<Model> {
@@ -4588,15 +4515,7 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
             stats.dfreq.insert((rel.to_owned(), col), counts);
         }
     }
-    let shapes = std::sync::Arc::new(f.shapes().iter().map(|s| super::front::Shape {
-        head: f.text(s.head).to_owned(),
-        lit: f.text(s.lit).to_owned(),
-        wait: match &s.wait {
-            super::program_image::ShapeWaitRef::After(a) => super::front::ShapeWait::After(f.text(*a).to_owned()),
-            super::program_image::ShapeWaitRef::Bound(vs) => super::front::ShapeWait::Bound(vs.iter().map(|&a| f.text(a).to_owned()).collect()),
-        },
-        text: f.text(s.text).to_owned(),
-    }).collect::<Vec<_>>());
+    let shapes = shapes_of(&f);
     // Input indexes as column lists, each ending in the rowid column if the table has one (SQLite appends it). The
     // vtabs answer the same probes as T's tables' indexes (`facts::vtab::syntax`), so they are listed as T's.
     if inputs.atoms.is_some() {
@@ -5215,25 +5134,6 @@ static INPUT_VIEWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 /// How many strata the process held as views of an input's columns, for tests and profiles.
 pub fn input_views() -> u64 {
     INPUT_VIEWS.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// The relations of `prog` whose one rule's body is a single atom of distinct variables and wildcards.
-pub fn projections(prog: &Program) -> HashMap<String, Vec<(usize, i64)>> {
-    let mut by_head: HashMap<&str, Vec<&Rule>> = HashMap::new();
-    for r in &prog.rules {
-        by_head.entry(r.head.rel.as_str()).or_default().push(r);
-    }
-    by_head
-        .into_iter()
-        .filter_map(|(rel, rules)| {
-            let [r] = rules.as_slice() else { return None };
-            let [Literal::Atom(a)] = r.body.as_slice() else { return None };
-            let vars: Vec<&crate::code_rule_dsl::logic::front::Name> = a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }).collect();
-            let plain = !a.neg && a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild | Term::Int(_) | Term::Branded(_))) && vars.iter().collect::<HashSet<_>>().len() == vars.len();
-            let eqs = a.args.iter().enumerate().filter_map(|(c, t)| match t { Term::Int(v) => Some((c, *v)), Term::Branded(a) => Some((c, a.value())), _ => None }).collect();
-            plain.then(|| (rel.to_owned(), eqs))
-        })
-        .collect()
 }
 
 /// A run's inputs: the program's, borrowed from its version, and those its maintained forms added (their old rows
@@ -6651,97 +6551,6 @@ fn made_parts<'a, 'v: 'a>(parts: impl IntoIterator<Item = &'a Part<'v>>) -> Resu
         rule.finish().map_err(Error::Plan)?;
     }
     b.finish().map(|(v, _)| v).map_err(Error::Plan)
-}
-
-/// A term, atom or literal written into a derived value's inputs (`logic::derived`), field by field: the same
-/// pieces in the same order as its text, without making the text.
-fn digest_term(d: &mut super::derived::Inputs, t: &Term) {
-    match t {
-        Term::Var(v) => {
-            d.u64(0);
-            d.str(v);
-        }
-        Term::Wild => d.u64(1),
-        Term::Int(i) => {
-            d.u64(2);
-            d.u64(*i as u64);
-        }
-        Term::Str(s) => {
-            d.u64(3);
-            d.str(s);
-        }
-        Term::Top => d.u64(4),
-        Term::Call(f, args) => {
-            d.u64(5);
-            d.str(f);
-            d.u64(args.len() as u64);
-            args.iter().for_each(|a| digest_term(d, a));
-        }
-        Term::Branded(b) => {
-            d.u64(6);
-            d.u64(b.class as u64);
-            d.u64(u64::from(b.atom));
-        }
-    }
-}
-
-fn digest_atom(d: &mut super::derived::Inputs, a: &Atom) {
-    d.str(&a.rel);
-    d.u64(u64::from(a.neg) | u64::from(a.gated) << 1);
-    d.u64(a.args.len() as u64);
-    a.args.iter().for_each(|t| digest_term(d, t));
-}
-
-fn digest_literal(d: &mut super::derived::Inputs, l: &Literal) {
-    match l {
-        Literal::Atom(a) => {
-            d.u64(0);
-            digest_atom(d, a);
-        }
-        Literal::Cmp { l, op, r } => {
-            d.u64(1);
-            d.str(op);
-            digest_term(d, l);
-            digest_term(d, r);
-        }
-        Literal::Agg { var, op, over, atom } => {
-            d.u64(2);
-            d.str(var);
-            match op {
-                AggOp::Join { by, sep } => {
-                    d.u64(4);
-                    d.u64(by.len() as u64);
-                    by.iter().for_each(|b| d.str(b));
-                    d.str(sep);
-                }
-                // Each aggregate its own tag: `sum` and `product` over one atom are different values.
-                AggOp::Count => d.u64(0),
-                AggOp::Min => d.u64(1),
-                AggOp::Max => d.u64(2),
-                AggOp::Sum => d.u64(3),
-                AggOp::Product => d.u64(5),
-            }
-            d.str(over.as_deref().unwrap_or("\u{0}"));
-            digest_atom(d, atom);
-        }
-        Literal::Nearest { n, a, kindset } => {
-            d.u64(3);
-            d.str(n);
-            d.str(a);
-            d.str(kindset);
-        }
-        Literal::Ast { document, node, matcher, captures } => {
-            d.u64(4);
-            d.str(document);
-            d.str(node);
-            d.str(matcher);
-            d.u64(captures.len() as u64);
-            for (k, v) in captures {
-                d.str(k);
-                d.str(v);
-            }
-        }
-    }
 }
 
 /// A native spec's token for a constant term of `v`.

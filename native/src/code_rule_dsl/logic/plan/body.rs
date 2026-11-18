@@ -265,7 +265,7 @@ impl<'v> Body<'v> {
         }
         (0..self.len()).filter_map(|i| self.atom(i)).map(|a| self.rel(a)).collect()
     }
-    /// The signature of literal `i`'s atom with `bound` bound, under which its fanouts are observed (`plan::atom_sig`).
+    /// The signature of literal `i`'s atom with `bound` bound, under which its fanouts are observed (T's `atom_sig`).
     pub fn sig(&self, i: usize, bound: &VarSet) -> super::Sig {
         let cols = self.args(i).iter().enumerate().filter_map(|(c, &t)| match t {
             TermRef::Var(v) if bound.contains(v) => Some((c, None)),
@@ -315,7 +315,7 @@ impl<'v> Body<'v> {
     pub fn position_of(&self, a: AtomRef<'_>) -> Option<usize> {
         self.lits.iter().position(|l| l.atom().is_some_and(|b| b.node() == a.node()))
     }
-    /// A constant term's value (`plan::constant`).
+    /// A constant term's value.
     pub fn constant(&self, t: TermRef<'_>) -> Option<Constant> {
         match t {
             TermRef::Int(i) => Some(Constant::Int(i)),
@@ -324,7 +324,7 @@ impl<'v> Body<'v> {
             _ => None,
         }
     }
-    /// Whether literal `i` joins: a positive atom, or `nearest` (`plan::is_join`).
+    /// Whether literal `i` joins: a positive atom, or `nearest`.
     pub fn is_join(&self, i: usize) -> bool {
         match self.view(i) {
             Lit::Atom(a) => !a.neg(),
@@ -332,7 +332,10 @@ impl<'v> Body<'v> {
             _ => false,
         }
     }
-    /// Whether filter `i` can run with `bound` bound (`plan::ready`).
+    /// Whether filter `i` can run with `bound` bound: `$x = e` assigns $x if it is unbound when `e`'s variables are
+    /// bound (SQL and the native `cat`/`eq` steps bind an unbound left side); otherwise it is a test. An equality of a
+    /// bound variable or constant with an unbound variable, `$s = $a`, assigns the right side as `$a = $s` would
+    /// (`binds_right`).
     pub fn ready(&self, i: usize, bound: &VarSet) -> bool {
         match self.view(i) {
             Lit::Atom(a) if a.neg() => self.vars(i).is_subset(bound),
@@ -377,7 +380,8 @@ impl<'v> Body<'v> {
         matches!(t, TermRef::Call(f, args) if self.v.text(f) == "cat" && { args.clone().all(|a| matches!(a, TermRef::Var(_))) })
     }
 
-    /// The rule written into a digest, as `plan::digest_atom` and `plan::digest_literal` write the tree's head and body.
+    /// The rule written into a derived value's inputs (`logic::derived`), field by field: its head and body, the same
+    /// pieces in the same order as its text, without making the text.
     pub(in crate::code_rule_dsl) fn digest(&self, d: &mut super::super::derived::Inputs) {
         self.digest_atom(d, self.head());
         d.u64(self.lits.len() as u64);
@@ -390,7 +394,11 @@ impl<'v> Body<'v> {
     pub fn key(&self) -> u128 {
         *self.key.get_or_init(|| super::super::derived::digest(|d| self.digest(d)))
     }
-    /// The key observations of this rule's steps are kept under (`plan::obs_rule`).
+    /// The key observations of this rule's steps are kept under (`Stats::obs`): its head and body, digested (`key`,
+    /// not its text written out: it is asked at every search). A fanout through a bound column depends on which values
+    /// the rule's bindings bring: `docof($x, $d)` with `$d` bound reads a whole document, and one rule's bindings fall
+    /// in 11-node documents while another's fall in documents of thousands of nodes. Pooled over rules, the first set
+    /// the second's estimate (`up_once`: 1,285 rows a binding, priced at 10).
     pub fn observed_key(&self) -> u64 {
         let d = self.key();
         (d as u64) ^ ((d >> 64) as u64)
@@ -503,7 +511,10 @@ impl std::fmt::Display for HeadText<'_, '_> {
     }
 }
 
-/// An equality of a bound variable or constant with an unbound variable assigns the right side (`plan::binds_right`).
+/// The variable `l = r` assigns from its right side: `r` an unbound variable and `l` a bound variable or a constant
+/// (`$s = $a` with `$s` bound reads as `$a = $s`). Without it, `p($s), q($a), $s = $a` could only be ordered as a
+/// cross product of `p` and `q` narrowed after by the test (decision 0099 item 4: `fl4317_typing_root`, 14 k rows,
+/// then 2.86 M, then 603). `RERAIL_EQUALITY_BINDS=off` keeps the left side the only one assigned, for comparison.
 pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &VarSet) -> Option<Slot> {
     static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *OFF.get_or_init(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != CmpOp::Eq {

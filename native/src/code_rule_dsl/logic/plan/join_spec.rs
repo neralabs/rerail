@@ -221,7 +221,7 @@ impl<'a> Run<'a, '_> {
         let pf = self.fields();
         let inputs = |d: &mut super::super::derived::Inputs| {
             if bare {
-                // The tree's head of no terms, as `digest_atom` writes it.
+                // A head of no terms, as `Body::digest_atom` writes it.
                 d.str(b.rel(b.head()));
                 d.u64(0);
                 d.u64(0);
