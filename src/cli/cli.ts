@@ -711,9 +711,10 @@ async function runRepositoryCommand(command: "start" | "stop", rawArgs: readonly
   const firstOption = rawArgs.findIndex(argument => argument.startsWith("--"));
   const positionals = command === "stop" ? rawArgs.slice(0, firstOption === -1 ? rawArgs.length : firstOption) : [];
   const args = rawArgs.slice(positionals.length);
+  // `stop` never asks, so it gets no reader and what is typed ahead stays for the shell.
+  if (command === "stop") return runStopCommand(args, positionals, setupIo(args, false));
   const io = setupIo(args);
   try {
-    if (command === "stop") return runStopCommand(args, positionals, io);
     if (args.includes(JSON_FLAG)) {
       const step = await startStep(args, context, machinePlace(context));
       io.say(JSON.stringify(step));
