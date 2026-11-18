@@ -348,7 +348,8 @@ interface LeftCall {
 /**
  * An engine service over a checkout of its own holding `files`, which checks the events hooks leave in its home, with a
  * Claude Code session started: its auditor keeps each edit batch and steers once for each finding `toldFor` gives, each
- * steer naming its batch so none stands for another. Where `cold`, its evaluator opens only at `open`.
+ * steer naming its batch so none stands for another, and scoped to its file as the enforcer's are: a later revision of
+ * another file leaves it queued. Where `cold`, its evaluator opens only at `open`.
  */
 async function serviceFor(files: Record<string, string>, cold: boolean) {
   const root = await realpath(await mkdtemp(join(process.platform === "win32" ? tmpdir() : SOCKET_ROOT, "rerail-left-")));
@@ -378,8 +379,8 @@ async function serviceFor(files: Record<string, string>, cold: boolean) {
       },
       auditGeneratedEdits: async (_sessionId, batch) => {
         batches.push(batch);
-        const told = batch.mode === "log" ? [] : batch.edits.flatMap(toldFor);
-        for (const finding of told) await steerDelivery.requestSteer(SESSION, "steer", `[${batch.revision}] ${finding}`, { revision: batch.revision, scope: [] });
+        for (const edit of batch.mode === "log" ? [] : batch.edits)
+          for (const finding of toldFor(edit)) await steerDelivery.requestSteer(SESSION, "steer", `[${batch.revision}] ${finding}`, { revision: batch.revision, scope: [edit.path] });
         return { revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] };
       },
       settleGeneratedEdits: async () => undefined,
