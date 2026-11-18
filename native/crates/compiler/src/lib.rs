@@ -38,6 +38,7 @@ pub mod native_cpu_shape;
 pub mod clif_rust;
 pub mod rust_stream;
 pub mod native_cpu_stream;
+pub mod native_cpu_pp;
 pub mod native_cpu_tape;
 pub mod native_ir;
 pub mod program;

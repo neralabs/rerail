@@ -18,6 +18,8 @@
 //!     pass: each record's parent and extra flag);
 //!   - `Return`: the next call of the call stack, popped (the words' verifier: no call is made
 //!     on a cycle without a token, so the returns are at most the calls).
+//!   - `Pop`: the next entry of a stack the machine keeps, popped (the preprocessing words: a
+//!     source at its end, the conditionals opened in a file), so at most what was pushed.
 //!
 //!   So no loop steps a byte at a time. The check is on the graph: with the named blocks taken
 //!   out, it must have no cycle (a depth-first search), as the words' verifier cuts `TOKEN`'s
@@ -39,6 +41,7 @@ pub enum Step {
     Word,
     Node,
     Return,
+    Pop,
 }
 
 /// Why a function was refused.

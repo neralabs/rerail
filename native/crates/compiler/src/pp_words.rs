@@ -65,6 +65,7 @@ pub const STOP: u8 = 32;
 /// A token: its kind, flags and spelling (`buf` 0: the scratch bytes; `f + 1`: file `f`'s), and
 /// the expansion it came from (`exp`: 0 none, else an index + 1 of `Expanded::exps`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(C)]
 pub struct Tok {
     pub kind: u8,
     pub flags: u8,
@@ -390,20 +391,21 @@ const VA_OPT_MARK: u32 = 0xfffe;
 const PASTE_MARK: u32 = 1 << 16;
 
 #[derive(Clone, Copy)]
-struct Src {
+#[repr(C)]
+pub(crate) struct Src {
     /// The file, or `NONE`: the arena.
-    file: u32,
-    pos: u32,
-    end: u32,
+    pub(crate) file: u32,
+    pub(crate) pos: u32,
+    pub(crate) end: u32,
     /// The macro enabled again where it is left, or `NONE`.
-    def: u32,
-    stop: bool,
+    pub(crate) def: u32,
+    pub(crate) stop: bool,
     /// A file's: the token index of the `#` of the directive read last.
-    hash: u32,
+    pub(crate) hash: u32,
     /// A file's, as `#line` set them: its presumed line less its physical line, and its
     /// presumed name (scratch bytes; `NONE`: its path).
-    delta: i32,
-    presumed: (u32, u32),
+    pub(crate) delta: i32,
+    pub(crate) presumed: (u32, u32),
 }
 
 impl Src {
@@ -417,20 +419,21 @@ impl Src {
 }
 
 #[derive(Clone, Copy, Default)]
-struct Def {
-    fnlike: bool,
-    variadic: bool,
-    params: u16,
+#[repr(C)]
+pub(crate) struct Def {
+    pub(crate) fnlike: bool,
+    pub(crate) variadic: bool,
+    pub(crate) params: u16,
     /// The body: file `file`'s tokens `first..end`, and their marks from `marks`.
-    file: u32,
-    first: u32,
-    end: u32,
-    marks: u32,
+    pub(crate) file: u32,
+    pub(crate) first: u32,
+    pub(crate) end: u32,
+    pub(crate) marks: u32,
     /// The arguments to expand before substitution, in the order it asks: `uses[pre.0..pre.1]`.
-    pre: (u32, u32),
-    disabled: bool,
+    pub(crate) pre: (u32, u32),
+    pub(crate) disabled: bool,
     /// A built-in's index in `BUILTINS` + 1, or 0.
-    builtin: u8,
+    pub(crate) builtin: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -679,7 +682,9 @@ fn word_byte(c: u8) -> bool {
 }
 
 /// Runs a preprocessing program over a TU (file 0 its main file), in bounds.
-pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Result<Expanded, Refused> {
+impl<'a> Machine<'a> {
+    /// The machine at a TU's start: the main file its source, the built-ins defined.
+    fn new(program: &'a Words, files: &'a [File<'a>], env: &'a Env<'a>, bounds: &'a Bounds) -> Result<Machine<'a>, Refused> {
     let table = bounds.macros.next_power_of_two() * 2;
     let mut m = Machine {
         program,
@@ -724,6 +729,122 @@ pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Resul
         digits: None,
     };
     m.install_builtins().map_err(|why| Refused { pc: 0, why })?;
+    Ok(m)
+    }
+
+    fn finish(self) -> Expanded {
+        Expanded { toks: self.out, scratch: self.scratch, wanted: self.wanted, exps: self.exps, unanswered: self.unanswered }
+    }
+}
+
+/// The compiled words' view of the machine (`native_cpu_pp`): each buffer's start, length and
+/// room (its bound; the vector is reserved to it ahead, so a write within the room never
+/// moves it), and the scalars the words read. The code reads and writes them in place, and the
+/// lengths are given back to the vectors when it returns.
+#[repr(C)]
+pub(crate) struct Ctx {
+    pub files: *const FileC,
+    pub sources: *mut Src,
+    pub nsources: u64,
+    pub room_sources: u64,
+    pub arena: *mut Tok,
+    pub narena: u64,
+    pub room_arena: u64,
+    pub out: *mut Tok,
+    pub nout: u64,
+    pub room_out: u64,
+    pub scratch: *mut u8,
+    pub nscratch: u64,
+    pub room_scratch: u64,
+    /// `(u32, bool, bool)`s (`Machine::conds`), at their Rust layout: the code is made in this
+    /// process (`COND_*`).
+    pub conds: *mut u8,
+    pub nconds: u64,
+    pub room_conds: u64,
+    pub defs: *mut Def,
+    pub returns: *mut u32,
+    pub nreturns: u64,
+    pub room_returns: u64,
+    pub collecting: u64,
+    pub t: Tok,
+    pub from_file: u8,
+    pub in_if: u8,
+}
+
+/// A file as the compiled words read it.
+#[repr(C)]
+pub(crate) struct FileC {
+    pub toks: *const Tok,
+    pub ntoks: u64,
+    pub bytes: *const u8,
+    pub nbytes: u64,
+}
+
+/// A conditional's layout (`Machine::conds`): its size and its file source's offset.
+pub(crate) const COND_SIZE: usize = std::mem::size_of::<(u32, bool, bool)>();
+pub(crate) const COND_SRC: usize = std::mem::offset_of!((u32, bool, bool), 0);
+
+/// Runs compiled words (`native_cpu_pp`): `code` over the machine's buffers, the result `0`
+/// (accepted) or `pc + 1` and a reason's index into `reasons` above bit 32.
+///
+/// # Safety
+/// `code` reads and writes only within the `Ctx` it is given: each buffer below its room.
+pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, bounds: &Bounds, code: unsafe extern "C" fn(*mut Ctx) -> u64, reasons: &[&'static str]) -> Result<Expanded, Refused> {
+    let mut m = Machine::new(program, files, env, bounds)?;
+    let filesc: Vec<FileC> = files.iter().map(|f| FileC { toks: f.toks.as_ptr(), ntoks: f.toks.len() as u64, bytes: f.bytes.as_ptr(), nbytes: f.bytes.len() as u64 }).collect();
+    fn room<T>(v: &mut Vec<T>, n: usize) -> u64 {
+        v.reserve_exact(n.saturating_sub(v.len()));
+        n as u64
+    }
+    let mut returns = vec![0u32; bounds.depth];
+    let mut c = Ctx {
+        files: filesc.as_ptr(),
+        room_sources: room(&mut m.sources, bounds.depth),
+        sources: m.sources.as_mut_ptr(),
+        nsources: m.sources.len() as u64,
+        room_arena: room(&mut m.arena, bounds.arena),
+        arena: m.arena.as_mut_ptr(),
+        narena: m.arena.len() as u64,
+        room_out: room(&mut m.out, bounds.output),
+        out: m.out.as_mut_ptr(),
+        nout: m.out.len() as u64,
+        room_scratch: {
+            m.scratch.reserve_exact(bounds.scratch.saturating_sub(m.scratch.len()));
+            bounds.scratch as u64
+        },
+        scratch: m.scratch.as_mut_ptr(),
+        nscratch: m.scratch.len() as u64,
+        room_conds: room(&mut m.conds, bounds.depth * 16),
+        conds: m.conds.as_mut_ptr().cast(),
+        nconds: m.conds.len() as u64,
+        defs: m.defs.as_mut_ptr(),
+        returns: returns.as_mut_ptr(),
+        nreturns: 0,
+        room_returns: bounds.depth as u64,
+        collecting: u64::from(m.collecting),
+        t: m.t,
+        from_file: u8::from(m.from_file),
+        in_if: u8::from(m.in_if),
+    };
+    // SAFETY: the caller's.
+    let r = unsafe { code(&mut c) };
+    // SAFETY: the code wrote each buffer below its room, which its vector has reserved.
+    unsafe {
+        m.sources.set_len(c.nsources as usize);
+        m.arena.set_len(c.narena as usize);
+        m.out.set_len(c.nout as usize);
+        m.scratch.set_len(c.nscratch as usize);
+        m.conds.set_len(c.nconds as usize);
+    }
+    (m.collecting, m.t, m.from_file, m.in_if) = (c.collecting as u32, c.t, c.from_file != 0, c.in_if != 0);
+    if r == 0 {
+        return Ok(m.finish());
+    }
+    Err(Refused { pc: (r & 0xffff_ffff) as usize - 1, why: reasons.get((r >> 32) as usize).copied().unwrap_or("the compiled words refuse") })
+}
+
+pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Result<Expanded, Refused> {
+    let mut m = Machine::new(program, files, env, bounds)?;
     let words = &program.words;
     let mut returns: Vec<usize> = Vec::new();
     let mut pc = 0usize;
@@ -753,7 +874,7 @@ pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Resul
                 pc = returns.pop().ok_or_else(|| fail("a return with no call"))?;
                 None
             }
-            ACCEPT => return Ok(Expanded { toks: m.out, scratch: m.scratch, wanted: m.wanted, exps: m.exps, unanswered: m.unanswered }),
+            ACCEPT => return Ok(m.finish()),
             STOP => return Err(fail("the program stopped")),
             READ => {
                 m.read();
