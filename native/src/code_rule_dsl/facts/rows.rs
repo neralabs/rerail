@@ -39,6 +39,7 @@ impl Life {
         match self {
             Life::Run => FACTS_BYTES,
             Life::Source => FACTS_BYTES / 4,
+            Life::Kept => FACTS_BYTES / 4,
             // Each alone in a block of its size (`try_new`).
             Life::Device => 0,
         }
@@ -72,6 +73,9 @@ pub enum Life {
     /// runs' relations, they kept those blocks alive past them: on posthog/hogql every block leased stayed, and the
     /// peak resident size rose 125 MB.
     Source,
+    /// The relations a run keeps past it (a chunk's exports, read by the cross-file part where they lie): apart from
+    /// the run's other relations, so holding them does not keep those relations' blocks.
+    Kept,
     /// A device run's own relations (decision 0325 step 5): the views it makes from a chunk, a fixpoint's totals and
     /// deltas, an upload. Leased as the device's join buffers are, within its budget (a refusal runs the stratum on
     /// the CPU), and apart from the runs' relations, which they would keep alive.
@@ -79,7 +83,19 @@ pub enum Life {
 }
 
 /// The blocks new relations go in outside a chunk, while they have room: one a `Life`.
-static OPEN: [Mutex<Option<Arc<Facts>>>; 3] = [Mutex::new(None), Mutex::new(None), Mutex::new(None)];
+static OPEN: [Mutex<Option<Arc<Facts>>>; 4] = [Mutex::new(None), Mutex::new(None), Mutex::new(None), Mutex::new(None)];
+
+/// Every block leased, by `Life`, while it lives: what a profile reads (`held`).
+static LIVE: Mutex<[Vec<std::sync::Weak<Facts>>; 3]> = Mutex::new([Vec::new(), Vec::new(), Vec::new()]);
+
+/// Per `Life`, the blocks held now, their bytes written and their bytes reserved: a profile's account of the rows
+/// outside the heap.
+pub fn held() -> [(usize, usize, usize); 3] {
+    let live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    std::array::from_fn(|l| {
+        live[l].iter().filter_map(std::sync::Weak::upgrade).fold((0, 0, 0), |(n, u, r), f| (n + 1, u + f.block.used(), r + f.block.reserved()))
+    })
+}
 
 /// A chunk's blocks (Q58): the ones its new relations go in while they have room (one a `Life`), and every one it
 /// made, to count those that outlive it. A block lives while any relation in it does, so one shared by every chunk
@@ -87,7 +103,7 @@ static OPEN: [Mutex<Option<Arc<Facts>>>; 3] = [Mutex::new(None), Mutex::new(None
 /// counted it whole.
 #[derive(Default)]
 pub struct Chunk {
-    open: [Mutex<Option<Arc<Facts>>>; 3],
+    open: [Mutex<Option<Arc<Facts>>>; 4],
     made: Mutex<Vec<std::sync::Weak<Facts>>>,
 }
 
@@ -192,10 +208,15 @@ fn spec(k: usize) -> Spec {
     Spec { widths: vec![8; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG }
 }
 
-/// One relation of a block: a segment or a tail, shared by its holders; given back to the block's free list when
-/// the last lets go (decision 0342). A reader in place holds it too (`InBlock::part`).
+/// One relation of a block: a segment or a tail, shared by its holders; its chunks given back to the block's free
+/// list when the last lets go (decision 0342). A reader in place holds it too (`InBlock::part`).
 #[derive(Clone)]
-pub struct Part(Arc<Held>);
+pub struct Part {
+    held: Arc<Held>,
+    /// Its rows are the relation's first `cap` (`u32::MAX`: all of them): a segment shared with the tail it was
+    /// taken from (`Rows::clone`, `shared`), whose writer goes on past it. A capped part is never written.
+    cap: u32,
+}
 
 /// A part's relation, where it lies.
 pub struct Held {
@@ -207,10 +228,22 @@ pub struct Held {
     cols: Arc<[ColRead]>,
 }
 
+/// The bytes of dead relations' chunks given back to the OS so far (`Held`'s drop), for a profile.
+static GIVEN_BACK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The bytes of dead relations' chunks given back to the OS so far.
+pub fn given_back() -> usize {
+    GIVEN_BACK.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 impl Drop for Held {
     fn drop(&mut self) {
-        // SAFETY: the relation lies in `facts`' block, and this was its last holder.
-        unsafe { (*self.rel).release(&self.facts.block) };
+        // SAFETY: the relation lies in `facts`' block, and this was its last holder. Its chunks go to the block's
+        // free list, their whole pages past the list's link back to the OS (Q76: a block lives while any relation in
+        // it does, so a chunk's dead relations otherwise kept their pages resident; about 500 MB of a 300-file cold
+        // run's footprint, Q76).
+        let given = unsafe { (*self.rel).release(&self.facts.block) };
+        GIVEN_BACK.fetch_add(given, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -218,7 +251,7 @@ impl std::ops::Deref for Part {
     type Target = Held;
     #[inline(always)]
     fn deref(&self) -> &Held {
-        &self.0
+        &self.held
     }
 }
 
@@ -244,18 +277,34 @@ impl Part {
         // A device relation is written once at its size, and lives as the device's buffers did: alone in a block of
         // its size (leased within the device's budget), given back with it. A run's tail grows: its block has room for
         // it to double.
-        let alone = life == Life::Device;
+        // A relation given room past its rows (`extra`: its indexes', `Rows::with_index_room`) is alone in its block
+        // too, so its indexes lie with it.
+        let alone = life == Life::Device || extra > 0;
         let chunk = CHUNK.with(|c| c.borrow().clone());
         let mut open = chunk.as_ref().map_or(&OPEN[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
             let facts = match &*open {
-                _ if alone => Arc::new(Facts::new(lease_exact(need + extra, life)?)),
+                _ if alone => {
+                    let f = Arc::new(Facts::new(lease_exact(need + extra, life)?));
+                    if let Some(c) = &chunk {
+                        c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
+                    }
+                    if life != Life::Device {
+                        let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+                        live[life as usize].retain(|w| w.strong_count() > 0);
+                        live[life as usize].push(Arc::downgrade(&f));
+                    }
+                    f
+                }
                 Some(f) if !fresh && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => f.clone(),
                 _ => {
                     let f = Arc::new(Facts::new(lease(2 * need + MARGIN, life)?));
                     if let Some(c) = &chunk {
                         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
                     }
+                    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+                    live[life as usize].retain(|w| w.strong_count() > 0);
+                    live[life as usize].push(Arc::downgrade(&f));
                     *open = Some(f.clone());
                     f
                 }
@@ -265,7 +314,7 @@ impl Part {
             {
                 let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
                 let rel = std::ptr::from_ref(rel);
-                return Ok(Part(Arc::new(Held { facts, life, rel, cols })));
+                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols }), cap: u32::MAX });
             }
         }
         unreachable!("a new block of {} bytes holds a relation of {need}", 2 * need + MARGIN)
@@ -287,6 +336,11 @@ impl Part {
         Ok(part)
     }
 
+    /// How long its rows live: the blocks it is in.
+    pub fn life(&self) -> Life {
+        self.life
+    }
+
     /// Its relation's descriptor's offset in its block: what a reader's `rel_*` reads take.
     pub fn rel_at(&self) -> usize {
         self.facts.block.offset_of(self.rel)
@@ -305,7 +359,23 @@ impl Part {
 
     #[inline]
     pub fn len(&self) -> u32 {
-        self.rel().rows.len()
+        self.rel().rows.len().min(self.cap)
+    }
+
+    /// This part's rows as they are now, as a segment: shared, not copied, and blind to rows its writer adds later.
+    fn prefix(&self) -> Part {
+        Part { held: self.held.clone(), cap: self.len() }
+    }
+
+    /// Whether it is a prefix of its relation (`prefix`), which a reader of the relation itself would read past.
+    fn capped(&self) -> bool {
+        self.cap != u32::MAX
+    }
+
+    /// Its row `i`'s value in column `c`, where it lies.
+    #[inline(always)]
+    pub fn get(&self, i: u32, c: usize) -> i64 {
+        self.cols[c].get(i)
     }
 
     /// An empty relation of `k` columns in a run's block, with room for `rows` rows that a writer other than the
@@ -313,6 +383,12 @@ impl Part {
     /// `rows_at`), then says how many it wrote (`written`).
     pub fn for_writes(k: usize, rows: usize) -> Part {
         Part::new(Life::Run, k, rows)
+    }
+
+    /// This relation where it lies, `rows` of it, for a reader or writer that binds its block (the device): it keeps
+    /// the relation's chunks as the part does.
+    pub fn in_block(&self, rows: u32) -> InBlock {
+        InBlock { facts: self.facts.clone(), at: self.rel_at(), rows, dead: 0, part: Some(self.clone()) }
     }
 
     /// Its rows' descriptor's offset in its block: what a writer's `rows_at` takes.
@@ -334,6 +410,7 @@ impl Part {
     /// Appends a row of `k` values, room made first: a full block moves the relation to another.
     #[inline]
     fn push(&mut self, row: &[i64]) {
+        debug_assert!(!self.capped(), "a write to a shared prefix");
         let i = self.len();
         if self.rel().rows.reserved() <= i {
             self.grow(u64::from(i) + 1);
@@ -350,6 +427,7 @@ impl Part {
 
     /// Room for `n` rows: chunks in its block, or the relation moved to a block with room for twice as many.
     fn grow(&mut self, n: u64) {
+        debug_assert!(!self.capped(), "a write to a shared prefix");
         if self.rel().rows.try_reserve(&self.facts.block, n) {
             return;
         }
@@ -408,6 +486,7 @@ pub struct Rows {
 
 /// Where a relation's rows lie for a reader that binds its block (the device, decision 0325): the block, kept while
 /// this lives, and the relation's descriptor's offset in it.
+#[derive(Clone)]
 pub struct InBlock {
     pub facts: Arc<Facts>,
     pub at: usize,
@@ -419,15 +498,53 @@ pub struct InBlock {
     pub part: Option<Part>,
 }
 
+impl InBlock {
+    /// The relation it binds, where it lies.
+    pub fn relation(&self) -> &Relation {
+        // SAFETY: `at` is a relation's descriptor in `facts`' block, whose pages `own` keeps.
+        unsafe { &*self.facts.block.ptr::<Relation>(self.at) }
+    }
+
+    /// The relation's own index on its columns `cols` over its rows (decision 0325 step 5): found where it was built
+    /// before (by the device, or an earlier probe), else built now into its block, by the host, as the device builds
+    /// it. `None` for a delta (dead rows) or a key past `MAX_KEY`, or when the block has no room for it.
+    pub fn own_index(&self, cols: &[u16]) -> Option<usize> {
+        self.own_index_for(cols, self.rows as usize)
+    }
+
+    /// `own_index`, its buckets sized for `keys` distinct keys (`Relation::try_reserve_index_buckets`), when it is
+    /// built now.
+    pub fn own_index_for(&self, cols: &[u16], keys: usize) -> Option<usize> {
+        let r = self.relation();
+        if self.dead != 0 || r.base_rows != 0 || cols.is_empty() || cols.len() > rerail_blocks::relation::MAX_KEY {
+            return None;
+        }
+        let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = r.find_index(cols, self.rows) {
+            return Some(i);
+        }
+        // SAFETY: under the block's index lock; the relation's rows `0..rows` are written.
+        let room = unsafe { r.try_reserve_index_buckets(&self.facts.block, cols, self.rows, keys) }?;
+        // SAFETY: the room was just reserved under the lock, and nothing reads it until it is marked built.
+        unsafe {
+            r.build_index(&room);
+            r.index_built(&room);
+        }
+        Some(room.index)
+    }
+}
+
 impl Clone for Rows {
-    /// The segments shared; the tail copied (it is written by one `Rows`).
+    /// The segments shared, and the tail too, not copied: as a segment of the rows it holds now (`Part::prefix`). Its
+    /// writer, the one `Rows` holding it, goes on past them; the copy's next row starts a tail of its own.
     fn clone(&self) -> Rows {
-        let tail = self.tail.as_ref().map(|t| {
-            let mut c = Part::new(self.life, self.k, t.len() as usize);
-            c.copy_from(t, 0, t.len());
-            c
-        });
-        Rows { segs: self.segs.clone(), from: self.from, tail, k: self.k, hint: self.hint, life: self.life, merged: Default::default(), kills: Default::default() }
+        let mut segs = self.segs.clone();
+        let mut from = self.from;
+        if let Some(t) = self.tail.as_ref().filter(|t| t.len() > 0) {
+            segs.push((from, t.prefix()));
+            from += t.len();
+        }
+        Rows { segs, from, tail: None, k: self.k, hint: self.hint, life: self.life, merged: Default::default(), kills: Default::default() }
     }
 }
 
@@ -453,6 +570,18 @@ impl Rows {
             r.extend_from_slice(&rows);
         }
         r.freeze(n)
+    }
+
+    /// No rows yet, of `k` values each, living `life` long, with room for `rows` rows alone in a block, and past them
+    /// for `indexes` indexes of the relation's own over its rows (`InBlock::own_index_for`): a source held so is
+    /// probed by its own indexes, not host tables (decision 0325 step 5). The room is the block's address space: its
+    /// pages are taken as an index is written.
+    pub fn with_index_room(k: usize, life: Life, rows: usize, indexes: usize) -> Rows {
+        let cap = rows.next_power_of_two().max(1);
+        let index = 4 * (cap + 1) + 4 * rows.max(1) + 64;
+        let extra = indexes.max(1) * index + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
+        let part = Part::try_new_with(life, k, rows, extra).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"));
+        Rows { k, life, hint: rows, tail: Some(part), ..Rows::default() }
     }
 
     /// The rows held.
@@ -534,14 +663,13 @@ impl Rows {
         self
     }
 
-    /// The `n` rows of a frozen relation, shared: its segments taken (and its tail copied, if it has one), with an
-    /// empty tail from `n` on, for a relation that starts as them.
+    /// The `n` rows of a frozen relation, shared: its segments taken (and its tail, if it has one, as the rows it holds
+    /// now: `Part::prefix`, not copied), with an empty tail from `n` on, for a relation that starts as them.
     pub fn shared(&self, n: usize) -> Rows {
         let mut segs = self.segs.clone();
+        // The tail shared as it is now, not copied (`Part::prefix`).
         if let Some(t) = self.tail.as_ref().filter(|t| t.len() > 0) {
-            let mut c = Part::new(self.life, self.k, t.len() as usize);
-            c.copy_from(t, 0, t.len());
-            segs.push((self.from, c));
+            segs.push((self.from, t.prefix()));
         }
         Rows { segs, from: n as u32, tail: None, k: self.k, hint: 0, life: self.life, merged: Default::default(), kills: Default::default() }
     }
@@ -570,7 +698,8 @@ impl Rows {
         Some(match (&self.segs[..], &self.tail) {
             ([], None) => return None,
             ([], Some(t)) if self.from == 0 => t,
-            ([(0, p)], None) => p,
+            // A shared prefix is not its relation: a reader that binds the relation would read past it.
+            ([(0, p)], None) if !p.capped() => p,
             (segs, tail) => self.merged.get_or_init(|| {
                 let parts: Vec<&Part> = segs.iter().map(|(_, p)| p).chain(tail.iter()).collect();
                 let mut one = Part::new(self.life, self.k, parts.iter().map(|p| p.len() as usize).sum());
@@ -606,6 +735,41 @@ impl Rows {
         self.from = at + n;
     }
 
+    /// Its relations, oldest first: the frozen segments, then the tail if it has rows. A reader that keeps them
+    /// (`append_part`) holds the rows where they lie.
+    pub fn parts(&self) -> impl Iterator<Item = &Part> {
+        self.segs.iter().map(|(_, p)| p).chain(self.tail.iter().filter(|t| t.len() > 0))
+    }
+
+    /// Rows `lo..hi`, part by part in id order: each part, the rows of it (its own row numbers `from..to`), and the
+    /// id of row `from`. A sequential reader finds each part once, not each row's (rows gathered from many relations,
+    /// `append_part`, lie in many parts).
+    pub fn each_run(&self, lo: u32, hi: u32, mut f: impl FnMut(&Part, u32, u32, u32)) {
+        let mut id = lo;
+        while id < hi {
+            let (p, i) = self.part_of(id);
+            let n = (p.len() - i).min(hi - id);
+            f(p, i, i + n, id);
+            id += n;
+        }
+    }
+
+    /// Values a row.
+    pub fn width(&self) -> usize {
+        self.k
+    }
+
+    /// These rows with the tail made a segment (moved), and no segments merged, as `freeze` merges them past
+    /// `MAX_SEGMENTS`: rows gathered from many relations (`append_part`), read where they lie.
+    pub fn sealed(mut self) -> Rows {
+        if let Some(tail) = self.tail.take().filter(|t| t.len() > 0) {
+            let n = tail.len();
+            self.segs.push((self.from, tail));
+            self.from += n;
+        }
+        self
+    }
+
     /// Whether these rows share a frozen segment with `other` (a relation started from it).
     pub fn shares(&self, other: &Rows) -> bool {
         self.segs.iter().any(|(_, a)| other.segs.iter().any(|(_, b)| std::ptr::eq(a.rel, b.rel)))
@@ -635,7 +799,10 @@ impl Rows {
     #[inline(always)]
     fn part_of(&self, id: u32) -> (&Part, u32) {
         if id >= self.from {
-            return (self.tail.as_ref().expect("a row of the tail"), id - self.from);
+            let Some(tail) = self.tail.as_ref() else {
+                panic!("row {id} of a relation of {} rows ({} values a row, the tail from {}, {} segments): past its rows", self.rows(), self.k, self.from, self.segs.len())
+            };
+            return (tail, id - self.from);
         }
         let (first, p) = match &self.segs[..] {
             [only] => only,
@@ -721,6 +888,18 @@ impl std::fmt::Debug for Row {
 mod tests {
     use super::*;
 
+    /// An empty kept relation keeps its width: one started from it holds the rows pushed to it (it dropped them when
+    /// the width came from the rows, none for no rows).
+    #[test]
+    fn a_relation_started_from_an_empty_one_keeps_its_rows() {
+        let kept = Rows::frozen(3, Vec::new(), 0);
+        let mut next = kept.shared(0);
+        next.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
+        assert_eq!(next.rows(), 2);
+        assert_eq!(*next.row(1, 3), [4, 5, 6]);
+        assert_eq!(next.get(0, 2), 3);
+    }
+
     /// A frozen relation's rows are shared by one started from it, which pushes its own after them; freezing that
     /// one moves its tail into a segment, and both read every row by id.
     #[test]
@@ -753,6 +932,29 @@ mod tests {
         assert_eq!(*rows.row(12, k), [1000, 2000]);
         assert_eq!(*rows.row(31, k), [1019, 2019]);
         assert_eq!(rows.len(), n * k);
+    }
+
+    /// A copy of rows still being written shares their tail, not a copy of it: it reads the rows the tail held when
+    /// it was made, the writer's later rows are not among them, and its own pushes start a tail of its own.
+    #[test]
+    fn a_copy_shares_the_tail_and_sees_only_its_rows() {
+        let k = 2;
+        let mut rows = Rows::new(k);
+        rows.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
+        let mut copy = rows.clone();
+        assert!(std::ptr::eq(copy.segs.last().expect("the tail, shared").1.rel, rows.tail.as_ref().expect("a tail").rel), "the tail was copied");
+        rows.extend_from_slice(&[7, 8]);
+        assert_eq!((rows.rows(), copy.rows()), (4, 3));
+        assert_eq!(copy.to_vec(0, 3, k), [1, 2, 3, 4, 5, 6]);
+        copy.extend_from_slice(&[9, 10]);
+        assert_eq!(*copy.row(3, k), [9, 10]);
+        assert_eq!(*rows.row(3, k), [7, 8]);
+        // `shared` takes the tail as it is now, as `clone` does.
+        let next = rows.shared(4);
+        assert_eq!((next.rows(), next.to_vec(0, 4, k)), (4, vec![1, 2, 3, 4, 5, 6, 7, 8]));
+        // A shared prefix is not bound as its relation: one relation of its rows is made for a reader that binds one.
+        let one = copy.in_block().expect("rows");
+        assert_eq!(one.rows, 4);
     }
 
     /// A relation kept with no rows and started again (the cross-file part maintained from its frames in a new

@@ -173,7 +173,7 @@ pub mod matcher {
             matcher_metal::matcher_roots(matcher, tapes)
         }
 
-        fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: &[Vec<Vec<u32>>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error> {
+        fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: crate::code_rule_dsl::transducer::packed::device::ClauseRoots<'_>) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error> {
             matcher_metal::wave_roots(wave, tapes, roots)
         }
 

@@ -67,6 +67,12 @@ pub mod go_lean;
 pub mod c_lean;
 /// C#'s tape from the lean parser (`rerail_csharp_lean`).
 pub mod csharp_lean;
+/// Kotlin's tape from the lean parser (`rerail_kotlin_lean`).
+pub mod kotlin_lean;
+/// Swift's tape from the lean parser (`rerail_swift_lean`).
+pub mod swift_lean;
+/// Scala's tape from the lean parser (`rerail_scala_lean`).
+pub mod scala_lean;
 /// PHP's tape from the lean parser (`rerail_php_lean`).
 pub mod php_lean;
 /// HTML's tape from the lean parser (`rerail_html_lean`).
@@ -170,6 +176,9 @@ pub struct Grammar {
     /// by measuring and validating its C string on every call, and `kind` is the matcher's
     /// most frequent question.
     named: Vec<(Option<&'static str>, bool)>,
+    /// The field names and their codes, sorted by name, read once: Tree-sitter answers a field's code by comparing
+    /// the name with each field's in turn, and the summaries ask it at every `field` (Q51).
+    fields: Vec<(&'static str, u16)>,
 }
 
 impl Grammar {
@@ -188,10 +197,10 @@ impl Grammar {
     }
 
     pub fn field_code(&self, name: &str) -> Option<u16> {
-        self.kinds.field_id(name)
+        self.fields.binary_search_by(|(field, _)| (*field).cmp(name)).ok().map(|at| self.fields[at].1)
     }
     pub fn has_field(&self, name: &str) -> bool {
-        self.kinds.field_id(name).is_some()
+        self.field_code(name).is_some()
     }
     pub fn new(lang: GrammarDialect) -> Result<Arc<Self>, String> {
         let kinds = lang.kinds();
@@ -204,10 +213,15 @@ impl Grammar {
                 (kinds.kind_name(code), kinds.kind_is_named(code))
             })
             .collect();
-        Ok(Arc::new(Self { lang, kinds, named }))
+        let mut fields: Vec<(&'static str, u16)> = (1..=kinds.field_count() as u16).filter_map(|code| Some((kinds.field_name(code)?, code))).collect();
+        fields.sort_unstable();
+        // A name of two codes keeps its first, as the grammar's own lookup answers.
+        fields.dedup_by_key(|(name, _)| *name);
+        Ok(Arc::new(Self { lang, kinds, named, fields }))
     }
 
-    /// The grammar of an embedded program's dialect, built once per process.
+    /// The grammar of a dialect, built once per process and shared by every document of it: built per document, a
+    /// run over 300 files held 61 MB of grammars at its peak (Q74), and built each one's kind table again.
     pub fn embedded(lang: GrammarDialect) -> Result<Arc<Self>, String> {
         static GRAMMARS: std::sync::LazyLock<
             std::sync::Mutex<std::collections::HashMap<GrammarDialect, Arc<Grammar>>>,
@@ -1593,6 +1607,23 @@ impl TapeImage {
         Ok(Self::of15([&code, &size, &base, &off, &tail], widths, codes, Vec::new(), grammar.lang, source.len(), Some(digest)))
     }
 
+    /// A written tape whose codes name contextual aliases (`Code::alias`, an index into
+    /// `kind_aliases`): a kind whose symbol's own name or namedness is not the node's, as
+    /// `encode_node` finds it. The aliases numbered by first use, as `pack` numbers them.
+    pub fn with_kind_aliases(mut self, kind_aliases: Vec<(String, bool)>) -> Result<Self, String> {
+        // A parser writes format 15's columns (`written`); a tape held in another format came from a store.
+        let Held::F15(c) = &mut self.held else { return Err("a written tape is held in format 15".into()) };
+        if kind_aliases.len() >= usize::from(SENTINEL)
+            || c.codes.iter().any(|code| code.alias != SENTINEL && usize::from(code.alias) >= kind_aliases.len())
+        {
+            return Err("a written tape's aliases do not agree with its codes".into());
+        }
+        c.kind_aliases = kind_aliases;
+        // The table as the tape API reads it names the aliases: made again from them.
+        c.table = Default::default();
+        Ok(self)
+    }
+
     /// The columns of `nodes`, in preorder with their sizes set: codes folded and numbered by
     /// first use, `base` per 16 nodes, and each column at its narrowest width.
     fn pack(
@@ -2931,11 +2962,12 @@ impl<'a> TapeNode<'a> {
     }
 }
 
+/// A node's children, read off the tape as they are asked for. How many are left is counted only when asked
+/// (`size_hint`): a search among them (`child_by_field_id`) counted every child first, then walked them again.
 struct Children<'a> {
     node: TapeNode<'a>,
     next: Option<usize>,
     end: usize,
-    remaining: usize,
 }
 impl<'a> Iterator for Children<'a> {
     type Item = TapeNode<'a>;
@@ -2943,11 +2975,12 @@ impl<'a> Iterator for Children<'a> {
         let index = self.next?;
         read!("children");
         self.next = self.node.tape.next_sibling(index, self.end);
-        self.remaining -= 1;
         Some(self.node.at(index as u32, self.node.index))
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.remaining, Some(self.remaining))
+        let tape = self.node.tape;
+        let remaining = std::iter::successors(self.next, |&at| tape.next_sibling(at, self.end)).count();
+        (remaining, Some(remaining))
     }
 }
 impl ExactSizeIterator for Children<'_> {}
@@ -2983,7 +3016,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     fn children(&self) -> impl ExactSizeIterator<Item = Self> {
         let (tape, index) = (self.tape, self.index as usize);
         let end = tape.subtree_end(index);
-        Children { node: *self, next: tape.first_child(index), end, remaining: rerail_tape_format::tape::children(tape, index).count() }
+        Children { node: *self, next: tape.first_child(index), end }
     }
     /// The subtree in preorder, each node with its parent: the subtrees open around it.
     fn dfs(&self) -> impl Iterator<Item = Self> {
@@ -3089,7 +3122,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         self.entry().flags & CODE_MISSING != 0
     }
     fn field(&self, name: &str) -> Option<Self> {
-        let field = self.grammar.kinds.field_id(name)?;
+        let field = self.grammar.field_code(name)?;
         self.child_by_field_id(field)
     }
     fn field_children(&self, field_id: Option<u16>) -> impl Iterator<Item = Self> {

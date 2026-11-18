@@ -144,6 +144,9 @@ pub enum Line {
     /// Its relations started from kept rows (`Start::Base`) hold them as no wave's delta: its first wave is driven by
     /// its inputs' changes (seeds that read them, `plan::reads_change`), not by its kept rows (decision 0122 §2).
     KeptOld,
+    /// The relations whose rows the run keeps past it (a chunk's exports): made in blocks of their own
+    /// (`Life::Kept`), apart from the run's other relations (`keptrows <rels>`).
+    KeptRows(Vec<usize>),
     /// Relation `rel` is a lattice's (decision 0124): its last column the value, joined by the lattice `name`'s join,
     /// the `keys` columns before it the key; after `widen` changes of a key, widened.
     Lattice { rel: usize, keys: usize, name: String, widen: Option<u32> },
@@ -436,6 +439,7 @@ impl std::fmt::Display for Line {
             Line::Device => f.write_str("device"),
             Line::Leveled(rels) => write!(f, "leveled {}", comma(rels)),
             Line::KeptOld => f.write_str("keptold"),
+            Line::KeptRows(rels) => write!(f, "keptrows {}", comma(rels)),
             Line::Lattice { rel, keys, name, widen } => write!(f, "lattice {rel} {keys} {} {}", hex(name), widen.map_or_else(|| "-".to_owned(), |w| w.to_string())),
             Line::Request(r) => write!(f, "request {r}"),
             Line::Produced(r) => write!(f, "produced {r}"),
@@ -524,6 +528,7 @@ impl ComponentSpec {
                 "device" => Line::Device,
                 "leveled" => Line::Leveled(t.get(1).map(|x| list(x)).transpose()?.unwrap_or_default()),
                 "keptold" => Line::KeptOld,
+                "keptrows" => Line::KeptRows(list(at(1)?)?),
                 "lattice" => Line::Lattice {
                     rel: num(at(1)?)?,
                     keys: num(at(2)?)?,

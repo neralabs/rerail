@@ -225,7 +225,7 @@ fn is_space(c: char) -> bool {
 
 pub struct Lexer<'s> {
     pub src: &'s [u8],
-    pub blocks: Blocks<'s>,
+    pub blocks: Blocks,
 }
 
 impl<'s> Lexer<'s> {

@@ -86,6 +86,162 @@ pub enum TokenRule {
     /// last byte the closer's last (`outside`: the byte before it). A lexer's reader of a
     /// string or a comment: on the CPU, a search of the closer's bits from the start.
     Read(Vec<Region>),
+    /// `read K parts { P = E bytes N, … } else C`: a region read in parts, as a lexer reads a
+    /// string with escapes. Its tokens are the opener's byte and the closer's bytes (this kind),
+    /// each part `P` (`N` bytes from a bit of `E` in the region), and each run of the region's
+    /// other bytes (`C`). The parts' kinds are tokens of their own (`Inside`, after this one).
+    /// `read K | L parts …`: regions of one `regions` that one reader reads alike, as Kotlin's
+    /// strings and raw strings are, at one byte; each closer its own region's length.
+    ReadParts(Vec<Region>, Parts),
+    /// A token of a region read in parts (`ReadParts`): `last` its last-byte mask. The reader
+    /// starts it, not the token loop: no first byte ends it by a rule.
+    Inside(Expr),
+}
+
+/// A region's parts (`TokenRule::ReadParts`): each part's kind, start mask and bytes, and the
+/// kind of the bytes between them.
+#[derive(Clone, Debug)]
+pub struct Parts {
+    pub parts: Vec<(String, Expr, PartLen)>,
+    pub content: String,
+    /// `closes { K = E bytes N }`: a closer where `E` holds is a token of kind `K`, `N` bytes
+    /// from the closer's first; the others are the reader's kind (Kotlin's string, closed by
+    /// a `"` or by a template's `${`).
+    pub closes: Vec<(String, Expr, u8)>,
+}
+
+/// How far a part of a region read in parts runs (`Parts`): `bytes N`, or `last L`, through the
+/// first byte of `L` at or after its start (an identifier after Kotlin's `$`).
+#[derive(Clone, Debug)]
+pub enum PartLen {
+    Bytes(u8),
+    Last(Expr),
+}
+
+impl Parts {
+    /// The token rows of a region `r` read in parts from its opener `s` (one byte, the reader's
+    /// own row), as masks: the closer, of the reader's kind (`kind`), then each part's and the
+    /// content's. With `f` the region's fill and `body = f & ~s`,
+    ///
+    /// ```text
+    /// closer:  c = prev(f) & ~f                    # its first byte; its last N - 1 after
+    /// part P:  ps = E & body;   last prev(ps, N - 1)
+    ///          (`last L`: its bytes fill(ps, prev(L)), its last L & those bytes)
+    /// content: x = body & ~(each part's bytes);   start x & ~prev(x), last x & ~next(x)
+    /// ```
+    /// With `closes`: the closers' last bytes, as one mask (`ReadArm::last`); `None`, every
+    /// closer the region's length.
+    pub fn closer_last(&self, rs: &[Region]) -> Option<Expr> {
+        if self.closes.is_empty() && rs.iter().all(|r| r.bytes == rs[0].bytes) {
+            return None;
+        }
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let closer = Self::closer(rs);
+        let mut last: Option<Expr> = None;
+        for (_, e, n) in &self.closes {
+            let c = prev(and(closer.clone(), e.clone()), n - 1);
+            last = Some(or_of(last, c));
+        }
+        for r in rs {
+            let own = self.own(r);
+            last = Some(or_of(last, prev(own, r.bytes - 1)));
+        }
+        last
+    }
+
+    /// The regions' fill: `f_K`, or each's, `|`ed.
+    fn fill(rs: &[Region]) -> Expr {
+        rs.iter().fold(None, |a, r| Some(or_of(a, Expr::Name(format!("f_{}", r.kind))))).expect("a region")
+    }
+
+    /// The closers' first bytes: the byte after each fill.
+    fn closer(rs: &[Region]) -> Expr {
+        let f = Self::fill(rs);
+        Expr::And(Box::new(prev(f.clone(), 1)), Box::new(Expr::Not(Box::new(f))))
+    }
+
+    /// Region `r`'s closers that are the reader's own kind (no `closes` mask holds).
+    fn own(&self, r: &Region) -> Expr {
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        let mut own = Self::closer(std::slice::from_ref(r));
+        for (_, e, _) in &self.closes {
+            own = and(own, not(e.clone()));
+        }
+        own
+    }
+
+    /// The rows of each region (`rs`), in turn: each region's tokens are rows of their own, so
+    /// each row is in its region's mode (`row_modes`), as a reader of one region's are.
+    pub fn rows(&self, kind: &str, rs: &[Region], s: &Expr) -> Vec<Stmt> {
+        rs.iter().flat_map(|r| self.region_rows(kind, r, s)).collect()
+    }
+
+    fn region_rows(&self, kind: &str, r: &Region, s: &Expr) -> Vec<Stmt> {
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        let next = |e: Expr| Expr::Call("next".into(), vec![Arg::E(e)]);
+        let f = Expr::Name(format!("f_{}", r.kind));
+        let body = and(f.clone(), not(s.clone()));
+        let closer = Self::closer(std::slice::from_ref(r));
+        let token = |kind: &str, start: Expr, last: Expr| Stmt::Token { kind: kind.to_owned(), start, through: None, last: Some(last.clone()), rule: Some(TokenRule::Inside(last)) };
+        // The reader's own row is its token's, the opener; the closer is its kind's too, but
+        // where a `closes` mask holds: that one's kind's, its bytes.
+        let mut out = vec![];
+        for (k, e, n) in &self.closes {
+            let c = and(closer.clone(), e.clone());
+            out.push(token(k, c.clone(), prev(c, n - 1)));
+        }
+        let own = self.own(r);
+        out.insert(0, token(kind, own.clone(), prev(own, r.bytes - 1)));
+        let mut covered: Option<Expr> = None;
+        let mut cover = |c: Expr| {
+            covered = Some(match covered.take() {
+                Some(x) => or(x, c),
+                None => c,
+            });
+        };
+        for (p, e, len) in &self.parts {
+            let ps = and(e.clone(), body.clone());
+            match len {
+                PartLen::Bytes(n) => {
+                    out.push(token(p, ps.clone(), prev(ps.clone(), n - 1)));
+                    for k in 0..*n {
+                        cover(prev(ps.clone(), k));
+                    }
+                }
+                PartLen::Last(l) => {
+                    let bytes = Expr::Call("fill".into(), vec![Arg::E(ps.clone()), Arg::E(prev(l.clone(), 1))]);
+                    out.push(token(p, ps.clone(), and(l.clone(), bytes.clone())));
+                    cover(bytes);
+                }
+            }
+        }
+        let x = match covered {
+            Some(c) => and(body, not(c)),
+            None => body,
+        };
+        out.push(token(&self.content, and(x.clone(), not(prev(x.clone(), 1))), and(x.clone(), not(next(x)))));
+        out
+    }
+}
+
+/// `prev(e, k)`, `e` itself at 0.
+fn prev(e: Expr, k: u8) -> Expr {
+    match k {
+        0 => e,
+        1 => Expr::Call("prev".into(), vec![Arg::E(e)]),
+        k => Expr::Call("prev".into(), vec![Arg::E(e), Arg::N(u64::from(k))]),
+    }
+}
+
+/// `a | e`, or `e` with no `a`.
+fn or_of(a: Option<Expr>, e: Expr) -> Expr {
+    match a {
+        Some(a) => Expr::Or(Box::new(a), Box::new(e)),
+        None => e,
+    }
 }
 
 impl TokenRule {
@@ -134,6 +290,9 @@ impl TokenRule {
                 }
                 out.unwrap_or(Expr::Empty)
             }
+            // The opener, one byte; the closer and the parts are rows of their own (`Parts::rows`).
+            TokenRule::ReadParts(..) => s.clone(),
+            TokenRule::Inside(last) => last.clone(),
         }
     }
 }
@@ -390,9 +549,13 @@ pub enum Stmt {
     /// are their `last` mask too (`TokenRule::last`), and a CPU ends the token at its start by
     /// the rule (decision 0177), with no last mask.
     Token { kind: String, start: Expr, through: Option<Expr>, last: Option<Expr>, rule: Option<TokenRule> },
-    Munch { kind: String, over: Expr, lits: Vec<(Vec<u8>, Option<String>)> },
     Keywords { kind: String, words: Vec<(Vec<u8>, Option<String>)>, soft: Vec<Vec<u8>>, required: bool },
     Skip(Expr),
+    /// `prefix B …`: a file that starts with these bytes (one to eight) is read from after them,
+    /// as a lexer strips a byte order mark before its loop (decision 0335). Its bytes are outside
+    /// the stream: no class, `~` or token has them, the stream's first byte is the one after
+    /// them, and positions stay the file's.
+    Prefix(Vec<u8>),
     Error(String, Expr),
     /// `error "WHY" by tokens when E`: an error whose bytes are the ones the token loop refuses
     /// at (decision 0177): a first byte no token begins with, a reader's region open at the
@@ -437,7 +600,17 @@ pub enum Stmt {
     /// `, at KIND when TEST` and `, after KIND when TEST` (`MarkCheck`): a token of the kind
     /// that passes the test (a token escape's, `TokenEscape`) is a bit of the mark at its first
     /// byte (`at`) or at the byte after its last (`after`), as a lexer marks what it reads.
-    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck> },
+    ///
+    /// `, settles`: where the grammar takes it, the extras before its bit (since the grammar token
+    /// before) stay in the nodes its arm closes, and those after it go after them, as
+    /// tree-sitter-kotlin's scanner makes a line break the statement's semicolon: a comment on a
+    /// statement's line is the statement's.
+    ///
+    /// `, ends`: a hidden mark that a level which may end where it holds, and does not take it,
+    /// ends at, for its caller to take: tree-sitter's scanner gives its semicolon wherever one is
+    /// valid, before the token after it, which the level might read on (`a` then `b` on the next
+    /// line is two statements, not an infix call).
+    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool },
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
@@ -470,11 +643,14 @@ pub enum Stmt {
 
 /// The kind `implied` gives a token (`A as IMPLIED`): it makes no leaf.
 pub const IMPLIED: &str = "\u{0}implied";
+/// An `implied` token written as its kind (`implied R K`), not its text: this before the kind.
+const IMPLIED_KIND: &str = "\u{1}";
 /// The kind `drop` gives the node just made at this level (`relabel _ as GONE`): it goes.
 pub const GONE: &str = "\u{0}gone";
 
-/// Each `implied RULE 'A' …` of a tree's body, applied: its tokens in `RULE`'s own body marked
-/// `A as IMPLIED`. A token not written there is an error.
+/// Each `implied RULE 'A' … K …` of a tree's body, applied: its tokens in `RULE`'s own body
+/// marked `A as IMPLIED`, each written `'A'` or a token kind `K` (a character's content, whose
+/// bytes the character's node spans). A token not written there is an error.
 fn apply_implied(body: &mut [Stmt]) -> Result<(), String> {
     fn mark(g: &mut Gram, tokens: &[String], found: &mut Vec<bool>) {
         match g {
@@ -484,8 +660,14 @@ fn apply_implied(body: &mut [Stmt]) -> Result<(), String> {
                     *g = Gram::As(IMPLIED.into(), Box::new(Gram::Lit(t.clone())));
                 }
             }
+            Gram::Sym(k) => {
+                if let Some(i) = tokens.iter().position(|x| x.strip_prefix(IMPLIED_KIND) == Some(k.as_str())) {
+                    found[i] = true;
+                    *g = Gram::As(IMPLIED.into(), Box::new(Gram::Sym(k.clone())));
+                }
+            }
             // A token given a kind of its own, or merged, is a node's: not implied.
-            Gram::Sym(_) | Gram::As(..) | Gram::Merge(..) | Gram::Balanced { .. } | Gram::Any(_) => {}
+            Gram::As(..) | Gram::Merge(..) | Gram::Balanced { .. } | Gram::Any(_) => {}
             Gram::Seq(gs) | Gram::Alt(gs) => gs.iter_mut().for_each(|g| mark(g, tokens, found)),
             Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) => mark(a, tokens, found),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => mark(body, tokens, found),
@@ -508,7 +690,7 @@ fn apply_implied(body: &mut [Stmt]) -> Result<(), String> {
             return Err(format!("implied {rule}: no such rule"));
         }
         if let Some(i) = found.iter().position(|f| !f) {
-            return Err(format!("implied {rule}: {:?} is not written in it", tokens[i]));
+            return Err(format!("implied {rule}: {:?} is not written in it", tokens[i].trim_start_matches(IMPLIED_KIND)));
         }
     }
     Ok(())
@@ -641,6 +823,8 @@ struct P {
     /// Statements the one just read needs before it: a `pairs`' classes, one a byte, each made
     /// once (`classed`).
     before: Vec<Stmt>,
+    /// Statements the one just read makes after it: a region's parts' tokens (`Parts::rows`).
+    after: Vec<Stmt>,
     classed: Vec<u8>,
     /// The `pairs` read so far, by name, for a token's `pair` (`TokenRule::Pairs`).
     pair_sets: Vec<(String, Vec<[u8; 2]>)>,
@@ -1112,6 +1296,7 @@ impl P {
             let st = self.stmt()?;
             out.append(&mut self.before);
             out.push(st);
+            out.append(&mut self.after);
             self.nls();
         }
         Ok(out)
@@ -1142,6 +1327,76 @@ impl P {
         self.pair_sets.push((name_of.clone(), pairs));
         Ok(Stmt::Mask(name_of, mask))
     }
+    /// `munch K over O { "L" [-> KIND] … }`: operator tokens by longest match over each run of
+    /// `O` (03-bitlex.md §3.3), as masks and tokens. At each byte the longest literal that
+    /// starts there (1 to 3 bytes, all of them in `O`); a byte starts a token unless the token
+    /// one or two bytes before covers it, a fixed point taken four times from "every byte". A
+    /// run that has not settled by then (a chain of candidates such as `=====`) is an error, as
+    /// is a byte of `O` no literal starts. A token's kind is its alias, else its literal.
+    fn munch(&mut self, kind: &str, over: Expr, lits: &[(Vec<u8>, Option<String>)]) -> R<Stmt> {
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        let shift = |f: &str, e: Expr, k: usize| match k {
+            0 => e,
+            1 => Expr::Call(f.into(), vec![Arg::E(e)]),
+            k => Expr::Call(f.into(), vec![Arg::E(e), Arg::N(k as u64)]),
+        };
+        let any = |v: Vec<Expr>| v.into_iter().reduce(|a, b| or(a, b));
+        let n = |x: &str| Expr::Name(format!("munch_{kind}_{x}"));
+        if lits.iter().any(|(l, _)| l.is_empty() || l.len() > 3) {
+            return self.err("munch: literals of 1 to 3 bytes");
+        }
+        let class = |b: u8| format!("pair_byte_{b:02x}");
+        for &b in lits.iter().flat_map(|(l, _)| l) {
+            if !self.classed.contains(&b) {
+                self.classed.push(b);
+                self.before.push(Stmt::Class(class(b), vec![(u32::from(b), u32::from(b))]));
+            }
+        }
+        let mut out = vec![Stmt::Mask(format!("munch_{kind}_over"), over)];
+        // Each literal where it starts, and the bytes the longest of each length starts at.
+        let mut by_len: [Vec<Expr>; 3] = Default::default();
+        for (j, (l, _)) in lits.iter().enumerate() {
+            let at = l.iter().enumerate().map(|(k, &b)| and(shift("next", Expr::Name(class(b)), k), shift("next", n("over"), k))).reduce(|a, b| and(a, b)).expect("a byte");
+            out.push(Stmt::Mask(format!("munch_{kind}_at{j}"), at));
+            by_len[l.len() - 1].push(n(&format!("at{j}")));
+        }
+        let zero = || Expr::Name("empty".into());
+        let [one, two, three] = by_len.map(|v| any(v).unwrap_or_else(zero));
+        out.push(Stmt::Mask(format!("munch_{kind}_l3"), three));
+        out.push(Stmt::Mask(format!("munch_{kind}_l2"), and(two, not(n("l3")))));
+        out.push(Stmt::Mask(format!("munch_{kind}_l1"), and(one, not(or(n("l2"), n("l3"))))));
+        // The fixed point: a byte starts a token unless one started a byte or two before covers it.
+        out.push(Stmt::Mask(format!("munch_{kind}_win0"), n("over")));
+        for k in 1..=4 {
+            let w = n(&format!("win{}", k - 1));
+            let covered = or(shift("prev", and(w.clone(), or(n("l2"), n("l3"))), 1), shift("prev", and(w, n("l3")), 2));
+            out.push(Stmt::Mask(format!("munch_{kind}_win{k}"), and(n("over"), not(covered))));
+        }
+        out.push(Stmt::Error(format!("munch {kind}: a chain of operators longer than its bound"), Expr::Xor(Box::new(n("win3")), Box::new(n("win4")))));
+        out.push(Stmt::Error(format!("munch {kind}: a byte no operator starts"), and(n("win3"), not(or(n("l1"), or(n("l2"), n("l3")))))));
+        let last = or(or(and(n("win3"), n("l1")), shift("prev", and(n("win3"), n("l2")), 1)), shift("prev", and(n("win3"), n("l3")), 2));
+        out.push(Stmt::Mask(format!("munch_{kind}_last"), last));
+        // A token a kind: the bytes where the longest literal is one of the kind's.
+        let mut kinds: Vec<(String, Vec<Expr>)> = Vec::new();
+        for (j, (l, alias)) in lits.iter().enumerate() {
+            let k = alias.clone().unwrap_or_else(|| String::from_utf8_lossy(l).into_owned());
+            let longest = and(n(&format!("at{j}")), n(&format!("l{}", l.len())));
+            match kinds.iter_mut().find(|(x, _)| *x == k) {
+                Some((_, v)) => v.push(longest),
+                None => kinds.push((k, vec![longest])),
+            }
+        }
+        for (k, v) in kinds {
+            let start = and(n("win3"), any(v).expect("a literal"));
+            out.push(Stmt::Token { kind: k, start, through: None, last: Some(n("last")), rule: None });
+        }
+        let last = out.pop().expect("a token");
+        self.before.extend(out);
+        Ok(last)
+    }
+
     /// A token test: `count(E) at least N` or `run(E) at least N` (`TokenTest`).
     fn token_test(&mut self) -> R<(TokenTest, Expr, u32)> {
         let test = if self.eat_kw("count") {
@@ -1349,6 +1604,13 @@ impl P {
                 if by_tokens { Stmt::TokenError(m, self.expr()?) } else { Stmt::Error(m, self.expr()?) }
             }
             "skip" => Stmt::Skip(self.expr()?),
+            "prefix" => {
+                let items = self.class_items()?;
+                if items.len() > 8 || items.iter().any(|&(lo, hi)| lo != hi || hi > 0xff) {
+                    return self.err("a prefix of one to eight single bytes");
+                }
+                Stmt::Prefix(items.iter().map(|&(b, _)| b as u8).collect())
+            }
             "escape" => {
                 let m = String::from_utf8_lossy(&self.string()?).into_owned();
                 // `escape "WHY" by tokens when E`: the token loop's, as an error's
@@ -1376,12 +1638,16 @@ impl P {
             "implied" => {
                 let rule = self.ident()?;
                 let mut tokens = vec![];
-                while let Some(Tok::Str(s)) = self.peek() {
-                    tokens.push(String::from_utf8_lossy(s).into_owned());
+                loop {
+                    match self.peek() {
+                        Some(Tok::Str(s)) => tokens.push(String::from_utf8_lossy(s).into_owned()),
+                        Some(Tok::Ident(k)) => tokens.push(format!("{IMPLIED_KIND}{k}")),
+                        _ => break,
+                    }
                     self.i += 1;
                 }
                 if tokens.is_empty() {
-                    return self.err("implied RULE 'A' …");
+                    return self.err("implied RULE 'A' … K …");
                 }
                 Stmt::Implied { rule, tokens }
             }
@@ -1534,10 +1800,14 @@ impl P {
                         }
                     }
                 }
-                let (mut end, mut unplaced, mut checks) = (false, None, vec![]);
+                let (mut end, mut unplaced, mut checks, mut settles, mut ends) = (false, None, vec![], false, false);
                 while self.eat_p(",") {
                     self.nls();
-                    if self.eat_kw("else") {
+                    if self.eat_kw("settles") {
+                        settles = true;
+                    } else if self.eat_kw("ends") {
+                        ends = true;
+                    } else if self.eat_kw("else") {
                         self.want_kw("escape")?;
                         unplaced = Some(String::from_utf8_lossy(&self.string()?).into_owned());
                     } else if self.is_kw("at") || self.is_kw("after") {
@@ -1554,7 +1824,7 @@ impl P {
                         end = true;
                     }
                 }
-                Stmt::Mark { kind, at, end, unless, unplaced, checks }
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends }
             }
             "token" => {
                 let kind = self.kind()?;
@@ -1588,12 +1858,82 @@ impl P {
                             break;
                         }
                     }
-                    Some(TokenRule::Read(regions))
+                    if self.eat_kw("parts") {
+                        if regions.iter().any(|r| r.outside || r.empty.is_some()) {
+                            return self.err("a region read in parts with its closer its own, no `else`");
+                        }
+                        self.want_p("{")?;
+                        let mut parts = vec![];
+                        loop {
+                            self.nls();
+                            if self.eat_p("}") {
+                                break;
+                            }
+                            let p = self.kind()?;
+                            self.want_p("=")?;
+                            let e = self.expr()?;
+                            let len = if self.eat_kw("last") {
+                                PartLen::Last(self.expr()?)
+                            } else {
+                                self.want_kw("bytes")?;
+                                let n = u8::try_from(self.int()?).map_err(|_| "a part of at most 255 bytes".to_owned())?;
+                                if n == 0 {
+                                    return self.err("a part of one byte or more");
+                                }
+                                PartLen::Bytes(n)
+                            };
+                            parts.push((p, e, len));
+                            self.nls();
+                            let _ = self.eat_p(",");
+                        }
+                        self.want_kw("else")?;
+                        let content = self.kind()?;
+                        let mut closes = vec![];
+                        if self.eat_kw("closes") {
+                            self.want_p("{")?;
+                            loop {
+                                self.nls();
+                                if self.eat_p("}") {
+                                    break;
+                                }
+                                let k = self.kind()?;
+                                self.want_p("=")?;
+                                let e = self.expr()?;
+                                self.want_kw("bytes")?;
+                                let n = u8::try_from(self.int()?).map_err(|_| "a closer of at most 255 bytes".to_owned())?;
+                                if n == 0 {
+                                    return self.err("a closer of one byte or more");
+                                }
+                                closes.push((k, e, n));
+                                self.nls();
+                                let _ = self.eat_p(",");
+                            }
+                        }
+                        Some(TokenRule::ReadParts(regions, Parts { parts, content, closes }))
+                    } else {
+                        Some(TokenRule::Read(regions))
+                    }
                 } else {
                     None
                 };
                 if let Some(r) = &rule {
                     last = Some(r.last(&start));
+                }
+                // A region read in parts: its other rows after it (`Parts::rows`).
+                if let Some(TokenRule::ReadParts(rs, parts)) = &rule {
+                    // Several regions: the opener a row in each's mode too, at its own openers
+                    // (`start & o_K`), all of the one reader (`ReadParts`).
+                    if rs.len() > 1 {
+                        let at = |r: &Region| Expr::And(Box::new(start.clone()), Box::new(Expr::Name(format!("o_{}", r.kind))));
+                        for r in &rs[1..] {
+                            let s = at(r);
+                            self.after.push(Stmt::Token { kind: kind.clone(), start: s.clone(), through: None, last: Some(s), rule: rule.clone() });
+                        }
+                        self.after.extend(parts.rows(&kind, rs, &start));
+                        let s = at(&rs[0]);
+                        return Ok(Stmt::Token { kind, start: s.clone(), through: None, last: Some(s), rule });
+                    }
+                    self.after.extend(parts.rows(&kind, rs, &start));
                 }
                 Stmt::Token { kind, start, through, last, rule }
             }
@@ -1601,7 +1941,8 @@ impl P {
                 let kind = self.ident()?;
                 self.want_kw("over")?;
                 let over = self.expr()?;
-                Stmt::Munch { kind, over, lits: self.words()? }
+                let lits = self.words()?;
+                self.munch(&kind, over, &lits)?
             }
             "keywords" => {
                 let kind = self.ident()?;
@@ -1705,14 +2046,42 @@ impl P {
     }
 }
 
+/// The prefix a program declares (`Stmt::Prefix`), if any; and an error where it has two, or a
+/// construct whose meaning reads bytes or positions past the stream's cleaning: a machine,
+/// `ucode`, hypotheses or a number (decision 0335). Every evaluator of the language asks this.
+pub fn prefix_of(stmts: &[Stmt]) -> Result<Option<Vec<u8>>, String> {
+    fn walk(stmts: &[Stmt], found: &mut Vec<Vec<u8>>, bad: &mut Option<&'static str>) {
+        for s in stmts {
+            match s {
+                Stmt::Prefix(b) => found.push(b.clone()),
+                Stmt::Machine(..) => *bad = Some("a machine"),
+                Stmt::Ucode { .. } => *bad = Some("`ucode`"),
+                Stmt::Hyp { .. } => *bad = Some("hypotheses"),
+                Stmt::Number(..) => *bad = Some("a number"),
+                Stmt::Block { body, .. } | Stmt::Rounds { body, .. } | Stmt::Tree { body, .. } => walk(body, found, bad),
+                _ => {}
+            }
+        }
+    }
+    let (mut found, mut bad) = (Vec::new(), None);
+    walk(stmts, &mut found, &mut bad);
+    match (found.len(), bad) {
+        (0, _) => Ok(None),
+        (1, None) => Ok(found.pop()),
+        (1, Some(what)) => Err(format!("a prefix with {what}: its meaning reads the bytes before the stream")),
+        _ => Err("more than one prefix".into()),
+    }
+}
+
 pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
-    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], classed: vec![], pair_sets: vec![] };
+    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], after: vec![], classed: vec![], pair_sets: vec![] };
     p.nls();
     let mut out = vec![];
     while p.peek().is_some() {
         let st = p.stmt()?;
         out.append(&mut p.before);
         out.push(st);
+        out.append(&mut p.after);
         p.nls();
     }
     Ok(out)

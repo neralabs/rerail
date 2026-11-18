@@ -194,3 +194,5 @@ Not yet:
    rows: most of those passes are 0036's formulas, which follow their members and do not walk from each.
 2. The micro walk's prediction is a prior (`predict_walk`): the walk counts no steps the cost store could learn
    from.
+
+(Work queue numbers as on the hub: written as Q19 and Q22 on oscar, the hub's Q49 and Q64.)

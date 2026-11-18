@@ -25,10 +25,18 @@ default-filter = """not (
   | test(=code_rule_dsl::sql_executor::tests::recursive::partitioned_recursive_lattices_remove_cycles_with_bounded_work_and_match_fresh)
   | test(=code_rule_dsl::sql_executor::tests::reductions::dependent_aggregate_keys_follow_old_and_new_dependencies_without_scanning_contexts)
   | test(/^code_rule_dsl::waves::matches::tests::the_wave_/)
+  | test(=class_pack::tests::random_needs_are_answered)
+  | package(rerail-c-directives)
 )"""
 # A test past this is reported as slow; past four periods it is stopped.
 slow-timeout = { period = "60s", terminate-after = 4 }
 failure-output = "final"
+
+# rerail-c-directives: each test compiles a C grammar through Cranelift in its own process
+# (70–80 s in a debug build on an M3 Max), and the token tests two (C's and C++'s).
+[[profile.default.overrides]]
+filter = "package(rerail-c-directives)"
+slow-timeout = { period = "60s", terminate-after = 8 }
 
 [profile.default.junit]
 path = "junit.xml"

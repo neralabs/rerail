@@ -246,8 +246,8 @@ This record is steps 2, 3 and 4, and the API they need.
   `waves::matches`), the grid and register machines and the non-resident interpreter read it. The resident path
   (§9) does not.
 - **The core facts' digest** serializes a format 15 image to hash it (format 16's bytes are hashed as held).
-- **The tape tests** (`tape::tests`) are format 15's: they assert the run stores format 15, and fail under
-  `RERAIL_TAPE=16`.
+- **The tape tests** (`tape::tests`) are format 15's. Since 0340 made format 16 the default, the tests that read
+  format 15's columns pin their thread to format 15 (`formats::this_thread_stores`).
 
 ## Not done
 

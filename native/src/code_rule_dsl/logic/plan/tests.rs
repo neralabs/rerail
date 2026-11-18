@@ -2537,6 +2537,35 @@ fn a_kind_after_a_field_is_priced_by_the_fields_children() {
     assert_eq!(f.child_share("5", "9"), None, "an unmeasured field says nothing");
 }
 
+/// Q44: a relation of the component being solved has no measured distinct values yet. A lookup of it by a column
+/// is priced at PostgreSQL's prior (200 values a column, `ndv_or_default`), not one value: as one, every key was the
+/// whole relation, and a transitive closure's self-join was planned at its relation's rows a binding. A relation not
+/// being solved keeps one value, and is read whole, then probed back.
+#[test]
+fn a_lookup_of_a_relation_being_solved_is_priced_by_the_distinct_prior() {
+    let p = parse(".decl d(x: number)\n.decl w(x: number, s: number)\n.decl r(s: number)\nr(s) :- d(x), w(x, s).\n.output r\n").unwrap();
+    let model = |solving: bool| {
+        let mut model = bare_model(&p);
+        model.stats.nodes = 4_000.0;
+        model.stats.card.insert("d", 10.0);
+        model.ndv.insert(("d", 0), 10.0);
+        model.stats.fan.insert(("d", 0), 1.0);
+        model.stats.card.insert("w", 4_000.0);
+        if solving {
+            model.stats.solving.insert("w".to_owned());
+        }
+        model
+    };
+    // `d`'s 10 rows, each probing `w` by `x`: 4,000 rows / 200 values, 20 a key.
+    let (order, work) = priced_first_rule(&model(true), &p);
+    assert_eq!(order[0], "d($x)");
+    assert!((work - 210.0).abs() < 1.0, "work {work}");
+    // Not being solved, `w`'s column is one value: a probe by it reads all 4,000 rows, so `w` is read first.
+    let (order, work) = priced_first_rule(&model(false), &p);
+    assert_eq!(order[0], "w($x, $s)", "work {work}");
+    assert!(work >= 8_000.0, "work {work}");
+}
+
 /// Decision 0299: a probe on several bound columns reads at least the rows of one combination the relation holds.
 /// Independence divided `w`'s two rows a node by its 400 names, though a node has one name.
 #[test]
@@ -2910,4 +2939,58 @@ fn a_demanded_rule_is_driven_by_its_demand() {
     };
     assert!(!model.valid_live_driver(&led_by("col"), &b, None), "a kept order led by a scan is not taken");
     assert!(model.valid_live_driver(&led_by("demand_x"), &b, None));
+}
+
+/// Decision 0354: with a batch pricer, the search hands back its best's and runners-up's steps from its own cells,
+/// and they are the features the plan record of the same order gives (the samples the model learns from): each
+/// step's rows, basis, access and source alike.
+#[test]
+fn the_searchs_own_steps_are_the_records_features() {
+    struct NoPrice;
+    impl joins::Pricer for NoPrice {
+        fn price(&self, _: &[joins::Choice]) -> Option<Vec<Vec<f64>>> {
+            None
+        }
+    }
+    use crate::code_rule_dsl::logic::costs::join_steps::category;
+    let p = parse(".decl delta(k:number,a:number,t:number,f:number)\n.decl expand(o:number,t:number,k:number)\n.decl restrict(c:number,o:number,a:number)\n.input restrict\n.decl result(c:number,f:number)\nresult(c,f) :- restrict(c,o,a), expand(o,1,k), delta(k,a,2,f), c != f.\n.output result\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty(&p),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    for (rel, rows, ndv, fan) in [
+        ("delta",526.0,vec![526.0,173.0,1.0,526.0],vec![1.0,5.0,526.0,1.0]),
+        ("expand",201_000.0,vec![10000.0,4.0,1878.0],vec![30.0,100000.0,200.0]),
+        ("restrict",450.0,vec![450.0,450.0,4.0],vec![1.0,1.0,140.0]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c,(ndv,fan)) in ndv.into_iter().zip(fan).enumerate() {
+            model.ndv.insert((rel,c),ndv);
+            model.stats.fan.insert((rel,c),fan);
+        }
+    }
+    model.stats.solve(["delta","expand","result"].into_iter().map(str::to_owned).collect());
+    joins::set_pricer(Some(std::sync::Arc::new(NoPrice)));
+    let fields = body::Placed::of_program(&p).unwrap();
+    let fields = fields.fields().unwrap();
+    let r = &p.rules[0];
+    let alone = body::alone(r).unwrap();
+    let b = body::nth(&alone, 0);
+    // The record made in full, as a profiled run makes it.
+    let was = explaining(true);
+    for first in [None, Some(2)] {
+        let got = model.search_steps_against_records(fields, &b, first).unwrap();
+        assert!(got.len() >= 2, "the best and a runner-up, delta {first:?}: {}", got.len());
+        for (steps, x) in &got {
+            let x = x.as_ref().expect("a record of the order");
+            assert_eq!(steps.len(), x.steps.len());
+            for (s, e) in steps.iter().zip(&x.steps) {
+                assert!((s.rows - e.rows).abs() <= 1e-9 * e.rows.abs().max(1.0), "{}: rows {} against the record's {}", e.literal, s.rows, e.rows);
+                assert_eq!(category(&s.basis, 4), category(&e.basis, 4), "{}: basis", e.literal);
+                assert_eq!(category(&s.access, 1), category(&e.access, 1), "{}: access", e.literal);
+                assert_eq!(category(&s.source, 4), category(&e.source, 4), "{}: source", e.literal);
+            }
+        }
+    }
+    explaining(was);
+    joins::set_pricer(None);
 }

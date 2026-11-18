@@ -7,7 +7,7 @@
 //! automaton, say which word each gap between them holds ([`TokenGrammar::gaps`]). That reads the
 //! kinds and fields of one parent's children and static tables, never the source. A tape's facts
 //! make each parent's gaps once, the first time a test asks (`GapScope`, a scratch of their call:
-//! Q135), not for each child; nothing outlives the call.
+//! Q134), not for each child; nothing outlives the call.
 //!
 //! ```text
 //! argument_list  f(a, b)       stored: a, b       gaps: before a "(", before b ",", end ")"
@@ -31,7 +31,7 @@ use std::rc::Rc;
 use crate::code_rule_dsl::tape::tokens::Gaps;
 
 /// A parent's stored children (their node ids, ascending, and which are extras) and its gaps, as `stored_gaps` gives
-/// them, made once a tape's call (`GapScope`, Q135), and the gaps an `Earlier` or `Later` test found matching, by test.
+/// them, made once a tape's call (`GapScope`, Q134), and the gaps an `Earlier` or `Later` test found matching, by test.
 pub(in crate::code_rule_dsl) struct ParentGaps {
     ids: Vec<usize>,
     extra: Vec<bool>,
@@ -88,7 +88,7 @@ thread_local! {
 }
 
 /// One tape's parents' gaps for its facts' gap tests (a scratch of the call, on this thread until dropped:
-/// `fact_rows`), so a parent's are made once, not for each child a test asks of (Q135: a parent of n children cost
+/// `fact_rows`), so a parent's are made once, not for each child a test asks of (Q134: a parent of n children cost
 /// n²). Outside a scope each test makes its parent's.
 pub struct GapScope {
     previous: Option<TapeGaps>,

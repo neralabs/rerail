@@ -16,21 +16,17 @@ From the daemon:
   the file (an extended attribute), and `seen` reports those while the file is as written.
 - {"op": "have", "id", "paths"}: replies {"op": "had", "id", "seen"}, each path's [mtime_ns, size]
   (null when missing): what an earlier connection already wrote.
-- {"op": "prune", "id", "root", "keep", "skip"}: removes each file under the kept copy of `root` that a
-  put wrote (it has the attribute) and that is neither in `keep` (the build machine's files of `root` now)
-  nor under a directory of `skip`, nor under a `.git`: a file the checkout deleted. A file a command wrote
-  there has no attribute and stays. Replies {"op": "pruned", "id", "removed"}, the build machine's paths.
 - {"op": "same", "id", "files"}: `files` maps paths of this host's own (a crate in its cargo
   registry, at the path it has on the build machine too) to their sha256 there. Replies {"op":
   "same?", "id", "differ"}: those missing or different here. Only read: a compile then reads that
   crate in place, at the very path the build machine compiles it from, and rustc's output is the
   same bytes (rustc hashes a source file's real path into it, remapped or not).
-- {"op": "run", "id", "cwd", "argv", "env", "dirs", "outputs", "depinfo", "map", "inplace"}: runs
+- {"op": "run", "id", "cwd", "argv", "env", "dirs", "outputs", "depinfo", "map", "inplace", "externs"}: runs
   the compile in a thread of its own; `inplace` lists the directories it reads in place (`same`). `map` lists the build machine's paths that are kept here: every one of
   them in the arguments, the environment and `cwd` is replaced by where it is kept, and
   `--remap-path-prefix ROOT=/` (rustc's lowest-precedence remap; rustc strips a prefix by path components, so `/` puts the leading slash back) gives the compile's paths back.
   Replies with a "file" frame per output (the dep-info with ROOT taken out), then {"op": "done",
-  "id", "code", "stdout", "stderr", "read"}: `read` maps each file the dep-info lists to
+  "id", "code", "stdout", "stderr", "read"}: `read` maps each file the dep-info lists, and each of `externs` (its `--extern` crates), to
   [mtime_ns, size] as `seen`, for the daemon to check against its own. An output that names ROOT
   (a path written into it that no remap reached, such as `env!("CARGO_MANIFEST_DIR")`) is not sent:
   code 71, and the compile runs on the build machine. A put that fails makes every later run fail
@@ -43,10 +39,24 @@ over that plain TCP connection, which costs no encryption and no ssh flow contro
 the lifeline: when it ends, the agent ends. If the connection cannot be made, it replies
 {"op": "tcp-failed", "why"} on ssh and stays there.
 """
-import ctypes, json, os, re, socket, struct, subprocess, sys, threading
+import ctypes, json, os, re, socket, struct, subprocess, sys, threading, time, traceback
 
-# `RERAIL_FARM_AGENT_ROOT` moves it for the agent's test (test-agent) alone.
-ROOT = os.environ.get("RERAIL_FARM_AGENT_ROOT") or os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm/root.noindex")
+
+def leave(kind, value, tb):
+    """An uncaught exception (the daemon's connection reset, a broken pipe) ends the agent at once,
+    as the stream's end does: a normal exit finalizes the interpreter while another thread holds
+    stdin's lock, and Python aborts ("Fatal Python error: _enter_buffered_busy"), which macOS reports
+    as a crash on the host (5 in half an hour, 2026-11-17)."""
+    try:
+        traceback.print_exception(kind, value, tb)
+        sys.stderr.flush()
+    finally:
+        os._exit(1)
+
+
+sys.excepthook = leave
+
+ROOT = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm/root.noindex")
 XATTR = b"org.rerail.farm.sent"
 
 out = sys.stdout.buffer
@@ -84,13 +94,20 @@ def receive():
     return header, inp.read(header.get("size", 0))
 
 
-def seen(kept):
+def seen(kept, touch=False):
     """[mtime_ns, size] of the file kept at `kept`, as the build machine had it when it was sent (its
-    attribute), while the file is as it was written; else as it is here; None when missing."""
+    attribute), while the file is as it was written; else as it is here; None when missing. `touch`
+    (the daemon asks what a run will read): its access time becomes now, so prune_root counts it as
+    used from here on, never removing it under the run that was just told it is here."""
     try:
         st = os.stat(kept)
     except OSError:
         return None
+    if touch:
+        try:
+            os.utime(kept, ns=(time.time_ns(), st.st_mtime_ns))
+        except OSError:
+            pass
     buf = ctypes.create_string_buffer(96)
     n = libc.getxattr(kept.encode(), XATTR, buf, 96, 0, 0)
     if n > 0:
@@ -138,37 +155,17 @@ def put(header, payload):
     tmp = f"{kept}.farm-{os.getpid()}-{threading.get_ident()}"
     with open(tmp, "wb") as f:
         f.write(payload)
-    os.chmod(tmp, header.get("mode", 0o644) & 0o7777)
     written = os.stat(tmp).st_mtime_ns
     tag = f"{header['mtime_ns']} {len(payload)} {written}".encode()
+    # The attribute before the mode: macOS refuses it on a read-only file (EACCES), and a tree's
+    # git objects are read-only: every one failed, and the daemon dropped this agent each time
+    # (2026-11-17).
     if libc.setxattr(tmp.encode(), XATTR, tag, len(tag), 0, 0) != 0:
+        e = ctypes.get_errno()
         os.unlink(tmp)
-        raise OSError(ctypes.get_errno(), "setxattr failed", kept)
+        raise OSError(e, "setxattr failed", kept)
+    os.chmod(tmp, header.get("mode", 0o644) & 0o7777)
     os.replace(tmp, kept)
-
-
-def marked(kept):
-    """Whether a put wrote the file kept at `kept` (its attribute is there)."""
-    return libc.getxattr(kept.encode(), XATTR, None, 0, 0, 0) > 0
-
-
-def prune_deleted(root, keep, skip):
-    """The files a put wrote under `root`'s copy that the build machine no longer has (`prune`), removed."""
-    keep = set(keep)
-    removed = []
-    for d, dirs, files in os.walk(at(root)):
-        dirs[:] = [x for x in dirs if x != ".git"]
-        for f in files:
-            kept = os.path.join(d, f)
-            path = kept[len(ROOT):]
-            if path in keep or under(path, skip) or not marked(kept):
-                continue
-            try:
-                os.unlink(kept)
-                removed.append(path)
-            except OSError as e:
-                print(f"farm-agent: {path}: {e}", file=sys.stderr, flush=True)
-    return removed
 
 
 def mapper(prefixes):
@@ -248,6 +245,9 @@ def run(job):
                         full = p if p.startswith("/") else os.path.normpath(os.path.join(job["cwd"], p))
                         # Read in place: its content was checked (`same`) just before.
                         read[p] = "inplace" if under(full, inplace) else seen(at(full))
+            # The `--extern` crates it read: the dep-info does not list them.
+            for p in job.get("externs", []):
+                read[p] = seen(at(p))
     send({"op": "done", "id": job["id"], "code": code, "stdout": stdout.decode("latin-1").replace(ROOT + "/", "/"),
           "stderr": stderr.decode("latin-1").replace(ROOT + "/", "/"), "read": read})
 
@@ -284,7 +284,14 @@ def over_tcp(header):
     return True
 
 
-TARGETS = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm/targets.noindex")
+FARM = os.path.join(os.path.expanduser("~"), "Library/Caches/rerail-farm")
+TARGETS = os.path.join(FARM, "targets.noindex")
+# The commands' TMPDIR: the farm's, so what their runs leave (stores, scratch) is the farm's to free,
+# never the host's own temporary directory (pruned as the root is, every file counting).
+TMP = os.path.join(FARM, "tmp.noindex")
+# A lock per directory a command runs in (its checkout's copy, its trees): held shared while it runs,
+# so prune_root leaves those directories alone (`busy`).
+BUSY = os.path.join(FARM, "busy.noindex")
 # A test target directory unused this long goes; so do the least recently used ones while the disk
 # has less free than the run asks for and PRUNE_HEADROOM_GB more: pruning only to the farm's own
 # threshold left the host just above it, and the next run's build took it below (unusable).
@@ -297,19 +304,83 @@ PRUNE_HEADROOM_GB = 40
 CLEAN_SECONDS = 15 * 60
 
 
+# The free disk macOS gives an important write: what is free and what it purges for it (Time
+# Machine's hourly local snapshots, caches). statvfs leaves that out: one host showed 19 GB free
+# with 691 GB available, the snapshots holding a day of every file the farm had deleted (2026-11-17).
+AVAILABLE_JS = ('ObjC.import("Foundation"); var r = Ref(); $.NSURL.fileURLWithPath($.NSHomeDirectory())'
+                '.getResourceValueForKeyError(r, $.NSURLVolumeAvailableCapacityForImportantUsageKey, null); String(r[0].js)')
+
+
 def free_gb():
+    try:
+        out = subprocess.run(["osascript", "-l", "JavaScript", "-e", AVAILABLE_JS], capture_output=True, text=True, timeout=10)
+        b = float(out.stdout.strip())
+        if b > 0:
+            return b / (1 << 30)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
     st = os.statvfs(os.path.expanduser("~"))
     return st.f_bavail * st.f_frsize / (1 << 30)
 
 
+def target_lock(name, exclusive):
+    """The lock of the test target `name` (in TARGETS/.locks, outside the directory it guards): a
+    command holds it shared while it runs, prune exclusively while it removes the directory. Held
+    until the returned file closes; None when `exclusive` and someone holds it."""
+    import fcntl
+    os.makedirs(os.path.join(TARGETS, ".locks"), exist_ok=True)
+    f = open(os.path.join(TARGETS, ".locks", name), "a+")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB if exclusive else fcntl.LOCK_SH)
+    except OSError:
+        f.close()
+        return None
+    return f
+
+
+def busy_lock(path):
+    """Holds `path` (a directory a command runs in) busy until the returned file closes."""
+    import fcntl, hashlib
+    os.makedirs(BUSY, exist_ok=True)
+    f = open(os.path.join(BUSY, hashlib.sha1(path.encode()).hexdigest()), "a+")
+    fcntl.flock(f, fcntl.LOCK_SH)
+    if f.tell() == 0:
+        f.write(path)
+        f.flush()
+    return f
+
+
+def busy():
+    """The directories a command runs in now (their lock is held)."""
+    import fcntl
+    out = []
+    try:
+        names = os.listdir(BUSY)
+    except OSError:
+        return out
+    for n in names:
+        try:
+            with open(os.path.join(BUSY, n), "r") as f:
+                try:
+                    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError:
+                    path = f.read().strip()
+                    if path:
+                        out.append(path)
+        except OSError:
+            pass
+    return out
+
+
 def prune(keep, min_free_gb):
     """Removes test target directories of TARGETS (never anything else): those unused for TARGET_DAYS,
-    then the least recently used while the disk is short of `min_free_gb`."""
+    then the least recently used while the disk is short of `min_free_gb`. Never one a command is
+    running in (its lock is held): removing those failed other checkouts' builds mid-run (2026-11-16)."""
     import shutil, time
     used = []
     for name in os.listdir(TARGETS):
         d = os.path.join(TARGETS, name)
-        if name == keep or not os.path.isdir(d) or os.path.islink(d):
+        if name == keep or name.startswith(".") or not os.path.isdir(d) or os.path.islink(d):
             continue
         try:
             used.append((os.stat(os.path.join(d, ".used")).st_mtime, d))
@@ -318,8 +389,162 @@ def prune(keep, min_free_gb):
     used.sort()
     for when, d in used:
         if time.time() - when > TARGET_DAYS * 86400 or free_gb() < min_free_gb + PRUNE_HEADROOM_GB:
-            print(f"farm-agent: removing the test target {os.path.basename(d)} (unused since {time.ctime(when)})", file=sys.stderr, flush=True)
-            shutil.rmtree(d, ignore_errors=True)
+            lock = target_lock(os.path.basename(d), True)
+            if lock is None:
+                continue
+            try:
+                print(f"farm-agent: removing the test target {os.path.basename(d)} (unused since {time.ctime(when)})", file=sys.stderr, flush=True)
+                # Aside first, at once: a removal cut short (this process ends with its command)
+                # leaves no half a target that cargo would trust, only trash the next sweep removes.
+                trash = os.path.join(TARGETS, f".trash.{os.path.basename(d)}.{os.getpid()}")
+                try:
+                    os.rename(d, trash)
+                except OSError:
+                    continue
+            finally:
+                lock.close()
+            shutil.rmtree(trash, ignore_errors=True)
+
+
+# While a command runs, its agent checks the host every SWEEP_SECONDS (one agent at a time):
+# targets due a clean are cleaned, whether or not their own commands ever ended (a test-remote
+# killed by its caller took its agent with it, and that target was never cleaned: 33 GB of a
+# host's 318 GB of targets were leftover objects), and while the disk is short, the least
+# recently used targets no command holds go, then the root's idle copies. Checking only when a
+# command started let concurrent builds take a host from 255 GB free to none within the hour
+# (2026-11-17).
+SWEEP_SECONDS = 60
+# The test targets together stay under the job's `max_target_gb` (farm.py, `max_target_gb`): the
+# least recently used no command holds go first. Measured at most every BUDGET_SECONDS. Without a
+# bound the targets grew with the checkouts using a host (16 of them: 318 GB), until the host's
+# disk ran out.
+MAX_TARGET_GB = 150
+BUDGET_SECONDS = 600
+
+
+def target_sizes():
+    """{target directory: GB on disk}, by `du` (a few seconds for hundreds of GB)."""
+    out = {}
+    try:
+        names = [n for n in os.listdir(TARGETS) if not n.startswith(".")]
+    except OSError:
+        return out
+    for n in names:
+        d = os.path.join(TARGETS, n)
+        try:
+            r = subprocess.run(["du", "-sk", d], capture_output=True, text=True, timeout=300)
+            out[d] = int(r.stdout.split()[0]) / (1 << 20)
+        except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+            pass
+    return out
+
+
+def keep_to_budget(max_gb, keep=None):
+    """Removes the least recently used targets no command holds while they hold over `max_gb`."""
+    import shutil
+    sizes = target_sizes()
+    total = sum(sizes.values())
+    if total <= max_gb:
+        return
+    def used(d):
+        try:
+            return os.stat(os.path.join(d, ".used")).st_mtime
+        except OSError:
+            return 0
+    for d in sorted(sizes, key=used):
+        if total <= max_gb:
+            break
+        name = os.path.basename(d)
+        if name == keep:
+            continue
+        lock = target_lock(name, True)
+        if lock is None:
+            continue
+        try:
+            trash = os.path.join(TARGETS, f".trash.{name}.{os.getpid()}")
+            try:
+                os.rename(d, trash)
+            except OSError:
+                continue
+        finally:
+            lock.close()
+        print(f"farm-agent: removing the test target {name} ({sizes[d]:.0f} GB; the targets hold "
+              f"{total:.0f} GB, over {max_gb:g})", file=sys.stderr, flush=True)
+        total -= sizes[d]
+        shutil.rmtree(trash, ignore_errors=True)
+
+
+def sweep(job):
+    """One pass of the watchdog (see SWEEP_SECONDS). Returns at once when another agent sweeps."""
+    import fcntl, shutil
+    try:
+        lock = open(os.path.join(FARM, "sweep.lock"), "a+")
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return
+    try:
+        min_free_gb = job.get("min_free_gb", 40)
+        try:
+            names = os.listdir(TARGETS)
+        except OSError:
+            names = []
+        for n in names:
+            if n.startswith(".trash."):
+                shutil.rmtree(os.path.join(TARGETS, n), ignore_errors=True)
+        if job.get("cleaner"):
+            home = ROOT + os.path.expanduser("~/Library/Caches/rerail-farm/relax-home")
+            for n in names:
+                d = os.path.join(TARGETS, n)
+                if n.startswith(".") or not os.path.isdir(d):
+                    continue
+                try:
+                    used = os.stat(os.path.join(d, ".used")).st_mtime
+                except OSError:
+                    continue
+                try:
+                    cleaned = os.stat(os.path.join(d, ".cleaned")).st_mtime
+                except OSError:
+                    cleaned = 0
+                if cleaned >= used or time.time() - cleaned < CLEAN_SECONDS:
+                    continue
+                open(os.path.join(d, ".cleaned"), "w").close()
+                try:
+                    with open(os.path.join(d, ".cleaned.log"), "w") as log:
+                        # Its own session: it finishes even when this agent ends with its command.
+                        subprocess.run(["nice", "-n", "19", "/usr/bin/python3", "-c", job["cleaner"], "--relax-home", home, d],
+                                       stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True, timeout=900,
+                                       env={k: v for k, v in os.environ.items() if k != "RELAX_HOME"})
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+        stamp = os.path.join(FARM, "budget.checked")
+        try:
+            due = time.time() - os.stat(stamp).st_mtime >= BUDGET_SECONDS
+        except OSError:
+            due = True
+        if due:
+            open(stamp, "w").close()
+            keep_to_budget(job.get("max_target_gb", MAX_TARGET_GB), job.get("target"))
+        if free_gb() < min_free_gb + PRUNE_HEADROOM_GB:
+            prune(job.get("target"), min_free_gb)
+        if free_gb() < min_free_gb + PRUNE_HEADROOM_GB:
+            fd = os.open(os.path.join(FARM, "root.log"), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+            try:
+                prune_roots(min_free_gb, (ROOT_DAYS,) + ROOT_SHORT_DAYS + (1 / 24,), lambda line: os.write(fd, (line + "\n").encode()))
+            finally:
+                os.close(fd)
+    except Exception as e:
+        try:
+            print(f"farm-agent: the sweep failed: {e!r}", file=sys.stderr, flush=True)
+        except Exception:
+            pass
+    finally:
+        lock.close()
+
+
+def watchdog(job):
+    while True:
+        sweep(job)
+        time.sleep(SWEEP_SECONDS)
 
 
 def run_command(job):
@@ -330,12 +555,23 @@ def run_command(job):
     dependencies, so no two writers share one. The command stops when this command's input ends
     (the connection closed): a host's sshd does not stop it without a terminal."""
     import resource, signal
+    # The connection's end (a caller killed, a closed terminal) hangs this agent up: it stays, to
+    # stop the command (`watch`) and clean after it, instead of dying with the session.
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
     m = mapper(job.get("map", []))
     env = dict(os.environ)
     env.update({k: m(v) for k, v in job.get("env", {}).items()})
+    global BUSY_HELD
+    BUSY_HELD = [busy_lock(ROOT + os.path.normpath(p)) for p in job.get("map", []) if p.startswith("/") and p != "/"]
+    os.makedirs(TMP, exist_ok=True)
+    env["TMPDIR"] = TMP + "/"
     env["PATH"] = os.path.expanduser("~/.cargo/bin") + ":/opt/homebrew/bin:" + env.get("PATH", "")
     if job.get("target"):
         os.makedirs(TARGETS, exist_ok=True)
+        # Held until this process exits (after the command): prune leaves the directory alone. Taken
+        # before the directory is made, so a removal under way ends first.
+        global HELD
+        HELD = target_lock(job["target"], False)
         target = os.path.join(TARGETS, job["target"])
         os.makedirs(target, exist_ok=True)
         open(os.path.join(target, ".used"), "w").close()
@@ -370,9 +606,14 @@ def run_command(job):
         except OSError:
             pass
     threading.Thread(target=watch, daemon=True).start()
+    if job.get("target"):
+        threading.Thread(target=watchdog, args=(job,), daemon=True).start()
     code = proc.wait()
-    sys.stdout.flush()
-    sys.stderr.flush()
+    for f in (sys.stdout, sys.stderr):
+        try:
+            f.flush()
+        except OSError:
+            pass  # the connection is gone: the cleaning below still runs
     if job.get("target") and job.get("cleaner"):
         clean(os.path.join(TARGETS, job["target"]), job["cleaner"], env.get("RELAX_HOME"))
     if job.get("target"):
@@ -413,19 +654,71 @@ def tidy_root(min_free_gb):
         null = os.open(os.devnull, os.O_RDWR)
         for n in (0, 1, 2):
             os.dup2(null, n)
-        fd = os.open(os.path.join(os.path.dirname(ROOT), "root.log"), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
-        relax = ROOT + os.path.expanduser("~/Library/Caches/rerail-farm/relax-home")
-        for days in (ROOT_DAYS,) + ROOT_SHORT_DAYS:
-            if days != ROOT_DAYS and free_gb() >= min_free_gb + PRUNE_HEADROOM_GB:
-                break
-            n, b = prune_root(days, [relax])
-            os.write(fd, f"{time.strftime('%Y-%m-%d %H:%M')}: idle {days:g}+ days: {n} paths, "
-                         f"{b / 1e9:.1f} GB; {free_gb():.0f} GB free\n".encode())
+        fd = os.open(os.path.join(FARM, "root.log"), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        prune_roots(min_free_gb, (ROOT_DAYS,) + ROOT_SHORT_DAYS, lambda line: os.write(fd, (line + "\n").encode()))
     finally:
         os._exit(0)
 
 
-def prune_root(days, keep=()):
+def prune_roots(min_free_gb, days_list, say):
+    """prune_root on the root and on TMP (where every file is the commands' own): what is idle for
+    the first of `days_list`, then for each shorter one while the disk is short. Never the farm's
+    Relax home (clean-target cleans it) or a directory a command runs in (`busy`)."""
+    relax = ROOT + os.path.expanduser("~/Library/Caches/rerail-farm/relax-home")
+    for i, days in enumerate(days_list):
+        if i and free_gb() >= min_free_gb + PRUNE_HEADROOM_GB:
+            break
+        keep = [relax] + busy()
+        n, b = prune_root(days, keep)
+        n2, b2 = prune_root(days, keep, TMP, every_file=True)
+        say(f"{time.strftime('%Y-%m-%d %H:%M')}: idle {days:g}+ days: {n + n2} paths, "
+            f"{(b + b2) / 1e9:.1f} GB; {free_gb():.0f} GB free")
+
+
+def free_space(job):
+    """`farm-agent free JOB` (farm.free_host, when a host is short of disk): frees what is the
+    farm's here, least needed first, until the disk has `min_free_gb` + PRUNE_HEADROOM_GB free:
+    test targets no command runs in (least recently used first), then the rest cleaned
+    (clean-target, the job's `cleaner`), then the root and TMP down to what was used in the last
+    hour. Nothing of the host's own. Prints a JSON line: free GB before and after, and what the
+    farm still holds here."""
+    import shutil
+    min_free_gb = job.get("min_free_gb", 40)
+    want = min_free_gb + PRUNE_HEADROOM_GB
+    before = free_gb()
+    steps = []
+    say = lambda line: steps.append(line)
+    if os.path.isdir(TARGETS):
+        prune(None, min_free_gb)
+        if job.get("cleaner"):
+            home = ROOT + os.path.expanduser("~/Library/Caches/rerail-farm/relax-home")
+            for name in os.listdir(TARGETS):
+                d = os.path.join(TARGETS, name)
+                if name.startswith(".") or not os.path.isdir(d):
+                    continue
+                try:
+                    subprocess.run(["nice", "-n", "19", "/usr/bin/python3", "-c", job["cleaner"], "--relax-home", home, d],
+                                   stdin=subprocess.DEVNULL, capture_output=True, timeout=900,
+                                   env={k: v for k, v in os.environ.items() if k != "RELAX_HOME"})
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+            say(f"targets cleaned; {free_gb():.0f} GB free")
+        keep_to_budget(job.get("max_target_gb", MAX_TARGET_GB))
+        say(f"targets kept to {job.get('max_target_gb', MAX_TARGET_GB):g} GB; {free_gb():.0f} GB free")
+    if free_gb() < want:
+        prune_roots(min_free_gb, (ROOT_DAYS,) + ROOT_SHORT_DAYS + (1 / 24,), say)
+    held = 0
+    for d, dirs, files in os.walk(FARM):
+        for n in files:
+            try:
+                held += os.lstat(os.path.join(d, n)).st_blocks * 512
+            except OSError:
+                pass
+    print(json.dumps({"before_gb": round(before, 1), "after_gb": round(free_gb(), 1),
+                      "farm_gb": round(held / (1 << 30), 1), "steps": steps}), flush=True)
+
+
+def prune_root(days, keep=(), root=ROOT, every_file=False):
     """Removes from ROOT what no run has used for `days`: whole directories none of whose files was
     read or written since, and, in directories still in use, the copies the mirror sent (they carry
     XATTR; the mirror sends one again when a run needs it: a compile that misses it fails once, runs
@@ -439,6 +732,25 @@ def prune_root(days, keep=()):
     keep = [os.path.realpath(k) for k in keep]
     removed = [0, 0]
 
+    def last_use(path, isdir):
+        """Asked again just before removing: the walk's view of a big tree is minutes old by then,
+        and a run may have started reading it meanwhile (it removed a checkout's Cargo.lock and
+        rust-toolchain.toml under a run that had just been told they were there, 2026-11-17)."""
+        if any(path == k or path.startswith(k + "/") or k.startswith(path + "/") for k in keep + busy()):
+            return time.time()
+        st = os.lstat(path)
+        # A directory's access time is this walk's own reading of it: only its modification counts.
+        newest = st.st_mtime if isdir else max(st.st_atime, st.st_mtime)
+        if isdir:
+            for d, dirs, files in os.walk(path):
+                for n in dirs + files:
+                    try:
+                        st = os.lstat(os.path.join(d, n))
+                        newest = max(newest, st.st_mtime if n in dirs else max(st.st_atime, st.st_mtime))
+                    except OSError:
+                        pass
+        return newest
+
     def blocks(path):
         total = 0
         for d, dirs, files in os.walk(path):
@@ -450,9 +762,11 @@ def prune_root(days, keep=()):
         return total
 
     def remove(path, isdir):
-        if not path.startswith(ROOT + "/"):
+        if not path.startswith(root + "/"):
             return
         try:
+            if last_use(path, isdir) >= cutoff:
+                return
             b = blocks(path) if isdir else os.lstat(path).st_blocks * 512
         except OSError:
             return
@@ -490,7 +804,7 @@ def prune_root(days, keep=()):
                 else:
                     st = e.stat(follow_symlinks=False)
                     used = max(st.st_atime, st.st_mtime)
-                    if used < cutoff and not e.is_symlink() and sent(e.path):
+                    if used < cutoff and (every_file or (not e.is_symlink() and sent(e.path))):
                         idle_sent.append(e.path)
             except OSError:
                 used = time.time()
@@ -504,8 +818,8 @@ def prune_root(days, keep=()):
                 remove(p, False)
         return newest
 
-    if os.path.isdir(ROOT) and not os.path.islink(ROOT):
-        walk(ROOT, True)
+    if os.path.isdir(root) and not os.path.islink(root):
+        walk(root, True)
     return removed[0], removed[1]
 
 
@@ -537,6 +851,11 @@ def clean(target, source, relax_home):
 os.makedirs(ROOT, exist_ok=True)
 if sys.argv[1:2] == ["exec"]:
     run_command(json.loads(sys.argv[2]))
+if sys.argv[1:2] == ["free"]:
+    os.setpriority(os.PRIO_PROCESS, 0, 19)
+    free_space(json.loads(sys.argv[2]))
+    sys.stdout.flush()
+    os._exit(0)
 if under_mount(ROOT):
     refused.append(f"{ROOT} is under a network mount")
 
@@ -555,12 +874,10 @@ while True:
             refused.append(f"{header['path']} ({e})")
     elif header["op"] == "run":
         threading.Thread(target=run, args=(header,), daemon=True).start()
-    elif header["op"] == "prune":
-        send({"op": "pruned", "id": header["id"], "removed": prune_deleted(header["root"], header["keep"], header.get("skip", []))})
     elif header["op"] == "same":
         send({"op": "same?", "id": header["id"], "differ": [p for p, h in header["files"].items() if sha(p) != h]})
     elif header["op"] == "have":
-        send({"op": "had", "id": header["id"], "seen": [seen(at(p)) for p in header["paths"]]})
+        send({"op": "had", "id": header["id"], "seen": [seen(at(p), touch=True) for p in header["paths"]]})
     elif header["op"] == "ping":
         send({"op": "pong", "id": header.get("id")})
 

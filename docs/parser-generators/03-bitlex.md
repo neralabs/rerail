@@ -463,7 +463,9 @@ run backward over the groups, as its fixed points' rounds are still to come.
 - **`munch`** has a bounded fixed point. A candidate operator wins unless a winning operator that
   starts one or two bytes earlier covers it. The rule is applied a fixed three times. If the third
   and fourth applications differ, a run of chained candidates (such as `=====`) was longer than
-  the bound, and the error bit is set.
+  the bound, and the error bit is set. The Bitlex parser expands a `munch` into these masks and a token
+  per kind (an alias, else the literal), so the evaluator and the compiler share one meaning
+  (2026-11-17, 0348).
 - **`check`, flattened.** When the regex is a fixed sequence of parts (literals, classes, `?`,
   `+` and `*` on one class, and alternatives that differ only in a class), the compiler turns it
   into masks, as the number rules in both lexers do by hand. These are the masks:

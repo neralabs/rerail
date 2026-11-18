@@ -226,6 +226,63 @@ in place would climb the parents (a search back on format 15) every time. They a
 step 3 makes the other derived values go: rules computed on demand, written once into relations. Until then they
 are computed once a projection, on first read, into its block (row 1 below, now marked step 3).
 
+Step 3, as built for them (2026-11-17):
+- **A scan carries both in its walk.** `Viewed::each_row` keeps the open subtrees (each one's end on the tape, its id
+  and its children so far), so a row's parent id, its place and its depth come with it. `Projected::places` is the
+  same walk for the other passes (`Within`'s statistics, the device chunk's `ord`, a step 4 copy).
+- **A point read of `depth`** climbs the tape's parents and counts the numbered ones.
+- **A point read of `idx`** reads a derived column. The tape holds no sibling's place, and hops along the siblings
+  are as many as the siblings: a probe for each of a module's 17,000 functions was quadratic. So the first point
+  read of a projection writes the walk's places once into its block (`Projected::idx`, `copy: derived`). A scan
+  never makes it.
+- hogql, 4 interleaved pairs at load 112–134: findings 1,629 in each; 78.3 B instructions (median) against 77.0 B,
+  within the noise. The derived column is made for 719–783 projections a run (0.03 s, 0.2–0.3 MB); the two arrays
+  were made 2,731–2,841 times (0.075–0.081 s, 21–22 MB).
+- Check: in `node_ids_in_place_equal_the_numbered_ones`, each node's point reads equal the walk's, in every format,
+  whole and narrowed; `a_views_filter_scan_holds_the_rows_a_per_row_read_finds` holds the scans to the point reads.
+
+**Step 3's derived values: `str` on request** (2026-11-17). `str(n, s)` is answered on request, as 0174 answers
+`node_text` and `value`: `ON_REQUEST`'s second round, answered by `@rr_node_str(n)` (`LongTexts::str_any`), which
+reads the node's literal as the batch's shape states it (`core_rr::node_str`, the definition the eager rows use too,
+or T's). Check: `str_answered_on_request_holds_the_eager_rows`, against a reader that keeps it eager. On hogql
+(`p0_names` asks for 2 nodes) it saves almost nothing, and the reason is in the profile: the projection's skip
+flags compute each node's literal wherever `text` is read (a literal's prefix makes it token-like), and hogql's
+rules read every node's `text` (no kind narrows them, `text_nodes` is none), so `CoreRows::node` visits all
+1.3 M nodes for `text`. Rules look `text` up by node for 663,057 rows. `text` is what row 7's time is.
+
+`text` on request is open (work queue Q121). A first build (a node's whole text answered by `@rr_text`, the spans'
+rows eager as `rr_text_span`) broke the widened copies' termination, the converter's printing and a demand test, and
+0174 §4 measured that a request a node costs more than eager `text` within the bound. It is kept as a patch until it
+is measured against eager on hogql.
+
+Found on the way and fixed: the image's merge (`preparation::merge`) merged two requests of one body
+(`rr_str_req`, `rr_node_text_req`), which the tree's keeps by name (`simplify::request`, the debug check "the
+version's merges are the tree's"); `node_column_counts` indexed a text document's dialect, which it has none of.
+
+**Step 3's tape answers: `next_sibling` is a view** (2026-11-17). Its rows were core.rr's `CoreRows::node` pairs,
+each numbered node's numbered direct children, consecutive. Now:
+- the rank index marks a fourth item, `Item::Sibling`: a node after a numbered direct sibling (the projection's walk
+  keeps the open numbered nodes and whether each has had a direct child; an anchor that hangs from the root is no
+  child of it). A group is six words, 48 bytes for 64 tape nodes (40 before); `Numbering` holds four counts and
+  samples, its Rust and MSL reads written again from the CLIF;
+- `View::Sibling` has a row per marked node, as `field`'s are its marked ones. Column `b` is the row's node; `a`
+  comes with the scan's walk (the open subtree's last child), and a point read climbs from the tape node before `b`
+  (`Projected::prev_sibling`); a lookup by `a` hops the tape's siblings after its subtree (`next_sibling`);
+- check: `node_ids_in_place_equal_the_numbered_ones` holds both reads to the old pairs in every format, whole and
+  narrowed, and the rank reads of the new item to its walk. The device has no view of it yet (step 4).
+
+`line`, `end_line`, `col` and `docof` were views already (`View::Loc`) except where `Extra` makes spans' rows; those
+and `visit_index` (CPython's visit order, a derived fact computed once for the documents a program reads it of),
+`doc_root` and `host_node` (a guest's) are left for this step.
+
+Found on the way and fixed:
+- `Locs::token_spans` copied every token's start and end into a `Vec` on a span's first read: unmarked, and missed by
+  the check. A token's span is now its tape node's, by a select on the rank index.
+- `front::prune` gated a request rule by the readers lowering recorded (`asked_by`). A reader inlined since
+  (`simplify`) is read under its readers' names, so the gate dropped the request: `tables :- q(s, x0), …` with `q`
+  inlined read no `str` (`value_documents_are_memoised_with_the_files_that_asked`). A record naming a relation the
+  program no longer has now leaves its rule ungated.
+
 `DefIds`' `low`, `order` and `back` are gone. Every projection, narrowed ones too, keeps its granule table, and it
 answers ids, order keys and their inverses:
 - `order`, an order key (its run's rank, then its index in its granule): the table keeps each granule stretch's run
@@ -256,8 +313,22 @@ The table's columns are in the projection's block beside its rank index (`cells:
 are computed. Six interleaved pairs on hogql: findings 1,629; the samples show no cost in the placing, and the
 table's build unchanged.
 
-Still to do in step 2: write the reads once in CLIF, for Rust and MSL; the chunk's `low` column (row 3) goes with
-them.
+The reads are written once in CLIF (0310), in the relation's family: a read takes the address of the projection's
+descriptor (`rerail_clif::ids::Numbering`, in its block), whose runs point at the rank index's groups and samples and
+at the table's columns. `num_is`, `num_rank`, `num_select`, `num_low_of`, `num_number_of`, `num_order_of` and
+`num_number_of_order` (`rerail_clif::id_reads`). Their Rust is the facts crate's `id_reads.rs` and their MSL its
+`id_reads.metal`, each kept current by a test in `rerail-clif`. `Ranks` and `granules::Table` read through the Rust;
+their hand-written point reads are gone.
+
+Checks: the reads equal the hand-written ones on every projection of the id test (done before those went); now the
+rank index's point reads equal its walk over the set bits, the ids and order keys equal the old numbering's, and on
+the device the MSL reads answer what the Rust answers for every tape node, in its block, in all three formats, whole
+and narrowed (`the_kernels_id_reads_are_the_hosts`). hogql, 8 interleaved pairs at load 55-91: findings 1,629; median
+75.1 B instructions against 78.2 B before.
+
+Step 2 is done but for one copy: the chunk's `low` column (row 3), which goes when step 4's kernels read the ids
+through `id_reads.metal`. Each generated MSL file defines the same load helpers (`clif_word`, ...): a kernel that
+includes two of them needs those emitted once, which step 4 does as it includes them.
 
 ## The copies today
 
@@ -265,7 +336,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 
 | # | Copy | Where | Size or cost (hogql) | Removed by |
 |---|---|---|---|---|
-| 1 | The projection's derived per-node arrays: `idx`, `depth` (`core`, `local`, `up`, `size` and `fielded` are gone: the rank index) | `syntax.rs`, `Projected` | 4 bytes a node each | Step 3 |
+| 1 | Gone (step 3): the projection's per-node arrays. `core`, `local`, `up`, `size` and `fielded` are the rank index; scans carry `idx` and `depth` in the walk, and a point read climbs for `depth`. Only a point read of `idx` makes a column, derived once (see "Node identity") | — | — | Done |
 | 2 | Gone (step 2): definition ids by node, `DefIds::low`, `order`, `back`. The granule table answers them. | — | — | Done |
 | 3 | The chunk block's node columns: `core`, `up`, `fielded`, `low`, `start`, `end`, `kind`, `field`, and the canonical code copy. `low` is made by one scan of the granule table. `core`, `up` and `fielded` are made here from the rank index and the walk, now that the host holds no arrays of them. | `device_chunk.rs`, `build` (`made`, `made_in_order`, `put`) | 22 bytes a node; 0.07 s a run | Step 4 |
 | 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 660.8 MB, 111.5 ms a run | Step 4 |
@@ -350,6 +421,8 @@ the same findings. Three changes keep the reads where the work already is:
   the tape node. None of these is searched again.
 - The id and number conversions search less: `number_of` finds a slot from an interpolated guess (the slots are
   hashes), and `low_of` searches between two jumps, one every 64 numbers (4 bytes for each 64 nodes).
+  Both searches are the CLIF reads' (`num_number_of`, `num_granule`): the jumps are a run of the descriptor
+  (`Numbering::jumps`), so the host and the kernels search the same way.
 
 A scan of a whole view reads its rows in one walk (`Source::for_rows_in`), as `for_rows` does.
 

@@ -146,6 +146,12 @@ pub fn projection(
         }
     }
     let outputs: BTreeSet<_> = prog.outputs.iter().cloned().collect();
+    projection_of(&users, &outputs, reads);
+}
+
+/// `projection` from the relations' readers (a relation's, or a native's) and the outputs, found by its caller (over
+/// a version, `logic::plan::text_demand`).
+pub fn projection_of(users: &BTreeMap<String, BTreeSet<String>>, outputs: &BTreeSet<String>, reads: &BTreeSet<String>) {
     for scalar in analysis::SCALARS.iter().filter(|r| reads.contains(**r)) {
         let mut queue = VecDeque::from([vec![(*scalar).to_owned()]]);
         let mut seen = BTreeSet::new();

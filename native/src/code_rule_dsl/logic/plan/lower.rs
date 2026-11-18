@@ -50,7 +50,7 @@ pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<O
         "substr" => (vec![Some(Name), Some(Int), Some(Int)], Some(Name)),
         // W's semantics, ahead of `strings::functions`' (`plan::sql_term`'s arms for them).
         "replace_all" | "rx_replace" => (vec![Some(Name); 3], Some(Name)),
-        "json_str" | "nfkc" | "py_repr" => (vec![Some(Name)], Some(Name)),
+        "json_str" | "nfkc" | "py_repr" | "shell_unquote" => (vec![Some(Name)], Some(Name)),
         "ed25519_ok" => (vec![Some(Name); 3], Some(Int)),
         "rx_group" => (vec![Some(Name); 3], Some(Name)),
         // `@place(path, line)` (`rr::lower`'s `PLACE`): a place where a node goes, taken apart again by
@@ -88,10 +88,12 @@ fn expand_memberships(prog: &Program) -> Result<Option<Program>> {
     let domains = domains(prog)?;
     let cols = columns_of(&domains);
     let mut out = prog.clone();
-    out.rules.clear();
-    for rule in &prog.rules {
+    // Each rule with its source, so the request record (decision 0331) follows a split rule: each part serves its
+    // source's readers.
+    let mut rules = Vec::with_capacity(prog.rules.len());
+    for (k, rule) in prog.rules.iter().enumerate() {
         if !rule.body.iter().any(|l| membership(l).is_some()) {
-            out.rules.push(rule.clone());
+            rules.push((rule.clone(), vec![k]));
             continue;
         }
         let vars = rule_vars(rule, &mut |a: &Atom| cols.get(a.rel.as_str()).map(Vec::as_slice))?;
@@ -109,8 +111,9 @@ fn expand_memberships(prog: &Program) -> Result<Option<Program>> {
                 _ => bodies.iter_mut().for_each(|b| b.push(l.clone())),
             }
         }
-        out.rules.extend(bodies.into_iter().map(|body| super::super::front::Rule { head: rule.head.clone(), body: body.into() }));
+        rules.extend(bodies.into_iter().map(|body| (super::super::front::Rule { head: rule.head.clone(), body: body.into() }, vec![k])));
     }
+    out.set_rules_from(rules);
     Ok(Some(out))
 }
 
@@ -353,77 +356,8 @@ pub fn domains_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> Re
             }
         }
     }
-    // A rule's variables' domains, by slot (`rule_vars`).
     let rule_vars = |r: RuleRef<'_>, cols: &[Vec<Option<Domain>>], rels: &[Option<u32>]| -> Result<Vec<Option<Domain>>> {
-        let mut vars: Vec<Option<Domain>> = vec![None; r.var_count()];
-        let head = v.show_atom(r, r.head());
-        let set = |vars: &mut Vec<Option<Domain>>, s: crate::code_rule_dsl::logic::program_image::Slot, d: Domain| -> Result<bool> {
-            match vars[s.0 as usize] {
-                Some(e) if e.symbolic() && d.symbolic() && e != d => Err(Error::Plan(format!("rule for {head}: ${} is a {e:?} and a {d:?}", v.text(r.var(s))))),
-                Some(_) => Ok(false),
-                None => {
-                    vars[s.0 as usize] = Some(d);
-                    Ok(true)
-                }
-            }
-        };
-        fn call(v: &crate::code_rule_dsl::logic::program_image::Version, t: TermRef<'_>, vars: &mut Vec<Option<Domain>>, set: &dyn Fn(&mut Vec<Option<Domain>>, crate::code_rule_dsl::logic::program_image::Slot, Domain) -> Result<bool>) -> Result<bool> {
-            let mut changed = false;
-            if let TermRef::Call(f, args) = t {
-                let args: Vec<TermRef<'_>> = args.collect();
-                let (domains, _) = functor_domains(v.text(f), args.len());
-                for (&a, d) in args.iter().zip(domains) {
-                    if let (TermRef::Var(s), Some(d)) = (a, d) {
-                        changed |= set(vars, s, d)?;
-                    }
-                    changed |= call(v, a, vars, set)?;
-                }
-            }
-            Ok(changed)
-        }
-        let atoms: Vec<(Vec<TermRef<'_>>, Option<&[Option<Domain>]>)> = atoms(r).iter().zip(rels).map(|(a, d)| (a.args().collect(), d.map(|d| cols[d as usize].as_slice()))).collect();
-        let body: Vec<L<'_>> = r.body().map(|l| l.view()).collect();
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for (args, ds) in &atoms {
-                for (c, &t) in args.iter().enumerate() {
-                    if let (TermRef::Var(s), Some(Some(d))) = (t, ds.and_then(|ds| ds.get(c))) {
-                        changed |= set(&mut vars, s, *d)?;
-                    }
-                    changed |= call(v, t, &mut vars, &set)?;
-                }
-            }
-            for l in &body {
-                match *l {
-                    L::Cmp { l, r: rt, .. } => {
-                        changed |= call(v, l, &mut vars, &set)?;
-                        changed |= call(v, rt, &mut vars, &set)?;
-                        if let (TermRef::Var(x), TermRef::Var(y)) = (l, rt) {
-                            if let Some(d) = vars[x.0 as usize] {
-                                changed |= set(&mut vars, y, d)?;
-                            }
-                            if let Some(d) = vars[y.0 as usize] {
-                                changed |= set(&mut vars, x, d)?;
-                            }
-                        }
-                        if let (TermRef::Var(x), TermRef::Call(f, args)) = (l, rt)
-                            && let (_, Some(d)) = functor_domains(v.text(f), args.count())
-                        {
-                            changed |= set(&mut vars, x, d)?;
-                        }
-                    }
-                    L::Nearest { n, a, .. } => {
-                        changed |= set(&mut vars, n, Domain::Node)?;
-                        changed |= set(&mut vars, a, Domain::Node)?;
-                    }
-                    L::Agg { var, op: AggRef::Join { .. }, .. } => changed |= set(&mut vars, var, Domain::Name)?,
-                    L::Agg { var, op: AggRef::Count | AggRef::Sum, .. } => changed |= set(&mut vars, var, Domain::Int)?,
-                    _ => {}
-                }
-            }
-        }
-        Ok(vars)
+        rule_var_domains(v, r, &rels.iter().map(|d| d.map(|d| cols[d as usize].as_slice())).collect::<Vec<_>>())
     };
     let mut queued = vec![true; rules.len()];
     let mut work: std::collections::VecDeque<usize> = (0..rules.len()).collect();
@@ -456,9 +390,90 @@ pub fn domains_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> Re
     Ok(decls.into_iter().zip(cols).map(|((rel, _), ds)| (rel.to_owned(), ds.into_iter().map(|d| d.unwrap_or(Domain::Name)).collect())).collect())
 }
 
+/// The domains of rule `r`'s variables, by slot (`rule_vars` on the tree): `ds` gives each atom's column domains,
+/// the head's then each body atom's (an aggregate's included), in order, `None` for a relation with none.
+pub(in crate::code_rule_dsl) fn rule_var_domains(
+    v: &crate::code_rule_dsl::logic::program_image::Version,
+    r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>,
+    ds: &[Option<&[Option<Domain>]>],
+) -> Result<Vec<Option<Domain>>> {
+    use crate::code_rule_dsl::logic::program_image::{AggRef, Lit as L, TermRef};
+    let rels = ds;
+    let mut vars: Vec<Option<Domain>> = vec![None; r.var_count()];
+    let head = v.show_atom(r, r.head());
+    let set = |vars: &mut Vec<Option<Domain>>, s: crate::code_rule_dsl::logic::program_image::Slot, d: Domain| -> Result<bool> {
+        match vars[s.0 as usize] {
+            Some(e) if e.symbolic() && d.symbolic() && e != d => Err(Error::Plan(format!("rule for {head}: ${} is a {e:?} and a {d:?}", v.text(r.var(s))))),
+            Some(_) => Ok(false),
+            None => {
+                vars[s.0 as usize] = Some(d);
+                Ok(true)
+            }
+        }
+    };
+    fn call(v: &crate::code_rule_dsl::logic::program_image::Version, t: TermRef<'_>, vars: &mut Vec<Option<Domain>>, set: &dyn Fn(&mut Vec<Option<Domain>>, crate::code_rule_dsl::logic::program_image::Slot, Domain) -> Result<bool>) -> Result<bool> {
+        let mut changed = false;
+        if let TermRef::Call(f, args) = t {
+            let args: Vec<TermRef<'_>> = args.collect();
+            let (domains, _) = functor_domains(v.text(f), args.len());
+            for (&a, d) in args.iter().zip(domains) {
+                if let (TermRef::Var(s), Some(d)) = (a, d) {
+                    changed |= set(vars, s, d)?;
+                }
+                changed |= call(v, a, vars, set)?;
+            }
+        }
+        Ok(changed)
+    }
+    let heads_and_atoms: Vec<crate::code_rule_dsl::logic::program_image::AtomRef<'_>> = std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).collect();
+    let atoms: Vec<(Vec<TermRef<'_>>, Option<&[Option<Domain>]>)> = heads_and_atoms.iter().zip(rels).map(|(a, d)| (a.args().collect(), *d)).collect();
+    let body: Vec<L<'_>> = r.body().map(|l| l.view()).collect();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (args, ds) in &atoms {
+            for (c, &t) in args.iter().enumerate() {
+                if let (TermRef::Var(s), Some(Some(d))) = (t, ds.and_then(|ds| ds.get(c))) {
+                    changed |= set(&mut vars, s, *d)?;
+                }
+                changed |= call(v, t, &mut vars, &set)?;
+            }
+        }
+        for l in &body {
+            match *l {
+                L::Cmp { l, r: rt, .. } => {
+                    changed |= call(v, l, &mut vars, &set)?;
+                    changed |= call(v, rt, &mut vars, &set)?;
+                    if let (TermRef::Var(x), TermRef::Var(y)) = (l, rt) {
+                        if let Some(d) = vars[x.0 as usize] {
+                            changed |= set(&mut vars, y, d)?;
+                        }
+                        if let Some(d) = vars[y.0 as usize] {
+                            changed |= set(&mut vars, x, d)?;
+                        }
+                    }
+                    if let (TermRef::Var(x), TermRef::Call(f, args)) = (l, rt)
+                        && let (_, Some(d)) = functor_domains(v.text(f), args.count())
+                    {
+                        changed |= set(&mut vars, x, d)?;
+                    }
+                }
+                L::Nearest { n, a, .. } => {
+                    changed |= set(&mut vars, n, Domain::Node)?;
+                    changed |= set(&mut vars, a, Domain::Node)?;
+                }
+                L::Agg { var, op: AggRef::Join { .. }, .. } => changed |= set(&mut vars, var, Domain::Name)?,
+                L::Agg { var, op: AggRef::Count | AggRef::Sum, .. } => changed |= set(&mut vars, var, Domain::Int)?,
+                _ => {}
+            }
+        }
+    }
+    Ok(vars)
+}
+
 /// Each relation's columns as `rule_vars` reads them, from the domains: by name, one lookup per atom.
 pub(in crate::code_rule_dsl) fn columns_of(domains: &Domains) -> HashMap<&str, Vec<Option<Domain>>> {
-    domains.iter().map(|(r, ds)| (r.as_str(), ds.iter().copied().map(Some).collect())).collect()
+domains.iter().map(|(r, ds)| (r.as_str(), ds.iter().copied().map(Some).collect())).collect()
 }
 
 /// The domain of column `c` (declared `t`) of a new relation that shares its first `known` columns with a relation
@@ -827,6 +842,9 @@ fn transduce_nearest(prog: &mut Program, domains: &mut Domains) -> Vec<(String, 
         sets
     }
 }
+
+mod on_version;
+pub use on_version::lower_version;
 
 #[cfg(test)]
 pub mod tests;

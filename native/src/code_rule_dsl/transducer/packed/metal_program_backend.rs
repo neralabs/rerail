@@ -767,7 +767,7 @@ fn execute_packed_once(
     budget: super::Budget,
     growth: &super::StateGrowth,
 ) -> Result<PackedExecution, Error> {
-    let _evaluation = super::metal_backend::metal_execution_guard()?;
+    let _evaluation = super::metal_backend::evaluation_scope();
     if matches!(engine, Engine::Jit { programs: count, .. } if *count != programs.len()) {
         return Err(Error::InvalidAnchor);
     }

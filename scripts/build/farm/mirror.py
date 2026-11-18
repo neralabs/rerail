@@ -170,18 +170,6 @@ class Host:
     def run(self, job):
         return self.ask(dict(job, op="run"))
 
-    def prune(self, root, keep, skip):
-        """Removes from the host's copy of `root` the files the mirror sent there that are no longer here
-        (`keep`: the files of `root` now), but for those under `skip`; the paths removed (None: no reply)."""
-        reply = self.ask({"op": "prune", "root": root, "keep": sorted(keep), "skip": skip}, timeout=120)
-        if reply is None:
-            return None
-        removed = reply.get("removed") or []
-        with self.lock:
-            for p in removed:
-                self.sent.pop(p, None)
-        return removed
-
     def has_same(self, directory):
         """Whether the host's own copy of `directory` (a crate of the cargo registry, at the same path
         there) is this machine's, file for file: then a compile reads it in place (farm-agent,
@@ -213,7 +201,7 @@ class Host:
                 with open(tmp, "wb") as f:
                     f.write(payload)
                 os.replace(tmp, path)
-            elif header["op"] in ("done", "had", "same?", "pruned"):
+            elif header["op"] in ("done", "had", "same?"):
                 waiting = self.waiting.get(header["id"])
                 if waiting:
                     waiting["result"] = header
@@ -364,18 +352,13 @@ def work(job):
         if job.get("verify"):
             for p, _ in files:
                 h.sent.pop(p, None)
+        # The `--extern` crates asked again: a compile against another version of one is wrong
+        # under this one's key, where another file's difference only costs a resend.
+        for p in job.get("files", []):
+            h.sent.pop(p, None)
         h.learn([p for p, _ in files])
         for path, st in files:
             h.put(path, st)
-        # A checkout's deleted files leave its copy there too (`prune`: only files the mirror wrote).
-        if job.get("prune"):
-            trees = [root for root, kind in job["roots"] if kind == "tree"]
-            for root, kind in job["roots"]:
-                if kind == "checkout":
-                    prefix = root.rstrip("/") + "/"
-                    if h.prune(root, [p for p, _ in files if p.startswith(prefix)], trees) is None:
-                        drop(name, h, "its mirror agent did not answer a prune")
-                        return failed(f"{name}'s copy of {root} could not be pruned")
     except OSError as e:
         drop(name, h, f"the mirror's connection broke: {e!r}")
         return failed(f"the connection to {name} broke while sending")

@@ -47,7 +47,7 @@ pub fn kind(path: &str) -> String {
     } else if top == "stats" {
         "statistics phase (preparing, measuring, binding)"
     } else if has("W's reference graph") {
-        "W's reference graph (a second parse, in Rust: no device form)"
+        "W's reference graph (summaries read off the tape, in Rust: no device form)"
     } else if has("tape") || has("parse") || has("tree-sitter") {
         "parsing"
     } else if top == "write" {

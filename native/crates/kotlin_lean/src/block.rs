@@ -14,6 +14,16 @@
 
 use rerail_simd8::Simd8x64;
 
+/// What a block lexer's reader made of a token start (`Blocks::lex_blocks`).
+pub enum Lexed<Tk> {
+    /// A token, and its end.
+    Tok(Tk, usize),
+    /// A comment (written to the extras), and its end.
+    Extra(usize),
+    /// Nothing: the lexer's token reader reads it.
+    Slow,
+}
+
 /// A block's masks, by index.
 const WORD: usize = 0; // [A-Za-z0-9_]
 const BLANK: usize = 1; // ' ', '\t', '\v', '\f'
@@ -85,6 +95,14 @@ static HI: [u8; 16] = {
 #[inline(always)]
 fn class(c: u8) -> u8 {
     LO[usize::from(c & 15)] & HI[usize::from(c >> 4)]
+}
+
+/// Whether `c` is white space (a blank or a line end). (Swift's lexer, sharing this file, has no
+/// use for it: its fast exit measured slower.)
+#[allow(dead_code)]
+#[inline(always)]
+pub fn is_space(c: u8) -> bool {
+    class(c) & (C_BLANK | C_EOL) != 0
 }
 
 /// Whether `c` may continue a name (ASCII only: a byte from 0x80 is read as a character).
@@ -185,6 +203,113 @@ impl<'s> Blocks<'s> {
                 return self.src.len();
             }
             m = self.m[b][k] ^ flip;
+        }
+    }
+
+    /// Tokens from `at` on, a block at a time (docs/parser-generators/31, the block lexer): a
+    /// block's token starts found at once (`!space & !(word & word << 1)`), each read by `fast`
+    /// from its start, given the length of the word run there when it ends inside the block, and
+    /// whether a line end is in the white space before it (both readers given `cx`, the comments'
+    /// list). `fast` makes a token and its end, or
+    /// reads a comment (its end), or leaves the start to `slow`: the lexer's token reader from the
+    /// end of the last token or comment (characters past ASCII), given whether a line end was
+    /// passed since the last token (before comments), which gives a token, its end and whether it
+    /// is the text's end. Stops once `min` tokens are made (after a token `fast` made, or at a
+    /// block's end), or at the text's end; returns where the next token is to be read from.
+    #[inline(always)]
+    pub fn lex_blocks<Tk, E, C>(
+        &self,
+        at: usize,
+        out: &mut Vec<Tk>,
+        min: usize,
+        cx: &mut C,
+        fast: impl Fn(&mut C, usize, usize, bool) -> Result<Lexed<Tk>, E>,
+        slow: impl Fn(&mut C, usize, bool) -> Result<(Tk, usize, bool), E>,
+    ) -> Result<usize, E> {
+        let len = self.src.len();
+        let made = out.len();
+        // The end of the last token or comment, and whether a line end is between the last token
+        // and the block read (outside comments).
+        let (mut gap, mut carry) = (at, false);
+        // Whether comments were read since the last token (a stop then would lose `carry`).
+        let mut extra = false;
+        let mut b = at / 64;
+        'blocks: loop {
+            if b >= self.m.len() {
+                let (t, e, end) = slow(cx, gap, carry)?;
+                out.push(t);
+                if end {
+                    return Ok(e);
+                }
+                gap = e;
+                carry = false;
+                extra = false;
+                b = e / 64;
+                continue;
+            }
+            let base = b * 64;
+            let m = &self.m[b];
+            let (word, eol) = (m[WORD], m[EOL]);
+            let space = m[BLANK] | eol;
+            let from = gap.saturating_sub(base);
+            let mut starts = !space & !(word & (word << 1)) & (!0u64 << from);
+            // A token starts where the last one ended, inside a word's run too (`0x1Fg`).
+            if gap >= base && gap < len && !space >> from & 1 == 1 {
+                starts |= 1 << from;
+            }
+            while starts != 0 {
+                let q = starts.trailing_zeros() as usize;
+                let g = gap.saturating_sub(base);
+                let nl = carry || eol & (!0u64 << g) & ((1u64 << q) - 1) != 0;
+                let run = (!(word >> q)).trailing_zeros() as usize;
+                let run = if q + run < 64 { run } else { usize::MAX };
+                let e = match fast(cx, base + q, run, nl)? {
+                    Lexed::Tok(t, e) => {
+                        out.push(t);
+                        // Enough: the rest of the block is read at the next call (a parser that
+                        // reads again from a token, `relex_at`, throws away what is read ahead).
+                        if out.len() - made >= min {
+                            return Ok(e);
+                        }
+                        carry = false;
+                        extra = false;
+                        e
+                    }
+                    Lexed::Extra(e) => {
+                        // The white space before the comment is the next token's.
+                        carry = nl;
+                        extra = true;
+                        e
+                    }
+                    Lexed::Slow => {
+                        let (t, e, end) = slow(cx, gap, carry)?;
+                        out.push(t);
+                        if end {
+                            return Ok(e);
+                        }
+                        carry = false;
+                        extra = false;
+                        e
+                    }
+                };
+                gap = e;
+                if e >= base + 64 {
+                    b = e / 64;
+                    continue 'blocks;
+                }
+                starts &= !0u64 << (e - base);
+                if e < len && !space >> (e - base) & 1 == 1 {
+                    starts |= 1 << (e - base);
+                }
+            }
+            // The line ends after the last token, up to the text's end.
+            let g = gap.saturating_sub(base);
+            let real = if base + 64 > len { (1u64 << (len - base)) - 1 } else { !0 };
+            carry |= g < 64 && eol & (!0u64 << g) & real != 0;
+            b += 1;
+            if out.len() - made >= min && !extra {
+                return Ok(gap);
+            }
         }
     }
 

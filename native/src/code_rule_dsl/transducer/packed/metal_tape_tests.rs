@@ -4,7 +4,7 @@ use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
 use crate::code_rule_dsl::fixtures::{document, temp};
 use crate::code_rule_dsl::residency::slabs::{self, DocTable, DocView};
-use crate::code_rule_dsl::tape::{Grammar, TAPE_FORMAT_VERSION, TapeDoc};
+use crate::code_rule_dsl::tape::{Grammar, TapeDoc};
 use crate::content_store::ContentStore;
 use sha2::{Digest as _, Sha256};
 // What the backend reads through its own imports, which its facade in the engine does not re-export.
@@ -49,7 +49,7 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
         let (tape, _stored) = document(source, lang);
         let bytes = tape.resident_parts(None).unwrap().0;
         let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
-        store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(TAPE_FORMAT_VERSION), &bytes).unwrap();
+        store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(crate::code_rule_dsl::tape::formats::stored_version()), &bytes).unwrap();
         digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
         tapes.push(tape);
     }
@@ -233,7 +233,7 @@ fn a_label_kernel_costs_footprint() {
 
 /// Every label kernel and the fact-only pattern kernel compile, for a mixed batch (0) and for each format's own
 /// (`tape_format`). A kernel that does not compile is fatal (decision 0382; before it, a run fell back to the CPU and
-/// gave the right rows, so the label tests alone passed with MSL that did not compile: t41, Q57); this compiles every
+/// gave the right rows, so the label tests alone passed with MSL that did not compile: t41, Q62); this compiles every
 /// format's kernels whether or not a run reaches them.
 #[test]
 fn the_label_kernels_compile_for_every_format() {

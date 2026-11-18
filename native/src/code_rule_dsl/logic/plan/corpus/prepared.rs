@@ -1,7 +1,7 @@
 //! A program as a run prepares it, kept in the store across processes (decisions 0073, 0155): pruned, simplified,
 //! demanded, lowered, its joins pushed, located and split.
 //!
-//! - **Programs.** Its two programs (`front`, the program as demanded; `lowered`, as lowered) are each kept as their
+//! - **Programs.** Its two programs (`source`, the program as demanded; `lowered`, as lowered) are each kept as their
 //!   `.rr` text (`program_text`), a source of the store by its sha256, and read back by the rr parser straight into a
 //!   program: nothing is lowered or joined again.
 //! - **Pointer.** One facts-memo entry (decision 0052) under the program text's source, for the run's plan: what
@@ -260,13 +260,14 @@ fn nested<'a>(facts: &'a Facts, rel: &str) -> Result<BTreeMap<i64, Vec<&'a [Valu
         .collect())
 }
 
-/// The prepared program of `facts` (what preparing found, `rest_of`), its front program `prog` and its lowered
-/// program's version, for `dialect`.
+/// The prepared program of `facts` (what preparing found, `rest_of`), its source's version (the program before
+/// lowering) and its lowered program's version, for `dialect`.
 pub fn prepared_of(
     facts: &Facts,
-    prog: crate::code_rule_dsl::logic::front::Program,
+    source: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     dialect: GrammarDialect,
+    lists: &crate::code_rule_dsl::logic::front::Lists,
 ) -> Result<Prepared, String> {
     let mut by_rel: BTreeMap<String, Vec<(i64, lower::Domain)>> = BTreeMap::new();
     for r in facts.get("prepared_domain").into_iter().flatten() {
@@ -358,6 +359,7 @@ pub fn prepared_of(
             crate::code_rule_dsl::typing::file_local::programs_of(version.clone())?
         }
     };
+    let head = source.header(lists)?;
     // The memo's strata, when the program was kept with them; else the first run makes them.
     let memo_strata = std::sync::OnceLock::new();
     if let Some(part) = facts.get("prepared_memo_part").and_then(|rows| rows.first()) {
@@ -377,7 +379,8 @@ pub fn prepared_of(
         let _ = memo_strata.set((digest, super::memo::Strata { by_rel }));
     }
     Ok(Prepared {
-        prog,
+        source,
+        head,
         vocabulary: Arc::new(vocabulary),
         // Its stored image alone: the tree read is the split's, made above, and dropped.
         lowered: lower::Lowered { version, maint: None, domains, ops, dialect },
@@ -466,15 +469,15 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
         let Some(digest) = unhex(digest) else { return Ok(None) };
         texts.insert(name.to_string(), digest);
     }
-    let (Some(front), Some(lowered)) = (texts.get("front"), texts.get("lowered")) else { return Ok(None) };
+    let (Some(source), Some(lowered)) = (texts.get("source"), texts.get("lowered")) else { return Ok(None) };
     let mut documents = Vec::new();
-    // The front program, as a tree (its readers read one still); the lowered program, its version opened from its
-    // image, no tree decoded (decision 0281's path, step 5): the split's parts are views of it.
-    let front = {
-        let _s = crate::code_rule_dsl::logic::profile::span(|| "read a program's text".into());
-        let Some((program, sources)) = program_text::load(store, front, lists)? else { return Ok(None) };
+    // Both programs' versions opened from their images, no tree decoded (decision 0281's path, steps 5 and R): the
+    // split's parts are views of the lowered one.
+    let source = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "open the program's image before lowering".into());
+        let Some((version, sources)) = program_text::load_image(store, source, lists)? else { return Ok(None) };
         documents.extend(sources);
-        program
+        version
     };
     let version = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "open the lowered program's image".into());
@@ -496,7 +499,7 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
         }
         None => return Ok(None),
     };
-    let got = prepared_of(&facts, front, version, dialect);
+    let got = prepared_of(&facts, source, version, dialect, lists);
     if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
         eprintln!("RERAIL_PREPARED_TRACE lookup ({}): {:.1} kB of facts; read {:.3} s, to a prepared program {:.3} s{}",
             super::phases::current().unwrap_or_else(|| "main".into()), entry.len() as f64 / 1e3, read.as_secs_f64(), at.elapsed().as_secs_f64(),
@@ -559,7 +562,7 @@ pub(super) fn documents(store: &ContentStore, source: SourceId, key: &[u8; 32]) 
     let mut digests = Vec::new();
     for row in facts.remove(PROGRAM).unwrap_or_default() {
         if let [Value::Str(name), Value::Str(digest)] = row.as_slice()
-            && (name.as_ref() == "front" || name.as_ref() == "lowered")
+            && (name.as_ref() == "source" || name.as_ref() == "lowered")
             && let Some(digest) = unhex(digest)
         {
             digests.push(digest);
@@ -581,15 +584,11 @@ pub(super) fn record(store: &ContentStore, source: Option<SourceId>, text: Strin
     super::memo::off();
     let mut facts = rest_of(prepared);
     let mut programs = Vec::new();
-    for name in ["front", "lowered"] {
-        // The lowered program's image is its version's, taken as it is (no encode of its tree, decision 0281). With
-        // images off (`RERAIL_PROGRAM_IMAGE=off`) it is not kept, as a version has no text form: the program is
-        // prepared again.
-        let encoded = match name {
-            "front" => program_text::encode(&prepared.prog),
-            _ => program_text::encode_version(&prepared.lowered.version),
-        };
-        let Some(encoded) = encoded else { return };
+    for (name, version) in [("source", &prepared.source), ("lowered", &prepared.lowered.version)] {
+        // Each program's image is its version's, taken as it is (no encode of a tree, decision 0281). With images
+        // off (`RERAIL_PROGRAM_IMAGE=off`) it is not kept, as a version has no text form: the program is prepared
+        // again.
+        let Some(encoded) = program_text::encode_version(version) else { return };
         facts.entry(PROGRAM.to_owned()).or_default().push([Value::Str(name.to_owned().into()), Value::Str(hex(&encoded.digest).into())].into());
         programs.push(encoded);
     }
