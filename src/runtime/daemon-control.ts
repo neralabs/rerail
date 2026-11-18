@@ -1451,7 +1451,8 @@ export function autostartDaemon(machine: DaemonMachine = THIS_MACHINE): void {
 /**
  * What a stop did: stopped the home's daemon; found none; found a record naming a live process that is not the home's
  * daemon, which it removed, ending nothing (`not-daemon`, said with {@link NOT_HOME_DAEMON_NOTE}); or found daemon.json
- * naming another pid, or none, when it would signal the one it named, and ended and removed nothing (`record-changed`).
+ * naming another pid when it would signal the one it named, or none while that pid ran on past the stop's wait, and
+ * ended and removed nothing (`record-changed`).
  */
 export type StopDaemonResult = "stopped" | "not-running" | "not-daemon" | "record-changed";
 
@@ -1534,7 +1535,7 @@ function recordNow(home: string, pid: number): "named" | "other" | "gone" | unde
 /**
  * What asking a daemon to stop came to ({@link askDaemonToStop}): it was asked, or let alone as already ending (`asked`);
  * its pid was another process's, and the record naming it is removed (`not-daemon`); or daemon.json names it no longer
- * (`record-changed`).
+ * while it runs (`record-changed`).
  */
 type StopAsk = "asked" | Extract<StopDaemonResult, "not-daemon" | "record-changed">;
 
@@ -1557,7 +1558,7 @@ async function askDaemonToStop(state: DaemonState, check: () => SignalVerdict, h
 async function signalWhenProven(state: DaemonState, verdict: SignalVerdict, home: string, machine: DaemonMachine): Promise<StopAsk> {
   if (verdict === "unknown") throw new Error(unprovenDaemonMessage(home, state.pid, machine.platform));
   if (verdict === "ending") return "asked";
-  if (verdict === "ours") return signalWhileNamed(state, home, machine);
+  if (verdict === "ours") return await signalWhileNamed(state, home, machine);
   await rm(join(home, DAEMON_STATE_FILE), { force: true });
   return "not-daemon";
 }
@@ -1567,16 +1568,34 @@ async function signalWhenProven(state: DaemonState, verdict: SignalVerdict, home
  * start removes a record that names no daemon of the home before it launches one, which takes the home's lock an instant
  * before it records its own pid beside it, so the lock's record may still name the pid daemon.json named. A daemon.json
  * that cannot be read tells neither, and the stop ends nothing and says so ({@link unprovenDaemonMessage}). A daemon's own
- * shutdown removes daemon.json just before it exits, so a record gone with its pid is the daemon ending by itself between
- * the proof and the signal: the stop goes on as for one the signal finds gone ({@link signalDaemon}).
+ * shutdown removes daemon.json just before its process exits, as when another stop asked it first: a record gone is
+ * waited out ({@link endsByItself}), and the stop goes on as for a daemon the signal finds gone once that process ends.
  */
-function signalWhileNamed(state: DaemonState, home: string, machine: DaemonMachine): StopAsk {
+async function signalWhileNamed(state: DaemonState, home: string, machine: DaemonMachine): Promise<StopAsk> {
   const record = recordNow(home, state.pid);
   if (record === undefined) throw new Error(unprovenDaemonMessage(home, state.pid, machine.platform));
-  if (record === "gone" && !processAlive(state.pid, machine.kill)) return "asked";
+  if (record === "gone") return (await endsByItself(home, state.pid, machine)) ? "asked" : "record-changed";
   if (record !== "named") return "record-changed";
   signalDaemon(state.pid, "SIGTERM", machine);
   return "asked";
+}
+
+/**
+ * Whether the process `pid`, proven the daemon of `home` just before its daemon.json was found gone, exits within the
+ * wait a stop gives a daemon after its signal ({@link endWhenStopped}), sending it nothing: a daemon's close removes that
+ * record last. The wait ends at once when daemon.json or the home's lock record names another process, a daemon a start
+ * launched in the home ({@link signalWhileNamed}); `pid` then runs no daemon of it.
+ */
+async function endsByItself(home: string, pid: number, machine: DaemonMachine): Promise<boolean> {
+  const alive = (): boolean => processAlive(pid, machine.kill);
+  await goneWithin(() => alive() && !anotherNamed(home, pid), STOP_TIMEOUT_MS);
+  return !alive();
+}
+
+/** Whether daemon.json or the record beside the home's lock in `home` names a process other than `pid`. */
+function anotherNamed(home: string, pid: number): boolean {
+  const holder = homeDaemonHolder(home);
+  return recordNow(home, pid) === "other" || (holder !== undefined && holder !== pid);
 }
 
 /** Whether the process `alive` watches is gone within `ms`, polling while it runs. */

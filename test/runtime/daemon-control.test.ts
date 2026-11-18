@@ -1286,8 +1286,8 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(existsSync(stateFile)).toBe(false);
   });
 
-  // A start removed daemon.json to launch a daemon, which has taken the home's lock and not yet recorded its own pid
-  // beside it; or that daemon has recorded itself already.
+  // A start removed daemon.json to launch a daemon, which has taken the home's lock and records its own pid beside it
+  // just as the stop asks the lock; or that daemon has recorded itself in daemon.json already.
   it.each([
     ["linux", "is removed", undefined],
     ["win32", "is removed", undefined],
@@ -1304,7 +1304,11 @@ describe("a record whose live pid is not the home's daemon", () => {
     await rm(stateFile);
     const changed = now === undefined ? undefined : JSON.stringify({ ...state(platform), pid: now });
     if (changed !== undefined) await writeFile(stateFile, changed);
-    const result = await stopFoundDaemon(home, found, machine);
+    const newDaemonRecords = (): boolean => {
+      writeFileSync(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: OTHER_PID }));
+      return true;
+    };
+    const result = await stopFoundDaemon(home, found, { ...machine, homeDaemonLockHeld: newDaemonRecords });
     expect(STOP_ANSWERS[result]).toBe("daemon.json changed while Rerail was stopping the daemon it named, so Rerail ended nothing and "
       + "left that record as it is; run rerail daemon stop again to stop the daemon it names now.\n");
     expect(signals).toEqual([]);
@@ -1333,6 +1337,63 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(await stopFoundDaemon(home, { status: "unresponsive", state: state(platform) }, machine)).toBe("stopped");
     expect(signals).toEqual([]);
     expect(existsSync(stateFile)).toBe(false);
+  });
+
+  /**
+   * A machine where the daemon `state(platform)` names is proven the home's by its start, read just before the signal,
+   * when its own shutdown has removed daemon.json; its process then answers as running `looks` more times, and with a
+   * faked clock every look from then on moves it on by `step` ms.
+   */
+  function shuttingDown(platform: NodeJS.Platform, signals: Array<string | number | undefined>, looks: number, step = 0): {
+    machine: DaemonMachine;
+    looksLeft: () => number;
+  } {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    let left = Number.POSITIVE_INFINITY;
+    const machine = fakeMachine(platform, {
+      kill: (_pid, signal) => {
+        if (left <= 0) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        left -= 1;
+        if (step > 0 && Number.isFinite(left)) vi.setSystemTime(Date.now() + step);
+        if (signal !== 0) signals.push(signal);
+        return true;
+      },
+      processStartedAt: () => {
+        rmSync(stateFile);
+        left = looks;
+        return STARTED_AT - 500;
+      },
+    });
+    return { machine, looksLeft: () => left };
+  }
+
+  // Two stops at once: the first one's signal or shutdown request has the daemon close, and its close removes
+  // daemon.json last, an instant before its process exits. The second stop has proven that daemon the home's and finds
+  // its record gone while its process still runs: it waits for that exit, as it waits after a signal of its own.
+  it.each(["linux", "win32"] as const)("waits for a daemon whose own shutdown removed daemon.json to exit, sends it nothing and counts it as stopped (%s)", async platform => {
+    const signals: Array<string | number | undefined> = [];
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(state(platform)));
+    const { machine, looksLeft } = shuttingDown(platform, signals, 3);
+    expect(await stopFoundDaemon(home, { status: "unresponsive", state: state(platform) }, machine)).toBe("stopped");
+    expect(signals).toEqual([]);
+    expect(looksLeft()).toBe(0);
+    expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(false);
+  });
+
+  // The pid outlives the wait a stop gives a daemon after its signal, and nothing names another process: the stop ends
+  // there, as when daemon.json names another pid.
+  it.each(["linux", "win32"] as const)("sends nothing and says the record changed when the pid whose daemon.json is gone outlives the stop's wait (%s)", async platform => {
+    const signals: Array<string | number | undefined> = [];
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(state(platform)));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const { machine } = shuttingDown(platform, signals, Number.MAX_SAFE_INTEGER, 1_000);
+      expect(await stopFoundDaemon(home, { status: "unresponsive", state: state(platform) }, machine)).toBe("record-changed");
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(signals).toEqual([]);
+    expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(false);
   });
 
   it.each(["linux", "win32"] as const)("ends nothing and says so when daemon.json cannot be read just before the signal (%s)", async platform => {
