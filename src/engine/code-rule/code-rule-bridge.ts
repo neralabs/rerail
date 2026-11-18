@@ -374,13 +374,13 @@ async function modifiedSince(absolute: string, modifiedAt: number): Promise<numb
  * take bytes written meanwhile as the baseline. So does a walk that finds a command of the session it holds sources back
  * for as its read ends (`#toolChanges`): the command may have begun after the walk looked, and be part way through what
  * the walk read. With none, none the walk holds sources back for began before the bytes were read. The original `stamp`
- * is kept either way, so the next walk reads the file again; a file gone once read keeps the stamp it was read at, as
- * the next walk finds it gone.
+ * is kept either way, so the next walk reads the file again. A file such a walk cannot stamp after its read (gone, as
+ * when the command emptied and then removed it) is stamped now, so the command holds it back too.
  */
 async function stampOfRead(walk: SourceWalk, absolute: string, modifiedAt: number): Promise<number> {
   if (!walk.captureChanges) return await modifiedSince(absolute, modifiedAt);
   if (walk.commandRuns?.() !== true) return modifiedAt;
-  return await modifiedSince(absolute, modifiedAt).catch(() => modifiedAt);
+  return await modifiedSince(absolute, modifiedAt).catch(async () => Math.max(modifiedAt, await filesystemClock()));
 }
 /**
  * A text file as a walk observes it, with its text only when it may be an edit (`#discoveredEdit`): its digest is not

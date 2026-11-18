@@ -1362,8 +1362,12 @@ describe("CodeRuleBridge", () => {
   });
 
   // A walk looked at a file one command had written, and read it only after a second command, begun meanwhile, emptied
-  // it: its text was the emptied file, while the stamp it looked at said the change came before the second command.
-  it("leaves a file a command empties while a walk reads it to the walk after that command ends", async () => {
+  // it: its text was the emptied file, while the stamp it looked at said the change came before the second command. So
+  // too when the command then removed the file before the walk could stamp it again.
+  it.each([
+    ["empties", false],
+    ["empties and then removes", true],
+  ] as const)("leaves a file a command %s while a walk reads it to the walk after that command ends", async (_kind, removed) => {
     const root = await workspace();
     const path = join(root, "src", "a.py");
     await writeFile(path, "x = 1\n");
@@ -1381,11 +1385,15 @@ describe("CodeRuleBridge", () => {
     await awaitClockAfter(path);
     // The walk at the first command's result has looked at the file, and waits to open it.
     const opening = holdDiscovery("opens", path);
+    const reading = holdDiscovery("reads", path);
     const firstResult = bridge.finish("shell-1");
     await opening.entered;
     await bridge.begin("shell-2", "Bash", { command: "python3 generate.py" });
     await writeFile(path, "");
     opening.release();
+    await reading.entered;
+    if (removed) await rm(path);
+    reading.release();
     await firstResult;
     await writeFile(path, "x = 3\ny = 4\n");
     await bridge.finish("shell-2");
