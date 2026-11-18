@@ -16,6 +16,7 @@ import {
   type AuditResult,
   type AuditSummary,
   type AuditMode,
+  type AuditOrigin,
   type AuditScope,
   type AuditStatus,
   type AuditRuleProvenance,
@@ -99,8 +100,10 @@ function auditColumns(database: RerailDatabase) {
 
 /**
  * The id of `provenance` in `audit_rule_provenances`, stored first when no audit recorded it yet, so the audits of one
- * checkout's rules share one copy. Its key is the SHA-256 of its JSON text. For the caller's write transaction: no other
- * writer can store the same text between the lookup and the insert.
+ * checkout's rules share one copy. Its key is the SHA-256 of its JSON text, as the daemon's move of older audits'
+ * inline provenance keys it (`rule-provenance-move.ts`), so a later audit of the same rules names the copy the move
+ * stored; a test of an upgraded file holds the two to that. For the caller's write transaction: no other writer can
+ * store the same text between the lookup and the insert.
  */
 function storedRuleProvenanceId(database: RerailDatabase, provenance: readonly AuditRuleProvenance[]): number {
   const json = JSON.stringify(provenance);
@@ -120,6 +123,7 @@ export interface AuditQuery {
   status?: AuditStatus;
   scope?: AuditScope;
   mode?: AuditMode;
+  origin?: AuditOrigin;
   limit?: number;
   offset?: number;
 }
@@ -252,14 +256,17 @@ function scopedSessions(column: SQLiteColumn, repositoryId: Repository): SQL {
   return repositoryId === undefined ? sql`1 = 1` : sql`${column} IN (${sessionsOfRepository(repositoryId)})`;
 }
 
+/** The column each `AuditQuery` filter matches exactly. */
+const EXACT_FILTER_COLUMNS = {
+  auditId: audits.auditId, sessionId: audits.sessionId, status: audits.status,
+  scope: audits.scope, mode: audits.mode, origin: audits.origin,
+} as const;
+const EXACT_FILTERS = Object.keys(EXACT_FILTER_COLUMNS) as Array<keyof typeof EXACT_FILTER_COLUMNS>;
+
 function conditions(query: AuditQuery, repositoryId: Repository): SQL | undefined {
   return and(
     repositoryId === undefined ? undefined : scopedSessions(audits.sessionId, repositoryId),
-    query.auditId === undefined ? undefined : eq(audits.auditId, query.auditId),
-    query.sessionId === undefined ? undefined : eq(audits.sessionId, query.sessionId),
-    query.status === undefined ? undefined : eq(audits.status, query.status),
-    query.scope === undefined ? undefined : eq(audits.scope, query.scope),
-    query.mode === undefined ? undefined : eq(audits.mode, query.mode),
+    ...EXACT_FILTERS.map(filter => (query[filter] === undefined ? undefined : eq(EXACT_FILTER_COLUMNS[filter], query[filter]))),
   );
 }
 
@@ -278,6 +285,7 @@ function record(row: AuditRow & { unlistedFailureCount: number }): AuditRecord {
     workspaceRoot: row.workspaceRoot,
     scope: row.scope,
     mode: row.mode,
+    origin: row.origin,
     revision: row.revision,
     catalogRevision: row.catalogRevision,
     ruleRevisions: row.ruleRevisions,
@@ -660,12 +668,16 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
           workspaceRoot: input.workspaceRoot,
           scope: input.scope,
           mode: input.mode,
+          origin: input.origin ?? "ongoing",
           revision: input.revision,
           catalogRevision: input.catalogRevision,
           ruleRevisions: input.ruleRevisions,
           paths: input.paths,
           ruleProvenance: [],
-          ruleProvenanceId: provenance.length === 0 ? null : storedRuleProvenanceId(this.#database, provenance),
+          // Every audit names a stored copy, `[]` included (one row for all that ran no rules): an audit that names
+          // none is one a Rerail older than `audit-rule-provenance-once` wrote, and the daemon's move of older audits'
+          // provenance waits while such audits come (`rule-provenance-move.ts`).
+          ruleProvenanceId: storedRuleProvenanceId(this.#database, provenance),
           startedAt: Date.now(),
           finishedAt: null,
           status: "running",
@@ -750,11 +762,11 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
   }
 
   interrupt(sessionId: string): void {
-    this.#database
-      .update(audits)
-      .set({ status: "interrupted", finishedAt: Date.now() })
-      .where(and(eq(audits.sessionId, sessionId), eq(audits.status, "running")))
-      .run();
+    const running = and(eq(audits.sessionId, sessionId), eq(audits.status, "running"));
+    // Read first: an update takes the write lock even when it matches no row, waiting up to 5 s for another process's,
+    // and every evaluator's open asks this of a session that mostly runs nothing.
+    if (this.#database.select({ auditId: audits.auditId }).from(audits).where(running).limit(1).get() === undefined) return;
+    this.#database.update(audits).set({ status: "interrupted", finishedAt: Date.now() }).where(running).run();
   }
 
   get(auditId: string): AuditRecord | undefined {

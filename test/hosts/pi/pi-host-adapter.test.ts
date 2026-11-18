@@ -80,18 +80,22 @@ describe("Pi host adapter owner transitions", () => {
 });
 
 describe("native steers", () => {
-  it("sends a note naming no rule (a Merge Assist note) and records no steer for it, as it does for a rule's steer", async () => {
+  it("sends a note naming no rule (a Merge Assist note), with its conflict for the person's line, and records no steer for it, as it does for a rule's steer", async () => {
     const steer = (content: string, ruleIds: readonly string[]): AdapterDelivery => ({
       sessionId: "session", requested: "steer", mechanism: "native-queue", content, ruleIds, rules: [],
     });
-    const sent: string[] = [];
+    const conflict = { id: "conflict:a", text: "your edit overlaps jbarnes-1: retry.ts" };
+    const sent: Array<{ content: string; details: object }> = [];
     const receipts: Array<readonly string[]> = [];
     await sendNativeDeliveries(
-      [{ ...steer("Your edit overlaps open work.", []), conflict: { id: "conflict:a", text: "your edit overlaps jbarnes-1: retry.ts" } }, steer("Fix a.", ["a"])],
-      message => { sent.push(message.content); },
+      [{ ...steer("Your edit overlaps open work.", []), conflict }, steer("Fix a.", ["a"])],
+      message => { sent.push({ content: message.content, details: message.details }); },
       (_sessionId, _receiptId, ruleIds) => { receipts.push(ruleIds); },
     );
-    expect(sent).toEqual(["Your edit overlaps open work.", "Fix a."]);
+    expect(sent).toEqual([
+      { content: "Your edit overlaps open work.", details: expect.objectContaining({ conflict }) },
+      { content: "Fix a.", details: expect.not.objectContaining({ conflict: expect.anything() }) },
+    ]);
     expect(receipts).toEqual([["a"]]);
   });
 });

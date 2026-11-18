@@ -1,7 +1,9 @@
 # Writing a command rule
 
-Internal testing: conversation rules are not part of Rerail's latest release, which ships code rules only. Tell the person so in the
-read-back (SKILL.md, Write step 6).
+Internal testing: conversation rules are not part of Rerail's latest release, which ships code rules only. They are experimental
+and off unless `RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1` (or `RERAIL_EXPERIMENTAL=1`) is set: for `rerail rules test` and
+`rules add`, which refuse a conversation draft otherwise, and for the daemon, which checks none otherwise. Tell the person so in
+the read-back (SKILL.md, Write step 6).
 
 A conversation rule with a structural `match` checks each tool call the agent makes, before Rerail records it. Use one for a
 command the agent should never run, or should run only with care: force pushes, skipped hooks, publishing, deleting outside

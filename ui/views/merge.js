@@ -10,18 +10,20 @@
  * Conflict titles, summaries, hunks, authors, branch names and links are other people's text: every one is a text
  * node (`h()` children), never markup, and a pull request link is an `href` only when `safePeerUrl` accepts it.
  *
- * Buttons the page keeps busy (Turn on, Scan now, Turn off, a card's Dismiss) are patched in place, never rebuilt for a
- * write in flight or the passing of time, so the focus stays on the button a person used.
+ * Buttons the page keeps busy (Turn on, Scan now, Turn off, Save) are patched in place, never rebuilt for a write in
+ * flight or the passing of time. A busy button is disabled, which drops its focus, and the answer may rebuild it (or
+ * Dismiss removes its card at once), so once a write is drawn the focus goes back to the control the person used, or
+ * to the one that took its place (`refocusIndex`), unless the person moved it meanwhile.
  */
 import { h, icon, setAttr, setContent, setText, syncChildren } from "../dom.js";
 import { ago, failed, fmt, plural, stamp } from "../format.js";
 import { data, ui, repoName } from "../state.js";
-import { captureScope, inScope, writeMergeAssist } from "../poll.js";
-import { invalidate, toast } from "../shell.js";
+import { captureScope, inScope, mergeAssistMark, mergeAssistReadAfter, writeMergeAssist } from "../poll.js";
+import { invalidate, renderNow, toast } from "../shell.js";
 import {
   HOOK_TIMEOUT_DEFAULT, HOOK_TIMEOUT_MAX, QUIET_TEXT, TOLD_TEXT,
   branchText, conflictSections, dismissToast, githubText, hookFailure, hunkLines, quoted, readinessChecks,
-  safePeerUrl, scanSummary, scannedWhat, settingsChange, settingsDraft, settingsSummary, sideHeading,
+  refocusIndex, safePeerUrl, scanSummary, scannedWhat, settingsChange, settingsDraft, settingsSummary, sideHeading,
   writeError,
 } from "../merge-model.js";
 
@@ -50,6 +52,27 @@ async function write(scope, method, path, body, failure) {
 
 const here = () => repoName() || "this repo";
 
+/** The page's button `act` when it has the focus, as `refocusIndex` takes it (`{ act, i, index }`), else `null`. */
+function focusedControl(act) {
+  const el = document.activeElement;
+  if (page === null || el === null || el.dataset?.act !== act || !page.root.contains(el)) return null;
+  return { act, i: el.dataset.i ?? null, index: [...page.root.querySelectorAll(`button[data-act="${act}"]`)].indexOf(el) };
+}
+
+/**
+ * Draw the page now and, when the focus was on `used` (`focusedControl`) and is nowhere now, put it back there or on
+ * what took its place (`refocusIndex`); else on the Conflicts heading after a Dismiss, the page's heading otherwise.
+ */
+function drawAndRefocus(used) {
+  renderNow();
+  const active = document.activeElement;
+  if (used === null || page === null || (active !== null && active !== document.body)) return;
+  const controls = [...page.root.querySelectorAll("button[data-act]")].filter(button => !button.disabled);
+  const at = refocusIndex(used, controls.map(button => ({ act: button.dataset.act, i: button.dataset.i ?? null })));
+  const heading = used.act === "madismiss" && !page.conflicts.root.hidden ? page.conflicts.head.querySelector("h2") : page.heading;
+  (at >= 0 ? controls[at] : heading)?.focus();
+}
+
 /*
  * Each write below returns early once the page shows another repository: that page's busy flags and dismissals in
  * flight are its own (`changeScope` cleared these), and the answer is not its business.
@@ -57,7 +80,7 @@ const here = () => repoName() || "this repo";
 
 async function setEnabled(enabled) {
   if (ui.mergeSwitching) return;
-  const scope = captureScope();
+  const scope = captureScope(), used = focusedControl(enabled ? "maon" : "maoff");
   ui.mergeSwitching = true; invalidate();
   const status = await write(scope, "PUT", SETTINGS, { enabled }, enabled ? "Couldn’t turn on Merge Assist" : "Couldn’t turn off Merge Assist");
   if (!inScope(scope)) return;
@@ -67,19 +90,19 @@ async function setEnabled(enabled) {
       ? `Merge Assist is on in ${here()}. You and your coding agent are told when your work here collides with work in flight.`
       : `Merge Assist is off in ${here()}. Rerail no longer looks for conflicts here.`);
   }
-  invalidate();
+  drawAndRefocus(used);
 }
 
 async function scan() {
   const before = data.mergeAssist;
   if (ui.mergeScanning || before?.scanning) return;
-  const scope = captureScope();
+  const scope = captureScope(), used = focusedControl("mascan");
   ui.mergeScanning = true; invalidate();
   const status = await write(scope, "POST", SCAN, {}, "Couldn’t scan other branches");
   if (!inScope(scope)) return;
   ui.mergeScanning = false;
   if (status !== null) toast(scanSummary(before, status));
-  invalidate();
+  drawAndRefocus(used);
 }
 
 /* ---------- settings ---------- */
@@ -116,7 +139,7 @@ function settingsToSave() {
 async function saveSettings() {
   const body = settingsToSave();
   if (body === null) return;
-  const scope = captureScope();
+  const scope = captureScope(), used = focusedControl("masettings");
   ui.mergeSaving = true; invalidate();
   const saved = await write(scope, "PUT", SETTINGS, body, "Couldn’t save Merge Assist’s settings");
   if (!inScope(scope)) return;
@@ -125,7 +148,7 @@ async function saveSettings() {
     ui.mergeSettings = null;
     toast(`Saved Merge Assist’s settings for ${here()}.`);
   }
-  invalidate();
+  drawAndRefocus(used);
 }
 
 function fold(name) {
@@ -138,13 +161,18 @@ function fold(name) {
 /** The open conflict `id` when it can be dismissed now: shown, and not already being dismissed; else `undefined`. */
 const dismissable = id => (ui.mergeDismissing.has(id) ? undefined : data.mergeAssist?.conflicts.find(c => c.id === id && c.status === "open"));
 
-/** Dismiss conflict `id` as not a conflict: its card leaves at once and comes back if the write fails. */
+/**
+ * Dismiss conflict `id` as not a conflict: its card leaves at once, handing its Dismiss's focus to the next card's,
+ * and comes back if the write fails.
+ */
 async function dismiss(id) {
   const conflict = dismissable(id);
   if (conflict === undefined) return;
   const scope = captureScope();
   const words = dismissToast(conflict);
-  ui.mergeDismissing.add(id); invalidate();
+  const used = focusedControl("madismiss");
+  ui.mergeDismissing.add(id);
+  drawAndRefocus(used);
   const status = await write(scope, "POST", DISMISS, { conflictId: id }, words.fail);
   if (!inScope(scope)) return;
   ui.mergeDismissing.delete(id);
@@ -305,13 +333,13 @@ function buildSettings() {
 }
 
 function build() {
-  const head = h("div.ghead.mhead", null,
-    h("h2", null, "Merge Assist", h("span.badge.mexp", null, "Experimental")),
+  const heading = h("h2", { tabindex: "-1" }, "Merge Assist", h("span.badge.mexp", null, "Experimental"));
+  const head = h("div.ghead.mhead", null, heading,
     h("p.pitch", null, "Rerail watches the branches and pull requests in flight and tells you and your coding agent when your work collides with someone else’s, before it merges."));
   const notice = h("div"), off = h("div"), strip = h("div"), settings = buildSettings(), conflicts = buildConflicts();
   page = {
     root: h("div.mpage", null, head, notice, off, strip, settings.root, conflicts.root),
-    notice, off, strip, settings, conflicts,
+    heading, notice, off, strip, settings, conflicts,
     // Built with the consent card and the strip; patched in place on every render.
     onButton: null, stripWhen: null, scanButton: null, offButton: null, problems: null,
   };
@@ -427,16 +455,19 @@ function settingsForm(fields) {
       // A text field: a number field reads "" for text it can't parse, which would save the default the person never typed.
       field("input.mfield.mnum", { id: "ma-timeout", type: "text", inputmode: "numeric", "aria-describedby": "ma-timeout-hint ma-settings-problem" }, fields.timeout),
       h("p.mnote2", { id: "ma-timeout-hint" }, `1 to ${HOOK_TIMEOUT_MAX}; ${HOOK_TIMEOUT_DEFAULT} by default. A command still running then is stopped.`)),
-    h("p.msetproblem", { id: "ma-settings-problem", "aria-live": "polite" }),
-    h("div.macts", null, h("button.btn.sm.solid", { "data-act": "masettings" }, "Save")),
+    h("div.macts", null,
+      h("button.btn.sm.solid", { "data-act": "masettings" }, "Save"),
+      // Always rendered and empty without a problem: a screen reader announces a live region's change only once it is shown.
+      h("p.msetproblem", { id: "ma-settings-problem", "aria-live": "polite" })),
   ];
 }
 
-/** Why the last Save was refused, and which field it was about (`aria-invalid`); nothing once a field changes. */
-function patchProblem(form, fields) {
-  const problem = form.querySelector('p[id="ma-settings-problem"]');
-  setText(problem, fields.problem ?? "");
-  setAttr(problem, "hidden", fields.problem === null);
+/**
+ * Why the last Save was refused, and which field it was about (`aria-invalid`); empty once a field changes. The
+ * paragraph is never hidden, so the text a refused Save puts in it is announced.
+ */
+export function patchProblem(form, fields) {
+  setText(form.querySelector('p[id="ma-settings-problem"]'), fields.problem ?? "");
   setAttr(form.querySelector('input[id="ma-hook"]'), "aria-invalid", fields.field === "command" ? "true" : null);
   setAttr(form.querySelector('input[id="ma-timeout"]'), "aria-invalid", fields.field === "timeout" ? "true" : null);
 }
@@ -492,7 +523,7 @@ function renderConflicts(status) {
   if (!on) return;
   const { open, dismissed } = conflictSections(status, ui.mergeDismissing);
   setContent(c.head, JSON.stringify(open.length), () => [
-    h("h2", null, "Open conflicts", h("span.n2", { "aria-label": `${fmt(open.length)} open` }, fmt(open.length))),
+    h("h2", { tabindex: "-1" }, "Open conflicts", h("span.n2", { "aria-label": `${fmt(open.length)} open` }, fmt(open.length))),
     h("p", null, CONFLICTS_LEAD),
   ]);
   setAttr(c.list, "hidden", open.length === 0);
@@ -505,17 +536,22 @@ function renderConflicts(status) {
   syncDismissed(c.dismissed.list, dismissed);
 }
 
-/** The conflict a link names (`#merge?conflict=<id>`, the session's line), until a status shows whether it is here. */
+/**
+ * The conflict a link names (`#merge?conflict=<id>`, the session's line), `{ id, after }`, until a status asked for
+ * after the link (`after`, `mergeAssistMark`) shows whether it is here. The status held when the link is followed may
+ * be the sidebar's, half a minute old: the conflict may be new since, or dismissed.
+ */
 let reveal = null;
 
 export function enter(route) {
-  if (route.conflict !== undefined) reveal = route.conflict;
+  if (route.conflict !== undefined) reveal = { id: route.conflict, after: mergeAssistMark() };
 }
 
-/** Which conflict to bring into view this render, once the status is in; a dismissed one opens its fold. */
+/** Which conflict to bring into view this render, once a fresh status is in; a dismissed one opens its fold. */
 function revealTarget(status) {
-  if (reveal === null || status === null) return null;
-  const found = status.enabled ? status.conflicts.find(c => c.id === reveal) : undefined;
+  if (reveal === null || status === null || !mergeAssistReadAfter(reveal.after)) return null;
+  const { id } = reveal;
+  const found = status.enabled ? status.conflicts.find(c => c.id === id) : undefined;
   reveal = null;
   if (found === undefined) return null;
   if (found.status !== "open") ui.mergeOpen.add("dismissed");

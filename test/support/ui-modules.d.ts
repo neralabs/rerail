@@ -76,6 +76,8 @@ declare module "*/ui/poll.js" {
   export function recommendationsFor(scope: Scope): Promise<Array<{ packId: string; folder: string }>>;
   export function saveFollowGitignore(follow: boolean, page: { toast(message: string): void; invalidate(): void }): Promise<void>;
   export function writeMergeAssist(scope: Scope, method: string, path: string, body: object): Promise<import("../../src/engine/index.js").MergeAssistStatus | null>;
+  export function mergeAssistMark(): number;
+  export function mergeAssistReadAfter(mark: number): boolean;
   export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
   export function refresh(): Promise<void>;
   export function refreshNow(): Promise<void>;
@@ -149,6 +151,8 @@ declare module "*/ui/state.js" {
     sessionDetail: Map<string, SessionDetail>;
     missing: boolean;
     disconnected: boolean;
+    /** The daemon answered 401: this browser holds no access capability. */
+    accessRequired: boolean;
     /** Whether a poll has answered for the scope: the sidebar's Merge Assist count waits for it. */
     loaded: boolean;
     /** `GET /api/merge-assist` for the scoped checkout (`MergeAssistStatus`). */
@@ -242,6 +246,8 @@ declare module "*/ui/routes.js" {
 declare module "*/ui/views/index.js" {
   /** The need names a poll loads for the page now: the sidebar's, the open view's and an open sheet's. */
   export function currentNeeds(): string[];
+  /** What `#content` shows: a view's name, or the page in its place ("access", "no-repo", "missing", "not-set-up"). */
+  export function pageKey(): string;
 }
 
 declare module "*/ui/history-model.js" {
@@ -300,6 +306,11 @@ declare module "*/ui/render/rule-sheet-model.js" {
   export function splitPath(path: string | null | undefined): { file: string; dir: string };
 }
 
+declare module "*/ui/views/merge.js" {
+  interface Patched { hidden: boolean; textContent: string; getAttribute(name: string): string | null; hasAttribute(name: string): boolean; setAttribute(name: string, value: string): void; removeAttribute(name: string): void }
+  export function patchProblem(form: { querySelector(selector: string): Patched | null }, fields: { problem: string | null; field: "command" | "timeout" | null }): void;
+}
+
 declare module "*/ui/views/create.js" {
   export interface CreateSuggestion { packId: string; name: string; reason: string }
   export function createSuggestions(
@@ -344,4 +355,6 @@ declare module "*/ui/merge-model.js" {
   export function settingsDraft(settings: MergeAssistSettings): SettingsFields;
   export function settingsChange(fields: SettingsFields): { body: MergeAssistSettings } | { problem: string; field: "command" | "timeout" };
   export function settingsSummary(settings: MergeAssistSettings): string;
+  export interface FocusControl { act: string; i: string | null }
+  export function refocusIndex(used: FocusControl & { index: number }, controls: readonly FocusControl[]): number;
 }

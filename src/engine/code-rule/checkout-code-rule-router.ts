@@ -122,6 +122,16 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     }
   }
 
+  /**
+   * Has the owners look again at each of `paths`, a tool call's files, and the folders above it
+   * (`CheckoutOwners.lookAgainAt`). `git worktree add`, from any repository, can make a folder this session looked up
+   * while it was plain a checkout, and the answers kept from then would leave the call's edits there unchecked.
+   */
+  refreshOwners(paths: readonly string[]): void {
+    if (this.#closing) return;
+    for (const path of paths) this.#options.owners.lookAgainAt(resolve(this.#sessionRoot, path));
+  }
+
   updateSettings(settings: Required<AuditSettings>): void {
     this.#settings = settings;
     for (const lane of this.#lanes.values()) lane.enforcer.updateSettings(settings);
@@ -454,8 +464,19 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
 
   /** Whether `root` may run rules in this session: it is eligible, and the session's own checkout is not stopped. */
   #mayRun(root: string): boolean {
-    const starting = this.#eligibilityOf(this.#options.startingCheckout);
-    return starting !== "stopped" && starting !== "unrecorded" && this.#eligibilityOf(root) === "ok";
+    return this.whyNoRules(root) === undefined;
+  }
+
+  /**
+   * Why the checkout at `root` runs no rules in this session, or undefined when it may: the starting checkout's
+   * eligibility while it is stopped or unrecorded, which keeps every lane closed, else `root`'s own unless it is `ok`.
+   */
+  whyNoRules(root: string): { checkoutRoot: string; eligibility: Exclude<CheckoutEligibility, "ok"> } | undefined {
+    const starting = this.#options.startingCheckout;
+    const startingEligibility = this.#eligibilityOf(starting);
+    if (startingEligibility === "stopped" || startingEligibility === "unrecorded") return { checkoutRoot: starting, eligibility: startingEligibility };
+    const eligibility = this.#eligibilityOf(root);
+    return eligibility === "ok" ? undefined : { checkoutRoot: root, eligibility };
   }
 
   #eligibilityOf(root: string): CheckoutEligibility {

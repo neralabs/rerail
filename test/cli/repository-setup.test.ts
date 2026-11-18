@@ -62,35 +62,37 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     const asked = agentIo();
     await runSetup(asked, request(setup, environment, { answer: "yes", repo: setup.repo }));
     expect(asked.text()).toContain("From your lint config (read as data, never run):");
-    expect(asked.text()).toContain(`${TYPE_DEFINITIONS} starts with option = "type"  .eslintrc.json: "@typescript-eslint/consistent-type-definitions": ["error","type"]`);
-    expect(asked.text()).toContain(`${TSLINT_COMMENT} starts off  .eslintrc.json: "@typescript-eslint/ban-tslint-comment": "off"`);
+    // The config extends nothing, so the rules it does not name start off, counted.
+    expect(asked.text()).toMatch(/^ {4}\d+ rules start off {2}\.eslintrc\.json does not turn it on$/mu);
+    expect(asked.text()).toContain(`${TYPE_DEFINITIONS} starts on with option = "type"  .eslintrc.json: "@typescript-eslint/consistent-type-definitions": ["error","type"]`);
+    // The pack starts ban-tslint-comment off already: the config's off changes nothing, so it is not named.
+    expect(asked.text()).not.toContain(TSLINT_COMMENT);
 
     await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
-    expect(rulesOf(setup, [TYPE_DEFINITIONS, TSLINT_COMMENT])).toEqual({
-      // The pack keeps consistent-type-definitions off; the repository's option is there for when it is turned on.
-      [TYPE_DEFINITIONS]: { on: false, config: { option: "type" } },
+    expect(rulesOf(setup, [TYPE_DEFINITIONS, TSLINT_COMMENT, TS_COMMENT])).toEqual({
+      [TYPE_DEFINITIONS]: { on: true, config: { option: "type" } },
       [TSLINT_COMMENT]: { on: false, config: null },
+      [TS_COMMENT]: { on: false, config: null },
     });
   });
 
-  it("starts the ESLint ports off for an eslint.config.ts it cannot read statically, and takes an .oxlintrc.json off", async () => {
+  it("keeps the pack's values for the ESLint ports when it cannot read eslint.config.ts statically, and takes an .oxlintrc.json off", async () => {
     const setup = await fixture();
     writeFileSync(join(setup.repo, "eslint.config.ts"), "throw new Error(\"run\");\n");
-    writeFileSync(join(setup.repo, ".oxlintrc.json"), "{ // ours\n  \"rules\": { \"typescript/ban-tslint-comment\": \"off\", },\n}\n");
+    writeFileSync(join(setup.repo, ".oxlintrc.json"), "{ // ours\n  \"rules\": { \"typescript/ban-ts-comment\": \"off\", },\n}\n");
     const environment = fakeSetupEnvironment();
     const review = agentIo();
     await runSetup(review, request(setup, environment, { answer: "yes", repo: setup.repo }));
-    expect(review.text()).toContain("eslint.config.ts is not statically readable: it exports no config Rerail can find (export default or module.exports). Rerail never runs your config. The rules Rerail ports from ESLint start off, since Rerail cannot tell which it turns off.");
-    expect(review.text()).toContain(`${TS_COMMENT} starts off  eslint.config.ts is not statically readable`);
-    expect(review.text()).toContain(`${TSLINT_COMMENT} starts off  eslint.config.ts is not statically readable; .oxlintrc.json: "typescript/ban-tslint-comment": "off"`);
+    expect(review.text()).toContain("eslint.config.ts is not statically readable: it exports no config Rerail can find (export default or module.exports). Rerail never runs your config. The rules Rerail ports from ESLint keep the pack's values, since Rerail cannot tell which it turns on or off.");
+    expect(review.text()).toContain(`${TS_COMMENT} starts off  .oxlintrc.json: "typescript/ban-ts-comment": "off"`);
 
     await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
     expect(selected(setup)).toEqual(["typescript"]);
     expect(rulesOf(setup, [TS_COMMENT, TSLINT_COMMENT])).toEqual({ [TS_COMMENT]: { on: false, config: null }, [TSLINT_COMMENT]: { on: false, config: null } });
   });
 
-  // dolanmiu/docx (PR 3716) sets consistent-type-definitions to "type" in its eslint.config.ts, for its
-  // **/src/**/*.ts files, after shared configs; set-up used to leave the option for the person to set by hand.
+  // dolanmiu/docx (PR 3716) sets consistent-type-definitions to "type" in its eslint.config.ts for some files, after
+  // shared configs; set-up used to leave the option for the person to set by hand.
   it("takes options and folder offs from a flat eslint.config.ts, read as data, and writes them on start", async () => {
     const setup = await fixture();
     writeFileSync(join(setup.repo, "eslint.config.ts"), [
@@ -98,7 +100,7 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
       "import tsEslint from \"typescript-eslint\";",
       "const config: Linter.Config[] = [",
       "  ...tsEslint.configs.stylistic,",
-      "  { files: [\"**/src/**/*.ts\"], rules: { \"@typescript-eslint/consistent-type-definitions\": [\"error\", \"type\"] } },",
+      "  { files: [\"**/*.ts\"], rules: { \"@typescript-eslint/consistent-type-definitions\": [\"error\", \"type\"] } },",
       "  { files: [\"scripts/**\"], rules: { \"@typescript-eslint/ban-tslint-comment\": \"off\" } },",
       "];",
       "export default config;",
@@ -106,17 +108,22 @@ describe("set-up and the repository's own lint config", { timeout: SETUP_TIMEOUT
     const environment = fakeSetupEnvironment();
     const asked = agentIo();
     await runSetup(asked, request(setup, environment, { answer: "yes", repo: setup.repo }));
-    expect(asked.text()).toContain(`${TYPE_DEFINITIONS} starts with option = "type"  eslint.config.ts: "@typescript-eslint/consistent-type-definitions": ["error","type"] for ["**/src/**/*.ts"]`);
+    expect(asked.text()).toMatch(/^ {4}\d+ rules start on {2}eslint\.config\.ts: tsEslint\.configs\.stylistic$/mu);
+    // Files that hold every file the port runs on (here app.ts) count as every file.
+    expect(asked.text()).toContain(`${TYPE_DEFINITIONS} starts on with option = "type"  eslint.config.ts: "@typescript-eslint/consistent-type-definitions": ["error","type"]\n`);
     expect(asked.text()).toContain(`${TSLINT_COMMENT} starts off in scripts/  eslint.config.ts: "@typescript-eslint/ban-tslint-comment": "off" for ["scripts/**"]`);
 
     await runSetup(agentIo(), request(setup, environment, { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
-    expect(rulesOf(setup, [TYPE_DEFINITIONS])).toEqual({ [TYPE_DEFINITIONS]: { on: false, config: { option: "type" } } });
+    expect(rulesOf(setup, [TYPE_DEFINITIONS, TSLINT_COMMENT])).toEqual({ [TYPE_DEFINITIONS]: { on: true, config: { option: "type" } }, [TSLINT_COMMENT]: { on: true, config: null } });
     const database = openRerailDatabase(setup.databasePath, { readonly: true });
     try {
-      expect(database.select().from(ruleSettings).all().map(({ folder, targetId, on, config }) => ({ folder, targetId, on, config }))).toEqual([
-        { folder: "", targetId: TYPE_DEFINITIONS, on: null, config: { option: "type" } },
-        { folder: "scripts", targetId: TSLINT_COMMENT, on: false, config: null },
-      ]);
+      const rows = database.select().from(ruleSettings).all().map(({ folder, targetId, on, config, origin }) => ({ folder, targetId, on, config, origin }));
+      expect(rows.every(row => row.origin === "lint-config")).toBe(true);
+      expect(rows.filter(row => row.targetId === TYPE_DEFINITIONS || row.targetId === TSLINT_COMMENT)).toEqual(expect.arrayContaining([
+        { folder: "", targetId: TSLINT_COMMENT, on: true, config: null, origin: "lint-config" },
+        { folder: "", targetId: TYPE_DEFINITIONS, on: true, config: { option: "type" }, origin: "lint-config" },
+        { folder: "scripts", targetId: TSLINT_COMMENT, on: false, config: null, origin: "lint-config" },
+      ]));
     } finally {
       database.$client.close();
     }
@@ -381,7 +388,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     const asked = agentIo();
     await runSetup(asked, request(setup, fakeSetupEnvironment({ packs: countingStore(["python"]) }), { answer: "yes", repo: setup.repo }));
     expect(asked.text()).toContain([
-      "Scanned acme-api. None of Rerail’s rule packs fit it.",
+      "Scanned acme-api. No rule pack matches what it’s built with.",
       "",
       "  Found           .py 3 · .ts 1",
       "                  from Git’s list of files, which leaves out what Git ignores",
@@ -402,7 +409,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(io.text()).toContain("Couldn’t download Rerail’s rule packs, so set-up can’t tell which fit acme-api.");
     expect(io.text()).toContain("npm error code E401");
     expect(io.text()).toContain("Try downloading them again?");
-    expect(io.text()).not.toContain("None of Rerail’s rule packs fit");
+    expect(io.text()).not.toContain("No rule pack matches");
     expect(io.text()).not.toContain("with no rule packs on?");
     expect(environment.connections).toEqual([]);
   });
@@ -422,7 +429,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     expect(await runSetup(asked, request(setup, fakeSetupEnvironment({ packs }), { answer: "pick-myself", repo: setup.repo }))).toEqual({ status: "waiting" });
     const [complexity] = repositoryPackVersions("complexity");
     expect(asked.text()).toContain("Which rule packs should Rerail start with in acme-api?");
-    expect(asked.text()).toContain(`complexity@${complexity!.version}  Cyclomatic complexity`);
+    expect(asked.text()).toContain(`complexity@${complexity!.version}  Function complexity`);
     expect(asked.text()).not.toContain("(limit 6)");
     expect(asked.text()).toContain(`--answer pick-myself --repo ${shellWord("posix", setup.repo)} --packs none`);
     expect(readsRepository).not.toHaveBeenCalled();
@@ -452,7 +459,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
       const asked = agentIo();
       await runSetup(asked, request(setup, fakeSetupEnvironment(), { answer: "yes", repo: setup.repo }));
       expect(asked.text()).toMatch(/@neralabs\/rerail-pack-typescript@\S+: .*0\.0\.9/u);
-      expect(asked.text()).toContain("Scanned acme-api. None of Rerail’s rule packs fit it.");
+      expect(asked.text()).toContain("Scanned acme-api. No rule pack matches what it’s built with.");
     } finally {
       await removeFolder(current);
     }
