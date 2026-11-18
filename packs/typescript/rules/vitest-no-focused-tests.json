@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "vitest-no-focused-tests",
-  "revision": 3,
+  "revision": 4,
   "mode": "steer",
   "description": "Remove .only from Vitest tests and suites; a focused test makes Vitest skip every other test in the file.",
   "scope": {
@@ -422,19 +422,6 @@
                   "field": "object",
                   "matches": "vitest-it-test-callee"
                 }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-it-test-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "matches": "vitest-it-test-callee"
-                }
               }
             ]
           },
@@ -587,19 +574,6 @@
                   "field": "object",
                   "matches": "vitest-describe-callee"
                 }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-describe-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
-                  "matches": "vitest-describe-callee"
-                }
               }
             ]
           },
@@ -617,19 +591,6 @@
                 "kind": "member_expression",
                 "has": {
                   "field": "object",
-                  "matches": "vitest-describe-it-test-context-callee"
-                }
-              },
-              {
-                "kind": "call_expression",
-                "has": {
-                  "field": "function",
-                  "matches": "vitest-describe-it-test-context-callee"
-                }
-              },
-              {
-                "kind": "parenthesized_expression",
-                "has": {
                   "matches": "vitest-describe-it-test-context-callee"
                 }
               }
