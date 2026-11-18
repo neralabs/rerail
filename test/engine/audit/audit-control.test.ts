@@ -87,33 +87,42 @@ describe("audit controls", () => {
     /**
      * A folder `App`, a session there that spells it as VS Code or a typed `cd` can (`c:\…\app`), and the key Rerail
      * 0.1.4's store saved that session's settings under: the JS realpath, which keeps that spelling. This build keys
-     * the folder by the spelling the disk stores (`C:\…\App`).
+     * the folder by the spelling the disk stores (`C:\…\App`), and records the session in the folder's repository.
+     * Outside Git, 0.1.4 recorded the folder under the same key as the settings when its session opened there; with
+     * `recordedHere` this build recorded it too, under the stored spelling. A Git checkout is recorded under Git's top
+     * level by both.
      */
-    async function spelledFixture() {
+    async function spelledFixture({ git = false, recordedHere = true } = {}) {
       const { root, controls, sessionStore } = await fixture();
       const stored = join(realpathSync.native(root), "App");
       await mkdir(stored);
+      if (git) execFileSync("git", ["init", "-q", stored]);
       const spelled = join(dirname(stored).replace(/^[A-Z]:/u, drive => drive.toLowerCase()), "app");
-      sessionStore.openSession({ host: "claude-code", sessionId: "spelled", cwd: spelled });
       const earlierKey = realpathSync(spelled);
-      const rows = () => {
+      const inDatabase = <T>(work: (database: ReturnType<typeof openRerailDatabase>) => T): T => {
         const database = openRerailDatabase(sessionStore.path);
-        try {
-          return Object.fromEntries(database.select().from(auditSettings).all().map(row => [row.workspaceRoot, row.settings]));
-        } finally { database.$client.close(); }
+        try { return work(database); } finally { database.$client.close(); }
       };
+      const sql = (statement: string, ...values: unknown[]) => inDatabase(database => database.$client.prepare(statement).run(...values));
+      const recorded = inDatabase(database => recordCheckout(database, spelled));
+      if (!git) sql("INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, ?, ?, NULL, 1, 1)", earlierKey, recorded.repositoryKey, recorded.cloneId);
+      if (!recordedHere) sql("DELETE FROM checkouts WHERE checkout_path = ?", stored);
+      sessionStore.openSession({ host: "claude-code", sessionId: "spelled", cwd: spelled }, 1, recorded.repositoryKey);
+      const rows = () => inDatabase(database => Object.fromEntries(database.select().from(auditSettings).all().map(row => [row.workspaceRoot, row.settings])));
       const saveAsEarlier = (settings: { scope: "ai-output" | "repository"; mode: "log" | "steer" }) => {
-        const database = openRerailDatabase(sessionStore.path);
-        try {
-          database.insert(auditSettings).values({ workspaceRoot: earlierKey, settings, updatedAt: 1 }).run();
-        } finally { database.$client.close(); }
+        sql("INSERT INTO audit_settings (workspace_root, settings_json, updated_at) VALUES (?, ?, 1)", earlierKey, JSON.stringify(settings));
       };
-      return { stored, spelled, earlierKey, controls, sessionStore, rows, saveAsEarlier };
+      /** What a letter or 8.3 name that led elsewhere when 0.1.4 saved through it leaves: its row under the spelling names that folder's repository. */
+      const recordedForAnother = () => {
+        sql("INSERT INTO repositories (repository_key, display_name, started, configured_at, created_at, updated_at) VALUES ('clone:another', 'Another', 1, 1, 1, 1)");
+        sql("UPDATE checkouts SET repository_key = 'clone:another', clone_id = 'another' WHERE checkout_path = ?", earlierKey);
+      };
+      return { stored, spelled, earlierKey, controls, sessionStore, rows, saveAsEarlier, recordedForAnother, sql };
     }
 
     /** `check` on a fresh {@link spelledFixture}, its stores closed however it ends, so the folder can be removed. */
-    async function inSpelledFolder(check: (folder: Awaited<ReturnType<typeof spelledFixture>>) => void): Promise<void> {
-      const folder = await spelledFixture();
+    async function inSpelledFolder(check: (folder: Awaited<ReturnType<typeof spelledFixture>>) => void, options?: Parameters<typeof spelledFixture>[0]): Promise<void> {
+      const folder = await spelledFixture(options);
       try {
         expect(folder.earlierKey).not.toBe(folder.stored);
         check(folder);
@@ -122,12 +131,21 @@ describe("audit controls", () => {
       }
     }
 
+    const LOG = { scope: "ai-output", mode: "log", steerStrategy: "message" };
+    const STEER = { scope: "ai-output", mode: "steer", steerStrategy: "message" };
+
     it("reads the audit mode 0.1.4 saved there, for the session and by the folder", () => inSpelledFolder(({ spelled, controls, saveAsEarlier }) => {
       saveAsEarlier({ scope: "ai-output", mode: "log" });
-      expect(controls.getSettings("spelled").settings).toEqual({ scope: "ai-output", mode: "log", steerStrategy: "message" });
+      expect(controls.getSettings("spelled").settings).toEqual(LOG);
       expect(controls.hasUserSettings("spelled")).toBe(true);
       expect(controls.getWorkspaceSettings(spelled)?.mode).toBe("log");
     }));
+
+    it("reads it for a session 0.1.4 recorded, before this build recorded the folder", () => inSpelledFolder(({ controls, saveAsEarlier }) => {
+      saveAsEarlier({ scope: "ai-output", mode: "log" });
+      expect(controls.getSettings("spelled").settings).toEqual(LOG);
+      expect(controls.hasUserSettings("spelled")).toBe(true);
+    }, { recordedHere: false }));
 
     it("reads a row saved under the stored spelling before the one 0.1.4 saved", () => inSpelledFolder(({ stored, controls, saveAsEarlier }) => {
       saveAsEarlier({ scope: "ai-output", mode: "log" });
@@ -143,6 +161,27 @@ describe("audit controls", () => {
         [earlierKey]: { scope: "repository", mode: "log" },
       });
     }));
+
+    it("outside Git, takes nothing 0.1.4 saved under the spelling for another repository's folder: the session steers, and a change starts from the defaults", () => inSpelledFolder(({ stored, earlierKey, spelled, controls, rows, saveAsEarlier, recordedForAnother }) => {
+      saveAsEarlier({ scope: "repository", mode: "log" });
+      recordedForAnother();
+      expect(controls.getSettings("spelled").settings).toEqual(STEER);
+      expect(controls.hasUserSettings("spelled")).toBe(false);
+      expect(controls.getWorkspaceSettings(spelled)).toBeUndefined();
+      controls.updateSettings("spelled", { steerStrategy: "rewind" });
+      expect(rows()).toEqual({ [stored]: { scope: "ai-output", mode: "steer", steerStrategy: "rewind" }, [earlierKey]: { scope: "repository", mode: "log" } });
+    }));
+
+    it("outside Git, takes nothing 0.1.4 saved under a spelling it recorded no folder under", () => inSpelledFolder(({ earlierKey, controls, saveAsEarlier, sql }) => {
+      saveAsEarlier({ scope: "ai-output", mode: "log" });
+      sql("DELETE FROM checkouts WHERE checkout_path = ?", earlierKey);
+      expect(controls.getSettings("spelled").settings).toEqual(STEER);
+    }));
+
+    it("in a Git checkout, reads what 0.1.4 saved under the spelling though no record says whose folder it was, as 0.1.4 read it", () => inSpelledFolder(({ controls, saveAsEarlier }) => {
+      saveAsEarlier({ scope: "ai-output", mode: "log" });
+      expect(controls.getSettings("spelled").settings).toEqual(LOG);
+    }, { git: true }));
   });
 
   it("retries an interrupted repository audit in a later session, and never a completed one", async () => {
