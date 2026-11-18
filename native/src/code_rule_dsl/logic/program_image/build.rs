@@ -168,6 +168,26 @@ impl<'p> Builder<'p> {
         b
     }
 
+    /// A base of all of `edit`, an overlay of `parent` (its derivation's input), under its atom and relation ids: each
+    /// rule copied with the source the derivation records for it: a rule of `parent` with a source its own (as `keep`
+    /// records it), a rule the edit added its source in `parent`; a rule with none stays without (a base's digest). A pass's output folded so is the same edit of its input as the
+    /// overlay was (`manager::Delta`, the request record by rule, decision 0331); `folding` keeps the older sources.
+    fn folding_edit(edit: &'p Version, parent: &Version) -> Builder<'p> {
+        let mut b = Builder::derive(edit);
+        let added = match edit {
+            Version::Overlay { delta, .. } => delta.rule_base(),
+            _ => u32::MAX,
+        };
+        for r in edit.rules() {
+            let id = b.copy(edit, r);
+            let src = r.source().map(|s| if r.id().0 < added && parent.contains(r.id()) { r.id() } else { s });
+            if let Some(src) = src {
+                b.enc.set_from(id.0 - b.enc.rule_base(), src);
+            }
+        }
+        b
+    }
+
     /// The edit's size: rules removed and added, and part rows stated.
     pub fn size(&self) -> usize {
         self.removed.len() + self.enc.rules() as usize + self.parts.decls.len() + self.parts.decls_gone.len() + self.rows + self.parts.facts_gone.len()
@@ -511,7 +531,7 @@ impl<'p> Builder<'p> {
         let size = self.size();
         let overlay = Version::over(parent, &self.finish_bytes()?)?;
         if 2 * size >= parent.size().max(1) {
-            return Ok((overlay.fold()?, Made::Folded));
+            return Ok((Builder::folding_edit(&overlay, parent).finish()?.0, Made::Folded));
         }
         Ok((overlay, Made::Overlay))
     }

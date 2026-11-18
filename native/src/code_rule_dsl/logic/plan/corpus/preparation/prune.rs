@@ -35,6 +35,11 @@ impl ProgramPass for Prune {
         }
         let native_reads: HashMap<&str, Vec<&str>> = about.natives.iter().map(|n| (v.rel_name(n.rel), n.reads.iter().map(|&r| v.rel_name(r)).collect())).collect();
         let reads = |i: usize| -> Vec<String> { rules[i].body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()).collect() };
+        // A reader the program no longer has (merged into another, renamed, inlined since the requests were made)
+        // cannot be asked whether it is needed: its requests are kept, as an ungated rule is (the tree's `reach`).
+        let d = cx.get::<crate::code_rule_dsl::logic::plan::fields::FieldsData>()?;
+        let f = crate::code_rule_dsl::logic::plan::fields::Fields::over(v, &d);
+        let has = |rel: &str| body_of.contains_key(rel) || f.is_input(rel) || native_reads.contains_key(rel) || f.facts(rel).is_some();
         let mut kept = vec![false; rules.len()];
         let (mut need, mut todo): (BTreeSet<String>, Vec<String>) = (BTreeSet::new(), roots.clone());
         loop {
@@ -56,7 +61,7 @@ impl ProgramPass for Prune {
                 if let Some(by) = by
                     && !kept[i]
                     && need.contains(head(i))
-                    && by.iter().any(|b| need.contains(b))
+                    && by.iter().any(|b| need.contains(b) || !has(b))
                 {
                     kept[i] = true;
                     todo.extend(reads(i));
@@ -67,6 +72,7 @@ impl ProgramPass for Prune {
             }
         }
         // The record follows the rules kept.
+        let dropped: BTreeSet<&str> = (0..rules.len()).filter(|&i| !kept[i] && !need.contains(head(i))).map(head).collect();
         let mut asked_after: BTreeMap<String, Vec<BTreeSet<String>>> = BTreeMap::new();
         for (req, readers) in &asked {
             let mine: Vec<bool> = (0..rules.len()).filter(|&i| head(i) == req.as_str()).map(|i| kept[i]).collect();
@@ -74,6 +80,13 @@ impl ProgramPass for Prune {
             if mine.len() == readers.len() {
                 let mut it = mine.iter();
                 readers.retain(|_| *it.next().unwrap());
+            }
+            // A reader `prune` drops is not needed: it leaves the record, beside one it keeps, so a later gate (the
+            // embed slice's) does not take it for one gone by a rename, whose requests stay.
+            for by in &mut readers {
+                if by.iter().any(|b| dropped.contains(b.as_str())) && by.iter().any(|b| !dropped.contains(b.as_str())) {
+                    by.retain(|b| !dropped.contains(b.as_str()));
+                }
             }
             let has_rules = (0..rules.len()).any(|i| kept[i] && head(i) == req.as_str());
             if !readers.is_empty() || has_rules {

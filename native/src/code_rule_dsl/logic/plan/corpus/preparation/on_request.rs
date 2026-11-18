@@ -448,10 +448,10 @@ impl<'v> Widen<'v> {
     /// `Widen::demand_of` (decision 0291): what the rules reading `rule`'s relation ask of its column holding `n`: the
     /// column, and per reading site an ask (its head left to the caller), its other literals widened and joined to the
     /// column's variable, renamed apart with that variable as `rr_dn`, with the relations whose rules ask it (equal
-    /// asks are one); and the relations with a reading site that asks nothing narrower (read in an aggregate or by
-    /// name, with that column a constant or bound by nothing its reader keeps), each of which keeps the request whole.
-    /// Each is a gate (`Program::asked_by`). None where the relation is an output or an input, is read by its own
-    /// rules, or no site asks anything narrower.
+    /// asks are one); and the blockers, the relations with a reading site that cannot ask (read in an aggregate, by
+    /// name, by its own rules, or with that column a constant or bound by nothing its reader keeps), whose request is
+    /// made unnarrowed beside the narrowed one. Each is a gate (`Program::asked_by`). None where the relation is an
+    /// output or an input, or no site asks.
     fn demand_of(&self, rule: RuleRef<'_>, n: Slot) -> Option<(usize, Vec<(New, BTreeSet<String>)>, BTreeSet<String>)> {
         let v = self.v;
         let rel = v.rel_name(rule.head().rel());
@@ -479,7 +479,8 @@ impl<'v> Widen<'v> {
                     _ => continue,
                 };
                 if reader == rel {
-                    return None;
+                    whole.insert(reader.to_owned());
+                    continue;
                 }
                 let Some(TermRef::Var(u)) = a.args().nth(col) else {
                     whole.insert(reader.to_owned());
@@ -667,7 +668,11 @@ impl ProgramPass for SourcesOnRequest {
                     // The request kept whole for the readers that ask for all, each its gate: with the narrowed one, which
                     // it subsumes where both are reached (`front::subsume_requests`).
                     let mut whole: Option<(New, BTreeSet<String>)> = None;
+                    // The narrowed request serves the reader's readers that ask (with none of them reached it asks for
+                    // nothing); unnarrowed, it serves the reader.
+                    let mut askers: BTreeSet<String> = BTreeSet::from([reader.to_owned()]);
                     let narrowed = wd.demand_of(rule, n).map(|(col, asks, all)| {
+                        askers = asks.iter().flat_map(|(_, by)| by.iter().cloned()).collect();
                         if !all.is_empty() {
                             let (body, wild) = wild_singletons(v, rule, body.clone(), n);
                             whole = Some((New { src: rule.id(), head: req.to_owned(), args: Head::Node(n), body, wild, rename: None, demand: None }, all));
@@ -683,7 +688,7 @@ impl ProgramPass for SourcesOnRequest {
                     if on() {
                         explained.push(format!("{reader} reads `{}`: asks `{key}`{}{}", shown(), Widen::left_out(&dropped), narrowed.map_or(String::new(), |d| format!("; narrowed by its readers' asks, `{d}`"))));
                     }
-                    for (request, key, by) in std::iter::once((request, key, BTreeSet::from([reader.to_owned()]))).chain(whole.map(|(r, by)| {
+                    for (request, key, by) in std::iter::once((request, key, askers)).chain(whole.map(|(r, by)| {
                         let key = r.key(v);
                         (r, key, by)
                     })) {

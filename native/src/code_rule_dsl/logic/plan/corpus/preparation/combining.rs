@@ -430,6 +430,24 @@ impl ProgramPass for FoldOwn<'_> {
             let rows: Vec<Vec<Cell>> = renamed(f.demand().map(str::to_owned).collect()).iter().enumerate().map(|(k, r)| vec![p, Cell::Int(k as i64), Cell::Str(b.atom(r))]).collect();
             b.set_about_rows("demand", rows);
         }
+        // The request record's readers folded too (`Program::rename_readers`, decision 0331): a request of a folded
+        // copy serves its original.
+        let rows = b.about_rows("asked");
+        if rows.iter().any(|r| named(b, r[3], &|x| folded.contains_key(x))) {
+            let mut asked = crate::code_rule_dsl::logic::program_image::about::Asked::new();
+            for r in rows {
+                let (Cell::Str(req), Cell::Int(k), Cell::Str(reader)) = (r[1], r[2], r[3]) else { continue };
+                let reader = b.text(reader);
+                let reader = folded.get(reader).map_or(reader, String::as_str).to_owned();
+                let by = asked.entry(b.text(req).to_owned()).or_default();
+                let k = k as usize;
+                if by.len() <= k {
+                    by.resize(k + 1, BTreeSet::new());
+                }
+                by[k].insert(reader);
+            }
+            b.set_asked(&asked);
+        }
         self.folded += folded.len() + sets.len();
         Ok(())
     }

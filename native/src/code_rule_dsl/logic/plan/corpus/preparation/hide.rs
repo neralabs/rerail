@@ -440,11 +440,12 @@ impl ProgramPass for Hide {
         // The version: every rule copied from its source with its edits, then the helpers, then the fields.
         let b = w.derive()?;
         b.set_header(&was, &prog);
+        let asked = asked_after(v, &rules);
         for (rule, fin) in rules.iter().zip(&finals) {
             let src = v.rule(rule.src).expect("a rule of the input");
             let mut rw = Writing::new(b, v, rule, fin);
             let bounds: Vec<(AtomId, i64)> = fin.bounds.iter().map(|(x, n)| (b.atom(x), *n)).collect();
-            let mut out = b.rule();
+            let mut out = b.rule().source(rule.src);
             out = out.head_with(v, src, src.head(), &mut rw);
             for l in src.body() {
                 rw.cur = l.node();
@@ -477,8 +478,44 @@ impl ProgramPass for Hide {
             }
             out.finish()?;
         }
+        if let Some(asked) = asked {
+            b.set_asked(&asked);
+        }
         Ok(())
     }
+}
+
+/// The request record (decision 0331) as the tree's hiding leaves it (`Program::push_rule_from`): a request's rule,
+/// copied or edited, serves the readers its source served; a copy of a reader under another name reads what the
+/// reader read, so it is a reader wherever its source is. `None` where the input has no record.
+fn asked_after(v: &Version, rules: &[W]) -> Option<crate::code_rule_dsl::logic::program_image::about::Asked> {
+    let was = v.asked();
+    if was.is_empty() {
+        return None;
+    }
+    let mut by: HashMap<RuleId, BTreeSet<String>> = HashMap::default();
+    for (req, readers) in &was {
+        let Some(rel) = v.rel(req) else { continue };
+        let ids: Vec<RuleId> = v.heads(rel).map(|r| r.id()).collect();
+        if ids.len() == readers.len() {
+            by.extend(ids.into_iter().zip(readers.iter().cloned()));
+        }
+    }
+    let mut out: crate::code_rule_dsl::logic::program_image::about::Asked = was.keys().map(|req| (req.clone(), Vec::new())).collect();
+    for rule in rules {
+        let src = v.rel_name(v.rule(rule.src).expect("a rule of the input").head().rel());
+        if let Some(readers) = out.get_mut(&rule.head) {
+            let serves = by.get(&rule.src).filter(|_| src == rule.head).cloned().unwrap_or_else(|| BTreeSet::from([rule.head.clone()]));
+            readers.push(serves);
+        }
+        if src != rule.head {
+            for readers in out.values_mut().flatten().chain(by.values_mut()).filter(|r| r.contains(src)) {
+                readers.insert(rule.head.clone());
+            }
+        }
+    }
+    out.retain(|_, by| !by.is_empty());
+    Some(out)
 }
 
 /// What the last stage adds to a rule: kind or field names qualified, wildcards named, the bounds, and the aggregates

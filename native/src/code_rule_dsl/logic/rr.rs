@@ -305,6 +305,7 @@ impl Text {
                 lower::sources_on_request(&mut tree, round);
             }
             let t = version_of(&tree)?;
+            let t = crate::code_rule_dsl::logic::program_image::record_as(&t, &v);
             assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "the cone copied on the version is the tree's: {}", super::program_image::differences(&t, &v));
         }
         Ok(Some(v))
@@ -328,6 +329,7 @@ impl Text {
         #[cfg(debug_assertions)]
         {
             let t = version_of(&tree.own)?;
+            let t = crate::code_rule_dsl::logic::program_image::record_as(&t, &written);
             assert_eq!((t.size(), t.digest()), (written.size(), written.digest()), "the walk's version is the tree's: {}", super::program_image::differences(&t, &written));
         }
         let version = link_seeded_version(linked, written, scoped, core_names())?;
@@ -573,6 +575,7 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
                 #[cfg(debug_assertions)]
                 {
                     let t = version_of(&lower::link(modules.iter().map(lower::Module::clone).collect())?)?;
+                    let t = crate::code_rule_dsl::logic::program_image::record_as(&t, &version);
                     assert_eq!((t.size(), t.digest()), (version.size(), version.digest()), "the library linked on versions is the tree's: {}", super::program_image::differences(&t, &version));
                 }
                 if keep_image(store, "a linked library's image", key, version.base_bytes().expect("a folded version is a base").to_vec()) {
@@ -1076,6 +1079,7 @@ fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::progr
         lower::widen_cyclic_contexts(&mut tree);
         lower::unseed(&mut tree, seeds, core);
         let t = version_of(&tree)?;
+        let t = crate::code_rule_dsl::logic::program_image::record_as(&t, &v);
         assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "the lowering's tail on the version is the tree's: {}", super::program_image::differences(&t, &v));
     }
     Ok(v)
@@ -1148,8 +1152,21 @@ fn encode_program(program: &Program) -> Result<Vec<u8>, String> {
 }
 
 /// The alias the library linked from modules `keys` is kept under.
+/// The values of the switches that change lowering (`plan::corpus::COMBINING`: `RERAIL_NODE_SOURCES` in
+/// `sources_on_request`, `RERAIL_ORDER_RAW` and `RERAIL_NODE_IDS` in `front::finish`'s `order_nodes`), for an image's
+/// key: an image lowered under one value is not another's. Only those set: an unset switch keeps the key every run
+/// has had, and the engine's shipped images (decision 0264) with it.
+fn switched(bytes: &mut Vec<u8>) {
+    for switch in super::plan::corpus::COMBINING {
+        if let Some(v) = std::env::var_os(switch) {
+            bytes.extend_from_slice(format!("\0{switch}={}", v.to_string_lossy()).as_bytes());
+        }
+    }
+}
+
 fn linked_key(keys: &[crate::content_store::HashKey]) -> crate::content_store::HashKey {
     let mut bytes = format!("rerail linked library {}\0{}\0", super::program_image::FORMAT, crate::code_rule_dsl::build_ids::engine()).into_bytes();
+    switched(&mut bytes);
     for k in keys {
         bytes.extend_from_slice(&k.sha256_bytes().unwrap_or_default());
     }
@@ -1160,6 +1177,7 @@ fn linked_key(keys: &[crate::content_store::HashKey]) -> crate::content_store::H
 fn program_key(src: &str, scope: &[crate::content_store::HashKey]) -> crate::content_store::HashKey {
     let digest = crate::content_store::HashKey::sha256(src.as_bytes()).sha256_bytes().unwrap_or_default();
     let mut bytes = format!("rerail program image {}\0{}\0", super::program_image::FORMAT, crate::code_rule_dsl::build_ids::engine()).into_bytes();
+    switched(&mut bytes);
     bytes.extend_from_slice(&digest);
     bytes.push(0);
     for k in scope {
@@ -1171,6 +1189,7 @@ fn program_key(src: &str, scope: &[crate::content_store::HashKey]) -> crate::con
 /// The alias a module's image is kept under (`library_modules`).
 fn module_key<'k>(files: impl Iterator<Item = &'k [u8; 32]>, scope: impl Iterator<Item = &'k crate::content_store::HashKey>) -> crate::content_store::HashKey {
     let mut bytes = format!("rerail module image v2 (helpers made once) {}\0{}\0", super::program_image::FORMAT, crate::code_rule_dsl::build_ids::engine()).into_bytes();
+    switched(&mut bytes);
     for d in files {
         bytes.extend_from_slice(d);
     }
@@ -2115,3 +2134,28 @@ fn builtin_program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
 }
 
 pub use crate::code_rule_dsl::facts::vtab::syntax::core_rr::single_metavars;
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    /// An image lowered under a switch that changes lowering (`plan::corpus::COMBINING`) is kept under another key than
+    /// the default's, and an unset switch keeps the key (the engine's shipped images, decision 0264, are found).
+    #[test]
+    fn an_image_lowered_under_a_lowering_switch_is_keyed_apart() {
+        let scope = [crate::content_store::HashKey::sha256(b"a module")];
+        let files = [[7u8; 32]];
+        let default = (program_key("x(1).", &scope), module_key(files.iter(), scope.iter()), linked_key(&scope));
+        // The keys as they were before switches were keyed: an unset switch adds nothing.
+        let mut bytes = format!("rerail linked library {}\0{}\0", crate::code_rule_dsl::logic::program_image::FORMAT, crate::code_rule_dsl::build_ids::engine()).into_bytes();
+        bytes.extend_from_slice(&scope[0].sha256_bytes().unwrap_or_default());
+        assert_eq!(default.2, crate::content_store::HashKey::sha256(&bytes));
+        for switch in ["RERAIL_NODE_SOURCES", "RERAIL_ORDER_RAW", "RERAIL_NODE_IDS"] {
+            let _set = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[(switch, "eager")]);
+            assert_ne!(program_key("x(1).", &scope), default.0, "{switch}");
+            assert_ne!(module_key(files.iter(), scope.iter()), default.1, "{switch}");
+            assert_ne!(linked_key(&scope), default.2, "{switch}");
+        }
+        assert_eq!((program_key("x(1).", &scope), module_key(files.iter(), scope.iter()), linked_key(&scope)), default);
+    }
+}

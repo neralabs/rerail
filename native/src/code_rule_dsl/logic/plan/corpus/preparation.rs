@@ -311,4 +311,32 @@ mod tests {
         let heads: Vec<&str> = rev.rules().map(|r| rev.rel_name(r.head().rel())).collect();
         assert_eq!(heads, ["q", "p"]);
     }
+
+    /// The request record (decision 0331) follows the steps' rules, the derivations' too (by each rule's source), and
+    /// holds one entry a rule after the pipeline; readers merged are named by their class.
+    #[test]
+    fn the_request_record_follows_the_preparation_steps() {
+        let mut p = crate::code_rule_dsl::logic::rr::parse(
+            ".decl k(x: number)\n.input k\n.decl q(x: number)\n.decl a(x: number)\n.decl b(x: number)\n\
+             q(x) :- k(x), x < 3.\nq(x) :- k(x), x > 5.\na(x) :- q(x).\nb(x) :- q(x), x != 1.\n.output a, b\n",
+        )
+        .unwrap();
+        let by = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<std::collections::BTreeSet<String>>();
+        p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["b"])]);
+        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+        let (out, _) = run(v, true).unwrap();
+        assert_eq!(out.asked_against_rules(), [("q".to_owned(), 2, 2)]);
+        assert_eq!(out.asked()["q"], [by(&["a"]), by(&["b"])]);
+        // Two equal readers merged: the record names the class (`simplify::merge_identical`'s rename, the tree's).
+        let mut p = crate::code_rule_dsl::logic::rr::parse(
+            ".decl k(x: number)\n.input k\n.decl q(x: number)\n.decl a(x: number)\n.decl a2(x: number)\n.decl o(x: number)\n\
+             q(x) :- k(x), x < 3.\nq(x) :- k(x), x > 5.\na(x) :- q(x).\na2(x) :- q(x).\no(x) :- a(x), a2(x).\n.output o\n",
+        )
+        .unwrap();
+        p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["a2"])]);
+        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+        let (out, _) = run(v, true).unwrap();
+        assert!(out.rel("a2").is_none_or(|r| out.heads(r).next().is_none()), "a2 merged into a");
+        assert_eq!(out.asked()["q"], [by(&["a"]), by(&["a"])]);
+    }
 }

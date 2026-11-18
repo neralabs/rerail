@@ -27,7 +27,7 @@ use super::version::{Made, Version};
 use super::{RelId, RuleId};
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -905,11 +905,119 @@ pub struct Pipeline<'s> {
     kept: Vec<Kept>,
     /// A keyed pipeline's store and chain (0281 §6).
     keyed: Option<Keyed<'s>>,
+    /// The request record by rule, carried through each step (`AskedByRule`); `None` once a step is read from a
+    /// keyed store (its delta unknown: the record is left as the output states it).
+    asked: Option<AskedByRule>,
+    /// A step read from the store left the record to be read again from its output (`load`).
+    asked_again: bool,
+}
+
+/// The request record (`Version::asked`, decision 0174's `asked` rows) by rule id, carried through a pipeline's
+/// steps (decision 0331): a rule kept serves its readers; a rule a pass rewrote, its source's (`RuleRef::source`; an
+/// edit folded keeps them, `Builder::folding_edit`); a rule made again alike with none, the input's rule of its
+/// content, in order; a rule equal to repeats the step dropped, theirs too; any other rule
+/// its own relation, which `prune` keeps wherever the relation is needed. The record is by place among a relation's
+/// rules, which a pass that adds, drops or reorders rules shifts: the pipeline states it again at its end.
+#[derive(Clone, Debug)]
+struct AskedByRule {
+    by: HashMap<RuleId, BTreeSet<String>>,
+    reqs: BTreeSet<String>,
+}
+
+impl AskedByRule {
+    fn of(v: &Version) -> Option<AskedByRule> {
+        let asked = v.asked();
+        if asked.is_empty() {
+            return None;
+        }
+        // A record whose length is not its relation's rule count gates nothing (every reader of it checks: `prune`,
+        // the embed slice, lowering): it is carried as no record.
+        let (mut by, mut reqs) = (HashMap::new(), BTreeSet::new());
+        for (req, readers) in &asked {
+            let Some(rel) = v.rel(req) else { continue };
+            let ids: Vec<RuleId> = v.heads(rel).map(|r| r.id()).collect();
+            if ids.len() == readers.len() {
+                by.extend(ids.into_iter().zip(readers.iter().cloned()));
+                reqs.insert(req.clone());
+            }
+        }
+        Some(AskedByRule { by, reqs })
+    }
+    fn step(&mut self, from: &Version, out: &Version, delta: &Delta) {
+        if delta.is_empty() {
+            return;
+        }
+        let mut next = HashMap::new();
+        // A pass that states the record itself (the merge renames readers) is taken at its word where its record
+        // holds an entry a rule.
+        let (was, stated) = (from.asked(), out.asked());
+        // A request the step states first (a later round's, `SourcesOnRequest`) is carried from here on.
+        for (req, by) in &stated {
+            if !self.reqs.contains(req) && out.rel(req).is_some_and(|rel| out.heads(rel).count() == by.len()) {
+                self.reqs.insert(req.clone());
+            }
+        }
+        for req in &self.reqs {
+            let Some(rel) = out.rel(req) else { continue };
+            if let Some(by) = stated.get(req).filter(|by| was.get(req) != Some(*by) && by.len() == out.heads(rel).count()) {
+                next.extend(out.heads(rel).map(|r| r.id()).zip(by.iter().cloned()));
+                continue;
+            }
+            // The input's rules of this relation the step removed (every rule, when it rebuilt), by content, in order:
+            // a rule made again alike with no source stated is the next of them; the rest of a content the output
+            // holds fewer of are repeats dropped, whose readers the rule left of it serves too.
+            let mut gone: HashMap<u64, std::collections::VecDeque<BTreeSet<String>>> = HashMap::new();
+            if let Some(old) = from.rel(req) {
+                for r in from.heads(old).filter(|r| delta.rebuilt || delta.removed.has(r.id())) {
+                    gone.entry(r.hash()).or_default().push_back(self.by.get(&r.id()).cloned().unwrap_or_default());
+                }
+            }
+            let mut made: Vec<(RuleId, u64, BTreeSet<String>)> = Vec::new();
+            for r in out.heads(rel) {
+                let mut readers = BTreeSet::new();
+                let kept = !delta.rebuilt && !delta.added.contains(&r.id());
+                if kept && let Some(b) = self.by.get(&r.id()) {
+                    readers.extend(b.iter().cloned());
+                } else if let Some(b) = r.source().and_then(|s| self.by.get(&s)) {
+                    readers.extend(b.iter().cloned());
+                    if let Some(q) = gone.get_mut(&r.hash()) {
+                        q.pop_front();
+                    }
+                } else if let Some(b) = gone.get_mut(&r.hash()).and_then(|q| q.pop_front()) {
+                    readers.extend(b);
+                }
+                made.push((r.id(), r.hash(), readers));
+            }
+            for (id, hash, mut readers) in made {
+                if let Some(q) = gone.get(&hash) {
+                    readers.extend(q.iter().flatten().cloned());
+                }
+                if readers.is_empty() {
+                    readers.insert(req.clone());
+                }
+                next.insert(id, readers);
+            }
+        }
+        self.by = next;
+    }
+    /// The record as `Version::asked` states it, for `v`'s rules.
+    fn asked(&self, v: &Version) -> super::about::Asked {
+        let mut asked = super::about::Asked::new();
+        for req in &self.reqs {
+            let Some(rel) = v.rel(req) else { continue };
+            let by: Vec<BTreeSet<String>> = v.heads(rel).map(|r| self.by.get(&r.id()).cloned().unwrap_or_else(|| BTreeSet::from([req.clone()]))).collect();
+            if !by.is_empty() {
+                asked.insert(req.clone(), by);
+            }
+        }
+        asked
+    }
 }
 
 impl<'s> Pipeline<'s> {
     pub fn new(name: &'static str, v: Arc<Version>) -> Pipeline<'s> {
-        Pipeline { name, input: v.clone(), v, decided: RefCell::new(Vec::new()), stages: Vec::new(), failed: None, keep: false, last: Vec::new(), kept: Vec::new(), keyed: None }
+        let asked = AskedByRule::of(&v);
+        Pipeline { name, input: v.clone(), v, decided: RefCell::new(Vec::new()), stages: Vec::new(), failed: None, keep: false, last: Vec::new(), kept: Vec::new(), keyed: None, asked, asked_again: false }
     }
     /// A pipeline whose steps are keyed and kept in `steps` (0281 §6). A step's key is a chain: the input version's
     /// identity (`identity`), the pipeline's name and the engine build, then for each step so far its pass's `NAME`,
@@ -1005,6 +1113,13 @@ impl<'s> Pipeline<'s> {
     #[allow(clippy::too_many_arguments)]
     fn record(&mut self, pass: &'static str, out: Arc<Version>, ran: Ran, form: Form, visited: usize, from: &Arc<Version>, rule: Option<RuleKept>) -> Result<()> {
         let delta = Delta::of(from, &out);
+        match &mut self.asked {
+            Some(asked) => asked.step(from, &out, &delta),
+            // A pipeline that began with no record carries the one its first step states (the lowering's tail: the
+            // requests made on request, `SourcesOnRequest`), unless a stored step left it to be read on `load`.
+            None if !self.asked_again && from.asked().is_empty() => self.asked = AskedByRule::of(&out),
+            None => {}
+        }
         let cx = Cx { v: &out, store: out.analyses(), pass, decided: &self.decided, asked: None };
         out.analyses().carry(from.analyses(), &cx, &delta)?;
         self.stages.push(Stage { pass, ran, form, visited, input: (self.v.size(), self.v.digest()), output: (out.size(), out.digest()), delta: delta.size(), touched: delta.touched });
@@ -1147,6 +1262,10 @@ impl<'s> Pipeline<'s> {
         if found.pass != pass || found.version != version {
             return Ok(Some(key));
         }
+        // Its delta unknown, the record is read again from its output once it is opened (`load`): each step's output
+        // states its record (`record`).
+        self.asked = None;
+        self.asked_again = true;
         let input = self.stages.last().map_or((self.v.size(), self.v.digest()), |s| s.output);
         self.stages.push(Stage { pass, ran: Ran::Stored, form: Form::Unchanged, visited: 0, input, output: found.output, delta: 0, touched: Reads::default() });
         self.decided.borrow_mut().extend(found.decided.iter().cloned());
@@ -1163,6 +1282,9 @@ impl<'s> Pipeline<'s> {
             return Err(format!("{}: {}: its stored output is not the program its step recorded", self.name, found.pass));
         }
         self.v = v;
+        if std::mem::take(&mut self.asked_again) {
+            self.asked = AskedByRule::of(&self.v);
+        }
         Ok(())
     }
 
@@ -1170,6 +1292,12 @@ impl<'s> Pipeline<'s> {
     fn keep_step(&mut self, key: StepKey, pass: &'static str, version: u32, step: impl FnOnce(&mut Self) -> Result<()>) -> Result<()> {
         let from = self.decided.borrow().len();
         step(self)?;
+        if self.keyed.is_none() {
+            return Ok(());
+        }
+        // A step stored holds its record (as the pipeline's end states it, `state_asked`): a run that reads the step
+        // from the store goes on from the record a run that made it had (`load` reads it again).
+        self.state_asked()?;
         let Some(k) = &self.keyed else { return Ok(()) };
         let decided = self.decided.borrow()[from..].to_vec();
         k.steps.keep(&key, &StepRecord { pass: pass.to_owned(), version, image: [0; 32], output: (self.v.size(), self.v.digest()), decided }, &self.v)
@@ -1198,10 +1326,26 @@ impl<'s> Pipeline<'s> {
         self.failed.get_or_insert_with(|| format!("{}: still changing after {rounds} rounds", self.name));
         self
     }
+    /// States the carried request record in the current version (`AskedByRule`), where the steps shifted it.
+    fn state_asked(&mut self) -> Result<()> {
+        let Some(carried) = &self.asked else { return Ok(()) };
+        let asked = carried.asked(&self.v);
+        if asked == self.v.asked() {
+            return Ok(());
+        }
+        let v = self.v.clone();
+        let mut b = v.builder();
+        b.set_asked(&asked);
+        let stated = b.finish_overlay()?;
+        let cx = Cx { v: &stated, store: stated.analyses(), pass: "the request record stated", decided: &self.decided, asked: None };
+        stated.analyses().carry(v.analyses(), &cx, &Delta::of(&v, &stated))?;
+        self.v = stated;
+        Ok(())
+    }
     /// The last version, or the first step's error.
     pub fn finish(mut self) -> Result<(Arc<Version>, Vec<Stage>)> {
         if self.failed.is_none()
-            && let Err(e) = self.load()
+            && let Err(e) = self.load().and_then(|()| self.state_asked())
         {
             self.failed = Some(e);
         }
@@ -1213,7 +1357,7 @@ impl<'s> Pipeline<'s> {
     /// The run, kept to run again (`again`), or the first step's error.
     pub fn done(mut self) -> Result<Run> {
         if self.failed.is_none()
-            && let Err(e) = self.load()
+            && let Err(e) = self.load().and_then(|()| self.state_asked())
         {
             self.failed = Some(e);
         }
