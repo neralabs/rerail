@@ -516,6 +516,12 @@ impl B<'_, '_> {
             fifteen,
         )
     }
+    /// `by_format` for a read of what a 16z tape holds as format 16 does, in place, not in blocks (its newline index:
+    /// `Tape16Z::view`'s `lines`, decision 0336 §6): format 16's body for both.
+    fn by_format_whole(&mut self, ty: ir::Type, sixteen: impl Fn(&mut Self) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
+        let sixteen = &sixteen;
+        self.by_formats(ty, |b| sixteen(b), |b| sixteen(b), fifteen)
+    }
     /// `by_format` with a 16z tape's body of its own (`zed`).
     fn by_formats(&mut self, ty: ir::Type, sixteen: impl FnOnce(&mut Self) -> Value, zed: impl FnOnce(&mut Self) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
         match self.format {
@@ -2082,7 +2088,7 @@ fn line_select(b: &mut B<'_, '_>) -> Value {
 /// bucket, then a search of the bucket's low parts); format 15's line starts searched.
 fn line(b: &mut B<'_, '_>) -> Value {
     let x = b.arg(0);
-    b.by_format(
+    b.by_format_whole(
         I32,
         |b| {
             let m = lines_field(b, 0);
@@ -2173,7 +2179,7 @@ fn line(b: &mut B<'_, '_>) -> Value {
 /// position, and its low part); format 15's line start.
 fn line_start(b: &mut B<'_, '_>) -> Value {
     let k = b.arg(0);
-    b.by_format(
+    b.by_format_whole(
         I32,
         |b| {
             let first = b.f.ins().icmp_imm(IntCC::Equal, k, 0);
