@@ -292,9 +292,19 @@ no span: 3 interleaved pairs at load 23–25, `extra document rows` 0.094–0.13
 findings 1,629 in each; 73.5 B instructions (median) against 80.2 B.
 
 Where spans are made, the nodes' and tokens' place rows are still made beside the spans' (the spans' are derived
-facts; the nodes' are copies of tape answers): a view over the spans too, or a union of the view and the spans'
-rows, is left for this step, with `visit_index` (CPython's visit order, a derived fact computed once for the documents a program reads it of),
-`doc_root` and `host_node` (a guest's) are left for this step.
+facts; the nodes' are copies of tape answers), and bound in place of the view. The view already covers the whole
+source and its lines (`Locs::positions`, the `ExtraSpan::Line` ids); the other spans (`src_line_lf`, `tape_line`,
+matches, comments, `rx_span`) have their byte ranges only in `Extra`. Q123: those ranges written once into the
+batch's block, and the view reading them past its own positions, so nothing makes a node's place.
+
+**Step 3's other relations of row 7** (2026-11-17), each checked against "Not copies":
+- `visit_index` (CPython's visit order), `host_node` (a guest node's innermost host node, an axis's answer) and
+  `doc_root` (a document's root id, one row a document) are derived facts, each made only where a program reads it
+  (`tree::Tree::new`, `GuestRows::document`'s `wants`). They stay relations.
+- `intval` and `op_t` are read by no core.rr library rule; in core.rr's shape `NodeRows` runs only where a program
+  reads them. In T's shape they come with `NodeRows`' eager `text`, `name` and `str`, deferred with Q121.
+- What row 7 keeps: `core_rr`'s and `NodeRows`' eager derived values (`text`, `name`, `value`'s literals, T's
+  rows), deferred (Q121), and the nodes' place rows beside spans (Q123).
 
 Found on the way and fixed:
 - `Locs::token_spans` copied every token's start and end into a `Vec` on a span's first read: unmarked, and missed by

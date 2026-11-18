@@ -1581,3 +1581,15 @@ sha) or `program_shared`'s order may hand back the files recorded before the edi
   "the observer's store not asked inside the waves in a warm run (…/src: its answers unknown, read again)". Both are
   a run's record of what it read disagreeing with a later read of the same files.
 
+### Q123. Spans' places read by the `Loc` views (0353 step 3, row 7)
+
+Where `Extra` makes spans (`source`, `src_line`, `src_line_lf`, `tape_line`, a regex's matches, comments, `rx_span`),
+it also makes `line`, `end_line`, `col` and `docof` rows for every node and token, and `Batch::made` binds those in
+place of the views: copies of tape answers. The views already cover the whole source and its lines
+(`Locs::positions`, `ExtraSpan::Line`).
+- **Do**: write the other spans' byte ranges once into the batch's block where `Extra` makes them (a derived fact),
+  and have `View::Loc` read them past its own positions (`local_of` maps a span id there through
+  `granules::span_of`); then `Extra` makes no place rows, and `made` binds no place relation.
+- **Check**: the view's rows equal the rows made today, for a program reading each span relation.
+- **Done when**: no place row is made for a node or token in core.rr's shape.
+
