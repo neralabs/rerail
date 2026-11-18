@@ -1295,13 +1295,28 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
   - `transformed_candidate_rejection_precedes_accepted_witness_limits`
   - `typed_output_preserves_late_operand_failures_without_publishing_failed_evaluations`
 
-### Q51. (Q47 at 8bfa12af6) W's reference graph parses every file a second time (39% of internal_dead_code's CPU)
+### Q51. (Q47 at 8bfa12af6) W's reference graph parses every file a second time (39% of internal_dead_code's CPU) — done
 
 - **Found** (2026-11-16, t41 §2): `references::add_file` parses again with tree-sitter and runs W's
   `calls::summarize`: 39.7 s over 3,110 files, 12.6 ms a file. The hot frames are `ts_node_child_with_descendant`
   (tree-sitter's `parent()`, a walk from the root at every call).
 - **Done when**: the reference graph is built from the tape and facts the run already has (a rule program or the
   transducer), with no second parse and no parent climbs; internal_dead_code's CPU drops by about that much.
+- **Done** (2026-11-17). The chunk builder hands each file's own tape to the graph, and `calls::summarize` reads it in
+  place through `TapeDoc`, as W's workspace reads a restored tape. Its error flag is `SyntaxErrors::of_doc`. A tape
+  kept only for the graph is dropped after it. The walk had two wastes of its own:
+  - every `child_by_field_id` counted all the node's children before searching them (`Children`'s exact size). The
+    count is now taken only when asked;
+  - every `field(name)` compared the name with each of the grammar's fields (tree-sitter's lookup). The grammar now
+    holds its field names sorted.
+
+  s1000 internal_dead_code with Metal, at load 57–112:
+  - the reference graph's CPU went from 4.0–4.2 s to 0.68–0.76 s;
+  - the run's CPU from 12.3–13.1 s to 8.6–8.9 s (121–126 G instructions to 86–93 G);
+  - the findings are the same, and `reference_edge_is_ws_reference_graph_*` pass.
+
+  What is left is the summarizer's own walk: tape reads through `AnyTape`'s dispatch on each step. Its parent reads
+  are the descent's (`up`), not climbs.
 
 ### Q52. (Q48 at 8bfa12af6) The memory line starves chunks without lowering the peak
 

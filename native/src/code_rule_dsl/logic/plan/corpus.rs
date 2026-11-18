@@ -47,8 +47,9 @@ pub const REFERENCE_RELATIONS: [&str; 2] = ["reference_edge", "reference_open"];
 /// Base relations a program reads that are built across a run's files (the reference graph's,
 /// `corpus::references`): each file added as its facts are built, the rows bound in the cross-file part.
 pub trait CrossFileRelations: Send + Sync {
-    /// Adds the file with key `key` at `path`, with its source and facts.
-    fn add(&self, key: u32, path: &str, source: &Arc<String>, facts: &Arc<crate::code_rule_dsl::facts::core::Facts>) -> Result<()>;
+    /// Adds the file with key `key` at `path`, with its source, facts and tape (the run's own, read in place: the file
+    /// is not parsed again).
+    fn add(&self, key: u32, path: &str, source: &Arc<String>, facts: &Arc<crate::code_rule_dsl::facts::core::Facts>, tape: &crate::code_rule_dsl::tape::TapeDoc) -> Result<()>;
     /// The relations the run's files give, with their columns and rows.
     fn relations(self: Box<Self>, store: &crate::content_store::ContentStore, read: &BTreeSet<String>) -> Result<Vec<(&'static str, Vec<String>, Vec<Option<Vec<i64>>>)>>;
 }
@@ -5032,9 +5033,9 @@ fn run_observed(
             // In the waves no SQL is read or written (decision 0104): the tape was found before the first wave, or the
             // file is parsed and its source and tape are the writer's, behind the run; the manifest names the sources
             // it stores (`late_sources`).
-            Some(cache) if cfg!(feature = "tape-cache") => core::build_in_wave_with_tape(&file, cache, digest, tape.as_ref(), true, keep_tapes),
+            Some(cache) if cfg!(feature = "tape-cache") => core::build_in_wave_with_tape(&file, cache, digest, tape.as_ref(), true, keep_tapes || references.is_some()),
             Some(_) => unreachable!("no tape cache without `tape-cache`"),
-            None => core::build_with_tape(&file, keep_tapes),
+            None => core::build_with_tape(&file, keep_tapes || references.is_some()),
         };
         // The tape is kept beside the facts only where the program runs matchers over it (decision 0106).
         let (built, tape) = match built {
@@ -5046,11 +5047,14 @@ fn run_observed(
             Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
         };
         if let Some(references) = &references {
-            // W's reference graph parses the file again with tree-sitter and summarizes it in Rust: work with no
-            // device form, named apart from the tape and facts it sits beside.
-            let _refs = crate::code_rule_dsl::logic::profile::span(|| "W's reference graph (tree-sitter again)".into());
-            references.add(*d as u32, path, &file.source, &facts)?;
+            // W's reference graph summarizes the file from its tape, read in place (Q51: it parsed every file again
+            // with tree-sitter, 39% of internal_dead_code's CPU).
+            let _refs = crate::code_rule_dsl::logic::profile::span(|| "W's reference graph".into());
+            let doc = tape.as_ref().ok_or_else(|| Error::Plan(format!("{path}: no tape for the reference graph")))?;
+            references.add(*d as u32, path, &file.source, &facts, doc)?;
         }
+        // A tape kept only for the reference graph goes with it.
+        let tape = tape.filter(|_| keep_tapes);
         // The tape, in the file's context: kept only for a program that reads W's values, f-string trees or string
         // annotations off it, or runs matchers over it (decision 0106).
         let tape = tape.map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
