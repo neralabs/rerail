@@ -1543,3 +1543,22 @@ always a refusal.
 - Route a parked member back to the thread that holds its submission, or flush that wave before the job hands its
   members back (the job's mark taken before the thread's open wave, not after).
 - **Done when**: no hogql run has the refusal, findings unchanged over 20 runs.
+
+### Q121. `text` on request (0353 step 3's derived values): measure, then decide
+
+0353 step 3 says derived values become rules computed on demand. `str` is (4c26a140b). `text` is not yet, and it
+is row 7's time on hogql: the rules read every node's `text` (no kind narrows them), so `CoreRows::node` visits all
+1.3 M nodes and interns their texts, 0.44–0.47 s of CPU a run. Rules look `text` up by node for 663,057 rows, about
+half the nodes. 0174 §4 kept `text` within the bound eager because a request row a node costs more than the row it
+asks for.
+
+A first build is saved as `working-data/0353-step3/text-on-request.patch`: `text` in `ON_REQUEST`'s second round,
+answered by `@rr_text` (a node's whole text, which is what `text` and its long-text twins (0109) give together; a
+span's bytes), with the spans' eager rows as `rr_text_span`. It ran the core cases but left five breakages:
+- its widened copies made an unbounded value cycle (`rr_wide_str_lres`, `@cat` in a recursion that `text` bounded);
+- the converter's printed programs and its reachability check (`rr_text_req_by_m5_0 is not reached`);
+- `long_container_text_is_materialized_only_for_the_consumers_that_demand_it`, which reads the eager rows.
+- **Next**: fix those, then measure hogql against eager (instructions, the requests' rows, atoms). Keep it only if
+  it is cheaper than eager there and on the data-layer pack; else record why `text` stays eager in 0353.
+- **Done when**: `text` is answered on request at or under eager's cost, or 0353 records with the measurement that
+  it stays eager.

@@ -250,6 +250,15 @@ flags compute each node's literal wherever `text` is read (a literal's prefix ma
 rules read every node's `text` (no kind narrows them, `text_nodes` is none), so `CoreRows::node` visits all
 1.3 M nodes for `text`. Rules look `text` up by node for 663,057 rows. `text` is what row 7's time is.
 
+`text` on request is open (work queue Q121). A first build (a node's whole text answered by `@rr_text`, the spans'
+rows eager as `rr_text_span`) broke the widened copies' termination, the converter's printing and a demand test, and
+0174 §4 measured that a request a node costs more than eager `text` within the bound. It is kept as a patch until it
+is measured against eager on hogql.
+
+Found on the way and fixed: the image's merge (`preparation::merge`) merged two requests of one body
+(`rr_str_req`, `rr_node_text_req`), which the tree's keeps by name (`simplify::request`, the debug check "the
+version's merges are the tree's"); `node_column_counts` indexed a text document's dialect, which it has none of.
+
 `DefIds`' `low`, `order` and `back` are gone. Every projection, narrowed ones too, keeps its granule table, and it
 answers ids, order keys and their inverses:
 - `order`, an order key (its run's rank, then its index in its granule): the table keeps each granule stretch's run

@@ -12,12 +12,14 @@ use crate::executors_guard_tests::{product_lines, repo, sources};
 const SPLITS: [&str; 7] = ["split('\\t')", "split_once('\\t')", "rsplit_once('\\t')", "rsplit('\\t')", "split(\"\\t\")", "split_once(\"\\t\")", ", '\\t')"];
 
 /// The files that may split on a tab, how many times, and why.
-const ALLOWED: [(&str, usize, &str); 5] = [
+const ALLOWED: [(&str, usize, &str); 7] = [
     ("native/src/code_rule_dsl/logic/strings/git.rs", 1, "a consulted read's key (repository root, revision), made in memory and stored length-prefixed"),
     ("native/src/code_rule_dsl/logic/plan/corpus/inputs.rs", 2, "a `.input` file's text (a repository file the rule declares as input), and a consulted read's key (revision, path)"),
     ("native/src/code_rule_dsl/logic/plan/coverage.rs", 1, "the coverage ledger, a hand-kept document"),
     ("native/src/code_rule_dsl/typing/rounds.rs", 8, "the typing spike's fact dumps (T's research inputs), not a run's outputs"),
     ("native/src/code_rule_dsl/facts/ygraph/mod.rs", 2, "the y-graph's member lists and its recorded edges (fixtures of the replay)"),
+    ("accel/src/upkeep.rs", 2, "the build farm upkeep's record of when each job last finished, a file of its own beside the job's"),
+    ("native/crates/tape_format/src/f16.rs", 1, "format 16's code table choices in their text form (`to_text`, `from_text`), a checked-in grammar file"),
 ];
 
 /// Every lean parser's edit oracle (`native/crates/<language>_lean/src/oracle.rs`) reads a recorded edit script,

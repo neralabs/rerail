@@ -350,7 +350,11 @@ fn congruence(v: &Version, f: Fields<'_>) -> Vec<Vec<String>> {
         rows
     };
     // What keeps a relation its own (`simplify::fixed`).
-    let fixed = |rel: &str| f.is_input(rel) || f.native(rel).is_some() || f.lattice(rel) || f.demanded(rel) || f.gate(rel) || !f.qualifiers_of(rel).is_empty();
+    // An attribute's request too (decision 0174): `rr_str_req` and `rr_node_text_req` of one reader have one body,
+    // and each is read by its name.
+    let fixed = |rel: &str| {
+        f.is_input(rel) || f.native(rel).is_some() || f.lattice(rel) || f.demanded(rel) || f.gate(rel) || !f.qualifiers_of(rel).is_empty() || crate::code_rule_dsl::logic::simplify::request(rel)
+    };
     let read = read_rels(v, f);
     let cands: Vec<&str> = rules_of
         .keys()

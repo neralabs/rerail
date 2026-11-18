@@ -3696,7 +3696,8 @@ pub fn node_column_counts(batch: &Batch, column: usize) -> Option<(i64, i64, Opt
             // guests), each code read as the column reads it (`Dialect::kind`: its canonical code).
             let mut by_code: std::collections::BTreeMap<u8, Vec<i64>> = Default::default();
             for p in &batch.docs {
-                let dialect = &batch.dialects[p.tag];
+                // A text document has no dialect, and no node.
+                let Some(dialect) = batch.dialects.get(p.tag) else { continue };
                 let counts = by_code.entry(p.tag).or_default();
                 for (_, id) in p.nodes() {
                     let code = usize::from(dialect.code(&p.facts, id));
