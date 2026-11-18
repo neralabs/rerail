@@ -1908,3 +1908,12 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 - **Done** (2026-11-18): the `.rr` steps 15–21 are moved (token marks, step 22's regions); Kotlin's
   steps 1–35 are an uncompiled record (0406); `deprecated back_fill` is refused; the IR's tests
   make their back fill with `syntax::backward`. Reviewer not yet run.
+
+### Q227. Kotlin: context over tokens in the token loop (0429)
+
+- **What**: tier 1's CPU body is 1,500 operations a block (144 machine instructions a byte); about
+  420 are keyword tests, and the fills and marks over them add more. 0429 answers them once a
+  token in the token loop, in four steps: the analysis, the word tests, the fills over tokens as
+  state, and the gap marks read through the state.
+- **Done when**: the CPU body holds no token-level mask (`tier1_cones` lists none left), with the
+  tapes unchanged.
