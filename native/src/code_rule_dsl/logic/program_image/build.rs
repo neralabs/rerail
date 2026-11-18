@@ -74,6 +74,7 @@ impl<'a> From<&'a str> for Rel<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct Builder<'p> {
     parent: Option<&'p Arc<Version>>,
     /// The version whose ids this image's are: the parent, or the version a fold is of.
@@ -107,16 +108,22 @@ impl Builder<'static> {
         for r in &prog.rules {
             b.add(r)?;
         }
+        b.set_program_header(prog);
+        Ok(b)
+    }
+
+    /// `prog`'s header but maintenance's parts on a base whose rules are written: its declarations, facts, inputs,
+    /// outputs and `.about` rows. The lowering writes a text's rules in its walk, then this (decision 0365 step 3).
+    pub fn set_program_header(&mut self, prog: &Program) {
         for (n, c) in &prog.decls {
-            b.declare_names(n, c.as_slice());
+            self.declare_names(n, c.as_slice());
         }
         for (r, rows) in &prog.facts {
-            b.set_facts(r, rows);
+            self.set_facts(r, rows);
         }
-        b.set_inputs(&prog.inputs);
-        b.set_outputs(&prog.outputs);
-        b.set_about(&super::about_of(prog));
-        Ok(b)
+        self.set_inputs(&prog.inputs);
+        self.set_outputs(&prog.outputs);
+        self.set_about(&super::about_of(prog));
     }
 }
 

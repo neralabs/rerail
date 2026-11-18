@@ -144,7 +144,7 @@ impl Lowerer {
         if !self.prog.decls.contains_key(name.as_str()) {
             let (params, body) = definition(rel);
             self.prog.decls.insert(name.clone().into(), DECLS[rel].iter().map(|(c, t)| (c.into(), t.into())).collect());
-            self.prog.rules.push(Rule { head: Atom { rel: name.clone().into(), args: params.iter().map(|p| var(p)).collect(), neg: false, gated: false }, body: body.into() });
+            self.write(Rule { head: Atom { rel: name.clone().into(), args: params.iter().map(|p| var(p)).collect(), neg: false, gated: false }, body: body.into() });
         }
         name
     }

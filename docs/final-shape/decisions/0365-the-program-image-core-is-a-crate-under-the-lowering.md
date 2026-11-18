@@ -52,9 +52,23 @@ moved up), the user chose: "move it down into a new crate under rerail-rr".
   the walk, which now skips the natives' names as well as the declarations'. `link` says whether it edited the
   rules, and `link_seeded_parts` refuses a module it did. Tests: 489 of 490 lowering, link and scope tests (Q81
   fails, as before); ep2's 317 policies over 10 files, fresh stores, debug: 0 rows.
-- **Step 3b, next**: the walk reads what it has written (`clause`'s modal positions, `demand`'s and
-  `world_demand`'s dedup, `arity`, `demand_of`, `rules`' widening). Written through the builder, the lowerer keeps
-  its own index of them (rules by head, their content hashes, their ids), in `rr::lower`, not the core.
+- **Step 3b**: a text's own rules are written as a version in the walk. The lowerer writes every rule through
+  `Lowerer::write`, to `Out::Tree` (`prog.rules`: a module kept as parts, the unseeded link, `lower`) or
+  `Out::Version` (`Written`: the builder, and what the walk reads back of what it wrote: a count for the `must`/`may`
+  rules' places, a 128-bit content hash of each rule for the demands written once, and the rules of the heads a
+  `.shape` names). `lower_module_seeded_written` writes so; `link_seeded_parts` hands the `Written` on, and
+  `rr::own_version` sets the module's header on it (`Builder::set_program_header`, which
+  `of_program_less_maintenance` now uses too) for `AppendModule`. The rules a statement wrote before the clauses go
+  first. `Builder` is `Clone` (the lowerer is). The `rerail-rr` mounts re-export the core.
+  - Found on ep2: `link` keyed each `helper_once` helper by its rules, which a written module's header does not
+    hold, so two aggregates of one head merged. A written module's helpers are taken as they are, as a seeded link
+    takes them anyway (its seeds hold no helpers, and the walk wrote each once).
+  - Checks: a debug build lowers each text's tree too and asserts the two versions are one program
+    (`lowered_own`); `a_texts_rules_are_written_as_a_version_in_its_walk` (two aggregates of two literals: fails with
+    the merge put back). Tests: 550 of 551 lowering, link, scope, image and on-the-version tests (Q81); ep2's 317
+    policies over 10 files, fresh stores, debug: 0 rows, every text's walk version the tree's.
+- **Next**: the module images (`ModuleParts`) and the seeds read a module's rules as a tree, so `Out::Tree` stays
+  until a library module is written as a version too; then `front::Program`'s rules go.
 
 ## Consequences
 

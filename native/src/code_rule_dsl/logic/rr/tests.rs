@@ -4196,3 +4196,19 @@ fn a_module_is_linked_and_checked_declared_on_the_version() {
     let v = lower("hit(n) :- kind(n, \"call\"), child(_, n, _).").unwrap();
     assert!(v.rules().any(|r| v.rel_name(r.head().rel()) == "hit"), "{}", v.show());
 }
+
+/// A text's rules are written as a version in its walk (decision 0365 step 3): the module linked holds its header
+/// alone, its rules in the version the walk wrote, and that version is the one the tree's rules encode to.
+#[test]
+fn a_texts_rules_are_written_as_a_version_in_its_walk() {
+    // Two aggregates of two literals under one head make two helpers of one stem and column types (`helper_once`):
+    // the link keyed them by their rules, which the walk wrote into the version, and merged them.
+    let src = "#include \"python/compare.rr\"\n.decl hit(n: node)\n.output hit\n.decl near(n: node, m: node)\nnear(n, m) :- child(_, n, _), child(_, m, _), kind(n, \"call\").\nhit(n) :- kind(n, \"call\"), child(_, n, _), !near(n, n).\n.decl sizes(n: node, a: number, b: number)\n.output sizes\nsizes(n, a, b) :- kind(n, \"call\"), a = count : { child(n, c, _), kind(c, \"name\") }, b = count : { child(n, c, _), kind(c, \"call\") }.\n";
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let (header_alone, v, tv) = super::read_text(src).unwrap().own_written_and_tree(&scoped).unwrap();
+    assert!(header_alone, "the walk wrote the rules");
+    assert!(v.rules().count() >= 2, "{}", v.show());
+    assert_eq!((v.size(), v.digest()), (tv.size(), tv.digest()), "{}", crate::code_rule_dsl::logic::program_image::differences(&tv, &v));
+}

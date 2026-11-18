@@ -679,6 +679,9 @@ step 3 replaces what is under the writer.
      and `declared_on_a_version_is_the_trees` on its own (a debug build's tree check refuses the same, so only there
      does the pass left out show); ep2's 317 policies: 0 rows. Next: each clause written through the builder, so
      the module's program is a version from the tape walk.
+     *Done (2026-11-17, decision 0365):* the image's core is the crate `rerail-program-image`, under `rerail-rr`, and a
+     text's own rules are written as a version in the walk (`Lowerer::write`, `Out::Version`), checked against the
+     tree in a debug build. Next: library modules written so, then `front::Program`'s rules deleted.
    - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.

@@ -74,17 +74,19 @@ pub fn names_hash<'a>(tag: u8, names: impl Iterator<Item = &'a str>) -> u64 {
 }
 
 /// A part, by ids, with its hash.
+#[derive(Clone)]
 pub struct Decl {
     pub cols: Vec<(u32, u32)>,
     pub hash: u64,
 }
+#[derive(Clone)]
 pub struct FactRel {
     pub rows: Vec<Vec<Cell>>,
     pub hash: u64,
 }
 
 /// The parts an image holds besides its rules, by ids. A delta's are what it replaces.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Parts {
     pub decls: std::collections::BTreeMap<u32, Decl>,
     pub decls_gone: std::collections::BTreeSet<u32>,
@@ -97,6 +99,7 @@ pub struct Parts {
     pub owns_about: bool,
 }
 
+#[derive(Clone)]
 pub struct Encoder<'p> {
     /// The version whose ids this image's extend (a delta's parent), if any.
     parent: Option<&'p Version>,

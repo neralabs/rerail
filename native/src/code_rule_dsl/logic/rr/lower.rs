@@ -181,6 +181,8 @@ fn place_relation(v: &str) -> String {
 
 #[derive(Clone, Default)]
 struct Lowerer {
+    /// Where the walk writes its rules: the tree's `prog.rules`, or a text's version (`Written`, decision 0365 step 3).
+    out: Out,
     prog: Program,
     /// `.lattice` declarations: name → (base type, its `Lub` functor).
     lattices: BTreeMap<String, (String, String)>,
@@ -242,6 +244,70 @@ struct Lowerer {
     /// lowering added. Linking keeps every module's stated inputs before the added ones, as one lowering of them all
     /// would order them.
     stated: usize,
+}
+
+/// Where `Lowerer::write` puts a rule.
+#[derive(Clone, Default)]
+enum Out {
+    /// `prog.rules`: a module kept as parts, the unseeded link, `lower`.
+    #[default]
+    Tree,
+    /// A text's own program, written as a version in the walk (decision 0365 step 3): `prog` holds its header alone.
+    Version(Box<Written>),
+}
+
+/// A text's rules as the walk writes them: the builder, and what the walk reads back of what it wrote.
+#[derive(Clone)]
+pub struct Written {
+    b: crate::code_rule_dsl::logic::program_image::Builder<'static>,
+    /// How many rules it wrote: a `must` or `may` head's rules are known by their place (`modal`).
+    n: usize,
+    /// Each rule's content, by a 128-bit hash: a demand is written once (`demand`, `world_demand`).
+    seen: std::collections::HashSet<u128>,
+    /// The rules of the relations a `.shape` names, which the module checks once its clauses are written.
+    shaped: BTreeSet<String>,
+    kept: Vec<Rule>,
+    /// The first rule the builder refused.
+    error: Option<String>,
+}
+
+impl Written {
+    fn new(shaped: BTreeSet<String>) -> Self {
+        Written { b: crate::code_rule_dsl::logic::program_image::Builder::base(), n: 0, seen: Default::default(), shaped, kept: Vec::new(), error: None }
+    }
+
+    fn hash(rule: &Rule) -> u128 {
+        use std::hash::{BuildHasher, Hash, Hasher};
+        let half = |seed: u64| {
+            let mut h = foldhash::fast::FixedState::with_seed(seed).build_hasher();
+            rule.hash(&mut h);
+            h.finish() as u128
+        };
+        half(0x9e37_79b9_7f4a_7c15) << 64 | half(0xc2b2_ae3d_27d4_eb4f)
+    }
+
+    fn write(&mut self, rule: Rule) {
+        self.seen.insert(Written::hash(&rule));
+        self.n += 1;
+        if let Err(e) = self.b.add(&rule) {
+            self.error.get_or_insert(e);
+        }
+        if self.shaped.contains(rule.head.rel.as_str()) {
+            self.kept.push(rule);
+        }
+    }
+
+    /// The builder, its header set from `header` (a program of no rules), as `Builder::of_program_less_maintenance`
+    /// sets one.
+    pub fn finish(self, header: &Program) -> Result<crate::code_rule_dsl::logic::program_image::Builder<'static>, Error> {
+        debug_assert!(header.rules.is_empty(), "a written program's header holds no rules");
+        if let Some(e) = self.error {
+            return Err(Error::Syntax(e));
+        }
+        let mut b = self.b;
+        b.set_program_header(header);
+        Ok(b)
+    }
 }
 
 /// A helper relation's stem, column types and rules (their templates: variables numbered in order, so the fresh
@@ -385,6 +451,16 @@ pub fn lower_module_in(statements: Vec<Statement>, scope: &[&Module]) -> Result<
 
 /// `lower_module_in`, in a scope seeded already.
 pub fn lower_module_seeded(statements: Vec<Statement>, seeds: &Seeds) -> Result<Module, Error> {
+    lower_module_seeded_as(statements, seeds, false)
+}
+
+/// `lower_module_seeded`, its rules written as a version in the walk (decision 0365 step 3): a text's own program,
+/// which `link_seeded_parts` links without editing its rules and `rr::link_seeded_version` appends onto its scope.
+pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) -> Result<Module, Error> {
+    lower_module_seeded_as(statements, seeds, true)
+}
+
+fn lower_module_seeded_as(statements: Vec<Statement>, seeds: &Seeds, as_version: bool) -> Result<Module, Error> {
     let typing = crate::code_rule_dsl::logic::profile::span(|| "type the tapes' terms".to_owned());
     let written: BTreeMap<String, Vec<String>> = statements
         .iter()
@@ -484,6 +560,14 @@ pub fn lower_module_seeded(statements: Vec<Statement>, seeds: &Seeds) -> Result<
     // stated. A demand an include's lowering made is not one: this module makes its own.
     l.printed_demands = DEMANDS.iter().chain(WORLD.iter().map(|(_, d)| d)).filter(|d| l.prog.decls.contains_key(**d) && !seeded.decls.contains(**d)).map(|d| (*d).to_owned()).collect();
     l.printed_demands.extend(seeds.printed.iter().cloned());
+    if as_version {
+        // From here the rules go to the version; what the statements wrote before goes first, in its order.
+        let mut w = Written::new(shapes.iter().map(|(shape, _)| shape.head.clone()).collect());
+        for rule in std::mem::take(&mut l.prog.rules) {
+            w.write(rule);
+        }
+        l.out = Out::Version(Box::new(w));
+    }
     for (heads, body, edits, line) in clauses {
         // A rule ending in `=> edits` defines a fix; fixes are not run, so it is left out.
         if !edits.is_empty() {
@@ -497,7 +581,7 @@ pub fn lower_module_seeded(statements: Vec<Statement>, seeds: &Seeds) -> Result<
     // Each directive names what its rules read: a relation of their body, and the variables it waits for.
     for (shape, line) in shapes {
         use crate::code_rule_dsl::logic::front::{ShapeWait, shape_base};
-        let rules: Vec<&crate::code_rule_dsl::logic::front::Rule> = l.prog.rules.iter().filter(|r| r.head.rel == shape.head).collect();
+        let rules: Vec<&crate::code_rule_dsl::logic::front::Rule> = l.written_of(&shape.head);
         let reads = |rel: &str| rules.iter().any(|r| r.body.iter().filter_map(|x| x.atom()).any(|a| shape_base(&a.rel) == rel));
         let missing = match &shape.wait {
             _ if !reads(&shape.lit) => Some(format!("no rule of `{}` reads `{}`", shape.head, shape.lit)),
@@ -717,7 +801,7 @@ impl Lowerer {
 
     /// `m` after the modules linked so far: its helpers numbered after theirs, its parts added to theirs.
     fn append(&mut self, m: Module) {
-        let (b, b_stated, _) = self.link(m);
+        let (b, b_stated, _) = self.link(m, false);
         append_parts(&mut self.prog, b, &mut self.stated, b_stated);
     }
 
@@ -725,7 +809,11 @@ impl Lowerer {
     /// lowerer knows of them added to theirs. `m`'s program, so renamed, is returned with the count of its inputs
     /// stated first, for `append_parts`, and whether its rules were edited (a helper renamed or merged): in a seeded
     /// scope they never are (`link_seeded_parts`), as its seeds number no helpers and hold every native's name.
-    fn link(&mut self, m: Module) -> (Program, usize, bool) {
+    ///
+    /// `written`: the walk wrote `m`'s rules as a version, so `m.prog` holds none to key its helpers by. Its helpers are
+    /// then taken as they are, which is what a seeded scope's link does with them anyway: its seeds hold no helpers,
+    /// and the walk wrote each of its own once (`helper_once`).
+    fn link(&mut self, m: Module, written: bool) -> (Program, usize, bool) {
         let Module { l: mut m, docof, places, .. } = m;
         let mut rename: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         for (stem, n) in &m.made {
@@ -757,6 +845,10 @@ impl Lowerer {
         // all (decision 0225 §6 with 0246): in the order made, each renamed before the next's key reads it.
         for (name, stem, k) in std::mem::take(&mut m.once) {
             let name = rename.get(&name).cloned().unwrap_or(name);
+            if written {
+                self.once.push((name, stem, k));
+                continue;
+            }
             let key = self.once_key(&m.prog, &name, &stem, k);
             match self.helpers.get(&key) {
                 Some(made) => {
@@ -987,10 +1079,14 @@ pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
 /// module's own program linked into it (`Lowerer::link`), and what the lowerer knows of them (`Lowered`, its program
 /// the scope's). `rr::link_seeded_version` makes the scope's version once (`Scoped`), appends the module's onto it
 /// (`append_parts`, `lowering_tail::AppendModule`), checks it is `declared`, and runs the analyses on it.
-pub fn link_seeded_parts(m: Module, seeds: &Seeds) -> Result<Linked, Error> {
+pub fn link_seeded_parts(mut m: Module, seeds: &Seeds) -> Result<Linked, Error> {
     let mut l = seeds.l.clone();
     l.violations.clear();
-    let (own, own_stated, edited) = l.link(m);
+    let written = match std::mem::take(&mut m.l.out) {
+        Out::Tree => None,
+        Out::Version(w) => Some(w),
+    };
+    let (own, own_stated, edited) = l.link(m, written.is_some());
     // The module's rules are the walk's as written: what lets the walk write them as a version (0365 step 3).
     if edited {
         return Err(Error::Syntax("a module linked in a seeded scope had its helpers renamed: its rules are not the walk's".to_owned()));
@@ -998,14 +1094,15 @@ pub fn link_seeded_parts(m: Module, seeds: &Seeds) -> Result<Linked, Error> {
     let stated = l.stated;
     let lowered = whole_front(l)?;
     debug_assert!(lowered.program.rules.is_empty(), "a scope's seeds hold no rules");
-    Ok(Linked { lowered, own, stated, own_stated })
+    Ok(Linked { lowered, own, written, stated, own_stated })
 }
 
 /// `link_seeded_parts`'s parts.
 pub struct Linked {
     pub lowered: Lowered,
-    /// The module's own program, linked.
+    /// The module's own program, linked: with its rules, or its header alone where the walk wrote them (`written`).
     pub own: Program,
+    pub written: Option<Box<Written>>,
     /// The scope's inputs stated first, and the module's (`append_parts`).
     pub stated: usize,
     pub own_stated: usize,
@@ -1865,6 +1962,38 @@ impl Lowerer {
     /// a rule's two aggregates over the same variables were `rr_ctx7` and `rr_ctx8` in most of dl1's 44 policies, and
     /// `congruence` merged them back after lowering (decision 0225 §6). An aggregate's helper, which demand narrows
     /// by its readers, has its readers' heads in its stem (`aggregate`).
+    /// A rule the walk made, written where it writes (`out`).
+    fn write(&mut self, rule: Rule) {
+        match &mut self.out {
+            Out::Tree => self.prog.rules.push(rule),
+            Out::Version(w) => w.write(rule),
+        }
+    }
+
+    /// How many rules the walk has written.
+    fn written(&self) -> usize {
+        match &self.out {
+            Out::Tree => self.prog.rules.len(),
+            Out::Version(w) => w.n,
+        }
+    }
+
+    /// Whether the walk wrote `rule` already.
+    fn wrote(&self, rule: &Rule) -> bool {
+        match &self.out {
+            Out::Tree => self.prog.rules.contains(rule),
+            Out::Version(w) => w.seen.contains(&Written::hash(rule)),
+        }
+    }
+
+    /// The rules written of `rel`, a relation a `.shape` names.
+    fn written_of(&self, rel: &str) -> Vec<&Rule> {
+        match &self.out {
+            Out::Tree => self.prog.rules.iter().filter(|r| r.head.rel == rel).collect(),
+            Out::Version(w) => w.kept.iter().filter(|r| r.head.rel == rel).collect(),
+        }
+    }
+
     fn helper_once(&mut self, name: String, stem: &str, cols: Vec<(String, String)>, rules: Vec<(Vec<Term>, Vec<Literal>)>) -> String {
         let rules: Vec<Rule> = rules.into_iter().map(|(args, body)| Rule { head: Atom { rel: name.clone().into(), args: args.into(), neg: false, gated: false }, body: body.into() }).collect();
         let names = self.template_names.get_or_insert_with(crate::code_rule_dsl::logic::front::template::CanonicalNames::new);
@@ -1874,7 +2003,9 @@ impl Lowerer {
         }
         self.prog.decls.insert(name.clone().into(), cols.into_iter().map(|(c, t)| (c.into(), t.into())).collect());
         self.once.push((name.clone(), stem.to_owned(), rules.len()));
-        self.prog.rules.extend(rules);
+        for rule in rules {
+            self.write(rule);
+        }
         self.helpers.insert(key, name.clone());
         name
     }
@@ -2041,7 +2172,7 @@ impl Lowerer {
             } else {
                 vec![atom("docof", vec![v("rr_v0"), v("rr_d")]), atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]), atom("line", vec![v("rr_v0"), v("rr_l")]), atom("col", vec![v("rr_v0"), v("rr_c")])]
             };
-            self.prog.rules.push(Rule { head: head.clone(), body: std::iter::once(atom(&f.name, cols.clone())).chain(at).chain(scoped.iter().cloned()).collect() });
+            self.write(Rule { head: head.clone(), body: std::iter::once(atom(&f.name, cols.clone())).chain(at).chain(scoped.iter().cloned()).collect() });
             if !f.node && place_values {
                 let of = |g: &str| Term::Call(g.to_owned().into(), [v("rr_v0")].into());
                 let mut found = head.clone();
@@ -2054,14 +2185,14 @@ impl Lowerer {
                     body.push(Literal::Cmp { l: v("rr_p"), op: "=", r: of(PLACE_PATH) });
                     body.extend(scoped.iter().cloned());
                 }
-                self.prog.rules.push(Rule { head: found, body: body.into() });
+                self.write(Rule { head: found, body: body.into() });
             }
             if f.places {
                 let mut args = vec![v("rr_p"), v("rr_l")];
                 args.extend(cols.into_iter().skip(1));
                 let mut head = head;
                 head.args.make_mut()[5] = Term::Int(0);
-                self.prog.rules.push(Rule { head, body: std::iter::once(atom(&place_relation(&f.name), args)).chain(scoped.iter().cloned()).collect() });
+                self.write(Rule { head, body: std::iter::once(atom(&place_relation(&f.name), args)).chain(scoped.iter().cloned()).collect() });
             }
         }
         // A syntax error at its line (or line 1), in its document; an input error at line 1 of the input's path.
@@ -2089,7 +2220,7 @@ impl Lowerer {
             if what == "syntax_error" {
                 self.guest_input();
             }
-            self.prog.rules.push(Rule { head, body: body.into() });
+            self.write(Rule { head, body: body.into() });
         }
         // A guest that does not parse, reported at its host's line (`syntax_error` of a guest is a file line).
         for (grammar, code) in guest_errors {
@@ -2107,7 +2238,7 @@ impl Lowerer {
             }
             self.guest_input();
             self.error_diagnostic(&policy, "guest_error", &code, body.clone())?;
-            self.prog.rules.push(Rule { head, body: body.into() });
+            self.write(Rule { head, body: body.into() });
         }
         Ok(true)
     }
@@ -2168,31 +2299,31 @@ impl Lowerer {
         if !within.is_empty() {
             self.prog.decls.insert("rr_scope_in".to_owned().into(), [("d".into(), "int".into())].into());
             for g in &within {
-                self.prog.rules.push(Rule { head: head("rr_scope_in", "d"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
+                self.write(Rule { head: head("rr_scope_in", "d"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
             }
-            self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: [doc.clone(), atom("rr_scope_in", vec![v("d")], true)].into() });
+            self.write(Rule { head: head("rr_scope_drop", "p"), body: [doc.clone(), atom("rr_scope_in", vec![v("d")], true)].into() });
         }
         for g in &out {
-            self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
+            self.write(Rule { head: head("rr_scope_drop", "p"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
         }
         // rr_scope_not(d): a document out of the scope, which a combined run's guards negate (decision 0091): in a
         // pack that reads more documents than this policy's scope, the policy's rules see only the others' rows.
         if !within.is_empty() || !out.is_empty() {
             self.prog.decls.insert(SCOPE_NOT.to_owned().into(), [("d".into(), "int".into())].into());
             if !within.is_empty() {
-                self.prog.rules.push(Rule { head: head(SCOPE_NOT, "d"), body: [doc.clone(), atom("rr_scope_in", vec![v("d")], true)].into() });
+                self.write(Rule { head: head(SCOPE_NOT, "d"), body: [doc.clone(), atom("rr_scope_in", vec![v("d")], true)].into() });
             }
             for g in &out {
-                self.prog.rules.push(Rule { head: head(SCOPE_NOT, "d"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
+                self.write(Rule { head: head(SCOPE_NOT, "d"), body: std::iter::once(doc.clone()).chain(test(g)).collect() });
             }
         }
         // `.scope report dirs`: a finding in a document under none of them is dropped too.
         if !report.is_empty() {
             self.prog.decls.insert("rr_report_in".to_owned().into(), [("d".into(), "int".into())].into());
             for g in &report {
-                self.prog.rules.push(Rule { head: head("rr_report_in", "d"), body: [doc.clone(), glob(g)].into() });
+                self.write(Rule { head: head("rr_report_in", "d"), body: [doc.clone(), glob(g)].into() });
             }
-            self.prog.rules.push(Rule { head: head("rr_scope_drop", "p"), body: [doc.clone(), atom("rr_report_in", vec![v("d")], true)].into() });
+            self.write(Rule { head: head("rr_scope_drop", "p"), body: [doc.clone(), atom("rr_report_in", vec![v("d")], true)].into() });
         }
         vec![atom("rr_scope_drop", vec![v("rr_p")], true)]
     }
@@ -2327,9 +2458,9 @@ impl Lowerer {
             for body in &bodies {
                 let (args, body) = unset(args.clone(), body.clone())?;
                 if let Some(m) = &head.modal {
-                    self.modal.insert(self.prog.rules.len(), m.clone());
+                    self.modal.insert(self.written(), m.clone());
                 }
-                self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: args.into(), neg: false, gated: false }, body: body.into() });
+                self.write(Rule { head: Atom { rel: rel.clone().into(), args: args.into(), neg: false, gated: false }, body: body.into() });
             }
         }
         Ok(())
@@ -2678,8 +2809,8 @@ impl Lowerer {
             body.push(Literal::Atom(Atom { rel: "doc".into(), args: [Term::Var("rr_demand_doc".into()), Term::Wild, Term::Wild].into(), neg: false, gated: false }));
         }
         let rule = Rule { head, body: body.into() };
-        if !self.prog.rules.contains(&rule) {
-            self.prog.rules.push(rule);
+        if !self.wrote(&rule) {
+            self.write(rule);
         }
         Ok(())
     }
@@ -2739,8 +2870,8 @@ impl Lowerer {
         self.siblings = saved;
         let Some(ctx) = ctx.transpose()? else { return Ok(()) };
         let rule = Rule { head: head(Term::Var(s.clone().into())), body: [Literal::Atom(ctx)].into() };
-        if !self.prog.rules.contains(&rule) {
-            self.prog.rules.push(rule);
+        if !self.wrote(&rule) {
+            self.write(rule);
         }
         Ok(())
     }
@@ -2770,7 +2901,7 @@ impl Lowerer {
         self.prog.decls.insert(name.as_str().into(), cols);
         let head = Atom { rel: name.into(), args: shared.iter().map(|c| Term::Var(c.as_str().into())).collect(), neg: false, gated: false };
         for body in out {
-            self.prog.rules.push(Rule { head: head.clone(), body: merge_negated_tests(body).into() });
+            self.write(Rule { head: head.clone(), body: merge_negated_tests(body).into() });
         }
         keep.into_iter().chain([vec![Literal::Atom(head)]]).collect()
     }
@@ -2803,7 +2934,7 @@ impl Lowerer {
         self.prog.decls.insert(name.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         let head = Atom { rel: name.into(), args: args.into(), neg: false, gated: false };
         for body in bodies {
-            self.prog.rules.push(Rule { head: head.clone(), body: body.into() });
+            self.write(Rule { head: head.clone(), body: body.into() });
         }
         Ok(Literal::Atom(Atom { neg: true, ..head }))
     }
@@ -2838,8 +2969,8 @@ impl Lowerer {
         let head = |rel: &str, args: Vec<Term>| Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false };
         let mut body = vec![atom("child", vec![v("p"), v("a"), v("i")], false), atom("child", vec![v("p"), v("s"), v("k")], false), cmp("i", "k")];
         body.extend(member);
-        self.prog.rules.push(Rule { head: head(&after, vec![v("a"), v("k")]), body: body.into() });
-        self.prog.rules.push(Rule {
+        self.write(Rule { head: head(&after, vec![v("a"), v("k")]), body: body.into() });
+        self.write(Rule {
             head: head(&first, vec![v("a"), v("j")]),
             body: vec![
                 atom(&after, vec![v("a"), Term::Wild], false),
@@ -2849,11 +2980,11 @@ impl Lowerer {
         let pair = || vec![atom("child", vec![v("p"), v("a"), v("i")], false), atom("child", vec![v("p"), v("b"), v("l")], false), cmp("i", "l")];
         let mut none = pair();
         none.push(atom(&after, vec![v("a"), Term::Wild], true));
-        self.prog.rules.push(Rule { head: head(&name, vec![v("a"), v("b")]), body: none.into() });
+        self.write(Rule { head: head(&name, vec![v("a"), v("b")]), body: none.into() });
         let mut upto = pair();
         upto.push(atom(&first, vec![v("a"), v("j")], false));
         upto.push(Literal::Cmp { l: v("l"), op: "<=", r: v("j") });
-        self.prog.rules.push(Rule { head: head(&name, vec![v("a"), v("b")]), body: upto.into() });
+        self.write(Rule { head: head(&name, vec![v("a"), v("b")]), body: upto.into() });
         name
     }
 
@@ -2885,13 +3016,13 @@ impl Lowerer {
         let real = |q: &str| Literal::Cmp { l: v(q), op: ">=", r: Term::Int(0) };
         let mut first = seed;
         first.extend([up(x, "rr_p"), real("rr_p")]);
-        self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: [v(x), v("rr_p")].into(), neg: false, gated: false }, body: first.into() });
+        self.write(Rule { head: Atom { rel: rel.clone().into(), args: [v(x), v("rr_p")].into(), neg: false, gated: false }, body: first.into() });
         let mut next = vec![atom(&rel, vec![v("rr_n"), v("rr_p")], false)];
         if let Some(stop) = stop {
             next.push(atom(stop, vec![v("rr_p")], true));
         }
         next.extend([up("rr_p", "rr_q"), real("rr_q")]);
-        self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: [v("rr_n"), v("rr_q")].into(), neg: false, gated: false }, body: next.into() });
+        self.write(Rule { head: Atom { rel: rel.clone().into(), args: [v("rr_n"), v("rr_q")].into(), neg: false, gated: false }, body: next.into() });
         rel
     }
 
@@ -3021,7 +3152,7 @@ impl Lowerer {
         self.prog.decls.insert(name.as_str().into(), [("n".into(), "node".into()), ("a".into(), "node".into())].into());
         let head = Atom { rel: name.as_str().into(), args: [Term::Var("n".into()), Term::Var("a".into())].into(), neg: false, gated: false };
         for body in bodies {
-            self.prog.rules.push(Rule { head: head.clone(), body: body.into() });
+            self.write(Rule { head: head.clone(), body: body.into() });
         }
         Ok(name)
     }
@@ -3043,7 +3174,7 @@ impl Lowerer {
             // The native producer replaces these seed values. They establish dependency and numeric types.
             head_args.extend([Term::Int(0), Term::Int(0), Term::Int(0)]);
         }
-        self.prog.rules.push(Rule { head: Atom { rel: name.to_owned().into(), args: head_args.into(), neg: false, gated: false }, body: body.into() });
+        self.write(Rule { head: Atom { rel: name.to_owned().into(), args: head_args.into(), neg: false, gated: false }, body: body.into() });
         self.prog.natives.insert(name.to_owned(), Native::MatchAll { input: input.to_owned(), pattern: re.to_owned(), groups: gs.to_vec(), positions });
     }
 
@@ -3503,7 +3634,7 @@ impl Lowerer {
             body.push(a("node", vec![v("d"), v(n), Term::Wild, Term::Wild, Term::Wild]));
         }
         self.prog.decls.insert(name.to_owned().into(), ["c", "f", "r", "o"].into_iter().map(|n| (n.into(), "node".into())).collect());
-        self.prog.rules.push(Rule { head: Atom { rel: name.to_owned().into(), args: ["c", "f", "r", "o"].into_iter().map(v).collect(), neg: false, gated: false }, body: body.into() });
+        self.write(Rule { head: Atom { rel: name.to_owned().into(), args: ["c", "f", "r", "o"].into_iter().map(v).collect(), neg: false, gated: false }, body: body.into() });
         self.prog.natives.insert(name.to_owned(), native);
     }
 
@@ -3531,7 +3662,7 @@ impl Lowerer {
             }
         }
         self.prog.decls.insert(rel.clone().into(),vars.iter().map(|(n,t)|(n.to_string(),t.to_string())).map(|(c, t)| (c.into(), t.into())).collect());
-        self.prog.rules.push(Rule{head:Atom{rel:rel.clone().into(),args:vars.iter().map(|(n,_)|v(n)).collect(),neg:false,gated:false},body: body.into()});
+        self.write(Rule{head:Atom{rel:rel.clone().into(),args:vars.iter().map(|(n,_)|v(n)).collect(),neg:false,gated:false},body: body.into()});
         self.prog.natives.insert(rel.clone(),native);
         rel
     }
@@ -3553,7 +3684,7 @@ impl Lowerer {
         if let Some(roots) = roots {
             body.push(atom(roots, vec![v("r"), Term::Wild]));
         }
-        self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: [v("r"), v("hit"), v("first")].into(), neg: false, gated: false }, body: body.into() });
+        self.write(Rule { head: Atom { rel: rel.clone().into(), args: [v("r"), v("hit"), v("first")].into(), neg: false, gated: false }, body: body.into() });
         // The edge relation's column types (a node, a number, a symbol); nodes where it is declared later.
         let ty = |c: usize, or: &str| self.prog.decls.get(edge).and_then(|cols| cols.get(c)).map_or_else(|| or.to_owned(), |(_, t)| t.to_string());
         let cols = vec![("r".to_owned(), ty(0, "node")), ("hit".to_owned(), ty(1, "node")), ("first".to_owned(), ty(2, "int"))];
@@ -3573,7 +3704,7 @@ impl Lowerer {
         let v = |n: &str| Term::Var(n.to_owned().into());
         let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false });
         let body = vec![atom(own, vec![v("d"), v("k")]), atom(edge, vec![v("d"), v("e")]), atom(own, vec![v("e"), Term::Wild])];
-        self.prog.rules.push(Rule { head: Atom { rel: rel.clone().into(), args: [v("d"), v("e"), v("k")].into(), neg: false, gated: false }, body: body.into() });
+        self.write(Rule { head: Atom { rel: rel.clone().into(), args: [v("d"), v("e"), v("k")].into(), neg: false, gated: false }, body: body.into() });
         let cols = vec![("d".to_owned(), "int".to_owned()), ("c".to_owned(), "int".to_owned()), ("k".to_owned(), "sym".to_owned())];
         self.prog.decls.insert(rel.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         self.prog.natives.insert(rel.clone(), Native::Components { edge: edge.to_owned(), own: own.to_owned() });

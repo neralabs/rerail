@@ -319,8 +319,18 @@ impl Text {
         check_names(&vec![(PathBuf::from("<program>"), checked)], reads_core)?;
         closed_program(&files, &own)?;
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
-        let m = lower::lower_module_seeded(own, &scoped.seeds)?;
-        let version = link_seeded_version(m, scoped, core_names())?;
+        // Its rules written as a version in the walk (decision 0365 step 3); a debug build lowers the tree too and
+        // checks the two are one program.
+        #[cfg(debug_assertions)]
+        let tree = lower::link_seeded_parts(lower::lower_module_seeded(own.clone(), &scoped.seeds)?, &scoped.seeds)?;
+        let mut linked = lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?;
+        let written = own_version(&linked.own, linked.written.take())?;
+        #[cfg(debug_assertions)]
+        {
+            let t = version_of(&tree.own)?;
+            assert_eq!((t.size(), t.digest()), (written.size(), written.digest()), "the walk's version is the tree's: {}", super::program_image::differences(&t, &written));
+        }
+        let version = link_seeded_version(linked, written, scoped, core_names())?;
         // A text that adds to library relations asks of the library (decision 0089 §3): its request's cone, the library
         // relations that read what it adds, and the helpers they read, are copied from the linked library, made once
         // (decision 0246 §2: a cone is made at link time). The run's `own_part` then holds them as the request.
@@ -330,6 +340,18 @@ impl Text {
         }).collect();
         let asked: BTreeSet<String> = version.rules().map(|r| version.rel_name(r.head().rel()).to_owned()).filter(|h| declared.contains(h) && !core_names().contains(h)).collect();
         Ok(Some(Own { version, asked, declared }))
+    }
+
+    /// The text's own program as its walk writes it (`lower::lower_module_seeded_written`) and as the tree's rules
+    /// encode, and whether the linked module held its header alone: a test's view of decision 0365 step 3.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn own_written_and_tree(self, scoped: &Scoped) -> Result<(bool, std::sync::Arc<super::program_image::Version>, std::sync::Arc<super::program_image::Version>), Error> {
+        let Read::Modular { own, .. } = self.0 else { return Err(Error::Syntax("not a modular text".to_owned())) };
+        let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
+        let tree = lower::link_seeded_parts(lower::lower_module_seeded(own.clone(), &scoped.seeds)?, &scoped.seeds)?;
+        let mut w = lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?;
+        let header_alone = w.own.rules.is_empty() && w.written.is_some();
+        Ok((header_alone, own_version(&w.own, w.written.take())?, version_of(&tree.own)?))
     }
 
     /// `lower_in` as a version: the stored image handed on unread (decision 0281's path, step 7a-2); else the text
@@ -967,16 +989,37 @@ pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<Stri
 /// `DropRepeated`: aggregate demand, `unit`, the sets, then the widened contexts), then the
 /// scope's declarations taken out of its header (`lower::unseed`). A debug build runs the tree's tail beside it and
 /// checks the two images agree.
-fn link_seeded_version(m: lower::Module, scoped: &Scoped, core: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+/// A module's own program as a version: the one its walk wrote (`written`), its header set from `own`'s, or `own`
+/// encoded.
+fn own_version(own: &Program, written: Option<Box<lower::Written>>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+    let Some(w) = written else { return version_of(own) };
+    let bytes = w.finish(own)?.finish_bytes().map_err(Error::Syntax)?;
+    super::program_image::Version::open(&bytes).map_err(Error::Syntax)
+}
+
+/// The module linked in `scoped` (`lower::link_seeded_parts`), its own program `own_v` (`own_version`), appended onto
+/// the scope's version and through the lowering's tail.
+fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::program_image::Version>, scoped: &Scoped, core: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::program_image::{Builder, manager::Pipeline};
     let seeds = &scoped.seeds;
-    let lower::Linked { lowered, own, stated, own_stated } = lower::link_seeded_parts(m, seeds)?;
+    let lower::Linked { lowered, own, stated, own_stated, .. } = linked;
+    // The tree's check below appends the module's rules too: where the walk wrote them, the version's.
+    #[cfg(debug_assertions)]
+    let own = {
+        let mut own = own;
+        if own.rules.is_empty() {
+            own.rules = own_v.program(&Default::default()).map_err(Error::Syntax)?.rules;
+        }
+        own
+    };
+    #[cfg(not(debug_assertions))]
+    drop(own);
     let lower::Lowered { sets, rewritten, docof_of_locs, findings, three, modal, .. } = lowered;
     let mut p = Pipeline::new("the lowering's tail", scoped.version()?);
     {
         use super::plan::corpus::preparation::{lowering_tail, on_request::SourcesOnRequest};
         // The module linked onto the scope's version, and checked declared.
-        p.program(&mut lowering_tail::AppendModule { own: version_of(&own)?, stated, own_stated }).program(&mut lowering_tail::Declared);
+        p.program(&mut lowering_tail::AppendModule { own: own_v, stated, own_stated }).program(&mut lowering_tail::Declared);
         p.program(&mut lowering_tail::ThreeValued { three: three.clone(), modal: modal.clone() });
         p.program(&mut lowering_tail::Findings { pending: findings.clone() });
         p.program(&mut lowering_tail::CoreDecls { docof_of_locs }).program(&mut lowering_tail::SpanPatterns).program(&mut lowering_tail::GrammarNames).program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
