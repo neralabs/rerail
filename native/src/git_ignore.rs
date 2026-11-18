@@ -322,7 +322,17 @@ mod tests {
         std::fs::write(root.join(".git/info/exclude"), "# local\n\nlocal.py\n").unwrap();
         let root = root.canonicalize().unwrap();
         let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
-        let source = |path: &str| Some(root.join(path).to_string_lossy().into_owned());
+        // The matcher names a file by the path a person reads: on Windows without the `\\?\`
+        // prefix that `canonicalize` puts there, and with the system's own separator.
+        let root = PathBuf::from(
+            root.to_string_lossy()
+                .strip_prefix(r"\\?\")
+                .map_or_else(|| root.to_string_lossy().into_owned(), str::to_owned),
+        );
+        let source = |path: &str| {
+            let file = path.split('/').fold(root.clone(), |file, part| file.join(part));
+            Some(file.to_string_lossy().into_owned())
+        };
         let matched = |pattern: &str, path: &str, line: u32| GitIgnoreMatch {
             source: source(path),
             line,
