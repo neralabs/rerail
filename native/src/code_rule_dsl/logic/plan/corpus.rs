@@ -47,8 +47,8 @@ pub const REFERENCE_RELATIONS: [&str; 2] = ["reference_edge", "reference_open"];
 /// Base relations a program reads that are built across a run's files (the reference graph's,
 /// `corpus::references`): each file added as its facts are built, the rows bound in the cross-file part.
 pub trait CrossFileRelations: Send + Sync {
-    /// Adds the file with key `key` at `path`, with its source and facts.
-    fn add(&self, key: u32, path: &str, source: &Arc<String>, facts: &Arc<crate::code_rule_dsl::facts::core::Facts>) -> Result<()>;
+    /// Adds the file with key `key` at `path`, with its parsed tape and facts.
+    fn add(&self, key: u32, path: &str, tape: &crate::code_rule_dsl::tape::TapeDoc, facts: &Arc<crate::code_rule_dsl::facts::core::Facts>) -> Result<()>;
     /// The relations the run's files give, with their columns and rows.
     fn relations(self: Box<Self>, store: &crate::content_store::ContentStore, read: &BTreeSet<String>) -> Result<Vec<(&'static str, Vec<String>, Vec<Option<Vec<i64>>>)>>;
 }
@@ -5110,7 +5110,7 @@ fn run_observed(
     // The matchers a chunk runs (decision 0106). A chunk's documents keep their tapes for them, and for a program that
     // reads W's values, f-string trees or string annotations (`syntax::taped`).
     let chunk_matchers = matchers::compiled(&matchers, &prog.policies).map_err(Error::Plan)?;
-    let keep_tapes = !chunk_matchers.is_empty() || read.iter().any(|rel| syntax::taped(rel));
+    let keep_tapes = references.is_some() || !chunk_matchers.is_empty() || read.iter().any(|rel| syntax::taped(rel));
     if !chunk_matchers.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("ast matchers (decision 0106)", || format!("{} matchers run by the transducer over each chunk's tapes", chunk_matchers.len()));
     }
@@ -5179,10 +5179,8 @@ fn run_observed(
         };
         let (facts, tape) = held.as_ref();
         if let Some(references) = &references {
-            // W's reference graph parses the file again with tree-sitter and summarizes it in Rust: work with no
-            // device form, named apart from the tape and facts it sits beside.
-            let _refs = crate::code_rule_dsl::logic::profile::span(|| "W's reference graph (tree-sitter again)".into());
-            references.add(*d as u32, path, &file.source, facts)?;
+            let _refs = crate::code_rule_dsl::logic::profile::span(|| "W's reference graph from the tape".into());
+            references.add(*d as u32, path, tape.as_ref().expect("reference analysis requests tapes"), facts)?;
         }
         // The tape, in the file's context: kept only for a program that reads W's values, f-string trees or string
         // annotations off it, or runs matchers over it (decision 0106).
@@ -6855,7 +6853,7 @@ fn run_observed(
         let load_ledger: Arc<std::sync::Mutex<cone_rounds::LoadLedger>> = Arc::default();
         let load_ledger_in = Arc::clone(&load_ledger);
         let git_root = root.to_path_buf();
-        let kept_git_reads: Arc<std::sync::Mutex<Vec<(String, String)>>> = Arc::default();
+        let kept_git_reads: Arc<std::sync::Mutex<Vec<(String, String, String)>>> = Arc::default();
         let kept_git_reads_in = Arc::clone(&kept_git_reads);
         let rounds_journal_in = rounds_journal.clone();
         // Beside the main thread, which answers its requests: a job of the pool's that takes turns with this one.
@@ -6941,16 +6939,17 @@ fn run_observed(
             let still_fn = |req: &str, key: &[i64], rows: &[&Vec<i64>]| -> bool {
                 if req == git::OBJECT {
                     let [repo, id] = key else { return false };
-                    if !rows.iter().any(|row| row.get(2).and_then(|&field| sym_text(field)).as_deref() == Some("kind")) {
-                        return false;
-                    }
+                    let Some(stamp) = rows.iter().find_map(|row| {
+                        (row.get(2).and_then(|&field| sym_text(field)).as_deref() == Some("storage"))
+                            .then(|| row.get(4).and_then(|&value| sym_text(value))).flatten()
+                    }).filter(|stamp| stamp.starts_with("readable:")) else { return false };
                     let (Some(repo), Some(id)) = (sym_text(*repo), sym_text(*id)) else { return false };
-                    let present = git.borrow_mut().get_or_insert_with(|| git::Git::new(&git_root))
-                        .observation(req, &repo, &id).as_deref() == Some("present");
-                    if present {
-                        kept_git_reads_in.lock().unwrap_or_else(|e| e.into_inner()).push((repo, id));
+                    let unchanged = git.borrow_mut().get_or_insert_with(|| git::Git::new(&git_root))
+                        .observation(req, &repo, &id).as_ref() == Some(&stamp);
+                    if unchanged {
+                        kept_git_reads_in.lock().unwrap_or_else(|e| e.into_inner()).push((repo, id, stamp));
                     }
-                    return present;
+                    return unchanged;
                 }
                 if req == git::REVISION {
                     return false;
@@ -7416,8 +7415,8 @@ fn run_observed(
         cone_inputs = cone_digests(&exports.borrow(), &per_file, &split.locations, &pf, docs.iter().chain(&loaded_docs))?;
         let summary = world.summary(pauses);
         if let Ok(mut reads) = kept_git_reads.lock() {
-            for (repo, id) in reads.drain(..) {
-                world.consulted_git(git::OBJECT, &repo, &id, "present".to_owned());
+            for (repo, id, stamp) in reads.drain(..) {
+                world.consulted_git(git::OBJECT, &repo, &id, stamp);
             }
         }
         consulted.extend(world.consulted());

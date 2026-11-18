@@ -65,6 +65,10 @@ Repository authorization remains an input to acquisition.
 A cache hit cannot introduce another repository capability.
 Local object presence is a different observation from previously acquired immutable content.
 The library must not derive present local storage merely from `git_object_result`.
+The provider records the storage state that it checked when it read an object.
+It checks loose file metadata and the pack and index files in the repository and its alternates.
+If the storage state changes, the provider reads and checks the object's checksum before it returns successful facts.
+Failed object reads are checked again when a later run requests the object.
 
 A tree decoder's cache key includes hash format:
 

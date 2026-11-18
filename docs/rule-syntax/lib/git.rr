@@ -20,7 +20,7 @@ git_record_key(r, oid, "git-record-1") :- git_root_repo(r), git_object_request(r
 
 .decl git_record(repo: symbol, oid: symbol, version: symbol, field: symbol, position: number, first: symbol, second: symbol, value: number, offset: number)
 git_record(r, oid, v, field, pos, a, b, n, o) :-
-    git_record_key(r, oid, v), git_object_of(r, oid, field, pos, a, b, n, o), field != "error".
+    git_record_key(r, oid, v), git_object_of(r, oid, field, pos, a, b, n, o), field != "error", field != "storage".
 .cache git_record by git_record_key
 
 .decl git_object_kind(repo: symbol, oid: symbol, kind: symbol)

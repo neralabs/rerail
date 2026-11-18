@@ -706,6 +706,7 @@ pub fn parse_input(dialect: GrammarDialect, source: &str) -> Cow<'_, str> {
 
 /// `dialect`'s ast-grep tree of `parse_input`, reading `source`'s text.
 pub fn ast_grep(dialect: GrammarDialect, source: &str) -> AstGrep<StrDoc<GrammarDialect>> {
+    crate::code_rule_dsl::prof::count("source_ast.parses", 1);
     match parse_input(dialect, source) {
         Cow::Borrowed(_) => dialect.ast_grep(source),
         Cow::Owned(input) => {

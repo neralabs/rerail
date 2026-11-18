@@ -25,6 +25,7 @@ struct View {
     scope: Option<String>,
     owner: OnceLock<crate::content_store::analysis_scope::AnalysisOwner>,
     inventory: OnceLock<Inventory>,
+    observed_trees: Mutex<std::collections::HashMap<gix::ObjectId, ObservedTree>>,
     ignore_blob: OnceLock<Result<Option<gix::ObjectId>, String>>,
     paths: Mutex<Option<Vec<String>>>,
     host_languages: OnceLock<SourceLanguages>,
@@ -36,6 +37,20 @@ pub struct Inventory {
     pub trees: Vec<crate::content_store::GitTree>,
     pub languages: std::collections::BTreeMap<String, String>,
     pub invalid_paths: Vec<String>,
+    pub tree_observations: std::collections::BTreeMap<HashKey, String>,
+}
+
+#[derive(Debug)]
+pub struct RawTreeEntry {
+    pub name: Vec<u8>,
+    pub mode: u16,
+    pub target: gix::ObjectId,
+}
+
+#[derive(Debug)]
+struct ObservedTree {
+    stamp: String,
+    entries: Arc<[RawTreeEntry]>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -408,6 +423,7 @@ impl Snapshot {
             scope,
             owner: OnceLock::new(),
             inventory: OnceLock::new(),
+            observed_trees: Mutex::default(),
             ignore_blob: OnceLock::new(),
             paths: Mutex::new(None),
             host_languages: OnceLock::new(),
@@ -488,13 +504,32 @@ pub fn source_language(path: &Path) -> Option<Option<String>> {
 pub fn with_inventory_tree<T>(
     root: &Path,
     id: &gix::hash::oid,
+    stamp: &str,
     read: impl FnOnce(&crate::content_store::GitTree) -> T,
 ) -> Option<T> {
     let view = view(root)?;
     let id = super::hash_key(id).ok()?;
-    let trees = &view.inventory.get()?.trees;
+    let inventory = view.inventory.get()?;
+    if inventory.tree_observations.get(&id)?.as_str() != stamp {
+        return None;
+    }
+    let trees = &inventory.trees;
     let index = trees.binary_search_by_key(&id, |tree| tree.id).ok()?;
     Some(read(&trees[index]))
+}
+
+/// The trees already read during this invocation, before or after source selection.
+pub fn observed_tree(root: &Path, id: gix::ObjectId, stamp: &str) -> Option<Arc<[RawTreeEntry]>> {
+    let view = view(root)?;
+    let observed = view.observed_trees.lock().unwrap_or_else(|error| error.into_inner());
+    observed.get(&id).filter(|tree| tree.stamp == stamp).map(|tree| Arc::clone(&tree.entries))
+}
+
+pub fn record_tree(root: &Path, id: gix::ObjectId, stamp: &str, entries: Arc<[RawTreeEntry]>) {
+    if let Some(view) = view(root) {
+        view.observed_trees.lock().unwrap_or_else(|error| error.into_inner())
+            .insert(id, ObservedTree { stamp: stamp.to_owned(), entries });
+    }
 }
 
 pub struct InventoryFilter {

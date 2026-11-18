@@ -131,7 +131,8 @@ impl World {
 
     pub(super) fn git_object(&mut self, repo: &str, id: &str) -> Vec<super::git::Record> {
         let records = self.git().records(repo, id);
-        let status = if records[0].field == "kind" { "present" } else { &records[0].first };
+        let status = records.iter().find(|record| matches!(record.field, "storage" | "error"))
+            .map_or("unchecked", |record| record.first.as_str());
         self.consulted_git(super::git::OBJECT, repo, id, status.to_owned());
         records
     }

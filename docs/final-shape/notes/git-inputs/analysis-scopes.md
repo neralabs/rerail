@@ -56,6 +56,7 @@ If a referenced tree cannot be read, `git_tree_walk_error` reports the failure.
 The source inventory requires every tree that passes its filter to be readable.
 When a policy asks for a tree that the inventory read, it receives those same
 decoded entries. The request can still reach trees outside the inventory.
+The inventory also uses verified tree entries from earlier policy requests in the same scan.
 
 ## Retention and invalidation
 
@@ -92,6 +93,7 @@ This order lets a stop find every store that can hold an ended generation.
 If the store fails to open, the run uses memory and adds no registration.
 The stop remains pending until each store for the directory accepts its release.
 For a store from before directory registration, the stop first checks for matching ownership rows.
+A store can hold these rows for one directory and have registrations for other directories.
 A store with a directory registration remains a release target while it is unavailable.
 The daemon handles due releases in order of their next attempt time.
 If a store is unavailable, the daemon saves a later attempt time for that release.
@@ -112,6 +114,8 @@ the empty set of entries. An unrelated registry entry leaves the key intact.
 Concurrent requests for the same source bytes share a tape build.
 The source phase retains recent builds within the existing memory budget.
 Each path still has its own document and module facts.
+Python reference analysis reads the same tape.
+It then links each document's references with the package and path facts for its placement.
 
 The Git view stays pinned during a run. Different revisions can use the same
 cache space, provided the engine compares their input facts before it reuses

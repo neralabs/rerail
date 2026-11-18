@@ -1,8 +1,11 @@
 //! Explicit Git requests in the corpus fixpoint. The handle belongs to this run.
 
 use super::front::{Program, Value};
+use crate::git_workspace::snapshot::{self, RawTreeEntry};
 use gix::bstr::ByteSlice as _;
 use std::path::{Path, PathBuf};
+
+mod storage;
 
 pub(super) const REVISION: &str = "git_revision_request";
 pub(super) const OBJECT: &str = "git_object_request";
@@ -25,6 +28,7 @@ pub(super) struct Git {
     tree: Option<gix::ObjectId>,
     commit: Option<gix::ObjectId>,
     snapshot_root: Option<PathBuf>,
+    storage: std::cell::OnceCell<Option<storage::Storage>>,
 }
 
 /// A decoded object's records share one acquisition. The library gives them their public schemas.
@@ -72,6 +76,7 @@ impl Git {
             tree,
             commit,
             snapshot_root: tree.map(|_| root.to_owned()),
+            storage: Default::default(),
         }
     }
 
@@ -107,8 +112,15 @@ impl Git {
     fn object(&self, key: &str, oid: &str) -> Result<Vec<Record>, &'static str> {
         let repo = self.repo(key)?;
         let id = Self::object_id(repo, oid)?;
-        if let Some(root) = &self.snapshot_root
-            && let Some(records) = crate::git_workspace::snapshot::with_inventory_tree(root, &id, |tree| {
+        let observed = self.storage_stamp(repo, id);
+        if let (Some(root), Some(stamp)) = (&self.snapshot_root, observed.as_deref()) {
+            if let Some(tree) = snapshot::observed_tree(root, id, stamp) {
+                if !repo.has_object(id) { return Err("missing"); }
+                let mut records = vec![Record::text("kind", "tree"), Record::text("storage", stamp)];
+                records.extend(tree.iter().map(raw_tree_record));
+                return Ok(records);
+            }
+            if let Some(records) = snapshot::with_inventory_tree(root, &id, stamp, |tree| {
                 let mut records = Vec::with_capacity(tree.entries.len() + 1);
                 records.push(Record::text("kind", "tree"));
                 for entry in &tree.entries {
@@ -121,14 +133,19 @@ impl Git {
                     records.push(record);
                 }
                 records
-            })
-        {
-            return repo.has_object(id).then_some(records).ok_or("missing");
+            }) {
+                if !repo.has_object(id) { return Err("missing"); }
+                let mut records = records;
+                records.push(Record::text("storage", stamp));
+                return Ok(records);
+            }
         }
         let object = repo
             .try_find_object(id)
             .map_err(|_| "unreadable")?
             .ok_or("missing")?;
+        gix::objs::Data::new(&object.data, object.kind, id.kind())
+            .verify_checksum(id.as_ref()).map_err(|_| "unreadable")?;
         let mut records = vec![Record::text("kind", object.kind.to_string())];
         match object.kind {
             gix::object::Kind::Commit => {
@@ -183,17 +200,18 @@ impl Git {
             gix::object::Kind::Tree => {
                 crate::code_rule_dsl::prof::count("git.tree_decodes", 1);
                 let tree = object.into_tree();
+                let mut entries = Vec::new();
                 for entry in tree.iter() {
                     let entry = entry.map_err(|_| "malformed")?;
-                    let mut record = match entry.filename().to_str() {
-                        Ok(name) if !name.is_empty() && name != "." && name != ".." && !name.contains('/') =>
-                            Record::text("entry", name),
-                        Ok(_) => return Err("malformed"),
-                        Err(_) => Record::text("entry-bytes", hex(entry.filename())),
-                    };
-                    record.second = entry.id().to_string();
-                    record.number = i64::from(entry.mode().value());
-                    records.push(record);
+                    let name = entry.filename().as_bytes();
+                    if name.is_empty() || name == b"." || name == b".." || name.contains(&b'/') {
+                        return Err("malformed");
+                    }
+                    entries.push(RawTreeEntry { name: name.to_vec(), mode: entry.mode().value(), target: entry.id().detach() });
+                }
+                records.extend(entries.iter().map(raw_tree_record));
+                if let (Some(root), Some(stamp)) = (&self.snapshot_root, observed.as_deref()) {
+                    snapshot::record_tree(root, id, stamp, entries.into());
                 }
             }
             gix::object::Kind::Tag => {
@@ -212,12 +230,17 @@ impl Git {
                 ));
             }
         }
+        records.push(Record::text("storage", observed.unwrap_or_else(|| "unchecked".to_owned())));
         Ok(records)
     }
 
     pub(super) fn records(&self, key: &str, oid: &str) -> Vec<Record> {
         self.object(key, oid)
             .unwrap_or_else(|error| vec![Record::text("error", error)])
+    }
+
+    fn storage_stamp(&self, repo: &gix::Repository, id: gix::ObjectId) -> Option<String> {
+        self.storage.get_or_init(|| storage::Storage::of(repo)).as_ref()?.object(id)
     }
 
     /// Presence is a separate observation. Re-observe former misses and open the new ref each run.
@@ -230,14 +253,12 @@ impl Git {
             OBJECT => {
                 let repo = self.repo(key);
                 Some(
-                    match repo
-                        .and_then(|repo| Self::object_id(repo, arg).map(|id| repo.has_object(id)))
+                    match repo.and_then(|repo| Self::object_id(repo, arg).map(|id| (repo, id)))
                     {
-                        Ok(true) => "present",
-                        Ok(false) => "missing",
-                        Err(reason) => reason,
+                        Ok((repo, id)) if repo.has_object(id) => self.storage_stamp(repo, id).unwrap_or_else(|| "unverified".to_owned()),
+                        Ok(_) => "missing".to_owned(),
+                        Err(reason) => reason.to_owned(),
                     }
-                    .to_owned(),
                 )
             }
             _ => None,
@@ -256,6 +277,16 @@ impl Git {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn raw_tree_record(entry: &RawTreeEntry) -> Record {
+    let mut record = match std::str::from_utf8(&entry.name) {
+        Ok(name) => Record::text("entry", name),
+        Err(_) => Record::text("entry-bytes", hex(&entry.name)),
+    };
+    record.second = entry.target.to_string();
+    record.number = i64::from(entry.mode);
+    record
 }
 
 fn observes_git(program: &Program) -> bool {
@@ -425,5 +456,10 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>) -> 
     trees.sort_by_key(|tree| tree.id);
     let invalid_paths = outputs.rows("inventory_path_error").into_iter()
         .filter_map(|row| row.get(0).text().map(str::to_owned)).collect();
-    Ok(snapshot::Inventory { files, trees, languages, invalid_paths })
+    let tree_observations = outputs.rows("inventory_tree_observation").into_iter().map(|row| {
+        let (Cell::Text(tree), Cell::Text(stamp)) = (row.get(0), row.get(1))
+            else { return Err("invalid Git tree observation".to_owned()) };
+        Ok((key(tree)?, stamp.to_owned()))
+    }).collect::<Result<_, String>>()?;
+    Ok(snapshot::Inventory { files, trees, languages, invalid_paths, tree_observations })
 }

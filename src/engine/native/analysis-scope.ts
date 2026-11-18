@@ -72,7 +72,6 @@ function analysisStores(databasePath: string): { fallback: Set<string>; register
     if (tables.includes("analysis_directory_store")) {
       for (const row of index.$client.prepare("SELECT directory,path FROM analysis_directory_store").all() as typeof registered) {
         registered.push(row);
-        fallback.delete(row.path);
       }
     }
   } finally {

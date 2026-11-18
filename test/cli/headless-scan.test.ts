@@ -651,7 +651,7 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     try {
       expect((await scan(root, { databasePath })).status).toBe("completed");
       const registry = new Database(`${databasePath}.analysis-stores.sqlite`);
-      try { registry.exec("DELETE FROM analysis_directory_store"); }
+      try { registry.prepare("UPDATE analysis_directory_store SET directory=?").run(join(root, "..", "another-checkout")); }
       finally { registry.close(); }
       const db = openRerailDatabase(databasePath);
       const store = new Database(storePath, { readonly: true });
@@ -919,6 +919,112 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
     git(root, "add", "copy/call.py");
     git(root, "commit", "-qm", "separate blobs for both placements");
     expect(measure("distinct")).toBe(shared + 1);
+  }, 30_000);
+
+  it("shares verified trees in either policy order and builds references from the tape", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-tree-order-")));
+    roots.push(root);
+    git(root, "init", "-q");
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src/a.py"), "def helper():\n    pass\n\ndef caller():\n    helper()\n");
+    git(root, "add", "src/a.py");
+    git(root, "commit", "-qm", "source");
+    const walk = join(root, "walk.rr");
+    writeFileSync(walk, `
+#include "git.rr"
+.policy "walk" revision 1
+.violation Seen(at: span) "tree file"
+git_tree_walk_request(r, t) :- git_source_tree(r, t).
+Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _).
+`);
+    const references = join(root, "references.rr");
+    writeFileSync(references, `
+#include "core.rr"
+.policy "references" revision 1
+.language python
+.violation Referenced(at: node) "reference"
+Referenced(src) :- reference_edge(src, _, _).
+`);
+    const script = `
+      import { runHeadlessScan } from "./src/cli/headless-scan.ts";
+      const [repo, databasePath, ...rr] = process.argv.slice(2);
+      console.log(JSON.stringify(await runHeadlessScan({
+        repo, databasePath, rr, revision: "HEAD", analysisScope: "order",
+        scope: "repository", packs: [], version: "test",
+      })));
+    `;
+    for (const [caseName, paths] of [["walk-first", [walk, references]], ["references-first", [references, walk]]] as const) {
+      const home = join(root, caseName);
+      const profile = join(home, "profile");
+      const report = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, join(home, "home.sqlite"), ...paths], {
+        input: script, encoding: "utf8",
+        env: { ...process.env, RERAIL_PROFILE: profile, RERAIL_CONTENT_STORE_PATH: join(home, "content.sqlite") },
+      })) as ScanReport;
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      expect(report.violations.map(finding => finding.code).sort()).toEqual(["Referenced", "Seen"]);
+      const counters = new Map([...readFileSync(join(profile, "profile.txt"), "utf8").matchAll(/^\s*count\s+(\d+)\s+([a-z._]+)$/gmu)]
+        .map(([, count, name]) => [name, Number(count)]));
+      expect(counters.get("git.tree_decodes")).toBe(2);
+      expect(counters.get("reference.tape_summaries")).toBe(1);
+      expect(counters.get("source_ast.parses") ?? 0).toBe(0);
+    }
+  }, 30_000);
+
+  it.each(["loose", "packed"])("rechecks a %s tree after corruption and restoration with the same cache", (representation) => {
+    const root = checkout();
+    const home = `${root}-home`;
+    mkdirSync(home);
+    mkdirSync(join(root, "src"));
+    writeFileSync(join(root, "src/a.py"), "x = 1\n");
+    git(root, "add", "src/a.py");
+    git(root, "commit", "-qm", "nested source");
+    const object = git(root, "rev-parse", "HEAD:src");
+    const objects = join(root, ".git/objects");
+    const loose = join(objects, object.slice(0, 2), object.slice(2));
+    let target = loose;
+    let offset = 0;
+    if (representation === "packed") {
+      const base = join(objects, "pack/verification");
+      const suffix = execFileSync("git", ["pack-objects", base], { cwd: root, input: `${object}\n`, encoding: "utf8" }).trim();
+      const index = `${base}-${suffix}.idx`;
+      target = `${base}-${suffix}.pack`;
+      const row = git(root, "verify-pack", "-v", index).split("\n").find(line => line.startsWith(object))!;
+      const [, , , size, start] = row.split(/\s+/u);
+      offset = Number(start) + Math.floor(Number(size) / 2);
+      rmSync(loose);
+    }
+    const policy = join(home, "walk.rr");
+    writeFileSync(policy, `
+#include "git.rr"
+.policy "walk" revision 1
+.violation Complete(at: span) "complete"
+.violation Unreadable(at: span, reason: symbol) "{reason}"
+git_tree_walk_request(r, t) :- git_source_tree(r, t).
+Complete(@place("tree", 1)) :- git_tree_walk_complete(_, _).
+Unreadable(@place("tree", 1), why) :- git_tree_walk_error(_, _, _, why).
+`);
+    const script = `
+      import { join } from "node:path";
+      import { runHeadlessScan } from "./src/cli/headless-scan.ts";
+      const [repo, home, policy] = process.argv.slice(2);
+      const report = await runHeadlessScan({
+        repo, databasePath: join(home, "rerail.sqlite"), rr: [policy], revision: "HEAD",
+        analysisScope: "readability", scope: "repository", packs: [], version: "test",
+      });
+      console.log(JSON.stringify(report.violations.map(({ code, message }) => [code, message])));
+    `;
+    const evaluate = () => JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, home, policy], {
+      input: script, encoding: "utf8", env: { ...process.env, RERAIL_CONTENT_STORE_PATH: join(home, "readability.sqlite") },
+    }));
+    const original = readFileSync(target);
+    expect(evaluate()).toEqual([["Complete", "complete"]]);
+    const corrupted = Buffer.from(original);
+    corrupted[offset] = corrupted[offset]! ^ 0xff;
+    chmodSync(target, 0o644);
+    writeFileSync(target, corrupted);
+    expect(evaluate()).toEqual([["Unreadable", "unreadable"]]);
+    writeFileSync(target, original);
+    expect(evaluate()).toEqual([["Complete", "complete"]]);
   }, 30_000);
 
   it("reopens the store after registry and parser version changes", () => {

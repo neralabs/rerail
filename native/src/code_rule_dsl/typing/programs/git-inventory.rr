@@ -40,6 +40,10 @@ inventory_path_error(p) :- git_inventory_child_of(_, _, _, _, _, "bytes", p).
 .output inventory_file
 .output git_tree_entry
 .output git_tree_entry_bytes
+.decl inventory_tree_observation(tree: symbol, stamp: symbol)
+inventory_tree_observation(t, stamp) :-
+    inventory_directory(r, _, t, _), git_object_of(r, t, "storage", _, stamp, _, _, _).
+.output inventory_tree_observation
 .output inventory_error
 .output inventory_path_error
 .output inventory_language
