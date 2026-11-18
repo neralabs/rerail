@@ -6,6 +6,7 @@
 use super::simplify::Tm;
 use crate::code_rule_dsl::logic::front::{List, Value};
 use crate::code_rule_dsl::logic::program_image::build::{Rewrite, Site, T};
+use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut, ProgramFields};
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::{AtomId, Builder, CmpOp, Lit, LitRef, RuleId, RuleRef, Slot, TermRef, Version};
 use crate::code_rule_dsl::logic::rr::lower::{Answer, OnRequest};
@@ -544,7 +545,8 @@ impl<'v> Widen<'v> {
     }
 
     /// The widened copies `rules` read, and those they read in turn.
-    fn rules(&self, rules: &[New], prog: &crate::code_rule_dsl::logic::front::Program) -> Widened {
+    fn rules(&self, rules: &[New], prog: &dyn ProgramFields) -> Widened {
+        let asked_by = prog.asked();
         let v = self.v;
         let mut out = Widened::default();
         let reads = |rules: &[New]| -> Vec<String> { rules.iter().flat_map(|r| r.reads(v)).filter_map(|rel| rel.strip_prefix(self.prefix.as_str()).map(str::to_owned)).collect() };
@@ -556,13 +558,15 @@ impl<'v> Widen<'v> {
             }
             let cols = &self.cols[&rel];
             let wide = self.wide(&rel);
-            let decl = prog.decls.get(rel.as_str());
+            let decl = prog.columns_of(rel.as_str());
+            let decl = decl.as_deref();
             out.decls.insert(wide.clone(), cols.iter().map(|&c| decl.and_then(|d| d.get(c)).map(|(n, t)| (n.to_string(), t.to_string())).unwrap_or_else(|| (format!("c{c}"), "symbol".to_owned()))).collect());
-            if let Some(rows) = prog.facts.get(&rel) {
+            if prog.states_facts(&rel) {
+                let rows = prog.fact_rows(&rel);
                 out.facts.insert(wide.clone(), rows.iter().map(|row| cols.iter().map(|&c| row[c].clone()).collect()).collect());
             }
             let of: Vec<RuleRef<'_>> = v.rel(&rel).into_iter().flat_map(|id| v.heads(id)).collect();
-            let asked = prog.asked_by.get(&rel).filter(|by| by.len() == of.len());
+            let asked = asked_by.get(&rel).filter(|by| by.len() == of.len());
             let mut made: Vec<New> = Vec::new();
             let mut keys: Vec<String> = Vec::new();
             let mut readers: Vec<BTreeSet<String>> = Vec::new();
@@ -601,8 +605,6 @@ impl ProgramPass for SourcesOnRequest {
         if attrs.is_empty() {
             return Ok(());
         }
-        let mut prog = v.header(&crate::code_rule_dsl::logic::front::Lists::default())?;
-        let was = prog.clone();
         let applied = !std::env::var("RERAIL_NODE_SOURCES").is_ok_and(|x| x == "eager");
         let wd = Widen::new(v, attrs.iter().map(|a| a.rel).collect());
         let mut all: Vec<New> = Vec::new();
@@ -725,7 +727,7 @@ impl ProgramPass for SourcesOnRequest {
             all.extend(rules);
             asked.insert(dem, by);
         }
-        let wide = wd.rules(&all, &prog);
+        let wide = wd.rules(&all, &**v);
         for (rel, cols) in &wide.copies {
             decision("on request: widened copies", || format!("{} of {rel}, columns {cols:?} of {}{}", wd.wide(rel), wd.arity(rel), if cols.len() < wd.arity(rel) { " (the others are bound only by what the copy leaves out)" } else { "" }));
         }
@@ -739,42 +741,47 @@ impl ProgramPass for SourcesOnRequest {
             Children { rel: &'static str, req: &'static str, named: &'static str, n: usize },
         }
         let mut answers: Vec<Answering> = Vec::new();
+        let b = w.on()?;
+        let col = |n: &str, t: &str| (n.to_owned(), t.to_owned());
         for OnRequest { rel, req, answer, eager } in answered {
-            let cols = prog.decls.get(rel).cloned().unwrap_or_else(|| vec![("n".into(), "node".into()), ("v".into(), "symbol".into())].into());
+            let cols: Vec<(String, String)> = b.columns_of(rel).unwrap_or_else(|| vec![col("n", "node"), col("v", "symbol")]);
             let n = cols.len();
             if let Some(input) = eager {
                 answers.push(Answering::Eager { rel, input, n });
-                prog.decls.insert(input.into(), cols.clone());
-                prog.inputs.push(input.to_owned());
+                declare_columns(b, input, &cols);
+                b.add_input(input);
             }
             match answer {
                 Answer::Function(function) => answers.push(Answering::Function { rel, req, function, n }),
                 Answer::Children { named } => {
                     answers.push(Answering::Children { rel, req, named, n });
                     let mut named_cols = cols.clone();
-                    named_cols.make_mut()[2] = ("c".into(), "node".into());
-                    prog.decls.insert(named.into(), named_cols);
-                    prog.inputs.push(named.to_owned());
-                    if !prog.inputs.iter().any(|i| i == "node_text") {
-                        prog.decls.entry("node_text".into()).or_insert_with(|| vec![("n".into(), cols[0].1.clone()), ("s".into(), cols[2].1.clone())].into());
-                        prog.inputs.push("node_text".to_owned());
+                    named_cols[2] = col("c", "node");
+                    declare_columns(b, named, &named_cols);
+                    b.add_input(named);
+                    if !b.input_names().iter().any(|i| i == "node_text") {
+                        b.declare_absent("node_text", &[("n", cols[0].1.as_str()), ("s", cols[2].1.as_str())]);
+                        b.add_input("node_text");
                     }
                 }
             }
-            prog.decls.insert(req.into(), vec![(cols[0].0.clone(), "node".into())].into());
-            prog.inputs.retain(|i| i != rel);
+            b.declare(req, &[(cols[0].0.as_str(), "node")]);
+            b.retain_inputs(&|i: &str| i != rel);
         }
-        prog.decls.extend(wide.decls.into_iter().map(|(r, cols)| (r.into(), cols.into_iter().map(|(n, t)| (n.into(), t.into())).collect())));
+        for (r, cols) in &wide.decls {
+            declare_columns(b, r, cols);
+        }
         for dem in demanded {
-            prog.decls.insert(dem.as_str().into(), vec![("n".into(), "node".into())].into());
+            b.declare(&dem, &[("n", "node")]);
         }
         for (rel, rows) in wide.facts {
-            prog.facts.entry(rel).or_default().extend(rows.into_iter().map(List::from));
+            let rows: Vec<List<Value>> = rows.into_iter().map(List::from).collect();
+            b.add_facts(&rel, &rows);
         }
-        prog.asked_by.extend(asked);
-        prog.asked_by.extend(wide.asked);
-        let b = w.on()?;
-        b.set_header(&was, &prog);
+        let mut all_asked = b.asked();
+        all_asked.extend(asked);
+        all_asked.extend(wide.asked);
+        b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Asked(&all_asked));
         // In the tree's order: the requests and answers, then the widened copies.
         let names: Vec<String> = (0..answers.iter().map(|a| match a { Answering::Eager { n, .. } | Answering::Function { n, .. } | Answering::Children { n, .. } => *n }).max().unwrap_or(0)).map(|i| format!("x{i}")).collect();
         let x = |i: usize| T::Var(names[i].as_str());
@@ -804,4 +811,10 @@ impl ProgramPass for SourcesOnRequest {
         }
         Ok(())
     }
+}
+
+/// Declares `rel` with `cols`.
+fn declare_columns(b: &mut (impl FieldsMut + ?Sized), rel: &str, cols: &[(String, String)]) {
+    let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+    b.declare(rel, &pairs);
 }

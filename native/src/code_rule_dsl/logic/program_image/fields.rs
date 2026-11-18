@@ -285,6 +285,9 @@ pub trait ProgramFields {
     fn answers(&self) -> BTreeMap<String, Vec<String>> {
         field(self, &["answer"], |f| f.answers())
     }
+    fn asked(&self) -> BTreeMap<String, Vec<BTreeSet<String>>> {
+        field(self, &["asked"], |f| f.asked())
+    }
 }
 
 /// Field `relations` of `p`, read (`program_facts::Fields`). A program's fields read as they were written: a row
@@ -546,6 +549,9 @@ impl ProgramFields for Tree {
     }
     fn answers(&self) -> BTreeMap<String, Vec<String>> {
         self.answers.clone()
+    }
+    fn asked(&self) -> BTreeMap<String, Vec<BTreeSet<String>>> {
+        self.asked_by.clone()
     }
 }
 

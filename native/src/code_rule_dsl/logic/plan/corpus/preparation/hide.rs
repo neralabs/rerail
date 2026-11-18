@@ -9,7 +9,8 @@
 //! rule copied from its source with those edits, the bounds the last stage adds, and the aggregates' helpers.
 
 use super::super::hiding::{ENTRIES, Fact, VIEWS, dialect_label, qualified};
-use crate::code_rule_dsl::logic::front::{self, Program, Value};
+use crate::code_rule_dsl::logic::front::{self, Value};
+use crate::code_rule_dsl::logic::program_image::fields::{Edit as Staged, FieldsMut, ProgramFields};
 use crate::code_rule_dsl::logic::program_image::build::{Rewrite, Site, T};
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::{AtomId, AtomRef, CmpOp, Lit, RuleId, Slot, TermRef, Version};
@@ -121,14 +122,18 @@ impl ProgramPass for Hide {
     const NAME: &'static str = "hide";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
         let v = cx.v();
-        let mut prog = v.header(&front::Lists::default())?;
-        let was = prog.clone();
+        // The fields' edits, staged on the input (read through them) and stated on the derivation at the end; the
+        // kind sets apart, stated once.
+        let input = std::sync::Arc::clone(w.input());
+        let mut prog = Staged::on(&input);
+        let mut all_kindsets = v.kindsets();
         let mut rules: Vec<W> = v.rules().map(|r| W::of(v, r)).collect();
-        let views: BTreeSet<String> = VIEWS.iter().filter(|r| !prog.inputs.iter().any(|i| i == *r)).map(|r| (*r).to_owned()).collect();
+        let inputs = prog.input_names();
+        let views: BTreeSet<String> = VIEWS.iter().filter(|r| !inputs.iter().any(|i| i == *r)).map(|r| (*r).to_owned()).collect();
         let view = |rel: &str| views.contains(rel);
-        let base: BTreeSet<String> = prog.inputs.iter().cloned().chain(VIEWS.iter().filter(|r| view(r)).map(|r| (*r).to_owned())).filter(|r| !ENTRIES.iter().any(|(e, ..)| e == r)).collect();
+        let base: BTreeSet<String> = inputs.iter().cloned().chain(VIEWS.iter().filter(|r| view(r)).map(|r| (*r).to_owned())).filter(|r| !ENTRIES.iter().any(|(e, ..)| e == r)).collect();
         let locations = |rel: &str| -> Vec<usize> {
-            let mut cols: Vec<usize> = prog.decls.get(rel).map_or_else(Vec::new, |c| c.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
+            let mut cols: Vec<usize> = prog.columns_of(rel).map_or_else(Vec::new, |c| c.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
             if let Some(c) = crate::code_rule_dsl::typing::file_local::document_column(rel)
                 && !cols.contains(&c)
             {
@@ -145,13 +150,13 @@ impl ProgramPass for Hide {
         let mut touched: Vec<usize> = (0..rules.len()).collect();
         loop {
             let _round = crate::code_rule_dsl::logic::profile::span(|| "hiding: a round".to_owned());
-            let looked = delta.round(&rules, &prog, &seeds, &base_locations, &view, &touched);
+            let looked = delta.round(&rules, &prog.b, &seeds, &base_locations, &view, &touched);
             let reaches = &delta.reaches;
             let carried = &delta.carried;
             let mut edits: Vec<(usize, usize, Edit)> = Vec::new();
             let ruled = &delta.heads;
             let mut copies: Vec<(W, Facts)> = Vec::new();
-            let mut decls: Vec<(front::Name, front::List<(front::Name, front::Name)>)> = Vec::new();
+            let mut decls: Vec<(String, Vec<(String, String)>)> = Vec::new();
             let mut axes: Vec<String> = Vec::new();
             let mut kindsets: Vec<(String, Vec<String>)> = Vec::new();
             let mut kind_facts: Vec<(String, String, Vec<String>)> = Vec::new();
@@ -209,7 +214,7 @@ impl ProgramPass for Hide {
                                     && !ruled.contains_key(a.rel.as_str())
                                     && let [S::Var(x)] = a.args.as_slice()
                                     && let Some(g) = kind_of.get(x)
-                                    && let Some(rows) = prog.facts.get(a.rel.as_str()) =>
+                                    && let Some(rows) = prog.states_facts(a.rel.as_str()).then(|| prog.fact_rows(a.rel.as_str())) =>
                             {
                                 let name = format!("rr_in_{}_rows_{}", g.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"), a.rel);
                                 if made.insert(name.clone()) {
@@ -235,7 +240,7 @@ impl ProgramPass for Hide {
                             let name = format!("rr_in_{g}_{set}");
                             if made.insert(name.clone()) {
                                 let label = dialect_label(&g);
-                                let kinds = prog.kindsets.get(set.as_str()).cloned().unwrap_or_default();
+                                let kinds = all_kindsets.get(set.as_str()).cloned().unwrap_or_default();
                                 kindsets.push((name.clone(), kinds.into_iter().map(|k| if qualified(&k).is_some() { k } else { format!("{label}:{k}") }).collect()));
                             }
                             edits.push((i, k, Edit::Kindset(name)));
@@ -246,7 +251,7 @@ impl ProgramPass for Hide {
                     if let Some(a) = l.atom()
                         && let Some((set, descendants)) = front::axis(&a.rel)
                         && !set.starts_with("rr_in_")
-                        && prog.kindsets.contains_key(set)
+                        && all_kindsets.contains_key(set)
                         && let Some(g) = a.args.iter().find_map(|t| t.var().and_then(grammar_of))
                     {
                         let copy = format!("rr_in_{}_{set}", g.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"));
@@ -254,10 +259,10 @@ impl ProgramPass for Hide {
                         let name = format!("{prefix}{copy}");
                         if made.insert(name.clone()) {
                             let label = dialect_label(&g);
-                            let kinds = prog.kindsets.get(set).cloned().unwrap_or_default();
+                            let kinds = all_kindsets.get(set).cloned().unwrap_or_default();
                             kindsets.push((copy, kinds.into_iter().map(|k| if qualified(&k).is_some() { k } else { format!("{label}:{k}") }).collect()));
-                            if let Some(d) = prog.decls.get(a.rel.as_str()) {
-                                decls.push((name.clone().into(), d.clone()));
+                            if let Some(d) = prog.columns_of(a.rel.as_str()) {
+                                decls.push((name.clone(), d));
                             }
                             axes.push(name.clone());
                         }
@@ -287,8 +292,8 @@ impl ProgramPass for Hide {
                             }
                             copies.push((copy, seed));
                         }
-                        if let Some(d) = prog.decls.get(orig.as_str()) {
-                            decls.push((name.clone().into(), d.clone()));
+                        if let Some(d) = prog.columns_of(orig.as_str()) {
+                            decls.push((name.clone(), d));
                         }
                         specialized.insert(name.clone(), (orig, cols));
                     }
@@ -320,18 +325,19 @@ impl ProgramPass for Hide {
             }
             touched = edited.into_iter().chain(first_copy..rules.len()).collect();
             delta.changed(&rules, &touched);
-            prog.decls.extend(decls);
-            prog.kindsets.extend(kindsets);
+            for (name, cols) in decls {
+                declare_columns(&mut prog.b, &name, &cols);
+            }
+            all_kindsets.extend(kindsets);
             for (name, orig, kinds) in kind_facts {
-                if let Some(d) = prog.decls.get(orig.as_str()).cloned() {
-                    prog.decls.insert(name.as_str().into(), d);
+                if let Some(d) = prog.columns_of(orig.as_str()) {
+                    declare_columns(&mut prog.b, &name, &d);
                 }
-                prog.facts.insert(name, kinds.iter().map(|k| [Value::Str(k.as_str().into())].into()).collect());
+                let rows: Vec<front::List<Value>> = kinds.iter().map(|k| [Value::Str(k.as_str().into())].into()).collect();
+                prog.b.set_facts(&name, &rows);
             }
             for axis in axes {
-                if !prog.inputs.contains(&axis) {
-                    prog.inputs.push(axis);
-                }
+                prog.b.add_input(&axis);
             }
             if !changed {
                 break;
@@ -406,7 +412,7 @@ impl ProgramPass for Hide {
                 if cols.is_empty() {
                     continue;
                 }
-                let decl = prog.decls.get(atom.rel.as_str()).cloned().unwrap_or_default();
+                let decl = prog.columns_of(atom.rel.as_str()).unwrap_or_default();
                 let doc_col = crate::code_rule_dsl::typing::file_local::document_column(&atom.rel);
                 // Every wildcard a column of the helper, named; the other arguments the atom's own.
                 let inner: Vec<Option<String>> = atom
@@ -435,11 +441,15 @@ impl ProgramPass for Hide {
             }
         }
         for h in &helpers {
-            prog.decls.insert(h.name.as_str().into(), h.vars.iter().map(|(c, t)| (c.as_str().into(), t.as_str().into())).collect());
+            let cols: Vec<(&str, &str)> = h.vars.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+            prog.b.declare(&h.name, &cols);
         }
         // The version: every rule copied from its source with its edits, then the helpers, then the fields.
         let b = w.derive()?;
-        b.set_header(&was, &prog);
+        b.state_fields_of(&prog.b);
+        if all_kindsets != v.kindsets() {
+            b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Kindsets(&all_kindsets));
+        }
         let asked = asked_after(v, &rules);
         for (rule, fin) in rules.iter().zip(&finals) {
             let src = v.rule(rule.src).expect("a rule of the input");
@@ -679,16 +689,16 @@ fn reaching(rules: &[W], seeds: &[Facts]) -> Vec<bool> {
 }
 
 /// `hiding::asking` over the rules here: the guest demand and the contexts only it reads, transitively.
-fn asking(prog: &Program, rules: &[W]) -> BTreeSet<String> {
+fn asking(prog: &dyn ProgramFields, rules: &[W]) -> BTreeSet<String> {
+    let declared = prog.declared_names();
     let context = |r: &str| {
         let own = r.strip_prefix('p').and_then(|t| t.find('_').filter(|&i| i > 0 && t[..i].bytes().all(|b| b.is_ascii_digit())).map(|i| &t[i + 1..]));
         own.unwrap_or(r).starts_with("rr_ctx")
     };
     let mut asking: BTreeSet<String> = BTreeSet::from([super::super::guests::DEMAND.to_owned()]);
     loop {
-        let more: Vec<String> = prog
-            .decls
-            .keys()
+        let more: Vec<String> = declared
+            .iter()
             .filter(|r| context(r) && !asking.contains(r.as_str()))
             .filter(|r| {
                 let mut readers = rules.iter().filter(|x| x.body.iter().any(|(_, l)| l.atom().is_some_and(|a| a.rel == r.as_str()))).peekable();
@@ -750,7 +760,7 @@ impl Delta {
         self.list(rules, touched);
     }
 
-    fn round(&mut self, rules: &[W], prog: &Program, seeds: &[Facts], base: &HashMap<String, Vec<usize>>, view: &dyn Fn(&str) -> bool, touched: &[usize]) -> Vec<usize> {
+    fn round(&mut self, rules: &[W], prog: &dyn ProgramFields, seeds: &[Facts], base: &HashMap<String, Vec<usize>>, view: &dyn Fn(&str) -> bool, touched: &[usize]) -> Vec<usize> {
         let first = std::mem::replace(&mut self.first, false);
         self.reaches.resize(rules.len(), false);
         let mut newly: Vec<usize> = Vec::new();
@@ -779,7 +789,7 @@ impl Delta {
         }
         for r in touched.iter().map(|&i| &rules[i]) {
             if !self.gained.contains_key(r.head.as_str()) && !view(&r.head) {
-                let n = prog.decls.get(r.head.as_str()).map_or(0, |c| c.len());
+                let n = prog.columns_of(r.head.as_str()).map_or(0, |c| c.len());
                 self.gained.insert(r.head.clone(), vec![Fact::default(); n]);
             }
         }
@@ -971,4 +981,10 @@ mod tests {
         assert!(want.show().contains("!rr_in_sql_rows_ok_kind("), "the tree reads the copy: {}", want.show());
         assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
     }
+}
+
+/// Declares `rel` with `cols` on the staged fields.
+fn declare_columns(b: &mut (impl FieldsMut + ?Sized), rel: &str, cols: &[(String, String)]) {
+    let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+    b.declare(rel, &pairs);
 }
