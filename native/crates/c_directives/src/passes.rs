@@ -207,7 +207,7 @@ const F_EVENTS: u16 = 2;
 const F_EXPAND: u16 = 3;
 
 fn funs(b: &mut B) {
-    assert_eq!(b.fun("test", Place::Words, 2), F_TEST);
+    assert_eq!(b.fun("test", Place::Words, 3), F_TEST);
     assert_eq!(b.fun("include", Place::Host, 2), F_INCLUDE);
     assert_eq!(b.fun("events", Place::Words, 3), F_EVENTS);
     assert_eq!(b.fun("expand", Place::Words, 2), F_EXPAND);
@@ -549,9 +549,81 @@ fn round() -> Prog {
     let a_inst = b.gather(x.id_inst, ai);
     let a_dir = b.gather(x.id_dir, ai);
     let a_pos = b.gather(x.id_pos, ai);
-    let tc = b.call(F_TEST, &[a_inst, a_dir, a_pos], &[x.keys, x.vals]);
-    let a_val = b.part(tc, 0);
-    let a_ref = b.part(tc, 1);
+    // The tests the rounds before read: by arm (instance << 32 | directive, sorted), its value
+    // and refusal, and the definitions it looked up (by memo entry). An arm is read again where
+    // it is new or one of those definitions is another at its position now.
+    let m_key = b.input("m_key");
+    let m_val = b.input("m_val");
+    let m_ref = b.input("m_ref");
+    let k_owner = b.input("k_owner");
+    let k_sym = b.input("k_sym");
+    let k_val = b.input("k_val");
+    let a_hi = b.shl(a_inst, 32);
+    let a_key = b.or(a_hi, a_dir);
+    let mk0 = b.search(false, m_key, a_key);
+    let m_at = b.gather_or(m_key, mk0, -1);
+    let hit = b.eq(m_at, a_key);
+    let none = b.c(-1);
+    let mk = b.select(hit, mk0, none);
+    let n_m = b.len(m_key);
+    let a_i = b.iota(a_key);
+    let m_arm = b.scatter(Combine::Set, a_i, mk, n_m, -1);
+    let p_arm = b.gather_or(m_arm, k_owner, -1);
+    let p_ok = b.le(zero, p_arm);
+    let p_pos = b.gather_or(a_pos, p_arm, 0);
+    let p_hi = b.shl(k_sym, 32);
+    let p_q = b.or(p_hi, p_pos);
+    let p_at0 = b.search(false, x.keys, p_q);
+    let p_at = b.addc(p_at0, -1);
+    let p_rk = b.gather_or(x.keys, p_at, -1);
+    let p_rs = b.shr(p_rk, 32);
+    let p_same = b.eq(p_rs, k_sym);
+    let p_v0 = b.gather_or(x.vals, p_at, 0);
+    let p_cur = b.select(p_same, p_v0, zero);
+    let p_diff = b.map(MapOp::Ne, p_cur, k_val);
+    let p_changed = b.and(p_ok, p_diff);
+    let m_changed = b.scatter(Combine::Max, p_changed, k_owner, n_m, 0);
+    let a_changed = b.gather_or(m_changed, mk, 1);
+    let not_hit = b.map(MapOp::Ne, hit, one);
+    let need = b.or(not_hit, a_changed);
+    let ei = b.compact(need);
+    let e_inst = b.gather(a_inst, ei);
+    let e_dir = b.gather(a_dir, ei);
+    let e_pos = b.gather(a_pos, ei);
+    let tc = b.call(F_TEST, &[e_inst, e_dir, e_pos], &[x.keys, x.vals]);
+    let t_tag = b.part(tc, 0);
+    let t_x = b.part(tc, 1);
+    let t_y = b.part(tc, 2);
+    let t_owner0 = b.expand(tc);
+    let t_owner = b.gather(ei, t_owner0);
+    let t_head = b.eqc(t_tag, 0);
+    let hi_ = b.compact(t_head);
+    let e_val = b.gather(t_x, hi_);
+    let e_ref = b.gather(t_y, hi_);
+    let n_a = b.len(a_key);
+    let ev_all = b.scatter(Combine::Set, e_val, ei, n_a, 0);
+    let er_all = b.scatter(Combine::Set, e_ref, ei, n_a, 0);
+    let kv = b.gather_or(m_val, mk, 0);
+    let kr = b.gather_or(m_ref, mk, 0);
+    let a_val = b.select(need, ev_all, kv);
+    let a_ref = b.select(need, er_all, kr);
+    // The memo the next round reads: every arm now, the pairs of those read again, and the
+    // kept pairs of the others.
+    let t_pair = b.eqc(t_tag, 1);
+    let tpi = b.compact(t_pair);
+    let np_owner = b.gather(t_owner, tpi);
+    let np_sym = b.gather(t_x, tpi);
+    let np_val = b.gather(t_y, tpi);
+    let p_need = b.gather_or(need, p_arm, 1);
+    let p_keep0 = b.map(MapOp::Ne, p_need, one);
+    let p_keep = b.and(p_ok, p_keep0);
+    let kpi = b.compact(p_keep);
+    let kp_owner = b.gather(p_arm, kpi);
+    let kp_sym = b.gather(k_sym, kpi);
+    let kp_val = b.gather(k_val, kpi);
+    let nk_owner = b.concat(np_owner, kp_owner);
+    let nk_sym = b.concat(np_sym, kp_sym);
+    let nk_val = b.concat(np_val, kp_val);
     // Each chain's first true arm.
     let i_nch = b.gather(f_nchains, x.i_file);
     let i_cbase = b.scan(Combine::Add, true, i_nch, None);
@@ -718,6 +790,12 @@ fn round() -> Prog {
     b.output("refused", refused);
     b.output("unsupported", unsupported);
     b.output("shape", x.shape);
+    b.output("m_key", a_key);
+    b.output("m_val", a_val);
+    b.output("m_ref", a_ref);
+    b.output("k_owner", nk_owner);
+    b.output("k_sym", nk_sym);
+    b.output("k_val", nk_val);
     b.built()
 }
 
@@ -998,8 +1076,13 @@ impl Calls for Host<'_, '_> {
         let (keys, vals) = (env[0], env[1]);
         match f {
             F_TEST => {
-                let (v, r) = self.unit.test(a[0], a[1], a[2], keys, vals);
-                out.extend([i64::from(v), r]);
+                // Its value and refusal, then each definition it looked up.
+                let mut looked = Vec::new();
+                let (v, r) = self.unit.test(a[0], a[1], a[2], keys, vals, &mut looked);
+                out.extend([0, i64::from(v), r]);
+                for (s, d) in looked {
+                    out.extend([1, s, d]);
+                }
             }
             F_INCLUDE => match self.unit.include(a[0], a[1], a[2], keys, vals) {
                 Ok(file) => out.extend([file, 0]),
@@ -1055,6 +1138,13 @@ struct State {
     e: [Vec<i64>; 4],
 }
 
+/// The tests read so far (`ROUND`'s memo): carried from round to round, not part of the state
+/// the fixpoint compares.
+#[derive(Default)]
+struct Memo([Vec<i64>; 6]);
+
+const MEMO: [&str; 6] = ["m_key", "m_val", "m_ref", "k_owner", "k_sym", "k_val"];
+
 /// The unit whose main file is `path`, read by the programs.
 pub fn run(cfg: Config, io: &mut dyn Files, path: &str) -> (Outcome, Stats) {
     let mut unit = match Unit::new(cfg, io, path) {
@@ -1079,11 +1169,18 @@ fn read(unit: &mut Unit) -> Outcome {
     let mut state = State::default();
     fresh(unit, 0, &mut state.a);
     let (b_sym, b_val) = unit.builtin_rows();
+    let mut memo = Memo::default();
     for round in 1..=rerail_compiler::array::MAX_ROUNDS as u32 {
         unit.generation += 1;
         unit.stats.rounds = round;
-        let cols = columns(unit, &state, &b_sym, &b_val);
-        let o = ROUND.run(&cols, &mut Host { unit: &mut *unit, refused: 0 })?;
+        let mut cols = columns(unit, &state, &b_sym, &b_val);
+        for (k, n) in MEMO.iter().enumerate() {
+            cols.insert(n, std::mem::take(&mut memo.0[k]));
+        }
+        let mut o = ROUND.run(&cols, &mut Host { unit: &mut *unit, refused: 0 })?;
+        for (k, n) in MEMO.iter().enumerate() {
+            memo.0[k] = o.remove(n).expect("the memo's outputs");
+        }
         if o["refused"][0] > 0 {
             return Err(unit.reason(o["refused"][0] - 1));
         }

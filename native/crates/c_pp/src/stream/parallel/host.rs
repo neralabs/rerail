@@ -103,8 +103,8 @@ pub struct Unit<'a> {
     /// By number: the file id.
     pub files: Vec<u32>,
     pub cols: Cols,
-    /// The positional table the functions read, and the generation it was made in.
-    vis: Option<(u64, usize, Vis)>,
+    /// The generation and length of the positional table `pp` holds.
+    vis: Option<(u64, usize)>,
     pub generation: u64,
     /// Tokens the expansions made: handle `-1 - k` is token `k`.
     made: Vec<Tk>,
@@ -279,26 +279,30 @@ impl<'a> Unit<'a> {
 
     /// The positional table of `keys` and `values`, made once a generation.
     fn table(&mut self, keys: &[i64], values: &[i64]) {
-        if self.vis.as_ref().is_some_and(|v| v.0 == self.generation && v.1 == keys.len()) {
-            self.pp.vis = Some(self.vis.as_ref().unwrap().2.clone());
+        if self.vis == Some((self.generation, keys.len())) {
             return;
         }
         let rows = keys.iter().zip(values).map(|(&k, &v)| ((k >> 32) as u32, (k & 0xffff_ffff) as u64, v as u32)).collect();
-        let vis = Vis { rows };
-        self.pp.vis = Some(vis.clone());
-        self.vis = Some((self.generation, keys.len(), vis));
+        self.pp.vis = Some(Vis { rows });
+        self.vis = Some((self.generation, keys.len()));
     }
 
     /// Arm `dir`'s test in instance `inst` at `pos`: its value, and a refusal's code plus one
-    /// (0: none). A refusal counts only where the arm is read; the program decides.
-    pub fn test(&mut self, inst: i64, dir: i64, pos: i64, keys: &[i64], values: &[i64]) -> (bool, i64) {
+    /// (0: none). A refusal counts only where the arm is read; the program decides. The
+    /// definitions it looked up go to `looked`, as (symbol, the table's value: definition plus
+    /// one, 0 none): the arm is read again only where one of them changes.
+    pub fn test(&mut self, inst: i64, dir: i64, pos: i64, keys: &[i64], values: &[i64], looked: &mut Vec<(i64, i64)>) -> (bool, i64) {
         self.table(keys, values);
         self.stats.tests += 1;
         let chain = self.tu.insts[inst as usize].chain.clone();
         let file = self.tu.insts[inst as usize].file;
         let d = (dir - self.cols.f_dirbase[self.number[file as usize] as usize]) as usize;
         let tab = self.tu.tabs[file as usize].as_ref().unwrap();
-        match in_context(&mut self.pp, &chain, pos as u64, |pp| test(pp, tab, d)) {
+        self.pp.looked = Some(Default::default());
+        let r = in_context(&mut self.pp, &chain, pos as u64, |pp| test(pp, tab, d));
+        let l = self.pp.looked.take().expect("the record of lookups").into_inner();
+        looked.extend(l.into_iter().map(|(s, d)| (i64::from(s), d.map_or(0, |d| i64::from(d) + 1))));
+        match r {
             Ok(v) => (v, 0),
             Err(why) => (false, self.reason_code(why) + 1),
         }

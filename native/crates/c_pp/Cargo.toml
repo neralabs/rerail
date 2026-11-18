@@ -5,6 +5,10 @@ edition = "2024"
 publish = false
 description = "The C and C++ preprocessor (decision 0327): every directive of a file recorded as rows, and a translation unit applied in one streaming pass."
 
+[features]
+# `oracle_profile` for other crates' tests: clang's profile of a corpus file.
+oracle = []
+
 [dependencies]
 # The shared lexer: the preprocessor's reading (`pp`) and the parser's tokens.
 rerail-c-lean = { path = "../c_lean" }

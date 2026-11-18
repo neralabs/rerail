@@ -140,3 +140,47 @@ fn what_is_refused() {
     assert_eq!(refused("#define f(a, b) a b\nf(1,\n#ifdef X\n2\n#else\n3\n#endif\n)\n"), Some("a call past its stretch of text"));
     assert_eq!(refused("#if 0\n#line 10\n#endif\nok\n"), None);
 }
+
+/// Both corpora: each file read by the programs against the serial pass, under clang's profile
+/// (`rerail_c_pp::oracle_profile`). `RERAIL_PP_LANGS` (`c,cpp`), `RERAIL_PP_FIRST` and
+/// `RERAIL_PP_COUNT` choose the files; `RERAIL_PP_EACH` prints each file's verdict and numbers.
+#[test]
+#[ignore = "the corpus (~/orca/rerail-shared/lean-corpus, or RERAIL_C_CORPUS) and clang"]
+fn the_corpus_by_the_programs() {
+    use rerail_c_pp::oracle_profile::{Lang, Profile, read_fs};
+    let env = |k: &str| std::env::var(k).ok();
+    let root = env("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from(env("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
+    let first: usize = env("RERAIL_PP_FIRST").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let count: usize = env("RERAIL_PP_COUNT").and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
+    let each = env("RERAIL_PP_EACH").is_some();
+    let mut wrong = 0;
+    for lang in env("RERAIL_PP_LANGS").unwrap_or("c,cpp".into()).split(',') {
+        let mut prof = Profile::new(if lang == "cpp" { Lang::cpp() } else { Lang::c() });
+        let mut names: Vec<_> = std::fs::read_dir(root.join(lang)).unwrap().flatten().map(|e| e.path()).collect();
+        names.sort();
+        let (mut same, mut differ) = (0, 0);
+        let mut refused: HashMap<&str, usize> = HashMap::new();
+        for path in names.iter().skip(first).take(count) {
+            let p = path.to_string_lossy().into_owned();
+            let settled = prof.settle(&p);
+            let mut io = Search::new(settled.dirs.clone(), read_fs);
+            let (out, st) = run(settled.cfg.clone(), &mut io, &p);
+            if each {
+                println!("{p}: {}; {st:?}", out.as_ref().map_or_else(|w| w.to_string(), |o| if *o == settled.tokens { "same".into() } else { "DIFFERS".into() }));
+            }
+            match out {
+                Ok(o) if o == settled.tokens => same += 1,
+                Ok(o) => {
+                    differ += 1;
+                    let k = o.iter().zip(&settled.tokens).position(|(a, b)| a != b).unwrap_or(o.len().min(settled.tokens.len()));
+                    let near = |v: &[Vec<u8>]| show(&v[k.saturating_sub(6)..(k + 6).min(v.len())]);
+                    println!("DIFF {p}: token {k} (serial {}, programs {})\n  serial:   {}\n  programs: {}", settled.tokens.len(), o.len(), near(&settled.tokens), near(&o));
+                }
+                Err(why) => *refused.entry(why).or_default() += 1,
+            }
+        }
+        println!("{lang}: {same} the same, {differ} differ, refused {refused:?}");
+        wrong += differ;
+    }
+    assert_eq!(wrong, 0, "units the programs read otherwise than the serial pass");
+}
