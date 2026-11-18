@@ -3507,7 +3507,7 @@ fn run_observed(
             }
             if !rewritten.readers.is_empty() {
                 crate::code_rule_dsl::logic::profile::decision("projected reader demand", || {
-                    format!("{} ({} ordered node witnesses)", rewritten.readers.into_iter().collect::<Vec<_>>().join(", "), rewritten.order_witnesses)
+                    format!("{} ({} ordered node and {} present location witnesses)", rewritten.readers.into_iter().collect::<Vec<_>>().join(", "), rewritten.order_witnesses, rewritten.present_witnesses)
                 });
             }
             // Transitive closures held as each start's bitmap, not as rows (decision 0119).

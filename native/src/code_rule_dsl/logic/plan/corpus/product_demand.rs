@@ -7,6 +7,7 @@
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Rule, Term, Value, components_of};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod nullable;
 mod upstream;
 
 pub(in crate::code_rule_dsl::logic::plan) const PREFIX: &str = "rr_product_demand_";
@@ -186,17 +187,29 @@ pub(super) fn rewrite(program: &mut Program, narrow_readers: bool) -> Result<Rew
             if let Ok(products) = rewrite_products(&mut trial, products.clone()) {
                 upstream::propagate(&mut trial, &products, &mut readers);
                 let order_witnesses = upstream::restore_order_witnesses(&mut trial, &readers);
+                let present_witnesses = nullable::restore(&mut trial);
                 *program = trial;
-                return Ok(Rewritten { products, readers, order_witnesses });
+                return Ok(Rewritten {
+                    products,
+                    readers,
+                    order_witnesses,
+                    present_witnesses,
+                });
             }
         }
         *program = strict;
-        return Ok(Rewritten { products, readers: BTreeSet::new(), order_witnesses: 0 });
+        return Ok(Rewritten {
+            products,
+            readers: BTreeSet::new(),
+            order_witnesses: 0,
+            present_witnesses: 0,
+        });
     }
     Ok(Rewritten {
         products: rewrite_products(program, products)?,
         readers: BTreeSet::new(),
         order_witnesses: 0,
+        present_witnesses: 0,
     })
 }
 
@@ -204,6 +217,7 @@ pub(super) struct Rewritten {
     pub products: BTreeSet<String>,
     pub readers: BTreeSet<String>,
     pub order_witnesses: usize,
+    pub present_witnesses: usize,
 }
 
 fn rewrite_products(program: &mut Program, mut demanded: BTreeSet<String>) -> Result<BTreeSet<String>, String> {
