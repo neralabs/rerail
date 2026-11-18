@@ -2258,6 +2258,10 @@ impl Projected {
 /// One wave's documents, sorted by key, and the row offsets of the views.
 pub struct Batch {
     pub docs: Vec<Projected>,
+    /// The documents' keys, in their order (ascending): the index a node's document is searched in (`doc`). Searched
+    /// in `docs` itself, each step read a different projection's line (Q183: `Batch::node` was a fifth of a join's
+    /// view reads).
+    keys: Vec<u32>,
     /// Each document's tape, for W's values answered on request (`LongTexts::value_any`, decision 0174), and its values,
     /// read off it at the first request; empty where no program asks for values.
     valued: Vec<Option<Valued>>,
@@ -3614,8 +3618,11 @@ impl Batch {
         for (doc, p) in docs.iter().enumerate() {
             of_tag[usize::from(p.tag)].push(doc as u32);
         }
+        let keys: Vec<u32> = docs.iter().map(|p| p.key).collect();
+        debug_assert!(keys.is_sorted(), "a batch's documents ascend by key");
         let batch = Arc::new(Batch {
             docs,
+            keys,
             valued,
             dialects,
             of_tag,
@@ -3684,7 +3691,7 @@ impl Batch {
         if hit.is_some() {
             return hit;
         }
-        let i = self.docs.binary_search_by_key(&d, |p| p.key).ok()?;
+        let i = self.keys.binary_search(&d).ok()?;
         DOC.with(|h| h.set((key, i)));
         Some(i)
     }
@@ -4191,10 +4198,26 @@ impl Viewed {
             for doc in b.of_tag[usize::from(tag)].iter().map(|&d| d as usize) {
                 let p = &b.docs[doc];
                 for &kind in &atoms {
-                    for id in p.facts.of_kind(kind) {
-                        let l = p.local_of_node(id as u32);
+                    let found = p.facts.of_kind(kind);
+                    // A kind of many of the document's nodes: one walk of its numbered nodes gives each match its local
+                    // id and id (`node_ids`), where a match read alone is a rank and a select (Q183: an identifier's
+                    // 165 k rows a lookup at 142 ns a row, against 9 when `kind` was a relation of its own).
+                    if found.len() * KIND_WALK_SHARE >= p.len() as usize {
+                        let mut at = found.iter().copied().peekable();
+                        for (l, x, id) in p.node_ids() {
+                            while at.next_if(|&f| f < x).is_some() {}
+                            match at.peek() {
+                                None => break,
+                                Some(&f) if f == x => emit(doc, l, x, Some(id), None),
+                                Some(_) => {}
+                            }
+                        }
+                        continue;
+                    }
+                    for id in found {
+                        let l = p.local_of_node(id);
                         if l != NONE {
-                            emit(doc, l, id as u32, None, None);
+                            emit(doc, l, id, None, None);
                         }
                     }
                 }
@@ -4404,6 +4427,11 @@ impl Viewed {
         }
     }
 }
+
+/// A lookup of a kind by value walks a document's numbered nodes (`Projected::node_ids`) where its matches are at least
+/// one node in this many: a match read alone (a rank, then a select for its id) costs about what this many steps of
+/// the walk do.
+pub const KIND_WALK_SHARE: usize = 16;
 
 /// What a view's column reads of a node's row (`Viewed::value_of`), each read when the column asks.
 struct At<'a> {

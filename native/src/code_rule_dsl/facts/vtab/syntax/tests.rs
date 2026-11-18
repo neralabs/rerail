@@ -250,6 +250,34 @@ fn a_views_filter_scan_holds_the_rows_a_per_row_read_finds() {
     assert!(tried >= 4 * 3, "the four views were tried");
 }
 
+/// Q183: a lookup of `node` by kind (`lookup_read`, a join's `kind($c, #k)` read where the view lies) gives every row
+/// of that kind, each with the values a per-row read gives, both where it walks the document's numbered nodes (a
+/// kind of at least one node in `KIND_WALK_SHARE`) and where it reads each match alone (a rarer kind).
+#[test]
+fn a_kind_lookup_reads_the_rows_a_per_row_read_finds() {
+    let store = ContentStore::open(&temp("kind-read")).unwrap();
+    let (_, node) = sources(&store, documents().into_iter().take(4).collect()).unwrap().into_iter().find(|(name, _)| *name == "node").unwrap();
+    let (n, width) = (node.len(), node.columns().len());
+    let cols: Vec<usize> = (0..width).collect();
+    let mut kinds: BTreeMap<i64, usize> = BTreeMap::new();
+    for r in 0..n {
+        *kinds.entry(node.value(r, 2)).or_default() += 1;
+    }
+    let (common, rare) = kinds.values().fold((0, 0), |(c, r), &k| if k * super::KIND_WALK_SHARE >= n { (c + 1, r) } else { (c, r + 1) });
+    assert!(common > 0 && rare > 0, "the documents have common kinds and rare ones: {common} and {rare}");
+    for &kind in kinds.keys() {
+        let per_row: BTreeSet<(usize, Vec<i64>)> = (0..n).filter(|&r| node.value(r, 2) == kind).map(|r| (r, cols.iter().map(|&c| node.value(r, c)).collect())).collect();
+        let mut read = BTreeSet::new();
+        let mut rows = 0;
+        assert!(node.lookup_read(2, kind, &cols, &mut |r, vals| {
+            rows += 1;
+            read.insert((r, vals.to_vec()));
+        }), "kind {kind}: the view reads its lookup");
+        assert_eq!(rows, per_row.len(), "kind {kind}: each row once");
+        assert_eq!(read, per_row, "kind {kind}");
+    }
+}
+
 /// A field's children by parent and field (`lookup_eq`, a join's `field($a, #f, $t)` with `$a` bound) are the rows a
 /// lookup by parent finds and a filter on the field keeps, in the same order: for every parent and each of its
 /// fields, and for a field it lacks.

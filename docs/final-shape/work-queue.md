@@ -2404,6 +2404,13 @@ with the default line takes the slow pass.
   scans and memberships too: 61 against 13 ns a row, 216 against 130. Together about 4 s of CPU. In the sample,
   view reads (`find_read`, `find_keyed`, `row_at`) are a third of the joins, and the block index's compares
   (`Run::find`'s `Rows::get` a value) half of `find_at`.
+  Done for (2), with no copy: a lookup of a kind by value walks a document's numbered nodes (`node_ids`) where the
+  kind is at least one node in 16 (`KIND_WALK_SHARE`), so each match has its local id and id from the walk, with no
+  rank or select. A node's document is searched in a dense index of the batch's keys, not across the projections
+  (`Batch::doc`). A join's scan of a whole view, put in the next step's key order (decision 0112), is read in one
+  walk with the values the step needs and ordered by them (`walked_in_order`, up to 2^18 rows). Before, each row was
+  read alone twice: its keys to sort by, then its values. Tests: `a_kind_lookup_reads_the_rows_a_per_row_read_finds`
+  (every kind, both ways), the view tests and setfix's 60.
 
 ### Q184. A warm run waits on the journal's cookies far longer than a `stat` of what it trusts would take
 

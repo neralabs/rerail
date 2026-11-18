@@ -3366,6 +3366,10 @@ const READ: usize = 8;
 /// The fewest rows of a view's scan read in one walk (`Rows::each`), not a row at a time: a walk reads each document
 /// the range holds whole.
 const WALK_SCAN: u32 = 64;
+/// The most rows of a view's scan read in one walk and held with their values to be put in the next step's key order
+/// (`walked_in_order`): 68 bytes a row, 17 MB at most; a longer scan's rows are read a row at a time as they are
+/// ordered.
+const WALKED_ROWS: usize = 1 << 18;
 impl<'a> RowRef<'a> {
     #[inline]
     pub fn at(self, c: usize) -> i64 {
@@ -6272,7 +6276,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     /// `left`: the rows to read are these (a cut's rows left, in the order its walk read them, `Rows0::order`) of
     /// the range: in the key's order when they are already (`None`), else sorted. A walk going on from a cut sorted
     /// all of the range again, then filtered it (decision 0294: a seed cut at each check, 7 sorts of 2.2 M rows).
-    fn scan_order(j: &JoinRule, store: &Store, i: usize, rows: Rows<'_>, cands: &Cands<'_>, binds: &[(usize, usize)], left: Option<&[u32]>) -> Option<Vec<u32>> {
+    /// `pre`: the range's rows already read, each with its values by column (`walked_in_order`), read from there.
+    fn scan_order(j: &JoinRule, store: &Store, i: usize, rows: Rows<'_>, cands: &Cands<'_>, binds: &[(usize, usize)], left: Option<&[u32]>, pre: Option<&[(u32, [i64; READ])]>) -> Option<Vec<u32>> {
         const SCAN_SORTED: u32 = 256;
         let &Cands::Range(lo, hi) = cands else { return None };
         let n = left.map_or((hi - lo) as usize, <[u32]>::len);
@@ -6327,6 +6332,11 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let id_at = |p: usize| left.map_or(lo + p as u32, |l| l[p]);
         let mut vals = vec![0i64; n * m];
         let read = |part: &mut [i64], first: usize| for (r, out) in part.chunks_exact_mut(m).enumerate() {
+            if let Some(pre) = pre {
+                let v = &pre[first + r].1;
+                for (o, f) in out.iter_mut().zip(&from) { *o = match *f { From::Col(c) => v[c], From::Const(x) => x }; }
+                continue;
+            }
             let row = rows.row(id_at(first + r));
             for (o, f) in out.iter_mut().zip(&from) { *o = match *f { From::Col(c) => row.at(c), From::Const(v) => v }; }
         };
@@ -6357,6 +6367,45 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let taken = runs::sort_pieces(&mut order, &known, |v| { runs::sort_keyed(v, tagged, m, |q, i| vals[q as usize * m + i], cmp); }, |a, b| key_cmp(a, b).is_le());
         runs::presorted::site_known(runs::presorted::SCAN, taken as u64);
         Some(order.into_iter().map(|q| id_at(q as usize)).collect())
+    }
+    /// A scan of a whole view put in the next step's key order (`scan_order`, decision 0112), its rows read in one walk
+    /// (`Source::for_rows_in`, decision 0353 step 2) with the values the step reads (`need`), then ordered by them: not
+    /// each row read alone twice, its keys to sort by and then its values (Q183: `kind`, a view of `node`, scanned at
+    /// 61 ns a row against 13 when it was a relation of its own). `None` where the walk does not serve: a range a
+    /// `Rows::each` walk reads as it is, or one past `WALKED_ROWS`.
+    fn walked_in_order<'b>(j: &JoinRule, store: &Store, i: usize, rows: Rows<'_>, cands: &Cands<'_>, binds: &[(usize, usize)], need: u64) -> Option<Cands<'b>> {
+        let (Rows::In(r), &Cands::Range(lo, hi)) = (rows, cands) else { return None };
+        let v = r.view.as_ref().filter(|v| v.ids.is_none() && v.cols.len() <= READ)?;
+        let n = (hi - lo) as usize;
+        if n < 256 || n > WALKED_ROWS || j.fused.get(i).is_some_and(Option::is_some) {
+            return None;
+        }
+        if !matches!(j.steps.get(i + 1), Some(Step::Atom { keys, .. }) if !keys.is_empty()) {
+            return None;
+        }
+        let (mut cols, mut at, mut m) = ([0usize; READ], [0usize; READ], 0);
+        for c in 0..v.cols.len() {
+            if need >> c & 1 != 0 {
+                cols[m] = v.cols[c];
+                at[m] = c;
+                m += 1;
+            }
+        }
+        let mut read: Vec<(u32, [i64; READ])> = Vec::with_capacity(n);
+        v.src.for_rows_in(lo as usize..hi as usize, &cols[..m], &mut |row, got| {
+            let mut vals = [0i64; READ];
+            for k in 0..m {
+                vals[at[k]] = got[k];
+            }
+            read.push((row as u32, vals));
+            true
+        });
+        debug_assert!(read.len() == n && read.iter().enumerate().all(|(p, &(id, _))| id == lo + p as u32), "the walk reads the range's rows in order");
+        let read = match scan_order(j, store, i, rows, cands, binds, None, Some(&read)) {
+            Some(order) => order.into_iter().map(|id| read[(id - lo) as usize]).collect(),
+            None => read,
+        };
+        Some(Cands::Read(Arc::new(read)))
     }
     /// The text a scratch value names (`TEXT_OUT`), if `v` is one.
     fn scratch<'s>(cx: &'s Ctx<'_, '_>, v: i64) -> Option<&'s str> {
@@ -6530,8 +6579,10 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     let left = only.as_ref().and_then(|o| o.order.as_deref()).zip(match cands { Cands::Range(lo, hi) => Some((lo, hi)), _ => None });
                     if let Some((ids, (lo, hi))) = left {
                         let ids: Vec<u32> = ids.iter().copied().filter(|id| (lo..hi).contains(id)).collect();
-                        cands = Cands::Owned(scan_order(j, store, i, rows, &cands, binds, Some(&ids)).unwrap_or(ids));
-                    } else if let Some(order) = scan_order(j, store, i, rows, &cands, binds, None) {
+                        cands = Cands::Owned(scan_order(j, store, i, rows, &cands, binds, Some(&ids), None).unwrap_or(ids));
+                    } else if let Some(read) = walked_in_order(j, store, i, rows, &cands, binds, need) {
+                        cands = read;
+                    } else if let Some(order) = scan_order(j, store, i, rows, &cands, binds, None, None) {
                         cands = Cands::Owned(order);
                     }
                 }
@@ -6896,7 +6947,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         // The rows a cut left, in their order where that is the key's; else the range's in the key's order (then
         // restricted to the rows left).
         let left: Option<Vec<u32>> = only.as_ref().and_then(|o| o.order.as_ref()).map(|ids| ids.iter().copied().filter(|id| (lo..hi).contains(id)).collect());
-        let order = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the morsels' scan order (scan_order)".into()); scan_order(j, store, 0, rows, &Cands::Range(lo, hi), binds, left.as_deref()) };
+        let order = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the morsels' scan order (scan_order)".into()); scan_order(j, store, 0, rows, &Cands::Range(lo, hi), binds, left.as_deref(), None) };
         let list: Option<Vec<u32>> = match (order, &only, left) {
             (o, _, Some(left)) => Some(o.unwrap_or(left)),
             (o, Some(only), None) => Some(o.map_or_else(|| (lo..hi).filter(|&id| only.has(id)).collect(), |o| o.into_iter().filter(|&id| only.has(id)).collect())),
