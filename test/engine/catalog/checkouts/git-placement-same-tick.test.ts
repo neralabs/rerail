@@ -162,7 +162,7 @@ describe("a file Git reads to place a folder, rewritten within one clock tick at
 });
 
 describe.skipIf(process.platform === "win32")("a kept answer on POSIX, where an lstat gives each folder's owner", () => {
-  it("is placed again once the checkout's folder is another account's, as Git reads its owner at every start", async () => {
+  it("asks Git at every ask once the checkout's folder is another account's, as Git reads its owner at every start", async () => {
     const root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-same-tick-")));
     cleanups.push(() => removeFolder(root));
     const main = repository(join(root, "aa"));
@@ -173,6 +173,7 @@ describe.skipIf(process.platform === "win32")("a kept answer on POSIX, where an 
     lstatKeeps(main, Object.assign(Object.create(Object.getPrototypeOf(stats) as object) as Stats, stats, { uid: stats.uid + 1 }));
     expect(repositoryIdentityLocation(main)).toEqual(answer);
     expect(repositoryIdentityLocation(main)).toEqual(answer);
-    expect({ answer, gitAfterTheFirst: placements(main) - placed }).toEqual({ answer: gitsAnswer(main), gitAfterTheFirst: 1 });
+    // Git takes another account's folder only through safe.directory, read from files outside the stamp.
+    expect({ answer, gitAfterTheFirst: placements(main) - placed }).toEqual({ answer: gitsAnswer(main), gitAfterTheFirst: 2 });
   });
 });
