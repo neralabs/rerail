@@ -375,45 +375,35 @@ fn the_corpus_expands_as_the_lean_pass_does() {
 }
 
 /// The compiled words (`native_cpu_pp`, decision 0348's stage 4b) give the interpreter's tokens
-/// on every example and TU, in C and C++. While the lowering is built a word group at a time, a
-/// TU that reaches a word with no code yet is counted, not compared.
+/// on every example and TU, in C and C++.
 #[test]
 fn the_compiled_words_are_the_interpreters() {
-    use rerail_compiler::native_cpu_pp::{NOT_LOWERED, compile_partial};
+    use rerail_compiler::native_cpu_pp::compile;
     let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
     let mut tus: Vec<(String, Vec<(&str, &[u8])>)> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
     tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
-    let (mut same, mut not_lowered, mut differ) = (0, 0, Vec::new());
-    let mut at: std::collections::BTreeMap<String, usize> = Default::default();
+    let (mut same, mut differ) = (0, Vec::new());
     for cpp in [false, true] {
         let p = program(cpp).unwrap();
-        let c = compile_partial(p).unwrap_or_else(|e| panic!("cpp {cpp}: {e:?}"));
+        let c = compile(p).unwrap_or_else(|e| panic!("cpp {cpp}: {e:?}"));
         let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
         for (name, files) in &tus {
             let want = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &pp_words::run);
             let got = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &jit);
             match got {
-                Err(e) if e.contains(NOT_LOWERED) => {
-                    not_lowered += 1;
-                    // The word reached: its opcode and mode.
-                    let pc: usize = e.split_whitespace().nth(3).and_then(|w| w.trim_end_matches(':').parse().ok()).unwrap_or(0);
-                    let (op, mode, _) = rerail_compiler::program::split(p.words[pc]);
-                    *at.entry(format!("{op:#04x} m={mode}")).or_default() += 1;
-                }
                 got if got == want => same += 1,
                 got => differ.push(format!("{name} (cpp {cpp}): JIT {got:?}\n interpreter {want:?}")),
             }
         }
     }
-    eprintln!("the same {same}, not lowered yet {not_lowered} (at {at:?}), differ {}", differ.len());
-    assert!(differ.is_empty(), "{}", differ.join("\n"));
+    assert!(differ.is_empty(), "{} of {} differ:\n{}", differ.len(), same + differ.len(), differ.join("\n"));
 }
 
 /// `#if`'s primaries and operators, the JIT's against the interpreter's, value by value: each
 /// case's 64 bits, whether it is unsigned, and whether it is an error, each an `#if` of its own.
 #[test]
 fn the_compiled_ifs_have_the_interpreters_values() {
-    use rerail_compiler::native_cpu_pp::compile_partial;
+    use rerail_compiler::native_cpu_pp::compile;
     const CASES: &[&str] = &[
         // Numbers.
         "0", "7", "010", "0x1F", "0X1f", "0b101", "0B11", "1'000'000", "0'7", "0x'1", "18446744073709551615", "18446744073709551616", "9223372036854775808",
@@ -431,7 +421,7 @@ fn the_compiled_ifs_have_the_interpreters_values() {
     let mut unlexed = Vec::new();
     for cpp in [false, true] {
         let p = program(cpp).unwrap();
-        let c = compile_partial(p).unwrap_or_else(|e| panic!("cpp {cpp}: {e:?}"));
+        let c = compile(p).unwrap_or_else(|e| panic!("cpp {cpp}: {e:?}"));
         let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
         let mut differ = Vec::new();
         for case in CASES {

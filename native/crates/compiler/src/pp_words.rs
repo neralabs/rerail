@@ -198,6 +198,44 @@ pub(crate) struct Want {
     pub(crate) embed: bool,
 }
 
+/// `#embed`'s state as the compiled words keep it (`Machine::embed` and `em`): the name's
+/// parameters' range (`rest`), the name (its bytes, `<…>` or not) and the file mode (a) found
+/// (`to`); the parameters read (`Em`'s fields, `limit` where `has_limit`); the digits' place in
+/// scratch where they are there.
+#[derive(Clone, Copy, Default)]
+#[repr(C)]
+pub(crate) struct EmC {
+    pub(crate) rest_lo: u64,
+    pub(crate) rest_hi: u64,
+    pub(crate) has_name: u64,
+    pub(crate) name: u64,
+    pub(crate) nname: u64,
+    pub(crate) angle: u64,
+    pub(crate) has_to: u64,
+    pub(crate) to: u64,
+    pub(crate) lo: u64,
+    pub(crate) i: u64,
+    pub(crate) hi: u64,
+    pub(crate) p: Tok,
+    pub(crate) arg0: u64,
+    pub(crate) arg1: u64,
+    pub(crate) depth: u64,
+    pub(crate) prefix0: u64,
+    pub(crate) prefix1: u64,
+    pub(crate) suffix0: u64,
+    pub(crate) suffix1: u64,
+    pub(crate) if_empty0: u64,
+    pub(crate) if_empty1: u64,
+    pub(crate) has_limit: u64,
+    pub(crate) limit: u64,
+    pub(crate) file: u64,
+    pub(crate) k: u64,
+    pub(crate) n: u64,
+    pub(crate) a: u64,
+    pub(crate) has_digits: u64,
+    pub(crate) digits: u64,
+}
+
 /// A built-in call being read (`BUILTIN`): which, its name's token, its parentheses' depth.
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -783,7 +821,7 @@ pub fn key(b: &[u8]) -> u64 {
 }
 
 /// `0` … `255` spelled one after another, then `,`: `#embed`'s bytes' spellings.
-const DIGITS: [u8; 659] = {
+pub(crate) const DIGITS: [u8; 659] = {
     let (mut b, mut i, mut d) = ([0u8; 659], 0, 0u32);
     while d < 256 {
         if d >= 100 {
@@ -879,6 +917,8 @@ pub(crate) struct Ctx {
     pub nfiles: u64,
     /// A token the compiled words keep aside (a built-in's name while its value is made).
     pub like: Tok,
+    /// `#embed`'s state (the compiled words' own).
+    pub em: EmC,
     pub sources: *mut Src,
     pub nsources: u64,
     pub room_sources: u64,
@@ -1080,6 +1120,7 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         files: filesc.as_ptr(),
         nfiles: filesc.len() as u64,
         like: Tok::default(),
+        em: EmC { has_digits: u64::from(m.digits.is_some()), digits: u64::from(m.digits.unwrap_or(0)), ..EmC::default() },
         room_sources: room(&mut m.sources, bounds.depth),
         sources: m.sources.as_mut_ptr(),
         nsources: m.sources.len() as u64,

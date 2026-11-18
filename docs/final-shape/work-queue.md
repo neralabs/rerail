@@ -851,6 +851,18 @@ pass.
   text as before. And `rerail-compiler` is optimized in dev builds (the root `Cargo.toml`). On
   the farm: the lowering 1.3 s a dialect, the examples test 416 s → 2.4 s.
 
+### Q35. C's token grammar refuses digit separators and `u8'…'`
+
+- **Keep**: a TU the grammar does not read goes to the lean pass whole
+  (`what_the_grammar_does_not_read_is_refused` states `1'000` so).
+- **Done when**: `bitlex_tokens/tokens.bitlex` reads `1'000'000`, `0'7`, `0x'1` (C23, C++14) and
+  `u8'a'` (C23, C++17) as one token each, the lean lexer agrees on them, and the refusal test
+  drops `1'000`. Then `the_compiled_ifs_have_the_interpreters_values` compares those five cases
+  too: `pp_expr::number` and the JIT's `number` already pass separators, and `char_value`
+  takes the `u8` prefix.
+- **Record** (2026-11-17): the values test lists the five cases as refused by the grammar, in C
+  and C++, and compares the other 95.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
