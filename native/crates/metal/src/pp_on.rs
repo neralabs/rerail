@@ -6,21 +6,29 @@
 //! arena block a batch, at GPU addresses, which the code reads as the CPU's reads pointers. When
 //! the batch is done, each buffer the words write is copied back and the machine finished
 //! (`pp_words::complete`), as the CPU's run finishes.
+//!
+//! - **Rooms by use (stage L1):** every room is pages the device takes, so each TU runs first at
+//!   the smallest of `Bounds::rung`'s rungs. A run refused past a room's bound runs again at the
+//!   next, in the next batch, up to the job's own bounds (the last rung, the CPU's).
+//! - **A batch past the device's budget** is split in halves, down to one TU.
 
 use crate::Error;
 use metal::MTLSize;
-use rerail_compiler::pp_words::{self, Bounds, Buf, Env, Expanded, File, Refused};
+use rerail_compiler::pp_words::{self, Bounds, Buf, Env, Expanded, File, RUNGS, Refused};
 use rerail_compiler::program::Words;
 
-/// A TU to run: the words, its files, its environment and its bounds.
+/// A TU to run: the words, its files, its environment and its bounds (its last rung's).
 pub type Job<'a> = (&'a Words, &'a [File<'a>], &'a Env<'a>, &'a Bounds);
 
 /// A batch's run: each TU's result, in order, and the batch's GPU seconds.
 pub struct Ran {
     pub results: Vec<Result<Expanded, Refused>>,
     pub gpu_seconds: f64,
-    /// The arena's bytes the batch's buffers took.
+    /// The largest arena's bytes a dispatch's buffers took.
     pub arena_bytes: usize,
+    /// The dispatches, and the TUs whose run ended at each rung.
+    pub dispatches: usize,
+    pub rungs: [usize; RUNGS],
 }
 
 /// A buffer the batch copies back: where it is in the host's memory and in the arena, its bytes.
@@ -30,17 +38,60 @@ struct Back {
     bytes: usize,
 }
 
-/// The arena's bytes a batch starts with; a batch that needs more is laid out again in twice.
+/// The arena's bytes a batch starts with; a batch that needs more is laid out again in twice,
+/// up to `MAX_ARENA`, past which it is split.
 const FIRST_ARENA: usize = 64 << 20;
+const MAX_ARENA: usize = 256 << 20;
 
-/// `jobs` run by `source`'s kernel `pp_batch`, on `workers` threads (at most the jobs).
+/// `jobs` run by `source`'s kernel `pp_batch`, on `workers` threads (at most the jobs), each from
+/// the smallest rung up.
 pub fn run_batch(source: &str, jobs: &[Job<'_>], workers: usize) -> Result<Ran, Error> {
     let pipeline = crate::runtime::pipeline_named(source, "pp_batch")?;
+    let n = jobs.len();
+    let mut results: Vec<Option<Result<Expanded, Refused>>> = (0..n).map(|_| None).collect();
+    let mut rung = vec![0usize; n];
+    let mut pending: Vec<usize> = (0..n).collect();
+    let mut all = Ran { results: Vec::new(), gpu_seconds: 0.0, arena_bytes: 0, dispatches: 0, rungs: [0; RUNGS] };
+    while !pending.is_empty() {
+        let bounds: Vec<Bounds> = pending.iter().map(|&i| if rung[i] + 1 < RUNGS { Bounds::rung(jobs[i].1, rung[i]) } else { jobs[i].3.clone() }).collect();
+        let these: Vec<Job<'_>> = pending.iter().zip(&bounds).map(|(&i, b)| (jobs[i].0, jobs[i].1, jobs[i].2, b)).collect();
+        let ran = fitted(&pipeline, &these, workers)?;
+        (all.gpu_seconds, all.arena_bytes, all.dispatches) = (all.gpu_seconds + ran.gpu_seconds, all.arena_bytes.max(ran.arena_bytes), all.dispatches + ran.dispatches);
+        let mut next = Vec::new();
+        for (&i, r) in pending.iter().zip(ran.results) {
+            match r {
+                Err(refused) if Bounds::is_room(refused.why) && rung[i] + 1 < RUNGS => {
+                    rung[i] += 1;
+                    next.push(i);
+                }
+                r => {
+                    all.rungs[rung[i]] += 1;
+                    results[i] = Some(r);
+                }
+            }
+        }
+        pending = next;
+    }
+    all.results = results.into_iter().map(|r| r.expect("each job ran")).collect();
+    Ok(all)
+}
+
+/// `jobs` in arenas that fit: one, twice as large while it is full, else the jobs split in halves.
+fn fitted(pipeline: &metal::ComputePipelineState, jobs: &[Job<'_>], workers: usize) -> Result<Ran, Error> {
     let mut size = FIRST_ARENA;
     loop {
-        match laid_out(&pipeline, jobs, workers, size)? {
-            Some(ran) => return Ok(ran),
-            None => size *= 2,
+        let laid = if size > MAX_ARENA { Err(Error::BackendCapacity) } else { laid_out(pipeline, jobs, workers, size) };
+        match laid {
+            Ok(Some(ran)) => return Ok(ran),
+            Ok(None) => size *= 2,
+            Err(Error::BackendCapacity) if jobs.len() > 1 => {
+                let (a, b) = jobs.split_at(jobs.len() / 2);
+                let (mut a, b) = (fitted(pipeline, a, workers)?, fitted(pipeline, b, workers)?);
+                a.results.extend(b.results);
+                (a.gpu_seconds, a.arena_bytes, a.dispatches) = (a.gpu_seconds + b.gpu_seconds, a.arena_bytes.max(b.arena_bytes), a.dispatches + b.dispatches);
+                return Ok(a);
+            }
+            Err(e) => return Err(e),
         }
     }
 }
@@ -148,5 +199,5 @@ fn laid_out(pipeline: &metal::ComputePipelineState, jobs: &[Job<'_>], workers: u
             }
         })
         .collect();
-    Ok(Some(Ran { results, gpu_seconds, arena_bytes: used }))
+    Ok(Some(Ran { results, gpu_seconds, arena_bytes: used, dispatches: 1, rungs: [0; RUNGS] }))
 }

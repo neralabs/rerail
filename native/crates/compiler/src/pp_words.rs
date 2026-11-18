@@ -286,6 +286,9 @@ pub(crate) struct NamedC {
 /// The file includes nest to at most (clang's bound).
 pub const MAX_INCLUDE_DEPTH: usize = 200;
 
+/// The device's rungs of `Bounds` (`Bounds::rung`), the last `Bounds::of`.
+pub const RUNGS: usize = 5;
+
 /// The stores' bounds.
 #[derive(Clone, Debug)]
 pub struct Bounds {
@@ -296,6 +299,12 @@ pub struct Bounds {
     pub macros: usize,
     pub output: usize,
     pub steps: u64,
+    /// The rooms of the calls' lists (`params`, `marks`, `kept`, `argv`, `pres`, `uses`), and of
+    /// the lists a TU rarely fills (`exps`, `wanted`, `asked`, and the bytes of the last two):
+    /// rooms only, which the interpreter's bounds (`arena`, `output`, `scratch`) are at `of`.
+    pub calls: usize,
+    pub lists: usize,
+    pub list_bytes: usize,
 }
 
 impl Bounds {
@@ -306,7 +315,30 @@ impl Bounds {
         let bytes: usize = files.iter().map(|f| f.bytes.len()).sum();
         let hashes = files.iter().flat_map(|f| f.toks.iter()).filter(|t| t.kind == HASH && t.flags & BOL != 0).count();
         // An `#embed` makes two tokens a byte.
-        Bounds { arena: 64 * toks + 2 * bytes + 4096, scratch: 64 * bytes + 4096, depth: 256, macros: hashes + 64, output: 64 * toks + 2 * bytes + 4096, steps: 4096 * (toks as u64 + 64) + 64 * bytes as u64 }
+        let (arena, output, scratch) = (64 * toks + 2 * bytes + 4096, 64 * toks + 2 * bytes + 4096, 64 * bytes + 4096);
+        Bounds { arena, scratch, depth: 256, macros: hashes + 64, output, steps: 4096 * (toks as u64 + 64) + 64 * bytes as u64, calls: arena, lists: output, list_bytes: scratch }
+    }
+
+    /// The device's rungs (decision 0348, stage L1), smallest first: rooms from a TU's use, for a
+    /// batch of TUs on Metal, where every room is pages taken. A run refused past a room's bound
+    /// (`is_room`) below the last rung is run again at the next. The last is `of`, so a TU's
+    /// answer, and its refusal at a real bound, are the CPU's. Each rung's tokens a token of the
+    /// TU, and its depths; an embedded file (data, no tokens) still makes two tokens a byte.
+    pub fn rung(files: &[File], r: usize) -> Bounds {
+        const RUNG: [(usize, usize); RUNGS - 1] = [(2, 32), (4, 64), (8, 64), (16, 128)];
+        let of = Bounds::of(files);
+        let Some(&(per, depth)) = RUNG.get(r) else { return of };
+        let toks: usize = files.iter().map(|f| f.toks.len()).sum();
+        let bytes: usize = files.iter().map(|f| f.bytes.len()).sum();
+        let data: usize = files.iter().filter(|f| f.toks.is_empty()).map(|f| f.bytes.len()).sum();
+        let tokens = per * toks + 2 * data + 256;
+        Bounds { arena: tokens, scratch: per * bytes + 256, depth, macros: of.macros, output: tokens, steps: of.steps, calls: tokens / 8 + 256, lists: tokens / 16 + 64, list_bytes: per * 256 }
+    }
+
+    /// Whether a refusal is a room's: past a store's bound, which a larger rung may hold. The
+    /// steps' bound is the work's, the same on every rung.
+    pub fn is_room(why: &str) -> bool {
+        why.starts_with("past the ") && why.ends_with(" bound") && why != "past the steps' bound"
     }
 }
 
@@ -1193,11 +1225,11 @@ pub fn prepare<'a>(program: &'a Words, files: &'a [File<'a>], env: &'a Env<'a>, 
     // Each vector's room reserved first, then placed.
     let rooms = [
         room(&mut m.sources, bounds.depth), room(&mut m.arena, bounds.arena), room(&mut m.out, bounds.output), room_bytes(&mut m.scratch, bounds.scratch),
-        room(&mut m.conds, bounds.depth * 16), room(&mut m.defs, bounds.macros * 4), room(&mut m.params, bounds.arena), room(&mut m.marks, bounds.arena),
-        room(&mut m.kept, bounds.arena), room(&mut m.frames, bounds.depth), room(&mut m.argv, bounds.arena), room(&mut m.pres, bounds.arena),
-        room(&mut m.uses, bounds.arena), room(&mut m.levels, bounds.depth), room(&mut m.exps, bounds.output), room(&mut m.wanted, bounds.output),
-        room_bytes(&mut m.wanted_bytes, bounds.scratch), room(&mut m.ex.vals, bounds.depth * 4), room(&mut m.ex.ops, bounds.depth * 4), room(&mut m.ex.mins, bounds.depth * 4),
-        room(&mut m.ex.live, bounds.depth * 4), room(&mut m.asked, bounds.output), room_bytes(&mut m.asked_bytes, bounds.scratch), room(&mut m.pushed, bounds.macros * 4),
+        room(&mut m.conds, bounds.depth * 16), room(&mut m.defs, bounds.macros * 4), room(&mut m.params, bounds.calls), room(&mut m.marks, bounds.calls),
+        room(&mut m.kept, bounds.calls), room(&mut m.frames, bounds.depth), room(&mut m.argv, bounds.calls), room(&mut m.pres, bounds.calls),
+        room(&mut m.uses, bounds.calls), room(&mut m.levels, bounds.depth), room(&mut m.exps, bounds.lists), room(&mut m.wanted, bounds.lists),
+        room_bytes(&mut m.wanted_bytes, bounds.list_bytes), room(&mut m.ex.vals, bounds.depth * 4), room(&mut m.ex.ops, bounds.depth * 4), room(&mut m.ex.mins, bounds.depth * 4),
+        room(&mut m.ex.live, bounds.depth * 4), room(&mut m.asked, bounds.lists), room_bytes(&mut m.asked_bytes, bounds.list_bytes), room(&mut m.pushed, bounds.macros * 4),
     ];
     let c = Ctx {
         files: ro(place, &filesc) as *const FileC,
