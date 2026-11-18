@@ -40,6 +40,10 @@ pub struct Token {
     pub soft: Option<String>,
     /// A mark (`mark K = E`): no width, before the token at `start`.
     pub mark: bool,
+    /// A settling mark's (`, settles`): its least bit since the grammar token before, and
+    /// whether its `drops` mask holds at the token's start (Q220). The extras before the bit
+    /// are the nodes' that it is taken in; where it drops, the extra before the token goes.
+    pub settle: Option<(usize, bool)>,
 }
 
 /// A `tree` section's grammar (docs/parser-generators/18-tree-as-grammar.md).
@@ -124,6 +128,8 @@ pub struct Ev<'a> {
     token_marks: HashMap<usize, (Vec<TokenElem>, Vec<Vec<TokenElem>>)>,
     /// A mark's `unless after` words (`Stmt::Mark`), by its index in `marks`.
     unless: HashMap<usize, Vec<Vec<u8>>>,
+    /// A settling mark's `drops` mask, where it has one (`Stmt::Mark`), by its index in `marks`.
+    settles: HashMap<usize, Option<Mask>>,
     /// A mark's `else escape` reason (`Stmt::Mark`), by its index in `marks`.
     unplaced: HashMap<usize, String>,
     /// A mark's `before`s and `unless before`s (`Stmt::Mark`), by its index in `marks`: the
@@ -203,6 +209,7 @@ impl<'a> Ev<'a> {
             next: HashMap::new(),
             unless: HashMap::new(),
             unplaced: HashMap::new(),
+            settles: HashMap::new(),
             tables,
             tree: None,
             byte_classes: HashMap::new(),
@@ -440,8 +447,15 @@ impl<'a> Ev<'a> {
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             // Applied by the parser (`A as IMPLIED` in the rule's body).
             Stmt::Implied { .. } => {}
-            Stmt::Mark { kind, at, end, unless, unplaced, checks, next, .. } => {
+            Stmt::Mark { kind, at, end, unless, unplaced, checks, next, settles, drops, .. } => {
                 let m = self.mask(at)?;
+                if *settles {
+                    let d = match drops {
+                        Some(d) => Some(self.mask(d)?),
+                        None => None,
+                    };
+                    self.settles.insert(self.marks.len(), d);
+                }
                 if !next.is_empty() {
                     self.next.insert(self.marks.len(), next.clone());
                 }
@@ -1139,7 +1153,7 @@ impl<'a> Ev<'a> {
             for j in i..end {
                 covered.set(j)
             }
-            toks.push(Token { kind: kinds[k].clone(), start: i, end, soft: None, mark: false });
+            toks.push(Token { kind: kinds[k].clone(), start: i, end, soft: None, mark: false, settle: None });
         }
         // A token that starts inside the one before (tier 2 refuses it too).
         if let Some(w) = toks.windows(2).find(|w| w[1].start < w[0].end) {
@@ -1206,6 +1220,9 @@ impl<'a> Ev<'a> {
         let extra = self.tree.as_ref().map_or(&[][..], |t| &t.extra[..]);
         let grammar: Vec<usize> = (0..toks.len()).filter(|&i| !extra.contains(&toks[i].kind)).collect();
         let mut before: Vec<Vec<bool>> = vec![vec![false; self.marks.len()]; toks.len()];
+        // Each mark's least bit before each token, and after the last (a settling mark's place).
+        let mut least: Vec<Vec<usize>> = vec![vec![usize::MAX; self.marks.len()]; toks.len()];
+        let mut least_end = vec![self.n; self.marks.len()];
         // A token mark: at each grammar token that begins its run, after its token before.
         // A choice at a token: its kind (or the rule's, a keyword's token: `lexed`), or its text
         // as a word (its kind's spelling, a keyword's, or its soft word). `~`: none of its
@@ -1233,6 +1250,7 @@ impl<'a> Ev<'a> {
                 let after = pre.is_empty() || (g > 0 && is(Some(grammar[g - 1]), pre)) || (g == 0 && matches!(pre.as_slice(), [TokenElem::Not(_)]));
                 if run && after {
                     before[grammar[g]][k] = true;
+                    least[grammar[g]][k] = toks[grammar[g]].start;
                 }
             }
         }
@@ -1249,9 +1267,13 @@ impl<'a> Ev<'a> {
                 match grammar.get(g) {
                     // `before`, `unless before`: the tokens from the one after.
                     Some(_) if self.next.get(&k).is_some_and(|n| !nexts_hold(n, &|seq| follows(g, seq))) => {}
-                    Some(&t) => before[t][k] = true,
+                    Some(&t) => {
+                        before[t][k] = true;
+                        least[t][k] = least[t][k].min(i);
+                    }
                     // `else escape`: no grammar token at or after the bit.
                     None => {
+                        least_end[k] = least_end[k].min(i);
                         if let Some(why) = self.unplaced.get(&k) {
                             escapes.push(format!("escape: {why} (byte {i})"));
                         }
@@ -1260,19 +1282,20 @@ impl<'a> Ev<'a> {
             }
         }
         self.errors.extend(escapes);
+        let settle = |k: usize, bit: usize, at: usize| self.settles.get(&k).map(|d| (bit, d.as_ref().is_some_and(|d| at < self.n && d.get(at))));
         let mut out = Vec::with_capacity(toks.len());
         for (t, tok) in toks.into_iter().enumerate() {
             for (k, (kind, _, _)) in self.marks.iter().enumerate() {
                 if before[t][k] {
-                    out.push(Token { kind: kind.clone(), start: tok.start, end: tok.start, soft: None, mark: true });
+                    out.push(Token { kind: kind.clone(), start: tok.start, end: tok.start, soft: None, mark: true, settle: settle(k, least[t][k].min(tok.start), tok.start) });
                 }
             }
             out.push(tok);
         }
         // A bit after the last grammar token's start puts no mark; `, end` puts one at the end.
-        for (kind, _, end) in &self.marks {
+        for (k, (kind, _, end)) in self.marks.iter().enumerate() {
             if *end {
-                out.push(Token { kind: kind.clone(), start: self.n, end: self.n, soft: None, mark: true });
+                out.push(Token { kind: kind.clone(), start: self.n, end: self.n, soft: None, mark: true, settle: settle(k, least_end[k], self.n) });
             }
         }
         Ok(out)

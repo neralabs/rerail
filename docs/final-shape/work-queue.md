@@ -1830,6 +1830,15 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 - **Done when**: the reference places a settling mark's extras as tier 2 does, and the test's
   grammar says `settles` again. `, drops W` (0406) is the same: the reference keeps the extra the
   compiled side drops; it drops it too.
+- **Done** (2026-11-18): each settling mark token carries its least bit and whether its `drops`
+  holds at its token (`eval::Token::settle`). Where the grammar takes it (`tree::Parser::settled`,
+  undone with the nodes where a way is given up), the nodes open there end past the extras before
+  the bit, and those extras are placed by span inside them. A dropped extra makes no node; where
+  no other extra is left before it, the nodes end past it, as the machine's (a node closed with
+  none pending ends at the last node made). `a_gap_mark_is_decided_by_the_token_after` says
+  `settles` again (it fails on the old reference), and `a_settling_mark_drops_in_the_reference`
+  checks `drops`, both against every executor. Kotlin's grammar is still compared with the lean
+  parser's tapes only, not with the reference. Reviewer not yet run.
 
 ### Q221. The C directives' Metal reads refuse with `UnsupportedBackend` in this worktree
 

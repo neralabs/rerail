@@ -42,7 +42,7 @@ token punct     = start code & punct
 keywords simple_identifier { } soft { "package" "import" "as" }
 keywords punct { "." "*" } required
 skip ws
-mark line       = lf & code, unless before "." simple_identifier, unless before "." "*", end
+mark line       = lf & code, unless before "." simple_identifier, unless before "." "*", end, settles
 mark more       = lf & code, before "." simple_identifier
 mark wild       = tokens "." "*"
 mark alias      = tokens after "import" simple_identifier (simple_identifier | ".")* "as"
@@ -70,6 +70,58 @@ tree kotlin {
     let orders: Vec<(u8, bool)> = c.program.token_marks.iter().map(|m| (m.order, m.unless)).collect();
     assert_eq!((r.mark_bits(), orders), (2, vec![(0, true), (0, true), (1, false), (2, false), (3, false)]));
     assert_eq!(check_documents("before", &c, b"pa.*\n/ ", &[], &fixed, &|_, _, _, _| None), None);
+}
+
+/// A settling mark's `drops W` (Q220): where `W` holds at the token after it (here an `import`),
+/// the extra before that token, after the mark's bit, goes; those before the bit are the header's.
+/// Bitlex's reference and every executor.
+#[test]
+fn a_settling_mark_drops_in_the_reference() {
+    let source = r#"lexer kotlin
+class ws        = ' ' '\t' '\n'
+class lf        = '\n'
+class slash     = '/'
+class star      = '*'
+class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
+class alpha     = 'a'..'z' 'A'..'Z' '_'
+class punct     = '.' '*'
+class ichar     = 'i'
+mask line_open  = slash & next(slash)
+regions hidden {
+  line  = line_open .. lf outside
+}
+mask code       = ~hidden & ~o_line
+mask w          = code & word
+mask name       = fill(w & alpha, ~w)
+mask swallow    = code & ichar & ~prev(word)
+error "a byte no token takes" by tokens when code & ~ws & ~name & ~punct
+token comment = start slash & o_line read line
+token simple_identifier = start alpha & name & ~prev(name) run word
+token punct     = start code & punct
+keywords simple_identifier { } soft { "package" "import" "as" }
+keywords punct { "." "*" } required
+skip ws
+mark line       = lf & code, unless before "." simple_identifier, unless before "." "*", end, settles, drops swallow
+mark more       = lf & code, before "." simple_identifier
+mark wild       = tokens "." "*"
+mark alias      = tokens after "import" simple_identifier (simple_identifier | ".")* "as"
+tree kotlin {
+  node source_file whole = [line] [package_header] import_header*
+  node package_header   = 'package' identifier line
+  node import_header    = 'import' (alias identifier 'as' simple_identifier as alias_name | identifier [wild '.' '*' as wildcard_import]) line
+  node identifier       = simple_identifier ([more] '.' simple_identifier)*
+  implied package_header 'package'
+  implied import_header 'import'
+  implied identifier '.'
+  extra comment
+}
+"#;
+    let c = compile_step("drops", source);
+    let fixed = ["package a // x\n// y\nimport b\n", "package a\n// y\n// z\nimport b\n", "// x\nimport a // y\nimport b\n", "package a\n// y\n"];
+    let comments = |d: &str| reference(&c, d.as_bytes()).expect("parses").iter().filter(|n| n.0 == c.ids.of("comment")).count();
+    // The comment on the line before an `import` goes; the one after the header's name stays.
+    assert_eq!(fixed.iter().map(|d| comments(d)).collect::<Vec<_>>(), [1, 1, 2, 1]);
+    assert_eq!(check_documents("drops", &c, b"pai.*\n/ ", &[], &fixed, &|_, _, _, _| None), None);
 }
 
 /// A token mark's run that counts depths (Q222), as the lean parser's `type_args_end` does: a

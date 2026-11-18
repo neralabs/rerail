@@ -238,6 +238,9 @@ refused, 0 differ (was 429, 62), and the generated Rust's tapes are the JIT's.
 
 - `compiler::ladder_tests::a_run_ends_on_a_token`: `ending`'s counts in Bitlex's reference, and
   every executor against it; `syntax`'s parse of `ending`, and a `~` in it refused.
+- `compiler::ladder_tests::a_gap_mark_is_decided_by_the_token_after` (with `settles`) and
+  `a_settling_mark_drops_in_the_reference`: Bitlex's reference places a settling mark's extras and
+  drops a `drops` extra as the executors do (Q220).
 - `kotlin_parser::tests::annotated_expressions_are_the_lean_parsers`: `@A if`, `@A(x) foo()`,
   `@A foo()`, `@A.B(1) h`, `val x = @A @B g()`, and annotated declarations, the lean parser's.
 
