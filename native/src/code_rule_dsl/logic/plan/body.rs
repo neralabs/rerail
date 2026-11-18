@@ -209,14 +209,15 @@ impl<'v> Body<'v> {
         self.lits.iter().filter(|l| l.atom().is_some()).count()
     }
     /// The demand that drives its rule, whatever the statistics say: a demand-restricted aggregate's
-    /// (`rr_demand_agg_…`), or a demanded relation's own (decision 0048's `x :- demand_x, …`: it never computes more
-    /// than its readers ask for). A plan that read it later scanned the corpus per chunk (Q59: 29 M rows, not 34 k).
+    /// (`rr_demand_agg_…`), a demanded relation's own (decision 0048's `x :- demand_x, …`), or the tuple demand
+    /// that bounds a Cartesian product. A plan that read its demand later scanned the corpus per chunk (Q59).
     pub fn demand_first(&self) -> Option<usize> {
         let head = self.rel(self.head());
         (0..self.len()).find(|&i| {
             self.plain_atom(i).is_some_and(|a| {
                 let rel = self.rel(a);
-                !a.neg() && (rel.contains("rr_demand_agg_") || rel.strip_prefix("demand_").is_some_and(|r| r == head))
+                !a.neg() && (rel.contains("rr_demand_agg_")
+                    || ["demand_", super::corpus::product_demand::PREFIX].iter().any(|&p| rel.strip_prefix(p) == Some(head)))
             })
         })
     }
