@@ -115,7 +115,11 @@ export const mergeAssistStatusSchema = z.object({
   enabled: z.boolean(),
   settings: mergeAssistSettingsSchema,
   readiness: z.object({
-    github: githubReadinessSchema,
+    github: githubReadinessSchema.extend({
+      readAt: z.string().optional().describe(
+        "When gh's sign-in was read (ISO 8601): a status reuses that reading for five minutes (one minute when gh could not tell), then reads gh again. Absent where Rerail ran no gh for it: Merge Assist off, or a repository not on GitHub.",
+      ),
+    }),
   }),
   scanning: z.boolean(),
   lastScan: lastScanSchema.nullable(),

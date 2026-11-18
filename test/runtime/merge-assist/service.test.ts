@@ -97,7 +97,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     await service.setEnabled(ws.repo, true);
     const reads = github.readinessReads;
 
-    expect((await service.status(ws.repo)).readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app" });
+    expect((await service.status(ws.repo)).readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:00:00.000Z" });
     await Promise.all([service.status(ws.repo), service.status(ws.repo)]);
     // Another process over the same database reuses it too.
     await ws.service({ github, now: () => now }).status(ws.repo);
@@ -115,6 +115,20 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect(github.readinessReads).toBe(reads + 3);
   });
 
+  it("says when the gh sign-in it shows was read, the same while that reading is reused, so a page can ask again as it ages", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    let now = Date.parse("2026-11-03T14:00:00Z");
+    const service = ws.service({ github: new FakeGithub(), now: () => now });
+    await service.setEnabled(ws.repo, true);
+
+    now += 4 * 60_000;
+    const reused = (await service.status(ws.repo)).readiness.github.readAt;
+    now += 60_000;
+    const readAgain = (await service.status(ws.repo)).readiness.github.readAt;
+
+    expect([reused, readAgain]).toEqual(["2026-11-03T14:00:00.000Z", "2026-11-03T14:05:00.000Z"]);
+  });
+
   it("says when gh could not tell whether it is signed in, asks again after a minute, and makes it a problem of the scan", async () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
     let now = Date.parse("2026-11-03T14:00:00Z");
@@ -122,7 +136,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     const service = ws.service({ github, now: () => now });
     const status = await service.setEnabled(ws.repo, true);
 
-    expect(status.readiness.github).toEqual({ state: "unavailable", login: null, repository: "acme/app" });
+    expect(status.readiness.github).toEqual({ state: "unavailable", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:00.000Z" });
     const reads = github.readinessReads;
     // Status reads within the minute run no `gh` again.
     await service.status(ws.repo);

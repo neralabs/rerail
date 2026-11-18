@@ -134,6 +134,8 @@ const PULLS_REUSE_MS = 5 * 60_000;
 const STOP_KILL_GRACE_MS = 500;
 
 const githubCacheSchema = z.object({ at: z.number(), readiness: githubReadinessSchema });
+/** `gh`'s readiness and when it was read; no time where no `gh` ran (a repository not on GitHub). */
+type GithubReading = { readonly readiness: GithubReadiness; readonly at?: number };
 /** A scan running in some process: since when, and which process claimed it. */
 const scanningSchema = z.object({ since: z.number(), pid: z.number().int() });
 type ScanMark = z.infer<typeof scanningSchema>;
@@ -174,7 +176,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   /** Scans running in this process, by checkout, with the mark each claimed; a second request joins the first. */
   readonly #scans = new Map<string, { work: Promise<void>; mark: ScanMark }>();
   /** `gh auth status` runs in this process, by repository; concurrent status reads share one. */
-  readonly #githubReads = new Map<string, Promise<GithubReadiness>>();
+  readonly #githubReads = new Map<string, Promise<GithubReading>>();
   /** When this process last found a checkout's conflicts after an edit, by checkout. */
   readonly #detectedAt = new Map<string, number>();
   /** The open pull requests this process last listed, by repository, and when. */
@@ -276,33 +278,32 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   /**
-   * `gh`'s readiness for the repository: the one read in the last five minutes by any process (the last minute, for
-   * one `gh` could not tell, `unavailable`), else read now. None is kept once Merge Assist is off.
+   * `gh`'s readiness for the repository and when it was read: the one read in the last five minutes by any process (the
+   * last minute, for one `gh` could not tell, `unavailable`), else read now. None is kept once Merge Assist is off.
    */
-  async #githubReadiness(repositoryKey: string, fresh: boolean): Promise<GithubReadiness> {
+  async #githubReadiness(repositoryKey: string, fresh: boolean): Promise<GithubReading> {
     const repository = githubRepositoryOf(repositoryKey);
-    if (repository === null) return { state: "not-github", login: null, repository: null };
+    if (repository === null) return { readiness: { state: "not-github", login: null, repository: null } };
     const key = STATE_KEYS.github(repositoryKey);
     const cached = fresh ? undefined : readState(this.#db, key, githubCacheSchema);
     const reuse = cached?.readiness.state === "unavailable" ? GITHUB_UNAVAILABLE_MS : GITHUB_READINESS_MS;
-    if (cached !== undefined && this.#now() - cached.at < reuse) return cached.readiness;
+    if (cached !== undefined && this.#now() - cached.at < reuse) return cached;
     let reading = this.#githubReads.get(repositoryKey);
     if (reading === undefined) {
       reading = this.#githubClient.readiness(repository)
-        .then(readiness => {
-          this.#keepReadiness(repositoryKey, readiness);
-          return readiness;
-        })
+        .then(readiness => this.#keepReadiness(repositoryKey, readiness))
         .finally(() => this.#githubReads.delete(repositoryKey));
       this.#githubReads.set(repositoryKey, reading);
     }
     return await reading;
   }
 
-  #keepReadiness(repositoryKey: string, readiness: GithubReadiness): void {
+  #keepReadiness(repositoryKey: string, readiness: GithubReadiness): GithubReading {
+    const reading = { at: this.#now(), readiness };
     this.#db.transaction(tx => {
-      if (mergeAssistEnabled(tx, repositoryKey)) writeState(tx, STATE_KEYS.github(repositoryKey), { at: this.#now(), readiness }, this.#now());
+      if (mergeAssistEnabled(tx, repositoryKey)) writeState(tx, STATE_KEYS.github(repositoryKey), reading, reading.at);
     }, { behavior: "immediate" });
+    return reading;
   }
 
   /** The checkout's scan mark when a live scan holds it: fresh, and claimed by a process that is still running. */
@@ -376,7 +377,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     const cached = this.#pulls.get(checkout.repositoryKey);
     if (!fresh && cached !== undefined && this.#now() - cached.at < PULLS_REUSE_MS) return cached.listing;
     const listing = this.#githubReadiness(checkout.repositoryKey, fresh)
-      .then(readiness => this.#listPulls(repository, readiness))
+      .then(({ readiness }) => this.#listPulls(repository, readiness))
       .catch((error: unknown): PullListing => ({
         pulls: null,
         problems: [`Rerail could not list open pull requests (${error instanceof Error ? error.message : String(error)}), ${INSTEAD}`],
@@ -411,9 +412,15 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     return { branch, base: base?.name ?? null };
   }
 
-  /** `gh`'s readiness as the status shows it: `unchecked` while Merge Assist is off, when Rerail runs no `gh`. */
-  async #statusReadiness(repositoryKey: string, enabled: boolean): Promise<GithubReadiness> {
-    if (enabled) return await this.#githubReadiness(repositoryKey, false);
+  /**
+   * `gh`'s readiness as the status shows it, with when it was read: `unchecked` while Merge Assist is off, when Rerail
+   * runs no `gh`.
+   */
+  async #statusReadiness(repositoryKey: string, enabled: boolean): Promise<MergeAssistStatus["readiness"]["github"]> {
+    if (enabled) {
+      const { readiness, at } = await this.#githubReadiness(repositoryKey, false);
+      return at === undefined ? readiness : { ...readiness, readAt: new Date(at).toISOString() };
+    }
     const repository = githubRepositoryOf(repositoryKey);
     return { state: "unchecked", login: null, repository: repository === null ? null : `${repository.owner}/${repository.name}` };
   }
