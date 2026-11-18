@@ -68,12 +68,6 @@ fn shipped_key(key: &[u8; 32]) -> HashKey {
     HashKey::sha256(&[format!("rerail combined entry {SCHEMA}\0").as_bytes(), plan().plans[0].as_slice(), key.as_slice()].concat())
 }
 
-/// The combined program of texts `key`, when the store keeps one whose library files all still read as recorded; or,
-/// where the store has none, the one the engine ships (decision 0264).
-pub(super) fn lookup(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<Program>> {
-    Ok(lookup_read(store, key, lists)?.map(|(program, _)| program))
-}
-
 /// The key of a rule file's entry (decision 0275): the program `rr::read_file` reads of the file at `path` (canonical)
 /// whose bytes' sha256 is `sha256`. The path is in it: the files an include finds beside it are another directory's
 /// elsewhere, and the read record names this one's.
@@ -95,7 +89,7 @@ pub(in crate::code_rule_dsl) fn text_header_key(src: &str) -> [u8; 32] {
     hash.finalize().into()
 }
 
-/// `lookup`, with the read record: every library file the program read or probed, in reading order. Each is checked
+/// The entry `key`'s program with the read record: every library file the program read or probed, in reading order. Each is checked
 /// as `LibraryFile::unchanged` checks it, by its `stat` while that holds and by its bytes' sha256 when it moved: the
 /// first key that settles it.
 pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Vec<LibraryFile>)>> {
@@ -103,8 +97,9 @@ pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32]
     Ok(program_text::load(store, &digest, lists)?.map(|(program, _)| (program, read)))
 }
 
-/// `lookup`'s program as its version, opened from its image with no tree decoded (decision 0281's path, step 7a-1;
-/// Typing-support's, taken at the merge of e829e72a7).
+/// The combined program of texts `key`, when the store keeps one whose library files all still read as recorded; or,
+/// where the store has none, the one the engine ships (decision 0264). Opened from its image as its version (decision
+/// 0281's path, step 7a-1).
 pub(super) fn lookup_version(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
     let Some((digest, _)) = entry_read(store, key)? else { return Ok(None) };
     Ok(program_text::load_image(store, &digest, lists)?.map(|(v, _)| v))

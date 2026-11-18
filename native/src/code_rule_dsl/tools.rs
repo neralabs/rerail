@@ -237,7 +237,8 @@ pub fn check_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
             Ok((program, _)) if let Err(error) = super::logic::plan::corpus::handed_version(&program).and_then(|v| super::logic::plan::corpus::combine_read_program(&v))
                 .map_err(|e| e.to_string())
                 // Pruned first, as a run is: a library's relation the outputs do not read is not planned.
-                .and_then(|combined| super::logic::plan::lower::domains(&super::logic::front::prune(combined)).map(|_| ()).map_err(|e| e.to_string())) =>
+                .and_then(|combined| super::logic::plan::corpus::preparation::pruned(combined))
+                .and_then(|pruned| super::logic::plan::lower::domains_of(&pruned).map(|_| ()).map_err(|e| e.to_string())) =>
             {
                 serde_json::json!({"path": path, "status": "types-failed", "error": error})
             }

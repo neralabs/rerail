@@ -58,6 +58,12 @@ impl Version {
         }
         s
     }
+    /// Each rule's head relation and the relations its body reads, each with whether it is negated, in order: what a
+    /// test asks of a program's shape.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn heads_and_reads(&self) -> Vec<(String, Vec<(bool, String)>)> {
+        self.rules().map(|r| (self.rel_name(r.head().rel()).to_owned(), r.reads().map(|a| (a.neg(), self.rel_name(a.rel()).to_owned())).collect())).collect()
+    }
     /// Rule `r`, as `front::ast::Rule` writes it.
     pub fn show_rule(&self, r: RuleRef<'_>) -> String {
         let mut s = String::new();

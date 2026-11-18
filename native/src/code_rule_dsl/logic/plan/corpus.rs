@@ -81,11 +81,11 @@ mod shape;
 pub mod connections;
 pub mod reuse;
 
-/// The switches that change the combined program (`combine_read`, with the `.rr` lowering its `rr::parse` runs): its
+/// The switches that change the combined program (`combine_tail`, with the `.rr` lowering its `rr::parse` runs): its
 /// key (`texts_digest`, in memory and in the store) holds their values, so a combined program kept or stored under
 /// one value is not another's. Every prepared key holds the combined program's.
 pub const COMBINING: &[&str] = &[
-    // `combine_read`: the copies to compare (`=copied`) and decision 0091's measurement (`scoping::guard`).
+    // `combine_tail`: the copies to compare (`=copied`) and decision 0091's measurement (`FactSpaces`).
     "RERAIL_LIBRARIES",
     "RERAIL_REQUESTS",
     "RERAIL_SCOPE_GUARDS",
@@ -95,7 +95,7 @@ pub const COMBINING: &[&str] = &[
     "RERAIL_ORDER_RAW",
     // Node ids by definition or in preorder (`syntax::definition_ids`, read by `order_nodes`).
     "RERAIL_NODE_IDS",
-    // Identical relations merged (`same_relations`, in combining and again in preparing).
+    // Identical relations merged (`combining::same_relations`, in combining and again in preparing).
     "RERAIL_SAME",
 ];
 
@@ -362,53 +362,54 @@ pub(crate) fn unchanged(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Op
 /// `env` facts (the world's roots). A function of the texts and the rule files they read: the whole-run cutoff's
 /// record keeps it beside the run's (decision 0275), so its check does not combine the program again to read them.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Summary(front::Program);
+pub(crate) struct Summary {
+    declared_ret: bool,
+    env: Vec<front::List<front::Value>>,
+    settings: Vec<(String, String)>,
+    policies: Vec<serde_json::Value>,
+    doc_scopes: Option<Vec<(Vec<String>, Vec<String>)>>,
+    text_globs: Vec<String>,
+}
 
 impl Summary {
     /// The summary of the program `programs` combine to, as `changes` combines them (the root's settings in each).
     pub(crate) fn of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Summary> {
-        Ok(Self::from_program(&combined_with_settings(programs, graphs, read, root, options)?))
+        Ok(Self::from_fields(&*combined_with_settings(programs, graphs, read, root, options)?))
     }
 
-    fn from_program(prog: &front::Program) -> Summary {
-        Summary(front::Program {
-            decls: prog.decls.iter().filter(|(k, _)| k.as_str() == "declared_ret").map(|(k, v)| (k.clone(), v.clone())).collect(),
-            facts: prog.facts.iter().filter(|(k, _)| k.as_str() == "env").map(|(k, v)| (k.clone(), v.clone())).collect(),
-            settings: prog.settings.clone(),
-            policies: prog.policies.clone(),
-            doc_scopes: prog.doc_scopes.clone(),
-            text_globs: prog.text_globs.clone(),
-            ..front::Program::default()
-        })
+    fn from_fields(p: &(impl ProgramFields + ?Sized)) -> Summary {
+        Summary {
+            declared_ret: p.declares("declared_ret"),
+            env: p.fact_rows("env"),
+            settings: p.settings(),
+            policies: p.policies(),
+            doc_scopes: p.doc_scopes(),
+            text_globs: p.text_globs(),
+        }
     }
 
     /// Its bytes: the parts as JSON.
     pub(crate) fn encode(&self) -> Option<Vec<u8>> {
-        let p = &self.0;
-        let env: Vec<Vec<serde_json::Value>> = p.facts.get("env").into_iter().flatten().map(|row| row.iter().map(|v| match v {
+        let env: Vec<Vec<serde_json::Value>> = self.env.iter().map(|row| row.iter().map(|v| match v {
             front::Value::Int(i) => serde_json::json!({ "i": i }),
             // An atom's value at run time is its integer (decision 0270); the settings' rows hold none.
             front::Value::Branded(b) => serde_json::json!({ "i": b.value() }),
             front::Value::Str(s) => serde_json::json!({ "s": s.as_str() }),
         }).collect()).collect();
         let parts = serde_json::json!({
-            "declared_ret": p.decls.contains_key("declared_ret"),
+            "declared_ret": self.declared_ret,
             "env": env,
-            "settings": p.settings,
-            "policies": p.policies,
-            "doc_scopes": p.doc_scopes,
-            "text_globs": p.text_globs,
+            "settings": self.settings,
+            "policies": self.policies,
+            "doc_scopes": self.doc_scopes,
+            "text_globs": self.text_globs,
         });
         serde_json::to_vec(&parts).ok()
     }
 
     pub(crate) fn decode(bytes: &[u8]) -> Option<Summary> {
         let v: serde_json::Value = serde_json::from_slice(bytes).ok()?;
-        let mut p = front::Program::default();
-        if v["declared_ret"].as_bool()? {
-            p.decls.insert(front::Name::new("declared_ret"), Default::default());
-        }
-        let mut rows = Vec::new();
+        let mut env = Vec::new();
         for row in v["env"].as_array()? {
             let mut out = front::List::default();
             for c in row.as_array()? {
@@ -418,27 +419,70 @@ impl Summary {
                     _ => return None,
                 });
             }
-            rows.push(out);
+            env.push(out);
         }
-        if !rows.is_empty() {
-            p.facts.insert("env".to_owned(), rows);
-        }
-        p.settings = serde_json::from_value(v["settings"].clone()).ok()?;
-        p.policies = serde_json::from_value(v["policies"].clone()).ok()?;
-        p.doc_scopes = serde_json::from_value(v["doc_scopes"].clone()).ok()?;
-        p.text_globs = serde_json::from_value(v["text_globs"].clone()).ok()?;
-        Some(Summary(p))
+        Some(Summary {
+            declared_ret: v["declared_ret"].as_bool()?,
+            env,
+            settings: serde_json::from_value(v["settings"].clone()).ok()?,
+            policies: serde_json::from_value(v["policies"].clone()).ok()?,
+            doc_scopes: serde_json::from_value(v["doc_scopes"].clone()).ok()?,
+            text_globs: serde_json::from_value(v["text_globs"].clone()).ok()?,
+        })
+    }
+}
+
+/// The summary's fields as a program's, for the readers `changes` shares with the run (`scoped`, `World`, `inputs`).
+impl ProgramFields for Summary {
+    fn input_names(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn output_names(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn declares(&self, rel: &str) -> bool {
+        rel == "declared_ret" && self.declared_ret
+    }
+    fn columns_of(&self, rel: &str) -> Option<Vec<(String, String)>> {
+        self.declares(rel).then(Vec::new)
+    }
+    fn declared_names(&self) -> Vec<String> {
+        if self.declared_ret { vec!["declared_ret".to_owned()] } else { Vec::new() }
+    }
+    fn fact_names(&self) -> Vec<String> {
+        if self.env.is_empty() { Vec::new() } else { vec!["env".to_owned()] }
+    }
+    fn states_facts(&self, rel: &str) -> bool {
+        rel == "env" && !self.env.is_empty()
+    }
+    fn fact_rows(&self, rel: &str) -> Vec<front::List<front::Value>> {
+        if rel == "env" { self.env.clone() } else { Vec::new() }
+    }
+    fn about(&self, _: &[&str]) -> crate::code_rule_dsl::logic::program_facts::Facts {
+        Default::default()
+    }
+    fn settings(&self) -> Vec<(String, String)> {
+        self.settings.clone()
+    }
+    fn policies(&self) -> Vec<serde_json::Value> {
+        self.policies.clone()
+    }
+    fn text_globs(&self) -> Vec<String> {
+        self.text_globs.clone()
+    }
+    fn doc_scopes(&self) -> Option<Vec<(Vec<String>, Vec<String>)>> {
+        self.doc_scopes.clone()
     }
 }
 
 /// The program `programs` combine to, as `changes` combines them: the root's settings (`<root>/rerail.env`, the `env`
 /// option) as the rows the run adds (decision 0249), the texts as the run's keys read them, messages masked
 /// (`texts_digest`, decision 0225 §3).
-fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<front::Program> {
+fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
     let masked = masked(programs);
-    Ok(combine_keyed(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, &added::Added::of(&settings, options), read, &front::Lists::default())?.0)
+    Ok(combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, &added::Added::of(&settings, options), read, &front::Lists::default())?.0)
 }
 
 /// The workspace documents whose bytes changed since a run that consulted `consulted`, when nothing else it
@@ -463,12 +507,12 @@ fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<
         return Ok(None);
     }
     let prog = match summary {
-        Some(Summary(prog)) => prog,
-        None => Summary::from_program(&combined_with_settings(programs, graphs, read, root, options)?).0,
+        Some(summary) => summary,
+        None => Summary::from_fields(&*combined_with_settings(programs, graphs, read, root, options)?),
     };
     // A program reading earlier phases is comparable: its record names every phase's program and what each phase
     // consulted (`reuse::record`, O-cutoff-phases).
-    if prog.decls.contains_key("declared_ret") {
+    if prog.declared_ret {
         trace("not comparable: declared_ret".to_owned());
         return Ok(None);
     }
@@ -747,10 +791,10 @@ pub fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, binding:
 /// so programs that name relations alike (a converter's `m650`, `exists_0`) do not meet. The base inputs and the
 /// `violation` output are shared, and kind sets are named by their kinds (`ks<j>`), so programs asking for one set
 /// share its tape pass. The simplifier then merges relations that are equal across programs (decision 0038).
-pub fn combine(programs: &[&str]) -> Result<front::Program> {
+pub fn combine(programs: &[&str]) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let graphs: Vec<Option<[u8; 32]>> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::graph_digest(t).ok().flatten()).collect();
     let masked = masked(programs);
-    combine_keyed(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), &graphs, &added::Added::default(), None, &front::Lists::default()).map(|(program, _)| program)
+    combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), &graphs, &added::Added::default(), None, &front::Lists::default()).map(|(program, _)| program)
 }
 
 /// The run's program texts, each read once (`rr::read_seed`, in `run_with_options`): their include graphs' digests,
@@ -801,30 +845,9 @@ impl<'a> Texts<'a> {
     }
 }
 
-/// `combine`, the texts' include graphs' digests given (`Texts::graphs`), each program given the rows `extra` adds
-/// (`added::Added`), with the digest of its texts, messages masked (`masked`, decision 0225 §3), and those rows
-/// (`texts_digest`) it is kept by: a run keys what it prepares by the same digest. `read` is the program the one text
-/// prints from, already lowered (`Texts::read`): the program itself, not its text lowered again.
-fn combine_keyed(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, lists: &front::Lists) -> Result<(front::Program, [u8; 32])> {
-    let key = texts_digest(masked, graphs, extra);
-    if let Some(program) = combined_kept().lock().expect("the combined programs").get(&key).and_then(|k| k.tree.clone()) {
-        crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
-        return Ok((program, key));
-    }
-    // The one text a run was handed the program of: its hidden program kept under the texts' digest too, as a pack's
-    // is (decision 0275): the lowered program is the key, and hiding it again is the step a hit saves. The rows the
-    // run adds (decision 0249) are in the key.
-    let one = read.filter(|_| programs.len() == 1);
-    let program = combine_stored(programs, extra, &key, lists, one)?;
-    keep_combined(key, |k| k.tree = Some(program.clone()));
-    Ok((program, key))
-}
-
-/// A combined program kept for the process (`COMBINED`): its tree (`combine_keyed`'s), its version
-/// (`combine_version`'s), or both.
+/// A combined program kept for the process (`COMBINED`): its version (`combine_version`'s).
 #[derive(Default)]
 struct Combined {
-    tree: Option<front::Program>,
     version: Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>,
 }
 
@@ -845,39 +868,44 @@ fn keep_combined(key: [u8; 32], edit: impl FnOnce(&mut Combined)) {
     edit(kept.entry(key).or_default());
 }
 
-/// One program handed to its run (`run_read`), combined as `combine_keyed` combines it, past the process's own kept
+/// One program handed to its run (`run_read`), combined as `combine_version` combines it, past the process's own kept
 /// programs: what the store gave or a miss made, what hiding it makes, and what the store then keeps under its texts'
 /// digest. For the tests of decision 0275.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn combine_handed(read: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<(front::Program, front::Program, Option<front::Program>)> {
+pub fn combine_handed(read: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>)> {
     let text = crate::code_rule_dsl::logic::rr::print(&read.program(&front::Lists::default()).map_err(Error::Plan)?)?;
     let none = added::Added::default();
     let key = texts_digest(&[text.as_str()], &[None], &none);
-    let made = combine_stored(&[text.as_str()], &none, &key, &front::Lists::default(), Some(read))?;
-    let hidden = combine_read(&[text.as_str()], &none, Some(read), None)?;
+    let made = combine_stored_version(&[text.as_str()], &none, &key, &front::Lists::default(), Some(read))?;
+    let hidden = combine_tail(&[text.as_str()], &none, Some(read), None)?;
     let kept = phases::reading_store().and_then(|store| {
         store.settle(&combined::queued(&key));
-        combined::lookup(&store, &key, &front::Lists::default()).ok().flatten()
+        combined::lookup_version(&store, &key, &front::Lists::default()).ok().flatten()
     });
     Ok((made, hidden, kept))
 }
 
-/// `combine_keyed`'s program as a version (decision 0281's path, step 7a): the image made once per combined program
-/// and kept for the process beside the tree (`COMBINED`), so a run that finds its program combined reads no tree.
+/// `combine`, the texts' include graphs' digests given (`Texts::graphs`), each program given the rows `extra` adds
+/// (`added::Added`), with the digest of its texts, messages masked (`masked`, decision 0225 §3), and those rows
+/// (`texts_digest`) it is kept by: a run keys what it prepares by the same digest. `read` is the program the one text
+/// prints from, already lowered (`Texts::read`): the program itself, not its text lowered again. The image is made
+/// once per combined program and kept for the process (`COMBINED`).
 fn combine_version(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, lists: &front::Lists) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, [u8; 32])> {
     let key = texts_digest(masked, graphs, extra);
     if let Some(v) = combined_kept().lock().expect("the combined programs").get(&key).and_then(|k| k.version.clone()) {
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
         return Ok((v, key));
     }
-    // The one text handed is kept under its texts' digest as `combine_keyed` keeps it (decision 0275).
+    // The one text a run was handed the program of: its hidden program kept under the texts' digest too, as a pack's
+    // is (decision 0275): the lowered program is the key, and hiding it again is the step a hit saves. The rows the
+    // run adds (decision 0249) are in the key.
     let one = read.filter(|_| programs.len() == 1);
     let v = combine_stored_version(programs, extra, &key, lists, one)?;
     keep_combined(key, |k| k.version = Some(Arc::clone(&v)));
     Ok((v, key))
 }
 
-/// `combine_linked`'s program as a version, and `combine_read`'s tail run on it (`tail_version`).
+/// The programs linked into one (`combine_linked_as`), and the combine's tail run on it (`tail_version`).
 fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let (v, tail) = combine_linked_as::<link::Versioned>(programs, extra, read, images_used)?;
     // `RERAIL_COMBINE_LINK=check`: the splice (decision 0373) against the programs linked whole.
@@ -890,8 +918,10 @@ fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate
     tail_version(v, &tail)
 }
 
-/// `combine_stored` of the version: the store's entry opened as a version (`combined::lookup_version`), or the
-/// combine's tail run on the version (`combine_tail`) and its image kept as the entry (`combined::record_version`).
+/// The combine kept in the persistent store across processes for a pack of programs (`combined`, decision 0094 §6):
+/// keyed by the texts and checked against the library files the combine read. The store's entry opened as a version
+/// (`combined::lookup_version`), or the combine's tail run on the version (`combine_tail`) and its image kept as the
+/// entry (`combined::record_version`).
 fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8; 32], lists: &front::Lists, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let store = if cfg!(feature = "tape-cache") && (programs.len() > 1 || read.is_some()) && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
         phases::reading_store()
@@ -934,41 +964,6 @@ fn edit_fields(v: &mut Arc<crate::code_rule_dsl::logic::program_image::Version>,
     Ok(())
 }
 
-/// `combine_texts`, kept in the persistent store across processes for a pack of programs (`combined`, decision 0094
-/// §6): keyed by the texts and checked against the library files the combine read.
-fn combine_stored(programs: &[&str], extra: &added::Added, key: &[u8; 32], lists: &front::Lists, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Result<front::Program> {
-    let store = if cfg!(feature = "tape-cache") && (programs.len() > 1 || read.is_some()) && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
-        phases::reading_store()
-    } else {
-        None
-    };
-    let Some(store) = store else { return combine_read(programs, extra, read, None) };
-    // The run's one hold on collection (O108) is taken later; this read and write hold it themselves.
-    let _reading = store.hold_collection().map_err(|e| Error::Plan(e.to_string()))?;
-    let found = {
-        let _lookup = crate::code_rule_dsl::logic::profile::span(|| "the combined program, from the store (decision 0094 §6)".into());
-        store.settle(&combined::queued(key));
-        combined::lookup(&store, key, lists).map_err(|e| Error::Plan(e.to_string()))?
-    };
-    if let Some(program) = found {
-        crate::code_rule_dsl::prof::count("corpus.combined_stored", 1);
-        crate::code_rule_dsl::logic::profile::decision("combined program (decision 0094 §6)", || "read from the store: the same texts, and every library file they read reads the same".into());
-        return Ok(program);
-    }
-    // What a miss combines: the program handed (`combine_read`), or the texts.
-    let mut images = Vec::new();
-    let (program, read) = crate::code_rule_dsl::logic::rr::recording(|| combine_read(programs, extra, read, Some(&mut images)));
-    let program = program?;
-    {
-        let _keep = crate::code_rule_dsl::logic::profile::span(|| "keep the combined program in the store, queued".into());
-        // Made into facts here, written by the store's writer (decisions 0102, 0306); one that does not read back as
-        // written is not kept.
-        combined::record(&store, "the combined program", key, &read, &program, &images);
-    }
-    crate::code_rule_dsl::logic::profile::decision("combined program (decision 0094 §6)", || format!("combined; kept in the store behind the run, with the {} library files it read", read.len()));
-    Ok(program)
-}
-
 /// The digest of `combine`'s texts and the rows it adds: what a combined program is a function of. `graphs`: each
 /// text's include graph's digest (`Texts::graphs`).
 /// `programs` are the texts with their messages masked (`masked`): a finding's message by its placeholders alone, its
@@ -977,7 +972,7 @@ fn combine_stored(programs: &[&str], extra: &added::Added, key: &[u8; 32], lists
 fn texts_digest(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added) -> [u8; 32] {
     use sha2::Digest as _;
     let mut hash = sha2::Sha256::new();
-    // Under another value of a switch `combine_read` reads, the same texts combine to another program (`COMBINING`).
+    // Under another value of a switch `combine_tail` reads, the same texts combine to another program (`COMBINING`).
     // Only those set: an unset switch keeps the key every run has had.
     for switch in COMBINING {
         if let Some(v) = std::env::var_os(switch) {
@@ -1068,29 +1063,6 @@ pub(in crate::code_rule_dsl) struct Cone {
     load: Arc<crate::code_rule_dsl::logic::program_image::Version>,
     reads: BTreeSet<String>,
     rest: Arc<crate::code_rule_dsl::logic::program_image::Version>,
-}
-
-/// The attributes answered on request by a function of the node's document (decision 0174: `value`, `node_text`)
-/// whose answers are not file-local, made eager again: their rounds undone, so the projection makes them for every
-/// node. A function's answer reads the node's document from the chunk's batch, which the cross-file part does not
-/// hold: there `@rr_node_value` answered nothing, without an error, and every reader of `value` saw no value (the
-/// Python pack: `__all__`'s and `exports`' readers ask across modules, so `value` went cross-file, and `1 if a else
-/// 0`'s branches compared the same in RUF034). Until a cross-file answer reads its documents (0174 §6), an attribute a
-/// cross-file reader asks for is eager.
-fn answers_where_documents_are(prog: &mut front::Program) {
-    use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST, undo_round};
-    loop {
-        let local = crate::code_rule_dsl::typing::file_local::split(prog);
-        let Some((round, rel)) = ON_REQUEST.iter().find_map(|round| {
-            round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && prog.decls.contains_key(a.req) && !local.contains(a.rel)).map(|a| (*round, a.rel))
-        }) else {
-            return;
-        };
-        crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || format!("no: its answer is not file-local (a cross-file reader asks), and the cross-file part holds no documents to read; {} eager (decision 0174 §6)", round.iter().map(|a| a.rel).collect::<Vec<_>>().join(", ")));
-        let mut rules = std::mem::take(&mut prog.rules);
-        undo_round(prog, &mut rules, round);
-        prog.rules = rules;
-    }
 }
 
 /// A measurement (dev only, `RERAIL_SPLIT_DUMP=<file>`): each cross-file relation of the split, by how its rules read
@@ -1346,24 +1318,16 @@ fn keep_prepared(key: [u8; 32], p: Arc<Prepared>) {
 
 /// `combine` of one program already read (`rr::read_file`): the program itself, as a run holds it, never printed and
 /// read again (decision 0249).
-pub fn combine_read_program(read: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<front::Program> {
-    combine_read(&[""], &added::Added::default(), Some(read), None)
+pub fn combine_read_program(read: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+    combine_tail(&[""], &added::Added::default(), Some(read), None)
 }
 
-pub fn combine_texts(programs: &[&str]) -> Result<front::Program> {
-    combine_read(programs, &added::Added::default(), None, None)
+/// The programs `programs` (`.rr` text) combined, past the process's and the store's kept programs.
+pub fn combine_texts(programs: &[&str]) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+    combine_tail(programs, &added::Added::default(), None, None)
 }
 
-/// `combine_texts`, the one text's program given already lowered (`read`): it is that program, not the text lowered
-/// again.
-/// `images`: where the aliases of the module and program images the combine read or kept are added (decision 0246
-/// §6), for the combined program's entry to name.
-fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<front::Program> {
-    let (linked, tail) = combine_linked(programs, extra, read, images_used)?;
-    tail_tree(linked, &tail)
-}
-
-/// What `combine_read` does to the linked program, on the whole (decision 0281's path, step 7a-1): one program's
+/// What the combine does to the linked program, on the whole (decision 0281's path, step 7a-1): one program's
 /// relations that are one merged; several programs' projected inputs, helpers retyped, attributes on request, the
 /// bound once where the libraries are held once, the fact spaces, and the relations that are one merged.
 #[derive(Debug)]
@@ -1372,46 +1336,7 @@ enum Tail {
     Many { hide: Option<u32>, policies: Vec<scoping::Policy> },
 }
 
-/// `combine_read`'s tail on the tree (the tools', and a debug build's check of `tail_version`).
-fn tail_tree(mut all: front::Program, tail: &Tail) -> Result<front::Program> {
-    let Tail::Many { hide, policies } = tail else {
-        requests_file_local(&mut all);
-        answers_where_documents_are(&mut all);
-        same_relations(&mut all);
-        return Ok(all);
-    };
-    // core.rr's `kind(n, k)` and `docof(n, d)` are projections of `node` in a part that reads them (`rr::lower`'s
-    // `projections`) and inputs in one that does not: once one part projects them, they are no inputs of the combined
-    // program. Both would give `kind` two domains.
-    let projected: BTreeSet<&str> = all.rules.iter().filter(|r| r.body.len() == 1 && r.body[0].atom().is_some_and(|a| a.rel == "node")).map(|r| r.head.rel.as_str()).filter(|rel| matches!(*rel, "kind" | "docof")).collect();
-    let projected: BTreeSet<String> = projected.into_iter().map(str::to_owned).collect();
-    all.inputs.retain(|rel| !projected.contains(rel));
-    // The helpers' columns, typed by the library's declarations, which each program was lowered without.
-    crate::code_rule_dsl::logic::rr::retype_helpers(&mut all);
-    // The attributes on request over the combined program's readers (decision 0174; undone in each part above).
-    for round in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST {
-        crate::code_rule_dsl::logic::rr::lower::sources_on_request(&mut all, round);
-    }
-    // A request the cross-file part would derive asks within the node's document instead (O-cross-file-answers,
-    // decision 0286); an answer still cross-file after that is made eager (0174 §8b).
-    requests_file_local(&mut all);
-    answers_where_documents_are(&mut all);
-    // The combined program bounded once to the documents it shows (decision 0058 §1, 0089 §4): a library's rules are
-    // the same for every program, so one analysis gives what each program's would.
-    if let Some(bound) = *hide {
-        let _hiding = crate::code_rule_dsl::logic::profile::span(|| format!("bound the combined program to the documents it shows ({} rules; decision 0058)", all.rules.len()));
-        hiding::hide(&mut all, bound);
-    }
-    // The library's relations once for the run, each policy's rules over its own scope's documents (decision 0091).
-    let spacing = crate::code_rule_dsl::logic::profile::span(|| "fact spaces".into());
-    let report = scoping::guard(&mut all, policies).map_err(Error::Plan)?;
-    drop(spacing);
-    fact_spaces_decision(&report);
-    same_relations(&mut all);
-    Ok(all)
-}
-
-/// The fact spaces' decision (decision 0091), of the tree's guard or the version's.
+/// The fact spaces' decision (decision 0091).
 fn fact_spaces_decision(report: &scoping::Report) {
     crate::code_rule_dsl::logic::profile::decision("fact spaces", || {
         let guarded: Vec<String> = report.guarded.iter().map(|(p, n)| format!("{p}: {n}")).collect();
@@ -1427,23 +1352,35 @@ fn fact_spaces_decision(report: &scoping::Report) {
     });
 }
 
-/// `combine_read`'s tail on the version: the same passes, each on the manager.
+/// What the combine does to the linked program, on the version. Of one program, the requests asked where the
+/// documents are, and the relations that are one merged. Of several, first `kind` and `docof` no inputs where a part
+/// projects them, then each step below.
 fn tail_version(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: &Tail) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     use preparation::{combining, hide, on_request, whole};
     let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("combine", v);
     let mut spaces_report = None;
     if let Tail::Many { hide: bound, policies } = tail {
+        // core.rr's `kind(n, k)` and `docof(n, d)` are projections of `node` in a part that reads them (`rr::lower`'s
+        // `projections`) and inputs in one that does not: once one part projects them, they are no inputs of the
+        // combined program. Both would give `kind` two domains.
         p.program(&mut whole::Projected);
+        // The helpers' columns, typed by the library's declarations, which each program was lowered without.
         p.program(&mut whole::RetypeHelpers);
+        // The attributes on request over the combined program's readers (decision 0174; undone in each part).
         for round in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST {
             p.program(&mut on_request::SourcesOnRequest { round });
         }
+        // A request the cross-file part would derive asks within the node's document instead (O-cross-file-answers,
+        // decision 0286); an answer still cross-file after that is made eager (0174 §8b).
         p = requests_where_documents_are(p)?;
+        // The combined program bounded once to the documents it shows (decision 0058 §1, 0089 §4): a library's rules
+        // are the same for every program, so one analysis gives what each program's would.
         if let Some(bound) = *bound {
             let rules = p.current().map_err(Error::Plan)?.size();
             let _hiding = crate::code_rule_dsl::logic::profile::span(|| format!("bound the combined program to the documents it shows ({rules} rules; decision 0058)"));
             p.program(&mut hide::Hide { bound });
         }
+        // The library's relations once for the run, each policy's rules over its own scope's documents (decision 0091).
         let spacing = crate::code_rule_dsl::logic::profile::span(|| "fact spaces".into());
         let mut spaces = combining::FactSpaces::new(policies);
         p.program(&mut spaces);
@@ -1487,9 +1424,10 @@ pub(crate) fn cone_on_version(
     Ok(p.finish()?.0)
 }
 
-/// `requests_file_local` and `answers_where_documents_are` of the version `p` holds, through its tree: neither has a
-/// pass on the manager yet (work queue Q52), so a program that answers an attribute on request is decoded, the two
-/// run on the tree, and its image made again. One that answers none is left as it is.
+/// The requests `sources_on_request` made, narrowed where the split finds them cross-file to the asked node's own
+/// document (`file_local::RequestsFileLocal`): a node's attribute is its document's, answered in its chunk while the
+/// chunk's batch holds the text (O-cross-file-answers). Then the answers still cross-file made eager
+/// (`answers_where_documents_are_version`). A program that answers no attribute on request is left as it is.
 fn requests_where_documents_are<'s>(mut p: crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s>) -> Result<crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s>> {
     use crate::code_rule_dsl::logic::rr::lower::ON_REQUEST;
     let v = std::sync::Arc::clone(p.current().map_err(Error::Plan)?);
@@ -1514,9 +1452,15 @@ fn requests_where_documents_are<'s>(mut p: crate::code_rule_dsl::logic::program_
     Ok(crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("combine", v))
 }
 
-/// `answers_where_documents_are` on the version (decision 0281's path, step 7b): each round whose function's answer
-/// a cross-file reader asks for undone (`link::undone_with` over `undo_round`), by the version's file-local split
-/// (`FileLocal`), to a fixpoint.
+/// The attributes answered on request by a function of the node's document (decision 0174: `value`, `node_text`)
+/// whose answers are not file-local, made eager again: their rounds undone, so the projection makes them for every
+/// node. A function's answer reads the node's document from the chunk's batch, which the cross-file part does not
+/// hold: there `@rr_node_value` answered nothing, without an error, and every reader of `value` saw no value (the
+/// Python pack: `__all__`'s and `exports`' readers ask across modules, so `value` went cross-file, and `1 if a else
+/// 0`'s branches compared the same in RUF034). Until a cross-file answer reads its documents (0174 §6), an attribute a
+/// cross-file reader asks for is eager. Each round whose function's answer a cross-file reader asks for is undone
+/// (`link::undone_with` over `undo_round`), by the version's file-local split (`FileLocal`), to a fixpoint
+/// (decision 0281's path, step 7b).
 fn answers_where_documents_are_version(mut v: Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST, undo_round};
     loop {
@@ -1530,13 +1474,9 @@ fn answers_where_documents_are_version(mut v: Arc<crate::code_rule_dsl::logic::p
     }
 }
 
-/// `combine_read` up to the programs linked into one, and what its tail does to that (`Tail`).
-fn combine_linked(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(front::Program, Tail)> {
-    combine_linked_as::<front::Program>(programs, extra, read, images_used)
-}
-
-/// `combine_linked` over parts of either form (`link::Part`): trees, or versions (`link::Versioned`, the run's,
-/// decision 0281's path, step 7a-2).
+/// The programs `programs` linked into one (`link::Part`: versions, `link::Versioned`, decision 0281's path, step
+/// 7a-2), and what the combine's tail does to that (`Tail`). `images_used`: where the aliases of the module and
+/// program images the combine read or kept are added (decision 0246 §6), for the combined program's entry to name.
 fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(P::Linked, Tail)> {
     combine_linked_spliced::<P>(programs, extra, read, images_used, combine_link_mode() != "whole")
 }
@@ -2025,39 +1965,6 @@ fn combine_spliced<P: link::Part>(
         kept_link::record(store, family, v, &rec);
     }
     Ok(Some((linked, Tail::Many { hide: rec.hide, policies: rec.policies })))
-}
-
-/// The requests `sources_on_request` made, narrowed where the split finds them cross-file to the asked node's own
-/// document (`file_local::requests_file_local`): a node's attribute is its document's, answered in its chunk while
-/// the chunk's batch holds the text (O-cross-file-answers). The tree's form, which a debug build checks the version's
-/// (`file_local::RequestsFileLocal`) against, and `tail_tree`'s.
-fn requests_file_local(prog: &mut crate::code_rule_dsl::logic::front::ast::Program) {
-    if std::env::var("RERAIL_NODE_SOURCES").is_ok_and(|v| v == "eager") {
-        return;
-    }
-    let requests: Vec<&str> = crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).map(|a| a.req).filter(|r| prog.decls.contains_key(*r)).collect();
-    if requests.is_empty() {
-        return;
-    }
-    crate::code_rule_dsl::typing::file_local::requests_file_local(prog, &requests);
-}
-
-/// The relations that are one relation under two names made one, after the transforms that run after `simplify`
-/// (guest hiding's copies, the programs combined, their fact spaces): `simplify`'s congruence again
-/// (`merge_identical`). Hiding copied `rr_ctx…` helpers and copies of copies (`rr_in_annotation_0_annotation_2_wrap`)
-/// whose rules are another's. `RERAIL_SAME=off` keeps them apart.
-fn same_relations(prog: &mut front::Program) {
-    if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
-        return;
-    }
-    let _span = crate::code_rule_dsl::logic::profile::span(|| format!("merge the relations that are one ({} rules)", prog.rules.len()));
-    let rules = prog.rules.len();
-    let (merged, shared, repeated) = merge_and_drop_repeats(prog);
-    if merged > 0 || repeated > 0 {
-        crate::code_rule_dsl::logic::profile::decision("merged after hiding and combining", || {
-            format!("{merged} relations merged into an identical one ({shared} classes shared across programs), {repeated} rules that repeat another dropped; {} rules of {rules} left", prog.rules.len())
-        });
-    }
 }
 
 /// `simplify::merge_identical` between two `drop_repeated_rules`: the relations merged, the classes shared across

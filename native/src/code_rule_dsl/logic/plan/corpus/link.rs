@@ -1,10 +1,9 @@
-//! The programs of a run linked into one (decision 0089, 0091; 0281's path, step 7a-2), over parts that are trees
-//! (`front::Program`: the tools, and a debug build's check) or versions (`Versioned`: the run). `combine_linked` is
-//! written once over `Part`: what it reads of a part is its header (`Part::head`, the program less its rules) and
+//! The programs of a run linked into one (decision 0089, 0091; 0281's path, step 7a-2), over parts that are versions
+//! (`Versioned`). `combine_linked_as` is written over `Part`: what it reads of a part is its header (`Part::head`, the program less its rules) and
 //! its rules' heads and reads; what it edits is the header and which rules are kept (`Part::drop_heads`). The link
 //! copies each part's rules with their relations renamed (`Names`): a version's from its image, with no tree.
 
-use crate::code_rule_dsl::logic::front::{self, Program};
+use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::logic::program_image::build::Rewrite;
 use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut, ProgramFields};
 use crate::code_rule_dsl::logic::program_image::{AtomId, AtomRef, Builder, Version};
@@ -17,7 +16,7 @@ fn plan(e: impl ToString) -> crate::code_rule_dsl::logic::plan::Error {
     crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string())
 }
 
-/// A program of the run, as `combine_linked` reads and edits it.
+/// A program of the run, as `combine_linked_as` reads and edits it.
 pub(super) trait Part: Sized + Send {
     /// The programs linked.
     type Linked;
@@ -25,8 +24,6 @@ pub(super) trait Part: Sized + Send {
     const KEEPS: bool = false;
     /// What the link takes of a part's rules.
     type Rules;
-    /// A part from its tree.
-    fn of_tree(prog: Program) -> Result<Self>;
     /// A part from its version.
     fn of_version(v: Arc<Version>) -> Result<Self>;
     /// A part lowered in its library's scope (`Text::lower_in`), given the run's rows (decision 0249); `found`, its
@@ -302,109 +299,6 @@ impl<F: FieldsMut> Merged<F> {
     }
 }
 
-impl Part for Program {
-    type Linked = Program;
-    type Rules = Vec<front::Rule>;
-    type Fields = Program;
-    fn fields() -> Program {
-        Program::default()
-    }
-    type Header = Program;
-    fn header_fields(h: &Program) -> &dyn ProgramFields {
-        h
-    }
-    fn of_tree(prog: Program) -> Result<Self> {
-        Ok(prog)
-    }
-    fn of_version(v: Arc<Version>) -> Result<Self> {
-        v.program(&Default::default()).map_err(plan)
-    }
-    fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>, extra: &super::added::Added) -> Result<Self> {
-        // The tree's path reads its image itself.
-        let _ = found;
-        let mut prog = read.lower_in(text, library, scoped, store)?.expect("a modular text");
-        extra.add_to(&mut prog);
-        Ok(prog)
-    }
-    fn library(l: &crate::code_rule_dsl::logic::rr::Library) -> Result<Self> {
-        Ok(l.program().clone())
-    }
-    fn head(&self) -> &dyn ProgramFields {
-        self
-    }
-    fn edit_head(&mut self, f: &mut dyn FnMut(&mut dyn FieldsMut)) -> Result<()> {
-        f(self);
-        Ok(())
-    }
-    fn rules(&self) -> Vec<(String, Vec<String>)> {
-        self.rules
-            .iter()
-            .map(|r| {
-                let reads = r
-                    .body
-                    .iter()
-                    .filter_map(|l| match l {
-                        front::Literal::Atom(a) | front::Literal::Agg { atom: a, .. } => Some(a.rel.to_string()),
-                        _ => None,
-                    })
-                    .collect();
-                (r.head.rel.to_string(), reads)
-            })
-            .collect()
-    }
-    fn has_head(&self, rel: &str) -> bool {
-        self.rules.iter().any(|r| r.head.rel == rel)
-    }
-    fn rule_count(&self) -> usize {
-        self.rules.len()
-    }
-    fn shown(&self, heads: &BTreeSet<String>) -> Vec<String> {
-        self.rules.iter().filter(|r| heads.contains(r.head.rel.as_str())).map(|r| format!("{r:?}")).collect()
-    }
-    fn drop_heads(&mut self, gone: &dyn Fn(&str) -> bool) {
-        self.rules.retain(|r| !gone(r.head.rel.as_str()));
-    }
-    fn hide(&mut self, bound: u32) -> Result<()> {
-        super::hiding::hide(self, bound);
-        Ok(())
-    }
-    fn undo_on_request(&mut self) -> Result<()> {
-        crate::code_rule_dsl::logic::rr::lower::undo_on_request(self);
-        Ok(())
-    }
-    fn alone(self) -> Result<Self::Linked> {
-        Ok(self)
-    }
-    fn into_parts(mut self, names: &Names) -> (Program, Self::Rules) {
-        let mut rules = std::mem::take(&mut self.rules);
-        let atom = |a: &mut front::Atom| a.rel = names.rename(&a.rel).into();
-        for rule in &mut rules {
-            atom(&mut rule.head);
-            for l in &mut rule.body {
-                match l {
-                    front::Literal::Atom(a) => atom(a),
-                    front::Literal::Agg { atom: a, .. } => atom(a),
-                    front::Literal::Nearest { kindset, .. } => {
-                        if let Some(shared) = names.set_of.get(kindset) {
-                            *kindset = shared.clone();
-                        }
-                    }
-                    front::Literal::Cmp { .. } | front::Literal::Ast { .. } => {}
-                }
-            }
-        }
-        (self, rules)
-    }
-    fn link(mut header: Program, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<Self::Linked> {
-        for rule in rules.into_iter().flatten() {
-            if !(core.contains(rule.head.rel.as_str()) && header.rules.contains(&rule)) {
-                header.rules.push(rule);
-            }
-        }
-        Ok(header)
-    }
-}
-
 /// A part as a version: its image (a stored one handed on unread), its fields' edits made on it as an overlay
 /// (`edit_head`), and the relations whose rules are dropped. The drops are made on the version where a pass reads
 /// its rules (`settle`), or at the link, which copies the rules kept.
@@ -506,10 +400,6 @@ impl Part for Versioned {
     type Header = Arc<Version>;
     fn header_fields(h: &Arc<Version>) -> &dyn ProgramFields {
         &**h
-    }
-    fn of_tree(prog: Program) -> Result<Self> {
-        let (v, _) = Builder::of_program(&prog).and_then(|b| b.finish()).map_err(plan)?;
-        Ok(Versioned::of(v))
     }
     fn of_version(v: Arc<Version>) -> Result<Self> {
         Ok(Versioned::of(v))
