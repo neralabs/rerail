@@ -5,7 +5,14 @@ edition = "2024"
 publish = false
 description = "C's and C++'s directives as a Bitlex grammar (decision 0327, mode (a) compiled): the directive tape, held to the lean scan's rows."
 
+[features]
+# The words' compiled code as Rust (`rerail-pp-aot`), compiled by rustc, checked against the JIT once
+# (decision 0348, stage 4b). Off by default: `cargo nextest run -p rerail-c-directives --features
+# generated --lib -E 'test(/aot/)'`.
+generated = ["rerail-pp-aot/generated"]
+
 [dependencies]
+rerail-pp-aot = { path = "../pp_aot" }
 rerail-compiler = { path = "../compiler" }
 rerail-tape-format = { path = "../tape_format" }
 bitlex = { path = "../../../tools/bitlex", default-features = false }

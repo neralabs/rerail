@@ -3188,6 +3188,7 @@ dependencies = [
  "rerail-c-pp",
  "rerail-compiler",
  "rerail-metal",
+ "rerail-pp-aot",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -4170,6 +4171,13 @@ version = "0.1.0"
 dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-pp-aot"
+version = "0.1.0"
+dependencies = [
+ "rerail-compiler",
 ]
 
 [[package]]

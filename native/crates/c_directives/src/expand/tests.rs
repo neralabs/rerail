@@ -403,6 +403,62 @@ fn the_compiled_words_are_the_interpreters() {
     assert!(differ.is_empty(), "{} of {} differ:\n{}", differ.len(), same + differ.len(), differ.join("\n"));
 }
 
+/// The compiled words translate to Rust (`clif_rust`, the `generated` feature's source), each
+/// function's nesting shallow enough for rustc. `RERAIL_PP_AOT_DIR` set: written there.
+#[test]
+fn the_words_translate_to_rust() {
+    for (cpp, k) in [(false, 0), (true, 0), (true, 4)] {
+        let src = rerail_compiler::native_cpu_pp::rust_source(program(cpp).unwrap(), k).unwrap_or_else(|e| panic!("cpp {cpp} k {k}: {e}"));
+        let (mut depth, mut deepest) = (0usize, 0usize);
+        for c in src.bytes() {
+            match c {
+                b'{' => {
+                    depth += 1;
+                    deepest = deepest.max(depth);
+                }
+                b'}' => depth -= 1,
+                _ => {}
+            }
+        }
+        eprintln!("cpp {cpp} k {k}: {} KB, {} lines, nesting {deepest}", src.len() >> 10, src.lines().count());
+        if let Ok(dir) = std::env::var("RERAIL_PP_AOT_DIR") {
+            std::fs::write(std::path::Path::new(&dir).join(format!("pp_{}_k{k}.rs", if cpp { "cpp" } else { "c" })), &src).unwrap();
+        }
+    }
+}
+
+/// The words' code built ahead of time (`clif_rust`, the `generated` feature) gives the
+/// interpreter's tokens on every example and TU, for each build; each build is the source the
+/// words translate to now (its fingerprint), so it is the JIT's code compiled by rustc.
+#[cfg(feature = "generated")]
+#[test]
+fn the_aot_words_are_the_interpreters() {
+    let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
+    let mut tus: Vec<(String, Vec<(&str, &[u8])>)> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
+    tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
+    let (mut same, mut differ) = (0, Vec::new());
+    for &(cpp, entry, k, source, (structured, functions)) in rerail_pp_aot::BUILDS {
+        // Each function structured control, as rustc compiles it best (not a loop over a `match`).
+        assert_eq!(structured, functions, "cpp {cpp} k {k}");
+        let p = program(cpp).unwrap();
+        let now = rerail_compiler::native_cpu_pp::rust_source(p, k).unwrap();
+        let fp = now.lines().find_map(|l| l.strip_prefix("pub const SOURCE: u64 = ")).unwrap();
+        assert_eq!(fp.trim_end_matches(';'), format!("{source:#x}"), "cpp {cpp} k {k}: the build is not the words' code now; rebuild with the feature");
+        // SAFETY: `entry` is `rust_source`'s `pp_run` for this program (the fingerprint).
+        let aot = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| unsafe { rerail_compiler::native_cpu_pp::run_aot(entry, w, f, e, b) };
+        for (name, files) in &tus {
+            let want = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &pp_words::run);
+            let got = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &aot);
+            match got {
+                got if got == want => same += 1,
+                got => differ.push(format!("{name} (cpp {cpp}, k {k}): AOT {got:?}\n interpreter {want:?}")),
+            }
+        }
+    }
+    assert!(differ.is_empty(), "{} of {} differ:\n{}", differ.len(), same + differ.len(), differ.join("\n"));
+    eprintln!("{same} runs equal");
+}
+
 /// The corpus's files, each a TU of its own: the compiled words' tokens equal the interpreter's
 /// on every file the grammars read, and the TUs one refuses the other refuses for the same reason.
 #[test]
@@ -499,7 +555,8 @@ fn the_compiled_words_have_their_shape() {
 }
 
 /// The corpus's TUs expanded by the words' interpreter, by the compiled words (each TU at its
-/// depth) and by the lean pass: each's instructions retired, cycles and wall time on this
+/// depth), by the compiled words at depth 0 as Cranelift compiles them and as rustc does (the
+/// `generated` feature: `rerail-pp-aot`, the same IR), and by the lean pass: each's instructions retired, cycles and wall time on this
 /// thread, the runs warmed first (every depth compiled). The words' runs are their runs alone
 /// (the grammars' reads are tier 1's and mode (a)'s); the lean pass's lexes too. A benchmark:
 /// through `scripts/dev/quiet-run`, at `--profile profiling`.
@@ -523,10 +580,12 @@ fn the_corpus_timed() {
         cost.set(Cost { instructions: c.instructions + (i1 - i0), cycles: c.cycles + (c1 - c0), wall: c.wall + (t1 - t0) });
     };
     let (words, jit, lean_pass) = (Cell::new(Cost::default()), Cell::new(Cost::default()), Cell::new(Cost::default()));
+    let (jit0, aot0) = (Cell::new(Cost::default()), Cell::new(Cost::default()));
     // Each timed run: its cycles, the interpreter's and the compiled words', and what it did
-    // (tokens in, `#` at a line's start, tokens out, expansions).
-    let runs: std::cell::RefCell<Vec<[u64; 6]>> = Default::default();
-    let last = Cell::new([0u64; 6]);
+    // (tokens in, `#` at a line's start, tokens out, expansions); then the cycles at depth 0 of
+    // Cranelift's code and of rustc's.
+    let runs: std::cell::RefCell<Vec<[u64; 8]>> = Default::default();
+    let last = Cell::new([0u64; 8]);
     let mut tus = 0;
     for (dir, cpp) in [("c", false), ("cpp", true)] {
         let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
@@ -534,6 +593,8 @@ fn the_corpus_timed() {
         paths.sort();
         let srcs: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).unwrap()).collect();
         let c = Compiled::new();
+        let k0 = rerail_compiler::native_cpu_pp::compile_k(program(cpp).unwrap(), 0).unwrap();
+        let aot = rerail_pp_aot::BUILDS.iter().find(|b| b.0 == cpp && b.2 == 0).map(|b| b.1);
         for pass in 0..2 {
             let on = Cell::new(pass == 1);
             let run_words = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
@@ -544,7 +605,10 @@ fn the_corpus_timed() {
                     let x = r.as_ref().unwrap().as_ref().ok();
                     let toks: usize = f.iter().map(|f| f.toks.len()).sum();
                     let hashes = f.iter().flat_map(|f| f.toks.iter()).filter(|t| t.kind == pp_words::HASH && t.flags & pp_words::BOL != 0).count();
-                    last.set([words.get().cycles - before, 0, toks as u64, hashes as u64, x.map_or(0, |x| x.toks.len() as u64), x.map_or(0, |x| x.exps.len() as u64)]);
+                    let mut l = last.get();
+                    l[0] += words.get().cycles - before;
+                    l[2..6].copy_from_slice(&[toks as u64, hashes as u64, x.map_or(0, |x| x.toks.len() as u64), x.map_or(0, |x| x.exps.len() as u64)]);
+                    last.set(l);
                 } else {
                     r = Some(pp_words::run(w, f, e, b))
                 }
@@ -556,8 +620,8 @@ fn the_corpus_timed() {
                     let before = jit.get().cycles;
                     timed(&jit, &mut || r = Some(c.run(w, f, e, b)));
                     let mut x = last.get();
-                    x[1] = jit.get().cycles - before;
-                    runs.borrow_mut().push(x);
+                    x[1] += jit.get().cycles - before;
+                    last.set(x);
                 } else {
                     r = Some(c.run(w, f, e, b))
                 }
@@ -565,12 +629,34 @@ fn the_corpus_timed() {
             };
             for src in &srcs {
                 let files = [("main.c", src.as_slice())];
+                last.set([0; 8]);
                 let want = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &run_words);
                 if want.is_err() {
                     continue;
                 }
                 let got = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &run_jit);
                 assert_eq!(got, want);
+                // Depth 0, by Cranelift and by rustc (where built).
+                let at0 = |cost: &Cell<Cost>, slot: usize, run: &dyn Fn(&Words, &[File], &pp_words::Env, &Bounds) -> Result<pp_words::Expanded, pp_words::Refused>| {
+                    let g = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &|w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
+                        let mut r = None;
+                        let before = cost.get().cycles;
+                        if on.get() { timed(cost, &mut || r = Some(run(w, f, e, b))) } else { r = Some(run(w, f, e, b)) }
+                        let mut x = last.get();
+                        x[slot] += cost.get().cycles - before;
+                        last.set(x);
+                        r.unwrap()
+                    });
+                    assert_eq!(g, want);
+                };
+                at0(&jit0, 6, &|w, f, e, b| k0.run(w, f, e, b));
+                if let Some(entry) = aot {
+                    // SAFETY: `entry` is `rust_source`'s `pp_run` for this dialect's words.
+                    at0(&aot0, 7, &|w, f, e, b| unsafe { rerail_compiler::native_cpu_pp::run_aot(entry, w, f, e, b) });
+                }
+                if pass == 1 {
+                    runs.borrow_mut().push(last.get());
+                }
                 if pass == 1 {
                     timed(&lean_pass, &mut || {
                         std::hint::black_box(lean(src, cpp));
@@ -580,16 +666,21 @@ fn the_corpus_timed() {
             }
         }
     }
-    for (name, c) in [("the words' interpreter", words.get()), ("the compiled words", jit.get()), ("the lean pass (lexing too)", lean_pass.get())] {
+    let mut rows = vec![("the words' interpreter", words.get()), ("the compiled words", jit.get()), ("depth 0, Cranelift", jit0.get())];
+    if aot0.get().cycles > 0 {
+        rows.push(("depth 0, rustc (same IR)", aot0.get()));
+    }
+    rows.push(("the lean pass (lexing too)", lean_pass.get()));
+    for (name, c) in rows {
         eprintln!("{name:28} {:>8.1} M instructions {:>8.1} M cycles {:>10.3?}", c.instructions as f64 / 1e6, c.cycles as f64 / 1e6, c.wall);
     }
     eprintln!("over {tus} TUs");
     // The compiled words' cycles over the interpreter's, by what the runs do: a bucket's sums.
     let runs = runs.borrow();
-    let ratio = |rs: &[&[u64; 6]]| rs.iter().map(|r| r[1]).sum::<u64>() as f64 / rs.iter().map(|r| r[0]).sum::<u64>().max(1) as f64;
-    let share = |rs: &[&[u64; 6]]| rs.iter().map(|r| r[0]).sum::<u64>() as f64 / runs.iter().map(|r| r[0]).sum::<u64>().max(1) as f64;
+    let ratio = |rs: &[&[u64; 8]], i: usize| rs.iter().map(|r| r[i]).sum::<u64>() as f64 / rs.iter().map(|r| r[0]).sum::<u64>().max(1) as f64;
+    let share = |rs: &[&[u64; 8]]| rs.iter().map(|r| r[0]).sum::<u64>() as f64 / runs.iter().map(|r| r[0]).sum::<u64>().max(1) as f64;
     for (name, key) in [("tokens out a token in", 0usize), ("expansions a token in", 1), ("directives a token in", 2), ("tokens in", 3)] {
-        let v = |r: &[u64; 6]| -> f64 {
+        let v = |r: &[u64; 8]| -> f64 {
             let toks = r[2].max(1) as f64;
             match key {
                 0 => r[4] as f64 / toks,
@@ -598,12 +689,12 @@ fn the_corpus_timed() {
                 _ => r[2] as f64,
             }
         };
-        let mut sorted: Vec<&[u64; 6]> = runs.iter().collect();
+        let mut sorted: Vec<&[u64; 8]> = runs.iter().collect();
         sorted.sort_by(|a, b| v(a).total_cmp(&v(b)));
         let q = sorted.len() / 4;
         let parts: Vec<String> = (0..4).map(|i| {
             let part = &sorted[i * q..if i == 3 { sorted.len() } else { (i + 1) * q }];
-            format!("{:.3}..{:.3}: x{:.2} ({:.0}% of the interpreter's)", v(part[0]), v(part[part.len() - 1]), ratio(part), 100.0 * share(part))
+            format!("{:.3}..{:.3}: x{:.2}, K 0 x{:.2}, rustc x{:.2} ({:.0}% of the interpreter's)", v(part[0]), v(part[part.len() - 1]), ratio(part, 1), ratio(part, 6), ratio(part, 7), 100.0 * share(part))
         }).collect();
         eprintln!("by {name}, quarters: {}", parts.join("; "));
     }

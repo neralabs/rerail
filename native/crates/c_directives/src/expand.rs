@@ -8,9 +8,11 @@ use rerail_compiler::program::Words;
 
 pub const EXPAND: &str = include_str!("../expand/expand.rir");
 
+include!("expand_text.rs");
+
 /// The program's text for C (its `; C++ only` lines left out) or C++.
 pub fn text(cpp: bool) -> String {
-    EXPAND.lines().filter(|l| cpp || !l.trim_end().ends_with("; C++ only")).map(|l| format!("{l}\n")).collect()
+    text_of(EXPAND, cpp)
 }
 
 static C: std::sync::OnceLock<Result<Words, String>> = std::sync::OnceLock::new();

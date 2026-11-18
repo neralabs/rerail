@@ -1,0 +1,15 @@
+[package]
+name = "rerail-pp-aot"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The C preprocessing words built ahead of time: the JIT's Cranelift IR as Rust, compiled by rustc, checked against the JIT and timed beside it (decision 0348)."
+
+[features]
+# The generated code: the build script writes the words' code as Rust (about 3 MB a build) and
+# this crate compiles it. Off by default, so a workspace build leaves it out; turned on by
+# `rerail-c-directives`' `generated` feature.
+generated = ["dep:rerail-compiler"]
+
+[build-dependencies]
+rerail-compiler = { path = "../compiler", optional = true }

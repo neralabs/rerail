@@ -200,6 +200,10 @@ pub struct CompiledPp {
     pub code_bytes: Vec<usize>,
     /// Each word's CLIF instructions in the run's function (its copies' at every depth).
     pub word_insts: Vec<usize>,
+    /// Each function's IR as Cranelift was given it, by its id, where asked for (`rust_source`).
+    pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
+    /// The run's function's id.
+    pub run_id: u32,
 }
 
 impl CompiledPp {
@@ -6709,6 +6713,33 @@ pub fn compile(program: &Words) -> Result<CompiledPp, Error> {
 /// `EXPR` words are functions of their own, called from every depth, so the depths repeat only
 /// the calls' small words. `k` 0: no depth, no function of its own.
 pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
+    compile_kept(program, k, false)
+}
+
+/// The compiled words' IR at depth `k` as Rust (`clif_rust`): the same functions, compiled by
+/// rustc and LLVM ahead of time. Its entry is `pp_run`, run by `run_aot`; it ends with its
+/// fingerprint, `SOURCE`, so a build runs it only where the words translate to it again.
+pub fn rust_source(program: &Words, k: usize) -> Result<String, String> {
+    let c = compile_kept(program, k, true).map_err(|e| format!("{e:?}"))?;
+    let mut one = crate::clif_rust::translate(&c.ir, &[(c.run_id, "pp_run")], &[])?;
+    one.push_str(&format!("/// The depth it was compiled at.\npub const K: usize = {k};\n"));
+    let h = crate::clif_rust::fingerprint(&one);
+    Ok(format!("{one}\n/// This source's fingerprint (`clif_rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"))
+}
+
+/// `pp_words::run`'s work, by an ahead-of-time build of the words (`rust_source`'s `pp_run`).
+///
+/// # Safety
+/// `entry` must be `rust_source`'s `pp_run` for `program`, at any depth.
+pub unsafe fn run_aot(entry: unsafe extern "C" fn(u64) -> u64, program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Result<Expanded, Refused> {
+    // SAFETY: the same ABI: one pointer-sized argument, a 64-bit result.
+    let code = unsafe { std::mem::transmute::<unsafe extern "C" fn(u64) -> u64, unsafe extern "C" fn(*mut Ctx) -> u64>(entry) };
+    // SAFETY: as `CompiledPp::run`'s; the caller vouches the code is the words'.
+    unsafe { pp_words::run_native(program, files, env, bounds, code, REASONS) }
+}
+
+fn compile_kept(program: &Words, k: usize, keep: bool) -> Result<CompiledPp, Error> {
+    let mut ir = Vec::new();
     pp_words::validate(program)?;
     if k > MAX_K {
         return Err(Error::RefusedShape(format!("#if's depth {k} is past {MAX_K}")));
@@ -6773,6 +6804,9 @@ pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
         crate::native_cpu_shape::check(&context.func, &heads, &[]).map_err(|r| Error::RefusedShape(format!("word {pc}: {r:?}")))?;
         clif.push_str(&context.func.display().to_string());
         all_heads.extend(heads.iter().map(|h| h.1));
+        if keep {
+            ir.push((fid.as_u32(), context.func.clone()));
+        }
         module.define_function(fid, &mut context).map_err(|e| Error::RefusedShape(format!("word {pc}: {e:?}")))?;
         sizes.push(context.compiled_code().map_or(0, |c| c.code_info().total_size as usize));
         module.clear_context(&mut context);
@@ -6862,6 +6896,9 @@ pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
     crate::native_cpu_shape::check(&context.func, &heads, &own).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
     clif.push_str(&context.func.display().to_string());
     all_heads.extend(heads.iter().map(|h| h.1));
+    if keep {
+        ir.push((id.as_u32(), context.func.clone()));
+    }
     module.define_function(id, &mut context).map_err(|e| Error::RefusedShape(format!("pp_run: {e:?}")))?;
     sizes.insert(0, context.compiled_code().map_or(0, |c| c.code_info().total_size as usize));
     module.clear_context(&mut context);
@@ -6869,7 +6906,7 @@ pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
     let code = module.get_finalized_function(id);
     // SAFETY: `pp_run` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, unsafe extern "C" fn(*mut Ctx) -> u64>(code) };
-    Ok(CompiledPp { _module: module, entry, clif, heads: all_heads, code_bytes: sizes, word_insts })
+    Ok(CompiledPp { _module: module, entry, clif, heads: all_heads, code_bytes: sizes, word_insts, ir, run_id: id.as_u32() })
 }
 
 #[cfg(test)]
