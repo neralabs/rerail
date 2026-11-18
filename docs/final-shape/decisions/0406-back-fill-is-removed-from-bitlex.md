@@ -28,7 +28,7 @@ A grammar may not write `back_fill`, as a mask or as a number. The parse refuses
 | What the back fill asked | What the grammar writes | The lean parser's form |
 |---|---|---|
 | the next token, or a run of tokens from here | a token mark, `mark K = tokens [after E] A B …`, with `(A \| B)*` for a run | `peek`, `peek_at`, a forward scan |
-| a gap mark that the token after the gap decides | `mark K = E, unless at A …` | `Lexer::asi`'s test of the next token |
+| a gap mark that the token after the gap decides | `mark K = E, before A \| B …`, `mark K = E, unless before A \| B …` | `Lexer::asi`'s test of the next token |
 | the token's own later bytes | a test at the token: `escape "…" at KIND when …`, a mark's `at KIND when …` | the token's reader |
 | what the text is inside: a header, a declaration's run | the tree's rules | the parser's state |
 
@@ -43,9 +43,32 @@ lowering and the interpreter's keep it. The language writes one itself for a reg
 the CPU that meaning is the region's reader, which looks for its closer from its opener: `.rr`
 step 22's tier 1 makes no backward pass.
 
+## A gap mark's next token: `before`
+
+`mark K = E, before A | B …` holds only where the grammar token after its gap is one of the
+choices; `unless before A | B …` only where it is none of them. Kotlin's semicolon was
+`ends_line & ~back_fill(code & rbrace, solid)`: a line break whose next solid byte is not a `}`.
+It is now `mark semi = ends_line, unless before "}", end, settles, ends`, and the `}` after a line
+break is `mark semi_close = close_at, before "}", …`.
+
+The compiler gives the mark a pattern of one element at offset 0, the token it lands on, which
+tier 2 tests as it tests a token mark's run (0129): the interpreter's `token_mark_holds`,
+Cranelift's `token_pattern`, the generated Rust's `pattern_N`. A lazy gap mark (0177) asks its
+gap first, then its pattern. At the stream's end there is no token: a mark the end has holds there
+without its pattern, in every executor. Tier 1 makes nothing for it, and no pass.
+
+Kotlin's step 36 (`36-no-back-fills.bitlex`) starts from step 35 with these two back fills gone:
+the corpus is unchanged, 429 files the same as the lean parser's tapes, 62 refused, 0 differ.
+
 ## Tests
 
 - `syntax::tier2_tests::back_fill_is_refused`: a mask's and a number's `back_fill` are refused
   with the message; with `deprecated back_fill`, parsed.
+- `syntax::tier2_tests::a_mark_is_before_a_token`: `before` and `unless before` parse to the
+  choices and their `~`; `before ~X`, `before end` and two of them on one mark are refused.
+- `ladder_tests::a_gap_mark_is_decided_by_the_token_after`: a line break ends a header unless a
+  `.` comes after it, past a comment; the reference's nodes are the interpreter's and Cranelift's
+  on the grammar's sentences, their mutations and fixed documents. Its grammar has no `settles`,
+  which the reference does not implement (Q220).
 - The tests of the backward pass (`remade_tests`, `gating_tests`, `compile_tests`' aligned
   ones, bitlex's number tests) say `deprecated back_fill`: they test the IR, which keeps it.

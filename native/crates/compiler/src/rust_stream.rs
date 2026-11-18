@@ -1620,9 +1620,12 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
             let k = u32::from(order);
             let here = if (k as usize) < x.in_code {
                 // In the record, folded into `live` at the token (the end's marks too).
+                // A lazy gap mark with a pattern (`before`, decision 0406): its gap, then its token.
+                let lazy = x.lazy.iter().any(|&(m, _)| u32::from(m) == k);
                 match pattern {
+                    Some(i) if lazy => format!("(s.at_end || (s.lazy_{k}() && s.pattern_{i}()))"),
                     Some(i) => format!("(s.at_end || s.pattern_{i}())"),
-                    None if x.lazy.iter().any(|&(m, _)| u32::from(m) == k) => format!("(s.at_end || s.lazy_{k}())"),
+                    None if lazy => format!("(s.at_end || s.lazy_{k}())"),
                     None => "true".into(),
                 }
             } else {

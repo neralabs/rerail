@@ -1817,3 +1817,15 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   bundle as the seed): the encoded answers are one entry. No map of its own (0092, 0103).
 - **Done when**: a second process's compile of an unchanged or edited grammar makes no proofs it
   made before, measured.
+
+### Q220. Bitlex's reference does not implement a mark's `, settles`
+
+- **What**: `, settles` (a mark whose arm keeps the extras before its bit in the nodes it closes)
+  is parsed but read nowhere in `tools/bitlex` (`eval.rs`, `tree.rs`): the reference closes a node
+  before its trailing extras, where the compiled parser keeps them in it. Found by
+  `ladder_tests::a_gap_mark_is_decided_by_the_token_after` (0406) with a settling mark:
+  `package Z// c` then line breaks at the file's end, the header 8..17 in the reference and 8..24
+  in the interpreter and Cranelift. Kotlin's grammar is checked against the lean parser's tapes,
+  which agree with the compiled side, so nothing caught it.
+- **Done when**: the reference places a settling mark's extras as tier 2 does, and the test's
+  grammar says `settles` again.

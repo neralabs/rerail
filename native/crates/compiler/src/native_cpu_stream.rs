@@ -4359,8 +4359,15 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             }
                             f.switch_to_block(holds);
                         }
-                        // A token mark (decision 0129): its tokens follow, from the records.
+                        // A token mark (decision 0129): its tokens follow, from the records. At the
+                        // stream's end none: a mark the end has (a gap mark's `before`, decision
+                        // 0406) holds there, as its `Live` bit says.
                         if let Some(i) = pattern {
+                            let follows = f.create_block();
+                            let ask = f.create_block();
+                            let at_end = mget(&mut f, Mem::AtEnd);
+                            f.ins().brif(at_end, follows, &[], ask, &[]);
+                            f.switch_to_block(ask);
                             let m = native.token_marks[usize::from(i)].clone();
                             let bit = native.extras.first().map(|e| e.0);
                             let r = if outlined {
@@ -4385,7 +4392,6 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             } else {
                                 token_pattern(&mut f, &env, &m, bit, &mut heads)
                             };
-                            let follows = f.create_block();
                             f.ins().brif(r, follows, &[], skip, &[]);
                             f.switch_to_block(follows);
                         }

@@ -928,8 +928,10 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
         let rising = i == 0 || program.token_marks[i - 1].order < m.order;
         let offsets = m.elems.windows(2).all(|w| w[0].offset < w[1].offset) && m.elems.iter().any(|e| e.offset == 0) && m.elems.first().is_some_and(|e| e.offset >= -1);
         // A `not` or an `end` only after the mark's token, but for the token before's `not`,
-        // which has an `end` (no token before holds); an `end` only last after the mark's.
-        let after = m.elems.iter().all(|e| (!e.not && !e.end) || e.offset > 0 || (e.offset == -1 && e.not && e.end)) && m.elems.iter().filter(|e| e.offset >= 0).rev().skip(1).all(|e| !e.end);
+        // which has an `end` (no token before holds), and the mark's own token's `not`, a gap
+        // mark's `unless before` (decision 0406: its mask gives the token's bytes); an `end`
+        // only last after the mark's.
+        let after = m.elems.iter().all(|e| (!e.not && !e.end) || e.offset > 0 || (e.offset == 0 && !e.end) || (e.offset == -1 && e.not && e.end)) && m.elems.iter().filter(|e| e.offset >= 0).rev().skip(1).all(|e| !e.end);
         let offsets = offsets && after;
         let words = m.elems.iter().flat_map(|e| &e.words).all(|&s| usize::from(s) < program.strings.len());
         // A grammar with no extras has nothing to skip between the mark's tokens.

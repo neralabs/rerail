@@ -693,6 +693,14 @@ fn corpus() {
 fn show() {
     let c = compiled().expect("compiles");
     eprintln!("tier 2: {} words", c.program.words.len());
+    // `RERAIL_KOTLIN_WORDS=PC`: tier 2's words from 20 lines before its to 20 after.
+    if let Ok(pc) = std::env::var("RERAIL_KOTLIN_WORDS") {
+        let lines: Vec<&str> = c.words.lines().collect();
+        let at = lines.iter().position(|l| l.trim_start().starts_with(&format!("{pc:0>4}"))).unwrap_or(0);
+        for l in &lines[at.saturating_sub(20)..(at + 20).min(lines.len())] {
+            eprintln!("  {l}");
+        }
+    }
     for p in std::env::var("RERAIL_KOTLIN_SHOW").expect("set RERAIL_KOTLIN_SHOW").split(':') {
         let text = std::fs::read_to_string(p).expect("a file");
         let lean = lean_text(&text).unwrap_or_else(|| "refused".into());

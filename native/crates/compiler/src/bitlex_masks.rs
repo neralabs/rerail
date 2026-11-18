@@ -356,6 +356,9 @@ pub struct Lowering {
     /// The token marks (`mark K = tokens …`, decision 0129), by their index in `marks`: the token
     /// before, then the run. Tier 1 makes no mask for them.
     pub token_marks: HashMap<usize, (Vec<TokenElem>, Vec<Vec<TokenElem>>)>,
+    /// A mark's `before` (decision 0406), by its index in `marks`: what the token it is before
+    /// must be, tested by tier 2 at that token as a token mark's run is (`Mark::tokens`).
+    pub mark_next: HashMap<usize, Vec<TokenElem>>,
     /// A mark's `unless after` words, by its index in `marks` (`Records::unless`).
     pub unless: HashMap<usize, Vec<Vec<u8>>>,
     /// The marks with an `else escape`, by their index in `marks` (`Records::unplaced`).
@@ -481,6 +484,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         marks: Vec::new(),
         mark_exprs: Vec::new(),
         token_marks: HashMap::default(),
+        mark_next: HashMap::default(),
         unless: HashMap::default(),
         unplaced: Vec::new(),
         settles: Vec::new(),
@@ -939,7 +943,10 @@ impl Lowering {
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
                 Stmt::Hidden(kinds) => self.hidden.extend(kinds.iter().cloned()),
-                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends } => {
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next } => {
+                    if let Some(next) = next {
+                        self.mark_next.insert(self.marks.len(), next.clone());
+                    }
                     if *settles {
                         self.settles.push(self.marks.len());
                     }
@@ -3412,7 +3419,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             eprintln!("mark {k} {kind}: on starts {on_starts}, word {:?}, {} first bytes", word.as_ref().map(|w| String::from_utf8_lossy(w).into_owned()), first.iter().map(|w| w.count_ones()).sum::<u32>());
         }
         let unless = low.unless.get(&k).cloned().unwrap_or_default();
-        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: None, unless, settle: None, ends: low.ends.contains(&k) });
+        // `before`: a run of one token, the one the mark is before, tested by tier 2 there.
+        let tokens = low.mark_next.get(&k).map(|next| (Vec::new(), vec![next.clone()]));
+        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens, unless, settle: None, ends: low.ends.contains(&k) });
         if low.settles.contains(&k) {
             // From each bit up to the next grammar token's start: an extra that starts there is
             // after the mark's bit. Its mask after the marks' (below).
