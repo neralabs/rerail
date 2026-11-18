@@ -1703,7 +1703,9 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
                 let j = f.block_params(head)[0];
                 let first = f.ins().icmp_imm(IntCC::Equal, j, 0);
                 let on = f.create_block();
-                f.ins().brif(first, no, &[], on, &[]);
+                // No record before: an `end` element (`after ~E`) holds there, any other fails.
+                let held = f.create_block();
+                f.ins().brif(first, if el.end { held } else { no }, &[], on, &[]);
                 f.switch_to_block(on);
                 let j = f.ins().iadd_imm(j, -1);
                 let c = code_at(f, j);
@@ -1712,6 +1714,8 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
                 f.ins().brif(x, head, &[BlockArg::from(j)], found, &[]);
                 f.switch_to_block(found);
                 test(f, c, el);
+                f.ins().jump(held, &[]);
+                f.switch_to_block(held);
             }
             _ => {
                 let head = f.create_block();

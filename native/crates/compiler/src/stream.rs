@@ -927,8 +927,9 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
     for (i, m) in program.token_marks.iter().enumerate() {
         let rising = i == 0 || program.token_marks[i - 1].order < m.order;
         let offsets = m.elems.windows(2).all(|w| w[0].offset < w[1].offset) && m.elems.iter().any(|e| e.offset == 0) && m.elems.first().is_some_and(|e| e.offset >= -1);
-        // A `not` or an `end` only after the mark's token; an `end` only last.
-        let after = m.elems.iter().all(|e| (!e.not && !e.end) || e.offset > 0) && m.elems.iter().rev().skip(1).all(|e| !e.end);
+        // A `not` or an `end` only after the mark's token, but for the token before's `not`,
+        // which has an `end` (no token before holds); an `end` only last after the mark's.
+        let after = m.elems.iter().all(|e| (!e.not && !e.end) || e.offset > 0 || (e.offset == -1 && e.not && e.end)) && m.elems.iter().filter(|e| e.offset >= 0).rev().skip(1).all(|e| !e.end);
         let offsets = offsets && after;
         let words = m.elems.iter().flat_map(|e| &e.words).all(|&s| usize::from(s) < program.strings.len());
         // A grammar with no extras has nothing to skip between the mark's tokens.

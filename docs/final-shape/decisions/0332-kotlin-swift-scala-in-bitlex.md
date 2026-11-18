@@ -576,6 +576,298 @@ parameters (`val <T> List<T>.second`).
 
 Corpus: 355 the same (step 21: 327), 136 refused, 0 differ.
 
+## Kotlin, step 23 (`23-types-and-aliases.bitlex`)
+
+```kotlin
+fun f(s: (() -> Int)?) = 1
+val l = mutableListOf<(Int) -> Unit>()
+typealias O = (Int) -> Unit
+@Entity(primaryKeys = [A, B])
+class A
+@Inject
+constructor(private val b: B)
+```
+
+- A parenthesized type (`parenthesized_type`, nullable over it) where a `:` is before its
+  `(` and another `(` after it. Its mark shares `generic`'s: no type starts with `<`. A
+  function type whose first parameter is a function type is refused there.
+- `(` and `)` are type bytes for `generic`, so type arguments hold function types.
+- `typealias`, with modifiers and type parameters (`type_alias`).
+- A collection literal is a primary expression (tree-sitter-kotlin reads it anywhere).
+- A line of a class's header that starts with an annotation (no arguments) before its
+  `constructor` goes on the line before: the primary constructor's modifiers.
+
+Still refused: `fun interface` (its `fun` opens a function too), `suspend` function types,
+an annotated expression (`@Suppress("x") if …`), `constructor` and `by` as names.
+
+Corpus: 375 the same (step 22: 355), 116 refused, 0 differ.
+
+## Kotlin, step 24 (`24-strings-in-templates.bitlex`)
+
+```kotlin
+val v = "${System.getProperty("user.name")}"
+val p = "${name.replace('.', '/')}/a"
+```
+
+A template's code ends at the first `}` on its line, found from the bytes before the regions.
+A string or a character in the code is a region, as in any code. Where that `}` is inside one
+(`"${f("}")}"`), it opens no tail (`o_tail`), and the file is refused. A brace, a template, a
+comment or a line break in the code is still refused.
+
+Corpus: 390 the same (step 23: 375), 101 refused, 0 differ.
+
+## Kotlin, step 25 (`25-class-delegates.bitlex`)
+
+```kotlin
+class A(d: C) : C by d {
+}
+```
+
+The lean parser ends a delegate's expression before the body's `{`, where a name and a `{` are
+a call with a trailing lambda. That `{`, after a `by` in a class's or an object's header, has
+the mark a class body takes (`class_body = [dotted] '{' …`). The mark ends the expression's
+loop, as `trail` ends a list's. It shares `dotted`: no expression's loop takes a `{` that carries it.
+
+The first corpus run read an object literal's delegate (`object : I by itr {`) as a call: the
+file differed. The escape had kept it out for the class delegate it held too. The mark now
+holds in an object's header as well.
+
+Corpus: 391 the same (step 24: 390), 100 refused, 0 differ. The six other files the escape
+refused meet other refusals further on.
+
+## Kotlin, step 26 (`26-variance-accessors.bitlex`)
+
+```kotlin
+fun f(a: Array<out Any>) {}
+class B<in T>
+fun f() {
+    get(i).g(o)
+    set.add(1)
+}
+```
+
+- `out` is a soft keyword: a variance (`variance_modifier`) where a type projection or a type
+  parameter starts, and elsewhere a name the lean parser reads as a plain `simple_identifier`.
+  Types don't take it as a name, so `out` opens one choice only.
+- `get` or `set` at a line's start is an accessor, unless a `.` follows it, or (for `get`) an
+  argument does: then it is a call or a name, as in a function's body.
+- `class` after `::` (`this::class`) is no class's keyword. It began a class header, and
+  step 25's body mark then fell on a later `by lazy {`.
+
+Still refused: a `when` entry's trailing comma. The change broke a `when` entry starting with
+`in`, so it was taken out of the step. The cause was a slip in the edit, not the mark: the rule
+lost its body. Step 29 reads it.
+
+Corpus: 397 the same (step 25: 391), 94 refused, 0 differ.
+
+## Kotlin, step 27 (`27-delegates-and-names.bitlex`)
+
+```kotlin
+fun f() {
+    val state by viewModel.uiState.collectAsState()
+}
+fun g(
+    set: AttributeSet,
+) {}
+```
+
+- A declaration's receiver run (`decl_run`) ends after a `by`. The delegate's dots were taken
+  for a receiver's: `state by viewModel.uiState` read as a receiver type.
+- The accessor mark holds at no `get` or `set` before a `:` (a parameter's name).
+
+The stop is the byte after `by` (`prev(by_w, 2)`), not its `b`. With `by_w` itself the stop
+looks two bytes ahead, and the CPU's tier 1 then lost the receiver's mark wherever the run
+crossed a word: 16 files were refused that the interpreter read. That is open below (Q198).
+
+Still refused: a generic call on `?:`'s right side (`m ?: f<M>()!!`).
+
+Corpus: 400 the same (step 26: 397), 91 refused, 0 differ.
+
+## Kotlin, step 28 (`28-function-types.bitlex`)
+
+```kotlin
+val h: HTML.() -> Unit = {}
+fun f(w: A.B.() -> Unit, v: suspend () -> T) {}
+```
+
+- A type's last `.` before a `(` ends a function type's receiver (`ft_dot`, in `dotted`): no
+  expression has `.(`. Back from it over names, dots and type arguments without blanks, the
+  type's first name takes `generic` (`frecv`). The type is then a `function_type` whose
+  `receiver_type` holds the receiver's `user_type`. A receiver with blanks in its type arguments
+  (`Map<K, V>.()`) puts the mark inside them, where no rule takes it: refused.
+- The receiver's first name is no soft word. `suspend` after a `:` and before a `(` takes
+  `generic` too and is the function type's `type_modifiers`. One choice opens on both.
+- The alternatives after `generic` are one group, `generic (… | … | …)`: a mark is a token of
+  its own, so three alternatives that each start with it were not LL(1). The compiler's message
+  now says when the token it names is a mark.
+
+Corpus: 405 the same (step 27: 400), 86 refused, 0 differ.
+
+## Kotlin, step 29 (`29-annotated-expressions.bitlex`)
+
+```kotlin
+fun f() {
+    @Suppress("DEPRECATION")
+    if (a) b()
+    when (x) {
+        B,
+        C,
+        -> d
+    }
+}
+```
+
+- An `@` whose annotation's `)` comes just before an `if` or a `when` takes `generic`
+  (`ann_expr`). Its annotation then begins a `prefix_expression` over the `if` or `when`, as
+  in the lean parser's tree. An unmarked `@` begins a declaration's modifiers, so
+  `@Suppress("D")` before `val` is unchanged. That annotation's arguments are not optional
+  (`args_annotation`), since a `(` after its name could also begin the operand. An annotation
+  without arguments before an expression is still refused.
+- A `when` entry's trailing `,` before `->` takes `trail` (`"->"` added to its tokens). It is a
+  leaf in its own choice (`when_trail`), because `when_entry`'s other `,`s are implied.
+
+Corpus: 409 the same (step 28: 405), 82 refused, 0 differ.
+
+## Kotlin, step 30 (`30-swallowed-comments.bitlex`)
+
+```kotlin
+abstract class A {
+    val x = 1
+    /* c */
+    abstract fun f()
+}
+```
+
+- The lean lexer's `Asi::Swallow` case: a block comment that starts a line after a statement's
+  line, before a word starting with `a`, `e` or `w` that does not go on the line. The scanner
+  folds the comment into the semicolon it inserts, so the lean tree has no comment there. Here
+  the comment's bytes are skipped (`skip swallowed`; several `skip`s are ORed) and its token is
+  no start (`swallow_open`).
+- The swallow is read only where a semicolon may come: after a line that ends with a word, `)`,
+  `]`, `}` or a quote (`ok_lf`), and that is no header's line (`hdr_gap`). A header holds its
+  semicolon, so the lean parser's `package_header` ends at the next word. Before `else` it is
+  escaped, since a `when` entry holds its line break too. After a `{` no semicolon may come, and
+  the comment is an ordinary extra. Other line ends (`,`, an operator) are still refused.
+- A pitfall found here: `fill(a, stop)` holds at its start even where the start is a stop byte.
+  So "the last solid byte before the line break is X" is `fill(prev(X) & ~solid, solid)`.
+  Without the `& ~solid`, a line ending `),` passed as one ending `)`. That gave one differ in
+  the corpus, inside an argument list.
+
+Corpus: 414 the same (step 29: 409), 77 refused, 0 differ. The lost comments' open item (below)
+now covers the zero-width case only.
+
+## Kotlin, step 31 (`31-soft-templates.bitlex`)
+
+```kotlin
+val s = "a $value b"
+```
+
+The lean parser gives a soft keyword after a template's `$` a leaf of its own, named after the
+word, inside the `interpolated_identifier`. The token kind `interpolated_identifier` takes the
+soft keywords (`keywords interpolated_identifier { } soft { … }`, the 44 words the escape
+named), and the tree retags one to the node (`soft_interp`). A word with more after it
+(`$values`) is a plain identifier, as before.
+
+Corpus: 417 the same (step 30: 414), 74 refused, 0 differ.
+
+## Kotlin, step 32 (`32-constructor-lines.bitlex`)
+
+```kotlin
+class A {
+    val x = 1
+    private constructor(x: Int) : this()
+}
+class B
+internal constructor(x: Int)
+```
+
+- `constructor` after modifiers at a line's start is escaped only in a class's header now. In a
+  class's body the lean parser reads a secondary constructor, as the grammar did already.
+- In a header, a line of visibility modifiers (`vis_w`) or argument-less annotations before
+  `constructor` goes on the line (`ctor_ann`): the primary constructor's modifiers.
+- A class's header, the run back from `constructor`, and the line's modifiers (`line_mod`) stop
+  at a declaration's keyword (`head_stop`). Before this, a header without a body ran on into the
+  next declaration: `class A` then `internal class B private constructor(…)`.
+
+Corpus: 418 the same (step 31: 417), 73 refused, 0 differ.
+
+## Kotlin, step 33 (`33-names-after-dots.bitlex`)
+
+```kotlin
+fun f(limit: W) = limit.value
+
+internal operator fun g() {}
+```
+
+`decl_mod` is now `tokens after ~("." | "?." | "::") …`. After a `.` a modifier word is a
+navigation's name, even when a declaration starts on a later line.
+
+A token mark's `after` could not take a `~` (item 28 below), so it can now. `after ~E` holds
+where the token before is none of `E`'s, or where no token comes before: a modifier may be
+the file's first token. The compiler gives that element an `end`, meaning no record before
+holds. Five places implement it: Bitlex's syntax check and evaluator, the validator, and the
+interpreter's, Cranelift's and the generated Rust's token-mark tests.
+
+Corpus: 420 the same (step 32: 418), 71 refused, 0 differ.
+
+## Kotlin, step 34 (`34-soft-names.bitlex`)
+
+```kotlin
+fun f(constructor: C) = g(by = "foo")
+val x = when (c) {
+    !in A..B -> 1
+    !is C -> 2
+    else -> 3
+}
+```
+
+- `constructor` and `by` are soft words, as in tree-sitter-kotlin. As a name, `constructor` is
+  a `simple_identifier` holding its own leaf, as the other soft words are, and `by` is a plain
+  one. In the places where the keyword is read, no name can come.
+- A `!` that starts a line before `in` or `is` takes `named` (`bang_test`): a `when` entry's
+  negated test. Both tests start with the `!`, so they are one node (`neg_test`): it opens as
+  a `range_test` and is retagged a `type_test` at an `is`.
+
+Still refused: `fun interface`. The lean parser keeps a `fun` leaf in its `class_declaration`,
+but here a function's `fun` is implied. The `interface` after it comes too late to keep it, and a
+`relabel` after an implied leaf refuses (an implied leaf is no node it acts on).
+
+Corpus: 423 the same (step 33: 420), 68 refused, 0 differ.
+
+## Kotlin, step 35 (`35-raw-templates.bitlex`)
+
+```kotlin
+val x = """a ${b} "c" $d"""
+```
+
+A template in a raw string needs the regions to go back, after the template's `}`, to the kind
+of string the template interrupted: a raw string reads its quotes as content, and closes at
+`"""`, not at `"`. Two additions to `regions` (compiler item 29) make that:
+
+```text
+rstr  = dq3 .. rclose bytes 3 or t_dollar
+str   = dq & ~dq3 .. dq_close | t_dollar
+tail  = t_close .. dq_close | t_dollar after str chr tick
+rtail = t_close .. rclose bytes 3 or t_dollar after rstr
+```
+
+- `or C2 bytes M`: a second closer with its own length. A raw string's `"""` is three bytes
+  and a template's `$` one.
+- `after K …`: the kind opens only where the last region opened before, of the kinds with no
+  `after`, is one of `K …`. A `}` after a raw string's template opens a raw tail. After a
+  string's template, it opens a tail, also when the template's code holds a string, a
+  character or a backtick name (`"${f('x')}"`).
+
+A raw tail is read as a raw string's bytes are (`rbody`), so a run that reaches a quote is a
+part of its own, as in the lean tree. Its closers are the tail reader's: `'"'` of three bytes
+at a `"""`, one at a tail's `"`. `string_literal` takes templates after a raw string's `'""'`.
+
+Refused: a string, a character or a backtick name in a raw string's template's code (the last
+plain region would be that one, and its `}` would open a tail), and a raw string in a
+template's code.
+
+Corpus: 429 the same (step 34: 423), 62 refused, 0 differ. The 9 files refused for a template in a raw string are read, or stop at a refusal of another kind.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
@@ -749,6 +1041,26 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
     region's opener is from the bytes, and its code is unchanged. The test
     `raw_strings_are_the_lean_parsers` puts strings at those bytes.
 
+28. **A token mark's `after` takes a `~`** (step 33). `after ~E`: the token before is none of
+    `E`'s, or there is none. The element at offset -1 then has `end`, and every implementation
+    holds it with no record before: Bitlex's evaluator, `stream::token_mark_holds` (as it
+    was), the Cranelift stream's pattern, and `rust_stream`'s. The validator allows `not` with
+    `end` at -1 only. An `end` stays last among the elements after the mark's token.
+29. **A region's second closer, and a kind that goes back to another** (step 35). In
+    `regions`, `K = O .. C bytes N or C2 bytes M`: the region closes at either, and one of
+    `C2` hides `M` bytes. In the walk (`WalkKind::or`), `closer` is `C | C2` and the bytes
+    past a closer at `c` are `M` where `C2` has a bit at `c`. In the rounds, they come from
+    the closer's first byte, `c = prev(f) & ~f`: `prev(c & ~C2, 1..N-1) | prev(c & C2,
+    1..M-1)`. `K = … after A …` (`WalkKind::after`, a mask of kinds) opens only where the last
+    region opened before, of the kinds with no `after`, is an `A`. In the rounds that is
+    `o_K = O & ~H & prev(fill(o_A | …, o_others))`, with the plain kinds made first so it reads
+    their openers. The walks keep that kind: the interpreter's in a variable, the CPU's in the
+    region loop's second parameter and in four bits of its state past the flags
+    (`WalkState::width`). A kind whose condition fails takes no opener: it can change only at
+    an opening, which ends the search. Bitlex's evaluator runs the rounds (`Regions::body`);
+    Metal runs the rounds too. A reader in parts counts its own closers' bytes by
+    `Region::closer_last`. A plain `read` of a region with `or` is refused.
+
 ## Found on the way
 
 (Work queue numbers as on the hub; written as Q30, Q31 and Q32 on Swift-Kotlin-Scala-support.)
@@ -757,6 +1069,24 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
   theirs to fix.
 - Q124: done in this decision (the settling mark).
 - Q126: a token with no end rule ends at different bytes in the CPU tier 1 and in the interpreter.
+- Q198 (open; Q33 where it was written, Q186 on Swift-Kotlin-Scala-support): the CPU's tier 1 gets a `fill` wrong where its stop is a delayed output (one that
+  looks ahead) and the fill crosses a word. `decl_stop = … | by_w` in step 27 lost the
+  `dotted` mark at `fun ValueMapperBuilder.forKotlin()` (bytes 2165 to 2192, across 2176) in
+  pkl's `ConfigExtensions.kt`; the interpreter's mark is right. `tests::tier1_records` over
+  step 27's lexer with `by_w` as the stop reproduces it. The ladder uses an undelayed stop.
+  It still reproduces with every mark but `dotted` taken out and `dotted = recv_at`. It does not
+  reproduce in a small lexer with the same receiver masks over plain comment and string regions,
+  even with `code` or `by_w` made to look up to 30 bytes ahead. So it needs something more of
+  step 27's lexer, perhaps its token loop running in parts.
+
+- Open: the lean parser's lost block comments (26 corpus files at step 29, three escapes; step
+  30 reads the swallowed ones after a statement's line). After a line
+  break, before a token that goes on the line, it keeps the comment as a zero-width
+  `multiline_comment` at the next token's start, inside that token's node. Before a word with
+  `a`, `e` or `w` (`Asi::Swallow`), the comment is gone, and the statement ends at the word's
+  start. Both need tier 2 to write what the bytes don't give: a zero-width extra at a mark's
+  position, and a node that ends at a mark. A grammar step that only dropped the comment's
+  token was tried and withdrawn.
   The grammar gives its punctuation a `pair` rule, as rr's does.
 
 ## Next

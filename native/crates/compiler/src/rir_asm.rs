@@ -603,12 +603,13 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 }
                 program.rounds.push(group);
             } else if first == "region" {
-                // `block N region G %opener %closer %open %fill B [outside] [else %e M]`: a
+                // `block N region G %opener %closer %open %fill B [outside] [else %e M] [or %c M]
+                // [after MASK]`: a
                 // kind of a walk of rounds group G (`crate::block::Walk`), kinds in order.
                 let group: u16 = line.number("")?;
                 let (opener, closer, open, fill): (u16, u16, u16, u16) = (line.number("%")?, line.number("%")?, line.number("%")?, line.number("%")?);
                 let bytes: u8 = line.number("")?;
-                let (mut outside, mut empty) = (false, None);
+                let (mut outside, mut empty, mut or, mut after) = (false, None, None, 0u16);
                 while let Some(w) = line.peek_word() {
                     if w == "outside" {
                         line.word()?;
@@ -616,11 +617,17 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     } else if w == "else" {
                         line.word()?;
                         empty = Some((line.number("%")?, line.number("")?));
+                    } else if w == "or" {
+                        line.word()?;
+                        or = Some((line.number("%")?, line.number("")?));
+                    } else if w == "after" {
+                        line.word()?;
+                        after = line.number("")?;
                     } else {
-                        return Err(format!("block {at} region: `outside` or `else %e M`, not {w}"));
+                        return Err(format!("block {at} region: `outside`, `else %e M`, `or %c M` or `after MASK`, not {w}"));
                     }
                 }
-                let kind = crate::block::WalkKind { opener, closer, open, fill, bytes, outside, empty };
+                let kind = crate::block::WalkKind { opener, closer, open, fill, bytes, outside, empty, or, after };
                 match program.walks.last_mut() {
                     Some(w) if w.group == group => w.kinds.push(kind),
                     _ => {

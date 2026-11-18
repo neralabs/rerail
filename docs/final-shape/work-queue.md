@@ -2964,6 +2964,7 @@ always a refusal.
   changed the compiler since the base only by a wasm-only builder split (39a3a3cde), so the merge did not cause it.
   Theirs to settle, their area.
 - **Done when**: the test passes on their branch, and is merged in.
+- **Done** (2026-11-18, at the merge ea7dd9899 of Parser-generators-final-shape): passes on the merged tree.
 
 ### Q126. (Q32 on Swift-Kotlin-Scala-support) The CPU token loop and the interpreter disagree on a token with no end rule
 
@@ -4079,3 +4080,41 @@ The test is ignored with this item as its reason until then.
 
 - **Done when**: the 14 equal the interpreter (`edge_values` refusing where it cannot bound, or the edge part
   remaking the missed values), and the test runs again, unignored.
+
+### Q198. (Q33 on Swift-Kotlin-Scala-support, then its Q186) The CPU's tier 1 loses a fill's bit where its stop is a delayed output and the fill crosses a word
+
+- **Found** (2026-11-17, Kotlin's Bitlex ladder, step 27, decision 0332): `decl_stop = … | by_w` lost the `dotted`
+  mark at `fun ValueMapperBuilder.forKotlin()` (bytes 2165 to 2192, across 2176) in pkl's `ConfigExtensions.kt`;
+  the interpreter's mark is right. `tests::tier1_records` over step 27's lexer with `by_w` as the stop reproduces
+  it; a small lexer with the same masks does not. The ladder uses an undelayed stop (`prev(by_w, 2)`).
+- **Done when**: the CPU's records equal the interpreter's with the delayed stop, and a test holds it.
+
+### Q199. (Q196 on Swift-Kotlin-Scala-support) Tier 1 on the CPU differs from its interpreter on short files: `aligned` by a pattern, and `.rr` step 22
+
+- **Found** (2026-11-18, at the merge of Go-C-and-C-support into Swift-Kotlin-Scala-support):
+  `corpus_cranelift_equals_the_interpreter`: 14 generated grammars, every one with an `aligned(…)`
+  and every failing input under 64 bytes (one edge block). The smallest case: `mask m2 =
+  aligned(span(x, 3), 2)` (or of `toggle(x)`, `fill(x, digit)`) on `5x5`: Cranelift 0, the
+  interpreter 2. `aligned(…, 3)` (by `Phase`, not a 64-bit pattern) is right, as is each part
+  alone. Not `remat_consts`, `fold_nots` or `tables_as_compares` (each turned off, the same).
+  Parser-generators-final-shape fails the same 14 at 975117c82 (its own binary), so it predates the
+  merge; likely 0383's full body on edge blocks (`native_cpu_edge`) and a pattern constant.
+- **Also**: `rr_steps_parse_as_the_reference_and_the_engine` is red on step 22 (Go-C's `#include`
+  step): one document's tier 1 differs from the interpreter, and two sentences are refused at
+  `io_bare`, leaving too few for the engine comparison. Green at Go-C's dd6dcc161; at
+  Parser-generators' 975117c82 33 steps differ (without dd6dcc161's `tier1_equal`).
+- **Done when**: both pass; Parser-generators' area (the edge body), taken at the next merge.
+
+### Q200. The CPU's tier 1 of the rr grammar leaves the loop at a 19-digit number the interpreter reads on
+
+Found 2026-11-18 at the roll-up's Swift-Kotlin-Scala merge: `rr_parser`'s `the_marks_tests_are_the_masks` samples every
+fifth corpus file, and the files this merge adds moved `docs/rule-syntax/lib/rust/syntax-literals.rr` into the sample.
+On it the CPU's codes stop at token 2213 of 2808 (positions 12289 and 12307, `hex_pow(15, 1152921504606846976)`):
+tier 1 leaves the loop there (0177's exit), and the interpreter goes on (codes `2, b00, 48000d00`). With the file put
+in the test's inputs, it fails the same at Parser-generators' 612201517 (before 0383), ee0041caa, and the hub's
+08dfc3831, so it is older than this roll-up.
+
+The test leaves the file out of its sample, with this item as the reason.
+
+- **Done when**: the CPU's tier 1 and the interpreter agree on the file (the refusal's cause named: a count, a
+  check's, or the token loop's), and the test samples it again.

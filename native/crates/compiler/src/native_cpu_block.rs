@@ -511,15 +511,16 @@ pub struct State {
 /// A walk's state from one block to the next (`build_walk`): bits 0..4 the kind of region open
 /// at the block's end, plus one (0: none); bits 4..6 the hidden bytes it hides past its end (a
 /// closer's bytes, an empty literal's); bit `8 + k` that kind `k`'s closer has no byte left in
-/// the file (its `else` is taken from there on, with no scan).
+/// the file (its `else` is taken from there on, with no scan); with a kind with `after`, the
+/// four bits after those the last kind with none opened, plus one (0: none).
 pub struct WalkState;
 
 impl WalkState {
     pub const SKIP: u8 = 4;
     pub const NONE: u8 = 8;
     /// The field's width for a walk of `kinds` kinds.
-    pub fn width(kinds: usize) -> u8 {
-        Self::NONE + kinds as u8
+    pub fn width(kinds: usize, after: bool) -> u8 {
+        Self::NONE + kinds as u8 + if after { 4 } else { 0 }
     }
 }
 
@@ -565,7 +566,7 @@ impl State {
             }
         }
         for (w, walk) in native.walks.iter().enumerate().filter(|(_, w)| !w.kinds.is_empty()) {
-            wanted.push((usize::from(walk.hidden), WalkState::width(walk.kinds.len()), 2 + w, false));
+            wanted.push((usize::from(walk.hidden), WalkState::width(walk.kinds.len(), walk.kinds.iter().any(|k| k.after != 0)), 2 + w, false));
         }
         let mut used: Vec<u8> = Vec::new();
         let (mut fields, mut top, mut flag, mut walk) = (Vec::new(), vec![None; n], vec![None; n], vec![None; native.walks.len()]);
@@ -1617,9 +1618,14 @@ impl Emit<'_, '_> {
         f.ins().stack_store(state_in, slot, 0);
         for (k, kind) in walk.kinds.iter().enumerate() {
             let o = plain(&mut *f, &self.syms, &mut self.values, usize::from(kind.opener));
-            f.ins().stack_store(o, slot, 8 * (1 + 2 * k as i32));
+            f.ins().stack_store(o, slot, 8 * (1 + 3 * k as i32));
             let c = plain(&mut *f, &self.syms, &mut self.values, usize::from(kind.closer));
-            f.ins().stack_store(c, slot, 8 * (2 + 2 * k as i32));
+            f.ins().stack_store(c, slot, 8 * (2 + 3 * k as i32));
+            let c2 = match kind.or {
+                Some((c2, _)) => plain(&mut *f, &self.syms, &mut self.values, usize::from(c2)),
+                None => f.ins().iconst(types::I64, 0),
+            };
+            f.ins().stack_store(c2, slot, 8 * (3 + 3 * k as i32));
         }
         if calls.built.borrow()[w].is_none() {
             let func = crate::native_cpu_walk::build_walk(native, w, calls).expect("a walk the program verified");
@@ -1635,7 +1641,7 @@ impl Emit<'_, '_> {
         self.put(&mut *f, field, state_out);
         self.walked[w] = true;
         for (j, &v) in made.iter().enumerate() {
-            self.set(usize::from(v), Sym::Slot(slot, 8 * (1 + 2 * walk.kinds.len() + j) as i32, false));
+            self.set(usize::from(v), Sym::Slot(slot, 8 * (1 + 3 * walk.kinds.len() + j) as i32, false));
             self.carry(&mut *f, usize::from(v));
         }
     }

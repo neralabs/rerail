@@ -1244,8 +1244,13 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
         match el.offset {
             0 => writeln!(body, "        let c = unsafe {{ *self.codes.add(here * self.rs) }};\n        if !({}) {{ return false; }}", test(el)).unwrap(),
             o if o < 0 => {
-                // The record before, past the extras (an offset of -1).
-                writeln!(body, "        let mut j = here;\n        let c = loop {{\n            if j == 0 {{ return false; }}\n            j -= 1;\n            let c = unsafe {{ *self.codes.add(j * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n        if !({}) {{ return false; }}", test(el)).unwrap();
+                // The record before, past the extras (an offset of -1). None before: an `end`
+                // element (`after ~E`) holds there, any other fails.
+                if el.end {
+                    writeln!(body, "        let mut j = here;\n        let c = loop {{\n            if j == 0 {{ break None; }}\n            j -= 1;\n            let c = unsafe {{ *self.codes.add(j * self.rs) }};\n            if {free} {{ break Some(c); }}\n        }};\n        if let Some(c) = c {{ if !({}) {{ return false; }} }}", test(el)).unwrap();
+                } else {
+                    writeln!(body, "        let mut j = here;\n        let c = loop {{\n            if j == 0 {{ return false; }}\n            j -= 1;\n            let c = unsafe {{ *self.codes.add(j * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n        if !({}) {{ return false; }}", test(el)).unwrap();
+                }
             }
             o => {
                 // No record left: an `end` element holds there (it is the last), any other fails.
