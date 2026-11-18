@@ -3,7 +3,6 @@ import type * as FileSystem from "node:fs/promises";
 import { cp, lstat, mkdir, mkdtemp, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve, sep } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { removeFolder, runningIn } from "../../../support/platform/remove-folder.js";
 import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
@@ -540,13 +539,19 @@ describe("a walk of the other worktrees with change notices", () => {
   it("asks Git for no worktree's HEAD at the walks after their first, while the files Git reads it from hold", async () => {
     const { worktrees, checkouts } = await repository();
     const watching = await session(worktrees[0]!, checkouts, noticedWalks());
-    // A configuration file vouches for a checkout's files only once it is the reader's settle time (2 s) old.
-    await sleep(2_100);
-    await turn(watching);
-    counted.heads = 0;
-    for (const round of [1, 2, 3]) {
-      await writeFile(join(worktrees[2]!, "src", "a.py"), `old\n${round}\n`);
+    // A configuration file vouches for a checkout's files only once it is the reader's settle time (2 s) old: the clock
+    // the reader measures that on runs 2.1 s ahead from here on, as after a wait.
+    const now = Date.now.bind(Date);
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now() + 2_100);
+    try {
       await turn(watching);
+      counted.heads = 0;
+      for (const round of [1, 2, 3]) {
+        await writeFile(join(worktrees[2]!, "src", "a.py"), `old\n${round}\n`);
+        await turn(watching);
+      }
+    } finally {
+      clock.mockRestore();
     }
     // The walks still follow the worktree: its last write is recorded in Log.
     expect(audited(watching).at(-1)).toEqual([["written ../w3/src/a.py"], "log"]);

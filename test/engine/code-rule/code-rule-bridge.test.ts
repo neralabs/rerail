@@ -70,7 +70,7 @@ vi.mock("../../../src/engine/git-head-reader.js", async importOriginal => {
 /** For each path in it, the next file handles opened there call these, in turn, once closed (`readEnded`). */
 const closedReads = vi.hoisted(() => new Map<string, Array<() => void>>());
 /** How many of the next Git reads run, in Git's place, a program that stays until it is ended, as a Git still at work does. */
-const heldGit = vi.hoisted(() => ({ reads: 0 }));
+const heldGit = vi.hoisted(() => ({ reads: 0, started: undefined as (() => void) | undefined }));
 /** How many of the files a walk read were made into text (`LentBytes.text`), for the tests that pin what a walk keeps. */
 const decodedReads = vi.hoisted(() => ({ count: 0 }));
 /** Each buffer a file read filled while `watching`, by `readFile` or a file handle's `read`, for what a walk allocates. */
@@ -99,7 +99,14 @@ vi.mock("node:child_process", async importOriginal => {
     }
     return (actual.spawn as (...forwarded: unknown[]) => ReturnType<typeof actual.spawn>)(...call);
   };
-  return { ...actual, spawn };
+  // `heldGit.started` is called once a held program has been started in Git's place, so a test waits for that start.
+  const spawnTold = (...call: Parameters<typeof actual.spawn>) => {
+    const held = heldGit.reads;
+    const child = spawn(...call);
+    if (heldGit.reads < held) heldGit.started?.();
+    return child;
+  };
+  return { ...actual, spawn: spawnTold };
 });
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
@@ -311,6 +318,7 @@ afterEach(async () => {
   discovery.reads.clear();
   discovery.directories.clear();
   heldGit.reads = 0;
+  heldGit.started = undefined;
   readBuffers.watching = false;
   readBuffers.seen.clear();
   await Promise.all(passes.splice(0));
@@ -1560,8 +1568,10 @@ describe("CodeRuleBridge", () => {
     // The first session's walk reads HEAD first, through a Git that runs until it is ended. The read looks at Git's own
     // files before it starts that Git, so the Git starts a moment after the open returns.
     heldGit.reads = 1;
+    const heldStarted = new Promise<void>(resolve => { heldGit.started = resolve; });
     await bridge.openWorkspace("session-1");
-    const first = await runningSoon(root);
+    await heldStarted;
+    const first = runningIn(root);
     expect(first).not.toEqual([]);
 
     await bridge.openWorkspace("session-2");
@@ -1822,14 +1832,6 @@ async function opened(root: string, extra: Partial<CodeRuleAuditor> = {}, worktr
   await bridge.checkpoint("turn");
   await bridge.settleWorktreeWalk();
   return { bridge, auditGeneratedEdits };
-}
-/** The processes this test started that run in `folder`, once there is one, or none after 5 s. */
-async function runningSoon(folder: string): Promise<string[]> {
-  for (const deadline = Date.now() + 5_000; Date.now() < deadline; await new Promise(wake => setTimeout(wake, 10))) {
-    const running = runningIn(folder);
-    if (running.length > 0) return running;
-  }
-  return [];
 }
 /** Runs `run` as a shell tool call of `bridge`, and what the call's finish answered. */
 async function shell(bridge: CodeRuleBridge, run: () => void | Promise<void>): Promise<readonly CodeRuleResponse[]> {
@@ -2971,15 +2973,21 @@ describe("CodeRuleBridge and Git's own writes", () => {
     const root = await twoBranches();
     await writeFile(join(root, ".gitattributes"), "*.py text\n");
     commitAll(root);
-    // A file is taken by its stamp only once it is the reader's settle time (2 s) old.
-    await new Promise(wake => setTimeout(wake, 2_100));
-    const { bridge } = await opened(root);
-    const lineEndings = (args: readonly string[]): boolean => args.includes("check-attr") || args.includes("core.autocrlf") || args.includes("core.eol");
+    // A file is taken by its stamp only once it is the reader's settle time (2 s) old: the clock the reader measures that
+    // on runs 2.1 s ahead from here on, as after a wait.
+    const now = Date.now.bind(Date);
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now() + 2_100);
     const asked: number[] = [];
-    for (const round of [1, 2, 3]) {
-      asyncGitCalls.args.length = 0;
-      await shell(bridge, () => writeFile(join(root, "src", "a.py"), `old\n${round}\n`));
-      asked.push(asyncGitCalls.args.filter(lineEndings).length);
+    try {
+      const { bridge } = await opened(root);
+      const lineEndings = (args: readonly string[]): boolean => args.includes("check-attr") || args.includes("core.autocrlf") || args.includes("core.eol");
+      for (const round of [1, 2, 3]) {
+        asyncGitCalls.args.length = 0;
+        await shell(bridge, () => writeFile(join(root, "src", "a.py"), `old\n${round}\n`));
+        asked.push(asyncGitCalls.args.filter(lineEndings).length);
+      }
+    } finally {
+      clock.mockRestore();
     }
     expect(asked.slice(1)).toEqual([0, 0]);
   }, 30_000);

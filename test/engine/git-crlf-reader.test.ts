@@ -2,8 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** The arguments of each Git process Rerail started; the test's own `git` uses `execFileSync`, which is not counted. */
 const started = vi.hoisted(() => ({ git: [] as string[][] }));
@@ -22,11 +21,22 @@ import { removeFolder } from "../support/platform/remove-folder.js";
 
 /** An input must be this old before a reader keeps an answer by its stamp (the reader's 2 s, and a margin). */
 const SETTLED_MS = 2_100;
+/**
+ * How far the clock the reader measures an input's age on runs ahead of the real one: a test moves it on in place of
+ * waiting, so every input written before then reads as that much older, as after a wait.
+ */
+const clock = { aheadMs: 0 };
+const realNow = Date.now.bind(Date);
+beforeEach(() => {
+  vi.spyOn(Date, "now").mockImplementation(() => realNow() + clock.aheadMs);
+});
 const PATHS = ["a.txt", "src/b.py", "src/deep/c.bin", "d.md"];
 
 const folders: string[] = [];
 const environment = new Map<string, string | undefined>();
 afterEach(async () => {
+  vi.mocked(Date.now).mockRestore();
+  clock.aheadMs = 0;
   for (const [name, value] of environment) {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
@@ -71,7 +81,7 @@ describe("gitCrlfReader", () => {
   it("answers as gitCrlfPaths does, asking Git again only once a file it reads attributes or settings from changed", async () => {
     const root = await repository("*.txt text eol=crlf\n*.bin binary\n");
     const reader = gitCrlfReader();
-    await sleep(SETTLED_MS);
+    clock.aheadMs += SETTLED_MS;
     const changes: Array<[string, () => Promise<void> | void]> = [
       ["nothing", () => undefined],
       ["the top .gitattributes", async () => await writeFile(join(root, ".gitattributes"), "*.txt text eol=crlf\n*.py text eol=crlf\n")],
@@ -84,7 +94,7 @@ describe("gitCrlfReader", () => {
     ];
     for (const [name, change] of changes) {
       await change();
-      await sleep(SETTLED_MS);
+      clock.aheadMs += SETTLED_MS;
       const first = await read(reader, root);
       expect(first.rules, `after ${name}`).toEqual(first.expected);
       const again = await read(reader, root);
@@ -100,12 +110,12 @@ describe("gitCrlfReader", () => {
     setVariable("GIT_ATTR_NOSYSTEM", "1");
     setVariable("XDG_CONFIG_HOME", join(root, ".git", "no-config-home"));
     const reader = gitCrlfReader();
-    await sleep(SETTLED_MS);
+    clock.aheadMs += SETTLED_MS;
     const first = await read(reader, root);
     expect(first.rules).toEqual(first.expected);
     expect(first.git).not.toContain("check-attr");
     git(root, "config", "core.autocrlf", "true");
-    await sleep(SETTLED_MS);
+    clock.aheadMs += SETTLED_MS;
     const autocrlf = await read(reader, root);
     expect(autocrlf.rules).toEqual(autocrlf.expected);
     expect(Object.keys(autocrlf.rules as object)).toHaveLength(PATHS.length);
@@ -121,7 +131,7 @@ describe("gitCrlfReader", () => {
       expect(answer.rules).toEqual(answer.expected);
       expect(answer.git, `fresh, call ${time}`).toContain("check-attr");
     }
-    await sleep(SETTLED_MS);
+    clock.aheadMs += SETTLED_MS;
     setVariable("GIT_ATTR_SOURCE", "HEAD");
     for (const time of [1, 2]) {
       const answer = await read(reader, root);
