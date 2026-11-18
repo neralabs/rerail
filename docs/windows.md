@@ -492,9 +492,10 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   removes its state file and main-instance record. It kills only a daemon still running after that. macOS and Linux
   keep `SIGTERM`. A daemon that does not answer is signalled only while it is proven the one that wrote `daemon.json`
   (it holds the home's lock as its recorded holder, or started no later than the recorded `startedAt`). The stop asks
-  that after the shutdown request and just before the signal, so it reads a busy daemon's start once, and asks again
-  before a kill; where neither proves it while the process runs, the stop ends nothing more, keeps every record and
-  says how to check the process. [threat-model.md](threat-model.md) covers the route's access rules.
+  that after the shutdown request and just before the signal, so after its lookup the stop reads a busy daemon's start
+  once more, and asks again before a kill; where neither proves it while the process runs, the stop ends nothing
+  more, keeps every record and says how to check the process. [threat-model.md](threat-model.md) covers the route's
+  access rules.
 
 </details>
 
