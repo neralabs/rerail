@@ -388,6 +388,18 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
   when its connection or agent is gone, or a file could not be written there (its disk full:
   agent code 70; the daemon then drops the agent and forgets what it sent). A test run whose ssh
   connection drops (exit 255) runs again here.
+- **One tree per copy.** A host holds one copy of a checkout, at the checkout's path (its warm
+  target directory's paths point there), so two commands of one checkout on one host share it.
+  A command finds it idle and sends its tree, or finds it running from the very tree it has (the
+  same files with the same stats: `mirror.fingerprint`) and runs too, sending nothing; else it
+  goes to another host, or waits as for a slot. A Relax session (`live-test-remote`) sends each
+  save, so it takes the copy alone, and waits up to 9 minutes for it. The locks are this Mac's
+  (`farm.CopyUse`: `tests/HOST.CHECKOUT.send` and `.tree`). Before farm 34 a second command only
+  preferred another host: on the same one it sent its tree into the copy the first was running
+  from, and the first read the other's files, a failure that looked like a broken merge
+  (2026-11-18). test-remote and live-test-remote are installed beside the farm since, and a
+  checkout's own copy hands itself to them (as an old `quiet-run` is), so every branch takes a
+  copy by the same rules.
 - **Cleaned copies.** The mirror remembers what it sent each host, and a host restarted or cleaned
   forgets: an agent is asked what it holds when it starts, a compile that read a stale file clears
   what was sent, and `test-remote` asks the host again for every file of the checkout before it runs.

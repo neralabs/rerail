@@ -100,7 +100,9 @@ reruns the command here at `nice -n 19`. Don't work around a host that is down. 
 `status` to see why, and go on locally. Never wait for a host to be idle or less loaded: a
 usable host takes the command whatever its load, and `test-remote` itself waits only for a
 free test slot. Its busy CPU and load average in `status` are information, not a gate. `--remote-only` exits 69 when no host can take the
-command. A host may be a Linux machine: it takes a command when every Mac slot is busy (never a
+command. Several commands of one checkout may run at once: on one host they share its copy of the
+checkout when their files are the same, and otherwise one waits for the other or takes another
+host, so a command never reads another's files. A host may be a Linux machine: it takes a command when every Mac slot is busy (never a
 Metal one or a `--tree` run), and the command is then a Linux build and run, as CI's; its line
 says `(Linux: ...)`, and `--os macos` keeps a command on a Mac. It also compiles this Mac's library
 crates, in a container, to the very bytes this Mac would (the farm's README, "Mac compiles on a Linux host"). Both scripts run the installed farm (`~/.local/share/rerail-farm`), whatever version

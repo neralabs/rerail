@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 33
+VERSION = 34
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -36,6 +36,16 @@ SCCACHE = os.path.join(SHARE, "bin/sccache")
 if sys.argv and os.path.basename(sys.argv[0]) == "quiet-run" and os.path.isfile(os.path.join(SHARE, "quiet-run")):
     os.environ["RERAIL_QUIET_RUN_CHECKOUT"] = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), "../.."))
     os.execv(os.path.join(SHARE, "quiet-run"), [os.path.join(SHARE, "quiet-run")] + sys.argv[1:])
+# test-remote and live-test-remote are installed beside this too (farm 34), and a checkout's copy
+# is handed to them: every checkout's commands then take a host's copy of it by the same rules
+# (`CopyUse`), whatever its branch has. Before, two commands of one checkout could each send its
+# tree into one host's copy while the other ran there, and a run read the other's files.
+for _script in ("test-remote", "live-test-remote"):
+    _installed = os.path.join(SHARE, _script)
+    if sys.argv and os.path.basename(sys.argv[0]) == _script and os.path.isfile(_installed) \
+            and os.path.realpath(sys.argv[0]) != os.path.realpath(_installed):
+        os.environ["RERAIL_FARM_CHECKOUT"] = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), "../.."))
+        os.execv(_installed, [_installed] + sys.argv[1:])
 SCCACHE_CONF = os.path.join(CONFIG, "sccache.toml")
 HOSTS = os.path.join(CONFIG, "hosts.json")
 PORT = "4227"
@@ -274,6 +284,77 @@ class Lock:
             fcntl.flock(self.f, fcntl.LOCK_UN)
             self.held = False
         self.f.close()
+
+
+class CopyUse:
+    """A command's use of `checkout`'s copy on `host` (its files under the host's farm root, at the
+    checkout's path, where its warm target directory's paths point): one tree at a time. Locks here,
+    on this machine, which sends every one of its trees:
+      - `.send`, while a tree is sent: held a few seconds;
+      - `.tree`, held shared by every command running from the copy, alone by a Relax session (it
+        sends each save); its content names the tree last sent whole (`fingerprint`).
+    A command finds the copy idle (`sends`: it sends its tree, then runs), or running from the very
+    tree it has (it runs too, sending nothing), or else not for it now (`held` false: another host,
+    or a wait). `alone` (a Relax session) takes it only idle. Two commands of one checkout once
+    sent their trees into one copy while the other ran there: a run read the other's files, and
+    failed as if a merge had broken it (2026-11-18)."""
+
+    def __init__(self, host, checkout, fingerprint, alone=False):
+        base = state("tests", f"{host}.{key(checkout)}")
+        self.alone, self.fingerprint, self.held, self.sends, self.f = alone, fingerprint, False, False, None
+        self.send = Lock(base + ".send", blocking=False)
+        if not self.send.held:
+            self.send.release()
+            return
+        f = open(base + ".tree", "a+")
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.sends = True
+            # (named again once the whole tree is there: a send cut short leaves a copy of no tree)
+            f.seek(0)
+            f.truncate()
+            f.flush()
+        except BlockingIOError:
+            f.seek(0)
+            if alone or f.read() != fingerprint:
+                f.close()
+                self.send.release()
+                return
+            try:
+                fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                # (a Relax session's, or a sender's that took it between the read and here)
+                f.close()
+                self.send.release()
+                return
+            f.seek(0)
+            if f.read() != fingerprint:
+                f.close()
+                self.send.release()
+                return
+            self.send.release()
+        self.f, self.held = f, True
+
+    def sent(self):
+        """The tree is there whole (`sends`): named, and shared with the commands of the same tree
+        from now on; a session keeps the copy alone."""
+        if not self.sends:
+            return
+        self.f.seek(0)
+        self.f.truncate()
+        if not self.alone:
+            self.f.write(self.fingerprint)
+            self.f.flush()
+            # (under `.send`: no other command looks between the two)
+            fcntl.flock(self.f, fcntl.LOCK_SH)
+        self.send.release()
+
+    def release(self):
+        if self.f:
+            self.f.close()
+            self.f = None
+        self.send.release()
+        self.held = False
 
 
 # ---- the farm's sccache
