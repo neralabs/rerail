@@ -323,16 +323,19 @@ class FileRecordWriter {
 }
 
 /**
- * `attempt` (true once it took the write lock and did its work) now and then again after each of SQLite's busy handler
- * pauses, as a statement on a connection whose `busy_timeout` is `BUSY_TIMEOUT_MS` tries: the pauses sum to that bound,
- * the last one cut to fit. Each pause is a timer, so the thread answers other work between tries.
+ * `attempt` (true once it took the write lock and did its work) now and then again at the times SQLite's busy handler
+ * tries, as a statement on a connection whose `busy_timeout` is `BUSY_TIMEOUT_MS` does: after each of its pauses, which
+ * sum to that bound, the last one cut to fit. Each pause is a timer, so the thread answers other work between tries,
+ * and each ends at its try's time from the first: a timer that fires late, as Node's do by about a millisecond, and the
+ * work the thread did meanwhile shorten the next pause instead of pushing every later try back.
  */
 async function triedUntilFree(attempt: () => boolean, signal: AbortSignal): Promise<boolean> {
-  for (let tries = 0, paused = 0; !signal.aborted; tries += 1) {
+  const startedAt = performance.now();
+  for (let tries = 0, due = 0; !signal.aborted; tries += 1) {
     if (attempt()) return true;
-    const pause = Math.min(busyPauseMs(tries), BUSY_TIMEOUT_MS - paused);
-    if (pause <= 0 || !await pauseFor(pause, signal)) return false;
-    paused += pause;
+    if (due >= BUSY_TIMEOUT_MS) return false;
+    due = Math.min(due + busyPauseMs(tries), BUSY_TIMEOUT_MS);
+    if (!await pauseFor(Math.max(0, startedAt + due - performance.now()), signal)) return false;
   }
   return false;
 }

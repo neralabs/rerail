@@ -367,7 +367,7 @@ describe("a write that is made now or not at all", () => {
     const writer = (await recordWrites()).openRecordWriter(path);
     closers.push(() => writer.close());
     const holder = holderHere(path);
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     closers.push(() => { vi.useRealTimers(); });
 
     const made = writer.writeWhenFree(eventWrite("late"), new AbortController().signal);
@@ -381,13 +381,37 @@ describe("a write that is made now or not at all", () => {
     expect(eventIds(path)).toEqual([["late"]]);
   });
 
+  it("tries at SQLite's times from the first, however late this thread ends each pause", async () => {
+    const { path, sessions } = await stores();
+    sessions.openSession(session, 1_000);
+    const writer = (await recordWrites()).openRecordWriter(path);
+    closers.push(() => writer.close());
+    const holder = holderHere(path);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    closers.push(() => { vi.useRealTimers(); });
+    // Every pause ends 1 ms late, as Node's timers do by about that: a schedule that added the pauses up would make its
+    // 19th try at 1,047 ms, where SQLite's busy handler tries at 1,028 ms.
+    const onTime = globalThis.setTimeout;
+    vi.stubGlobal("setTimeout", (callback: () => void, ms: number) => onTime(callback, ms + 1));
+    closers.push(() => { vi.unstubAllGlobals(); });
+
+    const made = writer.writeWhenFree(eventWrite("on-time"), new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(1_028);
+    expect(eventIds(path)).toEqual([]);
+    holder.exec("COMMIT");
+    await vi.advanceTimersByTimeAsync(2);
+
+    expect(eventIds(path)).toEqual([["on-time"]]);
+    await expect(made).resolves.toBe(true);
+  });
+
   it("is not made, and keeps nothing, once the tries reach the busy timeout or its caller stops them", async () => {
     const { path, sessions } = await stores();
     sessions.openSession(session, 1_000);
     const writer = (await recordWrites()).openRecordWriter(path);
     closers.push(() => writer.close());
     const holder = holderHere(path);
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     closers.push(() => { vi.useRealTimers(); });
 
     const timedOut = writer.writeWhenFree(eventWrite("timed-out"), new AbortController().signal);

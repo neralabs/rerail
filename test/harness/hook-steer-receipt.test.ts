@@ -119,7 +119,7 @@ describe("a steered hook's receipt", () => {
     // Before, the hook waited for the lock up to SQLite's 5 s busy timeout, then lost the receipt.
     const release = holdWriteLock(root);
     // The hook's own tries wait on timers held here, so only the daemon's answer can end it.
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     try {
       await emitHookOutput(output, sink());
       expect(vi.getTimerCount()).toBe(0);
@@ -137,7 +137,7 @@ describe("a steered hook's receipt", () => {
     const daemon = await fakeDaemon(root, answer);
     const output = await steeredAnswer(root, daemon);
     const release = holdWriteLock(root);
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     const emitted = emitHookOutput(output, sink());
     await daemon.receiptRead;
     expect(daemon.receipts).toEqual(handed(root));
@@ -158,7 +158,7 @@ describe("a steered hook's receipt", () => {
     const daemon = await fakeDaemon(root, "hold");
     const output = await steeredAnswer(root, daemon);
     const release = holdWriteLock(root);
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     const emitted = emitHookOutput(output, sink());
     await daemon.receiptRead;
     await vi.advanceTimersByTimeAsync(20);
@@ -176,7 +176,7 @@ describe("a steered hook's receipt", () => {
     const daemon = await fakeDaemon(root, "hold");
     const output = await steeredAnswer(root, daemon);
     const release = holdWriteLock(root);
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     try {
       const emitted = emitHookOutput(output, sink());
       await daemon.receiptRead;
