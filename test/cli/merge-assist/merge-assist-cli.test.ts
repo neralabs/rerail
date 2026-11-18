@@ -9,6 +9,7 @@ import { runMergeAssistCommand, type MergeAssistCommandIo } from "../../../src/c
 import { mergeAssistStatusSchema, type MergeAssistStatus } from "../../../src/engine/index.js";
 import { MergeAssistError } from "../../../src/runtime/index.js";
 import { RecordingMergeAssistService, sampleConflict, sampleStatus } from "../../support/merge-assist/status.js";
+import { FakeGithub, mergeAssistWorkspaces } from "../../support/merge-assist/workspace.js";
 import { withExperiments } from "../../support/environment/experiments.js";
 
 // Merge Assist is experimental: every test here runs with it on, as a daemon started with the variable does.
@@ -324,5 +325,29 @@ describe("rerail merge-assist", () => {
     await expect(run(["settings", "--text", "x", "--repo", checkout])).rejects.toThrow(/^Unknown merge-assist option: --text/u);
     expect(closed).toBe(0);
     expect(service.calls).toEqual([]);
+  });
+});
+
+describe("rerail merge-assist over the service it opens", () => {
+  const workspace = mergeAssistWorkspaces();
+  const home = process.env.RERAIL_HOME;
+  afterEach(() => {
+    vi.stubEnv("RERAIL_HOME", home);
+  });
+
+  it("shows what gh says now, in its one answer, once the kept reading is five minutes old", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    vi.stubEnv("RERAIL_HOME", ws.folder);
+    const github = new FakeGithub();
+    // Turned on six minutes ago, when gh said it was signed in; since then GitHub refuses its token and no file of
+    // gh's moved.
+    await ws.service({ github, now: () => Date.now() - 6 * 60_000 }).setEnabled(ws.repo, true);
+    github.options.readinessError = true;
+    let stdout = "";
+    const io: MergeAssistCommandIo = { stdout: { write: text => { stdout += text; } }, stderr: { write: () => undefined }, github, dashboardUrl: async () => null };
+
+    expect(await runMergeAssistCommand(["status", "--repo", ws.repo], usage, io)).toBe(0);
+    expect(github.readinessReads).toBe(2);
+    expect(stdout).toContain("  GitHub: gh did not say whether it is signed in (it did not answer in time or failed)");
   });
 });

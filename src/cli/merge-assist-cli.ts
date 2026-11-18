@@ -25,6 +25,7 @@ import {
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
 import { readRulesDashboard } from "../presentation/session-presentation.js";
 import { createMergeAssistService, MergeAssistError, type MergeAssistService, type MergeAssistSettingsChange } from "../runtime/merge-assist/service.js";
+import type { GithubClient } from "../runtime/merge-assist/github.js";
 
 const ACTIONS = ["status", "on", "off", "scan", "conflicts", "dismiss", "settings"] as const;
 type MergeAssistAction = (typeof ACTIONS)[number];
@@ -50,11 +51,14 @@ export interface MergeAssistCommandIo {
   openService?: () => MergeAssistCommandSession;
   /** The Merge Assist page of the daemon serving `root`'s checkout, or null when none runs. */
   dashboardUrl?: (root: string) => Promise<string | null>;
+  /** The `gh` the default service runs; by default the person's (`createGithubClient`). */
+  github?: GithubClient;
 }
 
-function openDefaultService(): MergeAssistCommandSession {
+function openDefaultService(github: GithubClient | undefined): MergeAssistCommandSession {
   const database = openRerailDatabase(defaultRerailDatabasePath());
-  const service = createMergeAssistService({ database, answersOnce: true });
+  // The command answers once: a status that asks gh again shows what gh says in that answer.
+  const service = createMergeAssistService({ database, answersOnce: true, ...(github === undefined ? {} : { github }) });
   // Ctrl-C while the person's hook command runs stops it (its own process group, whose timeout lives in this
   // process) before Rerail exits, so none is left running.
   const interrupt = (): void => {
@@ -450,7 +454,7 @@ export async function runMergeAssistCommand(args: readonly string[], usage: () =
   if (!mergeAssistExperimentEnabled()) return refuse(io, args.includes("--json"), "experimental-off", experimentOffMessage("MERGE_ASSIST"));
   const stdout = io.stdout ?? process.stdout;
   const { step, root, name, json } = invocation(args, usage);
-  const session = (io.openService ?? openDefaultService)();
+  const session = io.openService?.() ?? openDefaultService(io.github);
   let outcome: Outcome;
   try {
     outcome = await outcomeOf(session, step, root);
