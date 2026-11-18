@@ -5224,11 +5224,12 @@ impl InRel {
     /// `old` made `new` in place (0364 R2, R4): a stratum derived again past θ keeps its kept relation. The rows it no
     /// longer derives are marked dead and those it newly derives added, so its change is its version (its marks),
     /// which its readers read in place, as any maintained relation's, not rows diffed into delta relations. Every row
-    /// takes `new`'s level (R4: a derive again resets levels). `None` where `old` cannot be started from
-    /// (`Rel::based`), or the two differ in width or in having levels.
+    /// takes `new`'s level (R4: a derive again resets levels): where `new` has none, the kept levels are dropped;
+    /// where `old` had none, every live row is then one `new` derives, found or added, and takes its level. `None`
+    /// where `old` cannot be started from (`Rel::based`), or the two differ in width.
     pub fn rebased(table: &str, old: &InRel, new: &InRel) -> Option<InRel> {
         let levels = new.has_levels();
-        if old.k != new.k || new.view.is_some() || old.has_levels() != levels {
+        if old.k != new.k || new.view.is_some() {
             return None;
         }
         let types = old.types().to_vec();
@@ -5239,6 +5240,11 @@ impl InRel {
             None if old.view.is_none() => Rel::compacted(table, &types, old, None),
             None => return None,
         };
+        if !levels {
+            rel.level.clear();
+        } else if rel.level.len() != rel.n {
+            rel.level = vec![0; rel.n];
+        }
         let start = rel.n;
         let k = new.k;
         let mut found = vec![false; start];

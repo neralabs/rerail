@@ -323,6 +323,15 @@ fn r5_a_ring_that_loses_its_entry_loses_every_row_it_held() {
     assert!(into_ring.is_empty(), "R5: neither x nor e reaches the ring: {into_ring:?}");
     s.write("e.py", "import r1\n");
     s.edit("the entry restored");
+    // R2 past θ: with θ 0 the ring's stratum is derived again; its kept rows have levels and the derive's rows none
+    // (O125's `cls_q`). It is still made a version of its kept rows in place, its levels dropped as a derive resets
+    // them: no row is copied to state its change.
+    let switched = super::switches::set(&[("RERAIL_AGAIN_THETA", "0"), ("RERAIL_AGAIN_MIN", "0")]);
+    s.write("e.py", "def e():\n    pass\n");
+    let ran = s.edit("the entry removed, derived again past θ");
+    drop(switched);
+    assert!(ran.report.cross_again.contains_key(maintain::THRESHOLD), "R4: θ 0 derives it again: {:?}", ran.report.cross_again);
+    assert_eq!(ran.shape.rows_copied, 0, "R2: a levelled stratum derived again is a version of its kept rows");
 }
 
 /// R6: a recursive component that cannot hold a row up by itself (every recursive step goes strictly down the tree:

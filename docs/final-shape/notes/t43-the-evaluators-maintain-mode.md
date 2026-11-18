@@ -508,3 +508,31 @@ with no key, and it is sound in any order. Every other candidate is checked once
 `maintain::shape` counts a proved component run without its key (`measures_unkeyed`). The R6 test asserts none
 in its cross part, through four edits, with each run's outputs equal to a fresh run's.
 
+## Step 11: after the merge, O125 again
+
+Two things stopped O125 on the merged engine.
+
+**The hub's product-demand pass refused `calls.rr`.** `pv(o, "cls", c) :- attr_of(_, o, _), builtin_ref(o,
+"object"), qv("builtins.object", "cls", c)` joins `o` and `c` through nothing. The pass pushed its demand up to
+`base`, an output, and refused the whole program. That also broke the typing oracle test
+(`python_calls_program_agrees_with_the_runtime`). By the user's choice, a node variable bound only by lookups on
+constants is now fixed, as `c = constant` is. Its product is one side times that lookup's few rows.
+
+**R6's key read was SQL inside the waves,** which `RERAIL_SQL_STRICT` refuses (decision 0104). It is now a lookup on
+the key relation's bound source, in place.
+
+O125 then ran, and step 02 copied 699 rows to state a change (R2). `cls_q` is a levelled stratum derived again past
+θ: its kept rows had levels and the derive's rows had none, and `InRel::rebased` refused to start from rows whose
+levels differed. It now takes either direction. Where the derive has no levels, the kept levels are dropped. Where
+the kept rows had none, every live row is one the derive found or added, and it takes the derive's level. R5's test
+now ends with an edit at θ 0 that derives the ring again, and asserts no row is copied.
+
+| Step | Session CPU (M3) | Session = cold |
+|---|---|---|
+| 00 | 27.0 s | yes |
+| 01 | 12.7 s | yes |
+| 02 | 10.2 s | yes |
+
+188 strata are maintained and 22 derived again past θ, as before the merge. Nothing is copied or held under a
+maintenance name, every changed read leads its line, and every measure reads its key.
+
