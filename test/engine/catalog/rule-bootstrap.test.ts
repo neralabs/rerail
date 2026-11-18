@@ -98,7 +98,7 @@ describe("database schema", () => {
   // path), so this runs enough rounds that a missing wait cannot slip through by luck. Eight processes each load Rerail
   // once, then open a new file each round, all at once, on the round's path written to their stdin: the opens start
   // together, not as each process happens to finish loading, and loading eight processes instead of one per open keeps
-  // the test short. Without the wait, 17 to 43 rounds in a hundred have an open fail, so 48 rounds leave about a 0.1%
+  // the test short. Without the wait, 17 to 43 rounds in a hundred have an open fail, so 48 rounds leave about a 0.01%
   // chance of a false pass at the lowest of those rates.
   it("creates one database when many processes open it at the same time", async () => {
     const opener = `

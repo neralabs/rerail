@@ -90,7 +90,11 @@ describe("the engine service's walk of the other worktrees, with the engine's tr
       // take of the notices (`WORKTREE_NOTICE_MS`) in between, instead of the 5 s that keeps a busy session's walks apart:
       // the test runs 14 walks, and what it counts is which worktrees each reads, not how often walks may run.
       const worktreeWalks = new RepositoryWorktreeWalks({ gapMs: 2 * WORKTREE_NOTICE_MS, treeWatch: nativeTreeWatch() });
-      const service = await startEngineService({ socketPath, storageRoot: join(root, "sessions"), databasePath, embedder: testEmbedder, worktreeWalks });
+      const service = await startEngineService({ socketPath, storageRoot: join(root, "sessions"), databasePath, embedder: testEmbedder, worktreeWalks })
+        .catch((error: unknown) => {
+          worktreeWalks.close();
+          throw error;
+        });
       try {
         await service.ingest({ kind: "session-start", eventId: "s:start", session: { host: "claude-code", sessionId: "s", cwd: w0 } });
         await vi.waitFor(() => expect(opens.mock.results).toHaveLength(1), { timeout: 60_000, interval: 50 });
