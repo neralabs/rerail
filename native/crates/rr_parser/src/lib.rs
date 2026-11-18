@@ -487,8 +487,9 @@ pub mod tests {
         let native = &c.native;
         let got = run_serial_split(&[native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
         let mut differ = 0;
-        // The CPU's form leaves out the masks its record pass makes (`BlockNative::records_made`).
-        let unmade = native.records_made();
+        // The CPU's form leaves out the masks its record pass makes, and the rows of the totals
+        // no one reads by them (`BlockNative::cpu_unstored`).
+        let unmade = native.cpu_unstored();
         let same_outputs = |g: &[Vec<u64>], w: &[Vec<u64>]| g.len() == w.len() && (0..w.len()).all(|o| unmade.contains(&o) || g[o] == w[o]);
         // Metal sets the gap marks the CPU's tier 2 tests itself (`lazy_marks`).
         let lazy = lazy_bits(native);
@@ -1424,8 +1425,9 @@ pub mod tests {
         }
     }
 
-    /// A number of 19 digits or more goes to the engine, checked at its token (decision 0133's
-    /// local check: the token's first 19 bytes); 18 digits are taken, as the engine's tape. In
+    /// An integer of 19 digits or more goes to the engine, checked at its token (decision 0133's
+    /// local check: the token's first 19 bytes); 18 digits are taken, as the engine's tape, and
+    /// a float of any length. In
     /// a block or across two, by every shape and the interpreter.
     #[test]
     fn long_numbers_go_to_the_engine() {
@@ -1439,6 +1441,8 @@ pub mod tests {
             let head = format!(".decl a(x: number)\n// {}\n", "x".repeat(pad));
             cases.push((format!("{head}a({d18}).\n"), true));
             cases.push((format!("{head}a({d18}.5).\n"), true));
+            // A float's digits are its text: no limit.
+            cases.push((format!("{head}a({d19}.5).\n"), true));
             cases.push((format!("{head}a(x) :- a(y), x = y + {d18}.\n"), true));
             cases.push((format!("{head}a({d19}).\n"), false));
             cases.push((format!("{head}a({d19}0).\n"), false));
@@ -1467,7 +1471,7 @@ pub mod tests {
         let old = crate::GRAMMAR
             .replace("start hash & directive run word", "start hash & directive last hashword & ~next(hashword & ~directive)")
             .replace("start alpha & ident & ~prev(ident) run word", "start alpha & ident & ~prev(ident) last ident & ~next(ident)")
-            .replace("start digit & int & ~prev(int) run num_run", "start digit & int & ~prev(int) last numeral & ~next(numeral)")
+            .replace("start digit & int & ~prev(int) run num_run once dot", "start digit & int & ~prev(int) last numeral & ~next(numeral)")
             .replace("start punct & p_start pair two_start", "start punct & p_start last p_last")
             .replace("read str", "last prev(f_str) & ~f_str")
             .replace("read line | block", "last (f_line & ~next(f_line)) | (prev(f_block) & ~f_block)")
@@ -1497,7 +1501,7 @@ pub mod tests {
             let (lx, ly) = (&x.positions[usize::from(ra.lasts)], &y.positions[usize::from(rb.lasts)]);
             if let Some(k) = lx.iter().zip(ly).position(|(p, q)| p != q) {
                 let s0 = x.positions[usize::from(ra.starts)][k] as usize;
-                let text = String::from_utf8_lossy(&f[s0.saturating_sub(10)..(s0 + 30).min(f.len())]).into_owned();
+                let text = String::from_utf8_lossy(&f[s0.saturating_sub(10)..(lx[k].max(ly[k]) as usize + 3).min(f.len())]).into_owned();
                 panic!("token {k} at {s0}: the rule's last {}, the mask's {}: {text:?}", lx[k], ly[k]);
             }
             assert_eq!(lx.len(), ly.len(), "the lasts' count");
@@ -1574,6 +1578,13 @@ pub mod tests {
         let c = crate::compiled().expect("compiles");
         let shape = c.parser.tier1.passes.last().expect("a pass");
         assert!(shape.arms >= 4, "the run's and the readers' arms: {}", shape.arms);
+        // The number's by name: its cut (`run … once dot`) is made in the run's window, so its
+        // short form calls nothing but its whole function (decision 0413).
+        let r = c.native.records.as_ref().expect("records");
+        for (what, b) in [("the number", b'7'), ("the string", b'"'), ("the comment", b'/')] {
+            let k = r.ends[usize::from(b)];
+            assert!(shape.arm_rules.contains(&k), "{what}'s rule {k} is no arm: {:?}", shape.arm_rules);
+        }
     }
 
     /// Decision 0177, stage 2a: the tokens by the loop, each at the first byte after the one
@@ -1652,7 +1663,8 @@ pub mod tests {
         for &o in &at {
             assert!(matches!(cpu.insts[usize::from(cpu.outputs[o])], BlockInst::Const(0)), "the CPU makes test {o}'s mask");
         }
-        // Tier 2's `\\u` checks read their mask from the bytes too: the CPU's body makes nothing.
+        // Tier 2's `\\u` checks read their mask from the bytes too, and a number's chain is
+        // cut by the loop (`run … once dot`): the CPU's body makes nothing.
         let made: Vec<String> = cpu.insts.iter().filter(|i| !matches!(i, BlockInst::Const(_))).map(|i| format!("{i:?}")).collect();
         assert!(made.is_empty(), "the CPU's body makes {made:?}");
     }
@@ -1871,6 +1883,17 @@ pub mod tests {
     /// The interpreter's codes without those bits.
     fn unlazy(codes: &[u32], lazy: u32) -> Vec<u32> {
         codes.iter().map(|c| c & !lazy).collect()
+    }
+
+    /// A compiled tier 1's codes against another run's: the same; or, for a file it refuses (a
+    /// total set), the same up to the refusal and none or 0s past it, as a refusal leaves the
+    /// compiled loop (decision 0177; `ladder::tier1_agrees`'s rule) where the interpreter reads on.
+    fn codes_agree(got: &[u32], want: &[u32], refused: bool) -> bool {
+        if !refused {
+            return got == want;
+        }
+        let left = got.iter().zip(want).position(|(g, w)| g != w).unwrap_or(got.len());
+        got.len() <= want.len() && got[left..].iter().all(|&c| c == 0)
     }
 
     /// A file refused: any of its totals set (an error output's count, or the loop's flag).
@@ -2273,10 +2296,11 @@ pub mod tests {
             inputs.push(format!("{p}r(x) :- x = {{\"a\": /* \x0c{} */ 1}}.\n", "c".repeat(80)).into_bytes());
         }
         let files = corpus();
-        // Every fifth corpus file but one (Q200: the CPU's tier 1 leaves the loop at a 19-digit
-        // number of `syntax-literals.rr` that the interpreter reads on, since before 0383).
-        let open_q200 = |f: &&String| f.contains("hex_pow(15, 1152921504606846976)");
-        inputs.extend(files.iter().filter(|f| !open_q200(f)).step_by(5).map(|f| f.as_bytes().to_vec()));
+        // Every fifth corpus file, and `syntax-literals.rr`, which a number of 19 digits refuses
+        // (`hex_pow(15, 1152921504606846976)`, the number rule's escape): a refusal mid-file.
+        let refused = |f: &String| f.contains("hex_pow(15, 1152921504606846976)");
+        assert!(files.iter().any(refused), "syntax-literals.rr is in the corpus");
+        inputs.extend(files.iter().enumerate().filter(|(k, f)| k % 5 == 0 || refused(f)).map(|(_, f)| f.as_bytes().to_vec()));
         inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes().to_vec()));
         let refs: Vec<&[u8]> = inputs.iter().map(|f| f.as_slice()).collect();
         let cpu = new.parser.tier1.run_files(&refs);
@@ -2299,7 +2323,8 @@ pub mod tests {
             // The CPU's codes: the interpreter's, but the lazy marks' gaps (tier 2's).
             let tested = checks.program.block_programs[0].run(f);
             let want: Vec<u32> = a.codes.iter().zip(&tested.codes).map(|(&c, &t)| c & !lazy | t & coded).collect();
-            assert_eq!(cpu[k].codes, want, "file {k}: the CPU's codes");
+            let refused = a.totals.iter().any(|&t| t != 0);
+            assert!(codes_agree(&cpu[k].codes, &want, refused), "file {k}: the CPU's codes ({} of {}), up to a refusal", cpu[k].codes.len(), want.len());
             // The CPU's tier 2 takes the gaps: its tape or refusal is the interpreter's, over the
             // cases (the corpus: its tape where it takes the file; two files of 500 KB it
             // refuses as before, the work queue's).
@@ -2317,10 +2342,13 @@ pub mod tests {
             let batch: Vec<rerail_compiler::block::BatchFile<'_>> = refs.iter().map(|b| rerail_compiler::block::BatchFile { bytes: b, program: 0 }).collect();
             let got = run_serial_split(&[&new.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
             // Metal sets the gap marks tier 2 on the CPU tests itself: its codes are the
-            // interpreter's whole.
+            // interpreter's whole, up to a refusal (`codes_agree`), as the CPU's.
             for (k, m) in got.run.files.iter().enumerate() {
-                assert_eq!(m.codes, new.program.block_programs[0].run(refs[k]).codes, "file {k}: Metal's codes");
-                assert_eq!(unlazy(&m.codes, lazy), unlazy(&cpu[k].codes, lazy), "file {k}: Metal's codes, the CPU's");
+                let interp = new.program.block_programs[0].run(refs[k]);
+                let refused = interp.totals.iter().any(|&t| t != 0);
+                assert!(codes_agree(&m.codes, &interp.codes, refused), "file {k}: Metal's codes ({} of {}), up to a refusal", m.codes.len(), interp.codes.len());
+                let (mc, cc) = (unlazy(&m.codes, lazy), unlazy(&cpu[k].codes, lazy));
+                assert!(codes_agree(&cc, &mc, refused) || codes_agree(&mc, &cc, refused), "file {k}: Metal's codes, the CPU's");
                 assert_eq!(m.totals, cpu[k].totals, "file {k}: Metal's refusals");
             }
         }
@@ -2328,15 +2356,15 @@ pub mod tests {
         eprintln!("{} files: the same marks; of the cases {} refused, {} taken", refs.len(), taken[0], taken[1]);
     }
 
-    /// A number's checks at its token (`escape … at number when …`, decision 0177): a second
-    /// `.` and 19 digits from its first refuse the file, on the interpreter, the CPU and Metal
+    /// A number's check at its token (`escape … at number when …`, decision 0177): an integer
+    /// of 19 digits or more refuses the file, a float's digits never, on the interpreter, the CPU and Metal
     /// alike, with the token across a block's edge and longer than a block.
     #[test]
     fn a_numbers_checks_are_at_its_token() {
         use rerail_compiler::block;
         let c = crate::compiled().expect("compiles");
         let r = c.native.records.as_ref().expect("records");
-        assert_eq!(r.checks.iter().filter(|c| c.then == rerail_compiler::records::CheckThen::Escape).count(), 2, "a count and a run, the number rule's");
+        assert_eq!(r.checks.iter().filter(|c| c.then == rerail_compiler::records::CheckThen::Escape).count(), 1, "a run, the number rule's");
         let mut cases: Vec<(String, bool)> = Vec::new();
         for pad in [0usize, 30, 40, 44, 50, 55, 58, 60, 63] {
             let head = format!(".decl a(x: number)\n// {}\n", "x".repeat(pad));
@@ -2344,7 +2372,7 @@ pub mod tests {
             cases.push((format!("{head}a(1234567890123456789).\n"), false));
             cases.push((format!("{head}a(0000000000000000001).\n"), false));
             cases.push((format!("{head}a(123456789012345678.5).\n"), true));
-            cases.push((format!("{head}a(1234567890123456789.5).\n"), false));
+            cases.push((format!("{head}a(1234567890123456789.5).\n"), true));
             cases.push((format!("{head}a(1.{}).\n", "7".repeat(80)), true));
             cases.push((format!("{head}a(1.{}.5).\n", "7".repeat(80)), false));
             cases.push((format!("{head}a(1.2.3).\n"), false));
@@ -2396,10 +2424,11 @@ pub mod tests {
         }
     }
 
-    /// A float read as simdjson reads one: digits, a `.`, digits, then a byte that is not
-    /// one more `.` and digit. `1.2.3` goes to the engine; tier 1 iterates nothing for it.
+    /// A float read as the engine reads one: digits, a `.`, digits. A `.` after a fraction is
+    /// no float's: `1.2.3` is `1.2`, `.` and `3`, and `1.2.3.4` is `1.2`, `.` and `3.4`. Every
+    /// case is the engine's tape, or refused by both.
     #[test]
-    fn chained_floats_go_to_the_engine() {
+    fn chained_floats_read_as_the_engine() {
         let c = crate::compiled().expect("compiles");
         let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         let mut cases = Vec::new();
@@ -2408,8 +2437,12 @@ pub mod tests {
             cases.push((format!("{head}a(1.5).\n"), true));
             cases.push((format!("{head}a(x) :- a(y), x = y + 12.25 * 3.0.\n"), true));
             cases.push((format!("{head}a(x) :- a(y), x = y - 0.125.\n"), true));
+            // A chain in a clause is the engine's syntax error too; in a setting, its floats
+            // and dots: `1.2`, `.`, `3.4`, `.`, `5`.
             cases.push((format!("{head}a(1.2.3).\n"), false));
             cases.push((format!("{head}a(x) :- a(y), x = 10.25.5.\n"), false));
+            cases.push((format!("{head}.scope 1.2.3.4.5\na(1).\n"), true));
+            cases.push((format!("{head}.mode 10.25.5 x\na(1).\n"), true));
             cases.push((format!("{head}a(x) :- a(y), x = -1.5, y = -20.\n"), true));
             cases.push((format!("{head}.limit 1.5\na(1).\n"), true));
             cases.push((format!("{head}.options {{\"a\": 1.5, \"b\": -0.25, \"c\": 3}}\n"), true));

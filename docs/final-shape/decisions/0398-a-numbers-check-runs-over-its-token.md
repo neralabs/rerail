@@ -1,7 +1,9 @@
 # 0398: A number's check runs over its token, in tier 2
 
 Status: decided (the user, 2026-11-18: "Check numbers and \u escapes once per token in tier 2,
-as simdjson does in stage 2", page 39's item 1). Supersedes 0351's note that the number check
+as simdjson does in stage 2", page 39's item 1). Kept by shape (the user, 2026-11-18: "this decision
+needs to be made based on one criteria: what brings us closer to the desired shape"): per-token
+checks are simdjson's stage 2; the cost on dense files does not decide it. Supersedes 0351's note that the number check
 stays tier 1's masks. The `\u` escapes' part is not done here.
 
 ## Intro

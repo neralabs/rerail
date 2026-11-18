@@ -280,7 +280,9 @@ impl Wave {
             atoms.extend(names.iter().map(|name| (*name).to_owned()).zip(found.iter().copied()));
             Ok(found)
         };
-        let mut program = emit::emit_program(source, PROGRAM, &batch, intern).map_err(invalid)?.program;
+        // The program joins the policies' tree (`json_rules`) until they write versions (0276 step 6).
+        let version = crate::code_rule_dsl::logic::program_image::Builder::of_program(source).and_then(|b| b.finish()).map(|(v, _)| v).map_err(invalid)?;
+        let mut program = emit::emit_program(version, PROGRAM, &batch, intern).map_err(invalid)?.program;
         program.file_local = true;
         program.partitions = vec![(RELATION.to_owned(), self.names.clone())];
         let bytes = serde_json::to_vec(&program).map_err(|error| invalid(error.to_string()))?;

@@ -11,7 +11,7 @@ use rerail_compiler::{native_cpu_clusters, native_cpu_stream, native_ir, rir_asm
 use rerail_kotlin_lean as lean;
 
 /// The grammar: the ladder's last step.
-pub const GRAMMAR: &str = include_str!("../bitlex_ladder/35-raw-templates.bitlex");
+pub const GRAMMAR: &str = include_str!("../bitlex_ladder/36-no-back-fills.bitlex");
 
 /// The tape's tag: Kotlin's in the registry (`languages/kotlin.json`).
 pub const TAG: u8 = 24;
@@ -24,7 +24,12 @@ pub struct Compiled {
     /// Tier 2's words and its state machine as text.
     pub words: String,
     pub machine: String,
+    /// The provers' answers the compile made, for the next (`compile_timed`'s `known`).
+    pub proofs: Vec<(Vec<u8>, rerail_compiler::bitlex_prove::Answer)>,
 }
+
+/// The provers' answers by question (decision 0414).
+pub type Proofs = rerail_compiler::bitlex_prove::Known;
 
 // SAFETY: nothing changes a compiled parser once it is made (as `rerail_rr_parser::Compiled`):
 // `image` takes `&self` and writes only buffers it allocates for the call.
@@ -58,7 +63,21 @@ fn field(name: &str) -> Option<u16> {
 
 /// `grammar` compiled: a ladder step's text.
 pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
+    compile_timed(grammar, Default::default(), &mut |_, _| {})
+}
+
+/// `compile_text`, each phase's time given to `lap` as it ends: Bitlex's syntax, the Bitlex
+/// compiler (tier 1's masks and tier 2's words), the words assembled, lowered to the native IR,
+/// tier 2's functions cut into clusters, and Cranelift's code for each tier. `known`: the provers'
+/// answers a compile made before (`Compiled::proofs`, decision 0414).
+pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static str, std::time::Duration)) -> Result<Compiled, String> {
+    let mut at = std::time::Instant::now();
+    let mut lap = |name: &'static str| {
+        lap(name, at.elapsed());
+        at = std::time::Instant::now();
+    };
     let stmts = ::bitlex::syntax::parse(grammar)?;
+    lap("syntax");
     let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
     let kind = |name: &str| {
         lean_kind(name).or_else(|| {
@@ -68,15 +87,25 @@ pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
         })
     };
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field };
-    let compiled = bitlex_compile::compile_shaped(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules)?;
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known)?;
+    lap("bitlex compiler");
     let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
+    lap("assembled");
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
+    lap("native IR");
     native.tag = TAG;
     for b in &mut native.block_programs {
         b.pad = rerail_compiler::native_cpu_block::BACK as u16;
     }
-    let parser = native_cpu_stream::Parser::with_cut(&native, &native_cpu_clusters::by_rules(&native)).map_err(|e| format!("Cranelift: {e:?}"))?;
-    Ok(Compiled { parser, program, words: compiled.words.clone(), machine: compiled.machine.clone() })
+    let cut = native_cpu_clusters::by_rules(&native);
+    lap("clusters");
+    let block = native.block_programs.first().ok_or("no tier 1 program")?;
+    let tier1 = rerail_compiler::native_cpu_block::compile(block).map_err(|e| format!("Cranelift: {e:?}"))?;
+    lap("tier 1 Cranelift");
+    let tier2 = native_cpu_stream::compile_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
+    lap("tier 2 Cranelift");
+    let parser = native_cpu_stream::Parser::with_tiers(&native, &cut, tier1, tier2);
+    Ok(Compiled { parser, program, words: compiled.words.clone(), machine: compiled.machine.clone(), proofs: compiled.proofs.clone() })
 }
 
 impl Compiled {

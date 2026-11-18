@@ -6,6 +6,20 @@ use cranelift_module::Module;
 /// The reads written once in CLIF (decisions 0310, 0325), compiled by the JIT through its inlining pass, each
 /// called through an exported function of its own (a hot read inlined into it, a cold one a call): what a test runs
 /// against a hand-written reader. Building it checks the pass: every hot read inlined, every cold one a call.
+/// A JIT builder whose code lies in one reservation (`ArenaMemoryProvider`, `CODE_RESERVE` bytes). AArch64 calls
+/// between a module's functions are `bl`s, which reach ±128 MB; the default provider takes each chunk of code from
+/// the allocator, and a large one may lie anywhere, so a module whose code takes two chunks could not link
+/// (`compiled_blob`'s `Arm64Call`). Every module that compiles the reads is built from it.
+pub fn builder() -> Result<cranelift_jit::JITBuilder, String> {
+    let mut builder = cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names()).map_err(|e| format!("the JIT builder: {e}"))?;
+    let arena = cranelift_jit::ArenaMemoryProvider::new_with_size(CODE_RESERVE).map_err(|e| format!("the JIT's code reservation: {e}"))?;
+    builder.memory_provider(Box::new(arena));
+    Ok(builder)
+}
+
+/// The address space a module's code is reserved (not committed): well within a `bl`'s reach.
+pub const CODE_RESERVE: usize = 64 << 20;
+
 pub struct Reads {
     _module: cranelift_jit::JITModule,
     fns: std::collections::HashMap<&'static str, *const u8>,
@@ -17,8 +31,7 @@ impl Reads {
     pub fn new() -> Self {
         use cranelift_codegen::ir::{InstBuilder, UserFuncName};
         use cranelift_module::Linkage;
-        let builder = cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names()).unwrap();
-        let mut module = cranelift_jit::JITModule::new(builder);
+        let mut module = cranelift_jit::JITModule::new(builder().unwrap());
         crate::inline::define_cold(&mut module, &mut |module, id, context| module.define_function(id, context)).unwrap();
         let mut ids = Vec::new();
         for read in crate::reads::READS {

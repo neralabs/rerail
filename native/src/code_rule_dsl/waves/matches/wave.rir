@@ -1,4 +1,4 @@
-wave sha256:f3b2387c0526c3ffd122a61f29a0bf0d5950ca5e0fcb8c51c7e6fbda243a8efa clauses=491 labels=5852
+wave sha256:d9722b3a5cb2700988f8b1795090b7eae7cfaf422250a9015848b608bb36dcb0 clauses=491 labels=5852
 clause 0 "bandit-b104-hardcoded-bind-all-interfaces/B104" root=sha256:f79ca489f679d5f1c726ba9310272affd8f75f16168640ea48096b0002074868 domain=kinds[string] offset=0
   label L16384 fact value slots=[]
   step L16384
@@ -7,9 +7,9 @@ clause 1 "bandit-b105-hardcoded-password-string/assigned" root=sha256:7439a21ec1
   label L16386 roots sha256:e1c3fb754f87dc31cdba8cdcc4d009e86b6cc16f270ec30fe79204176d49611b domain=kinds[assignment]
   label L16387 complement L16386
   label L16388 roots sha256:b43bfc7561fbc83d0d70ada0bb25416fbf1b0619f303ee27957cd6a4375c2595 domain=kinds[assignment]
-  label L16389 roots sha256:51bac7867924c5872e2b485231f30edf15e815d0ad077da820f58f98b9bc0307 domain=kinds[string] within And([Reached { step: Child, named: false, from: And([Or([Kind(199)]), Class(16388)]) }, Field(25)])
+  label L16389 roots sha256:51bac7867924c5872e2b485231f30edf15e815d0ad077da820f58f98b9bc0307 domain=kinds[string] within And([Reached { step: Child, named: false, from: And([Kind(199), Class(16388)]) }, Field(25)])
   label L16390 complement L16389
-  label L16391 roots sha256:8c67538a77ad18cd5d67fe74fa06312cc69f5986c3aaa686fb6114d1b6c3d37c domain=kinds[concatenated_string] within And([Reached { step: Child, named: false, from: And([Or([Kind(199)]), Class(16388)]) }, Field(25)])
+  label L16391 roots sha256:8c67538a77ad18cd5d67fe74fa06312cc69f5986c3aaa686fb6114d1b6c3d37c domain=kinds[concatenated_string] within And([Reached { step: Child, named: false, from: And([Kind(199), Class(16388)]) }, Field(25)])
   label L16392 complement L16391
   step L16385
   step L16386
@@ -843,7 +843,7 @@ clause 47 "ruff-b018-useless-expression/useless-attribute-access" root=sha256:24
   borrowed L16744
 clause 48 "ruff-b024-abstract-base-class-without-abstract-method/abstract-base-class-without-abstract-method" root=sha256:e34834583dd60f0819ce95056b36d80aafa07f9db66a2da0737e695e74594dc8 domain=kinds[class_definition] offset=385
   label L16769 fact gap slots=[]
-  label L16770 roots sha256:524fe91280438fe5622b1761e9894dda383bce5da693e67e5350069dd694af31 domain=kinds[assignment] within Reached { step: Parent, named: false, from: And([Or([Kind(208)]), Kind(208)]) }
+  label L16770 roots sha256:524fe91280438fe5622b1761e9894dda383bce5da693e67e5350069dd694af31 domain=kinds[assignment] within Reached { step: Parent, named: false, from: And([Kind(208), Kind(208)]) }
   label L16771 complement L16770
   label L16772 roots sha256:dcb9450ff48b880848604c33e1fa372c37df832ff329115bb78be66d7eec7c3b domain=kinds[assignment]
   label L16773 fact resolves slots=[]
@@ -1240,7 +1240,7 @@ clause 53 "ruff-d415-missing-terminal-punctuation/missing-terminal-punctuation" 
   label L16943 roots sha256:ac5b008a121e9a5767637774f2e06d04bef9bb789ae8e3580fd7e274d029fafa domain=kinds[expression_statement]
   label L16944 complement L16943
   label L16945 roots sha256:c1ac2585db26bd67d3bda01386b60f899d055c93ceb2384431f9ea0590254bc0 domain=kinds[expression_statement parenthesized_expression]
-  label L16946 roots sha256:0a017c6cca3c9870ee372d9a90efe65ff906af15d9e9e8299794c933b8cfa618 domain=kinds[string] within And([Reached { step: Parent, named: false, from: And([Or([Kind(232)]), Kind(232), Class(16940)]) }, Reached { step: Child, named: false, from: And([Or([Kind(122), Kind(225)]), Class(16945)]) }])
+  label L16946 roots sha256:0a017c6cca3c9870ee372d9a90efe65ff906af15d9e9e8299794c933b8cfa618 domain=kinds[string] within And([Reached { step: Parent, named: false, from: And([Kind(232), Kind(232), Class(16940)]) }, Reached { step: Child, named: false, from: And([Or([Kind(122), Kind(225)]), Class(16945)]) }])
   label L16947 complement L16946
   step L16939
   step L16940
@@ -1512,12 +1512,12 @@ clause 58 "ruff-e731-lambda-assignment/lambda-assignment" root=sha256:1bff2c456f
   label L17062 roots sha256:f6b426bac22476b67fb2df864b375c98d6354bf5c429891698ee5065756551a0 domain=kinds[identifier #180]
   label L17063 roots sha256:649ffd30c56ffcd832ea3b151747c4327d1d09b5bd008957436ca16cb32b44a9 domain=kinds[identifier #180]
   label L17064 roots sha256:c43e0b56961d4a87a3ac0b695af07fc66e246e192e98e9ebc0f799289e290c12 domain=kinds[lambda parenthesized_expression]
-  label L17065 roots sha256:86518522354250d95b401291dc7cba92bed5ecdab9b9155d99d9b5c85f7541f1 domain=kinds[assignment] within Reached { step: Child, named: false, from: And([Or([Kind(122)]), Kind(122)]) }
+  label L17065 roots sha256:86518522354250d95b401291dc7cba92bed5ecdab9b9155d99d9b5c85f7541f1 domain=kinds[assignment] within Reached { step: Child, named: false, from: And([Kind(122), Kind(122)]) }
   label L17066 complement L17065
   label L17067 roots sha256:337bfa7ad992c6c6cbf888345e97369f5fafe97915c4c5841b6263ca93605317 domain=kinds[function_definition class_definition]
   label L17068 complement L17067
   label L17069 targets sha256:b590a9356b9fed7d7b0dedad53ba256ff6813eda3fc93bf16bbecff574c0b58d domain=kinds[class_definition]
-  label L17070 roots sha256:ac12e9811b74b730b1c5d2e292a0b69a005b8f241f87ad3d4af588cdb4406d51 domain=kinds[assignment] within Reached { step: Child, named: false, from: And([Or([Kind(122)]), Kind(122)]) }
+  label L17070 roots sha256:ac12e9811b74b730b1c5d2e292a0b69a005b8f241f87ad3d4af588cdb4406d51 domain=kinds[assignment] within Reached { step: Child, named: false, from: And([Kind(122), Kind(122)]) }
   label L17071 complement L17070
   step L17056
   step L17057
@@ -1540,7 +1540,7 @@ clause 58 "ruff-e731-lambda-assignment/lambda-assignment" root=sha256:1bff2c456f
   borrowed L16842
 clause 59 "ruff-e741-ambiguous-variable-name/ambiguous-variable-name" root=sha256:0390a0814f5532c9c6221c239b89ad768292755d8e526eafc024df4c538ad2a2 domain=kinds[identifier] offset=688
   label L17072 fact gap slots=[]
-  label L17073 roots sha256:1f13f1335509f5bb1595715e1ab3d80ddb6581486aca33fa0f4844241213bfe3 domain=all within Reached { step: Child, named: false, from: Or([And([Or([Kind(123), Kind(182), Kind(183), Kind(199), Kind(200), Kind(207)]), Kind(199)]), Or([And([Or([Kind(123), Kind(182), Kind(183), Kind(199), Kind(200), Kind(207)]), Kind(200)]), Or([And([Or([Kind(123), Kind(182), Kind(183), Kind(199), Kind(200), Kind(207)]), Kind(123)]), Or([And([Or([Kind(123), Kind(182), Kind(183), Kind(199), Kind(200), Kind(207)]), Kind(182)]), Or([And([Or([Kind(123), Kind(182), Kind(183), Kind(199), Kind(200), Kind(207)]), Kind(207)]), And([Or([Kind(123), Kind(182), Kind(183), Kind(199), Kind(200), Kind(207)]), Kind(183)])])])])])]) }
+  label L17073 roots sha256:1f13f1335509f5bb1595715e1ab3d80ddb6581486aca33fa0f4844241213bfe3 domain=all within Reached { step: Child, named: false, from: Or([And([Or([Kind(123), Kind(182), Kind(183), Kind(199), Kind(200), Kind(207)]), Kind(199)]), And([Or([Kind(123), Kind(182), Kind(183), Kind(199), Kind(200), Kind(207)]), Kind(200)]), And([Or([Kind(123), Kind(182), Kind(183), Kind(199), Kind(200), Kind(207)]), Kind(123)]), And([Or([Kind(123), Kind(182), Kind(183), Kind(199), Kind(200), Kind(207)]), Kind(182)]), And([Or([Kind(123), Kind(182), Kind(183), Kind(199), Kind(200), Kind(207)]), Kind(207)]), And([Or([Kind(123), Kind(182), Kind(183), Kind(199), Kind(200), Kind(207)]), Kind(183)])]) }
   label L17074 complement L17073
   label L17075 targets sha256:41bbf29e8746e6deb4eaad031cc03ad7f30ec251493c29aa32d43d413983bc21 domain=all
   label L17076 targets sha256:7c6281f7ff6501e41f4698baace771249548dbf4858730fe38a1c0594f95e19a domain=all
@@ -1582,16 +1582,16 @@ clause 61 "ruff-f404-late-future-import/late-future-import" root=sha256:f09ba690
   label L17092 roots sha256:7b0f2dd4d1f66c12965feb37412785715fa39e9fe2aeae93a317e95ad3c58355 domain=all
   label L17093 complement L17092
   label L17094 targets sha256:7704574fc3b545b6a588bc0974d41d1370b6bd2824662b6aba2ab34114f0ed2b domain=all
-  label L17095 roots sha256:6b6b0267f82f9ddd26e8edab67e9e62bc07d9264074b3294e2ea172a3029f489 domain=kinds[expression_statement] within Reached { step: Child, named: false, from: And([Or([Kind(108)]), Kind(108)]) }
+  label L17095 roots sha256:6b6b0267f82f9ddd26e8edab67e9e62bc07d9264074b3294e2ea172a3029f489 domain=kinds[expression_statement] within Reached { step: Child, named: false, from: And([Kind(108), Kind(108)]) }
   label L17096 complement L17095
-  label L17097 roots sha256:5b7b0a660e4bdc62a90052f72505e6cee8cf0c8970169feb76aae6495f042395 domain=kinds[string] within Reached { step: Parent, named: false, from: And([Or([Kind(104)]), Kind(104)]) }
+  label L17097 roots sha256:5b7b0a660e4bdc62a90052f72505e6cee8cf0c8970169feb76aae6495f042395 domain=kinds[string] within Reached { step: Parent, named: false, from: And([Kind(104), Kind(104)]) }
   label L17098 complement L17097
   label L17099 complement L17102
   label L17100 roots sha256:045286df2d58c2043b6d4ca7822ac18af42162ba5bd1efb3773cc514e7ab4ac5 domain=kinds[concatenated_string]
   label L17101 complement L17100
   label L17102 roots sha256:ec173e70e2b3bba7d180d096fe05f3eba84c232f2ea117fb3c8b540485f79e18 domain=kinds[parenthesized_expression concatenated_string string]
   label L17103 complement L17102
-  label L17104 roots sha256:60d9e5bfc30ba086d3499d21798b497d36caf977029fd07f42744193cd466cd8 domain=kinds[expression_statement] within Reached { step: Child, named: false, from: And([Or([Kind(108)]), Kind(108)]) }
+  label L17104 roots sha256:60d9e5bfc30ba086d3499d21798b497d36caf977029fd07f42744193cd466cd8 domain=kinds[expression_statement] within Reached { step: Child, named: false, from: And([Kind(108), Kind(108)]) }
   label L17105 complement L17104
   label L17106 roots sha256:2ec0f865b85ab36756bcd7edb900f31636696de4601e0e18581fdaf2daebdcbf domain=all
   label L17107 complement L17106
@@ -1829,7 +1829,7 @@ clause 69 "ruff-ruf053-class-with-mixed-type-vars/generic-base-with-type-params"
 clause 70 "ruff-sim105-suppressible-exception/suppressible-exception" root=sha256:61f709f9e9883de7b5c7c0f16ec788ed9a14854fdb0b6fb26d0f2709f7e6a405 domain=kinds[try_statement] offset=821
   label L17205 roots sha256:e3020066473ca61cc6aa2f1d528f2c1d9cfe84637d866593ac3851ee2a4c9649 domain=kinds[import_statement future_import_statement import_from_statement assert_statement expression_statement delete_statement pass_statement]
   label L17206 complement L17205
-  label L17207 count sha256:1f7554784cfed52c62fcd860799cf4aa2a36af30f6b474eb53b5baf08f95dbe3 domain=kinds[#161] within Reached { step: Parent, named: false, from: Or([And([Or([Kind(111), Kind(114), Kind(115), Kind(121), Kind(122), Kind(126), Kind(128)]), Class(17206), Kind(122)]), Or([And([Or([Kind(111), Kind(114), Kind(115), Kind(121), Kind(122), Kind(126), Kind(128)]), Class(17206), Kind(126)]), Or([And([Or([Kind(111), Kind(114), Kind(115), Kind(121), Kind(122), Kind(126), Kind(128)]), Class(17206), Kind(121)]), Or([And([Or([Kind(111), Kind(114), Kind(115), Kind(121), Kind(122), Kind(126), Kind(128)]), Class(17206), Kind(111)]), Or([And([Or([Kind(111), Kind(114), Kind(115), Kind(121), Kind(122), Kind(126), Kind(128)]), Class(17206), Kind(115)]), Or([And([Or([Kind(111), Kind(114), Kind(115), Kind(121), Kind(122), Kind(126), Kind(128)]), Class(17206), Kind(114)]), And([Or([Kind(111), Kind(114), Kind(115), Kind(121), Kind(122), Kind(126), Kind(128)]), Class(17206), Kind(128)])])])])])])]) } by=start min=1 max=1
+  label L17207 count sha256:1f7554784cfed52c62fcd860799cf4aa2a36af30f6b474eb53b5baf08f95dbe3 domain=kinds[#161] within Reached { step: Parent, named: false, from: Or([And([Or([Kind(111), Kind(114), Kind(115), Kind(121), Kind(122), Kind(126), Kind(128)]), Class(17206), Kind(122)]), And([Or([Kind(111), Kind(114), Kind(115), Kind(121), Kind(122), Kind(126), Kind(128)]), Class(17206), Kind(126)]), And([Or([Kind(111), Kind(114), Kind(115), Kind(121), Kind(122), Kind(126), Kind(128)]), Class(17206), Kind(121)]), And([Or([Kind(111), Kind(114), Kind(115), Kind(121), Kind(122), Kind(126), Kind(128)]), Class(17206), Kind(111)]), And([Or([Kind(111), Kind(114), Kind(115), Kind(121), Kind(122), Kind(126), Kind(128)]), Class(17206), Kind(115)]), And([Or([Kind(111), Kind(114), Kind(115), Kind(121), Kind(122), Kind(126), Kind(128)]), Class(17206), Kind(114)]), And([Or([Kind(111), Kind(114), Kind(115), Kind(121), Kind(122), Kind(126), Kind(128)]), Class(17206), Kind(128)])]) } by=start min=1 max=1
   label L17208 roots sha256:38773515c8895c114005f1f3ca6f27132b0bb6712b1ab71daa661d137c52a978 domain=kinds[#161]
   label L17209 roots sha256:e3020066473ca61cc6aa2f1d528f2c1d9cfe84637d866593ac3851ee2a4c9649 domain=kinds[expression_statement pass_statement]
   label L17210 complement L17209
@@ -2170,7 +2170,7 @@ clause 73 "ruff-sim201-negate-equal-op/negate-equal-op" root=sha256:8396a7705af2
   label L17366 complement L17365
   label L17367 roots sha256:79c5a6302b145444a3095b89f38929a8d46ed9fcc2874c453e2fa09f7db19865 domain=kinds[comment raise_statement]
   label L17368 complement L17367
-  label L17369 roots sha256:a0a03e07b0158d9a01e7533e49582aa676b1adbd53aa058111920d1e2e325eaf domain=kinds[#161] within Reached { step: Parent, named: false, from: And([Or([Kind(127)]), Kind(127)]) }
+  label L17369 roots sha256:a0a03e07b0158d9a01e7533e49582aa676b1adbd53aa058111920d1e2e325eaf domain=kinds[#161] within Reached { step: Parent, named: false, from: And([Kind(127), Kind(127)]) }
   label L17370 complement L17369
   label L17371 roots sha256:781fde231808dd936f33b8bd66bc067afc9bfe1dd6786607cdfeedc6ea052887 domain=kinds[#161]
   label L17372 roots sha256:0c8551b68a3369c44c29deb1feb9523ca6c15105323a0709f4a9c8676880e49d domain=kinds[if_statement]
@@ -2358,7 +2358,7 @@ clause 80 "ruff-w605-invalid-escape-sequence/invalid-escape-sequence-end-of-form
 clause 81 "bandit-b101-assert-used/assert-used" root=sha256:08dadb51c2a7bd518250a171441df1e27e88b27ac708c77082f641163f083c99 domain=kinds[assert_statement] offset=1054
 clause 82 "bandit-b110-try-except-pass/try-except-pass" root=sha256:19269a3219d5271c945772b2cd356abe077d6b9938db9d4181eaebd6cccc93b8 domain=kinds[except_clause] offset=1054
   label L17438 roots sha256:074b4a2e7ba1f1f45d70796bed928a4728445ca75370e5605135dab97e5db0c0 domain=all
-  label L17439 count sha256:9257ee42b954145ca36d9bd39f34e3b07e1ed418ae02454e536cfc5d0b49966a domain=kinds[#161] within Reached { step: Parent, named: false, from: And([Or([Kind(128)]), Kind(128)]) } by=start min=1 max=1
+  label L17439 count sha256:9257ee42b954145ca36d9bd39f34e3b07e1ed418ae02454e536cfc5d0b49966a domain=kinds[#161] within Reached { step: Parent, named: false, from: And([Kind(128), Kind(128)]) } by=start min=1 max=1
   label L17440 roots sha256:d8f8f3a9f46bdd31974ee4abe0370da79c9ffab339686f92d23df539af1ec61e domain=kinds[#161]
   label L17441 pattern sha256:a181d70057904b3ee94ee5d6ae42f8c418832940f5b3efa5b23d56b6d5377a72 domain=kinds[except_clause] within Reached { step: Parent, named: false, from: And([Class(17440), Class(17440)]) }
   label L17442 pattern sha256:b709fa0350fe2139e9a59c02c3ca06db2323f9b37d0c80c030cc557f69684410 domain=kinds[identifier]
@@ -2373,7 +2373,7 @@ clause 82 "bandit-b110-try-except-pass/try-except-pass" root=sha256:19269a3219d5
   step L17444
   recursive 0 L17443
 clause 83 "bandit-b112-try-except-continue/try-except-continue" root=sha256:d7d3e524c43a1c42ec52c8401b6db7c2f440ff8ed1edb226c0cd46471d2b99de domain=kinds[except_clause] offset=1061
-  label L17445 count sha256:9257ee42b954145ca36d9bd39f34e3b07e1ed418ae02454e536cfc5d0b49966a domain=kinds[#161] within Reached { step: Parent, named: false, from: And([Or([Kind(130)]), Kind(130)]) } by=start min=1 max=1
+  label L17445 count sha256:9257ee42b954145ca36d9bd39f34e3b07e1ed418ae02454e536cfc5d0b49966a domain=kinds[#161] within Reached { step: Parent, named: false, from: And([Kind(130), Kind(130)]) } by=start min=1 max=1
   label L17446 roots sha256:3af099ae9986d68fffdc0d513ceb460c5a57dde53545f5a3a621cfd48c1a6669 domain=kinds[#161]
   label L17447 pattern sha256:b00539e710d8ba6e41f8fea687d41f05d7d7f449ae4e6f361cd73168ad866b77 domain=kinds[except_clause] within Reached { step: Parent, named: false, from: And([Class(17446), Class(17446)]) }
   step L17445
@@ -2725,7 +2725,7 @@ clause 118 "ruff-arg005-unused-lambda-argument/unused-lambda-argument" root=sha2
   label L17601 targets sha256:7649925852869c6662853ef1fdffdb35de1b59b171685b88872582ad31e95478 domain=kinds[for_in_clause]
   label L17602 roots sha256:8bee5f439008b9fd4e6afe3caf64c17eb9b236e088eb83ad3aad5fd30c5b0d7a domain=kinds[for_in_clause]
   label L17603 complement L17602
-  label L17604 roots sha256:900e62705edbaade0cb1ecfa7534bec9e4f4fc593046a268d2d654a4aa8a2556 domain=kinds[for_in_clause] within Reached { step: Child, named: false, from: Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(220)]), Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(222)]), Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(221)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(223)])])])]) }
+  label L17604 roots sha256:900e62705edbaade0cb1ecfa7534bec9e4f4fc593046a268d2d654a4aa8a2556 domain=kinds[for_in_clause] within Reached { step: Child, named: false, from: Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(220)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(222)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(221)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(223)])]) }
   label L17605 complement L17604
   label L17606 roots sha256:6303a3b18e36d96b179a64be9f38674d934dc9a5a70a262ebb3bba503e4f52bd domain=all
   label L17607 complement L17606
@@ -3145,12 +3145,12 @@ clause 138 "ruff-b029-except-with-empty-tuple/except-with-empty-tuple" root=sha2
   label L17767 roots sha256:576d6307d102dc24c2fac6cf38f5ff7377ccde932f4f1d923a9c3da05f686a8c domain=kinds[tuple]
   label L17768 complement L17767
   label L17769 fact gap slots=[]
-  label L17770 roots sha256:420806850d190d1f27fcf40742be6e33b07f241000acfa7e5ab0ea819e0b1ca9 domain=all within Reached { step: Child, named: false, from: And([Or([Kind(140)]), Kind(140)]) }
+  label L17770 roots sha256:420806850d190d1f27fcf40742be6e33b07f241000acfa7e5ab0ea819e0b1ca9 domain=all within Reached { step: Child, named: false, from: And([Kind(140), Kind(140)]) }
   label L17771 complement L17770
   label L17772 targets sha256:29510640eebc5c83971e21d3e3a31bf80d578ec2190d0748ec82bf2a9870bc3f domain=all
   label L17773 fact gap slots=[]
   label L17774 fact gap slots=[]
-  label L17775 roots sha256:653df430840f8da675e32b77aa1363aeb4d4e19c5a442c093e46923ff1704f4b domain=all within Reached { step: Child, named: false, from: And([Or([Kind(186)]), Kind(186), Class(17777)]) }
+  label L17775 roots sha256:653df430840f8da675e32b77aa1363aeb4d4e19c5a442c093e46923ff1704f4b domain=all within Reached { step: Child, named: false, from: And([Kind(186), Kind(186), Class(17777)]) }
   label L17776 complement L17775
   label L17777 roots sha256:7375096f5818add7f48a1e7e7f5a8a98ccac26818caa58e4788f0a909731b2fa domain=all
   label L17778 roots sha256:8f4187419c6b4d2d9f845107b93e895174a6eaa8e418530802b394aeb3288a73 domain=kinds[tuple]
@@ -3178,11 +3178,11 @@ clause 139 "ruff-b030-except-with-non-exception-classes/except-with-non-exceptio
   label L17783 roots sha256:769d32aac0f343188f0ed26cf60134be60ecb116667adc657b8a8606c135b0cb domain=kinds[tuple]
   label L17784 complement L17783
   label L17785 fact gap slots=[]
-  label L17786 roots sha256:d7f1a42f1b1c272d5256a62516cc49887d4961aa0012b55bf8fdcdc848f619eb domain=all within Reached { step: Child, named: false, from: And([Or([Kind(140)]), Kind(140)]) }
+  label L17786 roots sha256:d7f1a42f1b1c272d5256a62516cc49887d4961aa0012b55bf8fdcdc848f619eb domain=all within Reached { step: Child, named: false, from: And([Kind(140), Kind(140)]) }
   label L17787 complement L17786
   label L17788 fact gap slots=[]
   label L17789 fact gap slots=[]
-  label L17790 roots sha256:5d2397e6b916685634d4f4b67eb799d993240be62b09c13d9423a8ea17c516ea domain=all within Reached { step: Child, named: false, from: And([Or([Kind(186)]), Kind(186), Class(17792)]) }
+  label L17790 roots sha256:5d2397e6b916685634d4f4b67eb799d993240be62b09c13d9423a8ea17c516ea domain=all within Reached { step: Child, named: false, from: And([Kind(186), Kind(186), Class(17792)]) }
   label L17791 complement L17790
   label L17792 roots sha256:33ce5d6a1da742ef02f586949302ff095fcec0568be1300db098288620f49561 domain=all
   label L17793 roots sha256:6d66c1c63dcf7e24b242948a3dbaa002c47e3f25ce722b008cbcbf13a30b82b6 domain=all
@@ -3243,7 +3243,7 @@ clause 139 "ruff-b030-except-with-non-exception-classes/except-with-non-exceptio
   borrowed L17772
 clause 140 "ruff-b032-unintentional-type-annotation/unintentional-type-annotation" root=sha256:09dbdbb9742dcf22fed0649f3b082f0e8ad1e64f6765dfa4793472ee7de74bcb domain=kinds[assignment] offset=1429
   label L17813 fact gap slots=[]
-  label L17814 roots sha256:efaef254d08843f247c02432d03f8698471cefb3be3f78970916b9ecd3fbd8a8 domain=kinds[assignment] within And([Reached { step: Child, named: false, from: And([Or([Kind(122)]), Kind(122)]) }, Reached { step: Parent, named: false, from: And([Or([Kind(208)]), Kind(208)]) }])
+  label L17814 roots sha256:efaef254d08843f247c02432d03f8698471cefb3be3f78970916b9ecd3fbd8a8 domain=kinds[assignment] within And([Reached { step: Child, named: false, from: And([Kind(122), Kind(122)]) }, Reached { step: Parent, named: false, from: And([Kind(208), Kind(208)]) }])
   label L17815 complement L17814
   label L17816 fact gap slots=[]
   label L17817 roots sha256:3392e11d60ae8c1e0c9b60c25e9adf24f2bf34b14dafb72ff9a568da5f60009e domain=kinds[#180 attribute subscript parenthesized_expression]
@@ -3568,15 +3568,15 @@ clause 146 "ruff-c901-complex-structure/complex-structure" root=sha256:88e942c6c
   label L17951 roots sha256:b625902c715126ddcb2b355d3c3798b63a307db57b4b5ee5ce00e98ec07f1004 domain=kinds[dotted_name]
   label L17952 complement L17951
   label L17953 fact gap slots=[]
-  label L17954 roots sha256:dc84fb229c6f12c58884fed061856eaacdda782b27d25e116fcfb771949d8585 domain=kinds[#180] within Reached { step: Parent, named: false, from: And([Or([Kind(164)]), Kind(164), Class(17956)]) }
+  label L17954 roots sha256:dc84fb229c6f12c58884fed061856eaacdda782b27d25e116fcfb771949d8585 domain=kinds[#180] within Reached { step: Parent, named: false, from: And([Kind(164), Kind(164), Class(17956)]) }
   label L17955 complement L17954
   label L17956 roots sha256:8333f0616b784c50ba7606a6795a26e4c76724cc336c52e98d37b4e35d195fd0 domain=all
-  label L17957 roots sha256:1aa26307b23ef9607e1428bfaa63cc4bbe729170a1077d03b71a7618cc56c1bb domain=all within Reached { step: Parent, named: false, from: And([Or([Kind(164)]), Kind(164), Class(17956)]) }
+  label L17957 roots sha256:1aa26307b23ef9607e1428bfaa63cc4bbe729170a1077d03b71a7618cc56c1bb domain=all within Reached { step: Parent, named: false, from: And([Kind(164), Kind(164), Class(17956)]) }
   label L17958 complement L17957
-  label L17959 roots sha256:46836299e9d92142071ade129d903f92ae81ef23622b88205b6ff2482361508c domain=all within Reached { step: Parent, named: false, from: And([Or([Kind(164)]), Kind(164), Class(17956)]) }
+  label L17959 roots sha256:46836299e9d92142071ade129d903f92ae81ef23622b88205b6ff2482361508c domain=all within Reached { step: Parent, named: false, from: And([Kind(164), Kind(164), Class(17956)]) }
   label L17960 complement L17959
   label L17961 fact gap slots=[]
-  label L17962 roots sha256:c24c17fc848594fdcce8d1f281b6c97a8520a36921af5738d6b8a314e4aace8e domain=all within Reached { step: Parent, named: false, from: And([Or([Kind(164)]), Kind(164), Class(17956)]) }
+  label L17962 roots sha256:c24c17fc848594fdcce8d1f281b6c97a8520a36921af5738d6b8a314e4aace8e domain=all within Reached { step: Parent, named: false, from: And([Kind(164), Kind(164), Class(17956)]) }
   label L17963 complement L17962
   label L17964 roots sha256:0ddc6e635b915c9adbb4d7473ee4f044ae6b8b795a7dc8e19ff569b498b88caa domain=kinds[case_clause]
   label L17965 complement L17964
@@ -3775,7 +3775,7 @@ clause 154 "ruff-d200-unnecessary-multiline-docstring/unnecessary-multiline-docs
   label L18030 roots sha256:addf2af8e7093a2e31bc8c782a9991eeeebf0c9fb1df2025f954043e0b23e746 domain=kinds[expression_statement]
   label L18031 complement L18030
   label L18032 roots sha256:beeaa3d605d332402a3e2a02fa9edfa44ced53e672e629b080d51432c5d8e8cf domain=kinds[expression_statement parenthesized_expression]
-  label L18033 roots sha256:0a017c6cca3c9870ee372d9a90efe65ff906af15d9e9e8299794c933b8cfa618 domain=kinds[string] within And([Reached { step: Parent, named: false, from: And([Or([Kind(232)]), Kind(232)]) }, Reached { step: Child, named: false, from: And([Or([Kind(122), Kind(225)]), Class(18032)]) }])
+  label L18033 roots sha256:0a017c6cca3c9870ee372d9a90efe65ff906af15d9e9e8299794c933b8cfa618 domain=kinds[string] within And([Reached { step: Parent, named: false, from: And([Kind(232), Kind(232)]) }, Reached { step: Child, named: false, from: And([Or([Kind(122), Kind(225)]), Class(18032)]) }])
   label L18034 complement L18033
   step L18029
   step L18030
@@ -3793,7 +3793,7 @@ clause 155 "ruff-d205-missing-blank-line-after-summary/missing-blank-line-after-
   label L18036 roots sha256:bfd36ab072c25b5e7e76d632a3e4da556c49f7e7095090ef09ecf7dd243fa65b domain=kinds[expression_statement]
   label L18037 complement L18036
   label L18038 roots sha256:c9ded7bf174f29345ab5095b4b8ffab5202d70b3fb4e4ca6ecfb91dd840bdda0 domain=kinds[expression_statement parenthesized_expression]
-  label L18039 roots sha256:0a017c6cca3c9870ee372d9a90efe65ff906af15d9e9e8299794c933b8cfa618 domain=kinds[string] within And([Reached { step: Parent, named: false, from: And([Or([Kind(232)]), Kind(232)]) }, Reached { step: Child, named: false, from: And([Or([Kind(122), Kind(225)]), Class(18038)]) }])
+  label L18039 roots sha256:0a017c6cca3c9870ee372d9a90efe65ff906af15d9e9e8299794c933b8cfa618 domain=kinds[string] within And([Reached { step: Parent, named: false, from: And([Kind(232), Kind(232)]) }, Reached { step: Child, named: false, from: And([Or([Kind(122), Kind(225)]), Class(18038)]) }])
   label L18040 complement L18039
   step L18035
   step L18036
@@ -3811,7 +3811,7 @@ clause 156 "ruff-d209-new-line-after-last-paragraph/new-line-after-last-paragrap
   label L18042 roots sha256:dd312c102510990ea5d47111c397a39bdee56695dc2b3fc7ff5771d834d8b34f domain=kinds[expression_statement]
   label L18043 complement L18042
   label L18044 roots sha256:f666cb367fd84be2d49348471a5f67c8e49752a5e3d1192d684fa8b09ec50d2e domain=kinds[expression_statement parenthesized_expression]
-  label L18045 roots sha256:0a017c6cca3c9870ee372d9a90efe65ff906af15d9e9e8299794c933b8cfa618 domain=kinds[string] within And([Reached { step: Parent, named: false, from: And([Or([Kind(232)]), Kind(232)]) }, Reached { step: Child, named: false, from: And([Or([Kind(122), Kind(225)]), Class(18044)]) }])
+  label L18045 roots sha256:0a017c6cca3c9870ee372d9a90efe65ff906af15d9e9e8299794c933b8cfa618 domain=kinds[string] within And([Reached { step: Parent, named: false, from: And([Kind(232), Kind(232)]) }, Reached { step: Child, named: false, from: And([Or([Kind(122), Kind(225)]), Class(18044)]) }])
   label L18046 complement L18045
   step L18041
   step L18042
@@ -3829,7 +3829,7 @@ clause 157 "ruff-d212-multi-line-summary-first-line/multi-line-summary-first-lin
   label L18048 roots sha256:335bc3ae45b49ad46ed10ae6881c395632093dff491ddf7fc86177b780dcaa31 domain=kinds[expression_statement]
   label L18049 complement L18048
   label L18050 roots sha256:bddd7e523d6122bad9483783055f467f59c388ac264407943128df6f54dd427f domain=kinds[expression_statement parenthesized_expression]
-  label L18051 roots sha256:0a017c6cca3c9870ee372d9a90efe65ff906af15d9e9e8299794c933b8cfa618 domain=kinds[string] within And([Reached { step: Parent, named: false, from: And([Or([Kind(232)]), Kind(232)]) }, Reached { step: Child, named: false, from: And([Or([Kind(122), Kind(225)]), Class(18050)]) }])
+  label L18051 roots sha256:0a017c6cca3c9870ee372d9a90efe65ff906af15d9e9e8299794c933b8cfa618 domain=kinds[string] within And([Reached { step: Parent, named: false, from: And([Kind(232), Kind(232)]) }, Reached { step: Child, named: false, from: And([Or([Kind(122), Kind(225)]), Class(18050)]) }])
   label L18052 complement L18051
   step L18047
   step L18048
@@ -3875,9 +3875,9 @@ clause 159 "ruff-d300-triple-single-quotes/use-triple-single-quotes" root=sha256
   label L18066 complement L18065
   label L18067 roots sha256:f317b67ef6c279d2a0aa063b997e9abc02b7ac3d0de08d0d06c4ffd88cd46444 domain=kinds[expression_statement]
   label L18068 targets sha256:378230d6fe280433e894b02c31294d8a5c2548eb4fb88bef1a5f9248b63b087b domain=L18067
-  label L18069 roots sha256:ea4b96fa27ca2d8b822e2c77c7ffa0372f1c4127f96b0a6183d46b11ec7f5d9e domain=kinds[string] within Reached { step: Parent, named: false, from: And([Or([Kind(232)]), Kind(232)]) }
+  label L18069 roots sha256:ea4b96fa27ca2d8b822e2c77c7ffa0372f1c4127f96b0a6183d46b11ec7f5d9e domain=kinds[string] within Reached { step: Parent, named: false, from: And([Kind(232), Kind(232)]) }
   label L18070 complement L18069
-  label L18071 roots sha256:21c5186b7e5f24dd624e833e4eb4a86e09232e1b9e01d6ddb0805b56da9a9d5d domain=kinds[string] within Reached { step: Parent, named: false, from: And([Or([Kind(232)]), Kind(232)]) }
+  label L18071 roots sha256:21c5186b7e5f24dd624e833e4eb4a86e09232e1b9e01d6ddb0805b56da9a9d5d domain=kinds[string] within Reached { step: Parent, named: false, from: And([Kind(232), Kind(232)]) }
   label L18072 complement L18071
   step L18063
   step L18064
@@ -3917,7 +3917,7 @@ clause 161 "ruff-d403-first-word-uncapitalized/first-word-uncapitalized" root=sh
   label L18080 roots sha256:04dcfa911a41385a0742a7d2fec2b3284a36b753a608240e76ef560901c16edf domain=kinds[expression_statement]
   label L18081 complement L18080
   label L18082 roots sha256:374a2b7f5d873f643c34d684447f0938c3438017abeabe09dcb7d3c957404ff8 domain=kinds[expression_statement parenthesized_expression]
-  label L18083 roots sha256:0a017c6cca3c9870ee372d9a90efe65ff906af15d9e9e8299794c933b8cfa618 domain=kinds[string] within And([Reached { step: Parent, named: false, from: And([Or([Kind(232)]), Kind(232)]) }, Reached { step: Child, named: false, from: And([Or([Kind(122), Kind(225)]), Class(18082)]) }])
+  label L18083 roots sha256:0a017c6cca3c9870ee372d9a90efe65ff906af15d9e9e8299794c933b8cfa618 domain=kinds[string] within And([Reached { step: Parent, named: false, from: And([Kind(232), Kind(232)]) }, Reached { step: Child, named: false, from: And([Or([Kind(122), Kind(225)]), Class(18082)]) }])
   label L18084 complement L18083
   step L18079
   step L18080
@@ -3935,7 +3935,7 @@ clause 162 "ruff-d418-overload-with-docstring/overload-with-docstring" root=sha2
   label L18086 roots sha256:6c772adb36a64e260a5631e57bf347e5bd384ad75713e555546396702420c797 domain=kinds[identifier attribute parenthesized_expression]
   label L18087 roots sha256:b60f4477340b0a5372b524b13df4167c506763f2d3d3b50023ea854f91ae1697 domain=kinds[decorator]
   label L18088 roots sha256:78a41e66914242d311682a249308582ccd09cd6fe8b61378faaddf04b3718f9c domain=kinds[decorated_definition]
-  label L18089 roots sha256:0a017c6cca3c9870ee372d9a90efe65ff906af15d9e9e8299794c933b8cfa618 domain=kinds[string] within Reached { step: Parent, named: false, from: And([Or([Kind(232)]), Kind(232)]) }
+  label L18089 roots sha256:0a017c6cca3c9870ee372d9a90efe65ff906af15d9e9e8299794c933b8cfa618 domain=kinds[string] within Reached { step: Parent, named: false, from: And([Kind(232), Kind(232)]) }
   label L18090 complement L18089
   label L18091 roots sha256:e8703a2b563b96561ac713e8a085091af35176e766c33ada4e87940f2aad55fb domain=kinds[parenthesized_expression string]
   label L18092 fact gap slots=[]
@@ -4144,7 +4144,7 @@ clause 173 "ruff-e401-multiple-imports-on-one-line/multiple-imports-on-one-line"
   step L18146
 clause 174 "ruff-e711-none-comparison/none-comparison-equal" root=sha256:f874b9feb2a34335c4b424d9dc9b9653a2ccdb92c4985c7f95ddd10bc26a6d78 domain=kinds[none] offset=1763
   label L18147 fact gap slots=[]
-  label L18148 roots sha256:290cdf8677546d7a68ec447a6954c42f72cdf06fbb4c16773ccea37081b9c5bb domain=all within Reached { step: Child, named: false, from: And([Or([Kind(196)]), Kind(196)]) }
+  label L18148 roots sha256:290cdf8677546d7a68ec447a6954c42f72cdf06fbb4c16773ccea37081b9c5bb domain=all within Reached { step: Child, named: false, from: And([Kind(196), Kind(196)]) }
   label L18149 complement L18148
   label L18150 roots sha256:ffde5b0f70550d175cdefe444da5239bdd837f770e25e80a756526edaa5f91f3 domain=all
   label L18151 roots sha256:2ad926a17625ab54a95c47fa61f81236adb7fc97e78b69055635622ce007e5bb domain=all
@@ -4177,7 +4177,7 @@ clause 174 "ruff-e711-none-comparison/none-comparison-equal" root=sha256:f874b9f
   borrowed L17044
 clause 175 "ruff-e711-none-comparison/none-comparison-not-equal" root=sha256:816201eb8ddc8a7b2b484e071e131b2828822f96562330b368b87428cd08c791 domain=kinds[none] offset=1770
   label L18154 fact gap slots=[]
-  label L18155 roots sha256:ec94ed516a8c72dd9a6a417987f3bd61f3b1d656c5894afabfb0366d74b66d25 domain=all within Reached { step: Child, named: false, from: And([Or([Kind(196)]), Kind(196)]) }
+  label L18155 roots sha256:ec94ed516a8c72dd9a6a417987f3bd61f3b1d656c5894afabfb0366d74b66d25 domain=all within Reached { step: Child, named: false, from: And([Kind(196), Kind(196)]) }
   label L18156 complement L18155
   label L18157 roots sha256:40c840926ce954dbf7c878604389af216a33ec48bed7bd1790c91468ef15a7c9 domain=all
   label L18158 roots sha256:4d47790499fe5569ac820e0799a0d907fa15771786a1b2f23391096c2109ca21 domain=all
@@ -4235,7 +4235,7 @@ clause 179 "ruff-em101-raw-string-in-exception/raw-string-in-exception" root=sha
   label L18170 roots sha256:cf4684cf6c605fcb05a4638a5025d93eede9519a99690da12f5eb5d3d18d7f43 domain=kinds[identifier attribute parenthesized_expression]
   label L18171 roots sha256:1b0ae36412181e0f79837502cdc88c3acb3fdb9c33c067877487222979d38e73 domain=kinds[call]
   label L18172 complement L18171
-  label L18173 roots sha256:0ad685e0738feca9d40ec5b5cd240e0e7d5b9da56c015b60155ec3191a30c86a domain=all within Reached { step: Child, named: false, from: And([Or([Kind(127)]), Kind(127)]) }
+  label L18173 roots sha256:0ad685e0738feca9d40ec5b5cd240e0e7d5b9da56c015b60155ec3191a30c86a domain=all within Reached { step: Child, named: false, from: And([Kind(127), Kind(127)]) }
   label L18174 complement L18173
   label L18175 roots sha256:15719a2b6bb91171e976f959113759eb2ddc664c2939cfd9e083180e42b1afc0 domain=all
   label L18176 roots sha256:8e6670438531ed5b3568ccec8f0e6051f448dc160da08f4cc753b0e170d462cd domain=kinds[call]
@@ -4386,7 +4386,7 @@ clause 184 "ruff-f407-future-feature-not-defined/future-feature-not-defined" roo
 clause 185 "ruff-f541-f-string-missing-placeholders/f-string-missing-placeholders" root=sha256:b10e9d5cf859970edd8e7cfe3e330edd80b635ce56da397464ced9120e1868ec domain=kinds[string] offset=1844
   label L18228 roots sha256:1ec221f9dd0e1cdb3e85dc104542a8120bb6a7583336219274a1258ec9397841 domain=kinds[string]
   label L18229 roots sha256:e06a136a217519ba25cc90e81a1fac947ded7092defe92f9f9572252fd350075 domain=kinds[concatenated_string]
-  label L18230 roots sha256:ae33153bdb2f078d455188b210374b3876137a793de57e883655f855486df391 domain=kinds[string] within Reached { step: Parent, named: false, from: And([Or([Kind(104)]), Kind(104)]) }
+  label L18230 roots sha256:ae33153bdb2f078d455188b210374b3876137a793de57e883655f855486df391 domain=kinds[string] within Reached { step: Parent, named: false, from: And([Kind(104), Kind(104)]) }
   label L18231 complement L18230
   step L18228
   step L18229
@@ -4424,18 +4424,18 @@ clause 187 "ruff-f631-assert-tuple/assert-tuple" root=sha256:0f43868968f5bdc1e3e
   borrowed L17263
 clause 188 "ruff-f633-invalid-print-syntax/invalid-print-syntax" root=sha256:64e7e47a60270b226da32a6325db3cc8be8a2a48d979db5751e9e0f919bf88a6 domain=kinds[identifier print_statement attribute] offset=1859
   label L18243 fact gap slots=[]
-  label L18244 roots sha256:e5522514768f4bb484d404e300e31b7dd57c273a246d40ec5b859a793b3fd379 domain=kinds[identifier] within Reached { step: Child, named: false, from: Or([And([Or([Kind(123), Kind(199), Kind(200)]), Kind(199)]), Or([And([Or([Kind(123), Kind(199), Kind(200)]), Kind(200)]), And([Or([Kind(123), Kind(199), Kind(200)]), Kind(123)])])]) }
+  label L18244 roots sha256:e5522514768f4bb484d404e300e31b7dd57c273a246d40ec5b859a793b3fd379 domain=kinds[identifier] within Reached { step: Child, named: false, from: Or([And([Or([Kind(123), Kind(199), Kind(200)]), Kind(199)]), And([Or([Kind(123), Kind(199), Kind(200)]), Kind(200)]), And([Or([Kind(123), Kind(199), Kind(200)]), Kind(123)])]) }
   label L18245 complement L18244
   label L18246 fact gap slots=[]
   label L18247 targets sha256:cc69b1c2b3f5408aef7c30dfeb4c576993cf3f4650e13b25deac577003388d5a domain=all
   label L18248 fact gap slots=[]
   label L18249 fact gap slots=[]
-  label L18250 roots sha256:94a2b52b6b96e507ad2202744b6f6753410c0db8b628c5b43722ac0ee9508ab9 domain=kinds[identifier] within Reached { step: Child, named: false, from: Or([And([Or([Kind(182), Kind(183), Kind(207)]), Kind(182)]), Or([And([Or([Kind(182), Kind(183), Kind(207)]), Kind(207)]), And([Or([Kind(182), Kind(183), Kind(207)]), Kind(183)])])]) }
+  label L18250 roots sha256:94a2b52b6b96e507ad2202744b6f6753410c0db8b628c5b43722ac0ee9508ab9 domain=kinds[identifier] within Reached { step: Child, named: false, from: Or([And([Or([Kind(182), Kind(183), Kind(207)]), Kind(182)]), And([Or([Kind(182), Kind(183), Kind(207)]), Kind(207)]), And([Or([Kind(182), Kind(183), Kind(207)]), Kind(183)])]) }
   label L18251 complement L18250
   label L18252 targets sha256:e80e3e0cb7f7a585c78967710a28569170b9276fec7fd62f240cdb24f3ab592b domain=all
   label L18253 fact gap slots=[]
   label L18254 fact gap slots=[]
-  label L18255 roots sha256:386428c9cc598c0683c01c61185a82db666c5fca19f1f236c95392125e2b2a3c domain=kinds[dotted_name] within Reached { step: Child, named: false, from: And([Or([Kind(115)]), Kind(115)]) }
+  label L18255 roots sha256:386428c9cc598c0683c01c61185a82db666c5fca19f1f236c95392125e2b2a3c domain=kinds[dotted_name] within Reached { step: Child, named: false, from: And([Kind(115), Kind(115)]) }
   label L18256 complement L18255
   label L18257 targets sha256:1a38c3da3e414ec9302cde8faacf51c725670d0c06929eeecf71a3d915522ec1 domain=all
   label L18258 fact gap slots=[]
@@ -4446,10 +4446,10 @@ clause 188 "ruff-f633-invalid-print-syntax/invalid-print-syntax" root=sha256:64e
   label L18263 roots sha256:9158db99ade683b32c7fe8f7f21e65fd567bdf14d3d6a7a8ec03c8ef06487e06 domain=kinds[identifier]
   label L18264 roots sha256:4150bef799a0571ff1b9ba1650e06053dc0eb6cc38cb00dae64d6adce3d36de1 domain=kinds[module]
   label L18265 targets sha256:b366fb6a4955d5c0714275232c2d303d934139d865083f7e83a8c7231a7c33bf domain=L18264
-  label L18266 roots sha256:52ec3116e7223c75dee4ce331551448f9ccf3d05dad51d3dabdc46e2dae88afe domain=kinds[print_statement] within Reached { step: Parent, named: false, from: And([Or([Kind(120)]), Kind(120)]) }
+  label L18266 roots sha256:52ec3116e7223c75dee4ce331551448f9ccf3d05dad51d3dabdc46e2dae88afe domain=kinds[print_statement] within Reached { step: Parent, named: false, from: And([Kind(120), Kind(120)]) }
   label L18267 complement L18266
   label L18268 fact gap slots=[]
-  label L18269 roots sha256:023141cc7dccccfbc9278583152cb67dab5afbf53f0e67b6e251104bbc4fb58b domain=all within Reached { step: Child, named: false, from: And([Or([Kind(192)]), Kind(192)]) }
+  label L18269 roots sha256:023141cc7dccccfbc9278583152cb67dab5afbf53f0e67b6e251104bbc4fb58b domain=all within Reached { step: Child, named: false, from: And([Kind(192), Kind(192)]) }
   label L18270 complement L18269
   label L18271 fact gap slots=[]
   label L18272 roots sha256:e8b5f3d420352f6a911cf5d319e4b3436063cd4bf34bdf4d6f8b7c280bf7e7f8 domain=all
@@ -4525,13 +4525,13 @@ clause 192 "ruff-f704-yield-outside-function/yield-outside-function" root=sha256
   label L18287 complement L18286
   label L18288 roots sha256:900e62705edbaade0cb1ecfa7534bec9e4f4fc593046a268d2d654a4aa8a2556 domain=kinds[for_in_clause]
   label L18289 fact gap slots=[]
-  label L18290 roots sha256:8bee5f439008b9fd4e6afe3caf64c17eb9b236e088eb83ad3aad5fd30c5b0d7a domain=kinds[for_in_clause] within Reached { step: Child, named: false, from: And([Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(220)]), Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(222)]), Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(221)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(223)])])])]), Class(18302)]) }
+  label L18290 roots sha256:8bee5f439008b9fd4e6afe3caf64c17eb9b236e088eb83ad3aad5fd30c5b0d7a domain=kinds[for_in_clause] within Reached { step: Child, named: false, from: And([Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(220)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(222)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(221)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(223)])]), Class(18302)]) }
   label L18291 complement L18290
   label L18292 roots sha256:b5f22c43cba9f5e2bd75ef0d6032aa6e22c45a7bcf33bcb5b87c472f44db8d80 domain=kinds[for_in_clause]
-  label L18293 roots sha256:8bee5f439008b9fd4e6afe3caf64c17eb9b236e088eb83ad3aad5fd30c5b0d7a domain=kinds[for_in_clause] within Reached { step: Child, named: false, from: And([Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(220)]), Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(222)]), Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(221)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(223)])])])]), Class(18302)]) }
+  label L18293 roots sha256:8bee5f439008b9fd4e6afe3caf64c17eb9b236e088eb83ad3aad5fd30c5b0d7a domain=kinds[for_in_clause] within Reached { step: Child, named: false, from: And([Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(220)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(222)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(221)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(223)])]), Class(18302)]) }
   label L18294 complement L18293
   label L18295 roots sha256:f39e97363c18498f94521692b55bdc6f645cfa589e79ae38434c4f1a54a7f131 domain=kinds[for_in_clause]
-  label L18296 roots sha256:a30f1bc0360d77ee9af9aa75a84be269c35e2cbebfdf27e2f71d87631d96a62b domain=all within Reached { step: Child, named: false, from: And([Or([Kind(197)]), Kind(197), Class(18302)]) }
+  label L18296 roots sha256:a30f1bc0360d77ee9af9aa75a84be269c35e2cbebfdf27e2f71d87631d96a62b domain=all within Reached { step: Child, named: false, from: And([Kind(197), Kind(197), Class(18302)]) }
   label L18297 complement L18296
   label L18298 roots sha256:c22add3e992ad848f410c559f9424f38bf92a222dbd07d081b4bef1be5251017 domain=all
   label L18299 roots sha256:c22add3e992ad848f410c559f9424f38bf92a222dbd07d081b4bef1be5251017 domain=all
@@ -4543,13 +4543,13 @@ clause 192 "ruff-f704-yield-outside-function/yield-outside-function" root=sha256
   label L18305 fact gap slots=[]
   label L18306 fact gap slots=[]
   label L18307 fact gap slots=[]
-  label L18308 roots sha256:8bee5f439008b9fd4e6afe3caf64c17eb9b236e088eb83ad3aad5fd30c5b0d7a domain=kinds[for_in_clause] within Reached { step: Child, named: false, from: And([Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(220)]), Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(222)]), Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(221)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(223)])])])]), Class(18320)]) }
+  label L18308 roots sha256:8bee5f439008b9fd4e6afe3caf64c17eb9b236e088eb83ad3aad5fd30c5b0d7a domain=kinds[for_in_clause] within Reached { step: Child, named: false, from: And([Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(220)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(222)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(221)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(223)])]), Class(18320)]) }
   label L18309 complement L18308
   label L18310 roots sha256:90478e53b9c65a3d5c84542a96c37f4803db758e596c6aeffc2bdcfa6dc9e05b domain=kinds[for_in_clause]
-  label L18311 roots sha256:8bee5f439008b9fd4e6afe3caf64c17eb9b236e088eb83ad3aad5fd30c5b0d7a domain=kinds[for_in_clause] within Reached { step: Child, named: false, from: And([Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(220)]), Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(222)]), Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(221)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(223)])])])]), Class(18320)]) }
+  label L18311 roots sha256:8bee5f439008b9fd4e6afe3caf64c17eb9b236e088eb83ad3aad5fd30c5b0d7a domain=kinds[for_in_clause] within Reached { step: Child, named: false, from: And([Or([And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(220)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(222)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(221)]), And([Or([Kind(220), Kind(221), Kind(222), Kind(223)]), Kind(223)])]), Class(18320)]) }
   label L18312 complement L18311
   label L18313 roots sha256:47b2c3713c8e0b4b09a610e24e85a2bded463806ea9bb2e479f08c84f2b50c66 domain=kinds[for_in_clause]
-  label L18314 roots sha256:d6586f7af63f69f3c85bc8f220cb1db23c36de9b673f4a3e3c31453f2cebddb8 domain=all within Reached { step: Child, named: false, from: And([Or([Kind(197)]), Kind(197), Class(18320)]) }
+  label L18314 roots sha256:d6586f7af63f69f3c85bc8f220cb1db23c36de9b673f4a3e3c31453f2cebddb8 domain=all within Reached { step: Child, named: false, from: And([Kind(197), Kind(197), Class(18320)]) }
   label L18315 complement L18314
   label L18316 roots sha256:e9c3123ff8ff0b9ab7b85ecc9c682f7708e79b3c4b502d8e2e67e622d7b1e481 domain=all
   label L18317 roots sha256:e9c3123ff8ff0b9ab7b85ecc9c682f7708e79b3c4b502d8e2e67e622d7b1e481 domain=all
@@ -4616,7 +4616,7 @@ clause 198 "ruff-f901-raise-not-implemented/raise-not-implemented" root=sha256:6
   label L18333 fact gap slots=[]
   label L18334 roots sha256:c497e65ec09d0088032ee4f9ec536e6cb4d5401ead9c54e86905b9f669c5ecba domain=all
   label L18335 fact gap slots=[]
-  label L18336 roots sha256:27d27560ab7f94f269c8cc55e132bb0a8dc09838f970502290f09d04e0345a60 domain=all within Reached { step: Child, named: false, from: And([Or([Kind(206)]), Kind(206), Class(18334)]) }
+  label L18336 roots sha256:27d27560ab7f94f269c8cc55e132bb0a8dc09838f970502290f09d04e0345a60 domain=all within Reached { step: Child, named: false, from: And([Kind(206), Kind(206), Class(18334)]) }
   label L18337 complement L18336
   label L18338 roots sha256:17c3c1616e28c44315e8e4992b9d4d0b75653c0deb0071522342b48c5150c255 domain=all
   step L18332
@@ -4865,7 +4865,7 @@ clause 213 "ruff-log015-root-logger-call/root-logger-call" root=sha256:f3cbd068e
   group L18430
   recursive 0 L18430
 clause 214 "ruff-n801-invalid-class-name/invalid-class-name" root=sha256:5b40015a9a047600755fabc551bc158ba314ec85f69e798bfff0eed78f29894e domain=kinds[identifier] offset=2047
-  label L18431 roots sha256:ddbfe60105916a489750e152858d74148d4ab9656078849ba89dd3d4aa0dd7a4 domain=kinds[identifier] within And([Reached { step: Child, named: false, from: And([Or([Kind(154)]), Kind(154)]) }, Field(19)])
+  label L18431 roots sha256:ddbfe60105916a489750e152858d74148d4ab9656078849ba89dd3d4aa0dd7a4 domain=kinds[identifier] within And([Reached { step: Child, named: false, from: And([Kind(154), Kind(154)]) }, Field(19)])
   label L18432 complement L18431
   step L18431
   step L18432
@@ -4901,7 +4901,7 @@ clause 215 "ruff-n803-invalid-argument-name/invalid-argument-name" root=sha256:6
   borrowed L17068
   borrowed L17069
 clause 216 "ruff-n803-invalid-argument-name/invalid-lambda-argument-name" root=sha256:3756909d4eff46a429480ec193eab270fb77d104cddbf3305fb8e12842c86e69 domain=kinds[identifier default_parameter typed_default_parameter list_splat_pattern dictionary_splat_pattern typed_parameter] offset=2062
-  label L18446 roots sha256:89b28389a8e00c00a7084fc73300312780c7370de3a8894429c50443eda2d811 domain=kinds[identifier] within Reached { step: Child, named: false, from: And([Or([Kind(147)]), Kind(147)]) }
+  label L18446 roots sha256:89b28389a8e00c00a7084fc73300312780c7370de3a8894429c50443eda2d811 domain=kinds[identifier] within Reached { step: Child, named: false, from: And([Kind(147), Kind(147)]) }
   label L18447 complement L18446
   step L18446
   step L18447
@@ -6506,11 +6506,11 @@ clause 304 "ruff-pyi002-complex-if-statement-in-stub/complex-if-statement-in-stu
   label L19083 roots sha256:820e1e104a115c4b91039fad7cdeaf8dea0364aad6a77b02fbf1534c8a8bf494 domain=all
   label L19084 roots sha256:38f353796d365d652a7990aca26239dd0934a2fd81e4a80dc23e6308abbc48c0 domain=kinds[boolean_operator]
   label L19085 roots sha256:b2c757f58f2cd1a282ca3b774341b0a71a9bbe885084db7561e8903c36d1ab7f domain=kinds[boolean_operator]
-  label L19086 roots sha256:19ae4b3199caf058ca91f18a905003e08fc7deb34dccfd9b823a6c7e4f9ac72c domain=kinds[boolean_operator] within And([Reached { step: Child, named: false, from: Or([And([Or([Kind(191)]), Kind(191), Class(19084)]), And([Or([Kind(191)]), Kind(191), Class(19085)])]) }, Field(17)])
+  label L19086 roots sha256:19ae4b3199caf058ca91f18a905003e08fc7deb34dccfd9b823a6c7e4f9ac72c domain=kinds[boolean_operator] within And([Reached { step: Child, named: false, from: Or([And([Kind(191), Kind(191), Class(19084)]), And([Kind(191), Kind(191), Class(19085)])]) }, Field(17)])
   label L19087 complement L19086
-  label L19088 roots sha256:19ae4b3199caf058ca91f18a905003e08fc7deb34dccfd9b823a6c7e4f9ac72c domain=kinds[boolean_operator] within And([Reached { step: Child, named: false, from: Or([And([Or([Kind(191)]), Kind(191), Class(19084)]), And([Or([Kind(191)]), Kind(191), Class(19085)])]) }, Field(25)])
+  label L19088 roots sha256:19ae4b3199caf058ca91f18a905003e08fc7deb34dccfd9b823a6c7e4f9ac72c domain=kinds[boolean_operator] within And([Reached { step: Child, named: false, from: Or([And([Kind(191), Kind(191), Class(19084)]), And([Kind(191), Kind(191), Class(19085)])]) }, Field(25)])
   label L19089 complement L19088
-  label L19090 roots sha256:63b0d33e99720a0a2bf352cfb275c0b796115381cd6c3cb81fa0a4e36dce1cda domain=all within Reached { step: Child, named: false, from: And([Or([Kind(225)]), Kind(225), Class(19092)]) }
+  label L19090 roots sha256:63b0d33e99720a0a2bf352cfb275c0b796115381cd6c3cb81fa0a4e36dce1cda domain=all within Reached { step: Child, named: false, from: And([Kind(225), Kind(225), Class(19092)]) }
   label L19091 complement L19090
   label L19092 roots sha256:a70c3e017b4be8393ce511632ff99a6d92400d748635481c1b3f181016739e8f domain=all
   step L19072
@@ -6993,9 +6993,9 @@ clause 316 "ruff-pyi011-typed-argument-default-in-stub/typed-argument-default-in
   label L19244 roots sha256:170e6034b5be54c6ecfb92d60bc94f203e756d32da6837c4bfbd824e8889061e domain=kinds[identifier]
   label L19245 roots sha256:078a06c338fd25e7a6e037cd3cfaaf186420a6d900c28deddc1736e1683eae0d domain=kinds[parameters]
   label L19246 targets sha256:5829c6dc293cb324acae6df161746af469f144075a91d71cc29d4eedae0682f5 domain=L19245
-  label L19247 roots sha256:c8748de750c175811effd8f88fb7347aae1989bc8385645152737ae3b3425cef domain=kinds[attribute] within Reached { step: Parent, named: false, from: And([Or([Kind(1)]), Kind(1), Class(19241), Field(20)]) }
+  label L19247 roots sha256:c8748de750c175811effd8f88fb7347aae1989bc8385645152737ae3b3425cef domain=kinds[attribute] within Reached { step: Parent, named: false, from: And([Kind(1), Kind(1), Class(19241), Field(20)]) }
   label L19248 complement L19247
-  label L19249 roots sha256:257bf90a318b80b4e03ec427cf48545653f37ceeed37179325f3eb2002347d07 domain=kinds[import_statement] within Reached { step: Parent, named: false, from: And([Or([Kind(163)]), Kind(163)]) }
+  label L19249 roots sha256:257bf90a318b80b4e03ec427cf48545653f37ceeed37179325f3eb2002347d07 domain=kinds[import_statement] within Reached { step: Parent, named: false, from: And([Kind(163), Kind(163)]) }
   label L19250 complement L19249
   label L19251 roots sha256:f6fbd4d3cb87cc044ac64f7ea367af487114d0bcaf0aecdc456b704a86b562de domain=kinds[import_statement]
   label L19252 roots sha256:135febfd03e82e46e091e0d0dea9b426f54002f75e8ff3add827afe07e39b658 domain=kinds[module]
@@ -7006,13 +7006,13 @@ clause 316 "ruff-pyi011-typed-argument-default-in-stub/typed-argument-default-in
   label L19257 roots sha256:27bc0dad4219de0224c7e73d564d5cb59105b8f5b8028f5d7a7cffd3ef422a0b domain=kinds[integer float unary_operator parenthesized_expression]
   label L19258 fact resolves slots=[]
   label L19259 fact resolves slots=[]
-  label L19260 roots sha256:c8748de750c175811effd8f88fb7347aae1989bc8385645152737ae3b3425cef domain=kinds[attribute] within Reached { step: Parent, named: false, from: And([Or([Kind(1)]), Kind(1), Class(19259), Field(20)]) }
+  label L19260 roots sha256:c8748de750c175811effd8f88fb7347aae1989bc8385645152737ae3b3425cef domain=kinds[attribute] within Reached { step: Parent, named: false, from: And([Kind(1), Kind(1), Class(19259), Field(20)]) }
   label L19261 complement L19260
   label L19262 fact resolves slots=[]
   label L19263 roots sha256:f81a2981bfc57f3ecfc211c961f3dbb0a68fbf7adbd23807946bb9dff09272d4 domain=kinds[identifier]
   label L19264 roots sha256:a4ebab52d05608683a4d2f58e71e289d99fb3c75f15e016728edf03a591bf63c domain=kinds[parameters]
   label L19265 targets sha256:b4613c9506296fb86ef60cd054ba35e822db319bf2068387aff8888714dea431 domain=L19264
-  label L19266 roots sha256:a2e0d3c56a30c7d68a1b200e3a57cbbf714404698175f8da87c1ce59e3043cbd domain=kinds[attribute] within Reached { step: Parent, named: false, from: And([Or([Kind(1)]), Kind(1), Class(19262), Field(20)]) }
+  label L19266 roots sha256:a2e0d3c56a30c7d68a1b200e3a57cbbf714404698175f8da87c1ce59e3043cbd domain=kinds[attribute] within Reached { step: Parent, named: false, from: And([Kind(1), Kind(1), Class(19262), Field(20)]) }
   label L19267 complement L19266
   label L19268 roots sha256:b2a6a9b58154d8904bba25ab7a2a06397ac2b014f99f450ecd385ec3114bf576 domain=kinds[import_statement]
   label L19269 roots sha256:d24bc55bc17cd0daeea8372ae7187dc97424e19081e2c855387b8e0810e9a5b4 domain=kinds[module]
@@ -7123,7 +7123,7 @@ clause 318 "ruff-pyi013-ellipsis-in-non-empty-class-body/ellipsis-in-non-empty-c
 clause 319 "ruff-pyi014-argument-default-in-stub/argument-default-in-stub" root=sha256:534cc6ffdcd98fca2769fb84ae4121df6069a9e2725b7c05d7b1610c4bbf01de domain=all offset=2910
   label L19294 roots sha256:bc79daf2ebc8fdc35239a4941665e0af0fff87bc5b23603163e79b71e7fd6755 domain=all
   label L19295 complement L19294
-  label L19296 roots sha256:ebdb173279983cfc37c0f69f336609ee16de13298b2039b82149cf78d7db8885 domain=kinds[comment] within Reached { step: Child, named: false, from: And([Or([Kind(225)]), Kind(225), Class(19298)]) }
+  label L19296 roots sha256:ebdb173279983cfc37c0f69f336609ee16de13298b2039b82149cf78d7db8885 domain=kinds[comment] within Reached { step: Child, named: false, from: And([Kind(225), Kind(225), Class(19298)]) }
   label L19297 complement L19296
   label L19298 roots sha256:239019de47a9fe63d1fb2a938f56878726bcaf4dee5bc2e51532c95ead53eb31 domain=all
   label L19299 fact resolves slots=[]
@@ -7192,7 +7192,7 @@ clause 319 "ruff-pyi014-argument-default-in-stub/argument-default-in-stub" root=
   borrowed L18351
   borrowed L19255
 clause 320 "ruff-pyi015-assignment-default-in-stub/assignment-default-in-stub" root=sha256:5adfb86d51135ec6c22293f2d464390662626739a158a42a04ce319f4d0798b0 domain=all offset=2940
-  label L19324 roots sha256:ebdb173279983cfc37c0f69f336609ee16de13298b2039b82149cf78d7db8885 domain=kinds[comment] within Reached { step: Child, named: false, from: And([Or([Kind(225)]), Kind(225), Class(19326)]) }
+  label L19324 roots sha256:ebdb173279983cfc37c0f69f336609ee16de13298b2039b82149cf78d7db8885 domain=kinds[comment] within Reached { step: Child, named: false, from: And([Kind(225), Kind(225), Class(19326)]) }
   label L19325 complement L19324
   label L19326 roots sha256:ba169b028755d8e95de8bc39bb96ac69c2894ac406e7f5923cbbb8dfacbf8069 domain=all
   label L19327 roots sha256:1a17338c205f61241f795d1c3e02c691d2ef81895cefbb948d01472ce838b1b4 domain=all
@@ -7257,11 +7257,11 @@ clause 320 "ruff-pyi015-assignment-default-in-stub/assignment-default-in-stub" r
   label L19386 roots sha256:c159c2763262cec2aae1d61741e82cc989f7ae723ddc6e9ec4ff21547f611702 domain=kinds[binary_operator]
   label L19387 roots sha256:83767ddee1ccd67ae3b85b87afe5d98fbd961fa1ed6c04e89eba76af0c66b229 domain=kinds[identifier ellipsis none binary_operator attribute subscript call]
   label L19388 complement L19387
-  label L19389 roots sha256:6f7f10905280977d345163a091b4672f4fbf93bd70d70d90f23dd153e3e9d319 domain=kinds[assignment] within Reached { step: Parent, named: false, from: And([Or([Kind(208)]), Kind(208), Field(29)]) }
+  label L19389 roots sha256:6f7f10905280977d345163a091b4672f4fbf93bd70d70d90f23dd153e3e9d319 domain=kinds[assignment] within Reached { step: Parent, named: false, from: And([Kind(208), Kind(208), Field(29)]) }
   label L19390 complement L19389
   label L19391 fact resolves slots=[]
   label L19392 roots sha256:766fff33a4070b4193a1ab0312dff25a1fb2739670f40922e2a18e5752cb6819 domain=kinds[type]
-  label L19393 roots sha256:60fa0fdd81e7def8a782a262f79d4717bfe72c98582afbe5ec98ad9637d1bc79 domain=kinds[assignment] within Reached { step: Parent, named: false, from: And([Or([Kind(208)]), Kind(208), Field(29)]) }
+  label L19393 roots sha256:60fa0fdd81e7def8a782a262f79d4717bfe72c98582afbe5ec98ad9637d1bc79 domain=kinds[assignment] within Reached { step: Parent, named: false, from: And([Kind(208), Kind(208), Field(29)]) }
   label L19394 complement L19393
   label L19395 roots sha256:14acf6451e36c6d4b1b62ecdd4ae4653f442cab16f0a1a132335f3ec6d6d8e71 domain=kinds[assignment]
   label L19396 targets sha256:f31befe235524ff6689e2b616b074a422a929a2adbbd0eca3adb5e931ae6c15b domain=L19395
@@ -7366,7 +7366,7 @@ clause 320 "ruff-pyi015-assignment-default-in-stub/assignment-default-in-stub" r
   borrowed L19303
   borrowed L19304
 clause 321 "ruff-pyi017-complex-assignment-in-stub/attribute-target" root=sha256:900a1c676486d17b803111ac4054ce16e9be6eccdbe3729b898f2f48a5dc4785 domain=kinds[assignment] offset=3013
-  label L19397 roots sha256:dfa8c5f70e3f0638d5f68fc860d56fcf89b897c9e0da3eda1d5f436810b666ae domain=kinds[assignment] within And([Reached { step: Parent, named: false, from: And([Or([And([Or([Kind(203), Kind(204)]), Kind(203)]), And([Or([Kind(203), Kind(204)]), Kind(204)])]), Field(17)]) }, Reached { step: Child, named: false, from: And([Or([Kind(122)]), Kind(122)]) }])
+  label L19397 roots sha256:dfa8c5f70e3f0638d5f68fc860d56fcf89b897c9e0da3eda1d5f436810b666ae domain=kinds[assignment] within And([Reached { step: Parent, named: false, from: And([Or([And([Or([Kind(203), Kind(204)]), Kind(203)]), And([Or([Kind(203), Kind(204)]), Kind(204)])]), Field(17)]) }, Reached { step: Child, named: false, from: And([Kind(122), Kind(122)]) }])
   label L19398 complement L19397
   step L19397
   step L19398
@@ -7379,7 +7379,7 @@ clause 322 "ruff-pyi017-complex-assignment-in-stub/multiple-targets" root=sha256
   label L19403 complement L19402
   label L19404 roots sha256:54616112935596288f02baf239e22869bd4e476faee6d695539ef4d8feee2933 domain=kinds[assignment]
   label L19405 complement L19404
-  label L19406 roots sha256:dfa8c5f70e3f0638d5f68fc860d56fcf89b897c9e0da3eda1d5f436810b666ae domain=kinds[assignment] within Reached { step: Child, named: false, from: And([Or([Kind(122)]), Kind(122)]) }
+  label L19406 roots sha256:dfa8c5f70e3f0638d5f68fc860d56fcf89b897c9e0da3eda1d5f436810b666ae domain=kinds[assignment] within Reached { step: Child, named: false, from: And([Kind(122), Kind(122)]) }
   label L19407 complement L19406
   step L19399
   step L19400
@@ -7416,7 +7416,7 @@ clause 323 "ruff-pyi021-docstring-in-stub/docstring-in-stub" root=sha256:087a4e8
 clause 324 "ruff-pyi025-unaliased-collections-abc-set-import/unaliased-collections-abc-set-import" root=sha256:81d2c66e520cd639750f80ed502a4b082046987cf381500bf55991249c6381c2 domain=kinds[identifier dotted_name] offset=3030
   label L19414 targets sha256:b8117f515d1428ae05ee9a7ad6025451b8801acc3dc05e022e097f7055613c2c domain=all
   label L19415 fact gap slots=[]
-  label L19416 roots sha256:f0c95bd8632f8622b6f686ff9fe44e12fd82e71f4a2ca9111dcbd6493155d26b domain=kinds[dotted_name] within Reached { step: Child, named: false, from: And([Or([Kind(115)]), Kind(115)]) }
+  label L19416 roots sha256:f0c95bd8632f8622b6f686ff9fe44e12fd82e71f4a2ca9111dcbd6493155d26b domain=kinds[dotted_name] within Reached { step: Child, named: false, from: And([Kind(115), Kind(115)]) }
   label L19417 complement L19416
   label L19418 fact resolves slots=[]
   label L19419 fact resolves slots=[]
@@ -7665,9 +7665,9 @@ clause 333 "ruff-pyi036-bad-exit-annotation/first-argument-annotation" root=sha2
   label L19514 fact resolves slots=[]
   label L19515 roots sha256:1d2c348d311ed62758fbcf2eb6d2c2b0eda678474d621dfe3307f9ed00ac9a43 domain=kinds[identifier attribute type parenthesized_expression]
   label L19516 roots sha256:05783156aae9bc195f620f43c44c800706bf318a340bc980157018b91c7db53b domain=kinds[type]
-  label L19517 count sha256:0283889b7b4b67678eff641efaf185afffd2e5b1b83290237d89c3a9b711f7e9 domain=kinds[type_parameter] within Reached { step: Parent, named: false, from: And([Or([Kind(208)]), Kind(208), Class(19515)]) } by=start min=1 max=1
+  label L19517 count sha256:0283889b7b4b67678eff641efaf185afffd2e5b1b83290237d89c3a9b711f7e9 domain=kinds[type_parameter] within Reached { step: Parent, named: false, from: And([Kind(208), Kind(208), Class(19515)]) } by=start min=1 max=1
   label L19518 fact gap slots=[]
-  label L19519 roots sha256:68428a2ca64ee9255b32b20490776e9ef2034a9ae80d6425019132b95d862d51 domain=kinds[type_parameter] within Reached { step: Parent, named: false, from: And([Or([Kind(208)]), Kind(208), Class(19515)]) }
+  label L19519 roots sha256:68428a2ca64ee9255b32b20490776e9ef2034a9ae80d6425019132b95d862d51 domain=kinds[type_parameter] within Reached { step: Parent, named: false, from: And([Kind(208), Kind(208), Class(19515)]) }
   label L19520 complement L19519
   label L19521 roots sha256:8bee51b49b55c79059c0d60b96d128758aa7aae7da162c83264497d1fed1b1f1 domain=kinds[type_parameter]
   label L19522 fact resolves slots=[]
@@ -7707,7 +7707,7 @@ clause 333 "ruff-pyi036-bad-exit-annotation/first-argument-annotation" root=sha2
   label L19556 count sha256:46ac1f663c9f68de6be807ecbe2aac8be869ad5810c48b412160022275704ff7 domain=kinds[subscript] within Reached { step: Parent, named: false, from: And([Or([And([Or([Kind(1), Kind(203)]), Kind(1)]), And([Or([Kind(1), Kind(203)]), Kind(203)])]), Class(19555), Field(32)]) } by=start min=2 max=2
   label L19557 roots sha256:800fdc4733da53e396a7eaf89ff7f77ed9498fea2c23f455e51c4f8f055db834 domain=kinds[subscript]
   label L19558 roots sha256:c1acd2bf7b7df85748d46508470c815b9e0549e3813f3acbc614ad192c94dd3d domain=all
-  label L19559 count sha256:0283889b7b4b67678eff641efaf185afffd2e5b1b83290237d89c3a9b711f7e9 domain=kinds[type_parameter] within Reached { step: Parent, named: false, from: And([Or([Kind(208)]), Kind(208), Class(19545)]) } by=start min=2 max=2
+  label L19559 count sha256:0283889b7b4b67678eff641efaf185afffd2e5b1b83290237d89c3a9b711f7e9 domain=kinds[type_parameter] within Reached { step: Parent, named: false, from: And([Kind(208), Kind(208), Class(19545)]) } by=start min=2 max=2
   label L19560 fact resolves slots=[]
   label L19561 roots sha256:f1805314ea4d8614010f7ef7b76e3005c8d7ef52d078d6ffe00a6be57a793235 domain=kinds[generic_type]
   label L19562 roots sha256:0f3ce232dfc80e8e4f5c6e1fe02a0815b6075f5cbc0763fb6d9a2c2cb7dac83a domain=kinds[type_parameter]
@@ -8221,23 +8221,23 @@ clause 336 "ruff-pyi041-redundant-numeric-union/redundant-beside-complex" root=s
   label L19739 fact nthChild slots=[]
   label L19740 fact nthChild slots=[]
   label L19741 fact gap slots=[]
-  label L19742 roots sha256:e67c15d44f237fdeb6ce138ce09843a54dab5eb594b5e68ef7a5e7f52c577ea3 domain=kinds[tuple] within Reached { step: Child, named: false, from: And([Or([Kind(204)]), Kind(204)]) }
+  label L19742 roots sha256:e67c15d44f237fdeb6ce138ce09843a54dab5eb594b5e68ef7a5e7f52c577ea3 domain=kinds[tuple] within Reached { step: Child, named: false, from: And([Kind(204), Kind(204)]) }
   label L19743 complement L19742
   label L19744 fact nthChild slots=[]
   label L19745 fact nthChild slots=[]
   label L19746 fact gap slots=[]
-  label L19747 roots sha256:63369ad11f9ec12ee9b191f8bd29f586229482ea354bb5136135d9257bcbdb99 domain=kinds[type] within Reached { step: Child, named: false, from: And([Or([Kind(155)]), Kind(155)]) }
+  label L19747 roots sha256:63369ad11f9ec12ee9b191f8bd29f586229482ea354bb5136135d9257bcbdb99 domain=kinds[type] within Reached { step: Child, named: false, from: And([Kind(155), Kind(155)]) }
   label L19748 complement L19747
   label L19749 roots sha256:662b052de652b434a272d7ffeb67c04a573f08dcbe49c8b6e249b9c87ef97c2a domain=kinds[type]
   label L19750 fact nthChild slots=[]
   label L19751 fact nthChild slots=[]
   label L19752 fact gap slots=[]
-  label L19753 roots sha256:37139e3bba10c92f319e9ac1c43fae351c536268f8f5d623bf65d94544d0a85f domain=kinds[parenthesized_expression] within Reached { step: Child, named: false, from: And([Or([Kind(204)]), Kind(204)]) }
+  label L19753 roots sha256:37139e3bba10c92f319e9ac1c43fae351c536268f8f5d623bf65d94544d0a85f domain=kinds[parenthesized_expression] within Reached { step: Child, named: false, from: And([Kind(204), Kind(204)]) }
   label L19754 complement L19753
   label L19755 fact nthChild slots=[]
   label L19756 fact nthChild slots=[]
   label L19757 fact gap slots=[]
-  label L19758 roots sha256:4a0f5320ae4796367646965acb0e5d32b283e37ca0a02aa9e11dfd0d4b94dfec domain=kinds[type] within Reached { step: Child, named: false, from: And([Or([Kind(155)]), Kind(155)]) }
+  label L19758 roots sha256:4a0f5320ae4796367646965acb0e5d32b283e37ca0a02aa9e11dfd0d4b94dfec domain=kinds[type] within Reached { step: Child, named: false, from: And([Kind(155), Kind(155)]) }
   label L19759 complement L19758
   label L19760 roots sha256:b51bb2be33347ea2ae5c9db36e2681814da06bc715da66c37edc4b3ae9dc45d8 domain=kinds[type]
   label L19761 roots sha256:3378312dabbf2562b2777658e2174c19111a422fc5145a4422ca7efeb3ac182d domain=kinds[parenthesized_expression]
@@ -8277,23 +8277,23 @@ clause 336 "ruff-pyi041-redundant-numeric-union/redundant-beside-complex" root=s
   label L19795 fact nthChild slots=[]
   label L19796 fact nthChild slots=[]
   label L19797 fact gap slots=[]
-  label L19798 roots sha256:60abee30fd71540214b5f00323ba6ce71cfdef841c02e6186be1190e35164ba6 domain=kinds[tuple] within Reached { step: Child, named: false, from: And([Or([Kind(204)]), Kind(204)]) }
+  label L19798 roots sha256:60abee30fd71540214b5f00323ba6ce71cfdef841c02e6186be1190e35164ba6 domain=kinds[tuple] within Reached { step: Child, named: false, from: And([Kind(204), Kind(204)]) }
   label L19799 complement L19798
   label L19800 fact nthChild slots=[]
   label L19801 fact nthChild slots=[]
   label L19802 fact gap slots=[]
-  label L19803 roots sha256:ee093acf86f0c883c30f6ff5a6f3725d6c1a65a22603a4de2e60d8dcf53179ca domain=kinds[type] within Reached { step: Child, named: false, from: And([Or([Kind(155)]), Kind(155)]) }
+  label L19803 roots sha256:ee093acf86f0c883c30f6ff5a6f3725d6c1a65a22603a4de2e60d8dcf53179ca domain=kinds[type] within Reached { step: Child, named: false, from: And([Kind(155), Kind(155)]) }
   label L19804 complement L19803
   label L19805 roots sha256:bf13c47f0af4b1841200cccca4f3b80d517b7e1f466fc8738a17b18d3fab8b32 domain=kinds[type]
   label L19806 fact nthChild slots=[]
   label L19807 fact nthChild slots=[]
   label L19808 fact gap slots=[]
-  label L19809 roots sha256:3f9c44693a7c2edad8ce1753c00b147291f077f1ff95e36921e49084f577e6fb domain=kinds[parenthesized_expression] within Reached { step: Child, named: false, from: And([Or([Kind(204)]), Kind(204)]) }
+  label L19809 roots sha256:3f9c44693a7c2edad8ce1753c00b147291f077f1ff95e36921e49084f577e6fb domain=kinds[parenthesized_expression] within Reached { step: Child, named: false, from: And([Kind(204), Kind(204)]) }
   label L19810 complement L19809
   label L19811 fact nthChild slots=[]
   label L19812 fact nthChild slots=[]
   label L19813 fact gap slots=[]
-  label L19814 roots sha256:8b0f37a072821d575603e148726d1379055f7cac26e736f609864f7a772ddb92 domain=kinds[type] within Reached { step: Child, named: false, from: And([Or([Kind(155)]), Kind(155)]) }
+  label L19814 roots sha256:8b0f37a072821d575603e148726d1379055f7cac26e736f609864f7a772ddb92 domain=kinds[type] within Reached { step: Child, named: false, from: And([Kind(155), Kind(155)]) }
   label L19815 complement L19814
   label L19816 roots sha256:f740836e1da0f250eb578cf180a2341f9662c69190d0ac3d52edd663e2f52328 domain=kinds[type]
   label L19817 roots sha256:599d9d24a4e7a88a6a2a064795a381dfe492651775cbe2f1964ee0cff11c6eff domain=kinds[parenthesized_expression]
@@ -8332,23 +8332,23 @@ clause 336 "ruff-pyi041-redundant-numeric-union/redundant-beside-complex" root=s
   label L19850 fact nthChild slots=[]
   label L19851 fact nthChild slots=[]
   label L19852 fact gap slots=[]
-  label L19853 roots sha256:8b7aa5ff00af0d34ec5b6e7072f4e36b4f1c66fc2a0c8a8a6011ca4720fe3b56 domain=kinds[tuple] within Reached { step: Child, named: false, from: And([Or([Kind(204)]), Kind(204)]) }
+  label L19853 roots sha256:8b7aa5ff00af0d34ec5b6e7072f4e36b4f1c66fc2a0c8a8a6011ca4720fe3b56 domain=kinds[tuple] within Reached { step: Child, named: false, from: And([Kind(204), Kind(204)]) }
   label L19854 complement L19853
   label L19855 fact nthChild slots=[]
   label L19856 fact nthChild slots=[]
   label L19857 fact gap slots=[]
-  label L19858 roots sha256:377541c13478bee864d6e025b163add63dfdf8ef4d90ec35854098d90afdb41e domain=kinds[type] within Reached { step: Child, named: false, from: And([Or([Kind(155)]), Kind(155)]) }
+  label L19858 roots sha256:377541c13478bee864d6e025b163add63dfdf8ef4d90ec35854098d90afdb41e domain=kinds[type] within Reached { step: Child, named: false, from: And([Kind(155), Kind(155)]) }
   label L19859 complement L19858
   label L19860 roots sha256:c1d623342165e3b0ebf269690422265f4e65e185c8801eec765f93ed4643d508 domain=kinds[type]
   label L19861 fact nthChild slots=[]
   label L19862 fact nthChild slots=[]
   label L19863 fact gap slots=[]
-  label L19864 roots sha256:5c16480f38d31a9551b7aaef408cea80b1c01f2dbc585934c20be91924f5c855 domain=kinds[parenthesized_expression] within Reached { step: Child, named: false, from: And([Or([Kind(204)]), Kind(204)]) }
+  label L19864 roots sha256:5c16480f38d31a9551b7aaef408cea80b1c01f2dbc585934c20be91924f5c855 domain=kinds[parenthesized_expression] within Reached { step: Child, named: false, from: And([Kind(204), Kind(204)]) }
   label L19865 complement L19864
   label L19866 fact nthChild slots=[]
   label L19867 fact nthChild slots=[]
   label L19868 fact gap slots=[]
-  label L19869 roots sha256:47ca0075216980fcbf52647de4d66a71ca41a4703694e7de671be009cf41c75d domain=kinds[type] within Reached { step: Child, named: false, from: And([Or([Kind(155)]), Kind(155)]) }
+  label L19869 roots sha256:47ca0075216980fcbf52647de4d66a71ca41a4703694e7de671be009cf41c75d domain=kinds[type] within Reached { step: Child, named: false, from: And([Kind(155), Kind(155)]) }
   label L19870 complement L19869
   label L19871 roots sha256:ec65295bc0058802f7c36b2a5c359a426e28488d895d988e374cba127991e37f domain=kinds[type]
   label L19872 roots sha256:ed51260593ef49cad82b61323ae9088eab768c863d2b7a4c1d09aa923fce8b95 domain=kinds[parenthesized_expression]
@@ -8598,23 +8598,23 @@ clause 337 "ruff-pyi041-redundant-numeric-union/int-beside-float" root=sha256:e8
   label L19925 fact nthChild slots=[]
   label L19926 fact nthChild slots=[]
   label L19927 fact gap slots=[]
-  label L19928 roots sha256:d2007b214a1e76bafd2ed8884663ac45b63c62a7f744c493c6fa9c76e83e4815 domain=kinds[tuple] within Reached { step: Child, named: false, from: And([Or([Kind(204)]), Kind(204)]) }
+  label L19928 roots sha256:d2007b214a1e76bafd2ed8884663ac45b63c62a7f744c493c6fa9c76e83e4815 domain=kinds[tuple] within Reached { step: Child, named: false, from: And([Kind(204), Kind(204)]) }
   label L19929 complement L19928
   label L19930 fact nthChild slots=[]
   label L19931 fact nthChild slots=[]
   label L19932 fact gap slots=[]
-  label L19933 roots sha256:6faab93f64aa8b2d68f11fdc165a429af68647a7f69114ed998c78a54adf814a domain=kinds[type] within Reached { step: Child, named: false, from: And([Or([Kind(155)]), Kind(155)]) }
+  label L19933 roots sha256:6faab93f64aa8b2d68f11fdc165a429af68647a7f69114ed998c78a54adf814a domain=kinds[type] within Reached { step: Child, named: false, from: And([Kind(155), Kind(155)]) }
   label L19934 complement L19933
   label L19935 roots sha256:f41385e7c4175fa13ee60673d0ad81dfd351aa71fee7b1808bd8393bdbd71ef0 domain=kinds[type]
   label L19936 fact nthChild slots=[]
   label L19937 fact nthChild slots=[]
   label L19938 fact gap slots=[]
-  label L19939 roots sha256:94532098cf4f4ada015d44592427c749b0bbd46a43a87aaa2bbefaeb89d90d79 domain=kinds[parenthesized_expression] within Reached { step: Child, named: false, from: And([Or([Kind(204)]), Kind(204)]) }
+  label L19939 roots sha256:94532098cf4f4ada015d44592427c749b0bbd46a43a87aaa2bbefaeb89d90d79 domain=kinds[parenthesized_expression] within Reached { step: Child, named: false, from: And([Kind(204), Kind(204)]) }
   label L19940 complement L19939
   label L19941 fact nthChild slots=[]
   label L19942 fact nthChild slots=[]
   label L19943 fact gap slots=[]
-  label L19944 roots sha256:252d644c5d49fc0940bf2ca67c477e21343a88b80a903a79891dd2f5f9aaed71 domain=kinds[type] within Reached { step: Child, named: false, from: And([Or([Kind(155)]), Kind(155)]) }
+  label L19944 roots sha256:252d644c5d49fc0940bf2ca67c477e21343a88b80a903a79891dd2f5f9aaed71 domain=kinds[type] within Reached { step: Child, named: false, from: And([Kind(155), Kind(155)]) }
   label L19945 complement L19944
   label L19946 roots sha256:d08d7d57175e6ece708c58ade8c25d0d42338a6063333bcc0b12f471a126fae2 domain=kinds[type]
   label L19947 roots sha256:e88a244bb0c02329d6d3ad863829e44ca5bee051cf339dc1be01cee8053f8e4a domain=kinds[parenthesized_expression]
@@ -8653,23 +8653,23 @@ clause 337 "ruff-pyi041-redundant-numeric-union/int-beside-float" root=sha256:e8
   label L19980 fact nthChild slots=[]
   label L19981 fact nthChild slots=[]
   label L19982 fact gap slots=[]
-  label L19983 roots sha256:1a1a2f79546a78b3db99bd17a511600faa5dd71dae10993417317e838068bf1e domain=kinds[tuple] within Reached { step: Child, named: false, from: And([Or([Kind(204)]), Kind(204)]) }
+  label L19983 roots sha256:1a1a2f79546a78b3db99bd17a511600faa5dd71dae10993417317e838068bf1e domain=kinds[tuple] within Reached { step: Child, named: false, from: And([Kind(204), Kind(204)]) }
   label L19984 complement L19983
   label L19985 fact nthChild slots=[]
   label L19986 fact nthChild slots=[]
   label L19987 fact gap slots=[]
-  label L19988 roots sha256:18a4334267c7fd7ad9112e9dbf48290f4bc3205528d0add33bd7529503fb063b domain=kinds[type] within Reached { step: Child, named: false, from: And([Or([Kind(155)]), Kind(155)]) }
+  label L19988 roots sha256:18a4334267c7fd7ad9112e9dbf48290f4bc3205528d0add33bd7529503fb063b domain=kinds[type] within Reached { step: Child, named: false, from: And([Kind(155), Kind(155)]) }
   label L19989 complement L19988
   label L19990 roots sha256:2cf30b8b908f3c8e97ae07e240a28565c9db51be3ca2fcc3004dff7fc28aced0 domain=kinds[type]
   label L19991 fact nthChild slots=[]
   label L19992 fact nthChild slots=[]
   label L19993 fact gap slots=[]
-  label L19994 roots sha256:eb3a35836c47fde95456f3584e2b55af9919503c1a5ac0cb43494e42273f7a49 domain=kinds[parenthesized_expression] within Reached { step: Child, named: false, from: And([Or([Kind(204)]), Kind(204)]) }
+  label L19994 roots sha256:eb3a35836c47fde95456f3584e2b55af9919503c1a5ac0cb43494e42273f7a49 domain=kinds[parenthesized_expression] within Reached { step: Child, named: false, from: And([Kind(204), Kind(204)]) }
   label L19995 complement L19994
   label L19996 fact nthChild slots=[]
   label L19997 fact nthChild slots=[]
   label L19998 fact gap slots=[]
-  label L19999 roots sha256:67e37cd9a4a9eb3e4e7f387f74bb9a9013f806e3b0048475b32c6bd0cb2fef7b domain=kinds[type] within Reached { step: Child, named: false, from: And([Or([Kind(155)]), Kind(155)]) }
+  label L19999 roots sha256:67e37cd9a4a9eb3e4e7f387f74bb9a9013f806e3b0048475b32c6bd0cb2fef7b domain=kinds[type] within Reached { step: Child, named: false, from: And([Kind(155), Kind(155)]) }
   label L20000 complement L19999
   label L20001 roots sha256:52ea1386c2cdbf2495d5f0066734576342c946a0d896222afe4876d2f9a88851 domain=kinds[type]
   label L20002 roots sha256:0c6b713ad4776f4737b7a51b6150fb0c203cf632a35e1f48208aeb018a46d97a domain=kinds[parenthesized_expression]
@@ -8708,23 +8708,23 @@ clause 337 "ruff-pyi041-redundant-numeric-union/int-beside-float" root=sha256:e8
   label L20035 fact nthChild slots=[]
   label L20036 fact nthChild slots=[]
   label L20037 fact gap slots=[]
-  label L20038 roots sha256:472ea1a9f9677b489ae86a58a51cac00816bd53b640a75fcfde588ef5710d410 domain=kinds[tuple] within Reached { step: Child, named: false, from: And([Or([Kind(204)]), Kind(204)]) }
+  label L20038 roots sha256:472ea1a9f9677b489ae86a58a51cac00816bd53b640a75fcfde588ef5710d410 domain=kinds[tuple] within Reached { step: Child, named: false, from: And([Kind(204), Kind(204)]) }
   label L20039 complement L20038
   label L20040 fact nthChild slots=[]
   label L20041 fact nthChild slots=[]
   label L20042 fact gap slots=[]
-  label L20043 roots sha256:c02c0368483bb2d075ce7466a4c73d9dc3eae2245bae6feae03b10de7cc7a018 domain=kinds[type] within Reached { step: Child, named: false, from: And([Or([Kind(155)]), Kind(155)]) }
+  label L20043 roots sha256:c02c0368483bb2d075ce7466a4c73d9dc3eae2245bae6feae03b10de7cc7a018 domain=kinds[type] within Reached { step: Child, named: false, from: And([Kind(155), Kind(155)]) }
   label L20044 complement L20043
   label L20045 roots sha256:1196e7cdfa39ecf6e4519eb2299312a9b0f91602c3532bc69ec59125e538f14c domain=kinds[type]
   label L20046 fact nthChild slots=[]
   label L20047 fact nthChild slots=[]
   label L20048 fact gap slots=[]
-  label L20049 roots sha256:155223204307259a04044455b43781e5ee81eb31664d71a980606502fcbec968 domain=kinds[parenthesized_expression] within Reached { step: Child, named: false, from: And([Or([Kind(204)]), Kind(204)]) }
+  label L20049 roots sha256:155223204307259a04044455b43781e5ee81eb31664d71a980606502fcbec968 domain=kinds[parenthesized_expression] within Reached { step: Child, named: false, from: And([Kind(204), Kind(204)]) }
   label L20050 complement L20049
   label L20051 fact nthChild slots=[]
   label L20052 fact nthChild slots=[]
   label L20053 fact gap slots=[]
-  label L20054 roots sha256:2c1344bd63cbe3c0b5d96e228c7985a486004043c7e90c070c7eff81fb2ed539 domain=kinds[type] within Reached { step: Child, named: false, from: And([Or([Kind(155)]), Kind(155)]) }
+  label L20054 roots sha256:2c1344bd63cbe3c0b5d96e228c7985a486004043c7e90c070c7eff81fb2ed539 domain=kinds[type] within Reached { step: Child, named: false, from: And([Kind(155), Kind(155)]) }
   label L20055 complement L20054
   label L20056 roots sha256:cecf5d793031811a3ae5cf5cd504b81a7210899ce89367f0974e4a6657353696 domain=kinds[type]
   label L20057 roots sha256:11a4a1734bfe7ed5d36811d39a840f8317a602cd5e3f61f7e3f6d9cf5d5d36d6 domain=kinds[parenthesized_expression]
@@ -9826,9 +9826,9 @@ clause 357 "ruff-pyi063-pep484-style-positional-only-parameter/pep484-style-posi
   label L20476 roots sha256:b8fc212e09674377ba33df2da0c8125f3052b09971a4bdd8b313a6e82e04bae5 domain=kinds[function_definition]
   label L20477 roots sha256:83076133ea5ed7ae15260b580af02e8d39edff2f3f8b0db69810ef2bf778e724 domain=kinds[parameters]
   label L20478 fact nthChild slots=[]
-  label L20479 roots sha256:a8a29194aa7bd5cdd19f68d13e492674f05db6b01481f705f2c2d4123a2de1ba domain=kinds[] within And([Reached { step: Child, named: false, from: And([Or([Kind(146)]), Kind(146)]) }, Reached { step: Child, named: false, from: And([Class(20456), Class(20456)]) }])
+  label L20479 roots sha256:a8a29194aa7bd5cdd19f68d13e492674f05db6b01481f705f2c2d4123a2de1ba domain=kinds[] within And([Reached { step: Child, named: false, from: And([Kind(146), Kind(146)]) }, Reached { step: Child, named: false, from: And([Class(20456), Class(20456)]) }])
   label L20480 complement L20479
-  label L20481 roots sha256:6593a119a26ee62419b8d06c3ceaabfe27e75c21280556a58b64bee2d1edb8f0 domain=kinds[identifier] within And([Reached { step: Child, named: false, from: And([Or([Kind(146)]), Kind(146)]) }, Reached { step: Child, named: false, from: And([Class(20456), Class(20456)]) }])
+  label L20481 roots sha256:6593a119a26ee62419b8d06c3ceaabfe27e75c21280556a58b64bee2d1edb8f0 domain=kinds[identifier] within And([Reached { step: Child, named: false, from: And([Kind(146), Kind(146)]) }, Reached { step: Child, named: false, from: And([Class(20456), Class(20456)]) }])
   label L20482 complement L20481
   label L20483 fact nthChild slots=[]
   label L20484 fact nthChild slots=[]
@@ -10013,7 +10013,7 @@ clause 361 "ruff-ret501-unnecessary-return-none/unnecessary-return-none" root=sh
   label L20547 complement L20546
   label L20548 roots sha256:207d4407510f409148b7d8db264a1947de248862f8929bb6ce692a95ee153366 domain=kinds[comment return_statement]
   label L20549 complement L20548
-  label L20550 roots sha256:3227797806b34967bec448ddd84dba6e950df3115ac2d7ae26a785d7525f3690 domain=kinds[#161] within Reached { step: Parent, named: false, from: And([Or([Kind(125)]), Kind(125)]) }
+  label L20550 roots sha256:3227797806b34967bec448ddd84dba6e950df3115ac2d7ae26a785d7525f3690 domain=kinds[#161] within Reached { step: Parent, named: false, from: And([Kind(125), Kind(125)]) }
   label L20551 complement L20550
   label L20552 roots sha256:007ddee59cf5b834a27fb748fab0677544d7055c9b6047f3a1aeffa2f863a0ae domain=kinds[#161]
   label L20553 roots sha256:9f6a03593c877aa5a1e7c1a1ff36675e7680d46f4ab2e904713022a2a796e5fe domain=kinds[function_definition]
@@ -10342,7 +10342,7 @@ clause 371 "ruff-ruf001-ambiguous-unicode-character-string/with-unambiguous" roo
   label L20636 complement L20635
   label L20637 roots sha256:0a4bf1946d0130bc936cdedf802ba1c1f81d6c85d62865f87731c6625691744c domain=kinds[expression_statement]
   label L20638 targets sha256:88a605813b056650b89ffd51b4ac7ecf34b222e5ad01957acf5536ec3aba66c2 domain=L20637
-  label L20639 roots sha256:356721aec964f30054057256a5c519365c8e5bd32a71711c645c3e3285b1df67 domain=kinds[string_content] within Reached { step: Child, named: false, from: And([Or([Kind(231)]), Kind(231)]) }
+  label L20639 roots sha256:356721aec964f30054057256a5c519365c8e5bd32a71711c645c3e3285b1df67 domain=kinds[string_content] within Reached { step: Child, named: false, from: And([Kind(231), Kind(231)]) }
   label L20640 complement L20639
   step L20621
   step L20622
@@ -10377,7 +10377,7 @@ clause 372 "ruff-ruf001-ambiguous-unicode-character-string/without-unambiguous" 
   label L20646 complement L20645
   label L20647 roots sha256:c449615454976de5b706ecc4149f28002db09bc5d861b7e62bb9959276786b0a domain=kinds[expression_statement]
   label L20648 targets sha256:3e7ceeda2591fa5ba861256a0642f824cc0b70016f3a0408f5dbdd4624029f9a domain=L20647
-  label L20649 roots sha256:1c48ca4f69010ed5b67740dafb48e67b20049ca1e7fa5e83fc517a5d41e34ca5 domain=kinds[string_content] within Reached { step: Child, named: false, from: And([Or([Kind(231)]), Kind(231)]) }
+  label L20649 roots sha256:1c48ca4f69010ed5b67740dafb48e67b20049ca1e7fa5e83fc517a5d41e34ca5 domain=kinds[string_content] within Reached { step: Child, named: false, from: And([Kind(231), Kind(231)]) }
   label L20650 complement L20649
   step L20641
   step L20642
@@ -10414,7 +10414,7 @@ clause 373 "ruff-ruf001-ambiguous-unicode-character-string/with-unambiguous-stub
   label L20656 complement L20655
   label L20657 roots sha256:337e57ad62eeb86db0e4d6f57d9f1c1fdf2cf08730e9f4bba0747c8c91b4e1e9 domain=kinds[expression_statement]
   label L20658 targets sha256:6dc68edf9d6401e120ea5a6c4c5b2e6285df33afb9420a244c648fefeb635b22 domain=L20657
-  label L20659 roots sha256:b4f076b0e1e7bae4d6ae762813b9693b871659170c1c9f15e234c8f5b64668da domain=kinds[string_content] within Reached { step: Child, named: false, from: And([Or([Kind(231)]), Kind(231)]) }
+  label L20659 roots sha256:b4f076b0e1e7bae4d6ae762813b9693b871659170c1c9f15e234c8f5b64668da domain=kinds[string_content] within Reached { step: Child, named: false, from: And([Kind(231), Kind(231)]) }
   label L20660 complement L20659
   step L20651
   step L20652
@@ -10442,7 +10442,7 @@ clause 374 "ruff-ruf001-ambiguous-unicode-character-string/without-unambiguous-s
   label L20664 complement L20663
   label L20665 roots sha256:6cc5c67a027fc8ec691cc6d072fedfdbb6cf34d0f3cae038dc373e2d67eaac2b domain=kinds[expression_statement]
   label L20666 targets sha256:27d486b7989e1593bf7c8b09ac5f6075eae7cc49bd3a21d0b0009bd3842aee80 domain=L20665
-  label L20667 roots sha256:d42e31f8c36eca9266ee2a12106bff0d87068e98463b068e4fb2d136ea024157 domain=kinds[string_content] within Reached { step: Child, named: false, from: And([Or([Kind(231)]), Kind(231)]) }
+  label L20667 roots sha256:d42e31f8c36eca9266ee2a12106bff0d87068e98463b068e4fb2d136ea024157 domain=kinds[string_content] within Reached { step: Child, named: false, from: And([Kind(231), Kind(231)]) }
   label L20668 complement L20667
   step L20661
   step L20662
@@ -10472,7 +10472,7 @@ clause 375 "ruff-ruf001-ambiguous-unicode-character-string/with-unambiguous-defe
   label L20672 complement L20671
   label L20673 roots sha256:76fc71373dd6d5fb9cbeb645831680b685e896922d47c9f1715a1222d09970ef domain=kinds[expression_statement]
   label L20674 targets sha256:9c2c5433e5e32aaa92b763f91cf625f675bcd8063da87bab5d2720945041f36c domain=L20673
-  label L20675 roots sha256:6e2ed0daaf5c0792e641ff95c5f4b5161964d13efa6bc4cf38eda2bef4f39881 domain=kinds[string_content] within Reached { step: Child, named: false, from: And([Or([Kind(231)]), Kind(231)]) }
+  label L20675 roots sha256:6e2ed0daaf5c0792e641ff95c5f4b5161964d13efa6bc4cf38eda2bef4f39881 domain=kinds[string_content] within Reached { step: Child, named: false, from: And([Kind(231), Kind(231)]) }
   label L20676 complement L20675
   step L20669
   step L20670
@@ -10500,7 +10500,7 @@ clause 376 "ruff-ruf001-ambiguous-unicode-character-string/without-unambiguous-d
   label L20680 complement L20679
   label L20681 roots sha256:522275b7c22e312d74df2007fdaec4a1cc3240120fa82805a4e2237d5e9f0005 domain=kinds[expression_statement]
   label L20682 targets sha256:55b9942cb0f90069f75a63acf7ac8777c2831e3d9037b5c80874d7d6fc7726b8 domain=L20681
-  label L20683 roots sha256:23831a0f1f5feecab179513dab65259aed1ab6d35bbf1a7882198cfc6f7ed11f domain=kinds[string_content] within Reached { step: Child, named: false, from: And([Or([Kind(231)]), Kind(231)]) }
+  label L20683 roots sha256:23831a0f1f5feecab179513dab65259aed1ab6d35bbf1a7882198cfc6f7ed11f domain=kinds[string_content] within Reached { step: Child, named: false, from: And([Kind(231), Kind(231)]) }
   label L20684 complement L20683
   step L20677
   step L20678
@@ -10573,7 +10573,7 @@ clause 380 "ruff-ruf003-ambiguous-unicode-character-comment/without-unambiguous"
   step L20698
 clause 381 "ruff-ruf005-collection-literal-concatenation/collection-literal-concatenation" root=sha256:9f8d4e09c01d1ccc6d0c3acd81749c57465036abe5a5fe731b3eaf685e724406 domain=all offset=4315
   label L20699 fact gap slots=[]
-  label L20700 roots sha256:0037718c7e72289d0289eb2d54d8b47539040ef12673e2a59621f83b2b3466b4 domain=kinds[subscript] within Reached { step: Parent, named: false, from: And([Or([Kind(205)]), Kind(205)]) }
+  label L20700 roots sha256:0037718c7e72289d0289eb2d54d8b47539040ef12673e2a59621f83b2b3466b4 domain=kinds[subscript] within Reached { step: Parent, named: false, from: And([Kind(205), Kind(205)]) }
   label L20701 complement L20700
   label L20702 roots sha256:ef200e2dd8fe6fcabc586eb7e1583e043c586646704cd60f8afed92dc178ed4e domain=kinds[identifier attribute subscript call parenthesized_expression]
   label L20703 targets sha256:ae302610b71ee3a5c60ba0bf15f87a941753db327e9df0775936c6347cbc601b domain=all
@@ -10736,7 +10736,7 @@ clause 382 "ruff-ruf008-mutable-dataclass-default/mutable-dataclass-default" roo
   label L20842 fact gap slots=[]
   label L20843 roots sha256:c6406290db82299c0b65b8dbde62473555baf00820fd5ae92f564c6bc6a6b97d domain=kinds[identifier attribute parenthesized_expression]
   label L20844 roots sha256:a23e51a1487259b0ebc07216db22e0282d6c761deb1d062f6df3b36c28f503bf domain=kinds[identifier attribute subscript type generic_type parenthesized_expression]
-  label L20845 roots sha256:9d62904d5ca0d4be13a8e43a80e5915212f9dadab13c0840b94ad4eda4a9be2b domain=kinds[assignment] within Reached { step: Parent, named: false, from: And([Or([Kind(208)]), Kind(208)]) }
+  label L20845 roots sha256:9d62904d5ca0d4be13a8e43a80e5915212f9dadab13c0840b94ad4eda4a9be2b domain=kinds[assignment] within Reached { step: Parent, named: false, from: And([Kind(208), Kind(208)]) }
   label L20846 complement L20845
   label L20847 fact resolves slots=[]
   label L20848 roots sha256:bf902d540a77b42822f8da12e95aa523db3ab83b57ecfcd9a827c2ea9b86d873 domain=kinds[identifier attribute parenthesized_expression]
@@ -10971,7 +10971,7 @@ clause 383 "ruff-ruf008-mutable-dataclass-default/mutable-attrs-default" root=sh
   label L20966 fact gap slots=[]
   label L20967 roots sha256:f987cf85c6a4c7752022f209c8b164051930f903c999bce0c51da759b21e7d7a domain=kinds[identifier attribute parenthesized_expression]
   label L20968 roots sha256:eff6c50286a570d9f0c69b47045913346fb191569d5a87a4fd581eba1f04ddd6 domain=kinds[identifier attribute subscript type generic_type parenthesized_expression]
-  label L20969 roots sha256:87198c83b5d12b03e9509990ecf45be98884c499b52e992532b5ad2844f3ff90 domain=kinds[assignment] within Reached { step: Parent, named: false, from: And([Or([Kind(208)]), Kind(208)]) }
+  label L20969 roots sha256:87198c83b5d12b03e9509990ecf45be98884c499b52e992532b5ad2844f3ff90 domain=kinds[assignment] within Reached { step: Parent, named: false, from: And([Kind(208), Kind(208)]) }
   label L20970 complement L20969
   label L20971 fact resolves slots=[]
   label L20972 roots sha256:0054e3a8771177461be773ae8fbcb976af10ab16f8afc1b0aa686bc37d7465eb domain=kinds[identifier attribute parenthesized_expression]
@@ -11130,7 +11130,7 @@ clause 384 "ruff-ruf010-explicit-f-string-type-conversion/explicit-str" root=sha
   label L21006 roots sha256:f6f98b939b614023f674b60b60068a239f979281fbcb764da57091601e98b658 domain=kinds[identifier attribute parenthesized_expression]
   label L21007 fact resolves slots=[]
   label L21008 roots sha256:8c6ef5349a8a1385a0b3b2b9985587b0ad3888efcb7bf7dd17590ed3c126f153 domain=kinds[identifier attribute parenthesized_expression]
-  label L21009 count sha256:e8f011e9793a54115d6c30ffc94592f14b2687bf7c2aa4de3fe3bd50f26a1103 domain=kinds[argument_list] within Reached { step: Parent, named: false, from: And([Or([Kind(148)]), Kind(148)]) } by=start min=1 max=1
+  label L21009 count sha256:e8f011e9793a54115d6c30ffc94592f14b2687bf7c2aa4de3fe3bd50f26a1103 domain=kinds[argument_list] within Reached { step: Parent, named: false, from: And([Kind(148), Kind(148)]) } by=start min=1 max=1
   label L21010 roots sha256:258bae00e382a07f4ddd4e65df252dfa641e96b92587ddab8800594052fb8c1d domain=kinds[argument_list]
   label L21011 roots sha256:7e89b30fb2de15c21ec5bbfb5537f53e386d637926cfc9a4a8f6556a8cbaac6d domain=kinds[call]
   label L21012 fact gap slots=[]
@@ -11958,7 +11958,7 @@ clause 402 "ruff-ruf041-unnecessary-nested-literal/nested-literal" root=sha256:4
   label L21315 complement L21314
   label L21316 roots sha256:688484fe94c7e7d7485f87f891e1670bcbf1d2046d10ab9a6593e4ccfdb52d0f domain=kinds[type_parameter]
   label L21317 fact gap slots=[]
-  label L21318 roots sha256:fde152e36538f56f5f47ab6925ce321d3d6f8a5d0d0edf752ea24218c4ef02d3 domain=kinds[type_parameter] within Reached { step: Parent, named: false, from: And([Or([Kind(208)]), Kind(208), Class(21310)]) }
+  label L21318 roots sha256:fde152e36538f56f5f47ab6925ce321d3d6f8a5d0d0edf752ea24218c4ef02d3 domain=kinds[type_parameter] within Reached { step: Parent, named: false, from: And([Kind(208), Kind(208), Class(21310)]) }
   label L21319 complement L21318
   label L21320 roots sha256:a2575a8d4d239da009cefd272b48ba1c3260d3d35cf61f172d199f438a5d5c03 domain=kinds[type_parameter]
   label L21321 roots sha256:7e7b1d8c79cf5e790d355188510beb8ba5b97de3113c3e24692a7988caba35aa domain=kinds[subscript]
@@ -12260,9 +12260,9 @@ clause 408 "ruff-sim102-collapsible-if/collapsible-if" root=sha256:a8576bf250b0d
   label L21441 roots sha256:24a3f6dc7f5188edcae669744ed896498bfb2d92ef13cc057c4cea802cea3c25 domain=kinds[identifier]
   label L21442 fact gap slots=[]
   label L21443 roots sha256:0d76d050cf8cd2c13fa6d218eecd89622f7462efa6cf1cb733b4a1b0ec63ae64 domain=all
-  label L21444 roots sha256:4d3652e7d9e3c2b84edf267abafbd7fd86feb94be64d1029ae9be2689e893d2e domain=kinds[if_statement] within Reached { step: Parent, named: false, from: And([Or([Kind(161)]), Kind(161), Class(18951)]) }
+  label L21444 roots sha256:4d3652e7d9e3c2b84edf267abafbd7fd86feb94be64d1029ae9be2689e893d2e domain=kinds[if_statement] within Reached { step: Parent, named: false, from: And([Kind(161), Kind(161), Class(18951)]) }
   label L21445 complement L21444
-  label L21446 roots sha256:501f1025885a7cd187f04412716be1befeacf36980528621f075f036aca7308b domain=kinds[if_statement] within Reached { step: Parent, named: false, from: And([Or([Kind(161)]), Kind(161), Class(18951)]) }
+  label L21446 roots sha256:501f1025885a7cd187f04412716be1befeacf36980528621f075f036aca7308b domain=kinds[if_statement] within Reached { step: Parent, named: false, from: And([Kind(161), Kind(161), Class(18951)]) }
   label L21447 complement L21446
   label L21448 roots sha256:d872967f7fe3a5bb2ff9ebbfc3fa2c30b29711fb12b1dca2b41c00f254895519 domain=kinds[true false parenthesized_expression]
   label L21449 fact gap slots=[]
@@ -12275,7 +12275,7 @@ clause 408 "ruff-sim102-collapsible-if/collapsible-if" root=sha256:a8576bf250b0d
   label L21456 count sha256:0b6237e1e6a16b9a117396f72fc8c47815228dbd62f49bc0559a61dbb0a0daba domain=kinds[comparison_operator] by=start min=2 max=2
   label L21457 fact gap slots=[]
   label L21458 roots sha256:93f3a205f38805175c36da53df1bf4bc7a62ae016b5a59cc7933daa8b634d59f domain=kinds[true false comparison_operator parenthesized_expression]
-  label L21459 roots sha256:79448235c34396e40f2193abbe64f6e9896ee222b61274d0c57664d53b400c77 domain=kinds[if_statement] within Reached { step: Parent, named: false, from: And([Or([Kind(161)]), Kind(161), Class(18951)]) }
+  label L21459 roots sha256:79448235c34396e40f2193abbe64f6e9896ee222b61274d0c57664d53b400c77 domain=kinds[if_statement] within Reached { step: Parent, named: false, from: And([Kind(161), Kind(161), Class(18951)]) }
   label L21460 complement L21459
   label L21461 roots sha256:501f1025885a7cd187f04412716be1befeacf36980528621f075f036aca7308b domain=kinds[if_statement]
   label L21462 complement L21461
@@ -12338,7 +12338,7 @@ clause 409 "ruff-sim102-collapsible-if/collapsible-elif" root=sha256:b481cbc854a
   label L21479 roots sha256:0e67bcb9cc01fc9246ff138e16398dad9d46820e8bf25a27997d7f20ba41e462 domain=kinds[identifier]
   label L21480 fact gap slots=[]
   label L21481 roots sha256:01b1521fb918a493c77cfa67c8792dc5d919f808b1afd89afb9f928c0a87ead3 domain=all
-  label L21482 roots sha256:a4075980eecd1a2289a6e95aaf74a1e94cf69ac4599b1ca3dd2388fc904f9991 domain=kinds[if_statement] within Reached { step: Parent, named: false, from: And([Or([Kind(161)]), Kind(161), Class(18951)]) }
+  label L21482 roots sha256:a4075980eecd1a2289a6e95aaf74a1e94cf69ac4599b1ca3dd2388fc904f9991 domain=kinds[if_statement] within Reached { step: Parent, named: false, from: And([Kind(161), Kind(161), Class(18951)]) }
   label L21483 complement L21482
   label L21484 roots sha256:8449d642348e28cf8facb349ad0cb87ce42cb5e5c45ae330e855a41c601ffed7 domain=kinds[if_statement]
   label L21485 roots sha256:e6b2c1502c68cf61d1e6c2ee431606c78b6ce89f74f5b7ed6f457695762ae2c3 domain=kinds[elif_clause]
@@ -13222,7 +13222,7 @@ clause 436 "ruff-try003-raise-vanilla-args/raise-vanilla-args" root=sha256:6211c
   borrowed L18175
   borrowed L18178
 clause 437 "ruff-try300-try-consider-else/try-consider-else" root=sha256:fbc8f9c7463bd62a69fd3f55b05cd6f3cee78b41e81a85df7304eec59525f5a2 domain=kinds[return_statement] offset=5472
-  label L21856 roots sha256:b53c4fff0f5ea29c699840b1fca3a93176dbb1fb68a57dde0dbfc8d0e7bbffb8 domain=kinds[try_statement] within Reached { step: Parent, named: false, from: And([Or([Kind(140)]), Kind(140)]) }
+  label L21856 roots sha256:b53c4fff0f5ea29c699840b1fca3a93176dbb1fb68a57dde0dbfc8d0e7bbffb8 domain=kinds[try_statement] within Reached { step: Parent, named: false, from: And([Kind(140), Kind(140)]) }
   label L21857 complement L21856
   label L21858 roots sha256:04d83b37eac91a0deddb071ea2da08edadfb72339386214826a9c442a304d139 domain=kinds[try_statement]
   label L21859 roots sha256:61cb210b84552518f3089c1a880debee65d90cae6a6ae476f1ca7b0ac34afc65 domain=kinds[#161]
@@ -13282,7 +13282,7 @@ clause 438 "ruff-try400-error-instead-of-exception/error-instead-of-exception" r
   label L21886 roots sha256:62aba66a781a76dd031489bf5ebddb942bf61a79c61db78d478054f5560079d0 domain=all
   label L21887 roots sha256:635357a345bbb78af3a2a3165ba838219e07e09d76a4e7ff49a52715ecfe9722 domain=kinds[call] within Reached { step: Parent, named: false, from: And([Or([Kind(1), Kind(203), Kind(225)]), Class(21882), Field(14)]) }
   label L21888 complement L21887
-  label L21889 roots sha256:302281ec219c46e9247cbdf4a16ad2923bb8e3a729921a00fd80fdae63bed44c domain=kinds[#161] within Reached { step: Child, named: false, from: And([Or([Kind(140)]), Kind(140)]) }
+  label L21889 roots sha256:302281ec219c46e9247cbdf4a16ad2923bb8e3a729921a00fd80fdae63bed44c domain=kinds[#161] within Reached { step: Child, named: false, from: And([Kind(140), Kind(140)]) }
   label L21890 complement L21889
   label L21891 roots sha256:1d0e37b4b242cfaeb3a8510dc0890b6d310c4667e73e17efac3d64b45d1ce802 domain=all
   label L21892 targets sha256:095beaa94d6299211b7a0bd1d3792eedb5d314c93d38dcc8ddedcf936653dfa7 domain=L21891
@@ -13368,7 +13368,7 @@ clause 440 "ruff-up001-useless-metaclass-type/useless-metaclass-type" root=sha25
   label L21916 complement L21915
   label L21917 roots sha256:592f1e298e40aca2316be87fbe5a22847236874108823b975429264b3fb60563 domain=kinds[identifier #180]
   label L21918 roots sha256:2bd4d23d15aba3931b04168925e134aba8258d8809c87bea15626a9931f1acee domain=kinds[identifier parenthesized_expression]
-  label L21919 roots sha256:651021dc91c21bb45425133edc035db70c107729217b77cfdbd48a18cfe22dd3 domain=kinds[assignment] within Reached { step: Child, named: false, from: And([Or([Kind(122)]), Kind(122)]) }
+  label L21919 roots sha256:651021dc91c21bb45425133edc035db70c107729217b77cfdbd48a18cfe22dd3 domain=kinds[assignment] within Reached { step: Child, named: false, from: And([Kind(122), Kind(122)]) }
   label L21920 complement L21919
   step L21914
   step L21915
@@ -13569,20 +13569,20 @@ clause 447 "ruff-up004-useless-object-inheritance/useless-object-inheritance" ro
   step L21983
   recursive 0 L21982
 clause 448 "ruff-up009-utf8-encoding-declaration/utf8-encoding-declaration" root=sha256:2f079a7b438ff75178a020728a2c26fa459f372071a3d83147c87d9d6dbb640d domain=kinds[comment] offset=5600
-  label L21984 roots sha256:9614bcb014bc297c361ab72d4d6efe0a71746d93cf7d5b865f90aadeef136109 domain=kinds[comment] within Reached { step: Child, named: false, from: And([Or([Kind(108)]), Kind(108)]) }
+  label L21984 roots sha256:9614bcb014bc297c361ab72d4d6efe0a71746d93cf7d5b865f90aadeef136109 domain=kinds[comment] within Reached { step: Child, named: false, from: And([Kind(108), Kind(108)]) }
   label L21985 complement L21984
   label L21986 fact layout slots=[]
   label L21987 targets sha256:2999e3484ebf1575000a4e3e2204eb7dc3b0f88c48e2e4499dfd223440dc86de domain=kinds[comment]
-  label L21988 roots sha256:ff8a158d5bb68eadfb9440335399dd13336524936fdc92b23ae7de48ecb382c4 domain=kinds[comment] within Reached { step: Child, named: false, from: And([Or([Kind(108)]), Kind(108)]) }
+  label L21988 roots sha256:ff8a158d5bb68eadfb9440335399dd13336524936fdc92b23ae7de48ecb382c4 domain=kinds[comment] within Reached { step: Child, named: false, from: And([Kind(108), Kind(108)]) }
   label L21989 complement L21988
   label L21990 roots sha256:48038c99f2cc97d553d6d56d79a0cf0221e931f49d30871188e52c1eec340de5 domain=kinds[comment]
   label L21991 complement L21990
-  label L21992 roots sha256:0ac30732e527fa88cb3335228619708d1d2a1d7587e83a061566265349ac9381 domain=kinds[comment] within Reached { step: Child, named: false, from: And([Or([Kind(108)]), Kind(108)]) }
+  label L21992 roots sha256:0ac30732e527fa88cb3335228619708d1d2a1d7587e83a061566265349ac9381 domain=kinds[comment] within Reached { step: Child, named: false, from: And([Kind(108), Kind(108)]) }
   label L21993 complement L21992
   label L21994 roots sha256:29db1d02c88eedf6f621d8753b01752480914ab3cc0f6c6dc62882d67886c2ea domain=kinds[comment]
   label L21995 complement L21994
   label L21996 roots sha256:37a530021ac4179b87ecfcc16e455457a23a3237c2d8e078620ff42c3311a0e4 domain=kinds[comment]
-  label L21997 roots sha256:260fd163376986a5755178d19d67d330db4f547fd260d0528400b3e137eb02e4 domain=kinds[comment] within Reached { step: Child, named: false, from: And([Or([Kind(108)]), Kind(108)]) }
+  label L21997 roots sha256:260fd163376986a5755178d19d67d330db4f547fd260d0528400b3e137eb02e4 domain=kinds[comment] within Reached { step: Child, named: false, from: And([Kind(108), Kind(108)]) }
   label L21998 complement L21997
   step L21984
   step L21985
@@ -13756,7 +13756,7 @@ clause 463 "ruff-up035-deprecated-import/typing-extensions-to-types-313" root=sh
   label L22059 fact nthChild slots=[]
   label L22060 complement L22059
   label L22061 roots sha256:f2c68f7e8ec693efc6325e5ef0165c494c601e02f92e13c8e4ea44c6e608abe2 domain=kinds[aliased_import dotted_name]
-  label L22062 roots sha256:b4231efffe56b591289e5868c7f98d17380503c1654cb960c18b820012cd8d28 domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Or([Kind(163)]), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22058), Class(22058)]) }])
+  label L22062 roots sha256:b4231efffe56b591289e5868c7f98d17380503c1654cb960c18b820012cd8d28 domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Kind(163), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22058), Class(22058)]) }])
   label L22063 complement L22062
   step L22056
   step L22057
@@ -13780,7 +13780,7 @@ clause 465 "ruff-up035-deprecated-import/typing-extensions-to-typing-38" root=sh
   label L22070 fact nthChild slots=[]
   label L22071 complement L22070
   label L22072 roots sha256:b286e9c4b086dc2a8b795afdedfc751a721792a4544e267a82eacf93bbd5fd66 domain=kinds[aliased_import dotted_name]
-  label L22073 roots sha256:a9a3542ba78b8f664049357f37c34bd573ddba2ceb4f9f00e45c0f6c479f42ed domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Or([Kind(163)]), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22069), Class(22069)]) }])
+  label L22073 roots sha256:a9a3542ba78b8f664049357f37c34bd573ddba2ceb4f9f00e45c0f6c479f42ed domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Kind(163), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22069), Class(22069)]) }])
   label L22074 complement L22073
   step L22067
   step L22068
@@ -13800,7 +13800,7 @@ clause 466 "ruff-up035-deprecated-import/typing-extensions-to-typing-39" root=sh
   label L22081 fact nthChild slots=[]
   label L22082 complement L22081
   label L22083 roots sha256:23aa3a1d059454ad95a2c1bca1ce8a1f20448999be21660bc5f87b90802eeac4 domain=kinds[aliased_import dotted_name]
-  label L22084 roots sha256:3f86c2db151c2b8a2c8a1374e38d8d7fda55fe6832b995142bb0d5057c1ac183 domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Or([Kind(163)]), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22077), Class(22077)]) }])
+  label L22084 roots sha256:3f86c2db151c2b8a2c8a1374e38d8d7fda55fe6832b995142bb0d5057c1ac183 domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Kind(163), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22077), Class(22077)]) }])
   label L22085 complement L22084
   step L22075
   step L22076
@@ -13826,7 +13826,7 @@ clause 467 "ruff-up035-deprecated-import/typing-extensions-to-typing-310" root=s
   label L22095 fact nthChild slots=[]
   label L22096 complement L22095
   label L22097 roots sha256:c0d488738393b4bf00fa4f2589422d0f1012cd1362cc27ad8505b0488691d66e domain=kinds[aliased_import dotted_name]
-  label L22098 roots sha256:93f1e40e3e5c41b33efadabefd29c9af418b831d37a7672e0c38da7b074995c1 domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Or([Kind(163)]), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22088), Class(22088)]) }])
+  label L22098 roots sha256:93f1e40e3e5c41b33efadabefd29c9af418b831d37a7672e0c38da7b074995c1 domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Kind(163), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22088), Class(22088)]) }])
   label L22099 complement L22098
   step L22086
   step L22087
@@ -13858,7 +13858,7 @@ clause 468 "ruff-up035-deprecated-import/typing-extensions-to-typing-311" root=s
   label L22112 fact nthChild slots=[]
   label L22113 complement L22112
   label L22114 roots sha256:6cd687df460abf016f2f40b36fc6ccf94b274f0f6ab444851f4ebca33d7bff6c domain=kinds[aliased_import dotted_name]
-  label L22115 roots sha256:7d07c7a4879b25db8d02cce5ba9c81880f53c8cdcf8cd8c1ec48bb023ce17b0e domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Or([Kind(163)]), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22102), Class(22102)]) }])
+  label L22115 roots sha256:7d07c7a4879b25db8d02cce5ba9c81880f53c8cdcf8cd8c1ec48bb023ce17b0e domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Kind(163), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22102), Class(22102)]) }])
   label L22116 complement L22115
   step L22100
   step L22101
@@ -13896,7 +13896,7 @@ clause 469 "ruff-up035-deprecated-import/typing-extensions-to-typing-312" root=s
   label L22132 fact nthChild slots=[]
   label L22133 complement L22132
   label L22134 roots sha256:43dbbeb52874b7b0030210252f73c06e7100ab33c4124bd89866712c36413481 domain=kinds[aliased_import dotted_name]
-  label L22135 roots sha256:312002d466174452cacad016d5b1b995f150c48db62ff669c5d0f624540ab655 domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Or([Kind(163)]), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22119), Class(22119)]) }])
+  label L22135 roots sha256:312002d466174452cacad016d5b1b995f150c48db62ff669c5d0f624540ab655 domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Kind(163), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22119), Class(22119)]) }])
   label L22136 complement L22135
   step L22117
   step L22118
@@ -13940,7 +13940,7 @@ clause 470 "ruff-up035-deprecated-import/typing-extensions-to-typing-313" root=s
   label L22155 fact nthChild slots=[]
   label L22156 complement L22155
   label L22157 roots sha256:4fb85a21348854cee991df2de012882671c56e074c0fb52a181e42546b15d98a domain=kinds[aliased_import dotted_name]
-  label L22158 roots sha256:a5abd64ab0d9a90dd9ea2ae45578fd5e5fe89793457e480a1eedc0ea288c4649 domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Or([Kind(163)]), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22139), Class(22139)]) }])
+  label L22158 roots sha256:a5abd64ab0d9a90dd9ea2ae45578fd5e5fe89793457e480a1eedc0ea288c4649 domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Kind(163), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22139), Class(22139)]) }])
   label L22159 complement L22158
   step L22137
   step L22138
@@ -13979,7 +13979,7 @@ clause 472 "ruff-up035-deprecated-import/mypy-extensions-to-typing-38" root=sha2
   label L22166 fact nthChild slots=[]
   label L22167 complement L22166
   label L22168 roots sha256:a274577b9d3c8af43bc3875c2e35813025a0602424b88888b68c7c4435ca769c domain=kinds[aliased_import dotted_name]
-  label L22169 roots sha256:104fd937438cda3786dc827077e57d292f6f5a089c6916afa62f3e1273ce5fdc domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Or([Kind(163)]), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22165), Class(22165)]) }])
+  label L22169 roots sha256:104fd937438cda3786dc827077e57d292f6f5a089c6916afa62f3e1273ce5fdc domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Kind(163), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22165), Class(22165)]) }])
   label L22170 complement L22169
   step L22163
   step L22164
@@ -14031,7 +14031,7 @@ clause 478 "ruff-up035-deprecated-import/typing-to-collections-abc-310" root=sha
   label L22189 fact nthChild slots=[]
   label L22190 complement L22189
   label L22191 roots sha256:528fbf65e0551f7fe50322752969999319e55b70fab80bf1f09c4f646faef02e domain=kinds[aliased_import dotted_name]
-  label L22192 roots sha256:5324893d3e30dda8590c9ec77d299d1254c15755c76a9f2cbda89d32ccf00f42 domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Or([Kind(163)]), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22188), Class(22188)]) }])
+  label L22192 roots sha256:5324893d3e30dda8590c9ec77d299d1254c15755c76a9f2cbda89d32ccf00f42 domain=kinds[import_from_statement] within And([Reached { step: Parent, named: false, from: And([Kind(163), Kind(163), Field(18)]) }, Reached { step: Parent, named: false, from: And([Class(22188), Class(22188)]) }])
   label L22193 complement L22192
   step L22186
   step L22187
@@ -14093,7 +14093,7 @@ clause 485 "ruff-up035-deprecated-import/typing-defaultdict" root=sha256:471629f
 clause 486 "ruff-up039-unnecessary-class-parentheses/unnecessary-class-parentheses" root=sha256:15f76fc17c28eb7192695e4ff69fa652b73ac7ebca6417fac57338befb942497 domain=kinds[argument_list] offset=5831
   label L22215 roots sha256:1740975fb342f1772fb8f3446262c85c57ea97d328b250ec2166e1e35feb5f56 domain=all
   label L22216 complement L22215
-  label L22217 roots sha256:6c394f616a0c5fbc032e8f5a1e665afd438dbfcbf0af6d55e14a1009d62dfecf domain=kinds[argument_list] within And([Reached { step: Child, named: false, from: And([Or([Kind(154)]), Kind(154)]) }, Field(28)])
+  label L22217 roots sha256:6c394f616a0c5fbc032e8f5a1e665afd438dbfcbf0af6d55e14a1009d62dfecf domain=kinds[argument_list] within And([Reached { step: Child, named: false, from: And([Kind(154), Kind(154)]) }, Field(28)])
   label L22218 complement L22217
   step L22215
   step L22216

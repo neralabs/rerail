@@ -36,6 +36,7 @@
 # and more.
 
 lexer kotlin
+deprecated back_fill
 
 class ws        = ' ' '\t' '\n' '\r' 0x0c
 class lf        = '\n'

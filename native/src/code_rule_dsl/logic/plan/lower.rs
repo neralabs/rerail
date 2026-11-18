@@ -476,20 +476,6 @@ pub(in crate::code_rule_dsl) fn columns_of(domains: &Domains) -> HashMap<&str, V
 domains.iter().map(|(r, ds)| (r.as_str(), ds.iter().copied().map(Some).collect())).collect()
 }
 
-/// The domain of column `c` (declared `t`) of a new relation that shares its first `known` columns with a relation
-/// `domains` covers: past those, its declared type's, else its variable's domain in the relation's one rule (`var`),
-/// else a name, as `domains` finds them. A support relation (`supports`, `h__supN`) holds its head's columns, then the
-/// variables its body binds: a kind there (`kind(p, k)`) is a kind id, no atom (decision 0170), and given the head's
-/// domains alone it was taken for one.
-pub(in crate::code_rule_dsl) fn column_domain(c: usize, t: &str, known: &[Domain], var: Option<Domain>) -> Domain {
-    match t {
-        _ if c < known.len() => known[c],
-        "int" | "flat" | "min" | "max" => Domain::Int,
-        "node" => Domain::Node,
-        _ => var.unwrap_or(Domain::Name),
-    }
-}
-
 /// A program lowered for one dialect, before its image: the tree `lower_tree` gives, which the preparation passes edit
 /// (`corpus`) and the SQL emitter reads (`emit::emit`). The run reads none (decision 0281's path, step 4): `image`
 /// makes the run's `Lowered`, a version.
@@ -509,7 +495,7 @@ impl Given {
     pub fn image(&self) -> super::Result<Lowered> {
         let placed = super::body::Placed::of_program(&self.program)?;
         if !placed.whole {
-            let why = crate::code_rule_dsl::logic::program_image::Builder::of_program_less_maintenance(&self.program).and_then(|b| b.finish()).err().unwrap_or_default();
+            let why = crate::code_rule_dsl::logic::program_image::Builder::of_program(&self.program).and_then(|b| b.finish()).err().unwrap_or_default();
             return Err(Error::Plan(format!("the program has no image: {why}")));
         }
         Ok(Lowered::of_placed(placed, self.domains.clone(), self.ops, self.dialect))
@@ -532,8 +518,6 @@ impl Given {
 #[derive(Clone)]
 pub struct Lowered {
     pub version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
-    /// A maintained program's parts beside `version` (decision 0215): `None` for every other program.
-    pub(in crate::code_rule_dsl) maint: Option<std::sync::Arc<super::body::Maint>>,
     pub domains: Domains,
     /// The name atoms of `flat_bin`'s operators `+`, `-` and `*`.
     pub(in crate::code_rule_dsl) ops: [i64; 3],
@@ -543,23 +527,20 @@ pub struct Lowered {
 impl Lowered {
     /// The program `p` places, read beside `domains`, `ops` and `dialect`.
     pub fn of_placed(p: super::body::Placed, domains: Domains, ops: [i64; 3], dialect: GrammarDialect) -> Lowered {
-        Lowered { version: p.v, maint: p.maint, domains, ops, dialect }
+        Lowered { version: p.v, domains, ops, dialect }
     }
     /// A program of version `v` read beside this one's domains, operators and dialect (a part of it, or an edit of
-    /// it): with no maintained parts.
+    /// it).
     pub fn with_version(&self, v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Lowered {
-        Lowered { version: v, maint: None, domains: self.domains.clone(), ops: self.ops, dialect: self.dialect }
+        Lowered { version: v, domains: self.domains.clone(), ops: self.ops, dialect: self.dialect }
     }
     /// What the program's run reads beside its version (`plan::run`).
     pub fn lowering(&self) -> Lowering<'_> {
         Lowering { domains: &self.domains, dialect: self.dialect }
     }
-    /// The version `plan::run` reads, with its maintained parts.
+    /// The version `plan::run` reads.
     pub fn placed(&self) -> super::Result<super::body::Placed> {
-        Ok(match &self.maint {
-            Some(_) => super::body::Placed::derived(self.version.clone(), self.maint.clone()),
-            None => super::body::Placed::whole(self.version.clone()),
-        })
+        Ok(super::body::Placed::whole(self.version.clone()))
     }
     /// The program's digest (`Placed::digest`): its version's, kept as it was made, with its maintained parts'.
     pub fn digest(&self) -> super::Result<u64> {
@@ -656,8 +637,7 @@ pub fn relocate(prog: &mut Program, to: &HashMap<u32, u32>) -> bool {
                 Literal::Nearest { .. } | Literal::Ast { .. } => true,
             })
     };
-    let again = prog.again.iter_mut().flat_map(|a| a.rules.iter_mut().chain(a.deltas.iter_mut()));
-    if !prog.rules.iter_mut().chain(again).all(rule) {
+    if !prog.rules.iter_mut().all(rule) {
         return false;
     }
     prog.facts.values_mut().flatten().all(|row| {
@@ -844,7 +824,7 @@ fn transduce_nearest(prog: &mut Program, domains: &mut Domains) -> Vec<(String, 
 }
 
 mod on_version;
-pub use on_version::lower_version;
+pub use on_version::{lower_version, lowered};
 
 #[cfg(test)]
 pub mod tests;

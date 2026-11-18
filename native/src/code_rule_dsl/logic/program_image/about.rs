@@ -125,6 +125,8 @@ pub struct About {
     pub tapes: Vec<(RelId, usize)>,
     /// The join shape directives, in the program's order (`Program::shapes`).
     pub shapes: Vec<ShapeRef>,
+    /// Each relation's layout facts (`Program::layouts`, decision 0361), by relation id, each relation's in order.
+    pub layouts: Vec<(RelId, Vec<crate::code_rule_dsl::logic::front::ast::LayoutFact>)>,
 }
 
 /// A gate (`front::ast::Gate`): its key, its relation, its level, its source, and the relations it quiets and depends on,
@@ -186,6 +188,7 @@ impl About {
         let mut shapes: Vec<(i64, ShapeRef)> = Vec::new();
         let mut shape_after: Vec<(i64, AtomId)> = Vec::new();
         let mut shape_bound: Vec<(i64, i64, AtomId)> = Vec::new();
+        let mut layouts: Vec<(RelId, i64, crate::code_rule_dsl::logic::front::ast::LayoutFact)> = Vec::new();
         for f in v.about_facts() {
             let name = v.text(f.name());
             for row in f.rows() {
@@ -284,6 +287,13 @@ impl About {
                             shapes.push((k, ShapeRef { head, lit, wait: ShapeWaitRef::Bound(Vec::new()), text }));
                         }
                     }
+                    "layout" => {
+                        if let (Some(rel), Some(k), Some(text)) = (r(1), int(row.get(2).copied()), a(3))
+                            && let Ok(fact) = crate::code_rule_dsl::logic::front::ast::LayoutFact::of_placed(v.text(text))
+                        {
+                            layouts.push((rel, k, fact));
+                        }
+                    }
                     "shape_after" => shape_after.extend(int(row.get(1).copied()).zip(row.get(2).copied().and_then(atom))),
                     "shape_bound" => {
                         if let (Some(k), Some(i), Some(x)) = (int(row.get(1).copied()), int(row.get(2).copied()), row.get(3).copied().and_then(atom)) {
@@ -365,6 +375,13 @@ impl About {
             }
         }
         about.shapes = shapes.into_iter().map(|s| s.1).collect();
+        layouts.sort_by_key(|&(rel, k, _)| (rel, k));
+        for (rel, _, fact) in layouts {
+            match about.layouts.last_mut() {
+                Some((r, facts)) if *r == rel => facts.push(fact),
+                _ => about.layouts.push((rel, vec![fact])),
+            }
+        }
         answers.sort_unstable_by_key(|&(req, i, _)| (v.rel_name(req), i));
         about.answers = answers.into_iter().map(|(req, _, p)| (req, p)).collect();
         about.natives.sort_unstable_by_key(|n| n.rel);
@@ -445,6 +462,28 @@ impl Builder<'_> {
             }
         }
         self.set_about_rows("lattice", rows);
+    }
+    /// Renames readers in the request record (`asked` rows, column 3), as `Program::rename_readers` does: a request
+    /// of a merged or folded reader serves the relation it went into. Each rule's readers are a set, so readers
+    /// renamed to one are one row.
+    pub fn rename_asked_readers(&mut self, rename: &dyn Fn(&str) -> Option<String>) {
+        let rows = self.about_rows("asked");
+        if !rows.iter().any(|row| matches!(row.get(3), Some(&Cell::Str(a)) if rename(self.text(a)).is_some())) {
+            return;
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut renamed = Vec::with_capacity(rows.len());
+        for mut row in rows {
+            if let Some(&Cell::Str(a)) = row.get(3)
+                && let Some(t) = rename(self.text(a))
+            {
+                row[3] = Cell::Str(self.atom(&t));
+            }
+            if seen.insert(format!("{row:?}")) {
+                renamed.push(row);
+            }
+        }
+        self.set_about_rows("asked", renamed);
     }
     /// Removes relation `rel`'s native operator (`Program::natives`' entry): its rows of each native about relation,
     /// every one of which names its relation in column 1.
@@ -572,6 +611,20 @@ impl Builder<'_> {
             .collect();
         self.set_about_rows("answer", rows);
     }
+    /// The request record as the program being built holds it (`Version::asked`).
+    pub fn asked(&mut self) -> Asked {
+        let mut asked = Asked::new();
+        for row in self.about_rows("asked") {
+            let (Some(&Cell::Str(req)), Some(&Cell::Int(k)), Some(&Cell::Str(b))) = (row.get(1), row.get(2), row.get(3)) else { continue };
+            let Ok(k) = usize::try_from(k) else { continue };
+            let readers = asked.entry(self.text(req).to_owned()).or_default();
+            if readers.len() <= k {
+                readers.resize(k + 1, Default::default());
+            }
+            readers[k].insert(self.text(b).to_owned());
+        }
+        asked
+    }
     /// States the request record (`Program::asked_by`, `Version::asked`): each request relation's rules, in order, each
     /// with the relations whose readers it serves. Replaces the program's.
     pub fn set_asked(&mut self, asked: &Asked) {
@@ -618,6 +671,14 @@ impl Builder<'_> {
         self.set_about_rows("gate", main);
         self.set_about_rows("gate_quiet", quiet);
         self.set_about_rows("gate_dep", deps);
+    }
+    /// Adds setting `key` with `text` after the program's settings (`.global library …`, written by the file reader).
+    pub fn add_setting(&mut self, key: &str, text: &str) {
+        let p = program_cell(self);
+        let mut rows = self.about_rows("setting");
+        let k = rows.len() as i64;
+        rows.push(vec![p, Cell::Int(k), Cell::Str(self.atom(key)), Cell::Str(self.atom(text))]);
+        self.set_about_rows("setting", rows);
     }
     /// Adds relations `rels` to the relations of no columns (kept in name order, each once, as the tree's set).
     pub fn add_nullary<S: AsRef<str>>(&mut self, rels: &[S]) {

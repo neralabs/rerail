@@ -13,6 +13,7 @@
 # never written in practice.
 
 lexer rr
+deprecated back_fill
 
 class quote     = '"'
 class backslash = '\\'

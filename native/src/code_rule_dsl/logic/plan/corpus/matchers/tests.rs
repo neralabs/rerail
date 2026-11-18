@@ -57,7 +57,7 @@ unjoined(w) :- ast(d, w, {"language": "python", "rule": {"inside": {"kind": "cla
         let at = |needle: &str| matchers.iter().position(|(_, text, _)| text.contains(needle)).unwrap();
         // The run reads the rules from the prepared program's image (decision 0281, step R).
         let (image, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish()).unwrap();
-        let demand = demanded_by_roots(&prog, &image, &matchers);
+        let demand = demanded_by_roots(&image, &matchers);
         let word = at("identifier");
         assert_eq!(demand[at("function_definition")], Some(vec![word]), "inner's node is ident's, which only the identifier matcher fills");
         assert_eq!(demand[at("\"call\"")], None, "free joins with nothing");

@@ -332,7 +332,9 @@ def handle(conn):
         send(f, work(job))
     except Exception as e:
         try:
-            send(f, {"code": -1, "stdout": "", "stderr": "", "read": {"?": None}, "why": f"the daemon failed: {e!r}"})
+            import traceback
+            where = traceback.format_exc().strip().splitlines()[-3:-1]
+            send(f, {"code": -1, "stdout": "", "stderr": "", "read": {"?": None}, "why": f"the daemon failed: {e!r} ({' / '.join(w.strip() for w in where)})"})
         except OSError:
             pass
     finally:

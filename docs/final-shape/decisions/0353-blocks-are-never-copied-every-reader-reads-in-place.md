@@ -253,7 +253,8 @@ rules read every node's `text` (no kind narrows them, `text_nodes` is none), so 
 `text` on request is open (work queue Q121). A first build (a node's whole text answered by `@rr_text`, the spans'
 rows eager as `rr_text_span`) broke the widened copies' termination, the converter's printing and a demand test, and
 0174 §4 measured that a request a node costs more than eager `text` within the bound. It is kept as a patch until it
-is measured against eager on hogql.
+is measured against eager on hogql. Deferred (2026-11-17): `text` stays eager within its narrowing until steps 3 and 4 are done; after the literal
+fix below its rows visit 0.84 M of hogql's 2.27 M nodes, and rules look it up for 663 K rows.
 
 Found on the way and fixed: the image's merge (`preparation::merge`) merged two requests of one body
 (`rr_str_req`, `rr_node_text_req`), which the tree's keeps by name (`simplify::request`, the debug check "the
@@ -262,18 +263,48 @@ version's merges are the tree's"); `node_column_counts` indexed a text document'
 **Step 3's tape answers: `next_sibling` is a view** (2026-11-17). Its rows were core.rr's `CoreRows::node` pairs,
 each numbered node's numbered direct children, consecutive. Now:
 - the rank index marks a fourth item, `Item::Sibling`: a node after a numbered direct sibling (the projection's walk
-  keeps the open numbered nodes and whether each has had a direct child; an anchor that hangs from the root is no
-  child of it). A group is six words, 48 bytes for 64 tape nodes (40 before); `Numbering` holds four counts and
+  keeps the numbered nodes on its path and whether each has had a direct child, popped down to each node's tape
+  parent, which the walk gives; an anchor that hangs from the root is no child of it). Popped by subtree ends, the
+  marking added 0.014–0.032 s to hogql's identity maps (0.087–0.093 s); popped by parents, 0.108–0.116 s against
+  0.096–0.113 s at load 70–77, within the noise. A group is six words, 48 bytes for 64 tape nodes (40 before); `Numbering` holds four counts and
   samples, its Rust and MSL reads written again from the CLIF;
 - `View::Sibling` has a row per marked node, as `field`'s are its marked ones. Column `b` is the row's node; `a`
   comes with the scan's walk (the open subtree's last child), and a point read climbs from the tape node before `b`
   (`Projected::prev_sibling`); a lookup by `a` hops the tape's siblings after its subtree (`next_sibling`);
 - check: `node_ids_in_place_equal_the_numbered_ones` holds both reads to the old pairs in every format, whole and
   narrowed, and the rank reads of the new item to its walk. The device has no view of it yet (step 4).
+- hogql, 3 interleaved pairs against step 2's end (`s2s`), load 70–77: findings 1,629 in each; 76.3 B instructions
+  (median) against 79.2 B, within the noise (72.9–82.5 B against 74.5–81.8 B).
 
-`line`, `end_line`, `col` and `docof` were views already (`View::Loc`) except where `Extra` makes spans' rows; those
-and `visit_index` (CPython's visit order, a derived fact computed once for the documents a program reads it of),
-`doc_root` and `host_node` (a guest's) are left for this step.
+**Step 3: literal rows only where they are read** (2026-11-17). `rr_value_lit` (the eager part of `value` on
+request, 0174) holds the literals of the documents W reads no values of. The skip flags came from the program's
+reads, so a Python batch computed every node's literal and `values_of` dropped them all, and `CoreRows` visited
+every node for them (`Visits::All`). Where no other relation reads a literal, a document whose dialect W values now
+makes none, and the walk visits only the nodes whose text a rule reads. hogql, 3 interleaved pairs at load 43–49:
+nodes visited 2.24 M to 0.84 M of 2.27 M; `node rows` 0.427–0.433 s to 0.277–0.304 s; atoms interned 0.011–0.012 s to
+0.007 s; findings 1,629 in each; instructions within the noise (71.6–82.3 B against 75.0–81.5 B).
+
+**Step 3: places are views where no span is made** (2026-11-17). `line`, `end_line`, `col` and `docof` were views
+already (`View::Loc`), but `Extra` made `end_line`, `col` and `docof` as rows for every node and token wherever a
+program read them, and `Batch::made` bound those rows in place of the views (`line` alone waited for spans,
+`line_rows`). In core.rr's shape they are now made only where `Extra` makes spans, which have places too. hogql reads
+no span: 3 interleaved pairs at load 23–25, `extra document rows` 0.094–0.135 s and 254–271 MB allocated to none;
+findings 1,629 in each; 73.5 B instructions (median) against 80.2 B.
+
+Where spans are made, the nodes' and tokens' place rows are still made beside the spans' (the spans' are derived
+facts; the nodes' are copies of tape answers), and bound in place of the view. The view already covers the whole
+source and its lines (`Locs::positions`, the `ExtraSpan::Line` ids); the other spans (`src_line_lf`, `tape_line`,
+matches, comments, `rx_span`) have their byte ranges only in `Extra`. Q123: those ranges written once into the
+batch's block, and the view reading them past its own positions, so nothing makes a node's place.
+
+**Step 3's other relations of row 7** (2026-11-17), each checked against "Not copies":
+- `visit_index` (CPython's visit order), `host_node` (a guest node's innermost host node, an axis's answer) and
+  `doc_root` (a document's root id, one row a document) are derived facts, each made only where a program reads it
+  (`tree::Tree::new`, `GuestRows::document`'s `wants`). They stay relations.
+- `intval` and `op_t` are read by no core.rr library rule; in core.rr's shape `NodeRows` runs only where a program
+  reads them. In T's shape they come with `NodeRows`' eager `text`, `name` and `str`, deferred with Q121.
+- What row 7 keeps: `core_rr`'s and `NodeRows`' eager derived values (`text`, `name`, `value`'s literals, T's
+  rows), deferred (Q121), and the nodes' place rows beside spans (Q123).
 
 Found on the way and fixed:
 - `Locs::token_spans` copied every token's start and end into a `Vec` on a span's first read: unmarked, and missed by
@@ -348,7 +379,10 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 10 | A device fixpoint's total copied into a run's block at its end | `device.rs` (0325 step 4) | Each recursive stratum's rows | Step 6 |
 | 11 | The transducer's packed batch: 44 bytes a node, and its child lists | `PackedBatch::nodes` (0293 "Interim") | Each matched batch | Step 7 |
 | 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
-| 13 | A label level's fact rows as `(node, label)` pairs, uploaded for the pattern kernels (`Pass::Fact`). Found unlisted on 2026-11-18 (0425, Q251), not added then | `metal_label_passes.rs`, `Runner::level` | 32 MB (8.1 M words) on 15 fixtures while it went up once per pattern group; once a level since 0425 | Step 4 (Q251: the device reads the fact's relation in its block) |
+| 13 | The transducer's residency: every tape it reads copied into slabs of its own, and documents copied between slabs | `residency::slabs::admit_docs`, `insert`'s `place`; `rerail_metal::slabs::gather` | Each tape a Metal batch reads | Step 7 |
+| 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 4 bytes a line, 8 a span, each batch that makes the views | Step 4 |
+| 15 | Found 2026-11-17: a 16z tape's blocks laid out as format 16. `DocTape::in_place`'s copy went 2026-11-18 (the CPU reads 16z in place, step 4b); left, the transducer's residency's (`unblock_into` into its slab, for the kernels), and a 16z batch's views, refused on the device (`views.refused.z_on_device`) and made | `residency/slabs.rs`, `place`'s `unblock_into` | The tape's format 16 size, each 16z document a Metal batch reads (16z is opt-in: `RERAIL_TAPE=16z`) | Step 4b (the kernels) |
+| 16 | A label level's fact rows as `(node, label)` pairs, uploaded for the pattern kernels (`Pass::Fact`). Found unlisted on 2026-11-18 (0425, Q251), not added then | `metal_label_passes.rs`, `Runner::level` | 32 MB (8.1 M words) on 15 fixtures while it went up once per pattern group; once a level since 0425 | Step 4 (Q251: the device reads the fact's relation in its block) |
 
 ## The plan
 
@@ -380,6 +414,197 @@ Each step ends with:
    - Its derived values (`text`, `intval`, ...) become rules computed on demand, written once into relations.
    - Check: the views' rows equal today's, for every view and dialect, cold and warm.
 4. **The base views read the tape on the GPU.**
+   - First, each tape's one home is a residency slab (user, 2026-11-17). A batch's tapes were host-heap images
+     (`Facts::tape`, an `Arc<TapeImage>`), and the device's were copies of them in the transducer's slabs
+     (`slabs::insert`, and `gather`'s copies between slabs). The tape store's load writes a tape straight into a
+     slab, a GPU-shareable chunk block, and the host's `DocTape` reads it there, holding the slab. A format 15 tape
+     is decompressed (zstd, on disk only) into its slab; format 16 is placed as stored; a 16z tape stays compressed
+     (its LZ4 blocks as stored), so the reads written once read 16z in place, a block decoded where a read falls in
+     it, and `DocTape::in_place`'s laid-out copy goes. A host without a device uses the same blocks.
+   - Its parts, each committed with its check (2026-11-17):
+     - **4a.** Tapes placed in slabs and read there by the host: `Columns15`, `Tape16` and `Tape16Z` hold their
+       bytes in a slab room, which the store's load decompresses (a zstd frame) or reads (a segment) into;
+       `residency::slabs::admit` and `admit_docs` find a placed tape and copy nothing. A parsed tape is written into
+       its room. Check: every format's reads equal the heap image's.
+       Done for the facts' loads (2026-11-17): a stored tape's frame is decompressed straight into its room, and a
+       parsed tape's stored bytes are written there, which the store's writer takes (`TapeBytes`); the parser's own
+       columns remain until a parser writes into the room (`copy (0353 step 4a)`). hogql cold: 976 tapes in one
+       slab, findings 1,629, peak 800–864 MB against 864–921 MB. Found on the way, unlisted: the transducer's
+       residency copies every tape it reads into slabs of its own (`residency::slabs::admit_docs`, `insert`), and
+       `gather` copies documents between slabs; row 13 below, step 7's.
+     - A batch's tapes lie in several slabs, which no offset from one block reaches. A document's descriptor names
+       its slab and its tape's offset there, and each backend gives the reads the slabs' bases: the host its
+       pointers, the device their GPU addresses in an argument buffer (each slab made resident for the stage).
+     - The views made on the device, by view (hogql cold, 2026-11-17, the profile's `device.view_made.*`):
+       `node` 415.5 MB, the axis 362.7 MB (step 5's), `child` 75.9 MB, `col` 20.8 MB, `line` 20.8 MB, `docof`
+       15.0 MB: 911 MB in all (809.1 MB in the upload line, which counts a view once). 4c and 4d go view by view,
+       `node` first.
+     - The view reads' family (4c): its pointers are the chunk block (`t`, the document's entry an offset from it),
+       and the tape's base and view (`tt`, `v`), which the kernel or the host binds from the entry and the slabs'
+       bases. A view read calls the numbering's reads with `t` and the tape's with `tt` and `v`. The entry holds the
+       projection's numbering's offset, the tape's slab and offset, its `TapeView`, and its code table's kind and
+       field per code (a derived table, small, beside the dialect's canonical codes): no per-node column.
+     - **4b.** 16z read in place by the reads written once (a block decoded where a read falls), on the CPU, then
+       the kernels; `in_place`'s laid-out copy and the slab's `unblock_into` go.
+       Decided (user, 2026-11-18): decoded per reader, nothing outliving the read's slot. A 16z read is format 16's
+       read of the block it falls in (its decoded bytes, the block's view, the node's place in it), as `F16Z` reads
+       today, and a parent's walk crosses blocks; the reads written once do the same, the block decoded on a miss
+       by an LZ4 block decode written once in CLIF (so the kernels have the same code), into the reader's slot. On
+       the CPU a thread's slot (two blocks, as `F16Z`'s cache). On the device, a threadgroup decodes its rows'
+       block into threadgroup memory, spilling to device memory past about 16 KB.
+       - Open for the kernels: a stage's probes read a view at any row, so a threadgroup's reads are not within
+         one or two blocks as a scan's are. A probe whose block is not the group's needs a slot of its own; how
+         many, and where, is decided when the kernels' part is built, against a probe-heavy stratum's misses.
+       - The CPU's part (2026-11-18): a 16z tape's view (`F16Z_FORMAT`, `Tape16Z::view`) names its block index,
+         its blocks' side lengths and its compressed bytes where they lie as stored, its id, and the cache it reads
+         through (by its address less the tape's, and its entry size). A format 16 read of a 16z tape
+         (`by_format`'s third case) calls `tape_z_block` (cold), which finds the node's block in the cache or
+         decodes it into the cache's head (LZ4's block format in words: 8-byte copies, an offset under 8 widened
+         as LZ4's reference decoder does, a length's extension bytes one a step), and the read reads the entry as
+         format 16 with the node's place in its block, every load masked to the entry; `parent` walks back over
+         blocks' starts by `tape_slot`, and a call from the block's read finds its block itself. `DocTape::in_place`
+         gives the stored bytes (row 15's laid-out copy goes). The CPU's reader (`view::Reader`) is the view and a
+         cache of its own after it (two live generations of two blocks), and the CPU executor gives each evaluation
+         that reads a 16z tape one, since an evaluation's tasks run in order on one worker.
+       - The cache is the kernels' (below), checked on the CPU first: eight threads share one cache of four
+         blocks a generation over a tape of more blocks, so it turns and copies all the time (0.9 M misses, 0.4 M
+         turns in a run), and a read is wrong only where the cache counted no room. Found by that check and fixed:
+         a reader checks its entry's key and completion before it reads and its completion after; a writer claims
+         its entry by a compare-and-swap of its completion (marked as being written in its epoch), and skips one
+         an older writer still writes, so no two write one entry.
+         hogql cold with `RERAIL_TAPE=16z`, against the commit before: findings 1,629 throughout; the CPU's
+         binding, 4 pairs at load 30–49, peak footprint 397–472 MB against 429–456 MB, 121.7–143.5 B instructions
+         against 119.7–128.3 B (noise); the Metal binding, 1 pair at load 45, 102.7 B against 112.9 B, peak
+         1,207 MB against 1,289 MB. Checks: the JIT's reads of a 16z tape of 6 blocks equal `F16Z`'s, node by
+         node, and the JIT executor's outputs over one equal format 15's.
+       - The tape crate's `F16Z` still decodes with `lz4_sys` into its thread's two blocks, then reads them with the
+         generated format 16 reads: the same block, decoded by a second decoder. The Rust backend checks each load
+         against the tape's bytes, and a slot is not the tape's: the generated module reads 16z when its loads of a
+         slot are checked against the slot.
+       - The device's views read a 16z batch in place (2026-11-18; `views.refused.z_on_device` gone): the join
+         kernels include the reads with the 16z case (`metal_tape_reads_z.metal`); a batch whose tapes are 16z
+         gets one cache (`device_chunk::zcache_spec`), which every stage that reads its views shares, resident
+         to be read and written; each 16z row's view names it, its entry size the cache's (a view's loads are
+         masked to it). A generation holds four times the batch's blocks, 64 at least, within an eighth of a
+         chunk's budget (`RERAIL_ZCACHE_MB`, 48 MB): with one entry a block, the device test's batch of five
+         blocks turned 25 times in one pass and 8 reads found no room (the dead entry read: wrong ends); with
+         the room, 5 misses, no turn, no failure. On hogql (24 batches of about 136 blocks, 544 entries a generation,
+         8 KB entries) two more faults showed, both fixed: waits of 1,024 loads ran out while a block was
+         decoded on a loaded device (11 M duplicates; `SPIN` is now 65,536), and a thread that missed took its
+         entry before it raced for the block's index slot, so the thousands that missed one block at once took
+         thousands of entries and gave them back (the head turned 111 times a batch, 330 M reads found no room).
+         Now the slot is claimed first: an index slot holds the key's tag (16 bits) above its entry's number,
+         0 while its writer has not taken one, and a thread that finds its tag pending waits on the slot; only
+         the slot's winner takes an entry. Then hogql's 46 batches: 1,880 decodes for 2,769 blocks, 18.9 M hits,
+         1.4 M waits, no duplicate, no turn, no failure. A stage whose cache's failures rose while it ran is refused
+         (`Run::failed`), and the stratum runs on the CPU. The cache's counts go to the profile (`zcache.*`)
+         when the batch's directory goes, the statistics mode's with `RERAIL_ZCACHE_STATS=1`.
+       - Left for the kernels: the transducer's residency lays a 16z tape out whole in its slab
+         (`unblock_into`, row 13). It goes when the label and program kernels read the stored bytes through a
+         cache too.
+       - The kernels' part, decided (user, 2026-11-18): "a generic rolling GPU cache to amortize the cost": an LRU
+         cache, kept with atomics, of 2–4 generations, each a hash index and an arena. A lookup looks across the
+         generations, the head (active) and the frozen ones behind it. A miss computes its value (here a 16z
+         block decoded) into the head. When the head fills, the oldest generation is dropped and becomes the new
+         head. A hit in the oldest generation is copied into the head, so the cache keeps what is read (LRU). It
+         makes 16z viable for large runs on small amounts of GPU memory. Its shape, as built:
+         - Generic: a key (a u64; for a 16z block, its compressed bytes' address, unique across tapes) to an
+           entry of fixed size (a power of two), written once in CLIF for the JIT and the kernels. The CPU's
+           reader is the same cache, small and of one thread.
+         - A spare generation, cleared ahead: of G, G − 1 are live; a rotation is one compare-and-swap of the
+           epoch, and the thread that wins clears the next spare.
+         - Misses on the device, decided (user, 2026-11-18, superseding "a miss never waits"): claim first, a
+           bounded wait. Without waiting, the device's threads that miss one block at once each decoded it (57
+           decodes for a tape of a few blocks in the view probe); at four blocks a generation their copies filled
+           the head, the cache turned on itself, and 75 lookups found no room. Now a miss claims an entry, writes
+           its key and indexes it before it decodes; a lookup that finds its block being written waits for it
+           (`SPIN` loads at most), then decodes it too (a duplicate, counted). A writer whose index slot is taken
+           by the same key gives its entry back and looks again, so it finds the other's and waits. No wait is
+           unbounded: lanes of one SIMD group are not promised to make progress apart, so a wait may run out.
+           The user's further asks: a cache of a reasonable size, so its hit ratio is good (the device's is sized
+           from the budget, to hold the batch's blocks where it can); if that is not enough, the threads' start
+           points randomized, so they do not all miss one block at once; and a mode in which the cache keeps its
+           statistics, for tuning (`Spec::with_stats`: hits, waits, duplicates, beside the misses, copies, turns
+           and failures it always counts; `cache::Counts`).
+           Measured on the device's view probe (statistics on): each tape decoded once (1 miss, against up to 57
+           before), no failure and no duplicate at 1, 4 and 64 blocks a generation, hit ratio 0.993–0.999 (16–542
+           lookups waited, every wait answered), the rows the host's in every case. On the CPU, eight threads over
+           a cache far too small for their tape (four blocks a generation): hit ratio 0.77, 0.77 M lookups waited
+           instead of decoding, a read wrong only where a failure was counted.
+         - A read from a frozen generation that is dropped while it reads is caught: the read checks its
+           generation's stamp after it, and reads again. An entry's loads are masked to the entry, so a read of
+           one being rewritten reads nothing outside the cache.
+         - Every loop is bounded, as the device's work queue's are. A read that finds no room (the spare not
+           yet cleared, its retries spent) counts a failure in the cache's header; the host refuses that
+           dispatch's batch, which runs on the CPU (counted), rather than wait.
+       - Over 0336's 16z (the hub's merge of Native-and-GPU-strata, 2026-11-18). The hub's 16z is not this branch's
+         (one LZ4 block of a block's whole layout, a block index, its side lengths): it keeps format 16's header and
+         part starts, its checkpoints and newline index raw, and stores each block as four pieces, an array's bytes
+         for the block's nodes then its side list's part, each raw, one LZ4 block or a repeat of an earlier piece
+         (0336 §4, §5). The cache, its entries and the reads are this branch's; what knows the layout is ported:
+         `Tape16Z::view` names the piece index's starts, kinds and payload (`columns[0..3]`) and the header's part
+         starts (`parts`), and `z_decode` fills a block's entry as the tape crate's `F16Z` decodes it: each side
+         length from the part starts, each piece copied (raw, or a repeat's earlier piece) or decoded by `z_lz4`
+         into a scratch past the block and copied from there into its array's region and its side list's, the
+         checkpoints copied from the raw run (past the part starts, 8-aligned: `view` refuses a header where they
+         are not), each region's room cleared. The entry holds the scratch (its largest piece) beyond the block.
+         The scratch's two copies are the decode's own (an LZ4 piece decodes to one run, its two parts apart in the
+         block's layout); a decode that writes each part where it lies would take the copies out. The residency's
+         16z stays the hub's: the device decodes the pieces where a document is placed (0336 §8), and this branch's
+         `unblock_into` (row 15, on the host) is not taken.
+     - **4c.** The views' reads written once (CLIF, for Rust, the JIT and MSL), over a document's `TapeView` and
+       its projection's `Numbering`: each view's scan over 64-node groups (the open subtrees from one descent) and
+       its probes (by id; by parent, first child and next numbered sibling). Check: their rows equal `Viewed`'s,
+       for every view and format.
+     - **4d.** A stage's input is a relation or a view, through one read (a kernel template over it). The batch's
+       descriptors are in its chunk block, the tapes in their slabs, reached by GPU address (no `gather`).
+       `expand_view`, `VIEW_EXPAND`, the chunk block's node columns (row 3) and the residency's view entries go.
+       Check: `device::parity` for every view.
+       Done for `node`, `child`, `field` and `core_node` (2026-11-17, 4c and 4d):
+       - The reads: `view_node`, `view_child`, `view_field`, `view_core` (`rerail_clif::view_reads`, a third family
+         of reads: the entry, the tape's base, its view). A row is a point read: its tape node by `num_select`,
+         its columns off the tape, a kind or field by the entry's derived table of the tape's codes, a child's
+         place by the walk's places (the derived column the host's point reads read, 0353 step 3). Checked on the
+         JIT and the device against the host's rows, in all three formats, whole and narrowed
+         (`the_view_reads_are_the_hosts_rows`).
+       - The stages: a thread a row, its document by bisection of the batch's directory (`ViewDir`, `vread`); a
+         probe by key reads an index built over the view's rows, in a relation of no columns (an index in its
+         relation's block). Every reader of a relation reads a view the same way: a stage, a witness probe, an index
+         build, `rows_copy`. Checked: `views_made_on_the_device_are_the_hosts_rows`, hogql's findings.
+       - Not yet: the scans over 64-node groups and the probes by parent (first child, next sibling); the Rust
+         backend of the view reads (the host's `Viewed` reads the same columns through `Facts`, by hand).
+       - `line` (`View::Line`, 2026-11-17): a document's line starts are a derived fact written once where they are
+         computed, by a chunked search of the terminators (`memchr`, no byte loop): `LineTable`'s u32 words `[n,
+         starts[n], ends[n]]`, in a slab's room beside the tape for a loaded document (`LineTable::placed`). A fourth
+         family of reads, the lines' (`lines_line`: the starts at or before a byte, by bisection), which a view read
+         calls with the lines' base, its fourth pointer; `ViewRow` holds the lines' GPU address. A batch where a
+         document's lines are not in a slab makes `line` (counted, `views.refused.lines_unplaced`).
+       - core.rr's places (`Loc`: `line`, `end_line`, `col`, `docof`, 2026-11-17): a row is a position (a node, a
+         token, the whole text, a line, an end point), its span off the tape or off core.rr's lines, which are a
+         derived fact of the projection, written once into its block by a chunked search (`core_rr::Lines`' words
+         `[ns, starts[ns], ne, ends[ne]]`; the byte loop goes). The entry holds the positions' counts and a run to the
+         lines; `loc_line` (a relation's read of the same body as `lines_line`) finds a line. A guest's places are
+         its host's lines through its placement, a copied stretch or a point, from the entry's scalars (decision
+         0055). A normalized string's pieces and an embedder's segments live in no block: such a batch makes its
+         places (counted, `views.refused.locs.guest_*`). On hogql every guest is a copied stretch.
+       - Left made: the axis (step 5); a batch whose tapes are not on the device (the device's budget spent); a
+         batch with a guest whose placement is not a copied stretch or a point. `expand_view`, `VIEW_EXPAND`,
+         ChunkDoc's node columns and `fill_lines`/`fill_locs` (row 14) stay for them.
+       - Found on the way: the slabs holding tapes were never retired (4d's first part); now they are retired once
+         only the pool holds them, so a long session frees them with its tapes.
+       - hogql cold, 3 pairs: views made 347–503 MB against 597–788 MB; `node` and `child` 0. With `line` (whose
+         rows hogql's core.rr shape does not read: its `line` is `Loc`'s), 3 pairs against 4d at load 7–9: 67–78 B
+         instructions against 77–83 B, findings 1,629. With `Loc`, 3 pairs at load 23–26: views made 341–502 MB,
+         the axis alone (against 397–524 MB with `Loc`'s 70–98 MB); `Loc` read in place, 4.1–5.9 M rows a run;
+         74–85 B instructions against 68–89 B; findings 1,629.
+     - **4e.** Measured: the 660.8 MB is 0; refusals and strata apart, against Q68's.
+       Measured 2026-11-18 (hogql cold, format 15, the Metal binding, 3 runs at load 45–57, after 4b's CPU part):
+       findings 1,629; the views made on the device are the axis alone, 439, 523 and 467 MB (step 5's: of the
+       660.8 MB, every view step 4 covers is read in place). Strata placed on the GPU and refused at run time: 11
+       strata in 32 runs (0.56 s on the CPU), 7 in 25 (0.19 s), 2 in 2 (0.01 s); the largest refusals are the axis's
+       views of 2.2–2.5 M rows (`ann_ctx`). Strata run apart because the wave's budget was spent: 73, 134 and 77,
+       against 197 and 127 at the `line` commit and Q68's 103–181 (36–55 under the old prices). Instructions 65.2–
+       76.8 B. What remains of both is the axis's made views, which step 5 writes once.
    - A stage's input may be a tape view: the kernels read the chunk block's placed tapes through the generated MSL
      (`metal_tape.metal`'s reads, 0293 §9).
    - A scan is a dispatch over 64-node groups.

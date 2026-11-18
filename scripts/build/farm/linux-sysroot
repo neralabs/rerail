@@ -1,0 +1,36 @@
+#!/bin/sh
+# linux-sysroot HOST: copies what a Linux build links against from the farm's Linux host HOST
+# (aarch64, Ubuntu 24.04), into this Mac's farm cache: the C and C++ headers, glibc's startup
+# objects and libraries, and gcc's support directory (crtbegin, libgcc, libstdc++). `cargo-linux`
+# builds against it, so a binary built here links the very libraries the host runs. Run it again
+# after the host's system is upgraded; it replaces the copy whole.
+set -eu
+host=${1:?usage: linux-sysroot HOST}
+dest=$HOME/Library/Caches/rerail-farm/sysroot/aarch64-unknown-linux-gnu
+tmp=$dest.new.$$
+mkdir -p "$tmp"
+# glibc's startup objects and the libraries a Rust or C++ program links (the rest are stubs in
+# glibc 2.34 and later, kept for old link lines); libc.so and friends are linker scripts that name
+# the others by absolute path, which the sysroot resolves.
+libs='crt1.o crti.o crtn.o Scrt1.o rcrt1.o libc.so libc.so.6 libc_nonshared.a libm.so libm.so.6 libmvec.so libmvec.so.1
+      libpthread.so.0 libpthread.a libdl.so.2 libdl.a librt.so.1 librt.a libutil.so.1 libutil.a libresolv.so.2 libresolv.a
+      libgcc_s.so.1 libstdc++.so.6 libz.so libz.so.1 libz.a ld-linux-aarch64.so.1 libssl.so.3 libcrypto.so.3'
+libs=$(echo $libs)
+# gcc's directory of the host's own gcc (`gcc -dumpversion`: 13 on Ubuntu 24.04, whose libstdc++
+# headers are 13's, though a 14 may be installed beside it).
+ssh "$host" "cd / && gcc=usr/lib/gcc/aarch64-linux-gnu/\$(gcc -dumpversion | cut -d. -f1) && \
+  files=''; for f in $libs; do [ -e usr/lib/aarch64-linux-gnu/\$f ] && files=\"\$files usr/lib/aarch64-linux-gnu/\$f\"; done; \
+  tar chf - usr/include \$gcc \$files lib/ld-linux-aarch64.so.1" | tar xf - -C "$tmp"
+# Ubuntu's /lib is /usr/lib: the linker scripts name /lib/aarch64-linux-gnu/libc.so.6.
+mkdir -p "$tmp/lib"
+ln -sfn ../usr/lib/aarch64-linux-gnu "$tmp/lib/aarch64-linux-gnu"
+# A library the host has only at run time (OpenSSL 3 without its -dev package: Relax links it) is
+# linked by its unversioned name too; the binary records its soname (libssl.so.3).
+for v in "$tmp"/usr/lib/aarch64-linux-gnu/lib*.so.[0-9]*; do
+  plain=${v%%.so.*}.so
+  [ -e "$plain" ] || ln -s "$(basename "$v")" "$plain"
+done
+ssh "$host" 'ldd --version | head -1; . /etc/os-release; echo "$PRETTY_NAME"' > "$tmp/FROM"
+[ -d "$dest" ] && mv "$dest" "/tmp/ai-trash/linux-sysroot.$$"
+mv "$tmp" "$dest"
+echo "linux-sysroot: $dest ($(du -sh "$dest" | cut -f1)), from $(tr '\n' ' ' < "$dest/FROM")"

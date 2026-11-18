@@ -213,14 +213,16 @@ pub(in crate::code_rule_dsl) fn compiled(
 /// the atom is widened to the document where its body is the batch's own relations; this is that rule at node grain,
 /// where its body is the same wave's matchers. `None` where any read is not so joined: negated, in an aggregate, an
 /// output, or joined only with what the batch's rows or the inputs fill.
-pub fn demanded_by_roots(head: &Program, v: &Version, matchers: &[(String, String, Vec<String>)]) -> Vec<Option<Vec<usize>>> {
+pub fn demanded_by_roots(v: &Version, matchers: &[(String, String, Vec<String>)]) -> Vec<Option<Vec<usize>>> {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
+    let outputs = v.output_names();
     let index: HashMap<&str, usize> = matchers.iter().enumerate().map(|(k, (rel, _, _))| (rel.as_str(), k)).collect();
     let mut known = HashMap::new();
     matchers
         .iter()
         .enumerate()
         .map(|(k, (rel, _, _))| {
-            if head.outputs.iter().any(|out| out == rel) {
+            if outputs.iter().any(|out| out == rel) {
                 return None;
             }
             let mut by = BTreeSet::new();
@@ -242,7 +244,7 @@ pub fn demanded_by_roots(head: &Program, v: &Version, matchers: &[(String, Strin
                             return None;
                         }
                         other.args().enumerate().find_map(|(column, arg)| {
-                            (arg.var() == Some(node)).then(|| filled_by_roots(head, v, &index, v.rel_name(other.rel()), column, &mut known, &mut Vec::new())).flatten()
+                            (arg.var() == Some(node)).then(|| filled_by_roots(v, &index, v.rel_name(other.rel()), column, &mut known, &mut Vec::new())).flatten()
                         })
                     });
                     match roots {
@@ -259,7 +261,6 @@ pub fn demanded_by_roots(head: &Program, v: &Version, matchers: &[(String, Strin
 /// The matchers whose roots hold every value of `rel`'s `column`, where only they fill it: a matcher's own relation's
 /// node, or a derived relation whose every rule binds the column from such a column of a positive atom.
 fn filled_by_roots(
-    head: &Program,
     v: &Version,
     index: &HashMap<&str, usize>,
     rel: &str,
@@ -267,6 +268,7 @@ fn filled_by_roots(
     known: &mut HashMap<(String, usize), Option<BTreeSet<usize>>>,
     visiting: &mut Vec<(String, usize)>,
 ) -> Option<BTreeSet<usize>> {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
     if let Some(&k) = index.get(rel) {
         return (column == 0).then(|| BTreeSet::from([k]));
     }
@@ -276,10 +278,10 @@ fn filled_by_roots(
     }
     // A cycle, an input, a native or lattice relation, or a relation with facts: not only matchers' roots.
     if visiting.contains(&key)
-        || head.inputs.iter().any(|input| input == rel)
-        || head.natives.contains_key(rel)
-        || head.lattice.contains_key(rel)
-        || head.facts.get(rel).is_some_and(|rows| !rows.is_empty())
+        || v.input_names().iter().any(|input| input == rel)
+        || v.natives().contains_key(rel)
+        || v.lattice().contains_key(rel)
+        || v.has_fact_rows(rel)
     {
         return None;
     }
@@ -297,7 +299,7 @@ fn filled_by_roots(
             if atom.neg() {
                 return None;
             }
-            atom.args().enumerate().find_map(|(c, arg)| (arg.var() == Some(var)).then(|| filled_by_roots(head, v, index, v.rel_name(atom.rel()), c, known, visiting)).flatten())
+            atom.args().enumerate().find_map(|(c, arg)| (arg.var() == Some(var)).then(|| filled_by_roots(v, index, v.rel_name(atom.rel()), c, known, visiting)).flatten())
         });
         match (from, found.as_mut()) {
             (Some(from), Some(found)) => found.extend(from),

@@ -2,7 +2,8 @@
 //! calls it once `install`ed), so one place sees the memory they hold and chooses each one's.
 //!
 //! - `Device::Must`: a slab of the GPU pool within the Metal budget (`gpu::shared::lease_block_within`: the pool's
-//!   eviction order makes room).
+//!   eviction order makes room); an exact block in a join's budget is a pooled buffer of its size, leased as the
+//!   join's buffers are (`gpu::shared::lease_block_for_join`: a device run's own relation, decision 0325 step 5).
 //! - `Device::May`: a slab only when the budget holds it with nothing evicted and half of it left to the device's
 //!   own buffers (`lease_block_spare`); else host
 //!   memory, which the device reads in place through a no-copy buffer.
@@ -12,7 +13,7 @@
 //! both, and a policy that weighs the host's pressure reads the same ledger.
 
 use rerail_blocks::Block;
-use rerail_blocks::alloc::{Device, Need};
+use rerail_blocks::alloc::{Budget, Device, Need, Size};
 
 /// Installs this policy as the process's (`rerail_blocks::alloc::install`).
 pub fn install() {
@@ -25,7 +26,12 @@ pub fn policy(need: &Need) -> Result<Block, String> {
     let shaped = |b| rerail_blocks::alloc::shaped(b, need);
     match need.device {
         #[cfg(target_os = "macos")]
-        Device::Must => crate::gpu::shared::lease_block_within(need.kind, need.bytes).map(shaped),
+        Device::Must => match (need.size, need.budget) {
+            (Size::Slab, Budget::Metal) => crate::gpu::shared::lease_block_within(need.kind, need.bytes),
+            (Size::Exact, Budget::Join) => crate::gpu::shared::lease_block_for_join(need.kind, need.bytes),
+            (size, budget) => Err(format!("a device block of {} bytes, {size:?} in the {budget:?} budget: no such lease", need.bytes)),
+        }
+        .map(shaped),
         #[cfg(not(target_os = "macos"))]
         Device::Must => Err(format!("a device block of {} bytes with no device", need.bytes)),
         #[cfg(target_os = "macos")]
@@ -46,7 +52,7 @@ static HOST: std::sync::Mutex<Vec<std::sync::Weak<rerail_blocks::block::Extent>>
 
 /// A host block for `need`, counted.
 fn host(need: &Need) -> Block {
-    let b = rerail_blocks::alloc::shaped(Block::anon(need.kind, need.bytes), need);
+    let b = rerail_blocks::alloc::shaped(Block::anon(need.kind, rerail_blocks::alloc::bytes_of(need)), need);
     let mut live = HOST.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     live.retain(|e| e.strong_count() > 0);
     live.push(b.meter());
@@ -74,7 +80,7 @@ mod tests {
     use rerail_blocks::block::kind;
 
     fn need(writes: Writes, device: Device) -> Need {
-        Need { kind: kind::FACTS, bytes: 8 << 20, writes, device }
+        Need { kind: kind::FACTS, bytes: 8 << 20, writes, device, ..Need::SLAB }
     }
 
     /// A block no device reads is host memory, counted while it lives and not after; one that churns keeps a
@@ -108,5 +114,24 @@ mod tests {
         }
         assert!(must.is_err());
         assert!(!may.in_slab());
+    }
+
+    /// A device run's own relation (Q205): an exact block counted in a join's budget is a pooled buffer of its
+    /// size, not a slab's least; an exact block no device reads is host memory of its size.
+    #[test]
+    fn an_exact_device_block_in_a_joins_budget_is_its_size() {
+        let exact = |device| Need { kind: kind::FACTS, bytes: 40 << 10, writes: Writes::Once, device, size: Size::Exact, budget: Budget::Join };
+        let host = policy(&exact(Device::No)).unwrap();
+        assert!(!host.in_slab());
+        let page = rerail_blocks::block::PAGE;
+        assert_eq!(host.reserved(), (40usize << 10).max(rerail_blocks::alloc::EXACT_MIN).div_ceil(page) * page, "its need, in whole pages");
+        #[cfg(target_os = "macos")]
+        if crate::gpu::shared::get().is_some() {
+            let b = policy(&exact(Device::Must)).unwrap();
+            assert!(b.in_slab(), "a pooled buffer");
+            assert!(b.reserved() < crate::gpu::shared::SLAB_MIN, "of its size ({} bytes), not a slab's least", b.reserved());
+            return;
+        }
+        assert!(policy(&exact(Device::Must)).is_err());
     }
 }

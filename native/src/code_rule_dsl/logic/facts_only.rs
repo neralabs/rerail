@@ -22,9 +22,7 @@ use std::path::{Path, PathBuf};
 /// objects, and a run's relations held in SQLite.
 const FACT_STORE: &[&str] = &[
     "atoms",
-    "atom_segment",
-    "atom_key",
-    "atom_key_end",
+    "atom_blocks",
     "strings",
     "hashes",
     "paths",
@@ -49,6 +47,8 @@ const FACT_STORE: &[&str] = &[
     "tape",
     "node_type",
     "frames",
+    // A space's kept facts as blocks (decision 0401): which base and delta files it has.
+    "facts_blocks",
     "frame_spaces",
     // The frames' own bookkeeping (decision 0117 step 5): each space's confirmations, and each run's use of it.
     "frame_confirmed",

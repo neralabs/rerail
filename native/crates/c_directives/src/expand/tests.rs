@@ -411,6 +411,40 @@ fn the_compiled_words_are_the_interpreters() {
     assert!(differ.is_empty(), "{} of {} differ:\n{}", differ.len(), same + differ.len(), differ.join("\n"));
 }
 
+/// The words on Metal (`clif_msl`'s MSL of the same IR, decision 0348 stage 5) are the
+/// interpreter's, on every example and TU, in C and C++.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_metal_words_are_the_interpreters() {
+    if rerail_metal::METAL_DEVICE.is_none() {
+        return;
+    }
+    let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
+    let mut tus: Vec<(String, Vec<(&str, &[u8])>)> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
+    tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
+    let (mut same, mut differ) = (0, Vec::new());
+    for (cpp, (name, files)) in [false, true].into_iter().flat_map(|cpp| tus.iter().map(move |t| (cpp, t))) {
+        let want = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &pp_words::run);
+        let got = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &crate::expand::on_metal);
+        match got {
+            got if got == want => same += 1,
+            got => {
+                // The first token that differs, and the tokens around it.
+                let show = |r: &Result<Vec<Out>, String>, at: usize| match r {
+                    Ok(v) => format!("{} tokens, from {at}: {:?}", v.len(), v.iter().skip(at.saturating_sub(12)).take(20).map(|t| (t.0, t.1, String::from_utf8_lossy(&t.2).into_owned())).collect::<Vec<_>>()),
+                    Err(e) => e.clone(),
+                };
+                let at = match (&got, &want) {
+                    (Ok(g), Ok(w)) => g.iter().zip(w).position(|(a, b)| a != b).unwrap_or(g.len().min(w.len())),
+                    _ => 0,
+                };
+                differ.push(format!("{name} (cpp {cpp}): Metal {}\n interpreter {}", show(&got, at), show(&want, at)));
+            }
+        }
+    }
+    assert!(differ.is_empty(), "{} of {} differ:\n{}", differ.len(), same + differ.len(), differ.join("\n"));
+}
+
 /// The compiled words translate to Rust (`clif_rust`, the `generated` feature's source), each
 /// function's nesting shallow enough for rustc. `RERAIL_PP_AOT_DIR` set: written there.
 #[test]
@@ -771,4 +805,177 @@ fn the_compiled_ifs_have_the_interpreters_values() {
         assert!(differ.is_empty(), "cpp {cpp}:\n{}", differ.join("\n"));
     }
     eprintln!("the token grammar refuses {unlexed:?}");
+}
+
+/// The device's rungs (0348, stage L1): a TU whose expansion outgrows the smallest rung's rooms
+/// (a macro of 8 macros of 8 macros: 4,096 tokens from 60) is run again at larger rungs, and
+/// its tokens are the interpreter's.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_metal_rungs_run_a_tu_again_past_its_room() {
+    let src = "#define A x x x x x x x x\n#define B A A A A A A A A\n#define C B B B B B B B B\nC C C C C C C C\n";
+    let files = [("main.c", src.as_bytes())];
+    let rungs = std::cell::Cell::new([0usize; pp_words::RUNGS]);
+    let source = crate::expand::msl().unwrap();
+    let metal = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
+        let ran = rerail_metal::pp_on::run_batch(source, &[(w, f, e, b)], 1).expect("the batch");
+        rungs.set(ran.rungs);
+        ran.results.into_iter().next().expect("one result")
+    };
+    let want = expand_tu_with("main.c", &mut search(&files, &[]), false, &INTERPRETED, &pp_words::run).unwrap();
+    let got = expand_tu_with("main.c", &mut search(&files, &[]), false, &INTERPRETED, &metal).unwrap();
+    assert_eq!(want.len(), 4096);
+    assert!(got == want, "Metal's tokens differ");
+    assert_eq!(rungs.get()[0], 0, "the smallest rung held it: {:?}", rungs.get());
+}
+
+/// Stage 5's spike (0348): each round of `TUS` run on the device as batches of 1 to 128 copies
+/// of itself, against the Cranelift JIT on one core. It prints; it asserts nothing.
+#[test]
+#[ignore = "a measurement: run alone, on an idle Mac"]
+fn the_metal_words_time_against_the_jit() {
+    let t0 = std::time::Instant::now();
+    let src = crate::expand::msl().expect("msl");
+    let translate = t0.elapsed();
+    let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
+    let ns = [1usize, 32, 64, 128];
+    let jit = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
+    let cpu = std::cell::Cell::new(0f64);
+    let gpu = std::cell::RefCell::new([0f64; 4]);
+    let calls = std::cell::Cell::new(0usize);
+    let skipped = std::cell::RefCell::new([0usize; 4]);
+    let bytes = std::cell::Cell::new(0usize);
+    let first = std::cell::Cell::new(None);
+    let run = |w: &Words, fl: &[File], e: &pp_words::Env, b: &Bounds| {
+        let mut out = None;
+        for (k, &n) in ns.iter().enumerate() {
+            let jobs = vec![(w, fl, e, b); n];
+            let t = std::time::Instant::now();
+            let ran = match rerail_metal::pp_on::run_batch(src, &jobs, n) {
+                Ok(r) => r,
+                Err(err) => {
+                    eprintln!("SPIKE n={n} refused ({err:?}) after {} bytes a run", bytes.get());
+                    skipped.borrow_mut()[k] += 1;
+                    continue;
+                }
+            };
+            if first.get().is_none() {
+                first.set(Some(t.elapsed()));
+            }
+            gpu.borrow_mut()[k] += ran.gpu_seconds;
+            if n == 1 {
+                bytes.set(bytes.get().max(ran.arena_bytes));
+                out = Some(ran.results.into_iter().next().unwrap());
+            }
+        }
+        calls.set(calls.get() + 1);
+        let mut best = f64::MAX;
+        for _ in 0..5 {
+            let t = std::time::Instant::now();
+            let _ = jit.run(w, fl, e, b);
+            best = best.min(t.elapsed().as_secs_f64());
+        }
+        cpu.set(cpu.get() + best);
+        out.unwrap()
+    };
+    for (_, files) in TUS {
+        let files: Vec<(&str, &[u8])> = files.iter().map(|f| (f.0, f.1.as_bytes())).collect();
+        let _ = expand_tu_with(files[0].0, &mut search(&files, &dirs), false, &INTERPRETED, &run);
+    }
+    let g = gpu.borrow();
+    eprintln!("SPIKE CPU (Cranelift JIT, one core, least of 5, prepare and complete included): {:.3} ms total, {:.1} us a run", cpu.get() * 1e3, cpu.get() * 1e6 / calls.get() as f64);
+    eprintln!("SPIKE msl {} lines, translate {:?}, first batch (pipeline compile) {:?}", src.lines().count(), translate, first.get().unwrap());
+    eprintln!("SPIKE {} runs ({} TUs), largest arena {} bytes", calls.get(), TUS.len(), bytes.get());
+    for (k, &n) in ns.iter().enumerate() {
+        let done = calls.get() - skipped.borrow()[k];
+        eprintln!("SPIKE n={n}: {done} batches, GPU {:.3} ms total, {:.1} us a run", g[k] * 1e3, g[k] * 1e6 / (done * n).max(1) as f64);
+    }
+}
+
+/// The device's rungs (0348, stage L1) on the corpus: each round run by the JIT from the smallest
+/// rung up (`Bounds::rung`), as the device runs it, against the run at `Bounds::of`. It prints
+/// the rung each round needed, the reasons a smaller one refused, and the device bytes a run
+/// takes (`prepare`'s rooms) at its rung and at `of`.
+#[test]
+#[ignore = "the corpus (~/orca/rerail-shared/lean-corpus, or RERAIL_C_CORPUS)"]
+fn the_corpus_through_the_rungs() {
+    use pp_words::RUNGS;
+    let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
+    let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
+    let by_buffer = std::cell::RefCell::new(Vec::<usize>::new());
+    let bytes_at = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
+        let (mut n, mut k) = (0usize, 0usize);
+        let mut by = by_buffer.borrow_mut();
+        let small = b.arena < Bounds::of(f).arena;
+        let _ = pp_words::prepare(w, f, e, b, &mut |buf: pp_words::Buf| {
+            n += buf.room.next_multiple_of(16);
+            if small {
+                // The files' buffers first (7 a file), then the machine's.
+                let i = if k < 7 * f.len() { k % 7 } else { 7 + k - 7 * f.len() };
+                if by.len() <= i {
+                    by.resize(i + 1, 0);
+                }
+                by[i] += buf.room;
+            }
+            k += 1;
+            0
+        });
+        n
+    };
+    let needed = std::cell::RefCell::new([0usize; RUNGS]);
+    let reasons = std::cell::RefCell::new(std::collections::BTreeMap::<(usize, &'static str), usize>::new());
+    let (at_rung, at_of) = (std::cell::RefCell::new(Vec::new()), std::cell::RefCell::new(Vec::new()));
+    let laddered = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
+        let mut r = 0;
+        loop {
+            let rb = Bounds::rung(f, r);
+            let out = c.run(w, f, e, &rb);
+            match &out {
+                Err(x) if Bounds::is_room(x.why) && r + 1 < RUNGS => {
+                    *reasons.borrow_mut().entry((r, x.why)).or_default() += 1;
+                    r += 1;
+                }
+                _ => {
+                    needed.borrow_mut()[r] += 1;
+                    at_rung.borrow_mut().push(bytes_at(w, f, e, &rb));
+                    at_of.borrow_mut().push(bytes_at(w, f, e, b));
+                    return out;
+                }
+            }
+        }
+    };
+    let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
+    let (mut same, mut differ) = (0usize, Vec::new());
+    for (dir, cpp) in [("c", false), ("cpp", true)] {
+        let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
+        let mut paths: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        paths.sort();
+        for p in paths {
+            let src = std::fs::read(&p).unwrap();
+            let files = [("main.c", src.as_slice())];
+            let want = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &jit);
+            let got = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &laddered);
+            if got == want {
+                same += 1;
+            } else {
+                differ.push(p.display().to_string());
+            }
+        }
+    }
+    let q = |v: &mut Vec<usize>, f: f64| {
+        v.sort_unstable();
+        v.get(((v.len() as f64 - 1.0) * f) as usize).copied().unwrap_or(0)
+    };
+    let (mut a, mut b) = (at_rung.borrow().clone(), at_of.borrow().clone());
+    eprintln!("RUNGS the same {same}, differ {}: {:?}", differ.len(), differ.iter().take(5).collect::<Vec<_>>());
+    eprintln!("RUNGS runs by the rung they needed: {:?}", needed.borrow());
+    for ((r, why), n) in reasons.borrow().iter() {
+        eprintln!("RUNGS   rung {r} refused {n}: {why}");
+    }
+    for (name, v) in [("at its rung", &mut a), ("at Bounds::of", &mut b)] {
+        let sum: usize = v.iter().sum();
+        eprintln!("RUNGS bytes a run {name}: median {} KB, p90 {} KB, p99 {} KB, max {} KB, all {} MB", q(v, 0.5) >> 10, q(v, 0.9) >> 10, q(v, 0.99) >> 10, q(v, 1.0) >> 10, sum >> 20);
+    }
+    eprintln!("RUNGS MB by buffer, at the rungs: {:?}", by_buffer.borrow().iter().map(|b| b >> 20).collect::<Vec<_>>());
+    assert!(differ.is_empty());
 }

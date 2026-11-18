@@ -445,13 +445,25 @@ fn jsonc_comments_equal_tree_sitter() {
     assert!(problems.is_empty(), "{} differ:\n{}", problems.len(), problems.join("\n"));
 }
 
-/// Each form's shape, printed: tier 1's operations by kind, its carried state, its generated
+/// Each form's shape (`RERAIL_FORMS`: other grammars' files), printed: tier 1's operations by kind, its carried state, its generated
 /// loop body by opcode, and tier 2's words by opcode, with the machine code's sizes.
 #[test]
 #[ignore = "a measurement: run by name with --nocapture"]
 fn json_shapes() {
-    for name in ["14-json", "15-jsonc"] {
-        let c = form(name);
+    // `RERAIL_FORMS`: other Bitlex files to measure, as paths, in place of the two steps.
+    let forms: Vec<(String, Compiled)> = match std::env::var("RERAIL_FORMS") {
+        Ok(list) => list
+            .split(',')
+            .map(|p| {
+                let name = Path::new(p).file_stem().expect("a name").to_string_lossy().into_owned();
+                let c = compile_step(&name, &std::fs::read_to_string(p).expect("reads"));
+                (name, c)
+            })
+            .collect(),
+        Err(_) => ["14-json", "15-jsonc"].iter().map(|&n| (n.to_owned(), form(n))).collect(),
+    };
+    for (name, c) in &forms {
+        let name = name.as_str();
         let p = &c.program.block_programs[0];
         let mut ops: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
         for op in &p.ops {
@@ -576,11 +588,13 @@ fn json_tier1_vectors_equal_the_interpreter() {
             }
         }
         let block = &c.program.block_programs[0];
+        let made = rerail_compiler::block_native::BlockNative::lower(block).cpu_unstored();
         for f in &files {
-            assert_eq!(c.parser.tier1.extract(f), block.run_files(&[f]).remove(0), "{name}: {:?}", String::from_utf8_lossy(f));
+            assert_eq!(c.parser.tier1.extract(f).without(&made), block.run_files(&[f]).remove(0).without(&made), "{name}: {:?}", String::from_utf8_lossy(f));
         }
         let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
-        assert_eq!(c.parser.tier1.run_files(&refs), block.run_files(&refs), "{name}: the batch");
+        let without = |runs: Vec<rerail_compiler::block::BlockRun>| runs.iter().map(|r| r.without(&made)).collect::<Vec<_>>();
+        assert_eq!(without(c.parser.tier1.run_files(&refs)), without(block.run_files(&refs)), "{name}: the batch");
         assert!(c.parser.tier1.ascii_branch, "{name}: no ASCII test");
     }
 }
@@ -669,6 +683,7 @@ fn json_gated_regions_equal_the_interpreter() {
         let tests: usize = plan.regions.iter().map(|r| 1 + usize::from(r.pre.is_some())).sum();
         assert_eq!(c.parser.tier1.gate_branches, tests, "{name}: a region without its branch, or made twice");
         let block = &c.program.block_programs[0];
+        let made = rerail_compiler::block_native::BlockNative::lower(block).cpu_unstored();
         let mut files: Vec<Vec<u8>> = Vec::new();
         for t in tokens {
             for at in 0..140 {
@@ -682,7 +697,7 @@ fn json_gated_regions_equal_the_interpreter() {
             files.push(t.iter().chain(b" ").copied().cycle().take(400).collect());
         }
         for f in &files {
-            assert_eq!(c.parser.tier1.extract(f), block.run_files(&[f]).remove(0), "{name}: {:?}", String::from_utf8_lossy(f));
+            assert_eq!(c.parser.tier1.extract(f).without(&made), block.run_files(&[f]).remove(0).without(&made), "{name}: {:?}", String::from_utf8_lossy(f));
         }
     }
 }

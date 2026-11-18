@@ -48,6 +48,18 @@ pub enum Source {
     Full(usize),
     Native(String),
     Input(InputKey),
+    /// A lower stratum's native relation in one of its versions (decision 0364): `v:<o|n|m|p>:<hex table>`.
+    Version(String, Ver),
+}
+
+/// A relation's version a join reads (decision 0364): its rows at the run's start (`Old`), now (`New`), those of
+/// the start gone since (`Minus`) and those added since (`Plus`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Ver {
+    Old,
+    New,
+    Minus,
+    Plus,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -165,6 +177,15 @@ pub enum Line {
     /// those gone and the kept rows shown (`levels <cand> <chk> <held> <gone> <live>`).
     Levels { cand: usize, chk: usize, held: usize, gone: usize, live: usize },
     Edge(EdgeSpec),
+    /// The maintain mode (decision 0364 stage 3): a removal join, its head rows the candidates of relation `head`,
+    /// read from its versions (`Source::Version`): run once, before the seeds (`remove <head> <hex join>`).
+    Remove { head: usize, join: Arc<JoinSpec> },
+    /// An add join whose rows are checked before they are added (one driven by a negated atom's rows gone, which
+    /// may be back): `addchecked <head> <hex join>`.
+    AddChecked { head: usize, join: Arc<JoinSpec> },
+    /// A rule of `head` over the relations now, run per candidate with its head's slots bound: a candidate with no
+    /// row from any of them is killed in place (`recheck <head> <hex join>`).
+    Recheck { head: usize, join: Arc<JoinSpec> },
 }
 
 /// A component: its name, then its lines in order (relations are numbered in order, probes are numbered in order).
@@ -242,6 +263,17 @@ fn source(t: &str) -> Result<Source, String> {
     if let Some(rest) = t.strip_prefix("r:") {
         return Ok(Source::Native(unhex(rest)?));
     }
+    if let Some(rest) = t.strip_prefix("v:") {
+        let (v, table) = rest.split_once(':').ok_or_else(|| format!("bad version source {t}"))?;
+        let ver = match v {
+            "o" => Ver::Old,
+            "n" => Ver::New,
+            "m" => Ver::Minus,
+            "p" => Ver::Plus,
+            _ => return Err(format!("bad version {v}")),
+        };
+        return Ok(Source::Version(unhex(table)?, ver));
+    }
     if let Some(rest) = t.strip_prefix("t:") {
         return Ok(Source::Input(InputKey::parse(rest)?));
     }
@@ -309,6 +341,7 @@ impl std::fmt::Display for Source {
             Source::Full(i) => write!(f, "c{i}"),
             Source::Native(t) => write!(f, "r:{}", hex(t)),
             Source::Input(k) => write!(f, "t:{k}"),
+            Source::Version(t, v) => write!(f, "v:{}:{}", match v { Ver::Old => "o", Ver::New => "n", Ver::Minus => "m", Ver::Plus => "p" }, hex(t)),
         }
     }
 }
@@ -445,6 +478,9 @@ impl std::fmt::Display for Line {
             Line::Produced(r) => write!(f, "produced {r}"),
             Line::Stats(r) => write!(f, "stats {r}"),
             Line::Seed { head, join } => write!(f, "seed {head} {}", hex(&join.to_text())),
+            Line::Remove { head, join } => write!(f, "remove {head} {}", hex(&join.to_text())),
+            Line::AddChecked { head, join } => write!(f, "addchecked {head} {}", hex(&join.to_text())),
+            Line::Recheck { head, join } => write!(f, "recheck {head} {}", hex(&join.to_text())),
             Line::Join { head, delta, join, whole } => {
                 write!(f, "join {head} {delta} {}", hex(&join.to_text()))?;
                 match whole {
@@ -539,6 +575,9 @@ impl ComponentSpec {
                 "produced" => Line::Produced(num(at(1)?)?),
                 "stats" => Line::Stats(num(at(1)?)?),
                 "seed" => Line::Seed { head: num(at(1)?)?, join: join(at(2)?)? },
+                "remove" => Line::Remove { head: num(at(1)?)?, join: join(at(2)?)? },
+                "addchecked" => Line::AddChecked { head: num(at(1)?)?, join: join(at(2)?)? },
+                "recheck" => Line::Recheck { head: num(at(1)?)?, join: join(at(2)?)? },
                 "join" => Line::Join {
                     head: num(at(1)?)?,
                     delta: num(at(2)?)?,

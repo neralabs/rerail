@@ -183,12 +183,9 @@ fn fact(rel: &str, row: &[Value], out: &mut String) -> Result<(), String> {
     Ok(())
 }
 
-/// `prog` as its text. A program with parts the text has no form for (maintenance's `again`, `together` and
-/// `shapes`) is refused, not written in part.
+/// `prog` as its text. Its shapes and layouts (0361) are `.about` rows (`program_facts`), as the image's: every part
+/// of a program has a form in the text.
 pub fn print(prog: &Program) -> Result<String, String> {
-    if !prog.again.is_empty() || !prog.together.is_empty() || !prog.shapes.is_empty() {
-        return Err(bad("maintenance's parts (again, together, shapes) have no text"));
-    }
     let mut out = String::new();
     for (rel, cols) in &prog.decls {
         write!(out, ".decl {}(", escape(rel, &REL_WORDS)?).expect("a string");

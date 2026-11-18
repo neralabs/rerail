@@ -495,7 +495,7 @@ fn strata(v: &Version, about: &About, rules: &[Made<'_>]) -> Result<(Vec<BTreeSe
         s.sort_unstable();
         s.dedup();
     }
-    let sccs = crate::code_rule_dsl::logic::front::components_of_graph(names, succ, aggs, &[])?;
+    let sccs = crate::code_rule_dsl::logic::front::components_of_graph(names, succ, aggs)?;
     Ok((sccs, edges))
 }
 
