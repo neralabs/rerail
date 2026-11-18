@@ -242,7 +242,12 @@ Spotlight) keeps that high on an idle Mac, at a priority every compile preempts.
 A Linux host (`"os": "linux"`) runs `test-remote` commands, as a Linux build and run of the
 checkout: the engine's Linux build is CI's, on Ubuntu 24.04. It takes nothing else. A compile of
 this Mac's cannot run there: a crate's proc-macros are macOS libraries its rustc cannot load,
-and a build script's C needs the macOS SDK. Nor does a Relax run (`live-test-remote`).
+and a build script's C needs the macOS SDK.
+
+`live-test-remote` runs Relax there too, once every Mac is taken (or with `--host`, `--os
+linux`): the installed version's `bin/relax-linux`, which `scripts/dev/relax/build` makes with
+`cargo-linux` once the sysroot below is here (scripts/dev/relax/README.md, fork change 10; a body edit's verdict 2.6 s after the save there). It is
+a Linux run of the tests, as a `test-remote` one is.
 
 `test-remote` gives a command to a Mac first, and to a Linux host when every Mac slot is taken.
 A command that names Metal, or sends a `--tree` (a program built here is a macOS one), runs on a

@@ -14,7 +14,7 @@ mkdir -p "$tmp"
 # the others by absolute path, which the sysroot resolves.
 libs='crt1.o crti.o crtn.o Scrt1.o rcrt1.o libc.so libc.so.6 libc_nonshared.a libm.so libm.so.6 libmvec.so libmvec.so.1
       libpthread.so.0 libpthread.a libdl.so.2 libdl.a librt.so.1 librt.a libutil.so.1 libutil.a libresolv.so.2 libresolv.a
-      libgcc_s.so.1 libstdc++.so.6 libz.so libz.so.1 libz.a ld-linux-aarch64.so.1'
+      libgcc_s.so.1 libstdc++.so.6 libz.so libz.so.1 libz.a ld-linux-aarch64.so.1 libssl.so.3 libcrypto.so.3'
 libs=$(echo $libs)
 # gcc's directory of the host's own gcc (`gcc -dumpversion`: 13 on Ubuntu 24.04, whose libstdc++
 # headers are 13's, though a 14 may be installed beside it).
@@ -24,6 +24,12 @@ ssh "$host" "cd / && gcc=usr/lib/gcc/aarch64-linux-gnu/\$(gcc -dumpversion | cut
 # Ubuntu's /lib is /usr/lib: the linker scripts name /lib/aarch64-linux-gnu/libc.so.6.
 mkdir -p "$tmp/lib"
 ln -sfn ../usr/lib/aarch64-linux-gnu "$tmp/lib/aarch64-linux-gnu"
+# A library the host has only at run time (OpenSSL 3 without its -dev package: Relax links it) is
+# linked by its unversioned name too; the binary records its soname (libssl.so.3).
+for v in "$tmp"/usr/lib/aarch64-linux-gnu/lib*.so.[0-9]*; do
+  plain=${v%%.so.*}.so
+  [ -e "$plain" ] || ln -s "$(basename "$v")" "$plain"
+done
 ssh "$host" 'ldd --version | head -1; . /etc/os-release; echo "$PRETTY_NAME"' > "$tmp/FROM"
 [ -d "$dest" ] && mv "$dest" "/tmp/ai-trash/linux-sysroot.$$"
 mv "$tmp" "$dest"
