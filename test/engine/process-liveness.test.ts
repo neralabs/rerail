@@ -64,9 +64,24 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
     }) as unknown as typeof childProcess.spawnSync);
   }
 
-  it("reads the creation time PowerShell prints", async () => {
-    await standIn(process.execPath, ["-e", "process.stdout.write('1700000000000')"]);
+  // A FILETIME counts 100 ns ticks from 1601-01-01 UTC; this one is 1,234 ticks past 1_700_000_000_000 ms since 1970,
+  // more than a double holds exactly.
+  it("reads the creation time PowerShell prints as a FILETIME, in epoch milliseconds", async () => {
+    await standIn(process.execPath, ["-e", "process.stdout.write('133444736000001234\\r\\n')"]);
     expect(processStartedAt(process.pid, 30_000, "win32")).toBe(1_700_000_000_000);
+  });
+
+  // AppLocker and WDAC script policies run PowerShell in Constrained Language Mode, which allows cmdlets and the methods
+  // of core types only. The real PowerShell runs the reader's command with that mode set first.
+  it.runIf(process.platform === "win32")("reads when this process started under PowerShell's Constrained Language Mode", async () => {
+    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+      const constrained = args.map((arg, at) => (args[at - 1] === "-Command" ? `$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'; ${arg}` : arg));
+      return runSync(program, constrained, options);
+    }) as unknown as typeof childProcess.spawnSync);
+    const started = processStartedAt(process.pid, 30_000);
+    expect(started).toBeDefined();
+    expect(Math.abs(started! - (Date.now() - process.uptime() * 1_000))).toBeLessThan(1_000);
   });
 
   it("ends a PowerShell that does not answer at its bound and reads nothing", async () => {
