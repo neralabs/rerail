@@ -1202,24 +1202,35 @@ function createClaim(path: string): boolean {
   return true;
 }
 
+/** The claim at `path` as one look finds it: when it was made or last renewed, and what it names; undefined once it is gone. */
+function readClaim(path: string): { made: number; named: string } | undefined {
+  try {
+    return { made: statSync(path).mtimeMs, named: readFileSync(path, "utf8").trim() };
+  } catch (error) {
+    // A start ended it between this process's create and its look.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
 /**
  * Whether the claim at `path` still holds: it was made or renewed under `AUTOSTART_CLAIM_LEASE_MS` from now, either way,
  * so a claim made before the clock moved back expires too, and the process it names runs (`kill`'s signal 0). A claim
- * with no pid in it yet is being written by the process that created it, and holds.
+ * with no pid in it yet is being written by the process that created it, and holds. The autostart that made a claim
+ * hands it to its launcher (`handOverClaim`) and then exits, so a claim that names a process found gone is read again:
+ * it lapses only while it still names that process, and one handed over meanwhile holds while its launcher runs.
  */
 function claimHolds(path: string, kill: ProcessSignal): boolean {
-  let made: number;
-  let text: string;
-  try {
-    made = statSync(path).mtimeMs;
-    text = readFileSync(path, "utf8").trim();
-  } catch (error) {
-    // A start ended it between this process's create and its look.
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
+  let claim = readClaim(path);
+  while (claim !== undefined && Math.abs(Date.now() - claim.made) < AUTOSTART_CLAIM_LEASE_MS) {
+    if (claim.named === "") return true;
+    if (!/^[1-9]\d*$/u.test(claim.named)) return false;
+    if (processAlive(Number(claim.named), kill)) return true;
+    const again = readClaim(path);
+    if (again?.named === claim.named) return false;
+    claim = again;
   }
-  if (Math.abs(Date.now() - made) >= AUTOSTART_CLAIM_LEASE_MS) return false;
-  return text === "" || (/^[1-9]\d*$/u.test(text) && processAlive(Number(text), kill));
+  return false;
 }
 
 /**
