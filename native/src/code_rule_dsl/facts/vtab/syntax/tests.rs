@@ -1838,7 +1838,7 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
     let pipe = device.as_ref().map(|device| {
         let source = format!(
             "#include <metal_stdlib>\nusing namespace metal;\n{}{}{}{KERNEL}",
-            include_str!("../../../transducer/packed/metal_tape_reads.metal"),
+            include_str!("../../../transducer/packed/metal_tape_reads_z.metal"),
             include_str!("id_reads.metal"),
             include_str!("view_reads.metal")
         );
@@ -1911,14 +1911,17 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
                     })
                     .collect();
                 assert_eq!(jitted, want, "{at}: the JIT's rows");
-                // The kernels' reads do not read 16z yet.
-                if let (Some(device), Some((pipe, queue)), false) = (&device, &pipe, view.format == rerail_clif::view::F16Z_FORMAT) {
+                if let (Some(device), Some((pipe, queue))) = (&device, &pipe) {
                     let d = block.offset_of(entry.desc()) as u64;
                     // The tape where the device reads it: a test's buffer of its bytes, a word of room past them.
                     let mut bytes = tape.to_vec();
                     bytes.resize(tape.len() + 16, 0);
                     let tt = device.new_buffer_with_data(bytes.as_ptr().cast(), bytes.len() as u64, MTLResourceOptions::StorageModeShared);
                     let out = device.new_buffer(u64::from(n.max(1)) * WIDE as u64 * 8, MTLResourceOptions::StorageModeShared);
+                    // A 16z tape's blocks through a cache every thread shares (0353 step 4b): one of a block a
+                    // generation, which turns all the time and may find no room (a failure counted: the device
+                    // refuses the batch), and one with room.
+                    for room in [1u32, 64] {
                     let cmd = queue.new_command_buffer();
                     let enc = cmd.new_compute_command_encoder();
                     enc.set_compute_pipeline_state(pipe);
@@ -1928,6 +1931,16 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
                     // Its lines where the device reads them: a test's buffer of their words.
                     let lb = device.new_buffer_with_data(words.as_ptr().cast(), 4 * words.len() as u64, MTLResourceOptions::StorageModeShared);
                     let address = [tt.gpu_address(), lb.gpu_address()];
+                    let mut view = view;
+                    let spec = rerail_clif::view::cache::Spec::new(3, room, view.columns[3] as usize);
+                    let cache = device.new_buffer(spec.bytes() as u64, MTLResourceOptions::StorageModeShared);
+                    if view.format == rerail_clif::view::F16Z_FORMAT {
+                        // SAFETY: the buffer's bytes, shared with the host, not yet read by the device.
+                        spec.init(unsafe { std::slice::from_raw_parts_mut(cache.contents().cast::<u8>(), spec.bytes()) }).unwrap();
+                        let rel = cache.gpu_address().wrapping_sub(tt.gpu_address()) as i64;
+                        (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (rel as u32, (rel >> 32) as u32, spec.entry_bytes() as u32, 1);
+                    }
+                    enc.use_resource(&cache, metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);
                     enc.set_bytes(3, 16, address.as_ptr().cast());
                     enc.use_resource(&tt, metal::MTLResourceUsage::Read);
                     enc.use_resource(&lb, metal::MTLResourceUsage::Read);
@@ -1940,7 +1953,18 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
                     cmd.wait_until_completed();
                     // SAFETY: the kernel wrote WIDE longs a row, and its command completed.
                     let got = unsafe { std::slice::from_raw_parts(out.contents().cast::<i64>(), want.len()) };
-                    assert_eq!(got, &want[..], "{at}: the device's rows");
+                    // SAFETY: the cache's header, its command completed.
+                    let word = |at: i32| unsafe { *cache.contents().cast::<u8>().add(at as usize).cast::<u32>() };
+                    if view.format == rerail_clif::view::F16Z_FORMAT {
+                        let c = rerail_clif::view::cache::MISSES;
+                        eprintln!("{at}, {room} a generation: the device's cache: {} misses, {} turns, {} failed", word(c), word(rerail_clif::view::cache::ROTATED), word(rerail_clif::view::cache::FAILED));
+                    }
+                    let failed = word(rerail_clif::view::cache::FAILED);
+                    assert!(room == 1 || failed == 0, "{at}: the device's cache with room failed {failed} times");
+                    if failed == 0 {
+                        assert_eq!(got, &want[..], "{at}, {room} a generation: the device's rows");
+                    }
+                    }
                 }
                 tried += 1;
             }
