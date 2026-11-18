@@ -610,6 +610,11 @@ impl WorkspaceIndexTask {
             .store
             .local_check_results_by_key(&keys, catalog)
             .map_err(|error| invalid(error.to_string()))?;
+        let checked_sources = repository.snapshot.as_ref().and_then(|snapshot| {
+            let paths = prepared.iter().filter(|(_, _, _, _, key)| result_manifest.contains_key(key))
+                .map(|(file, _, _, _, _)| file.repository_path.clone()).collect::<Vec<_>>();
+            snapshot.checked_sources(storage.store.database_path(), &paths).ok()
+        });
         // Discovery found these files clean at scan start, but a file may change after it, and a
         // checkout conversion keeps a file clean in Git while its bytes differ from the blob's
         // (whose stored source and results another worktree may have published). Restore only a
@@ -619,9 +624,13 @@ impl WorkspaceIndexTask {
             .into_iter()
             .filter_map(|(file, input, stored, length, key)| {
                 let results = result_manifest.get(&key)?;
-                repository
-                    .holds_blob_bytes(&file.repository_path, length)
-                    .then_some((input, stored, results))
+                let verified = match &checked_sources {
+                    Some(sources) => sources.get(&file.repository_path) == Some(&stored.source_hash),
+                    None if repository.snapshot.is_some() => repository.read_source(&file.repository_path, length)
+                        .is_ok_and(|bytes| HashKey::sha256(&bytes) == stored.source_hash),
+                    None => repository.holds_blob_bytes(&file.repository_path, length),
+                };
+                verified.then_some((input, stored, results))
             })
             .collect::<Vec<_>>();
         let mut state = self.lock()?;

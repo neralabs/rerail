@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { deflateSync } from "node:zlib";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
@@ -1155,6 +1156,53 @@ LanguageKey(@place(path, 1), k) :- source_language_key(path, k, _).
       const sets = store.prepare("SELECT count(DISTINCT lane) AS lanes FROM analysis_scope_manifest JOIN corpus_manifests USING(manifest_id) WHERE scope = ? AND policy <> lane GROUP BY policy").all(`cwd:${analysisScopeHome(databasePath)}:${root}`);
       expect(sets).toEqual([{ lanes: 2 }]);
     } finally { store.close(); }
+  });
+
+  it.each(["configured", "rr"])("reports a corrupt selected blob and keeps other %s findings", async policy => {
+    const root = checkout();
+    const home = `${root}-home`;
+    mkdirSync(home);
+    writeFileSync(join(root, "b.py"), "b = NEEDLE\n");
+    git(root, "add", "b.py");
+    git(root, "commit", "-qm", "second source");
+    const rr = join(home, "source.rr");
+    writeFileSync(rr, `
+.policy "source" revision 1
+.language python
+.violation Needle(at: node) "needle"
+Needle(n) :- kind(n, "identifier"), text(n, "NEEDLE").
+`);
+    const oid = git(root, "rev-parse", "HEAD:b.py");
+    const loose = join(root, ".git", "objects", oid.slice(0, 2), oid.slice(2));
+    const original = readFileSync(loose);
+    const run = (paths?: string[]) => scan(root, {
+      databasePath: join(home, "rerail.sqlite"), revision: "HEAD", analysisScope: "source-objects",
+      ...(paths === undefined ? {} : { paths }), ...(policy === "rr" ? { rr: [rr] } : {}),
+    });
+    const allPaths = ["a.py", "b.py"];
+    const findings = (report: ScanReport) => report.violations.map(finding => finding.path).sort();
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", join(home, "content.sqlite"));
+    try {
+      const cold = await run();
+      expect(cold.status, JSON.stringify(cold.failures)).toBe("completed");
+      expect(findings(cold)).toEqual(allPaths);
+      rmSync(loose);
+      const corrupt = Buffer.from("b = BROKEN\n");
+      writeFileSync(loose, deflateSync(Buffer.concat([Buffer.from(`blob ${corrupt.length}\0`), corrupt])));
+      const warm = await run();
+      expect(warm.status).toBe("failed");
+      expect(warm.failures).toEqual([expect.objectContaining({ path: "b.py", message: expect.stringMatching(/unreadable|checksum/iu) })]);
+      expect(findings(warm)).toEqual(["a.py"]);
+      const selected = await run(["a.py"]);
+      expect(selected.status, JSON.stringify(selected.failures)).toBe("completed");
+      expect(findings(selected)).toEqual(["a.py"]);
+      writeFileSync(loose, original);
+      const restored = await run();
+      expect(restored.status, JSON.stringify(restored.failures)).toBe("completed");
+      expect(findings(restored)).toEqual(allPaths);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("updates renamed files, package modules and ignores in a shared revision cache", async () => {

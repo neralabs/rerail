@@ -88,6 +88,13 @@ pub struct GitDirectoryEntry {
 }
 
 #[cfg(not(feature = "headless"))]
+#[napi(object)]
+pub struct GitSourceFailure {
+    pub path: String,
+    pub message: String,
+}
+
+#[cfg(not(feature = "headless"))]
 impl GitRevisionSource {
     pub fn pinned_snapshot(&self) -> Arc<crate::git_workspace::snapshot::Snapshot> {
         Arc::clone(&self.snapshot)
@@ -117,6 +124,13 @@ impl GitRevisionSource {
     #[napi]
     pub fn invalid_paths(&self) -> Vec<String> {
         self.snapshot.invalid_paths().to_vec()
+    }
+
+    #[napi]
+    pub fn source_failures(&self) -> Vec<GitSourceFailure> {
+        self.snapshot.source_failures().into_iter().map(|failure| GitSourceFailure {
+            path: failure.path, message: failure.message,
+        }).collect()
     }
 
     #[napi]

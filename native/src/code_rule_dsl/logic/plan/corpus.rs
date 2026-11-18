@@ -77,6 +77,7 @@ mod git;
 
 pub fn install_git_inventory() {
     crate::git_workspace::snapshot::install_inventory_reader(git::inventory);
+    crate::git_workspace::snapshot::install_source_checker(git::check_source_digests);
 }
 pub mod world;
 pub mod texts;
@@ -3023,6 +3024,7 @@ fn run_observed(
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
     let mut listing: Option<(Vec<String>, &'static str)> = None;
     let mut phase_one_run = None;
+    let mut source_checks = Vec::new();
     // The source texts the digests read (decision 0300): this run's builder takes them, and phase 1's, handed them,
     // borrows them.
     let own_sources = texts::Sources::default();
@@ -3042,8 +3044,10 @@ fn run_observed(
         {
             let found = scoped(corpus_files(root)?, &prog, options);
             let label = corpus_language(language.as_deref(), typing, &found);
-            let of_label = found.by_label.get(label).cloned().unwrap_or_default();
-            let files = found.of(label);
+            let mut of_label = found.by_label.get(label).cloned().unwrap_or_default();
+            let mut files = found.of(label);
+            git::verify_sources(root, &mut files, &mut source_checks)?;
+            of_label.retain(|path| files.binary_search(path).is_ok());
             // The observer's facts: each source file of the run's grammar, its module, and its content's digest (read
             // only where the observer cannot vouch for it).
             // A Python file's module is the name its package root gives it (`package_root_modules`), as imports name it.
@@ -3083,7 +3087,7 @@ fn run_observed(
     } else {
         phases::facts(&prog, root, out, modes, binding, chunk_nodes, typing, options)?
     };
-    phased.extend(git::inputs(&prog, root));
+    phased.extend(git::inputs(&prog, root, options));
     phase_runs.splice(0..0, phase_one_run);
     // A phase's exports are the run's inputs, not its facts: their rows are bound as relations once the program is
     // prepared, so an edit that changes them leaves the program, its prepared plans and its keys as they were.
@@ -3128,6 +3132,7 @@ fn run_observed(
             (docs, first, label)
         }
         None => {
+            let already_checked = listing.is_some();
             let (files, label) = if git_metadata_only {
                 (Vec::new(), language.as_deref().and_then(crate::code_rule_dsl::language::label_named).unwrap_or("python"))
             } else if let Some(supplied) = options.get("inputFiles") {
@@ -3177,6 +3182,9 @@ fn run_observed(
             // The libraries come after the tree's files: a document's key is a function of its path (decision 0052),
             // so a memoised row's node ids stay valid.
             let mut files = files;
+            if !already_checked {
+                git::verify_sources(root, &mut files, &mut source_checks)?;
+            }
             files.extend(libraries.iter().map(|(p, _)| p.clone()));
             let keys = memo::doc_keys(&files);
             (keys.into_iter().zip(files).collect(), HashMap::new(), label)
@@ -3198,6 +3206,7 @@ fn run_observed(
             let digests = world::bytes_digests(&docs.iter().map(|(_, p)| root.join(p)).collect::<Vec<_>>());
             docs.iter().zip(digests).map(|((_, p), d)| ("doc".to_owned(), p.clone(), d)).collect()
         } else { Vec::new() };
+    consulted.extend(source_checks);
     let mut paths: HashMap<i64, String> = docs.iter().cloned().collect();
     // The documents requests loaded (decision 0065 §2a), whose rows are not the run's findings: their keys.
     let mut loaded_keys: std::collections::HashSet<i64> = std::collections::HashSet::new();

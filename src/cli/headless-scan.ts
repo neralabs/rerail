@@ -669,8 +669,8 @@ async function scanReport(
       completed = false;
     }
   }
-  for (const path of source?.invalidPaths() ?? []) {
-    failures.push({ code: "adapter-error", message: "Git path has invalid UTF-8", path, ruleId: null });
+  for (const { path, message } of source?.sourceFailures() ?? []) {
+    failures.push({ code: "adapter-error", message, path, ruleId: null });
     completed = false;
   }
   return {

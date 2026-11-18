@@ -20,7 +20,8 @@ const SELECTION: &str = "git_inventory_selection";
 const HOST_REGISTRY: &str = "git_inventory_host_registry";
 const HOST_SUFFIX: &str = "git_inventory_host_suffix";
 const HOST_NAME: &str = "git_inventory_host_name";
-pub(super) const INPUTS: [&str; 8] = [ROOT, REPOSITORY, TREE, COMMIT, SELECTION, HOST_REGISTRY, HOST_SUFFIX, HOST_NAME];
+const SOURCE_BLOB: &str = "git_selected_source_blob";
+pub(super) const INPUTS: [&str; 9] = [ROOT, REPOSITORY, TREE, COMMIT, SELECTION, HOST_REGISTRY, HOST_SUFFIX, HOST_NAME, SOURCE_BLOB];
 
 #[derive(Default)]
 pub(super) struct Git {
@@ -140,12 +141,9 @@ impl Git {
                 return Ok(records);
             }
         }
-        let object = repo
-            .try_find_object(id)
-            .map_err(|_| "unreadable")?
-            .ok_or("missing")?;
-        gix::objs::Data::new(&object.data, object.kind, id.kind())
-            .verify_checksum(id.as_ref()).map_err(|_| "unreadable")?;
+        let object = snapshot::verified_object(repo, id).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }
+        })?;
         let mut records = vec![Record::text("kind", object.kind.to_string())];
         match object.kind {
             gix::object::Kind::Commit => {
@@ -297,7 +295,7 @@ pub(super) fn observation(program: &Program, root: &Path) -> Option<String> {
     observes_git(program).then(|| Git::new(root).identity())
 }
 
-pub(super) fn inputs(program: &Program, root: &Path) -> std::collections::BTreeMap<String, Vec<Vec<Value>>> {
+pub(super) fn inputs(program: &Program, root: &Path, options: &serde_json::Value) -> std::collections::BTreeMap<String, Vec<Vec<Value>>> {
     let mut inputs = std::collections::BTreeMap::new();
     if !observes_git(program) {
         return inputs;
@@ -305,6 +303,14 @@ pub(super) fn inputs(program: &Program, root: &Path) -> std::collections::BTreeM
     let source = Git::new(root);
     for name in INPUTS.iter().filter(|name| program.inputs.iter().any(|input| input == **name)) {
         inputs.insert((*name).to_owned(), Vec::new());
+    }
+    if let Some(rows) = inputs.get_mut(SOURCE_BLOB)
+        && let Some(paths) = options.get("gitSourcePaths").and_then(|paths| paths.as_array())
+    {
+        rows.extend(paths.iter().filter_map(|path| path.as_str()).filter_map(|path| {
+            let oid = snapshot::source_object(root, path)?;
+            Some(vec![Value::Str(path.into()), Value::Str(oid.to_string().into())])
+        }));
     }
     if inputs.contains_key(HOST_REGISTRY)
         && let Some(registry) = crate::git_workspace::snapshot::source_languages(root)
@@ -358,6 +364,85 @@ pub(super) fn inputs(program: &Program, root: &Path) -> std::collections::BTreeM
         }
     }
     inputs
+}
+
+/// Use the ordinary Git acquisition rules for the paths this consumer will read.
+/// A lookup failure belongs to this result rather than to the immutable tree inventory.
+struct SourceObservation {
+    repo: String,
+    blob: gix::ObjectId,
+    digest: [u8; 32],
+    stamp: String,
+}
+
+type SourceChecks = (std::collections::HashMap<String, SourceObservation>, std::collections::HashMap<String, String>);
+
+fn source_checks(root: &Path, paths: &[String]) -> super::Result<SourceChecks> {
+    use crate::code_rule_dsl::logic::plan::output::{Outputs, Value as Cell};
+    if paths.is_empty() {
+        return Ok(Default::default());
+    }
+    let program = crate::code_rule_dsl::logic::rr::parse(concat!(
+        include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
+        include_str!("../../../../../../docs/rule-syntax/lib/git.rr"), "\n",
+        include_str!("../../../typing/programs/git-source-objects.rr"),
+    )).map_err(|err| super::Error::Plan(err.to_string()))?;
+    let options = serde_json::json!({ "reuse": false, "inputFiles": [], "gitSourcePaths": paths });
+    let image = super::run_fact_image(&program, root, &options)?;
+    let outputs = Outputs::of(&image).map_err(super::Error::Plan)?;
+    let invalid = || super::Error::Plan("invalid Git source observation".into());
+    let checked = outputs.rows("git_selected_source_readable").into_iter().map(|row| {
+        let (Cell::Text(path), Cell::Text(repo), Cell::Text(oid), Cell::Text(digest), Cell::Text(stamp)) =
+            (row.get(0), row.get(1), row.get(2), row.get(3), row.get(4)) else { return Err(invalid()) };
+        let blob = gix::ObjectId::from_hex(oid.as_bytes()).map_err(|_| invalid())?;
+        let digest = gix::ObjectId::from_hex(digest.as_bytes()).map_err(|_| invalid())?;
+        let digest = digest.as_bytes().try_into().map_err(|_| invalid())?;
+        Ok((path.to_owned(), SourceObservation { repo: repo.to_owned(), blob, digest, stamp: stamp.to_owned() }))
+    }).collect::<super::Result<_>>()?;
+    let failures = outputs.rows("git_selected_source_error").iter()
+        .filter_map(|row| Some((row.get(0).text()?.to_owned(), row.get(1).text()?.to_owned()))).collect();
+    Ok((checked, failures))
+}
+
+pub(super) fn check_source_digests(root: &Path, store: &Path, paths: &[String]) -> Result<std::collections::HashMap<String, crate::content_store::HashKey>, snapshot::InventoryError> {
+    let _store = super::ThreadStore::enter(store);
+    let (checked, _) = source_checks(root, paths).map_err(|err| match err {
+        super::Error::Cache(error) => snapshot::InventoryError::Cache(error),
+        other => snapshot::InventoryError::Source(other.to_string()),
+    })?;
+    Ok(checked.into_iter().map(|(path, entry)| (path, crate::content_store::HashKey::from_sha256_digest(entry.digest))).collect())
+}
+
+pub(super) fn verify_sources(
+    root: &Path,
+    paths: &mut Vec<String>,
+    consulted: &mut Vec<(String, String, String)>,
+) -> super::Result<()> {
+    if paths.is_empty() || !snapshot::contains(root) {
+        return Ok(());
+    }
+    let (checked, failures) = source_checks(root, paths)?;
+    super::observe(|observer| {
+        for observation in checked.values() {
+            let key = match observation.blob {
+                gix::ObjectId::Sha1(bytes) => crate::content_store::HashKey::git_sha1(bytes),
+                gix::ObjectId::Sha256(bytes) => crate::content_store::HashKey::git_sha256(bytes),
+                _ => continue,
+            };
+            observer.record_alias(&key.key_bytes(), observation.digest);
+            let request = serde_json::to_string(&(&observation.repo, observation.blob.to_string())).expect("string tuple");
+            consulted.push((OBJECT.to_owned(), request, observation.stamp.clone()));
+        }
+    });
+    paths.retain(|path| {
+        if Path::new(path).is_absolute() && !snapshot::contains(Path::new(path)) || checked.contains_key(path) {
+            return true;
+        }
+        let reason = failures.get(path).map_or("missing", String::as_str);
+        snapshot::record_source_error(root, path, format!("Git source object is {reason}"));
+        false
+    });
+    Ok(())
 }
 
 pub(super) fn still(root: &Path, previous: &str) -> bool {

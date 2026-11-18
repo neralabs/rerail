@@ -199,6 +199,7 @@ export interface NativeGitRevisionSource {
   readonly commit: string | null;
   containsPath(path: string): boolean;
   invalidPaths(): string[];
+  sourceFailures(): { path: string; message: string }[];
   readSource(path: string): Buffer | null;
   /** A missing directory gives no entries. An unreadable object throws. */
   readDirectory(path: string): { name?: string; nameBytes?: Buffer; mode: number }[] | null;

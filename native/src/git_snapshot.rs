@@ -26,6 +26,7 @@ struct View {
     owner: OnceLock<crate::content_store::analysis_scope::AnalysisOwner>,
     inventory: OnceLock<Inventory>,
     observed_trees: Mutex<std::collections::HashMap<gix::ObjectId, ObservedTree>>,
+    source_errors: Mutex<std::collections::BTreeMap<String, String>>,
     ignore_blob: OnceLock<Result<Option<gix::ObjectId>, String>>,
     paths: Mutex<Option<Vec<String>>>,
     host_languages: OnceLock<SourceLanguages>,
@@ -45,6 +46,12 @@ pub struct RawTreeEntry {
     pub name: Vec<u8>,
     pub mode: u16,
     pub target: gix::ObjectId,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct SourceFailure {
+    pub path: String,
+    pub message: String,
 }
 
 #[derive(Debug)]
@@ -79,9 +86,15 @@ impl From<&str> for InventoryError {
 
 type InventoryReader = fn(&Path, Option<&Path>) -> Result<Inventory, InventoryError>;
 static READ_INVENTORY: OnceLock<InventoryReader> = OnceLock::new();
+type SourceChecker = fn(&Path, &Path, &[String]) -> Result<std::collections::HashMap<String, HashKey>, InventoryError>;
+static CHECK_SOURCES: OnceLock<SourceChecker> = OnceLock::new();
 
 pub fn install_inventory_reader(reader: InventoryReader) {
     READ_INVENTORY.get_or_init(|| reader);
+}
+
+pub fn install_source_checker(check: SourceChecker) {
+    CHECK_SOURCES.get_or_init(|| check);
 }
 
 static VIEWS: Mutex<Vec<Arc<View>>> = Mutex::new(Vec::new());
@@ -96,6 +109,17 @@ fn error(e: impl std::fmt::Display) -> io::Error {
 }
 fn missing() -> io::Error {
     io::Error::from(io::ErrorKind::NotFound)
+}
+
+pub fn verified_object(repo: &gix::Repository, id: gix::ObjectId) -> io::Result<gix::Object<'_>> {
+    let object = repo.try_find_object(id).map_err(error)?.ok_or_else(missing)?;
+    gix::objs::Data::new(&object.data, object.kind, id.kind()).verify_checksum(id.as_ref())
+        .map_err(|err| error(format_args!("Git object checksum failed: {err}")))?;
+    Ok(object)
+}
+
+fn verified_blob(repo: &gix::Repository, id: gix::ObjectId) -> io::Result<gix::Blob<'_>> {
+    verified_object(repo, id)?.try_into_blob().map_err(error)
 }
 
 #[derive(Clone, Copy)]
@@ -265,6 +289,21 @@ impl Snapshot {
         self.view.inventory.get().map_or(&[], |inventory| inventory.invalid_paths.as_slice())
     }
 
+    pub fn source_failures(&self) -> Vec<SourceFailure> {
+        let invalid = self.invalid_paths().iter().map(|path| SourceFailure {
+            path: path.clone(), message: "Git path has invalid UTF-8".to_owned(),
+        });
+        let unreadable = self.view.source_errors.lock().unwrap_or_else(|e| e.into_inner());
+        invalid.chain(unreadable.iter().map(|(path, message)| SourceFailure {
+            path: path.clone(), message: message.clone(),
+        })).collect()
+    }
+
+    /// Verify demanded source identities before a consumer restores saved results.
+    pub fn checked_sources(&self, store: &Path, paths: &[String]) -> Result<std::collections::HashMap<String, HashKey>, InventoryError> {
+        CHECK_SOURCES.get().ok_or("Git source checker is unavailable")?(self.root(), store, paths)
+    }
+
     pub fn commit(&self) -> Option<String> {
         self.view.commit.map(|id| id.to_string())
     }
@@ -330,7 +369,7 @@ impl Snapshot {
     }
 
     pub fn owns_blob(&self, path: &str, length: u64) -> bool {
-        self.with_blob(path, |size, _| Ok(size == length))
+        self.with_blob(path, |size, read| Ok(size == length && read().is_ok()))
             .unwrap_or(false)
     }
 
@@ -345,9 +384,7 @@ impl Snapshot {
         };
         self.view.with_repo(|repo| {
             let header = repo.find_header(id).map_err(error)?;
-            f(header.size(), &|| {
-                Ok(repo.find_blob(id).map_err(error)?.data.clone())
-            })
+            f(header.size(), &|| Ok(verified_blob(repo, id)?.data.clone()))
         })
     }
 
@@ -424,6 +461,7 @@ impl Snapshot {
             owner: OnceLock::new(),
             inventory: OnceLock::new(),
             observed_trees: Mutex::default(),
+            source_errors: Mutex::default(),
             ignore_blob: OnceLock::new(),
             paths: Mutex::new(None),
             host_languages: OnceLock::new(),
@@ -622,6 +660,20 @@ pub fn blob(path: &Path) -> Option<HashKey> {
     super::hash_key(id.as_ref()).ok()
 }
 
+pub fn source_object(root: &Path, path: &str) -> Option<gix::ObjectId> {
+    let view = view(root)?;
+    match view.entry(&root.join(path)).ok()? {
+        Entry::File(id) => Some(id),
+        Entry::Dir(_) => None,
+    }
+}
+
+pub fn record_source_error(root: &Path, path: &str, message: String) {
+    if let Some(view) = view(root) {
+        view.source_errors.lock().unwrap_or_else(|e| e.into_inner()).insert(path.to_owned(), message);
+    }
+}
+
 pub fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
     let path = path.as_ref();
     let Some(v) = view(path) else {
@@ -630,7 +682,7 @@ pub fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
     let Entry::File(id) = v.entry(path)? else {
         return Err(io::Error::from(io::ErrorKind::IsADirectory));
     };
-    v.with_repo(|repo| Ok(repo.find_blob(id).map_err(error)?.data.clone()))
+    v.with_repo(|repo| Ok(verified_blob(repo, id)?.data.clone()))
 }
 
 /// Bounded read of a regular file in a registered Git source view.
@@ -643,7 +695,7 @@ pub fn read_bounded(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
         if repo.find_header(id).map_err(error)?.size() > limit {
             return Err(io::Error::from(io::ErrorKind::FileTooLarge));
         }
-        Ok(repo.find_blob(id).map_err(error)?.data.clone())
+        Ok(verified_blob(repo, id)?.data.clone())
     })
 }
 
