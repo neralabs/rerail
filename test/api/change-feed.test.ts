@@ -1,8 +1,11 @@
 import { EventEmitter } from "node:events";
 import type { FSWatcher, watch as watchFolder } from "node:fs";
+import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { databaseChangeFeed, LOOK_AGAIN_MS, type ChangeNotice } from "../../src/api/change-feed.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const DATABASE = join("/rerail-home", "rerail.sqlite");
 
@@ -167,5 +170,35 @@ describe("the database's change feed", () => {
 
     expect(await heardAfterTurn(heard)).toEqual(["data"]);
     expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it("looks no more after a notice of writes already told, as its own commit's notice heard after it was told, and looks after a new write", async () => {
+    const folder = fakeWatch();
+    const home = mkdtempSync(join(tmpdir(), "rerail-feed-"));
+    try {
+      const database = join(home, "rerail.sqlite");
+      writeFileSync(`${database}-wal`, "commit 1");
+      let version = "1";
+      let reads = 0;
+      const feed = databaseChangeFeed(database, () => { reads += 1; return version; }, { watch: folder.watch, beatMs: 60_000 });
+      const heard: ChangeNotice[] = [];
+      feed.listen(notice => heard.push(notice));
+      version = "2";
+      feed.notify("data");
+      expect(await heardAfterTurn(heard)).toEqual(["data"]);
+
+      folder.report("rerail.sqlite-wal");
+      await vi.advanceTimersByTimeAsync(LOOK_AGAIN_MS.at(-1)!);
+      const afterEcho = reads;
+      expect(vi.getTimerCount()).toBe(1);
+
+      appendFileSync(`${database}-wal`, ", commit 2 in flight");
+      folder.report("rerail.sqlite-wal");
+      await vi.advanceTimersByTimeAsync(LOOK_AGAIN_MS.at(-1)!);
+
+      expect([heard, afterEcho, reads - afterEcho]).toEqual([["data"], 3, LOOK_AGAIN_MS.length + 1]);
+    } finally {
+      await removeFolder(home);
+    }
   });
 });

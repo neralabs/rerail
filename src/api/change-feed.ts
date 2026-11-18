@@ -1,4 +1,4 @@
-import { watch as watchFolder, type FSWatcher } from "node:fs";
+import { statSync, watch as watchFolder, type FSWatcher } from "node:fs";
 import { basename, dirname } from "node:path";
 
 /**
@@ -98,6 +98,14 @@ function versionTracker(version: () => string | undefined): { moved(): boolean; 
   };
 }
 
+/** The database's main and `-wal` files by size and time: every write to either moves it. */
+function filesWritten(databasePath: string): string {
+  return [databasePath, `${databasePath}-wal`].map(path => {
+    const info = statSync(path, { throwIfNoEntry: false });
+    return info === undefined ? "" : `${info.mtimeMs}:${info.size}`;
+  }).join("|");
+}
+
 /**
  * Reads the version again on {@link LOOK_AGAIN_MS} after a notice that found it unmoved, and calls `onMoved` once it
  * moves; a new notice starts the steps over, and `stop` ends them.
@@ -138,15 +146,31 @@ export function databaseChangeFeed(databasePath: string, version: () => string |
   let beat: NodeJS.Timeout | undefined;
   let flushing = false;
 
+  /** The database's files as they were just before the look that last found a commit showing. */
+  let told: string | undefined;
   const tell = (notice: ChangeNotice): void => {
     for (const listener of [...listeners]) listener(notice);
   };
-  const looks = lookAgain(() => committed.moved(), () => tell("data"));
-  /** A data notice is told once its commit shows; else the looks again wait for it. */
+  /** Whether a commit shows since the last look, and the files as they were just before it looked. */
+  const look = (): { shows: boolean; files: string } => {
+    const files = filesWritten(databasePath);
+    const shows = committed.moved();
+    if (shows) told = files;
+    return { shows, files };
+  };
+  const looks = lookAgain(() => look().shows, () => tell("data"));
+  /**
+   * A data notice is told once its commit shows; else the looks again wait for it, unless the files are as they were
+   * when the last commit showed: the notice then tells of writes already told (this process's own commit, heard after
+   * its `notify`; the last write of a commit readers saw first). The files are read before the version, so a write that
+   * lands after that look always differs.
+   */
   const tellData = (): void => {
-    if (!committed.moved()) return looks.start();
-    looks.stop();
-    tell("data");
+    const { shows, files } = look();
+    if (shows) {
+      looks.stop();
+      tell("data");
+    } else if (files !== told) looks.start();
   };
   const flush = (): void => {
     flushing = false;
