@@ -215,8 +215,8 @@ pub(crate) fn option_input(rel: &str) -> bool {
 
 /// An input with one value for the whole run, as a fact has: the run's options (`option_input`), or an earlier
 /// phase's export (`corpus::phases`), bound once its rows are known. A rule reading one joins no document by it.
-pub(crate) fn run_constant(prog: &crate::code_rule_dsl::logic::front::Program, rel: &str) -> bool {
-    option_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && prog.inputs.iter().any(|i| i == rel))
+pub(crate) fn run_constant(prog: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), rel: &str) -> bool {
+    option_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && prog.input_names().iter().any(|i| i == rel))
 }
 
 /// Whether no rule of `prog` reads a document: every relation a rule reads is derived, a fact, or an input with one

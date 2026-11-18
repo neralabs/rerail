@@ -65,7 +65,7 @@
         let kept: Vec<i64> = facts["prepared_interned_atom"].iter().map(|r| r[3].integer().unwrap()).collect();
         assert_eq!(kept, here);
         assert!(super::relocate(&store, &mut facts, &moved, &lists).expect("read").is_none(), "already this store's");
-        super::prepared_of(&facts, std::sync::Arc::clone(&prepared.source), moved, prepared.lowered.dialect, &lists).expect("the moved program reads as prepared");
+        super::prepared_of(&facts, std::sync::Arc::clone(&prepared.source), moved, prepared.lowered.dialect).expect("the moved program reads as prepared");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -88,7 +88,7 @@
         let source_image = |p: &super::Prepared| crate::code_rule_dsl::logic::program_image::Version::open(p.source.base_bytes().expect("the source is a base")).unwrap();
         let lists = crate::code_rule_dsl::logic::front::Lists::default();
         let digest = |l: &crate::code_rule_dsl::logic::plan::lower::Lowered| l.placed().unwrap().digest();
-        let back = super::prepared_of(&facts, source_image(&prepared), lowered_image(&prepared), dialect, &lists).unwrap();
+        let back = super::prepared_of(&facts, source_image(&prepared), lowered_image(&prepared), dialect).unwrap();
         // Program has no PartialEq: its Debug form is the comparison, field by field; versions compare by digest.
         assert_eq!((back.source.size(), back.source.digest()), (prepared.source.size(), prepared.source.digest()), "the source");
         assert_eq!(digest(&back.lowered), digest(&prepared.lowered), "the lowered program");
@@ -107,14 +107,14 @@
         // tests that run beside this one.
         let all: Vec<std::sync::Arc<super::Prepared>> = super::super::with_prepared(|kept| kept.values().flatten().cloned().collect());
         for p in &all {
-            let b = super::prepared_of(&super::facts_of(p), source_image(p), lowered_image(p), p.lowered.dialect, &lists).unwrap();
+            let b = super::prepared_of(&super::facts_of(p), source_image(p), lowered_image(p), p.lowered.dialect).unwrap();
             assert_eq!((&b.split.exports, &b.split.base, &b.split.locations, &b.split.same_doc), (&p.split.exports, &p.split.base, &p.split.locations, &p.split.same_doc));
             assert_eq!(b.split.versions.cross.digest(), p.split.versions.cross.digest());
         }
         // And one stored without its split (an earlier entry's facts) makes it again, the same.
         let mut unsplit = facts.clone();
         unsplit.remove("prepared_split");
-        let again = super::prepared_of(&unsplit, source_image(&prepared), lowered_image(&prepared), dialect, &lists).unwrap();
+        let again = super::prepared_of(&unsplit, source_image(&prepared), lowered_image(&prepared), dialect).unwrap();
         assert_eq!(again.split.versions.cross.digest(), prepared.split.versions.cross.digest(), "the split, made again");
         // No program is in the facts: no row per node (decision 0155).
         assert!(["program", "rule", "atom", "term"].iter().all(|r| !facts.contains_key(*r)), "{:?}", facts.keys().collect::<Vec<_>>());

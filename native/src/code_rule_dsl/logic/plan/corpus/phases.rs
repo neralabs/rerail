@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 use super::super::{Error, Result};
 use super::{Report, Typing};
 use crate::code_rule_dsl::logic::front::{Literal, Program, Value};
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::typing::file_local::Binding;
 
 const SEP: &str = "__";
@@ -135,8 +136,8 @@ pub struct Declared {
 }
 
 /// The phase `prog` declares (`.phase NAME`, `.export a, b`), if any.
-pub fn declared(prog: &Program) -> Option<Declared> {
-    let setting = |key: &str| prog.settings.iter().filter(|(k, _)| k == key).map(|(_, v)| v.trim().to_owned()).collect::<Vec<_>>();
+pub fn declared(prog: &(impl ProgramFields + ?Sized)) -> Option<Declared> {
+    let setting = |key: &str| prog.setting_values(key);
     let name = setting("phase").into_iter().next()?;
     let list = |key: &str| setting(key).iter().flat_map(|v| v.split(',').map(|e| e.trim().trim_end_matches('.').to_owned()).collect::<Vec<_>>()).filter(|e| !e.is_empty()).collect::<Vec<_>>();
     Some(Declared { name, exports: list("export") })
@@ -215,11 +216,11 @@ pub(super) fn wanted(prog: &Program, dir: Option<&Path>) -> Result<BTreeMap<Stri
     wanted_in(prog, &super::shape::Shape::of_tree(prog), dir)
 }
 
-/// `wanted` of a program by its header (`Version::header`) and its rules' shape.
-pub(super) fn wanted_in(prog: &Program, shape: &super::shape::Shape, dir: Option<&Path>) -> Result<BTreeMap<String, Vec<(String, String)>>> {
+/// `wanted` of a program by its fields (a version's) and its rules' shape.
+pub(super) fn wanted_in(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, dir: Option<&Path>) -> Result<BTreeMap<String, Vec<(String, String)>>> {
     let own = declared(prog).map(|d| d.name);
     let mut out: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
-    for rel in shape.read.iter().map(String::as_str).filter(|r| !shape.made.contains(*r) && prog.decls.contains_key(*r)) {
+    for rel in shape.read.iter().map(String::as_str).filter(|r| !shape.made.contains(*r) && prog.declares(r)) {
         let Some((phase, export)) = rel.split_once(SEP) else { continue };
         if phase.is_empty() || export.is_empty() || own.as_deref() == Some(phase) || phase.starts_with("typing_") || phase.starts_with("rr_") {
             continue;
@@ -361,7 +362,7 @@ pub(crate) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 
 /// The facts `prog` reads from earlier phases (`<phase>__<export>`), each phase run first in its own space, and the
 /// phases' runs, in the order they ran.
-pub(crate) fn facts(prog: &Program, shape: &super::shape::Shape, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<(Facts, Vec<PhaseRun>)> {
+pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<(Facts, Vec<PhaseRun>)> {
     // A phase's own run: its upstream facts were worked out by the run that started it.
     if let Some(me) = declared(prog)
         && let Some(f) = HANDED_DOWN.with(|h| h.borrow().last().filter(|(n, _)| *n == me.name).map(|(_, f)| Facts::clone(f)))
@@ -411,9 +412,9 @@ pub(crate) fn facts(prog: &Program, shape: &super::shape::Shape, root: &Path, sc
             if !declared.exports.contains(export) {
                 return Err(Error::Plan(format!("{rel}: phase {name} does not export {export} (a phase's other relations are its own)")));
             }
-            let (want, have) = (&program.decls[export.as_str()], &prog.decls[rel.as_str()]);
+            let (want, have) = (&program.decls[export.as_str()], prog.columns_of(rel).unwrap_or_default());
             let ty = |t: &str| if t == "sym" { "symbol".to_owned() } else if t == "int" { "number".to_owned() } else { t.to_owned() };
-            if want.len() != have.len() || want.iter().zip(have).any(|((_, a), (_, b))| ty(a) != ty(b)) {
+            if want.len() != have.len() || want.iter().zip(&have).any(|((_, a), (_, b))| ty(a) != ty(b)) {
                 return Err(Error::Plan(format!("{rel}: {} columns, where phase {name}'s {export} has {}", have.len(), want.len())));
             }
         }

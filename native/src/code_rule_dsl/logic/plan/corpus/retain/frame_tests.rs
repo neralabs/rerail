@@ -112,7 +112,7 @@ fn k4_retains_consumers_of_literal_facts_and_invalidates_them_when_the_literal_c
     let computed=Retained{key:KEY,rels:HashMap::from([("result".into(),Kept{
         rel:InRel::flat(&[vec![1]],vec![b'i']),width:1,output:None,
     })]),..Default::default()};
-    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&pl(&prog),&Default::default(),&Locations::new(),&st(&prog),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None).unwrap(),1);
+    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&pl(&prog),&Default::default(),&Locations::new(),&st(&prog),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None,&HashMap::new()).unwrap(),1);
     let restored=Retained::from_frames(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
     assert_eq!(cut(Some(&restored),KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap().strata,(0,1));
     let changed=rr::parse(&text.replace("literal(1).","literal(2).")).unwrap();
@@ -121,7 +121,7 @@ fn k4_retains_consumers_of_literal_facts_and_invalidates_them_when_the_literal_c
     let external=rr::parse(&format!("{text}\n.input literal\n")).unwrap();
     let empty=Retained::from_frames(&store,[52;32],KEY,KEY,&pl(&external),&st(&external),&HashMap::new()).unwrap();
     let initial=cut(Some(&empty),KEY,&pl(&external),&st(&external),&HashMap::new()).unwrap();
-    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&pl(&external),&Default::default(),&Locations::new(),&st(&external),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None).unwrap(),0,
+    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&pl(&external),&Default::default(),&Locations::new(),&st(&external),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None,&HashMap::new()).unwrap(),0,
         "a relation with literal rows AND external inputs still needs a runtime dependency digest");
 }
 
@@ -280,7 +280,7 @@ fn a_relation_past_the_retain_budget_is_written_to_the_frames_and_let_go() {
     let mut next = after(None, KEY, now.clone(), &cut, derived, &BTreeMap::new(), &[], HashMap::new(), HashMap::new(), HashMap::new(), Default::default(), HashMap::new(), 0, false);
     assert_eq!(next.bytes(), 0, "nothing past the budget is held for the next run");
     assert_eq!(next.parts().1.len(), 2, "both are this run's to write");
-    let written = next.write_frames(&store, &was, &pl(&prog),&Default::default(), &Locations::new(), &st(&prog), &cut, &[], &now, &BTreeSet::new(), &HashMap::new(),HashMap::new(),None).unwrap();
+    let written = next.write_frames(&store, &was, &pl(&prog),&Default::default(), &Locations::new(), &st(&prog), &cut, &[], &now, &BTreeSet::new(), &HashMap::new(),HashMap::new(),None,&HashMap::new()).unwrap();
     assert_eq!(written, 8, "the rows past the budget are written to the frames");
     next.let_go_past();
     assert!(next.parts().1.is_empty(), "and then let go");

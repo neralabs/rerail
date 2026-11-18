@@ -306,7 +306,7 @@ mod tests {
         let by = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<std::collections::BTreeSet<String>>();
         p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["b"])]);
         let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
-        let (out, _) = run(v, true).unwrap();
+        let (out, _, _) = run(v, true, None, |_| Ok(())).unwrap();
         assert_eq!(out.asked_against_rules(), [("q".to_owned(), 2, 2)]);
         assert_eq!(out.asked()["q"], [by(&["a"]), by(&["b"])]);
         // Two equal readers merged: the record names the class (`simplify::merge_identical`'s rename, the tree's).
@@ -317,7 +317,7 @@ mod tests {
         .unwrap();
         p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["a2"])]);
         let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
-        let (out, _) = run(v, true).unwrap();
+        let (out, _, _) = run(v, true, None, |_| Ok(())).unwrap();
         assert!(out.rel("a2").is_none_or(|r| out.heads(r).next().is_none()), "a2 merged into a");
         assert_eq!(out.asked()["q"], [by(&["a"]), by(&["a"])]);
     }

@@ -31,9 +31,9 @@ use std::path::Path;
 
 use super::super::Result;
 use super::{Report, Typing};
-use crate::code_rule_dsl::logic::front::{Literal, Program, Value};
+use crate::code_rule_dsl::logic::front::{Program, Value};
 use crate::code_rule_dsl::logic::program_image::Version;
-use crate::code_rule_dsl::typing::file_local::{constant_relations, option_input};
+use crate::code_rule_dsl::typing::file_local::option_input;
 
 /// The option that marks a run as the constants' own (it folds nothing).
 pub(super) const OWN: &str = "constants_run";
@@ -41,66 +41,18 @@ pub(super) const OWN: &str = "constants_run";
 /// The relations made from no document that a rule outside them reads, or that the program outputs: from facts,
 /// settings and file-system reads, through other such relations and negations of them. Those the split already
 /// treats as constants (`constant_relations`: no request among them) are left to it.
-// The tree's edit, kept as a debug build's check of the version's (`run_typed`'s `Beside`).
-#[cfg_attr(not(debug_assertions), allow(dead_code))]
-pub(super) fn foldable(prog: &Program) -> BTreeSet<String> {
-    // Each relation's rules, and the inputs, looked up (a scan of every rule per relation and round was 0.23 s of an
-    // edit's start-up on the Python pack's main program).
-    let mut heads: std::collections::HashMap<&str, Vec<&crate::code_rule_dsl::logic::front::Rule>> = std::collections::HashMap::new();
-    for r in &prog.rules {
-        heads.entry(r.head.rel.as_str()).or_default().push(r);
-    }
-    let inputs: std::collections::HashSet<&str> = prog.inputs.iter().map(String::as_str).collect();
-    let world = |rel: &str| crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
-    let given = |rel: &str| !heads.contains_key(rel) && (option_input(rel) || world(rel) || (prog.facts.contains_key(rel) && !inputs.contains(rel)));
-    let mut fold: std::collections::HashSet<&str> =
-        heads.keys().copied().filter(|r| !prog.natives.contains_key(*r) && !prog.lattice.contains_key(*r) && !inputs.contains(r)).collect();
-    loop {
-        let out: Vec<&str> = fold
-            .iter()
-            .copied()
-            .filter(|rel| {
-                !heads[rel].iter().all(|r| {
-                    r.body.iter().all(|l| match l {
-                        Literal::Atom(a) | Literal::Agg { atom: a, .. } => fold.contains(a.rel.as_str()) || given(&a.rel),
-                        Literal::Cmp { .. } => true,
-                        _ => false,
-                    })
-                })
-            })
-            .collect();
-        if out.is_empty() {
-            break;
-        }
-        for rel in out {
-            fold.remove(rel);
-        }
-    }
-    let mut fold: BTreeSet<String> = fold.into_iter().map(str::to_owned).collect();
-    // Only those that read the world (else the split derives them in both parts already).
-    let constant = constant_relations(prog);
-    fold.retain(|r| !constant.contains(r));
-    // Of them, those something else reads, or the program outputs.
-    let read_outside: BTreeSet<&str> = prog
-        .rules
-        .iter()
-        .filter(|r| !fold.contains(r.head.rel.as_str()))
-        .flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str()))
-        .chain(prog.outputs.iter().map(String::as_str))
-        .collect();
-    fold.into_iter().filter(|r| read_outside.contains(r.as_str())).collect()
-}
-
-/// `foldable` of the program's version, `head` its header (`Version::header`).
-pub(super) fn foldable_of(v: &std::sync::Arc<Version>, head: &Program) -> Result<BTreeSet<String>> {
+pub(super) fn foldable_of(v: &std::sync::Arc<Version>) -> Result<BTreeSet<String>> {
     use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef};
-    let inputs: std::collections::HashSet<&str> = head.inputs.iter().map(String::as_str).collect();
+    let input_names = v.input_names();
+    let inputs: std::collections::HashSet<&str> = input_names.iter().map(String::as_str).collect();
+    let (natives, lattice) = (v.native_map().map_err(super::super::Error::Plan)?, v.lattice_decls().map_err(super::super::Error::Plan)?);
+    let outputs = v.output_names();
     let world = |rel: &str| crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| *r == rel);
     let mut heads: std::collections::HashMap<&str, Vec<RuleRef<'_>>> = std::collections::HashMap::new();
     for r in v.rules() {
         heads.entry(v.rel_name(r.head().rel())).or_default().push(r);
     }
-    let candidates: std::collections::HashSet<&str> = heads.keys().copied().filter(|r| !head.natives.contains_key(*r) && !head.lattice.contains_key(*r) && !inputs.contains(r)).collect();
+    let candidates: std::collections::HashSet<&str> = heads.keys().copied().filter(|r| !natives.contains_key(*r) && !lattice.contains_key(*r) && !inputs.contains(r)).collect();
     // The greatest fixpoint of the candidates whose every rule reads only those left, relations `given` holds, and
     // comparisons.
     let fixpoint = |given: &dyn Fn(&str) -> bool| -> BTreeSet<String> {
@@ -128,7 +80,7 @@ pub(super) fn foldable_of(v: &std::sync::Arc<Version>, head: &Program) -> Result
             }
         }
     };
-    let fact = |rel: &str| !heads.contains_key(rel) && head.facts.contains_key(rel) && !inputs.contains(rel);
+    let fact = |rel: &str| !heads.contains_key(rel) && v.find(rel).is_some_and(|a| v.facts(a).is_some()) && !inputs.contains(rel);
     let mut fold = fixpoint(&|rel| !heads.contains_key(rel) && (option_input(rel) || world(rel) || fact(rel)));
     // Only those that read the world: the split's constants (`file_local::constant_relations`: facts, the run's
     // options and phases' exports, no request) are derived in both parts already.
@@ -136,27 +88,26 @@ pub(super) fn foldable_of(v: &std::sync::Arc<Version>, head: &Program) -> Result
     fold.retain(|r| !constant.contains(r));
     let shape = super::shape::Shape::of(v);
     let read_outside: BTreeSet<&str> =
-        shape.reads_of.iter().filter(|(h, _)| !fold.contains(h.as_str())).flat_map(|(_, reads)| reads.iter().map(String::as_str)).chain(head.outputs.iter().map(String::as_str)).collect();
+        shape.reads_of.iter().filter(|(h, _)| !fold.contains(h.as_str())).flat_map(|(_, reads)| reads.iter().map(String::as_str)).chain(outputs.iter().map(String::as_str)).collect();
     Ok(fold.into_iter().filter(|r| read_outside.contains(r.as_str())).collect())
 }
 
-/// `as_outputs` on the version: its outputs a copy of each wanted relation, made by a rule of its own.
-pub(super) fn as_outputs_of(v: &std::sync::Arc<Version>, head: &mut Program, wanted: &[String]) -> Result<std::sync::Arc<Version>> {
+/// The constants' run's program: its outputs are a copy of each wanted relation, made by a rule of its own. The copy
+/// reads the relation as any rule outside the requests' cone does, so the cone hands it on wherever it is made.
+pub(super) fn as_outputs_of(v: &std::sync::Arc<Version>, wanted: &[String]) -> Result<std::sync::Arc<Version>> {
     use crate::code_rule_dsl::logic::program_image::{Builder, build::T};
     let mut b = Builder::on(v);
     let mut outputs = Vec::new();
     for rel in wanted {
-        let Some(cols) = head.decls.get(rel.as_str()).cloned() else { continue };
+        let Some(cols) = v.columns_of(rel) else { continue };
         let names: Vec<String> = (0..cols.len()).map(|i| format!("c{i}")).collect();
         let args: Vec<T<'_>> = names.iter().map(|n| T::Var(n.as_str())).collect();
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
         b.declare(&copy(rel), &pairs);
-        head.decls.insert(copy(rel).into(), cols);
         b.rule().head(copy(rel).as_str(), &args).atom(rel.as_str(), &args).finish().map_err(super::super::Error::Plan)?;
         outputs.push(copy(rel));
     }
     b.set_outputs(&outputs);
-    head.outputs = outputs;
     b.finish().map(|(v, _)| v).map_err(super::super::Error::Plan)
 }
 
@@ -165,29 +116,11 @@ fn copy(rel: &str) -> String {
     format!("rr_const_{rel}")
 }
 
-/// The constants' run's program: its outputs are a copy of each wanted relation, made by a rule of its own. The copy
-/// reads the relation as any rule outside the requests' cone does, so the cone hands it on wherever it is made.
-// The tree's edit, kept as a debug build's check of the version's (`run_typed`'s `Beside`).
-#[cfg_attr(not(debug_assertions), allow(dead_code))]
-pub(super) fn as_outputs(prog: &mut Program, wanted: &[String]) {
-    use crate::code_rule_dsl::logic::front::{Atom, Rule, Term};
-    prog.outputs.clear();
-    for rel in wanted {
-        let Some(cols) = prog.decls.get(rel.as_str()).cloned() else { continue };
-        let args: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("c{i}").into())).collect();
-        let atom = |r: String| Atom { rel: r.into(), args: args.clone().into(), neg: false, gated: false };
-        prog.decls.insert(copy(rel).into(), cols);
-        prog.rules.push(Rule { head: atom(copy(rel)), body: [Literal::Atom(atom(rel.clone()))].into() });
-        prog.outputs.push(copy(rel));
-    }
-}
-
-/// Derives `prog`'s foldable relations (`foldable`) by a run over no documents, and puts their rows in as facts,
+/// Derives the version's foldable relations (`foldable_of`) by a run over no documents, and puts their rows in as facts,
 /// their rules (and those of the relations only they read) dropped. The run's consulted reads, for the record.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn fold(
     v: &mut std::sync::Arc<Version>,
-    prog: &mut Program,
     programs: &[&str],
     read: Option<&Program>,
     added: &super::added::Added,
@@ -202,13 +135,13 @@ pub(super) fn fold(
     if options.get(OWN).is_some() {
         return Ok(Default::default());
     }
-    let wanted = foldable_of(v, prog)?;
+    let wanted = foldable_of(v)?;
     if wanted.is_empty() {
         return Ok(Default::default());
     }
     let _span = crate::code_rule_dsl::logic::profile::span(|| "fold the run's constants".into());
     let key = key(programs, added, root, options, &wanted);
-    let was_kept = kept(&key, root, prog)?;
+    let was_kept = kept(&key, root, &**v)?;
     let reused = was_kept.is_some();
     // The plans the constants' run used, for the outer run's record (`Report::plans`): kept with the constants, so a
     // run that reuses them names the plans the run that derived them did, and records the same manifest (0252).
@@ -222,8 +155,9 @@ pub(super) fn fold(
     };
     // Each relation's rows from the image, typed as its columns are declared: nothing parsed.
     let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::of(&image).map_err(|e| super::super::Error::Plan(format!("the run's constants: {e}")))?;
+    let mut folded: Vec<(String, Vec<crate::code_rule_dsl::logic::front::List<Value>>)> = Vec::new();
     for rel in &wanted {
-        let types: Vec<String> = prog.decls.get(rel.as_str()).map(|d| d.iter().map(|(_, t)| t.clone()).map(String::from).collect()).unwrap_or_default();
+        let types: Vec<String> = v.columns_of(rel).map(|d| d.into_iter().map(|(_, t)| t).collect()).unwrap_or_default();
         let mut rows = Vec::new();
         for row in outputs.rows(&copy(rel)) {
             if row.len() != types.len() {
@@ -240,12 +174,12 @@ pub(super) fn fold(
                 .collect::<Result<Vec<_>>>()?;
             rows.push(values.into());
         }
-        prog.facts.insert(rel.clone(), rows);
+        folded.push((rel.clone(), rows));
     }
-    // The version: the rows as facts, the relations' rules dropped (`prog` is its header).
+    // The version: the rows as facts, the relations' rules dropped.
     let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(v);
-    for rel in &wanted {
-        b.set_facts(rel, &prog.facts[rel]);
+    for (rel, rows) in &folded {
+        b.set_facts(rel, rows);
     }
     b.retain(|r| !wanted.contains(v.rel_name(r.head().rel())));
     *v = b.finish().map(|(v, _)| v).map_err(super::super::Error::Plan)?;
@@ -323,7 +257,7 @@ fn record_key(key: &str) -> String {
 /// The constants kept under `key`, when what their run consulted is as it was, with the plans their run used: the
 /// record's `plan` lines, for collection (`observe::collect` drops the record once none is live) and for the outer
 /// run's manifest.
-fn kept(key: &str, root: &Path, prog: &Program) -> Result<Option<(Derived, Vec<[u8; 32]>)>> {
+fn kept(key: &str, root: &Path, prog: &Version) -> Result<Option<(Derived, Vec<[u8; 32]>)>> {
     let Some((consulted, rows)) = super::observe(|o| o.run_record(&record_key(key))) else { return Ok(None) };
     let Some(consulted) = super::reuse::decode_consulted(&consulted) else { return Ok(None) };
     let (plans, consulted): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == "plan");

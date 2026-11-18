@@ -431,6 +431,48 @@ impl<'p> Builder<'p> {
         self.parts.outputs = Some((ids, encoder::names_hash(1, names.iter().map(|n| n.as_ref()))));
         self.parts_changed = true;
     }
+    /// The inputs this edit states, or its parent's.
+    pub fn input_names(&self) -> Vec<String> {
+        match &self.parts.inputs {
+            Some((ids, _)) => ids.iter().map(|&a| self.enc.text(a).to_owned()).collect(),
+            None => self.parent.map(|p| p.input_names()).unwrap_or_default(),
+        }
+    }
+    /// The outputs this edit states, or its parent's.
+    pub fn output_names(&self) -> Vec<String> {
+        match &self.parts.outputs {
+            Some((ids, _)) => ids.iter().map(|&a| self.enc.text(a).to_owned()).collect(),
+            None => self.parent.map(|p| p.output_names()).unwrap_or_default(),
+        }
+    }
+    /// Relation `rel`'s fact rows as this edit states them, or its parent's (`None` where it has none).
+    pub fn fact_cells(&self, rel: &str) -> Option<Vec<Vec<Cell>>> {
+        let a = self.enc.find(rel)?;
+        match self.parts.facts.get(&a) {
+            Some(f) => Some(f.rows.clone()),
+            None if self.parts.facts_gone.contains(&a) => None,
+            None => self.parent.and_then(|p| p.facts(AtomId(a))).map(|f| f.rows().map(|r| r.collect()).collect()),
+        }
+    }
+    /// Whether relation `rel` is declared, by this edit or its parent.
+    pub fn declares(&self, rel: &str) -> bool {
+        let Some(a) = self.enc.find(rel) else { return false };
+        self.parts.decls.contains_key(&a) || (!self.parts.decls_gone.contains(&a) && self.parent.is_some_and(|p| p.decl(AtomId(a)).is_some()))
+    }
+    /// Adds rows `rows` to relation `rel`'s facts, after the parent's.
+    pub fn add_facts(&mut self, rel: &str, rows: &[List<Value>]) {
+        if rows.is_empty() {
+            return;
+        }
+        let a = self.atom(rel);
+        let mut cells: Vec<Vec<Cell>> = match self.parts.facts.get(&a.0) {
+            Some(f) => f.rows.clone(),
+            None if self.parts.facts_gone.contains(&a.0) => Vec::new(),
+            None => self.parent.and_then(|p| p.facts(a)).map(|f| f.rows().map(|r| r.collect()).collect()).unwrap_or_default(),
+        };
+        cells.extend(rows.iter().map(|row| row.iter().map(|v| self.cell(v)).collect::<Vec<Cell>>()));
+        self.set_fact_cells(rel, cells);
+    }
     /// States the fields of `header` besides its rules (`Version::header`'s, edited by a pass that reads and writes
     /// only those): its declarations, facts, inputs, outputs and the rest of its `.about` rows, each where it differs
     /// from `was`, the header the pass was given. Its rules are the builder's own.
