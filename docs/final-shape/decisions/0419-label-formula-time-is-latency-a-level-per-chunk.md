@@ -71,14 +71,20 @@ s1000, at load 18:
 
 ## What is left
 
-- **The chunk count is now set by the memory sizing.** With the line lifted, s1000 runs in 6–8 chunks. Once a chunk is
-  credible, the next is the chunk budget (384 MB) over the most bytes per node any chunk added this run: 1,462 B, from a
-  70,985-node chunk, gives about 275,000 nodes. A larger `--chunk` (524,288 or 1,048,576) left the count at 6–8, and
-  the label GPU time within noise (67–103 ms against 69–84 ms). Small chunks' per-node figure includes fixed costs,
-  so the largest is pessimistic. That is the memory budget's rule (Q74), and it is kept.
-- **Gathering the label runs of chunks that run at once** into one Runner (the lanes wave's `queue`/`flush_group`
-  pattern, 0113, 0123) would cut the per-chunk levels further. It is not built. Each chunk's label run reads its own
-  chunk's tapes and residency, so this needs a Runner over several chunks' documents.
+- **Chunking is not the lever with the memory line lifted** (followed up the same day). The probe-size gain above
+  was under the default line. With the line lifted, s1000's label GPU time did not follow the chunks:
+  - with a larger cap (`--chunk` 524,288 or 1,048,576), 67–103 ms against 69–84 ms;
+  - with one chunk at a time and a 1,048,576-node cap (`RERAIL_CHUNKS_AT_ONCE=1`), 90–107 against 107–130 ms
+    (internal_dead_code) and 84–99 against 70–106 ms (public_api_triples), at load 27–57.
+
+  These are within run-to-run noise. The rows were the same. The profile's chunk count moved only between 6 and 8.
+- **The per-node measure is noise, not a model.** A credible chunk added 16–113 MB whatever its nodes (66,499 nodes:
+  89 MB; 70,985: 113 MB; 78,447: 32 MB; 259,488: 93 MB). No bytes-a-node rule fits that, so none was adopted. A
+  rule that sized chunks by the chunks of at least a quarter of the largest measured was built, and dropped
+  unmeasured as a gain. Its patch is kept outside the tree.
+- **Gathering concurrent chunks' label runs is not built.** Its prize is fewer label runs, and fewer runs (one chunk
+  at a time, larger chunks) did not lower the GPU time measurably. Decision 0386 keeps each job's wave its own, so
+  gathering would also make chunks wait on each other.
 - 0406's GPU numbers were taken under the default memory line (`RUN_MB` 1024), which cut its chunks smaller. Its
   before-and-after comparison stands, since both sides ran under the same line. Its absolute times are those of
   14–17 chunks.

@@ -1943,8 +1943,10 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   the long pole (now read by blocks: 96.8 → 54.6 ms), and every level once per chunk (now a chunk below the credible
   growth makes the next 4×: 82–98 → 77–84 ms, 89–94 → 67–82 ms). 0406's times were taken under the default memory
   line (14–17 chunks).
-- **Left**: with the line lifted, the memory sizing sets 6–8 chunks (about 275,000 nodes each, from the most bytes per
-  node a chunk added). Gathering the label runs of chunks that run at once into one Runner is not built.
+- **Closed** (2026-11-18, 0419's follow-up): with the line lifted, fewer or larger chunks did not lower the label GPU
+  time beyond noise (one chunk at a time with a 1M-node cap: 84–107 ms against 70–130 ms). A chunk's measured growth
+  is noise (16–113 MB whatever its nodes), so no finer sizing rule was adopted. Gathering concurrent chunks' label runs
+  is not built, since its prize is fewer runs and 0386 keeps each job's wave its own.
 
 ### Q219. A level's fact constraints are uploaded rows
 
