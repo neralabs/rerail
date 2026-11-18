@@ -399,6 +399,49 @@ fn the_compiled_words_are_the_interpreters() {
     assert!(differ.is_empty(), "{} of {} differ:\n{}", differ.len(), same + differ.len(), differ.join("\n"));
 }
 
+/// The corpus's files, each a TU of its own: the compiled words' tokens equal the interpreter's
+/// on every file the grammars read, and the TUs one refuses the other refuses for the same reason.
+#[test]
+#[ignore = "reads the corpus (~/orca/rerail-shared/lean-corpus, or RERAIL_C_CORPUS)"]
+fn the_corpus_compiled_is_the_interpreters() {
+    use rerail_compiler::native_cpu_pp::compile;
+    let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
+    let (mut same, mut out, mut differ) = (0, std::collections::BTreeMap::<String, usize>::new(), Vec::new());
+    let (mut t_words, mut t_jit) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
+    for (dir, cpp) in [("c", false), ("cpp", true)] {
+        let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
+        let mut paths: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        paths.sort();
+        let c = compile(program(cpp).unwrap()).unwrap_or_else(|e| panic!("cpp {cpp}: {e:?}"));
+        let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
+        for p in paths {
+            let src = std::fs::read(&p).unwrap();
+            let files = [("main.c", src.as_slice())];
+            let t0 = std::time::Instant::now();
+            let want = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &pp_words::run);
+            let t1 = std::time::Instant::now();
+            let got = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &jit);
+            let t2 = std::time::Instant::now();
+            match (&got, &want) {
+                (Err(a), Err(b)) if a == b => *out.entry(b.chars().take(80).collect()).or_default() += 1,
+                _ if got == want => {
+                    same += 1;
+                    (t_words, t_jit) = (t_words + (t1 - t0), t_jit + (t2 - t1));
+                }
+                _ => differ.push(format!("{}: JIT {:?}\n interpreter {:?}", p.display(), got.as_ref().map(|v| v.len()), want.as_ref().map(|v| v.len()))),
+            }
+        }
+    }
+    eprintln!("the same {same}, refused by both {}, differ {}; the expanded TUs: interpreter {t_words:?}, JIT {t_jit:?} (the grammars' reads included)", out.values().sum::<usize>(), differ.len());
+    for (why, n) in &out {
+        eprintln!("  {n:5} {why}");
+    }
+    for d in differ.iter().take(15) {
+        eprintln!("  {d}");
+    }
+    assert!(differ.is_empty());
+}
+
 /// `#if`'s primaries and operators, the JIT's against the interpreter's, value by value: each
 /// case's 64 bits, whether it is unsigned, and whether it is an error, each an `#if` of its own.
 #[test]
