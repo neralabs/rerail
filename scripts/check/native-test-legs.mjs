@@ -30,20 +30,21 @@ const SELF = fileURLToPath(import.meta.url);
 
 /** One leg: the tests whose path holds any of `filters` (every test when empty) and none of `skip`. */
 const SELECTED = [
+  // Nine tests, two of them 8 minutes each (scratch run 44354698909, `--report-time`): the slowest leg.
+  { id: "waves", name: "tests, waves", filters: ["code_rule_dsl::waves::"], skip: [] },
   {
     id: "workspace",
-    name: "tests, workspace, anchors, waves and transducer",
-    filters: ["code_rule_dsl::workspace::", "code_rule_dsl::matcher::anchors::", "code_rule_dsl::waves::", "code_rule_dsl::transducer::"],
+    name: "tests, workspace, anchors and transducer",
+    filters: ["code_rule_dsl::workspace::", "code_rule_dsl::matcher::anchors::", "code_rule_dsl::transducer::"],
     skip: [],
   },
   { id: "logic-rules", name: "tests, logic rules and converters", filters: ["code_rule_dsl::logic::rr::", "code_rule_dsl::logic::convert::"], skip: [] },
   {
     id: "logic",
-    name: "tests, logic and typing",
-    filters: ["code_rule_dsl::logic::", "code_rule_dsl::typing::"],
+    name: "tests, logic, typing, SQL executor and slice",
+    filters: ["code_rule_dsl::logic::", "code_rule_dsl::typing::", "code_rule_dsl::sql_executor::", "code_rule_dsl::slice::"],
     skip: ["code_rule_dsl::logic::rr::", "code_rule_dsl::logic::convert::"],
   },
-  { id: "sql", name: "tests, SQL executor and slice", filters: ["code_rule_dsl::sql_executor::", "code_rule_dsl::slice::"], skip: [] },
 ];
 
 /** The legs, in order; the last runs every test the others' filters do not name. */
