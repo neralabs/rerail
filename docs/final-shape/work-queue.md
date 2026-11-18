@@ -1667,8 +1667,12 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 - **Features from the search, the prediction armed** (the user): features 0.67–0.94 s to 0.07–0.13 s (the search's
   own steps); the device's command committed ahead, waiting on an event, so a round's rows start it. Prediction
   about 80 µs a round, on the host or the device. Work and findings as the planner's.
-- **Open**: a CPU-bound unprofiled run makes no plan records, so it stores no samples; fewer, larger rounds for
-  the per-wave replans.
+- **Step 2, a stratum's plans in one round** (the user): exact pair statistics not counted under the model
+  (3.2–4.4 s); every line planned in the round before its loop; whole replans a round a chunk; device from 6 steps.
+  Planning 5.2–5.3 s against the planner's 8.2–9.2 s; work −4.8% in two pairs. "Doubled searches" was chunking;
+  "probe re-planning" was an index build.
+- **Open**: a CPU-bound unprofiled run makes no plan records, so it stores no samples; rounds merged across strata
+  running at once (one a stratum is the floor now); more pairs for the work difference.
 - **Next**: model-planned runs over more corpora, the model retrained between; filters (×1.58 to ×1.70) and
   the median; the first step's samples (delta and seed sizes); one sample per line and place with counts. Then the
   model on by default where it wins, and step 2.

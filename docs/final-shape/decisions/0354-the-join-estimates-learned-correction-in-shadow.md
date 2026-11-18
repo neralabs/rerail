@@ -228,6 +228,42 @@ A CPU-bound unprofiled run therefore stored no samples (and, before step 1, pric
 steps are not handed to the record's other readers (placement's `add_joins` reads the columns' names and the
 walked rows they lack), so that gap stays open (Q82).
 
+## Step 2, and a stratum's plans in one round (2026-11-17)
+
+The user asked for the planning cost down further. Ranked by own CPU in the hogql profiles, four candidates; two
+were misread:
+
+1. **Exact pair statistics (step 2)**: with the model pricing, a slow line's exact pair statistics are not counted
+   (`exact_statistics`'s callers): the flag, the forced replan (priced by the model, in its round) and the wider
+   search's request stay. They were 3.2 to 4.4 s of CPU a hogql run, 29 to 42 counts, one stratum's 1.8 s.
+2. *The model doubled the searches*: no. A stratum's spec runs once a chunk of guest files (about 2,000 a chunk),
+   and the chunks vary from run to run for the planner too (34 to 63 on hogql). `keep_choice` prices one order
+   (no search).
+3. **A stratum's plans in one round** (`plan_ahead`, was `choose_first_plans`): every line of the stratum, not
+   only those seen first, is planned before its loop with the round open, and its plan handed to the loop
+   (`Ahead`, by `line_id`), which plans only a line missing from it. Lines the loop searched one at a time were two
+   in three of the prediction rounds; the whole plans' replans are one round a chunk, as the probes' were. The
+   device takes a round from 6 steps (`DEVICE_ROWS`, from the armed call's 38 µs and 0.9 µs a step against the
+   host's 8.3 µs a step). Rounds now: one a stratum before its loop (6,011), one a chunk of live replans (3,116);
+   fewer would merge rounds of strata running at once.
+4. *Probe re-planning*: no. `probe: order of a derived input` (3.3 to 3.7 s) is the sorted index a derived input
+   gets when first probed (decision 0112), execution. Probe and whole replans' searches were 0.4 s in all.
+
+hogql, the M1 Max (load 12 to 17), one store:
+
+| | planner | model | planner | model |
+|---|---|---|---|---|
+| chunks | 39 | 36 | 33 | 38 |
+| a stratum's planning (`spec`) | 5.31 s | 5.16 s | 3.74 s | 5.27 s |
+| exact pair statistics | 3.88 s | 0 | 4.45 s | 0 |
+| prediction (on the device / host, calls) | | 0.85 s (5,462 / 3,642) | | 0.78 s (5,952 / 4,185) |
+| strata CPU | 184.0 s | 161.9 s | 180.1 s | 163.7 s |
+| rows of work | 1.42 G | 1.35 G | 1.46 G | 1.39 G |
+
+The model's planning, statistics included, is 5.2 to 5.3 s against the planner's 8.2 to 9.2 s; its work 4.8 to
+4.9% under the planner's in both pairs (earlier pairs were within 3%, so two more pairs would settle it). Findings,
+hogql planned twice by each: the same 660 relations and 100,617 rows.
+
 ## Not done
 
 - **Samples of orders not kept, made on purpose**: an offline generator running each line's other orders over the

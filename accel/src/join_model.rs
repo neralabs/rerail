@@ -312,9 +312,10 @@ mod on {
         }
     }
 
-    /// The steps a call predicts on the device from (`JoinModel::fanouts`). Measured on the M3 (Q82): a dispatch
-    /// costs the host about 60 µs and 0.24 µs a step, a walk on the host about 9 µs a step.
-    pub const DEVICE_ROWS: usize = 8;
+    /// The steps a call predicts on the device from (`JoinModel::fanouts`). Measured on the M3 (Q82), with the
+    /// prediction armed ahead (`DeviceForest::prepare_values`): a call costs the host about 38 µs and 0.9 µs a step,
+    /// a walk on the host about 8.3 µs a step, even at 5.
+    pub const DEVICE_ROWS: usize = 6;
 
     /// The rows the first prediction is armed for at training (`DeviceForest::prepare_values`); a larger round arms
     /// the next larger.

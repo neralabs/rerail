@@ -2597,7 +2597,7 @@ impl Model {
 
     /// Decision 0354: a round's choice for a line planned in it (`plan_rule_reused_in`), kept under its key in place
     /// of the search's best, as `plan_rule_reused` keeps a line's plan: the line's next planning takes it.
-    fn keep_choice(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, key: PlanKey, order: &[Step]) -> Result<()> {
+    fn keep_choice(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, key: PlanKey, order: &[Step]) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         let got = self.plan_inner(pf, b, first, Some(order), true)?;
         let nodes = self.stats.nodes.max(1.0);
         PLANS.with(|p| {
@@ -2612,45 +2612,51 @@ impl Model {
         }
         // Its sizes now, as `plan_rule_reused` keeps them with its plan.
         let sizes = self.live_sizes_at(b, first, &self.delta_misses(b, first));
-        plans_learnt(&key, Learnt::Priced(Arc::new(Priced { sizes, got })));
-        Ok(())
+        plans_learnt(&key, Learnt::Priced(Arc::new(Priced { sizes, got: got.clone() })));
+        Ok(got)
     }
 
-    /// Decision 0354: with a batch pricer, a stratum's first plans of `lines` searched before its loop takes them,
-    /// their choices made in one round (one batch prediction for all of them) and kept (`keep_choice`): the loop's
-    /// planning of each then takes its kept plan, and the pricer is not asked line by line. A line whose planning
-    /// fails here is planned by the loop, which reports it. Without a pricer, or without a kept plans' store,
-    /// nothing is done. Only the lines that will be searched (no kept plan: `first_sight`) are, and only where there
-    /// are two: a line alone is one prediction for its candidates as it is (on hogql three in four component specs
-    /// had none to search, and the round only repeated their planning).
-    pub(in crate::code_rule_dsl) fn choose_first_plans(&mut self, pf: Fields<'_>, lines: &[(&Body<'_>, Option<usize>)]) {
-        if !joins::pricing() || PLANS.with(|p| p.borrow().is_none()) {
-            return;
+    /// Decision 0354: with a batch pricer, a stratum's lines planned before its loop, their choices made in one
+    /// round (one batch prediction for all of them): every line, not only those seen first, since a line with a
+    /// kept plan may be searched again (work pending, its sizes grown), and those were two in three of the rounds a
+    /// line at a time. Each line's plan is handed to the loop (`Ahead`), which plans only a line missing from it
+    /// (its planning failed here: the loop reports it). Without a pricer, or without a kept plans' store, nothing.
+    pub(in crate::code_rule_dsl) fn plan_ahead(&mut self, pf: Fields<'_>, lines: &[(&Body<'_>, Option<usize>)]) -> Ahead {
+        let mut ahead = Ahead::default();
+        if !joins::pricing() || PLANS.with(|p| p.borrow().is_none()) || lines.is_empty() {
+            return ahead;
         }
-        let lines: Vec<(&Body<'_>, Option<usize>)> = lines.iter().copied().filter(|&(b, first)| self.first_sight(b, first).is_some()).collect();
-        if lines.len() < 2 {
-            return;
-        }
-        let _span = super::profile::span(|| "join model: a stratum's first plans in one round".into());
+        let _span = super::profile::span(|| "join model: a stratum's plans in one round".into());
         let mut round: Vec<joins::Choice> = Vec::new();
         let mut asked = Vec::new();
-        for &(b, first) in &lines {
+        for &(b, first) in lines {
             if self.late(pf, b, first, false).is_err() {
                 continue;
             }
             let at = round.len();
-            if self.plan_rule_reused_in(pf, b, first, Some(&mut round)).is_ok() && round.len() > at {
-                asked.push((at, b, first));
+            if let Ok(got) = self.plan_rule_reused_in(pf, b, first, Some(&mut round)) {
+                if round.len() > at {
+                    asked.push((at, b, first));
+                }
+                ahead.insert(line_id(b, first), got);
             }
         }
         let choices = joins::finish_round(round);
         for (i, b, first) in asked {
             let Some(c) = choices.get(i).filter(|c| c.chosen != 0) else { continue };
-            if self.keep_choice(pf, b, first, c.key, &c.candidates[c.chosen].order).is_ok() {
-                super::profile::decision("join choices (decision 0203)", || format!("{}: {}", b.head_text(), c.why));
-                joins::log(|| format!("choice {} (first plans): {}", b.head_text(), c.why));
+            match self.keep_choice(pf, b, first, c.key, &c.candidates[c.chosen].order) {
+                Ok(got) => {
+                    super::profile::decision("join choices (decision 0203)", || format!("{}: {}", b.head_text(), c.why));
+                    joins::log(|| format!("choice {} (in a round): {}", b.head_text(), c.why));
+                    ahead.insert(line_id(b, first), got);
+                }
+                // The loop plans it, and takes the kept plan there is.
+                Err(_) => {
+                    ahead.remove(&line_id(b, first));
+                }
             }
         }
+        ahead
     }
 
     /// Decision 0258: an order for a line seen first, kept before, for the search to try first (`SearchCx::start`),
@@ -6422,6 +6428,14 @@ fn text_test_defined(vs: &body::Versions, rules: &[body::RuleKey], input: &str) 
 /// (`None` where the record is not of this order). A step's bound key is its relation's most distinct values among
 /// the columns bound when it reads. Without `counts`, each step's features for a prediction (the model's choice):
 /// every step after the first, its rows in and out the statistics'.
+/// Decision 0354: a stratum's plans made ahead of its loop (`Model::plan_ahead`), by line (`line_id`).
+pub(in crate::code_rule_dsl) type Ahead = HashMap<(usize, Option<usize>), (Plan, Option<super::profile::RulePlan>)>;
+
+/// A line of a stratum's loop: its body (where it lives for the loop) and its delta.
+pub(in crate::code_rule_dsl) fn line_id(b: &Body<'_>, first: Option<usize>) -> (usize, Option<usize>) {
+    (std::ptr::from_ref(b) as usize, first)
+}
+
 fn step_samples(model: &Model, b: &Body<'_>, order: &[Step], x: &super::profile::RulePlan, counts: Option<&[(u64, u64)]>, seed: bool, origin: &str) -> Option<Vec<super::costs::join_steps::StepSample>> {
     use super::costs::join_steps::{StepSample, category};
     if x.steps.len() != order.len() || counts.is_some_and(|c| c.len() != order.len()) {
@@ -7441,6 +7455,10 @@ impl<'a> Run<'a, '_> {
     /// of the second those join, counted from the engine's histograms of both on the shared variables. Each is an
     /// observation of the second atom bound by the first's variables, as `observe` keeps them. `whole`: `order` is the
     /// line's whole plan (O168), and its steps are read there.
+    ///
+    /// Decision 0354, step 2: not counted where the join model prices (`joins::pricing`): the slow line is planned
+    /// again in a round the model prices, which corrects its estimates per step; the counts were the largest
+    /// planning cost of a model-planned run (3.2 to 3.8 s of CPU on hogql, a stratum's 1.8 s at once).
     fn exact_statistics(&self, name: &str, line: usize, whole: bool, b: &Body<'_>, order: &[Step]) -> Vec<(Sig, [i64; 2])> {
         if self.model.inputs.atoms.is_none() {
             joins::log(|| format!("exact {}: symbols as text, no histograms", b.head_text()));
@@ -8068,13 +8086,16 @@ impl<'a> Run<'a, '_> {
         self.model.make_statistics(pf, &wanted)?;
         self.heavy_for(seeds.iter().copied(), false, None);
         plan_site("a stratum's seed");
-        self.model.choose_first_plans(pf, &seed_bodies.iter().map(|b| (b, None)).collect::<Vec<_>>());
+        let mut ahead = self.model.plan_ahead(pf, &seed_bodies.iter().map(|b| (b, None)).collect::<Vec<_>>());
         for (&r, b) in seeds.iter().zip(&seed_bodies) {
             let head = vs.head_at(r);
             self.model.late(pf, b, None, false)?;
             let span = planning(r, "plan");
             let t0 = if profiling { super::profile::now() } else { 0.0 };
-            let ((order, work, rows), x) = self.model.plan_rule_reused(pf, b, None)?;
+            let ((order, work, rows), x) = match ahead.remove(&line_id(b, None)) {
+                Some(got) => got,
+                None => self.model.plan_rule_reused(pf, b, None)?,
+            };
             let took = if profiling { super::profile::now() - t0 } else { 0.0 };
             drop(span);
             shape.add(Order::new(b, &order), work, false, false);
@@ -8167,7 +8188,7 @@ impl<'a> Run<'a, '_> {
         self.model.wants(round.iter().copied(), &mut wanted);
         self.model.make_statistics(pf, &wanted)?;
         self.heavy_for(rules.iter().copied(), false, None);
-        self.model.choose_first_plans(pf, &round);
+        let mut ahead = self.model.plan_ahead(pf, &round);
         let mut probes = Vec::new();
         // Each probe's whole plan's order, where it has one (O168: a whole plan cut is handed off as a probe is).
         let mut wholes: HashMap<usize, Vec<Step>> = HashMap::new();
@@ -8193,7 +8214,10 @@ impl<'a> Run<'a, '_> {
                 plan_site("a stratum's probe");
                 let _span = planning(r, "plan");
                 let t0 = if profiling { super::profile::now() } else { 0.0 };
-                let ((order, work, rows), x) = self.model.plan_rule_reused(pf, b, Some(ai))?;
+                let ((order, work, rows), x) = match ahead.remove(&line_id(b, Some(ai))) {
+                    Some(got) => got,
+                    None => self.model.plan_rule_reused(pf, b, Some(ai))?,
+                };
                 let key = self.model.reused_key(b, Some(ai));
                 let took = if profiling { super::profile::now() - t0 } else { 0.0 };
                 // Its delta as the plan priced it (`atom_rows`: the relation's rows, at most its last delta's).
@@ -8244,7 +8268,10 @@ impl<'a> Run<'a, '_> {
                 if whole_plan.is_none() {
                     plan_site("a stratum's whole plan");
                     self.model.late(pf, b, None, false)?;
-                    whole_plan = Some(self.model.plan_rule_reused(pf, b, None)?.0.0);
+                    whole_plan = Some(match ahead.remove(&line_id(b, None)) {
+                        Some(got) => got.0.0,
+                        None => self.model.plan_rule_reused(pf, b, None)?.0.0,
+                    });
                 }
                 let whole = whole_plan.as_ref().expect("planned");
                 let wspec = if whole[0].at != ai && !small_batches(a) {
@@ -8619,7 +8646,7 @@ impl<'a> Run<'a, '_> {
                     let rule = order_rules[line];
                     joins::flag_slow(key, rule, &probes[k].2, est, work);
                     super::profile::decision("slow joins (decision 0203)", || format!("{} (delta at {ai}): {work:.0} rows of work, priced {est:.0} for its {delta:.0} delta rows", b.head_text()));
-                    let exact = self.exact_statistics(&name, line, false, &b, &probes[k].2);
+                    let exact = if joins::pricing() { Vec::new() } else { self.exact_statistics(&name, line, false, &b, &probes[k].2) };
                     joins::log(|| format!("slow {} (delta at {ai}): {work:.0} rows of work, priced {est:.0} for its {delta:.0} delta rows; {} exact pair statistics", b.head_text(), exact.len()));
                     joins::put_exact(key, rule, exact);
                     self.heavy_for([r], true, Some(key));
@@ -8673,6 +8700,10 @@ impl<'a> Run<'a, '_> {
                 // Searched whatever was kept (`plan_rule_live`): every deferred relation they read.
                 let wanted: BTreeSet<String> = (0..probes.len()).filter(|&k| wants_whole(k, self)).flat_map(|k| Model::read_by_body(&line_bodies[nseeds + k])).map(str::to_owned).collect();
                 self.model.make_statistics(pf, &wanted)?;
+                // Decision 0354: the rules' whole plans searched first, their choices made together after one batch
+                // prediction (`joins::choose`), as the probes' below: a round a chunk, not one a rule.
+                let mut round: Vec<joins::Choice> = Vec::new();
+                let mut searched_whole: Vec<(usize, Vec<Step>, Option<usize>)> = Vec::new();
                 for k in 0..probes.len() {
                     if unplanned[k] || !wants_whole(k, self) {
                         continue;
@@ -8680,12 +8711,30 @@ impl<'a> Run<'a, '_> {
                     let r = probes[k].0;
                     let b = &line_bodies[nseeds + k];
                     if !replanned_at.take_whole(k) { continue; }
+                    if whole.iter().any(|(p, _, _)| *p == r) || searched_whole.iter().any(|(j, _, _)| probes[*j].0 == r) {
+                        searched_whole.push((k, Vec::new(), None));
+                        continue;
+                    }
+                    self.model.late(pf, b, None, true)?;
+                    let _span = planning(r, "replan whole");
+                    let asked = round.len();
+                    let ((new, _, _), _) = self.model.plan_rule_live_in(pf, b, None, Some(&mut round))?;
+                    searched_whole.push((k, new, (round.len() > asked).then_some(asked)));
+                }
+                let choices = joins::finish_round(round);
+                for (k, mut new, asked) in searched_whole {
+                    let r = probes[k].0;
+                    let b = &line_bodies[nseeds + k];
                     let (spec, order) = match whole.iter().find(|(p, _, _)| *p == r) {
                         Some((_, w, o)) => (w.clone(), o.clone()),
                         None => {
-                            self.model.late(pf, b, None, true)?;
-                            let _span = planning(r, "replan whole");
-                            let ((new, _, _), _) = self.model.plan_rule_live(pf, b, None)?;
+                            if let Some(c) = asked.and_then(|i| choices.get(i)).filter(|c| c.chosen != 0)
+                                && let Ok(((order, _, _), _)) = self.model.plan_inner(pf, b, None, Some(&c.candidates[c.chosen].order), false)
+                            {
+                                super::profile::decision("join choices (decision 0203)", || format!("{}: {}", b.head_text(), c.why));
+                                joins::log(|| format!("choice {} (whole, round): {}", b.head_text(), c.why));
+                                new = order;
+                            }
                             let Some(w) = self.whole_join_spec(b, &new, None, &ri, scc, &native_rels) else { continue };
                             whole.push((r, w.clone(), new.clone()));
                             (w, new)
@@ -8847,7 +8896,7 @@ impl<'a> Run<'a, '_> {
                         let rule = order_rules[line];
                         joins::flag_slow(key, rule, &running, est, ran);
                         super::profile::decision("slow joins (decision 0203)", || format!("{} {}: {ran:.0} rows of work, priced {est:.0} for its {} rows read", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done));
-                        let exact = self.exact_statistics(&name, line, whole, &b, &running);
+                        let exact = if joins::pricing() { Vec::new() } else { self.exact_statistics(&name, line, whole, &b, &running) };
                         joins::log(|| format!("slow {} {}: {ran:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics; its share of a critical path {:.3}{}", if whole { "whole plan" } else { "seed" }, b.head_text(), c.done, exact.len(), joins::note(&key).map_or(0.0, |n| n.critical), if joins::trial_due(&key) { ", trialled" } else { "" }));
                         joins::put_exact(key, rule, exact);
                         self.heavy_for([r], true, Some(key));
