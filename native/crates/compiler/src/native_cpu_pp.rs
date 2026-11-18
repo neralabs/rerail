@@ -17,9 +17,9 @@ use crate::native_cpu_shape::Step;
 use crate::pp_expr::Value as Val;
 use crate::pp_words::{self, DIGITS, EmC, Asked, B_BASE_FILE, B_COUNTER, B_DATE, B_FILE, B_FILE_NAME, B_HAS_EMBED, B_HAS_INCLUDE, B_HAS_INCLUDE_NEXT, B_INCLUDE_LEVEL, B_LINE, B_PRAGMA, B_TIME, B_TIMESTAMP, BUILTINS, Bi, Bounds, COND_ELSE, COND_SIZE, COND_SRC, COND_TAKEN, Ctx, Ex, FeatureC, Inc, MAX_INCLUDE_DEPTH, NamedC, OPS, Want, op_index, BOL, DIGRAPH, Def, DefState, EOF, EXP, Env, Expanded, File, FileC, Frame, HASH, HASHHASH, IDENT, LEVEL, LITERAL, NO_PARAM, NOEXP, NONE, NUMBER, PAIR, PASTE, PASTE_MARK, PLACEMARKER, PUNCT, Refused, SPACE, Slot, Src, Sub, Tok, USE, VA_ARGS, VA_OPT, VA_OPT_MARK};
 use crate::program::{ACCEPT, ARG, BUILTIN, COND, EMBED, DEFINE, DEFINED, EXPR, FRAME, GLUE, GOTO, IF, INCLUDE, IS, LINEDIR, PRAGMA, SKIP, KEEP, LINE, LOOKUP, MACRO, PAINT, PEEK, PRE, PUSH, PUT, PpTables, READ, RETURN, SKIPLINE, STOP, STR, SUB, UNDEF, Words, split};
-use cranelift_codegen::ir::{AbiParam, Block, BlockArg, BlockCall, InstBuilder, JumpTableData, MemFlags, Value, condcodes::IntCC, types};
+use cranelift_codegen::ir::{AbiParam, Block, BlockArg, BlockCall, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_codegen::ir::{ExtFuncData, ExternalName, FuncRef, UserExternalName};
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, default_libcall_names};
 use std::mem::{offset_of, size_of};
@@ -245,10 +245,15 @@ fn ld(f: &mut FunctionBuilder<'_>, ty: types::Type, base: Value, off: i32) -> Va
     f.ins().load(ty, flags(), base, off)
 }
 
-/// A narrow load, widened to 64 bits.
+/// A narrow load, widened to 64 bits: one extending load (`uload8` and the rest), which the
+/// backend emits as one instruction, where a load and an `uextend` cost a move more.
 fn ldu(f: &mut FunctionBuilder<'_>, ty: types::Type, base: Value, off: i32) -> Value {
-    let x = f.ins().load(ty, flags(), base, off);
-    if ty == types::I64 { x } else { f.ins().uextend(types::I64, x) }
+    match ty {
+        types::I8 => f.ins().uload8(types::I64, flags(), base, off),
+        types::I16 => f.ins().uload16(types::I64, flags(), base, off),
+        types::I32 => f.ins().uload32(flags(), base, off),
+        _ => f.ins().load(ty, flags(), base, off),
+    }
 }
 
 fn st(f: &mut FunctionBuilder<'_>, ty: types::Type, x: Value, base: Value, off: i32) {
@@ -303,18 +308,49 @@ impl Lower<'_, '_> {
         st(self.f, types::I64, end, ctx, at!(nreturns));
     }
 
+    /// To `cases`' block whose key `x` is (the keys rising), else to `default`: a balanced tree
+    /// of compares, never a `br_table`. Cranelift's Arm jump table carries a speculation barrier
+    /// (`csel`, then `csdb`) on every dispatch, which LLVM's does not: on the return dispatches
+    /// it was most of the compiled words' cycles (Q36, t44). Ends the current block.
+    fn switch(&mut self, x: Value, cases: &[(u64, Block)], default: Block) {
+        debug_assert!(cases.windows(2).all(|w| w[0].0 < w[1].0));
+        let here = self.f.current_block().expect("a block to end");
+        let mut work = vec![(here, 0usize, cases.len())];
+        while let Some((b, lo, hi)) = work.pop() {
+            if b != here {
+                self.f.switch_to_block(b);
+            }
+            match hi - lo {
+                0 => {
+                    self.f.ins().jump(default, &[]);
+                }
+                1 => {
+                    let eq = self.f.ins().icmp_imm(IntCC::Equal, x, cases[lo].0 as i64);
+                    self.f.ins().brif(eq, cases[lo].1, &[], default, &[]);
+                }
+                _ => {
+                    let mid = (lo + hi) / 2;
+                    let (left, right) = (self.f.create_block(), self.f.create_block());
+                    let below = self.f.ins().icmp_imm(IntCC::UnsignedLessThan, x, cases[mid].0 as i64);
+                    self.f.ins().brif(below, left, &[], right, &[]);
+                    work.push((right, mid, hi));
+                    work.push((left, lo, mid));
+                }
+            }
+        }
+    }
+
     /// A return to the return point of rank `to`, its block `targets[to]`: through a dispatch
-    /// block of the `RETURN`'s own (`Step::Return`), a table over the ranks.
+    /// block of the `RETURN`'s own (`Step::Return`), a tree of compares over the ranks
+    /// (`switch`).
     fn dispatch(&mut self, pc: usize, to: Value, targets: &[Block]) {
         let dispatch = self.f.create_block();
         self.heads.push((dispatch, Step::Return));
         self.f.ins().jump(dispatch, &[]);
         self.f.switch_to_block(dispatch);
         let bad = self.f.create_block();
-        let targets: Vec<BlockCall> = targets.iter().map(|&b| self.f.func.dfg.block_call(b, &[])).collect();
-        let default = self.f.func.dfg.block_call(bad, &[]);
-        let jt = self.f.create_jump_table(JumpTableData::new(default, &targets));
-        self.f.ins().br_table(to, jt);
+        let cases: Vec<(u64, Block)> = targets.iter().enumerate().map(|(k, &b)| (k as u64, b)).collect();
+        self.switch(to, &cases, bad);
         self.f.switch_to_block(bad);
         self.refuse(pc, R_NO_CALL);
     }
@@ -3557,15 +3593,15 @@ impl Lower<'_, '_> {
     fn builtin_value(&mut self, pc: usize, b: Value, lo: Value, hi: Value) {
         let ctx = self.ctx;
         let done = self.f.create_block();
-        let mut sw = Switch::new();
         let mut cases = Vec::new();
         for c in [B_LINE, B_FILE, B_FILE_NAME, B_BASE_FILE, B_COUNTER, B_INCLUDE_LEVEL, B_DATE, B_TIME, B_TIMESTAMP, B_HAS_INCLUDE, B_HAS_INCLUDE_NEXT, B_HAS_EMBED] {
             let blk = self.f.create_block();
-            sw.set_entry(u128::from(c), blk);
             cases.push((c, blk));
         }
         let feature = self.f.create_block();
-        sw.emit(self.f, b, feature);
+        let mut keyed: Vec<(u64, Block)> = cases.iter().map(|&(c, blk)| (u64::from(c), blk)).collect();
+        keyed.sort_unstable_by_key(|c| c.0);
+        self.switch(b, &keyed, feature);
         for (c, blk) in cases {
             self.f.switch_to_block(blk);
             match c {
@@ -5009,16 +5045,12 @@ impl Lower<'_, '_> {
         let u = self.f.ins().bor(lu, ru);
         let ub = self.f.ins().icmp_imm(IntCC::NotEqual, u, 0);
         let lub = self.f.ins().icmp_imm(IntCC::NotEqual, lu, 0);
-        let mut sw = Switch::new();
         let bad = self.f.create_block();
-        let case = |l: &mut Self, sw: &mut Switch, name: &[u8]| {
-            let b = l.f.create_block();
-            sw.set_entry(u128::from(op_index(name)), b);
-            b
-        };
         let names: [&[u8]; 18] = [b"||", b"&&", b"|", b"^", b"&", b"==", b"!=", b"<", b">", b"<=", b">=", b"<<", b">>", b"+", b"-", b"*", b"/", b"%"];
-        let blocks: Vec<Block> = names.iter().map(|n| case(self, &mut sw, n)).collect();
-        sw.emit(self.f, op, bad);
+        let blocks: Vec<Block> = names.iter().map(|_| self.f.create_block()).collect();
+        let mut keyed: Vec<(u64, Block)> = names.iter().zip(&blocks).map(|(n, &b)| (u64::from(op_index(n)), b)).collect();
+        keyed.sort_unstable_by_key(|c| c.0);
+        self.switch(op, &keyed, bad);
         self.f.switch_to_block(bad);
         self.refuse(pc, R_NO_OP);
         for (name, blk) in names.iter().zip(blocks) {
@@ -6586,6 +6618,86 @@ fn return_points(words: &[u32]) -> (Vec<u32>, Vec<usize>) {
     (ranks, rets)
 }
 
+/// Each branch on a combination of tests made a chain of branches on the tests themselves:
+/// `brif(bor(a, b), T, F)` is `brif(a, T, m); m: brif(b, T, F)`, `band` the dual, a `not`
+/// (`bxor_imm x, 1`) swaps the targets, and a widened test is the test. The backend fuses a
+/// compare into the branch that tests it, but materializes a combination (`cset`, `orr`, `uxtb`,
+/// then `cbnz`): Q36's moves and selects. Only where every operand is a test (0 or 1), so
+/// `band`'s split means what it did. The operands are computed before the first branch, as
+/// before: nothing moves past a branch.
+fn branch_on_tests(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::cursor::{Cursor, FuncCursor};
+    use cranelift_codegen::ir::{InstructionData, Opcode, ValueDef};
+    fn def(func: &cranelift_codegen::ir::Function, v: Value) -> Option<(Opcode, Vec<Value>, Option<i64>)> {
+        let v = func.dfg.resolve_aliases(v);
+        let ValueDef::Result(inst, 0) = func.dfg.value_def(v) else { return None };
+        let data = &func.dfg.insts[inst];
+        let imm = match data {
+            InstructionData::BinaryImm64 { imm, .. } => Some(imm.bits()),
+            _ => None,
+        };
+        Some((data.opcode(), func.dfg.inst_args(inst).iter().map(|&a| func.dfg.resolve_aliases(a)).collect(), imm))
+    }
+    fn is_test(func: &cranelift_codegen::ir::Function, v: Value, depth: u32) -> bool {
+        depth < 8
+            && match def(func, v) {
+                Some((Opcode::Icmp | Opcode::IcmpImm, _, _)) => true,
+                Some((Opcode::Band | Opcode::Bor | Opcode::Bxor, args, _)) => args.iter().all(|&a| is_test(func, a, depth + 1)),
+                Some((Opcode::BxorImm, args, Some(1))) | Some((Opcode::Uextend, args, _)) => is_test(func, args[0], depth + 1),
+                _ => false,
+            }
+    }
+    let mut work: Vec<Block> = func.layout.blocks().collect();
+    while let Some(block) = work.pop() {
+        let Some(inst) = func.layout.last_inst(block) else { continue };
+        let InstructionData::Brif { arg, blocks, .. } = func.dfg.insts[inst] else { continue };
+        let pool = &func.dfg.value_lists;
+        let call = |b: &BlockCall| (b.block(pool), b.args(pool).collect::<Vec<BlockArg>>());
+        let ((t, targs), (e, eargs)) = (call(&blocks[0]), call(&blocks[1]));
+        let Some((op, args, imm)) = def(func, arg) else { continue };
+        enum Then {
+            Or(Value, Value),
+            And(Value, Value),
+            Swap(Value),
+            Same(Value),
+        }
+        let then = match (op, imm) {
+            (Opcode::Bor, _) if is_test(func, arg, 0) => Then::Or(args[0], args[1]),
+            (Opcode::Band, _) if is_test(func, arg, 0) => Then::And(args[0], args[1]),
+            (Opcode::BxorImm, Some(1)) if is_test(func, args[0], 0) => Then::Swap(args[0]),
+            (Opcode::Uextend, _) if is_test(func, args[0], 0) => Then::Same(args[0]),
+            _ => continue,
+        };
+        let mut pos = FuncCursor::new(func).at_inst(inst);
+        pos.remove_inst();
+        match then {
+            Then::Or(a, b) | Then::And(a, b) => {
+                let m = pos.func.dfg.make_block();
+                pos.func.layout.insert_block_after(m, block);
+                let mut pos = FuncCursor::new(pos.func).at_bottom(block);
+                if matches!(then, Then::Or(..)) {
+                    pos.ins().brif(a, t, &targs, m, &[]);
+                } else {
+                    pos.ins().brif(a, m, &[], e, &eargs);
+                }
+                let mut pos = FuncCursor::new(pos.func).at_bottom(m);
+                pos.ins().brif(b, t, &targs, e, &eargs);
+                work.extend([block, m]);
+            }
+            Then::Swap(x) => {
+                let mut pos = FuncCursor::new(pos.func).at_bottom(block);
+                pos.ins().brif(x, e, &eargs, t, &targs);
+                work.push(block);
+            }
+            Then::Same(x) => {
+                let mut pos = FuncCursor::new(pos.func).at_bottom(block);
+                pos.ins().brif(x, t, &targs, e, &eargs);
+                work.push(block);
+            }
+        }
+    }
+}
+
 /// Compile `program`'s words (validated first).
 pub fn compile(program: &Words) -> Result<CompiledPp, Error> {
     compile_kept(program, false)
@@ -6676,6 +6788,7 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
             continue;
         }
         let fid = module.declare_function(&format!("pp_word_{pc}"), Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
+        branch_on_tests(&mut context.func);
         crate::native_cpu_shape::check(&context.func, &heads, &[]).map_err(|r| Error::RefusedShape(format!("word {pc}: {r:?}")))?;
         clif.push_str(&context.func.display().to_string());
         all_heads.extend(heads.iter().map(|h| h.1));
@@ -6756,6 +6869,7 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
             let _ = std::fs::write(path, cranelift_codegen::print_errors::pretty_verifier_error(&context.func, None, e));
         }
     }
+    branch_on_tests(&mut context.func);
     crate::native_cpu_shape::check(&context.func, &heads, &own).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
     clif.push_str(&context.func.display().to_string());
     all_heads.extend(heads.iter().map(|h| h.1));

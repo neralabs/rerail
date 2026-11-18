@@ -432,7 +432,11 @@ need a profiler run, which is open.
   On the corpus (3,060 TUs, 0 differ): the interpreter 1,098 M cycles, Cranelift 1,235 M,
   rustc 487 M, the lean pass 1,876 M.
 
-**Left:** Q36's plan (t44).
+- **The stall found (Q36).** Cranelift's Arm jump tables carry a speculation barrier (`csdb`) on
+  every dispatch, and every `RETURN` dispatched through one. The dispatches are now trees of
+  compares (`Lower::switch`), and the shape test refuses a `br_table`. With two smaller
+  changes (extending loads, branches on each test of a combination), Cranelift's code went
+  from 1,235 M cycles to 550 M: 0.50× the interpreter's, 1.14× rustc's (t44).
 
 ## Open
 

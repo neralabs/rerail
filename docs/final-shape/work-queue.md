@@ -883,6 +883,13 @@ pass.
   compilers (depth 16 against 0: Cranelift 1.11×, rustc 1.67×) and removed; C and C++ made one
   program, the dialect `Env::cpp`. One build each: Cranelift 1,235 M cycles, rustc 487 M, the
   interpreter 1,098 M. Steps 1–3 and the user's choice (step 5) are open.
+- **Done** (2026-11-18): the cause was Cranelift's jump tables. Its Arm `br_table` carries a
+  speculation barrier (`csel`, `csdb`) on every dispatch, and every rir `RETURN` dispatched
+  through one; LLVM's tables have none. Dispatches are now trees of compares
+  (`Lower::switch`), and the shape test refuses a `br_table`: 1,197 M cycles to 550 M, 1.14×
+  rustc's. With it, extending loads (`uload8`/`16`/`32`) and branches on combined tests split
+  into branches on each test (`branch_on_tests`): 2,134 M instructions to 1,966 M. The user
+  chose to ship rustc's build as the CPU path (t44, step 5).
 
 ### Q37. The pp words' ahead-of-time Rust (`clif_rust`), checked once
 
@@ -891,6 +898,16 @@ pass.
 - **Done** (2026-11-17): `rerail-pp-aot` (C and C++ at depth 0, C++ at 4) equals the
   interpreter on the examples and TUs, 90 runs (`the_aot_words_are_the_interpreters`, with
   `--features generated`).
+
+### Q38. Tier 1's and tier 2's jump tables carry Cranelift's speculation barrier
+
+- **Found** (2026-11-18, Q36): on Arm, Cranelift emits every `br_table` with a `csel` and a
+  `csdb`, unconditionally (no setting turns it off). In the pp words that barrier on the return
+  dispatches was 54% of the corpus's cycles. `native_cpu_block.rs` (one `br_table`) and
+  `native_cpu_stream.rs` (three) dispatch so too.
+- **Done when**: each is measured on its own benchmark with the dispatch as a tree of compares
+  (as `native_cpu_pp`'s `Lower::switch`), and kept where it is faster, with a guard as the pp
+  words' shape test has.
 
 ## Questions for the user
 

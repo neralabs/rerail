@@ -119,6 +119,28 @@ and writing a spelling's tail bytes as one word (to 1,290 M).
   `#if` depth estimate. C and C++ became one program at the same time, the dialect a flag of
   the run (`Env::cpp`).
 
+### Steps 1–3, one round (2026-11-18): the stall found and fixed
+
+Comparing the two compilers' code for the same words named the cause directly, without the
+profile of step 1. Each change was timed alone on the corpus (M1 Max, quiet run):
+
+| Change | Instructions | Cycles |
+|---|---|---|
+| Before | 2,134 M | 1,235 M |
+| Narrow loads as extending loads (`uload8`/`16`/`32`), no `uextend` move after | 2,062 M | 1,211 M |
+| A branch on `bor`/`band` of tests split into a branch per test (`branch_on_tests`) | 1,934 M | 1,197 M |
+| Every dispatch a tree of compares, no `br_table` (`Lower::switch`) | 1,966 M | **550 M** |
+| rustc, the same IR, for reference | 1,662 M | 485 M |
+
+- **The cause.** Cranelift's Arm backend emits every `br_table` with a `csel` and a `csdb`
+  (`JTSequence`), whatever the settings. `csdb` is a speculation barrier: the jump waits for
+  its index to be known. Every rir `RETURN` dispatched through a table, so every return of
+  `#if`'s evaluator and the expansion's calls waited. LLVM's jump tables have no barrier.
+- **The fix.** `Lower::switch`: a balanced tree of compares, for the return dispatches and the
+  two former `cranelift_frontend::Switch`es. The shape test refuses a `br_table`.
+- Cranelift's code is now at 0.50× the interpreter's cycles and 1.14× rustc's.
+- The same barrier is in tier 1's and tier 2's jump tables (work queue Q38).
+
 ### 5. A decision for the user: which code the CPU path runs
 
 The words' program is fixed when the engine is built. So the code rustc compiles ahead of time
@@ -131,8 +153,8 @@ is the same program the JIT would compile when the engine runs, at 0.43× of Cra
   the path where no build is present.
   Steps 1–3 still matter for any code Cranelift compiles for real when the engine runs.
 
-The recommendation is B, with steps 1–2 done first so the record says why Cranelift's code is
-slower. The choice is the user's.
+The recommendation was B, with steps 1–2 done first so the record says why Cranelift's code
+is slower. **The user chose B** (2026-11-18), after one more round on Cranelift (above).
 
 ## How each step is run
 
