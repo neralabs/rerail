@@ -1148,7 +1148,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     try {
       catalogs = new CheckoutCatalogs(databasePath);
       startWatch = options.startGate === true ? new RepositoryStartWatch(databasePath, workspaceRoot) : undefined;
-      sessionStore = new SqliteSessionStore(databasePath);
+      sessionStore = new SqliteSessionStore(databasePath, { onRowPutBack: sessionId => this.#claimAgain(sessionId) });
       audits = new SqliteAuditStore(databasePath);
       controls = new SqliteAuditControlStore(databasePath);
       this.#catalogs = catalogs;
@@ -2109,9 +2109,26 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const kept = this.#suspendedSessions?.get(sessionId)?.ownerClaim;
     const claim = kept !== undefined && this.#controls.holdsOwner(sessionId, kept)
       ? kept
-      : this.#controls.registerOwner(sessionId, this.#deliverBackground === undefined ? "next-event" : "background", this.#ownerLockId);
+      : this.#controls.registerOwner(sessionId, this.#ownerDelivery(), this.#ownerLockId);
     this.#suspendedSessions?.take(sessionId);
     return claim;
+  }
+
+  /** How this runtime delivers the steers of the sessions it claims: in the background when it can, else at the next event. */
+  #ownerDelivery(): "background" | "next-event" {
+    return this.#deliverBackground === undefined ? "next-event" : "background";
+  }
+
+  /**
+   * Writes this runtime's claim on a session it holds again once a write found the session's row gone and put it back
+   * (`SqliteSessionStore`'s `onRowPutBack`): another program that removes a running session's rows removes its claim
+   * with them, and a scan asked for in the session needs a live owner. A daemon started again would claim the session
+   * as it opened it; this one keeps the claim it made then.
+   */
+  #claimAgain(sessionId: string): void {
+    const state = this.#sessions.get(sessionId);
+    if (state === undefined || state.closed || state.ownerClaim === undefined) return;
+    this.#controls.claimAgain(sessionId, this.#ownerDelivery(), state.ownerClaim);
   }
 
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
@@ -2592,7 +2609,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
     // Read by the folder as the session spelt it and the repository it was recorded in, the facts its row holds, never
     // through the row: another program can remove a running session's row (a database put back from a copy), and
-    // neither the control timer nor the session's events need it. The session's next recorded event puts the row back.
+    // neither the control timer nor the session's events need it. The session's next recorded event puts the row back,
+    // and this runtime's claim on the session with it (`#claimAgain`).
     const settings = this.#controls.getWorkspaceSettings(state.descriptor.cwd, this.#repositoryKey(state.checkout)) ?? this.#auditSettings;
     state.steerStrategy = effectiveSteerStrategy(settings);
     state.codeRuleBridge?.updateSettings(settings);

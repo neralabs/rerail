@@ -421,6 +421,17 @@ export class SqliteAuditControlStore {
     return { token };
   }
   /**
+   * Writes the owner row of `claim`, which this process made (`registerOwner`) and still holds, again where another
+   * connection removed it with the session's rows, as putting back a database copied before the session began does, so
+   * the session's scans are claimed and its end is swept as before. A row already there, this claim's or another
+   * runtime's, is left as it is: a live runtime's claim is never taken.
+   */
+  claimAgain(sessionId: string, delivery: "background" | "next-event", claim: PolicyOwnerClaim): void {
+    this.#database.insert(policySessionOwners)
+      .values({ sessionId, delivery, active: true, processId: process.pid, token: claim.token, updatedAt: Date.now() })
+      .onConflictDoNothing().run();
+  }
+  /**
    * Whether `claim` still owns the session for this process: the claim a suspended session kept, which its next open
    * takes back without interrupting the scans queued for it. False once its owner was released or replaced.
    */

@@ -24,12 +24,14 @@ function catalog() {
   })]);
 }
 
-async function idleRuntime(sessions: readonly string[]) {
+/** A runtime holding `sessions` open; `background` gives it a way to deliver steers between events. */
+async function idleRuntime(sessions: readonly string[], { background = false } = {}) {
   const root = await realpath(await temporaryDirectory());
   const databasePath = join(root, "rerail.sqlite");
   const runtime = new RerailRuntime({
     storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
     createAuditor: options => new NativeCodeRuleEnforcer(catalog(), options),
+    ...(background ? { deliverBackground: () => undefined } : {}),
   });
   for (const sessionId of sessions) {
     await runtime.ingest({ kind: "session-start", eventId: `start-${sessionId}`, session: { host: "claude-code", sessionId, cwd: root } });
@@ -63,6 +65,28 @@ function recorded(databasePath: string, sessionId: string, eventId: string): { s
       session: database.prepare("SELECT ended_at AS endedAt FROM sessions WHERE session_id = ?").get(sessionId),
       events: database.prepare("SELECT count(*) AS count FROM events WHERE session_id = ? AND event_id = ?").get(sessionId, eventId),
     };
+  } finally {
+    database.close();
+  }
+}
+
+/** The session's owner row as the database holds it, undefined when it has none. */
+function ownerRow(databasePath: string, sessionId: string): unknown {
+  const database = new Database(databasePath, { readonly: true });
+  try {
+    return database.prepare("SELECT delivery, active, token FROM policy_session_owners WHERE session_id = ?").get(sessionId);
+  } finally {
+    database.close();
+  }
+}
+
+/** A live claim on `sessionId` with the token `token`, as another runtime of this process writes one. */
+function claimElsewhere(databasePath: string, sessionId: string, token: string): void {
+  const database = new Database(databasePath);
+  try {
+    database.pragma("busy_timeout = 5000");
+    database.prepare("INSERT INTO policy_session_owners (session_id, delivery, active, process_id, token, updated_at) VALUES (?, 'next-event', 1, ?, ?, 1)")
+      .run(sessionId, process.pid, token);
   } finally {
     database.close();
   }
@@ -139,6 +163,54 @@ describe("The runtime's audit control polling", () => {
       removeSessionRow(databasePath, "gone");
       await runtime.ingest({ kind: "user-prompt", eventId: "after-removal", sessionId: "gone", text: "go on" });
       expect(recorded(databasePath, "gone", "after-removal")).toEqual({ session: { endedAt: null }, events: { count: 1 } });
+    } finally {
+      await runtime.dispose();
+    }
+  }, 20_000);
+
+  // The session's claim went with its rows: a scan asked for in it (`rerail scan --session`) needs a live owner, and a
+  // daemon started again would claim the session when it opened it.
+  it.each([false, true])("claims a scan asked for in a running session once its row is removed and its next event has put the row back (steers between events: %s)", async background => {
+    const { runtime, databasePath } = await idleRuntime(["gone"], { background });
+    const other = new SqliteAuditControlStore(databasePath);
+    try {
+      const claimed = ownerRow(databasePath, "gone");
+      expect(claimed).toMatchObject({ delivery: background ? "background" : "next-event", active: 1 });
+      removeSessionRow(databasePath, "gone");
+      await runtime.ingest({ kind: "user-prompt", eventId: "after-removal", sessionId: "gone", text: "go on" });
+      expect(ownerRow(databasePath, "gone")).toEqual(claimed);
+      const queued = other.requestAudit("gone", { scope: "repository" });
+      expect({ status: queued.status, error: queued.error }).toEqual({ status: "queued", error: null });
+      await vi.waitFor(() => {
+        expect(other.listAuditRequests("gone").find(request => request.id === queued.id)?.status).not.toBe("queued");
+      }, { timeout: 3_000, interval: 50 });
+    } finally {
+      other.close();
+      await runtime.dispose();
+    }
+  }, 20_000);
+
+  it("leaves a session another runtime claimed since to it when the session's next event puts its row back", async () => {
+    const { runtime, databasePath } = await idleRuntime(["gone"]);
+    try {
+      removeSessionRow(databasePath, "gone");
+      claimElsewhere(databasePath, "gone", "another-runtime");
+      await runtime.ingest({ kind: "user-prompt", eventId: "after-removal", sessionId: "gone", text: "go on" });
+      expect(ownerRow(databasePath, "gone")).toEqual({ delivery: "next-event", active: 1, token: "another-runtime" });
+    } finally {
+      await runtime.dispose();
+    }
+  }, 20_000);
+
+  // A claim written again for a session that has let go of it would hold every scan asked for there queued for good.
+  it("writes no claim again for a session that is closing when a write of its close puts its row back", async () => {
+    const { runtime, databasePath } = await idleRuntime(["gone"]);
+    try {
+      removeSessionRow(databasePath, "gone");
+      const closing = runtime.closeSession("gone");
+      runtime.recordSteer("gone", "while-closing");
+      await closing;
+      expect(ownerRow(databasePath, "gone")).toBeUndefined();
     } finally {
       await runtime.dispose();
     }
