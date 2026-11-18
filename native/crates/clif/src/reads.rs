@@ -724,6 +724,9 @@ impl B<'_, '_> {
         let shared = self.column(4);
         let (head, check, read, again, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block());
         self.f.append_block_param(head, I32);
+        // `read` reads an entry: the one found, or the dead entry; and whether to check it again after the body.
+        self.f.append_block_param(read, I64);
+        self.f.append_block_param(read, I32);
         let zero = self.c32(0);
         self.f.ins().jump(head, &[zero.into()]);
         self.f.switch_to_block(head);
@@ -731,7 +734,8 @@ impl B<'_, '_> {
         let entry = self.call("tape_z_block", &[block]);
         let ready = self.entry_word(entry, c::READY);
         let before = self.f.ins().atomic_load(I32, MemFlags::trusted(), ready);
-        self.f.ins().brif(shared, check, &[], read, &[]);
+        let no = self.c32(0);
+        self.f.ins().brif(shared, check, &[], read, &[entry.into(), no.into()]);
         // Shared: the entry complete, of this block (another thread may have taken it since it was found).
         self.f.switch_to_block(check);
         self.f.ins().fence();
@@ -748,17 +752,22 @@ impl B<'_, '_> {
         let some = self.f.ins().icmp_imm(IntCC::NotEqual, before, 0);
         let ok = self.f.ins().band(ours, complete);
         let ok = self.f.ins().band(ok, some);
-        // Tries spent, the entry is read as it is, a failure counted (another thread holds it): a read that may be
-        // wrong is never silent (its reader refuses the run, `cache::Counts::failed`).
+        // Tries spent: the dead entry is read, a failure counted (another thread holds the block). Never the entry
+        // as it is, which may hold two blocks' bytes: a kernel that went on with such a value (an index, a span)
+        // would reach anywhere before its run is refused (decision 0403); the dead entry's reads are its zeros.
         let (gave_up, give_up) = (self.f.create_block(), self.f.create_block());
-        self.f.ins().brif(ok, read, &[], gave_up, &[]);
+        let yes = self.c32(1);
+        self.f.ins().brif(ok, read, &[entry.into(), yes.into()], gave_up, &[]);
         self.f.switch_to_block(gave_up);
         let spent = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, tries, i64::from(c::TRIES));
         self.f.ins().brif(spent, give_up, &[], again, &[]);
         self.f.switch_to_block(give_up);
         self.count_failed();
-        self.f.ins().jump(read, &[]);
+        let dead = self.dead_entry();
+        let no = self.c32(0);
+        self.f.ins().jump(read, &[dead.into(), no.into()]);
         self.f.switch_to_block(read);
+        let (entry, rechecking) = (self.f.block_params(read)[0], self.f.block_params(read)[1]);
         let tape = self.f.ins().iadd_imm(entry, i64::from(z::SLOT_BYTES));
         let view = self.f.ins().iadd_imm(entry, i64::from(z::SLOT_VIEW));
         let slot = Slot { tape: self.tape, view: self.view.expect("a read of the tape's family"), base: first, mask };
@@ -769,7 +778,7 @@ impl B<'_, '_> {
         self.f.append_block_param(done, ty);
         // Read again, a bounded number of times, if a writer took the entry while the body read it.
         let recheck = self.f.create_block();
-        self.f.ins().brif(shared, recheck, &[], done, &[value.into()]);
+        self.f.ins().brif(rechecking, recheck, &[], done, &[value.into()]);
         self.f.switch_to_block(recheck);
         self.f.ins().fence();
         let ready = self.entry_word(entry, c::READY);
@@ -780,14 +789,27 @@ impl B<'_, '_> {
         self.f.switch_to_block(changed);
         let spent = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, tries, i64::from(c::TRIES));
         self.f.ins().brif(spent, kept, &[], again, &[]);
+        // Tries spent: the dead entry read instead (above), a failure counted.
         self.f.switch_to_block(kept);
         self.count_failed();
-        self.f.ins().jump(done, &[value.into()]);
+        let dead = self.dead_entry();
+        let no = self.c32(0);
+        self.f.ins().jump(read, &[dead.into(), no.into()]);
         self.f.switch_to_block(again);
         let tries = self.f.ins().iadd_imm(tries, 1);
         self.f.ins().jump(head, &[tries.into()]);
         self.f.switch_to_block(done);
         self.f.block_params(done)[0]
+    }
+    /// The dead entry of the cache the view names: what a read with no entry of its own reads (its zeros).
+    fn dead_entry(&mut self) -> Value {
+        let lo = self.view(at::SIDE);
+        let hi = self.view(at::SIDE + 4);
+        let rel = wide(self, lo, hi);
+        let cache = self.f.ins().iadd(self.tape, rel);
+        let dead = cache_load(self, cache, crate::view::cache::DEAD);
+        let dead = self.f.ins().uextend(I64, dead);
+        self.f.ins().iadd(cache, dead)
     }
     /// One failure more in the cache the view names (`view::cache::FAILED`).
     fn count_failed(&mut self) {

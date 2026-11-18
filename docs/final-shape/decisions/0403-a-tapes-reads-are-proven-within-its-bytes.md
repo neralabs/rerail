@@ -62,6 +62,10 @@ The reads are the CLIF ones (`crates/clif/src/reads.rs`). Each line is why one k
   - A match reads only behind its own output, within the entry (`off ≤ written`).
 - **A block's number** must be below the tape's blocks. A block past the last gets the dead entry and a counted
   failure, and the batch is refused. The block index is read only below its end.
+- **A shared read whose tries ran out** reads the dead entry, a failure counted. It used to read the entry as it
+  was, which another thread may have been rewriting, so it could hold two blocks' bytes. The run is refused, but
+  only after its kernels have gone on with the value: a torn node, span or code used as an index reaches anywhere.
+  The dead entry's zeros read as in-range answers.
 - **Every load in a block's body** is masked to the entry (`address`, already). The dead entry is followed by the
   slack, which covers a masked load's reach of an entry plus a word.
 - **A side-list read** holds each of its offsets to the part's end, the next part's start, which `placement` checked.
@@ -113,8 +117,16 @@ buffers go back. `index` now panics with what it read: the relation's origin (th
 block, or a view read in place), its offset, its block's kind, magic and extent, and the header's words. That way
 the next occurrence names the block it came from. The work queue's Q125 carries what the runs since have shown.
 
+## Open
+
+- **Spans read against the source.** A node's start and end come from the tape's gaps and lengths, which no table
+  check bounds without decoding. A kernel that reads source bytes at a node's span must hold the span to its
+  document's source length. The frontier kernels check their records so (`r.source_length <= source_bytes`). The
+  other text readers (the join's text tests, the label patterns) are not yet audited: work queue Q126.
+
 ## What it replaces
 
 - The 16z decoder's literal check against the destination alone (`z_lz4`).
 - The 16z entry sized by each block's own node count.
 - Walks that trusted a size or a step from the tape.
+- A shared 16z read whose tries ran out, which read the entry as it was.
