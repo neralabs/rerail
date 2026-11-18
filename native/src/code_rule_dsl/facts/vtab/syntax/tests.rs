@@ -251,8 +251,8 @@ fn a_views_filter_scan_holds_the_rows_a_per_row_read_finds() {
 }
 
 /// Q183: a lookup of `node` by kind (`lookup_read`, a join's `kind($c, #k)` read where the view lies) gives every row
-/// of that kind, each with the values a per-row read gives, both where it walks the document's numbered nodes (a
-/// kind of at least one node in `KIND_WALK_SHARE`) and where it reads each match alone (a rarer kind).
+/// of that kind, each with the values a per-row read gives, from the batch's index by kind (`Batch::by_kind`), for
+/// every kind of four documents, common and rare; and `lookup` gives the same rows.
 #[test]
 fn a_kind_lookup_reads_the_rows_a_per_row_read_finds() {
     let store = ContentStore::open(&temp("kind-read")).unwrap();
@@ -263,8 +263,7 @@ fn a_kind_lookup_reads_the_rows_a_per_row_read_finds() {
     for r in 0..n {
         *kinds.entry(node.value(r, 2)).or_default() += 1;
     }
-    let (common, rare) = kinds.values().fold((0, 0), |(c, r), &k| if k * super::KIND_WALK_SHARE >= n { (c + 1, r) } else { (c, r + 1) });
-    assert!(common > 0 && rare > 0, "the documents have common kinds and rare ones: {common} and {rare}");
+    assert!(kinds.values().any(|&k| k * 16 >= n) && kinds.values().any(|&k| k == 1), "the documents have common kinds and single ones");
     for &kind in kinds.keys() {
         let per_row: BTreeSet<(usize, Vec<i64>)> = (0..n).filter(|&r| node.value(r, 2) == kind).map(|r| (r, cols.iter().map(|&c| node.value(r, c)).collect())).collect();
         let mut read = BTreeSet::new();
@@ -275,6 +274,8 @@ fn a_kind_lookup_reads_the_rows_a_per_row_read_finds() {
         }), "kind {kind}: the view reads its lookup");
         assert_eq!(rows, per_row.len(), "kind {kind}: each row once");
         assert_eq!(read, per_row, "kind {kind}");
+        let found: Vec<usize> = node.lookup(2, &[kind]).expect("the view looks up by kind");
+        assert_eq!(found, per_row.iter().map(|(r, _)| *r).collect::<Vec<_>>(), "kind {kind}: lookup's rows, in order");
     }
 }
 

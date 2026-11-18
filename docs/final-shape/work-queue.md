@@ -2411,6 +2411,16 @@ with the default line takes the slow pass.
   walk with the values the step needs and ordered by them (`walked_in_order`, up to 2^18 rows). Before, each row was
   read alone twice: its keys to sort by, then its values. Tests: `a_kind_lookup_reads_the_rows_a_per_row_read_finds`
   (every kind, both ways), the view tests and setfix's 60.
+  t53 (those, and the cross product closed) against t50, CPU cold on the M3, alternated: 77.41 and 69.02 against
+  77.89 and 75.31 s; findings identical. Its profile and a sample showed what was left. (3) A probe `kind($m, $k)`
+  still scanned every document's tape for the kind's codes (`Facts::of_kind`): 55 k probes at 39 µs. The batch now
+  keeps an index of the `node` view's rows by kind (`Batch::by_kind`, made once in a walk of the numbered nodes, each
+  match with its local id and tape node): an index, not a copy (0353). The walk by `KIND_WALK_SHARE` and the
+  dialects' `codes` and the batch's `of_tag`, which only that scan read, are gone. (4) Membership by id
+  (`kind($n, K)`, 26 M probes at 184 ns against 130 at t41) is an id's number (`num_number_of`) then a select:
+  10% of the join samples, in the CLIF reads. Open.
+  Not a regression: the A/B and profile runs here lower all 317 programs (4.1 s CPU), since no bundle
+  (`rerail-library.images`) is beside `tmp/m3slow/bin/tNN`; the bench's `run.sh` packs one beside the engine.
 
 ### Q184. A warm run waits on the journal's cookies far longer than a `stat` of what it trusts would take
 
