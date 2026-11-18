@@ -3236,7 +3236,10 @@ impl<'a> TapeNode<'a> {
             return false;
         }
         let parent = self.up();
-        parent == NONE || self.siblings_before(parent).all(|c| self.tape().table().entry(self.tape().code(c)).field != field)
+        parent == NONE
+            || self
+                .siblings_before(parent)
+                .all(|c| self.tape().table().entry(self.tape().code(c)).field != field)
     }
 
     #[inline]
@@ -3246,7 +3249,9 @@ impl<'a> TapeNode<'a> {
 
     #[inline]
     fn entry(&self) -> &'a Entry {
-        self.tape().table().entry(self.tape().code(self.index as usize))
+        self.tape()
+            .table()
+            .entry(self.tape().code(self.index as usize))
     }
     #[inline]
     fn start(&self) -> u32 {
@@ -3285,7 +3290,9 @@ impl<'a> TapeNode<'a> {
             return None;
         }
         let end = self.tape().subtree_end(parent as usize);
-        self.tape().next_sibling(self.index as usize, end).map(|n| self.at(n as u32, parent))
+        self.tape()
+            .next_sibling(self.index as usize, end)
+            .map(|n| self.at(n as u32, parent))
     }
     fn prev_sibling(&self) -> Option<Self> {
         read!("prev");
@@ -3380,7 +3387,13 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         read_at!("tape size", self.index);
         let me = *self;
         let end = self.tape().subtree_end(start);
-        (start..end).map(move |index| if index == start { me } else { me.at(index as u32, UNKNOWN) })
+        (start..end).map(move |index| {
+            if index == start {
+                me
+            } else {
+                me.at(index as u32, UNKNOWN)
+            }
+        })
     }
     fn child(&self, nth: usize) -> Option<Self> {
         self.children().nth(nth)
@@ -3528,7 +3541,13 @@ impl Doc for TapeDoc {
         Err("replace the source-bound tape after editing".into())
     }
     fn root_node(&self) -> Self::Node<'_> {
-        TapeNode { held: &self.held, grammar: &self.grammar, points: &self.points, index: 0, up: NONE }
+        TapeNode {
+            held: &self.held,
+            grammar: &self.grammar,
+            points: &self.points,
+            index: 0,
+            up: NONE,
+        }
     }
     // A node's text, from the matcher's crate (rerail-w), as `TapeNode::range`.
     #[inline]

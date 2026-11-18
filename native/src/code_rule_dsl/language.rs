@@ -1360,7 +1360,12 @@ pub fn is_stub_file(path: &str) -> bool {
 pub fn kind_ids(language: GrammarDialect, names: &[&str]) -> std::collections::BTreeSet<u16> {
     let kinds = language.kinds();
     (0..kinds.kind_count() as u16)
-        .filter(|&id| kinds.kind_is_named(id) && kinds.kind_name(id).is_some_and(|name| names.contains(&name)))
+        .filter(|&id| {
+            kinds.kind_is_named(id)
+                && kinds
+                    .kind_name(id)
+                    .is_some_and(|name| names.contains(&name))
+        })
         .collect()
 }
 
