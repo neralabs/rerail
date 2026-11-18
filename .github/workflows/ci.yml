@@ -192,7 +192,7 @@ jobs:
       e2e: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.e2e || 'true' }}
       integration: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.integration || 'true' }}
       sessions: ${{ github.event_name == 'pull_request' && github.event.pull_request.changed_files < 3000 && steps.filter.outputs.sessions || 'true' }}
-      # Which Rust packages' tests the change can affect (scripts/check/rust-selection.mjs): the changed crates and every
+      # Which Rust packages' tests the change can affect (scripts/check/ci/rust-selection.mjs): the changed crates and every
       # crate that depends on one. Everything off pull requests, past 3000 files, and when the step fails: rust-all
       # 'true', rust-packages every package (or ["all"] when even the package list could not be read), rust-cargo-args
       # `--workspace`, rust-nextest-filter `all()`, rust-engine 'true'. rust-packages '[]': no crate's tests to run.
@@ -227,7 +227,7 @@ jobs:
               - '.cargo/**'
               - 'scripts/check/check-rustfmt.mjs'
               - 'scripts/check/check-rustfmt/files.txt'
-              - 'scripts/check/native-test-legs.mjs'
+              - 'scripts/check/ci/native-test-legs.mjs'
               - 'scripts/profiling/reachability/**'
               - 'scripts/profiling/preparation/**'
               - 'scripts/profiling/composition.py'
@@ -271,7 +271,7 @@ jobs:
               - 'scripts/s3/**'
               - 'scripts/samples/**'
               - '.github/actions/rust-compile-cache/**'
-              - 'scripts/check/rust-selection.mjs'
+              - 'scripts/check/ci/rust-selection.mjs'
             # What every job installs, builds or runs with: this workflow and its actions, the dependencies, the Rust
             # toolchain and the engine's crates, the LFS attributes.
             common: &common
@@ -378,7 +378,7 @@ jobs:
           else
             echo Cargo.lock > "$RUNNER_TEMP/changed.txt"
           fi
-          node scripts/check/rust-selection.mjs "$RUNNER_TEMP/changed.txt" --github >> "$GITHUB_OUTPUT"
+          node scripts/check/ci/rust-selection.mjs "$RUNNER_TEMP/changed.txt" --github >> "$GITHUB_OUTPUT"
 
   # Uploads, as this run's artifacts, every set of archives the jobs below download (.github/actions/pack-test-data,
   # `fetch: "true"`): every tool-pack's archives for the unit jobs (Linux and Windows) and the conformance jobs, and the
@@ -540,7 +540,7 @@ jobs:
       - name: Run fmt, clippy
         run: npm run check:native
 
-  # The engine's test binaries, compiled once for the legs of the rust job (scripts/check/native-test-legs.mjs): it runs
+  # The engine's test binaries, compiled once for the legs of the rust job (scripts/check/ci/native-test-legs.mjs): it runs
   # `cargo test --workspace` with that script as cargo's target runner, which records each test binary with the
   # working directory and environment cargo gives it instead of running it, and runs the doc tests. It then lists every
   # binary's tests whole and under each leg's filters, fails unless each test is in exactly one leg, and hands the
@@ -602,7 +602,7 @@ jobs:
         name: Build the test binaries, run the doc tests and check the legs
         env:
           NATIVE_TESTS_CARGO_ARGS: ${{ needs.changes.outputs.rust-cargo-args }}
-        run: node scripts/check/native-test-legs.mjs build "$RUNNER_TEMP/native-tests"
+        run: node scripts/check/ci/native-test-legs.mjs build "$RUNNER_TEMP/native-tests"
 
       - name: Hand the test binaries to the legs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -620,7 +620,7 @@ jobs:
           artifact: ${{ steps.compile-cache.outputs.artifact }}
           dir: ${{ steps.compile-cache.outputs.dir }}
 
-  # The engine's tests, in the legs scripts/check/native-test-legs.mjs names, each running the binaries the
+  # The engine's tests, in the legs scripts/check/ci/native-test-legs.mjs names, each running the binaries the
   # rust-tests-build job compiled with its libtest filters, as `cargo test --workspace -- <filters>` would. Four read pack
   # test data (native/src/code_rule_dsl/test_support.rs's callers): Ruff's fixtures, SQLFluff's expected findings and
   # fixtures, eslint-plugin-vue's fixtures, and the data-layer port's recordings and rule corpus (the converter, census,
@@ -697,7 +697,7 @@ jobs:
           path: ${{ runner.temp }}/native-tests
 
       - name: Run ${{ matrix.name }}
-        run: node scripts/check/native-test-legs.mjs run "${{ matrix.leg }}" "$RUNNER_TEMP/native-tests"
+        run: node scripts/check/ci/native-test-legs.mjs run "${{ matrix.leg }}" "$RUNNER_TEMP/native-tests"
 
   # The profiling labs: the reachability spike and the SQL preparation lab, each its own manifest and target directory,
   # checked, built and tested apart from the engine's tests. Their builds are small (the job takes 2 minutes cold), so

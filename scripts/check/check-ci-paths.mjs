@@ -112,11 +112,11 @@ export const GROUPS = {
 export const UNGUARDED = {
   "release-pr": "whether this is the Release pull request, which its branch decides, no file path",
   rust: "the Rust jobs build and test crates; cargo's inputs are no TypeScript import closure",
-  "rust-all": "scripts/check/rust-selection.mjs selects from cargo's packages and module trees, no import closure",
-  "rust-packages": "scripts/check/rust-selection.mjs, as rust-all",
-  "rust-cargo-args": "scripts/check/rust-selection.mjs, as rust-all",
-  "rust-nextest-filter": "scripts/check/rust-selection.mjs, as rust-all",
-  "rust-engine": "scripts/check/rust-selection.mjs, as rust-all",
+  "rust-all": "scripts/check/ci/rust-selection.mjs selects from cargo's packages and module trees, no import closure",
+  "rust-packages": "scripts/check/ci/rust-selection.mjs, as rust-all",
+  "rust-cargo-args": "scripts/check/ci/rust-selection.mjs, as rust-all",
+  "rust-nextest-filter": "scripts/check/ci/rust-selection.mjs, as rust-all",
+  "rust-engine": "scripts/check/ci/rust-selection.mjs, as rust-all",
 };
 
 /** The `changes` output of filter `name`: the filter's answer on a pull request it could list whole, else `'true'`. */

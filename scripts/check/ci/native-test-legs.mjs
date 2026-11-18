@@ -15,9 +15,9 @@
 // The legs are libtest filters over the test paths, so a test's leg follows its module: the last leg skips what the
 // others select, and the build's check keeps "every test in exactly one leg" true as tests move.
 //
-//   node scripts/check/native-test-legs.mjs build <dir>    compile, run the doc tests, check the legs, pack; the legs
+//   node scripts/check/ci/native-test-legs.mjs build <dir>    compile, run the doc tests, check the legs, pack; the legs
 //                                                          with tests to run go to $GITHUB_OUTPUT as `legs` (JSON)
-//   node scripts/check/native-test-legs.mjs run <leg> <dir> run one leg's tests from the unpacked artifact
+//   node scripts/check/ci/native-test-legs.mjs run <leg> <dir> run one leg's tests from the unpacked artifact
 //
 // NATIVE_TESTS_REPORT_TIME=1 has `run` add libtest's unstable `--report-time` (under RUSTC_BOOTSTRAP=1), each test's
 // time, to rebalance the legs from a run's log.
@@ -26,7 +26,7 @@ import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const SELF = fileURLToPath(import.meta.url);
 
 /** One leg: the tests whose path holds any of `filters` (every test when empty) and none of `skip`. */
@@ -165,7 +165,7 @@ function build(dir) {
     console.log(`  ${leg.id}: ${count} tests (${leg.name})`);
   }
   if (problems.length > 0) {
-    console.error(`Each test must be in exactly one leg (scripts/check/native-test-legs.mjs LEGS):\n${problems.join("\n")}`);
+    console.error(`Each test must be in exactly one leg (scripts/check/ci/native-test-legs.mjs LEGS):\n${problems.join("\n")}`);
     process.exit(1);
   }
 

@@ -1,11 +1,11 @@
-// scripts/check/rust-selection.mjs: module trees resolved as rustc resolves them, and the selection from a change.
+// scripts/check/ci/rust-selection.mjs: module trees resolved as rustc resolves them, and the selection from a change.
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { after, test } from "node:test";
 
-import { moduleFiles, outputs, select } from "../../scripts/check/rust-selection.mjs";
+import { moduleFiles, outputs, select } from "../../scripts/check/ci/rust-selection.mjs";
 
 const root = mkdtempSync(join(tmpdir(), "rust-selection-"));
 after(() => rmSync(root, { recursive: true, force: true }));
