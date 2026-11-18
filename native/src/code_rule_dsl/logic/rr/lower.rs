@@ -415,12 +415,6 @@ pub struct Module {
     version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
 }
 
-/// The lowering half that reads one clause and the declarations in scope (decision 0246 §1, "per clause"), for a
-/// module that includes nothing.
-pub fn lower_module(statements: Vec<Statement>) -> Result<Module, Error> {
-    lower_module_in(statements, &[])
-}
-
 /// `statements` lowered as a module whose includes are `scope` (each module it reaches, once): its clauses read their
 /// declarations, inputs, lattices, kind sets and natives, and the result holds only its own (`Module`).
 /// A scope seeded once (decision 0246 §2): a lowerer holding what a scope's modules give the modules lowered in it,
@@ -1356,54 +1350,6 @@ impl Seeds {
     }
 }
 
-/// `whole()`'s sets, after `unit`: each literal of a body once, a rule that is its own body dropped, each rule once,
-/// each fact once. `rr::link_seeded_version` runs them on the version (`preparation::lowering_tail`).
-pub fn sets(program: &mut Program) {
-    // A body is a conjunction: a literal twice is the literal once. Lowering keeps each once, so a printed program
-    // (`match`'s groups printed as their bindings beside the test) lowers back to itself.
-    for rule in &mut program.rules {
-        if (1..rule.body.len()).any(|i| rule.body[..i].contains(&rule.body[i])) {
-            let mut kept: Vec<Literal> = Vec::with_capacity(rule.body.len());
-            for l in rule.body.iter() {
-                if !kept.contains(l) {
-                    kept.push(l.clone());
-                }
-            }
-            rule.body = kept.into();
-        }
-    }
-    // A rule whose body is its own head derives nothing: a natively made relation's rule as printed
-    // (`r(x) :- dfs_first_memo(x, …)`), whose construct lowers to the relation itself.
-    program.rules.retain(|r| !matches!(r.body.as_slice(), [Literal::Atom(a)] if !a.neg && a.rel == r.head.rel && a.args == r.head.args));
-    // So are a program's rules: a printed program states the rules its settings make (`.on syntax_error`'s finding,
-    // the scope's guards), which lowering its settings again makes once more.
-    {
-        use std::hash::{Hash, Hasher};
-        let mut seen: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
-        let mut kept: Vec<Rule> = Vec::with_capacity(program.rules.len());
-        for rule in program.rules.drain(..) {
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            rule.hash(&mut h);
-            let same = seen.entry(h.finish()).or_default();
-            if same.iter().all(|&i| kept[i] != rule) {
-                same.push(kept.len());
-                kept.push(rule);
-            }
-        }
-        program.rules = kept;
-    }
-    // A relation's facts are a set too.
-    for rows in program.facts.values_mut() {
-        let mut kept: Vec<crate::code_rule_dsl::logic::front::List<Value>> = Vec::with_capacity(rows.len());
-        for row in rows.drain(..) {
-            if !kept.contains(&row) {
-                kept.push(row);
-            }
-        }
-        *rows = kept;
-    }
-}
-
 /// `whole` but the lowerer's analyses, with what the lowerer knows of the program
 /// (`Lowered`): what `three_valued`, `findings`, `core_and_projections`, `span_patterns`, `grammar_names`, `builtins_out`, `kind_sets`,
 /// `unit`, `whole_back`, `front::finish` and the tail (aggregate demand, `unit`,
@@ -1464,19 +1410,6 @@ impl RulesSeen {
     }
 }
 
-/// The findings of the `.violation`s (`Lowerer::findings`) on a program: its rules taken out while they are written,
-/// what they show given as `RulesSeen`, so the version (`lowering_tail::Findings`) writes the same.
-pub fn findings(prog: &mut Program, pending: &PendingFindings) -> Result<(), Error> {
-    let seen = RulesSeen::of(&prog.rules);
-    let (made, wrote) = findings::findings_on(prog, pending, seen)?;
-    if wrote {
-        widen_violation_heads(prog.rules.iter_mut().map(|r| &mut r.head));
-    }
-    prog.rules.extend(made);
-    Ok(())
-}
-
-
 /// A program that derives `violation` itself, in the older five columns, is read at column 0.
 pub fn widen_violation_heads<'r>(heads: impl Iterator<Item = &'r mut Atom>) {
     for h in heads {
@@ -1489,24 +1422,6 @@ pub fn widen_violation_heads<'r>(heads: impl Iterator<Item = &'r mut Atom>) {
 /// Whether a term makes a `@place` value (`RulesSeen`).
 pub fn is_place_call(name: &str) -> bool {
     name == PLACE
-}
-
-/// Every constant grammar a rule names, in an `embed` or `embed_value` head or a `parsed` or `sub_tape` atom, is
-/// one the language registry has (decision 0082): a supported dialect's label or a fragment. A name it does not
-/// have would make no guest and say nothing.
-pub fn grammar_names(prog: &Program) -> Result<(), Error> {
-    for rule in &prog.rules {
-        let atoms = std::iter::once(&rule.head).chain(rule.body.iter().filter_map(Literal::atom));
-        for a in atoms {
-            if let Some(i) = grammar_column(&a.rel)
-                && let Some(Term::Str(g)) = a.args.get(i)
-                && !crate::code_rule_dsl::language::is_grammar(g)
-            {
-                return Err(no_grammar(&rule.head.rel, g));
-            }
-        }
-    }
-    Ok(())
 }
 
 /// `Program::rx_spans`: each `rx_span(p, c, …)` a rule reads, its pattern p a constant and its span c bound in
@@ -1755,65 +1670,6 @@ pub fn reads(prog: &Program) -> BTreeSet<(String, usize)> {
     prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| (a.rel.to_string(), a.args.len())).collect()
 }
 
-/// core.rr's declarations of what the program reads (`core::declare_core`), then `node`'s projections
-/// (`projections`), on a program.
-pub fn core_and_projections(prog: &mut Program, docof_of_locs: bool) -> Result<(), Error> {
-    let read = reads(prog);
-    let mut docof = docof_of_locs;
-    self::core::declare_core(prog, &read, &mut docof)?;
-    let derives_node = prog.rules.iter().any(|r| r.head.rel == "node");
-    for rule in projections(prog, &read, docof, derives_node) {
-        let at = projection_at(&rule.head.rel, prog.rules.first().map(|r| r.head.rel.as_str()));
-        prog.rules.insert(at, rule);
-    }
-    Ok(())
-}
-
-/// `.decl r(…) must, may` (core.rr 3): r is computed twice. Its may side, which keeps the name, holds what is
-/// proven or unknown: every rule of r. Its must side (`rr_must_r`) holds what is proven: the rules with no
-/// prefix or `must`. A relation that reads a three-valued one is three-valued too, with every rule on both
-/// sides. In a must side's rule a positive atom of a three-valued relation reads its must side and a negated
-/// one its may side; a may side's rule reads the other way. A finding is the may side: a definite one and a
-/// possible one have the same key, and the possible tag is not made yet.
-/// `three` the relations declared `must, may`, `modal` the rules' prefixes by index; the tree's form of
-/// `lowering_tail::ThreeValued`, both built of `three_closure`, `must_name`, `reads_must` and `three_valued_header`.
-pub fn three_valued(prog: &mut Program, three: &BTreeSet<String>, modal: &BTreeMap<usize, String>) {
-    if three.is_empty() {
-        return;
-    }
-    let shape: Vec<(&str, Vec<&str>)> = prog.rules.iter().map(|r| (r.head.rel.as_str(), r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str()).collect())).collect();
-    let three = three_closure(three, &shape);
-    drop(shape);
-    let side = |body: &[Literal], must_side: bool| -> Vec<Literal> {
-        body.iter()
-            .cloned()
-            .map(|mut l| {
-                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = &mut l
-                    && reads_must(&three, &a.rel, a.neg, must_side)
-                {
-                    a.rel = must_name(&a.rel).into();
-                }
-                l
-            })
-            .collect()
-    };
-    let mut rules = Vec::new();
-    for (i, rule) in std::mem::take(&mut prog.rules).into_iter().enumerate() {
-        if !three.contains(rule.head.rel.as_str()) {
-            rules.push(rule);
-            continue;
-        }
-        if modal.get(&i).map(String::as_str) != Some("may") {
-            let mut head = rule.head.clone();
-            head.rel = must_name(&head.rel).into();
-            rules.push(Rule { head, body: side(&rule.body, true).into() });
-        }
-        rules.push(Rule { head: rule.head.clone(), body: side(&rule.body, false).into() });
-    }
-    prog.rules = rules;
-    three_valued_header(prog, &three);
-}
-
 /// The three-valued relations: those declared so, and every relation a rule of which reads one (`rules`: each rule's
 /// head and the relations its body's atoms read), to a fixed point.
 pub fn three_closure(declared: &BTreeSet<String>, rules: &[(&str, Vec<&str>)]) -> BTreeSet<String> {
@@ -1854,14 +1710,6 @@ pub fn three_valued_header(prog: &mut (impl crate::code_rule_dsl::logic::program
             prog.set_facts(&must_name(rel), &rows);
         }
     }
-}
-
-/// `span_patterns` on a program, what it finds added to it.
-pub fn span_patterns_into(prog: &mut Program) -> Result<(), Error> {
-    let SpanPatterns(rx, ast) = span_patterns(&SpanProgram::of_tree(prog))?;
-    prog.rx_spans.extend(rx);
-    prog.ast_patterns.extend(ast);
-    Ok(())
 }
 
 /// What `span_patterns` finds: the rx spans and the AST patterns.
@@ -1931,176 +1779,9 @@ pub fn no_grammar(head: &str, g: &str) -> Error {
     Error::Syntax(format!("{head}: no grammar {g:?}; a grammar is a language registry dialect's label or fragment (languages/*.json)"))
 }
 
-/// The built-ins lowering writes out (`nearest`, `within`, …) and the core relations it rewrites where the program
-/// does not derive them (`rewritten`: `next_sibling`, `precedes`) are declared in `core.rr` for the checker; they are
-/// no relations of the program. `within` stays where a rule reads it: the lowering made it the engine's relation
-/// (decision 0050); a program lowered without `core.rr` (its own part, `parse_own`) still declares it.
-pub fn builtins_out(prog: &mut Program, rewritten: &[String]) {
-    let reads_within = prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == crate::code_rule_dsl::facts::vtab::syntax::WITHIN);
-    for b in builtins(rewritten).filter(|b| !(reads_within && *b == "within")) {
-        prog.decls.remove(b);
-        prog.inputs.retain(|i| i != b);
-    }
-    if reads_within {
-        use crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
-        prog.decls.entry(WITHIN.to_owned().into()).or_insert_with(|| [("n".into(), "node".into()), ("a".into(), "node".into())].into());
-        if !prog.inputs.iter().any(|i| i == WITHIN) {
-            prog.inputs.push(WITHIN.to_owned());
-        }
-    }
-}
-
 /// The relations `builtins_out` takes out, `within` among them.
 pub fn builtins(rewritten: &[String]) -> impl Iterator<Item = &str> {
     RELATION_ARG.iter().map(|(r, _)| *r).chain(["within", "earlier", "split_dot", "unset"]).chain(rewritten.iter().map(String::as_str))
-}
-
-/// `whole()` after the lowerer's analyses, before `front::finish`: nullary relations as sets of the unit, the
-/// scope's globs, the attributes on request. `rr::link_seeded_version` runs them on the version
-/// (`preparation::lowering_tail`, `on_request::SourcesOnRequest`).
-pub fn whole_back(prog: &mut Program) {
-    lower_boolean_relations(prog);
-    // A printed program (its findings already rules) is read again with its `.scope` settings: the documents it
-    // selects are the same.
-    prog.text_globs = scope_text_globs(&prog.settings);
-    if prog.doc_scopes.is_none() {
-        prog.doc_scopes = scope_globs(&prog.settings).map(|g| vec![g]);
-    }
-    for round in ON_REQUEST {
-        sources_on_request(prog, round);
-    }
-}
-
-/// A context relation (`Lowerer::context`'s `rr_ctx<k>`) narrows where a helper is computed to the values its rule
-/// binds. Built from a recursive rule's literals, it reads the rule's own component, and a negated or aggregated
-/// helper it narrows then sits in that component: `has_of(n) :- demand_has_of(n), …, count : { … } = 0` with
-/// `demand_has_of` asked by `has_of` is not stratifiable, though the helper's rows at the rule's values are not in
-/// doubt. Each context in a component that a negation or an aggregate closes a cycle in drops the literals of that
-/// component, and of the comparisons and negations only those whose variables the rest still binds (an aggregate is left out). A node
-/// column the rest leaves unbound ranges over the nodes (`node(_, v, _, _, _)`). The context then holds more rows than before,
-/// never fewer, and every rule that reads it joins it with its own literals, so no row it gives changes.
-pub fn widen_cyclic_contexts(program: &mut Program) {
-    let ctx_prefix = format!("{}ctx", crate::code_rule_dsl::logic::front::RESERVED);
-    for _ in 0..16 {
-        let mut changed = false;
-        for e in crate::code_rule_dsl::logic::front::unstratified(program) {
-            let Some((scc, _)) = e.unstratified() else { continue };
-            let scc = scc.clone();
-            for rule in program.rules.iter_mut().filter(|r| r.head.rel.starts_with(&ctx_prefix) && scc.contains(r.head.rel.as_str())) {
-                let in_cycle = |l: &Literal| l.atom().is_some_and(|a| scc.contains(a.rel.as_str()));
-                if !rule.body.iter().any(in_cycle) {
-                    continue;
-                }
-                let kept: Vec<Literal> = rule.body.iter().filter(|l| !in_cycle(l)).cloned().collect();
-                // What the positive atoms left bind; then the literals that only test.
-                let binds = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Nearest { .. } | Literal::Ast { .. });
-                let mut bound: BTreeSet<String> = kept.iter().filter(|l| binds(l)).flat_map(Literal::vars).collect();
-                let mut body: Vec<Literal> = kept.iter().filter(|l| binds(l)).cloned().collect();
-                let mut rest: Vec<Literal> = kept.into_iter().filter(|l| !binds(l)).collect();
-                loop {
-                    let before = rest.len();
-                    rest.retain(|l| {
-                        let ready = match l {
-                            Literal::Cmp { l: a, op, r } => crate::code_rule_dsl::logic::front::cmp_binds(a, op, r, &bound),
-                            // An aggregate is left out: it only narrows, and its body's variables are its own.
-                            Literal::Agg { .. } => None,
-                            _ => l.vars().is_subset(&bound).then(BTreeSet::new),
-                        };
-                        match ready {
-                            Some(new) => {
-                                bound.extend(new);
-                                body.push(l.clone());
-                                false
-                            }
-                            None => true,
-                        }
-                    });
-                    if rest.len() == before {
-                        break;
-                    }
-                }
-                let types: std::collections::BTreeMap<String, String> =
-                    program.decls.get(rule.head.rel.as_str()).into_iter().flatten().zip(&rule.head.args).filter_map(|((_, t), a)| match a {
-                        Term::Var(v) => Some((v.to_string(), t.to_string())),
-                        _ => None,
-                    }).collect();
-                let mut ok = true;
-                for v in rule.head.vars() {
-                    if bound.contains(&v) {
-                        continue;
-                    }
-                    if types.get(&v).is_some_and(|t| t == "node") && program.decls.contains_key("node") {
-                        let wild = Term::Wild;
-                        body.push(Literal::Atom(Atom { rel: "node".into(), args: vec![wild.clone(), Term::Var(v.clone().into()), wild.clone(), wild.clone(), wild].into(), neg: false, gated: false }));
-                        bound.insert(v);
-                    } else {
-                        ok = false;
-                    }
-                }
-                if ok {
-                    rule.body = body.into();
-                    changed = true;
-                }
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-}
-
-/// A rule that reads no relation (an aggregate's helper of comparisons only, `{ e = "a", q = @json_str(e) }`)
-/// holds once, as in Soufflé: it reads `rr_unit(0)`, one row, since the planner starts every body from an atom.
-/// A body with an aggregate (`ok(v) :- m = join …, v = @f(m).`) needs none: the planner runs a body of filters and
-/// aggregates over the relational unit, and the SQL executor maintains it as a scalar rule over its aggregates'
-/// inputs (a unit atom would hide them from its retained support).
-pub fn unit(prog: &mut Program) {
-    const UNIT: &str = "rr_unit";
-    let mut used = false;
-    for rule in &mut prog.rules {
-        // A matcher atom (`ast(…)`) or a walk reads the tree itself; an aggregate reads its atom.
-        let reads = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Ast { .. } | Literal::Nearest { .. } | Literal::Agg { .. });
-        if !rule.body.iter().any(reads) {
-            rule.body.insert(0, Literal::Atom(Atom { rel: UNIT.to_owned().into(), args: [Term::Int(0)].into(), neg: false, gated: false }));
-            used = true;
-        }
-    }
-    if used {
-        prog.decls.insert(UNIT.to_owned().into(), [("x".into(), "int".into())].into());
-        prog.facts.insert(UNIT.to_owned(), vec![[Value::Int(0)].into()]);
-    }
-}
-
-/// A nullary relation is a Boolean set: empty, or the single empty tuple. SQL tables need a column,
-/// so represent that tuple with the integer unit. Apply the same encoding to facts, heads, and reads
-/// (including aggregate reads); joins and negation then keep ordinary relational set semantics.
-fn lower_boolean_relations(prog: &mut Program) {
-    let names: BTreeSet<_> = prog.decls.iter().filter(|(_, cols)| cols.is_empty()).map(|(name, _)| name.clone()).collect();
-    if names.is_empty() {
-        return;
-    }
-    prog.nullary.extend(names.iter().map(|n| n.to_string()));
-    for name in &names {
-        prog.decls.get_mut(name).unwrap().push(("rr_unit".into(), "int".into()));
-        if let Some(rows) = prog.facts.get_mut(name.as_str()) {
-            for row in rows {
-                row.push(Value::Int(1));
-            }
-        }
-    }
-    let encode = |atom: &mut Atom| {
-        if names.contains(atom.rel.as_str()) && atom.args.is_empty() {
-            atom.args.push(Term::Int(1));
-        }
-    };
-    for rule in &mut prog.rules {
-        encode(&mut rule.head);
-        for lit in &mut rule.body {
-            if let Literal::Atom(atom) | Literal::Agg { atom, .. } = lit {
-                encode(atom);
-            }
-        }
-    }
 }
 
 /// The relations `lits` read, inside groups and aggregates too.
@@ -5570,150 +5251,6 @@ fn printf_pieces(format: &str, args: &[Term]) -> Option<Term> {
     let mut pieces = pieces.into_iter();
     let first = pieces.next()?;
     Some(pieces.fold(first, |acc, p| Term::Call("concat".into(), [acc, p].into())))
-}
-
-/// Kind sets: the relations of facts given to `nearest`, `inside` and `has`. One read nowhere else is only a set.
-/// A set of kinds that rules derive is no kind set: its axes are rules (`derived_axes`). (A set of nodes is read
-/// as climbs where it is given, `node_axis`.)
-pub fn kind_sets(prog: &mut Program, sets: BTreeSet<String>) -> Result<(), Error> {
-    let mut derived = BTreeSet::new();
-    for set in sets {
-        if prog.kindsets.contains_key(&set) {
-            continue;
-        }
-        let kinds = match members(prog, &set)? {
-            Members::Kinds(kinds) => kinds,
-            Members::Derived => {
-                derived.insert(set);
-                continue;
-            }
-        };
-        prog.kindsets.insert(set, kinds);
-    }
-    // A set no rule reads is no relation of the program; one that rules read (`lfscope(k) :- fscope(k)`) stays
-    // one as well, until those rules go with their own set: to a fixed point, in whatever order the sets come.
-    loop {
-        let unread: Vec<String> = prog
-            .kindsets
-            .keys()
-            .filter(|set| prog.decls.contains_key(set.as_str()) || prog.facts.contains_key(*set) || prog.rules.iter().any(|r| r.head.rel == set.as_str()))
-            .filter(|set| !prog.rules.iter().filter(|r| r.head.rel != set.as_str()).any(|r| r.body.iter().filter_map(Literal::atom).any(|a| a.rel == set.as_str())))
-            .cloned()
-            .collect();
-        if unread.is_empty() {
-            break;
-        }
-        for set in unread {
-            prog.facts.remove(&set);
-            prog.decls.remove(set.as_str());
-            prog.rules.retain(|r| r.head.rel != set);
-        }
-    }
-    derived_axes(prog, &derived);
-    Ok(())
-}
-
-/// What a set holds: its kinds when they are known now (a kind set), else kinds its rules (or an input) give.
-fn members(prog: &Program, set: &str) -> Result<Members, Error> {
-    if let Some(kinds) = kinds_of(prog, set, &mut BTreeSet::new()) {
-        return Ok(Members::Kinds(kinds));
-    }
-    if matches!(prog.decls.get(set).map(|c| c.as_slice()), Some([(_, t)]) if t == "sym") {
-        return Ok(Members::Derived);
-    }
-    Err(Error::Syntax(format!("the kind set {set} is not a relation of kinds (one column of facts, or rules `{set}(k) :- s(k)` over such sets)")))
-}
-
-/// The axes over sets of kinds rules derive, which the transducer cannot read from a node's kind: rules over
-/// `child`, in which each node's membership (`rr_in_<s>(x) :- node(_, x, k, _, _), s(k)`) is read once. A helper
-/// reads its set negated, so the set is complete before it (a lower stratum; a set that depends on its own axis
-/// is refused by the strata).
-/// - `rr_near_<s>(n, a)`, a is n's nearest strict ancestor in s (`nearest`, and `inside(n, _, s)`): down from each
-///   member to the next, a row per node below one;
-/// - `rr_anc_<s>(n, a)`, every strict ancestor a of n in s (`inside`): the chain of nearest ones;
-/// - `rr_desc_<s>(n, a)`, n in s and a any strict ancestor of it (`has`): up from each member;
-/// - `rr_above_<s>(a)`, a has a member strictly below it (`has(a, _, s)`).
-fn derived_axes(prog: &mut Program, derived: &BTreeSet<String>) {
-    let mut need = BTreeSet::new();
-    for rule in &mut prog.rules {
-        for l in &mut rule.body {
-            let (set, helper, args, neg) = match l {
-                Literal::Nearest { n, a, kindset } if derived.contains(kindset) => (kindset.clone(), "near", [Term::Var(n.clone().into()), Term::Var(a.clone().into())].into(), false),
-                Literal::Atom(x) => match axis(&x.rel) {
-                    Some((set, has)) if derived.contains(set) => {
-                        let (helper, args) = match (has, x.args.as_slice()) {
-                            (false, [_, Term::Wild]) => ("near", x.args.clone()),
-                            (false, _) => ("anc", x.args.clone()),
-                            (true, [Term::Wild, a]) => ("above", [a.clone()].into()),
-                            (true, _) => ("desc", x.args.clone()),
-                        };
-                        (set.to_owned(), helper, args, x.neg)
-                    }
-                    _ => continue,
-                },
-                _ => continue,
-            };
-            *l = Literal::Atom(Atom { rel: format!("rr_{helper}_{set}").into(), args: args.into(), neg, gated: false });
-            if helper == "anc" {
-                need.insert((set.clone(), "near"));
-            }
-            need.insert((set, helper));
-        }
-    }
-    if need.is_empty() {
-        return;
-    }
-    for rel in ["child", "node"] {
-        base_relation(prog, rel);
-    }
-    let v = |s: &str| Term::Var(s.to_owned().into());
-    let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg, gated: false });
-    let child = |p: &str, c: &str| atom("child", vec![v(p), v(c), Term::Wild], false);
-    for (set, helper) in need {
-        let member = format!("rr_in_{set}");
-        if !prog.decls.contains_key(member.as_str()) {
-            prog.decls.insert(member.clone().into(), [("x".into(), "node".into())].into());
-            let body = vec![atom("node", vec![Term::Wild, v("x"), v("k"), Term::Wild, Term::Wild], false), atom(&set, vec![v("k")], false)];
-            prog.rules.push(Rule { head: Atom { rel: member.clone().into(), args: [v("x")].into(), neg: false, gated: false }, body: body.into() });
-        }
-        let is = |x: &str, neg: bool| atom(&member, vec![v(x)], neg);
-        let rel = format!("rr_{helper}_{set}");
-        let me = |args: &[&str]| atom(&rel, args.iter().map(|a| v(a)).collect(), false);
-        let (cols, bodies): (&[&str], Vec<Vec<Literal>>) = match helper {
-            "near" => (&["n", "a"], vec![vec![child("a", "n"), is("a", false)], vec![child("p", "n"), is("p", true), me(&["p", "a"])]]),
-            "anc" => (&["n", "a"], vec![vec![atom(&format!("rr_near_{set}"), vec![v("n"), v("a")], false)], vec![atom(&format!("rr_near_{set}"), vec![v("n"), v("b")], false), me(&["b", "a"])]]),
-            "desc" => (&["n", "a"], vec![vec![is("n", false), child("a", "n")], vec![me(&["n", "p"]), child("a", "p")]]),
-            _ => (&["a"], vec![vec![is("n", false), child("a", "n")], vec![me(&["p"]), child("a", "p")]]),
-        };
-        prog.decls.insert(rel.clone().into(), cols.iter().map(|c| ((*c).to_owned(), "node".to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
-        let head = Atom { rel: rel.clone().into(), args: cols.iter().map(|c| v(c)).collect(), neg: false, gated: false };
-        for body in bodies {
-            prog.rules.push(Rule { head: head.clone(), body: body.into() });
-        }
-    }
-}
-
-/// The kinds of a unary relation of kinds: its facts, and the kinds of `s` for each rule `set(k) :- s(k)`.
-fn kinds_of(prog: &Program, set: &str, seen: &mut BTreeSet<String>) -> Option<Vec<String>> {
-    if !seen.insert(set.to_owned()) || prog.inputs.iter().any(|i| i == set) || prog.decls.get(set).is_some_and(|c| c.len() != 1) {
-        return None;
-    }
-    let mut kinds: Vec<String> = Vec::new();
-    for row in prog.facts.get(set).into_iter().flatten() {
-        let [Value::Str(k)] = row.as_slice() else { return None };
-        kinds.push(k.to_string());
-    }
-    for r in prog.rules.iter().filter(|r| r.head.rel == set) {
-        let ([Term::Var(k)], [Literal::Atom(a)]) = (r.head.args.as_slice(), r.body.as_slice()) else { return None };
-        if a.neg || !matches!(a.args.as_slice(), [Term::Var(v)] if v == k) {
-            return None;
-        }
-        kinds.extend(kinds_of(prog, &a.rel, seen)?);
-    }
-    // In the order written, each once.
-    let mut once = BTreeSet::new();
-    kinds.retain(|k| once.insert(k.clone()));
-    Some(kinds)
 }
 
 /// `prog` reading the base relation `rel` (`child`, `node`): declared as the engine declares it, and an input unless a

@@ -1,6 +1,8 @@
-//! The lowering's whole-program tail on the version (decision 0281's path, step 7b): `front::finish`'s rewrites and
-//! the passes `whole()` runs once the program is finished, each one for one with its tree form in `front` and
-//! `rr::lower`, which a debug build runs beside it (`rr::link_seeded_version`).
+//! The lowering's whole-program half on the version (decision 0281's path, step 7b; 0246 §1, "whole program, at
+//! link time"): the findings' rules, core's declarations, projections, kind sets, boolean relations, `front::finish`'s
+//! rewrites and checks, aggregate demand, removing repeated rules and literals, and widening cyclic contexts. Every
+//! text runs them (`rr::link_library_versions`, `rr::link_seeded_version`); their tree forms went with the tree's
+//! lowering (decision 0276 step 5).
 
 use crate::code_rule_dsl::logic::plan::body::{Body, VarSet, lit_vars};
 use crate::code_rule_dsl::logic::program_image::build::T;
@@ -9,10 +11,16 @@ use crate::code_rule_dsl::logic::program_image::{Lit as L, RuleId, Slot, TermRef
 use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut, ProgramFields};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// One round of `widen_cyclic_contexts` (see there): each context relation's rule in a component a negation or an
-/// aggregate closes a cycle in, its literals of that component dropped, the tests the rest binds kept, and a node
-/// column left unbound ranging over `node`. `changed` says whether the round widened one; the caller runs rounds
-/// until none does, as the tree's loop does (16 at most).
+/// A context relation (`Lowerer::context`'s `rr_ctx<k>`) narrows where a helper is computed to the values its rule
+/// binds. Built from a recursive rule's literals, it reads the rule's own component, and a negated or aggregated
+/// helper it narrows then sits in that component: `has_of(n) :- demand_has_of(n), …, count : { … } = 0` with
+/// `demand_has_of` asked by `has_of` is not stratifiable, though the helper's rows at the rule's values are not in
+/// doubt. One round: each context in a component that a negation or an aggregate closes a cycle in drops the literals
+/// of that component, and of the comparisons and negations only those whose variables the rest still binds (an
+/// aggregate is left out); a node column the rest leaves unbound ranges over the nodes (`node(_, v, _, _, _)`). The
+/// context then holds more rows than before, never fewer, and every rule that reads it joins it with its own literals,
+/// so no row it gives changes. `changed` says whether the round widened one; the caller runs rounds until none does
+/// (16 at most).
 #[derive(Default)]
 pub struct WidenCyclicContexts {
     pub changed: bool,
@@ -232,9 +240,12 @@ impl ProgramPass for FactsOnce {
     }
 }
 
-/// `lower::unit` on the version: each rule that reads no relation reads `rr_unit(0)`
-/// first, and `rr_unit` is declared with its one fact. A matcher atom or a walk reads the tree itself; an aggregate
-/// reads its atom.
+/// A rule that reads no relation (an aggregate's helper of comparisons only, `{ e = "a", q = @json_str(e) }`) holds
+/// once, as in Soufflé: it reads `rr_unit(0)` first, one row, since the planner starts every body from an atom, and
+/// `rr_unit` is declared with its one fact. A matcher atom or a walk reads the tree itself; an aggregate reads its
+/// atom. A body with an aggregate (`ok(v) :- m = join …, v = @f(m).`) needs none: the planner runs a body of filters
+/// and aggregates over the relational unit, and the SQL executor maintains it as a scalar rule over its aggregates'
+/// inputs (a unit atom would hide them from its retained support).
 pub struct Unit;
 
 impl ProgramPass for Unit {
@@ -266,14 +277,13 @@ impl ProgramPass for Unit {
     }
 }
 
-/// `aggregate_demand::optimize` on the version (see there): each private aggregate helper (`rr_agg…`) restricted
+/// Aggregate demand (`rr::aggregate_demand`'s analyses): each private aggregate helper (`rr_agg…`) restricted
 /// to the keys its consumers ask (`rr_demand_agg_<helper>`, read first by its rules and made from each consumer's
 /// guards), placed one helper at a time and refused where it makes the program unstratifiable; then a `count` of
 /// zero read once made an anti-join. The tree's order is kept: a helper's rules gain their demand where they stand,
 /// and the demand rules follow the program's.
 ///
-/// The program is taken to be declared: `lower::link_seeded_front` checks it before this runs, and the tree's pass
-/// places nothing in a program that is not (which `link_seeded` then refuses).
+/// The program is taken to be declared: `lowering_tail::Declared` checks a text's before this runs.
 #[derive(Default)]
 pub struct AggregateDemand;
 
@@ -336,7 +346,8 @@ fn lit_at(v: &Version, r: RuleId, n: u32) -> crate::code_rule_dsl::logic::progra
     v.rule(r).expect("a rule of the input").body().find(|l| l.node() == n).expect("a literal of the rule")
 }
 
-/// `aggregate_demand::guards` over rule `r`'s items: its safe positive guards joined to the keys, then the
+/// Safe positive guards, then comparisons whose inputs those guards bind (a context is a superset of the consumer,
+/// never an assumption about a not-yet-computed aggregate or recursive result), over rule `r`'s items: its safe positive guards joined to the keys, then the
 /// comparisons they let run.
 #[allow(clippy::too_many_arguments)]
 fn guards(v: &Version, p: &Placement, r: RuleId, items: &[Item], helper: &str, keys: &VarSet, deps: &BTreeMap<String, BTreeSet<String>>, reach: &crate::code_rule_dsl::logic::rr::aggregate_demand::Reach) -> Option<Vec<Item>> {
@@ -919,8 +930,9 @@ impl ProgramPass for DeclareAxes {
     }
 }
 
-/// `lower_boolean_relations` on the version: a nullary relation is a Boolean set, its one tuple the integer unit, so
-/// it gains a column `rr_unit`, its facts a `1`, and each atom of it (a head, a read, an aggregate's) a `1`.
+/// A nullary relation is a Boolean set: empty, or the single empty tuple. SQL tables need a column, so the tuple is
+/// the integer unit: the relation gains a column `rr_unit`, its facts a `1`, and each atom of it (a head, a read, an
+/// aggregate's) a `1`; joins and negation then keep ordinary relational set semantics.
 pub struct BooleanRelations;
 
 /// Appends the unit to an atom of a nullary relation.
@@ -999,14 +1011,25 @@ impl ProgramPass for ScopeGlobs {
     }
 }
 
-/// `lower::kind_sets` on the version (see there), over the sets the clauses named (the lowerer's `sets`): each set
-/// whose kinds are known now a kind set of the header; a set no rule reads taken out (to a fixed point); and the axes
-/// over sets that rules derive written as rules (`derived_axes`), after the program's.
+/// Kind sets: the relations of facts given to `nearest`, `inside` and `has`, over the sets the clauses named (the
+/// lowerer's `sets`). Each set whose kinds are known now (its facts, and the kinds of `s` for each rule
+/// `set(k) :- s(k)`: `kinds_of`) is a kind set of the header; one read nowhere else is only a set, taken out (to a
+/// fixed point). A set of kinds that rules derive is no kind set: the transducer cannot read it from a node's kind,
+/// so its axes are rules over `child`, written after the program's (`derived_axes`), in which each node's membership
+/// (`rr_in_<s>(x) :- node(_, x, k, _, _), s(k)`) is read once. A helper reads its set negated, so the set is complete
+/// before it (a lower stratum; a set that depends on its own axis is refused by the strata):
+/// - `rr_near_<s>(n, a)`, a is n's nearest strict ancestor in s (`nearest`, and `inside(n, _, s)`): down from each
+///   member to the next, a row per node below one;
+/// - `rr_anc_<s>(n, a)`, every strict ancestor a of n in s (`inside`): the chain of nearest ones;
+/// - `rr_desc_<s>(n, a)`, n in s and a any strict ancestor of it (`has`): up from each member;
+/// - `rr_above_<s>(a)`, a has a member strictly below it (`has(a, _, s)`).
+/// (A set of nodes is read as climbs where it is given, `node_axis`.)
 pub struct KindSets {
     pub sets: BTreeSet<String>,
 }
 
-/// `lower::kinds_of` on the version, rules gone by head left out.
+/// The kinds of a unary relation of kinds: its facts, and the kinds of `s` for each rule `set(k) :- s(k)`, rules gone
+/// by head left out.
 fn kinds_of(v: &Version, head: &(impl ProgramFields + ?Sized), gone: &BTreeSet<String>, set: &str, seen: &mut BTreeSet<String>) -> Option<Vec<String>> {
     use crate::code_rule_dsl::logic::front::Value;
     if !seen.insert(set.to_owned()) || head.input_names().iter().any(|i| i == set) || head.columns_of(set).is_some_and(|c| c.len() != 1) {
@@ -1210,7 +1233,9 @@ impl ProgramPass for KindSets {
     }
 }
 
-/// `lower::grammar_names` on the version: every constant grammar a rule names is one the language registry has.
+/// Every constant grammar a rule names, in an `embed` or `embed_value` head or a `parsed` or `sub_tape` atom, is one
+/// the language registry has (decision 0082): a supported dialect's label or a fragment. A name it does not have would
+/// make no guest and say nothing.
 pub struct GrammarNames;
 
 impl ProgramPass for GrammarNames {
@@ -1236,8 +1261,11 @@ impl ProgramPass for GrammarNames {
     }
 }
 
-/// `lower::builtins_out` on the version: the built-ins written out, and the core relations the lowering rewrote
-/// (`rewritten`, its settings), are no relations of the program; `within` stays declared where a rule reads it.
+/// The built-ins lowering writes out (`nearest`, `within`, …) and the core relations it rewrites where the program
+/// does not derive them (`rewritten`, its settings: `next_sibling`, `precedes`) are declared in `core.rr` for the
+/// checker; they are no relations of the program. `within` stays declared where a rule reads it: the lowering made it
+/// the engine's relation (decision 0050); a program lowered without `core.rr` (its own part, `parse_own`) still
+/// declares it.
 pub struct BuiltinsOut {
     pub rewritten: Vec<String>,
 }
@@ -1450,9 +1478,13 @@ impl ProgramPass for Findings {
     }
 }
 
-/// `lower::three_valued` on the version: a three-valued relation's rules written twice, its must side
-/// (`rr_must_<r>`, but a rule prefixed `may`) and its may side, each atom of a three-valued relation reading the side
-/// `lower::reads_must` says; the must sides declared and given the facts. Its settings: the relations declared
+/// `.decl r(…) must, may` (core.rr 3): r is computed twice. Its may side, which keeps the name, holds what is proven
+/// or unknown: every rule of r. Its must side (`rr_must_r`) holds what is proven: the rules with no prefix or `must`.
+/// A relation that reads a three-valued one is three-valued too (`lower::three_closure`), with every rule on both
+/// sides. In a must side's rule a positive atom of a three-valued relation reads its must side and a negated one its
+/// may side; a may side's rule reads the other way (`lower::reads_must`). The must sides are declared and given the
+/// facts. A finding is the may side: a definite one and a possible one have the same key, and the possible tag is not
+/// made yet. Its settings: the relations declared
 /// `must, may`, and the rules' prefixes by index (the version's order is the tree's).
 pub struct ThreeValued {
     pub three: BTreeSet<String>,
@@ -1608,11 +1640,10 @@ mod tests {
         assert!(got.is_ok() && want.is_ok(), "{got:?} {want:?}");
     }
 
-    /// `BuiltinsOut` on a version is the tree's `lower::builtins_out`: the built-ins' and the rewritten relations'
-    /// declarations and inputs go, and `within`, read by a rule, is declared and an input. (On a modular text's path
+    /// `BuiltinsOut` on a version: the built-ins' and the rewritten relations' declarations and inputs go, and `within`, read by a rule, is declared and an input. (On a modular text's path
     /// the unseeding hides this, since the library declares every built-in: so it is checked here, on its own.)
     #[test]
-    fn builtins_out_on_a_version_is_the_trees() {
+    fn builtins_out_on_a_version_takes_the_builtins_out() {
         let text = ".decl e(x: number)\n.input e\n.decl r(x: number)\nr(x) :- e(x).\n.output r\n";
         let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
         for b in ["nearest", "earlier", "precedes"] {
@@ -1634,9 +1665,10 @@ mod tests {
         let mut p = Pipeline::new("test", v);
         p.program(&mut super::BuiltinsOut { rewritten: rewritten.clone() });
         let (out, _) = p.finish().unwrap();
-        crate::code_rule_dsl::logic::rr::lower::builtins_out(&mut tree, &rewritten);
-        assert!(!tree.decls.contains_key("nearest") && !tree.decls.contains_key("precedes") && tree.inputs.iter().any(|i| i == "within"), "{:?}", tree.inputs);
-        let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
-        assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
+        let inputs = out.input_names();
+        for gone in ["nearest", "earlier", "precedes"] {
+            assert!(!out.declares(gone) && !inputs.iter().any(|i| i == gone), "{gone}: {inputs:?}\n{}", out.show());
+        }
+        assert!(out.declares("within") && inputs.iter().any(|i| i == "within"), "{inputs:?}\n{}", out.show());
     }
 }
