@@ -15,7 +15,8 @@
 //! are when it starts, and keeps them for its life: so a test starts one through `started`, which holds `reading` while
 //! it does. Started while `cross_file_rows_are_memoised_per_import_component` held `RERAIL_CROSS_MEMO=verify` or
 //! `RERAIL_INLINE_ONLY=near`, `a_second_run_in_one_process_records_the_first_runs_manifest`'s process of two ran
-//! another plan, and recorded two manifests of its own.
+//! another plan, and recorded two manifests of its own; started while a session test held `RERAIL_CROSS_K4=off`,
+//! `the_run_after_a_cold_one_writes_nothing`'s warm run wrote.
 
 use std::cell::Cell;
 use std::sync::{Condvar, Mutex};
