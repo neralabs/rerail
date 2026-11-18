@@ -1,7 +1,14 @@
-/** A finished tool call's run on the filesystem's clock: from just before it started to just after it ended. */
-interface ToolCallWindow {
+/** A call still running: when it started, on the filesystem's clock, and whether it is a shell command's. */
+interface RunningCall {
   readonly start: number;
+  readonly command: boolean;
+}
+
+/** A finished tool call's run on the filesystem's clock: from just before it started to just after it ended. */
+interface ToolCallWindow extends RunningCall {
   readonly end: number;
+  /** `ToolCallWindows.ends` once the call ended. */
+  readonly ended: number;
 }
 
 /**
@@ -17,22 +24,35 @@ export const MAX_FINISHED_CALLS = 1_000;
  * is another writer's: another session, an editor, a process a command left running.
  */
 export class ToolCallWindows {
-  /** Each call still running, by its id, with when it started. */
-  readonly #running = new Map<string, number>();
+  /** Each call still running, by its id. */
+  readonly #running = new Map<string, RunningCall>();
   /** The calls that ended, oldest first. */
   #finished: ToolCallWindow[] = [];
+  #ends = 0;
 
-  /** A call starts; one begun again (restored after a restart, or begun after it was answered unwatched) keeps its first start. */
-  begin(toolCallId: string, at: number): void {
-    if (!this.#running.has(toolCallId)) this.#running.set(toolCallId, at);
+  /**
+   * How many calls have ended so far. A walk notes it as it starts (`commandSince`): unlike the filesystem's clock, it
+   * orders a call's end and a walk's start that fall within one tick.
+   */
+  get ends(): number {
+    return this.#ends;
+  }
+
+  /**
+   * A call starts; one begun again (restored after a restart, or begun after it was answered unwatched) keeps its first
+   * start. `command` marks a shell command's call, whose writes no tool input names.
+   */
+  begin(toolCallId: string, at: number, command = false): void {
+    if (!this.#running.has(toolCallId)) this.#running.set(toolCallId, { start: at, command });
   }
 
   /** A call whose start was not seen opened no window, and adds none. */
   finish(toolCallId: string, at: number): void {
-    const start = this.#running.get(toolCallId);
-    if (start === undefined) return;
+    const call = this.#running.get(toolCallId);
+    if (call === undefined) return;
     this.#running.delete(toolCallId);
-    this.#finished.push({ start, end: at });
+    this.#ends += 1;
+    this.#finished.push({ ...call, end: at, ended: this.#ends });
     if (this.#finished.length > MAX_FINISHED_CALLS) this.#finished.shift();
   }
 
@@ -51,16 +71,20 @@ export class ToolCallWindows {
 
   /** Whether a call ran at some point from `from` to `to`; `from` equal to `to` asks about one stamp. */
   ranDuring(from: number, to: number): boolean {
-    for (const start of this.#running.values()) if (start <= to) return true;
+    for (const { start } of this.#running.values()) if (start <= to) return true;
     return this.#finished.some(window => window.start <= to && window.end >= from);
   }
 
   /**
-   * Whether call `toolCallId` still runs and had begun by `stamp`: what it wrote then may not be all it writes. With no
-   * stamp to go by, whether it still runs.
+   * When the earliest of the shell commands still running as a walk began started, given what `ends` was then: those
+   * that still run, and those that ended since. Undefined for none. A source such a command had begun by its stamp may
+   * have been read part way through its writing.
    */
-  runsSince(toolCallId: string, stamp: number | undefined): boolean {
-    const start = this.#running.get(toolCallId);
-    return start !== undefined && (stamp === undefined || start <= stamp);
+  commandSince(ends: number): number | undefined {
+    let since: number | undefined;
+    for (const call of [...this.#running.values(), ...this.#finished.filter(window => window.ended > ends)]) {
+      if (call.command && (since === undefined || call.start < since)) since = call.start;
+    }
+    return since;
   }
 }
