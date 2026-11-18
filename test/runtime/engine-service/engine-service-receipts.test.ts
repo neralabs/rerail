@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,17 +10,23 @@ import { testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
+// Every read goes to the real one unless a case makes a read fail.
+vi.mock("node:fs", { spy: true });
+const real = await vi.importActual<typeof import("node:fs")>("node:fs");
+
 const roots: string[] = [];
 const services: EngineService[] = [];
 afterEach(async () => {
   vi.useRealTimers();
+  vi.mocked(readFileSync).mockReset();
   await Promise.all(services.splice(0).map(service => service.close()));
   await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
 
 /**
  * An engine service over one started checkout, with the capability `accessToken` when one is given; `beforeStart` runs
- * once the checkout is started and the database made, before the service starts.
+ * once the checkout is started and the database made, before the service starts. `startAgain` closes the service and
+ * starts the next one over the same database, as a daemon's next start does.
  */
 async function serviceOverCheckout(accessToken?: string, beforeStart?: (databasePath: string, checkout: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "rerail-receipts-"));
@@ -30,22 +37,31 @@ async function serviceOverCheckout(accessToken?: string, beforeStart?: (database
   const repositoryKey = startTestRepository(checkout, databasePath);
   await beforeStart?.(databasePath, checkout);
   const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-receipts-${process.pid}-${Date.now()}` : join(root, "engine.sock");
-  const service = await startEngineService({
-    socketPath,
-    storageRoot: join(root, "state"),
-    databasePath,
-    embedder: testEmbedder,
-    ...(accessToken === undefined ? {} : { accessToken }),
-    createAuditor: () => ({
-      openWorkspace: async () => undefined,
-      acceptsPath: () => true,
-      auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
-      close: async () => undefined,
-    }),
-  });
-  services.push(service);
+  const start = async (): Promise<EngineService> => {
+    const service = await startEngineService({
+      socketPath,
+      storageRoot: join(root, "state"),
+      databasePath,
+      embedder: testEmbedder,
+      ...(accessToken === undefined ? {} : { accessToken }),
+      createAuditor: () => ({
+        openWorkspace: async () => undefined,
+        acceptsPath: () => true,
+        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
+        close: async () => undefined,
+      }),
+    });
+    services.push(service);
+    return service;
+  };
+  let service = await start();
+  const startAgain = async (): Promise<void> => {
+    services.splice(services.indexOf(service), 1);
+    await service.close();
+    service = await start();
+  };
   const session = (sessionId: string) => ({ host: "claude-code" as const, sessionId, cwd: checkout });
-  return { root, databasePath, repositoryKey, socketPath, session };
+  return { root, databasePath, repositoryKey, socketPath, session, startAgain };
 }
 
 /** Another connection, in this process, holding the write lock of the database at `databasePath` until `release`. */
@@ -160,6 +176,32 @@ describe("the engine service's receipts", () => {
     recordsMade(databasePath);
     expect(receipts(databasePath)).toEqual([
       { sessionId: "left", eventId: "steering-delivered:receipt-6", payloadJson: JSON.stringify({ ruleIds: ["rule:a"] }), repositoryId: repositoryKey },
+    ]);
+    expect(await keptFiles(databasePath)).toEqual([]);
+  });
+
+  it("leaves a kept receipt whose read fails at its start for the next start, which records it", async () => {
+    const receipt = (checkout: string) => ({ session: { host: "claude-code" as const, sessionId: "left", cwd: checkout }, receiptId: "receipt-7", ruleIds: ["rule:a"] });
+    let refused = 0;
+    const { databasePath, repositoryKey, startAgain } = await serviceOverCheckout(undefined, async (databasePath, checkout) => {
+      await keepReceipt(databasePath, receipt(checkout));
+      // Another process holds the kept file at the start's read, once, as a scanner on Windows does.
+      vi.mocked(readFileSync).mockImplementation((path, options) => {
+        if (refused === 0 && String(path).startsWith(`${databasePath}-receipts`)) {
+          refused += 1;
+          throw Object.assign(new Error(`EBUSY: resource busy or locked, open '${String(path)}'`), { code: "EBUSY" });
+        }
+        return real.readFileSync(path, options);
+      });
+    });
+    recordsMade(databasePath);
+    expect(refused).toBe(1);
+    expect(receipts(databasePath)).toEqual([]);
+    expect(await keptFiles(databasePath)).toHaveLength(1);
+    await startAgain();
+    recordsMade(databasePath);
+    expect(receipts(databasePath)).toEqual([
+      { sessionId: "left", eventId: "steering-delivered:receipt-7", payloadJson: JSON.stringify({ ruleIds: ["rule:a"] }), repositoryId: repositoryKey },
     ]);
     expect(await keptFiles(databasePath)).toEqual([]);
   });

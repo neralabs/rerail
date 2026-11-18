@@ -796,9 +796,10 @@ export async function keepReceipt(databasePath: string, receipt: SteerReceipt): 
 
 /**
  * The receipts kept beside the database at `databasePath` whose records were never made: a daemon took them and ended
- * first. A file that holds no receipt (one whose write the daemon's end cut short, before it answered the hook, which
- * then recorded the receipt itself) is removed. None when the folder does not exist, as it does not until a receipt
- * is handed over while the lock is held.
+ * first. A file read whole that holds no receipt (one whose write the daemon's end cut short, before it answered the
+ * hook, which then recorded the receipt itself) is removed. A file that cannot be read now (another process holds it,
+ * access is refused, no descriptor is free) stays, so the next start reads it again. None when the folder does not
+ * exist, as it does not until a receipt is handed over while the lock is held.
  */
 export function keptReceipts(databasePath: string): KeptReceipt[] {
   const folder = keptReceiptsFolder(databasePath);
@@ -810,17 +811,28 @@ export function keptReceipts(databasePath: string): KeptReceipt[] {
   }
   return names.flatMap(name => {
     const file = join(folder, name);
-    const receipt = receiptIn(file);
+    const text = keptText(file);
+    if (text === undefined) return [];
+    const receipt = receiptIn(text);
     if (receipt !== undefined) return [keptReceipt(file, receipt)];
     forgetFile(file);
     return [];
   });
 }
 
-/** The receipt in `file`, or undefined when it holds none. */
-function receiptIn(file: string): SteerReceipt | undefined {
+/** What `file` holds, or undefined when it cannot be read now. */
+function keptText(file: string): string | undefined {
   try {
-    return SteerReceiptSchema.parse(JSON.parse(readFileSync(file, "utf8")));
+    return readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/** The receipt `text` holds, or undefined when it holds none. */
+function receiptIn(text: string): SteerReceipt | undefined {
+  try {
+    return SteerReceiptSchema.parse(JSON.parse(text));
   } catch {
     return undefined;
   }
