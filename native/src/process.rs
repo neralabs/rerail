@@ -365,15 +365,8 @@ mod windows {
         let handle = OwnedHandle(handle);
         let [mut created, mut exited, mut kernel, mut user] = [FILETIME::default(); 4];
         // SAFETY: `handle` is an open process handle with that right, and the four times outlive the call.
-        let read = unsafe {
-            GetProcessTimes(
-                handle.0,
-                &mut created,
-                &mut exited,
-                &mut kernel,
-                &mut user,
-            )
-        };
+        let read =
+            unsafe { GetProcessTimes(handle.0, &mut created, &mut exited, &mut kernel, &mut user) };
         if read == 0 {
             return None;
         }
