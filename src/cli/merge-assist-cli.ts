@@ -438,6 +438,17 @@ function outcomeText(outcome: Outcome, name: string, dashboardUrl: string | null
 }
 
 /** What the command answers while the experiment is off, under `experimental-off`. */
+/**
+ * Ends this process with `code` once what it wrote has reached stdout and stderr. The command answers once: a stat of
+ * `gh`'s hosts file still out when its answer is written (gh-config.ts: a folder on a drive that does not answer) is
+ * read by no one, and would hold the process, and the terminal or shell call that ran it, until the drive answers.
+ * Everything else the command started has ended by then: its session closed after the person's hook command answered.
+ */
+export async function endOnceWritten(code: number): Promise<never> {
+  await Promise.all([process.stdout, process.stderr].map(async stream => await new Promise(written => stream.write("", written))));
+  process.exit(code);
+}
+
 /** A refusal: `{ error, message }` on stdout under `--json`, else `● <message>` on stderr; the command exits 1. */
 function refuse(io: MergeAssistCommandIo, json: boolean, code: string, message: string): number {
   if (json) (io.stdout ?? process.stdout).write(`${JSON.stringify({ error: code, message })}\n`);
