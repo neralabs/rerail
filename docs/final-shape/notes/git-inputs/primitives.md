@@ -40,6 +40,11 @@ Commit ranges are not a native primitive in this proposal.
 ## 3. Observation versus immutable computation
 
 A reference name, symbolic `HEAD`, revision expression, or abbreviated ID is observed again when requested in another invocation.
+The snapshot selector and `git_revision` use the same checked resolver.
+Gix parses the expression and reads repository references.
+The resolver checks each object's checksum before using its contents to follow a tag, parent, or tree entry.
+An intermediate object's failed check prevents a successful revision result.
+The resolver reads ancestry from checked commits. It does not use saved peeled tags or a commit graph as evidence of their contents.
 The provider publishes the complete result as base facts.
 An unchanged result supplies no logical delta.
 A changed result retracts the previous answer and supplies the new one.

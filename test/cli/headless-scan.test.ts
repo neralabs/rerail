@@ -306,6 +306,98 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     await expect(scan(root, { revision, analysisScope: "selection" })).rejects.toThrow(/Git object checksum failed/u);
   });
 
+  it.each(["loose", "packed"])("rejects revision expressions redirected by a corrupt %s object", async storage => {
+    const root = checkout();
+    const first = git(root, "rev-parse", "HEAD");
+    const tree = git(root, "rev-parse", "HEAD^{tree}");
+    const other = git(root, "commit-tree", tree, "-m", "unrelated root");
+    git(root, "commit", "--allow-empty", "-qm", "current commit");
+    git(root, "tag", "-am", "selects the first commit", "selected", first);
+    const objects = join(root, ".git", "objects");
+    const revisions = new Map([
+      ["HEAD^", first], ["HEAD~1", first], ["selected^{}", first], ["HEAD^{tree}", tree],
+      ["HEAD^{/seed}", first], ["HEAD:a.py", git(root, "rev-parse", "HEAD:a.py")],
+    ]);
+    const source = loadNativeBinding().GitRevisionSource;
+    const policy = join(root, "expressions.rr");
+    writeFileSync(policy, `
+#include "git.rr"
+.policy "expressions" revision 1
+.violation Resolved(at: span, expression: symbol, oid: symbol) "{expression} {oid}"
+.violation Unreadable(at: span, expression: symbol) "{expression}"
+${[...revisions.keys()].map(expr => `git_revision_request(r, "${expr}") :- git_root_repo(r).`).join("\n")}
+Resolved(@place("git", 1), e, o) :- git_revision(_, e, o).
+Unreadable(@place("git", 1), e) :- git_revision_error(_, e, _).
+`);
+    const options = { revision: first, analysisScope: "expressions", rr: [policy] };
+    const evaluate = async () => (await scan(root, options)).violations.map(finding => finding.message).sort();
+    const resolved = [...revisions].map(([expr, oid]) => `${expr} ${oid}`).sort();
+    expect(await evaluate()).toEqual(resolved);
+    const replaced = (kind: string, revision: string) => {
+      const oid = git(root, "rev-parse", revision);
+      const old = execFileSync("git", ["cat-file", kind, oid], { cwd: root });
+      const body = Buffer.from(old.toString().replace(first, other));
+      expect(body.equals(old)).toBe(false);
+      const loose = join(objects, oid.slice(0, 2), oid.slice(2));
+      if (storage === "loose") {
+        const saved = readFileSync(loose);
+        chmodSync(loose, 0o644);
+        writeFileSync(loose, deflateSync(Buffer.concat([Buffer.from(`${kind} ${body.length}\0`), body])));
+        return () => writeFileSync(loose, saved);
+      }
+      const base = join(objects, "pack", `corrupt-${kind}`);
+      const suffix = execFileSync("git", ["-c", "pack.compression=0", "pack-objects", base], {
+        cwd: root, input: `${oid}\n`, encoding: "utf8",
+      }).trim();
+      const pack = `${base}-${suffix}.pack`;
+      const row = git(root, "verify-pack", "-v", `${base}-${suffix}.idx`).split("\n")
+        .find(line => line.startsWith(oid))!;
+      const [, , , size, start] = row.split(/\s+/u).map(Number);
+      const saved = readFileSync(pack);
+      let payload = start!;
+      while ((saved[payload++]! & 128) !== 0) { /* Skip the entry header. */ }
+      const compressed = deflateSync(body, { level: 0 });
+      expect(payload + compressed.length).toBe(start! + size!);
+      const altered = Buffer.from(saved);
+      compressed.copy(altered, payload);
+      chmodSync(pack, 0o644);
+      writeFileSync(pack, altered);
+      rmSync(loose);
+      return () => writeFileSync(pack, saved);
+    };
+    const restoreCommit = replaced("commit", "HEAD");
+    const restoreTag = replaced("tag", "selected");
+    for (const revision of revisions.keys()) {
+      expect(() => new source(root, revision, "expressions")).toThrow(/Git object checksum failed/u);
+    }
+    expect(await evaluate()).toEqual([...revisions.keys()].sort());
+    restoreTag();
+    restoreCommit();
+    expect(await evaluate()).toEqual(resolved);
+  }, 30_000);
+
+  it("resolves refs, IDs, reflogs and index entries through the same rule relation", async () => {
+    const root = checkout();
+    git(root, "commit", "--allow-empty", "-qm", "second commit");
+    git(root, "tag", "-am", "annotated release", "release");
+    git(root, "pack-refs", "--all");
+    const short = git(root, "rev-parse", "--short", "HEAD");
+    const expressions = [short, "@", "main", "HEAD@{1}", "release", "release^{}", ":a.py", ":/seed"];
+    const policy = join(root, "refs.rr");
+    writeFileSync(policy, `
+#include "git.rr"
+.policy "refs" revision 1
+.violation Resolved(at: span, expression: symbol, oid: symbol) "{expression} {oid}"
+${expressions.map(expr => `git_revision_request(r, "${expr}") :- git_root_repo(r).`).join("\n")}
+Resolved(@place("git", 1), e, o) :- git_revision(_, e, o).
+`);
+    const report = await scan(root, { rr: [policy] });
+    expect(report.status).toBe("completed");
+    expect(report.violations.map(finding => finding.message).sort()).toEqual(
+      expressions.map(expr => `${expr} ${git(root, "rev-parse", "--verify", expr)}`).sort(),
+    );
+  });
+
   it("uses Git byte names for selection before reporting names with invalid UTF-8", async () => {
     const root = checkout();
     const withByteName = (tree: string, suffix: string, blob: string): string => {

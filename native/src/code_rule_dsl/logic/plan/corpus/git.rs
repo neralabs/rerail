@@ -88,10 +88,7 @@ impl Git {
     }
 
     fn revision(&self, key: &str, expression: &str) -> Result<gix::ObjectId, &'static str> {
-        self.repo(key)?
-            .rev_parse_single(expression)
-            .map(|id| id.detach())
-            .map_err(|_| "unresolved")
+        snapshot::resolve_revision(self.repo(key)?, expression).map_err(|_| "unresolved")
     }
 
     pub(super) fn resolve(&self, key: &str, expression: &str) -> (String, &'static str) {

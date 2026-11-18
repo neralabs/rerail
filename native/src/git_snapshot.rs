@@ -13,6 +13,10 @@ use gix::bstr::ByteSlice;
 #[path = "git_ignore_coverage.rs"]
 mod ignore_coverage;
 
+#[path = "git_snapshot_revision.rs"]
+mod revision;
+pub use revision::resolve as resolve_revision;
+
 #[path = "git_snapshot_storage.rs"]
 pub mod storage;
 
@@ -463,8 +467,7 @@ impl Snapshot {
     fn open(source: &Path, revision: &str, scope: Option<String>) -> Result<Self, String> {
         let repo = gix::discover(source).map_err(|e| e.to_string())?;
         let (id, commit, tree) = {
-            let mut target = repo.rev_parse_single(revision)
-                .map_err(|e| format!("{revision}: {e}"))?.detach();
+            let mut target = resolve_revision(&repo, revision).map_err(|e| format!("{revision}: {e}"))?;
             let object = loop {
                 let object = verified_object(&repo, target).map_err(|e| format!("{target}: {e}"))?;
                 if object.kind != gix::object::Kind::Tag { break object; }
