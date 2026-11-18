@@ -178,19 +178,24 @@ describe("gitHeadReader", () => {
         git(main, "symbolic-ref", "HEAD", "refs/heads/alias");
         return main;
       }],
-      ["a branch name with a part that ends with a dot, which Windows reads as another file", () => {
-        git(main, "symbolic-ref", "HEAD", "refs/heads/dots./x");
-        return main;
-      }],
       ["a ref file that holds no object id", async () => {
         git(main, "switch", "--quiet", "-c", "broken");
         await writeFile(join(main, ".git", "refs", "heads", "broken"), "not an object id\n");
         return main;
       }],
       ["a folder below the checkout's top", () => join(main, "src")],
+      ["a branch name with a part that ends with a dot, which Windows reads as another file", async () => {
+        // A file holds a commit at the branch's path, as Windows finds `dots/x` there, while Git refuses the name.
+        await mkdir(join(main, ".git", "refs", "heads", "dots."), { recursive: true });
+        await writeFile(join(main, ".git", "refs", "heads", "dots.", "x"), `${git(main, "rev-parse", "main")}\n`);
+        git(main, "symbolic-ref", "HEAD", "refs/heads/dots./x");
+        return main;
+      }],
     ];
     for (const [name, arrange] of cases) {
       const reader = filesReader();
+      // Git's answer for the checkout as it was vouches for its files, which each case then changes.
+      expect((await read(reader, main)).heads).toBe(1);
       const cwd = await arrange();
       for (const time of [1, 2, 3]) {
         const answer = await read(reader, cwd);

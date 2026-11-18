@@ -22,6 +22,7 @@ import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../..
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import type * as Git from "../../../src/engine/git.js";
 import type * as HeadReader from "../../../src/engine/git-head-reader.js";
+import { readGitHead } from "../../../src/engine/git-head-reader.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
 import type * as WalkReads from "../../../src/engine/code-rule/walk-read-buffers.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
@@ -1562,6 +1563,11 @@ describe("CodeRuleBridge", () => {
   });
 
   it("reopens with no Git the earlier session started still running in the folder", async () => {
+    // The daemon's one HEAD reader asks Git once per process where Git's configuration files are (`git var`): asked
+    // here first, in another repository, so the Git held below is the first session's own HEAD read.
+    const other = await workspace();
+    git(other, "init", "--quiet");
+    await readGitHead(other);
     const root = await workspace();
     git(root, "init", "--quiet");
     const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));

@@ -125,8 +125,8 @@ describe("gitCrlfReader", () => {
   it("asks Git on every call while an input is younger than the settle time, or GIT_ATTR_SOURCE moves where Git looks", async () => {
     const root = await repository("*.txt text eol=crlf\n");
     const reader = gitCrlfReader();
+    await writeFile(join(root, ".gitattributes"), "*.txt text eol=crlf\n# fresh\n");
     for (const time of [1, 2]) {
-      await writeFile(join(root, ".gitattributes"), `*.txt text eol=crlf\n# ${time}\n`);
       const answer = await read(reader, root);
       expect(answer.rules).toEqual(answer.expected);
       expect(answer.git, `fresh, call ${time}`).toContain("check-attr");
