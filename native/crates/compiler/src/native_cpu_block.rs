@@ -6231,7 +6231,7 @@ pub fn lazy_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -
     // tests' hits too.
     let coded = lazy_coded(r);
     let held = |k: u8| coded >> k & 1 == 1 && r.unless.iter().any(|&(m, _)| m == k);
-    loop_marks(r, bytewise).0.into_iter().filter(|&(k, _)| r.tested_only >> k & 1 == 0 && r.unplaced >> k & 1 == 0 && r.extra != Some(k) && !held(k)).collect()
+    loop_marks(r, bytewise).0.into_iter().filter(|&(k, _)| r.tested_only >> k & 1 == 0 && r.alone >> k & 1 == 0 && r.unplaced >> k & 1 == 0 && r.extra != Some(k) && !held(k)).collect()
 }
 
 /// The code bits of `block`'s gap marks tier 2 on the CPU tests itself (`lazy_marks`): the
@@ -6265,7 +6265,7 @@ pub(crate) fn loop_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> 
     let mut lift = Vec::new();
     let mut at = Vec::new();
     for (k, &(o, w)) in r.marks.iter().enumerate() {
-        if o == crate::records::WORD_ALONE || w != 0 || retagged >> k & 1 == 1 || r.tested_only >> k & 1 == 1 || !bytewise(o) {
+        if o == crate::records::WORD_ALONE || w != 0 || retagged >> k & 1 == 1 || r.tested_only >> k & 1 == 1 || r.alone >> k & 1 == 1 || !bytewise(o) {
             continue;
         }
         if r.gaps >> k & 1 == 1 { lift.push((k as u8, o)) } else { at.push((k as u8, o)) }
@@ -7699,7 +7699,7 @@ fn record_end(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
 fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts: usize, outputs: usize, c: &FileCols, n: Value, lift: bool, looped: u32, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
     // The marks a reader gives (`Reader::retag`) are its: no mask is read for them.
     let retagged: u32 = r.readers.iter().flat_map(|rd| rd.tags()).fold(0, |a, (_, m)| a | m);
-    let late: Vec<(usize, u16)> = r.marks.iter().enumerate().filter(|&(k, m)| m.0 != crate::records::WORD_ALONE && m.1 == 0 && (r.gaps >> k & 1 == 1) == lift && retagged >> k & 1 == 0 && r.tested_only >> k & 1 == 0 && looped >> k & 1 == 0).map(|(k, m)| (k, m.0)).collect();
+    let late: Vec<(usize, u16)> = r.marks.iter().enumerate().filter(|&(k, m)| m.0 != crate::records::WORD_ALONE && m.1 == 0 && (r.gaps >> k & 1 == 1) == lift && retagged >> k & 1 == 0 && r.tested_only >> k & 1 == 0 && r.alone >> k & 1 == 0 && looped >> k & 1 == 0).map(|(k, m)| (k, m.0)).collect();
     if late.is_empty() {
         f.ins().jump(then, &[]);
         return;
@@ -7771,6 +7771,9 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
     let qa: Vec<BlockArg> = q.iter().map(|&v| v.into()).collect();
     f.ins().brif(open, probe, &qa, found, &[q[0].into(), q[1].into(), q[2].into(), q[3].into()]);
 
+    // On from the cursor, a token at a time: the bits rise, so the walk is a merge of the bits
+    // with the starts (the tokens and the bits once each), where a search a bit was a
+    // mispredicted branch a step.
     f.switch_to_block(probe);
     let q = f.block_params(probe).to_vec();
     let place = {
@@ -7778,15 +7781,11 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
         let base = f.ins().ishl_imm(q[0], 6);
         f.ins().iadd(base, b)
     };
-    let sum = f.ins().iadd(q[3], q[4]);
-    let mid = f.ins().ushr_imm(sum, 1);
-    let (ma, mo) = c.field(f, crate::records::FIELD_START, mid);
+    let (ma, mo) = c.field(f, crate::records::FIELD_START, q[3]);
     let sv = f.ins().uload32(fl, ma, mo);
     let below = f.ins().icmp(IntCC::UnsignedLessThan, sv, place);
-    let mid1 = f.ins().iadd_imm(mid, 1);
-    let lo = f.ins().select(below, mid1, q[3]);
-    let hi = f.ins().select(below, q[4], mid);
-    f.ins().jump(search, &[q[0].into(), q[1].into(), q[2].into(), lo.into(), hi.into()]);
+    let lo1 = f.ins().iadd_imm(q[3], 1);
+    f.ins().brif(below, search, &[q[0].into(), q[1].into(), q[2].into(), lo1.into(), q[4].into()], found, &[q[0].into(), q[1].into(), q[2].into(), q[3].into()]);
 
     // A token starting at the bit's place: the marks' bits there, into its code.
     f.switch_to_block(found);

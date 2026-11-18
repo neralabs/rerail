@@ -527,7 +527,8 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     None => true,
                 };
                 // A mark the record has (`Records::marks`): its bit in the code.
-                let in_code = (k as usize) < records.map_or(0, |r| r.mark_bits());
+                // One the code holds no bit of (`Records::alone`) is a token mark's past it.
+                let in_code = (k as usize) < records.map_or(0, |r| r.mark_bits()) && records.is_none_or(|r| r.alone >> k & 1 == 0);
                 let token_mark = program.token_marks.iter().any(|m| u32::from(m.order) == k);
                 let here = if at_end {
                     mode & 32 != 0

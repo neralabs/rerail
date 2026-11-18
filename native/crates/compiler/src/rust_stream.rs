@@ -91,7 +91,8 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
         crate::native_cpu_block::lazy_marks(r, &|o| bw.can(o))
     });
     let lazy_bits: u64 = lazy.iter().fold(0, |a, &(k, _)| a | 1 << k);
-    let rest_bits: u64 = (if in_code >= 64 { 0 } else { u64::MAX << in_code }) | lazy_bits;
+    // The code's token marks with no bit (`Records::alone`): live at every token, as past it.
+    let rest_bits: u64 = (if in_code >= 64 { 0 } else { u64::MAX << in_code }) | lazy_bits | records.map_or(0, |r| u64::from(r.alone));
     let mut end_bits = rest_bits;
     for b in &native.structural {
         if let Op::Mark { order, end: true, .. } = b.operation

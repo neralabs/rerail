@@ -133,6 +133,10 @@ pub struct Records {
     pub nexts: Vec<PairTable>,
     /// The gap marks (bits of `marks`) made by token tests alone (`CheckThen`): no mask to read.
     pub tested_only: u32,
+    /// The token marks among the code's (bits of `marks`) that hold no bit (decision 0407): ones
+    /// that refuse nowhere alone, in the code only because a mark after them is. Tier 2 tests
+    /// their tokens alone, as those past the code's; their masks are zero.
+    pub alone: u32,
     /// The masks tier 2's local checks read (`program::LocalCheck::mask`, indexes into the block
     /// program's masks), and nothing else does: on the CPU, tier 2 reads each from the bytes
     /// where they make it (`native_cpu_bytes`), so the CPU's body makes none of them.

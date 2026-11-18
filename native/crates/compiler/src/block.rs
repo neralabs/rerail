@@ -1920,6 +1920,9 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         if r.tested_only != 0 {
             let _ = writeln!(out, "  block {at} rectested {}", r.tested_only);
         }
+        if r.alone != 0 {
+            let _ = writeln!(out, "  block {at} recalone {}", r.alone);
+        }
         // `block N recunplaced U`: the gap marks whose bit past the last grammar token refuses.
         if r.unplaced != 0 {
             let _ = writeln!(out, "  block {at} recunplaced {}", r.unplaced);

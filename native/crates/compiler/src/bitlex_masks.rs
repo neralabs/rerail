@@ -3190,6 +3190,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // Without the token loop's records, every mark is a mask tier 2 reads (`any_mark` below).
     let records = (!low.token_rules.is_empty() || !low.token_reads.is_empty()) && low.skip.is_some();
     let code_marks = if records { (0..low.marks.len()).rev().find(|&k| !low.token_marks.contains_key(&k) || refuses_alone(k)).map_or(0, |k| k + 1) } else { low.marks.len() };
+    let refusing_alone: Vec<bool> = (0..low.marks.len()).map(refuses_alone).collect();
     let token_extras = !low.extra.is_empty() && code_marks.min(crate::records::MARKS) + low.extra.len() <= crate::records::MARKS;
     let (states, arms) = {
         let extras = low.extra.iter().map(|k| id(k)).collect::<Result<Vec<u16>, String>>()?;
@@ -3242,6 +3243,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let looped = (!low.token_rules.is_empty() || !low.token_reads.is_empty()) && low.skip.is_some();
     let mut gaps = 0u32;
     let mut alone = vec![false; low.marks.len()];
+    let mut token_alone = 0u32;
     let mut settle_masks: Vec<(usize, Val)> = Vec::new();
     for (k, (kind, m, end)) in low.marks.clone().into_iter().enumerate() {
         let gs = grammar_starts.ok_or("marks with no grammar token")?;
@@ -3256,11 +3258,17 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 alone[k] = true;
                 let none = low.leaf(BlockOp::Const(0), false);
                 mark_masks.push(none);
+            } else if looped && !refusing_alone[k] {
+                // In the code only because a mark after it is: no bit, its tokens tier 2's alone
+                // (`Records::alone`), as a token mark's past the code's. A bit at every token
+                // would be set on the CPU after the tokens, a search a bit (`late_marks`), and a
+                // walk over every block's outputs.
+                token_alone |= 1 << k;
+                let none = low.leaf(BlockOp::Const(0), false);
+                mark_masks.push(none);
             } else if seq[0].iter().all(|c| matches!(c, TokenElem::Kind(_))) {
                 // A first element of kinds: its bit at those rows' grammar starts, not at every
-                // token's (tier 2 tests the whole run either way). On the CPU a mark of any word
-                // is set after the tokens, a search a bit (`late_marks`): at every token it was
-                // most of tier 1.
+                // token's (tier 2 tests the whole run either way).
                 let mut own: Option<Val> = None;
                 for c in &seq[0] {
                     let TokenElem::Kind(name) = c else { continue };
@@ -4152,7 +4160,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         Some(v) => Some(mask_of_val(v, &mut mark_masks)),
         None => None,
     };
-    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), check_masks: local_checks.iter().filter(|c| !c.token).map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default(), gap };
+    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), alone: token_alone & ((1u32 << crate::records::MARKS) - 1), check_masks: local_checks.iter().filter(|c| !c.token).map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default(), gap };
     crate::records::WordTable::new(&records.words)?;
     // A mark's tests pass over an extra's token by its mark (`records::gap_marks`): the token
     // loop knows it only where the reader gives it (`Reader::retag`).

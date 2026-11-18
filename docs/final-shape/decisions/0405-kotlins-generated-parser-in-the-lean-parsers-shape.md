@@ -154,3 +154,18 @@ starts (630 bits), and tier 2 tests the whole run as before. The CPU form's body
 instructions a block (`structure` prints it now). Measured (`jit_against_aot`, load about 21):
 tier 1 ahead of time 457M instructions and 107M cycles, from 500M and 164M; the lean lexer 54M
 and 16M. Tapes unchanged.
+
+Two more steps in the same pass (`late_marks`), which held 16.6% of tier 1's samples after the
+first:
+
+- A token mark in the code only because a mark after it is there (one that refuses nowhere by
+  itself) holds no bit: `Records::alone` (`recalone` in the text). Tier 2 tests its tokens by
+  themselves, as it does for the token marks past the code's.
+- Each bit found its token by a binary search from the cursor: about ten mispredicted branches a
+  bit, over some 365,000 bits of gap marks (`semi`, `dotted`, …). The bits rise, so the pass now
+  walks forward from the cursor one token at a time. It is a merge of the bits with the starts,
+  each read once.
+
+Measured (load about 12): tier 1 ahead of time took 88M cycles and 443M instructions, from 107M
+and 457M. Tiers 1 and 2 took 179M cycles and 799M instructions; the lean parser took 60M and 299M.
+The tapes are unchanged.

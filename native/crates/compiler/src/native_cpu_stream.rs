@@ -3789,7 +3789,8 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
         // the others all set (tested by their masks); at the stream's end, the bits of the
         // marks the end has. A mark the record holds is then one bit test.
         let in_code = native.block_programs.first().and_then(|b| b.records.as_ref()).map_or(0, |r| r.mark_bits());
-        let mut end_bits: i64 = if in_code >= 64 { 0 } else { -1i64 << in_code };
+        let alone_bits: i64 = native.block_programs.first().and_then(|b| b.records.as_ref()).map_or(0, |r| i64::from(r.alone));
+        let mut end_bits: i64 = (if in_code >= 64 { 0 } else { -1i64 << in_code }) | alone_bits;
         for b in words {
             if let Op::Mark { order, end: true, .. } = b.operation
                 && usize::from(order) < in_code
@@ -3804,7 +3805,8 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
             crate::native_cpu_block::lazy_marks(r, &|o| bw.can(o))
         });
         let lazy_bits: i64 = lazy.iter().fold(0, |a, &(k, _)| a | 1 << k);
-        let rest_bits: i64 = (if in_code >= 64 { 0 } else { -1i64 << in_code }) | lazy_bits;
+        // The code's token marks with no bit (`Records::alone`): live at every token, as past it.
+        let rest_bits: i64 = (if in_code >= 64 { 0 } else { -1i64 << in_code }) | lazy_bits | alone_bits;
         let one = f.ins().iconst(types::I64, 1);
         let before_first = f.ins().iconst(types::I64, -1);
         let pick = f.create_block();
