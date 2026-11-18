@@ -67,6 +67,8 @@ the pipelines cached from the probe's run on the same host for format 16 only.
 - `the_label_kernels_compile_for_every_format`: 8 label kernels and the pattern kernel, every format.
 - The Metal walks' comparisons (`on_metal_anchored_walks_find_the_unanchored_roots`,
   `lowered_clauses_find_the_same_roots_on_metal`, `spilled_walks_find_the_cpus_roots`) run every tier.
+- Run for this change (2026-11-18, the M3 Max, corpus0): `on_metal_anchored_walks_find_the_unanchored_roots` (10
+  files) and `spilled_walks_find_the_cpus_roots` (41 waves, 1,665 roots, every walk spilling through the drain) pass.
 
 ## Not yet
 
