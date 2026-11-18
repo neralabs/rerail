@@ -1426,10 +1426,20 @@ export function autostartDaemon(machine: DaemonMachine = THIS_MACHINE): void {
 }
 
 /**
- * What a stop did: stopped the home's daemon; found none; or found a record naming a live process that is not the home's
- * daemon, which it removed, ending nothing (`not-daemon`, said with {@link NOT_HOME_DAEMON_NOTE}).
+ * What a stop did: stopped the home's daemon; found none; found a record naming a live process that is not the home's
+ * daemon, which it removed, ending nothing (`not-daemon`, said with {@link NOT_HOME_DAEMON_NOTE}); or found daemon.json
+ * naming another pid, or none, when it would signal the one it named, and ended and removed nothing (`record-changed`).
  */
-export type StopDaemonResult = "stopped" | "not-running" | "not-daemon";
+export type StopDaemonResult = "stopped" | "not-running" | "not-daemon" | "record-changed";
+
+/** What `rerail daemon stop` says of each {@link StopDaemonResult}. */
+export const STOP_ANSWERS: Readonly<Record<StopDaemonResult, string>> = {
+  stopped: "Rerail daemon stopped.\n",
+  "not-running": "The Rerail daemon is not running.\n",
+  "not-daemon": `${NOT_HOME_DAEMON_NOTE}\nThe Rerail daemon is not running.\n`,
+  "record-changed": "daemon.json changed while Rerail was stopping the daemon it named, so Rerail ended nothing and left that "
+    + "record as it is; run rerail daemon stop again to stop the daemon it names now.\n",
+};
 
 /**
  * What to tell the person when the daemon outlives the kill, with a check that runs where they are: Windows has no
@@ -1494,9 +1504,9 @@ function recordNames(home: string, pid: number): boolean | undefined {
 /**
  * What asking a daemon to stop came to ({@link askDaemonToStop}): it was asked, or let alone as already ending (`asked`);
  * its pid was another process's, and the record naming it is removed (`not-daemon`); or daemon.json names it no longer
- * (`not-named`).
+ * (`record-changed`).
  */
-type StopAsk = "asked" | "not-daemon" | "not-named";
+type StopAsk = "asked" | Extract<StopDaemonResult, "not-daemon" | "record-changed">;
 
 /**
  * Asks the daemon `state` records in `home` to shut down: SIGTERM, or on Windows a shutdown request, SIGTERM only if it
@@ -1531,7 +1541,7 @@ async function signalWhenProven(state: DaemonState, verdict: SignalVerdict, home
 function signalWhileNamed(state: DaemonState, home: string, machine: DaemonMachine): StopAsk {
   const named = recordNames(home, state.pid);
   if (named === undefined) throw new Error(unprovenDaemonMessage(home, state.pid, machine.platform));
-  if (!named) return "not-named";
+  if (!named) return "record-changed";
   signalDaemon(state.pid, "SIGTERM", machine);
   return "asked";
 }
@@ -1637,7 +1647,7 @@ export async function stopFoundDaemon(home: string, found: FoundDaemon, machine:
   const pid = found.state.pid;
   const check = signalCheck(home, found, machine);
   const asked = await askDaemonToStop(found.state, check, home, machine);
-  if (asked !== "asked") return "not-daemon";
+  if (asked !== "asked") return asked;
   await endWhenStopped(home, pid, check, machine);
   // The daemon removes its own state file, main-instance record and home lock record on a clean shutdown; one killed, as
   // Windows always does, leaves them behind. A record naming a pid Windows reuses would keep the uninstall from the
