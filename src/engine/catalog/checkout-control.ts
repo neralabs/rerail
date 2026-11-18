@@ -32,9 +32,10 @@ export function checkoutRealpath(path: string): string {
  * The lookup under that earlier key is for Windows installs upgrading from 0.1.4 or earlier, which saved a folder's
  * audit settings, and the start state of a folder outside Git, under it. It copies and stores nothing. Once no install
  * upgrades from those versions, delete this function, {@link earlierPhysicalPath}, and what the compiler then names:
- * the earlier-key read of `SqliteAuditControlStore` (`#settingsRow`, `#earlierKey`, `settingsUnderEither`),
- * `CheckoutContext.earlierCheckoutPath` with `earlierKeyOf` and `ownStarted`'s second key in `repository-registry.ts`;
- * and `startStateFolder` in `session-presentation.ts`, which hands the daemon the folder as spelt for this lookup.
+ * the earlier-key read of `SqliteAuditControlStore` (`#settingsRow`, `#earlierKey`, `#savedHere`, `#outsideGit`,
+ * `settingsUnderEither`, `recordedRepository`, `SpeltFolder`), `CheckoutContext.earlierCheckoutPath` with `earlierKeyOf`,
+ * `earlierKeyAt` and `ownStarted`'s second key in `repository-registry.ts`; and `startStateFolder` in
+ * `session-presentation.ts`, which hands the daemon the folder as spelt for this lookup.
  */
 export function earlierRealpath(path: string): string {
   return realpathOn("linux")(path);

@@ -86,8 +86,24 @@ function contextOf<C extends string | null>(
  */
 function earlierKeyOf(location: RepositoryIdentityLocation, checkoutPath: string): string | undefined {
   if (location.git || process.platform !== "win32" || location.workspaceRoot === checkoutPath) return undefined;
-  const earlier = earlierPhysicalPath(location.workspaceRoot);
+  const earlier = earlierKeyAt(location.workspaceRoot);
   return earlier === checkoutPath ? undefined : earlier;
+}
+
+/**
+ * The keys {@link earlierPhysicalPath} gave each folder spelling this process asked about. A daemon checks the start
+ * state of a session's folder on each of its events, so the realpath runs once per spelling rather than once per
+ * event; a link in the path changed while this process runs keeps the key it had.
+ */
+const earlierKeys = new Map<string, string>();
+
+function earlierKeyAt(folder: string): string {
+  let key = earlierKeys.get(folder);
+  if (key === undefined) {
+    key = earlierPhysicalPath(folder);
+    earlierKeys.set(folder, key);
+  }
+  return key;
 }
 
 /** The most values one statement binds: SQLite refuses a statement with more than 32,766 variables (999 before 3.32). */
@@ -132,8 +148,8 @@ export function recordCheckout(db: RerailDatabase, workspace: string, now = Date
   refuseUnboundedFolder(repositoryIdentityLocation(workspace));
   const { cloneId, location } = resolveCloneId(workspace);
   const checkoutPath = physicalPath(location.workspaceRoot);
-  const context = db.transaction(tx => recordCheckoutRow(tx, location, checkoutPath, cloneId, now), { behavior: "immediate" });
-  return adoptRemoteOnce(db, context, location, now);
+  const repositoryKey = db.transaction(tx => recordCheckoutRow(tx, location, checkoutPath, cloneId, now), { behavior: "immediate" });
+  return adoptRemoteOnce(db, contextOf(location, checkoutPath, repositoryKey, cloneId), location, now);
 }
 
 /** Outside git a folder is its own checkout; a filesystem root or the home folder would claim everything below it. */
@@ -145,18 +161,21 @@ function refuseUnboundedFolder(located: RepositoryIdentityLocation): void {
   }
 }
 
-/** The checkout row at `checkoutPath` for `cloneId`, touched when it is there and written when not; a row of another clone id goes with its settings. */
+/**
+ * The checkout row at `checkoutPath` for `cloneId`, touched when it is there and written when not; a row of another
+ * clone id goes with its settings. Its repository; the caller forms the context after the write, outside its lock.
+ */
 function recordCheckoutRow(
   tx: Writer,
   location: RepositoryIdentityLocation,
   checkoutPath: string,
   cloneId: string,
   now: number,
-): CheckoutContext & { readonly cloneId: string } {
+): RepositoryKey {
   const existing = tx.select().from(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).get();
   if (existing?.cloneId === cloneId) {
     tx.update(checkouts).set({ lastSeenAt: now }).where(eq(checkouts.checkoutPath, checkoutPath)).run();
-    return contextOf(location, checkoutPath, existing.repositoryKey, cloneId);
+    return existing.repositoryKey;
   }
   if (existing !== undefined) {
     deleteCheckoutSettings(tx, [checkoutPath]);
@@ -165,7 +184,7 @@ function recordCheckoutRow(
   // A clone joins its recorded checkouts, else the repository keyed by its clone id, else the one its remote names.
   const repositoryKey = cloneRepository(tx, cloneId) ?? remoteRepositoryCreated(tx, location, cloneId, now);
   tx.insert(checkouts).values({ checkoutPath, repositoryKey, cloneId, started: null, createdAt: now, lastSeenAt: now }).run();
-  return contextOf(location, checkoutPath, repositoryKey, cloneId);
+  return repositoryKey;
 }
 
 /** The repository of a recorded checkout of the clone, else the repository keyed by its clone id. */
