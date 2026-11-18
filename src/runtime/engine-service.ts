@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { lstat, mkdir, unlink } from "node:fs/promises";
 import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { connect, type Socket } from "node:net";
-import { AsyncLocalStorage } from "node:async_hooks";
 import { dirname, resolve as resolvePath } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
@@ -261,6 +260,16 @@ function guardedFacts(read: () => EventAnswerFacts | undefined): EventAnswerFact
   }
 }
 
+/**
+ * What the caller that sent an event reads of its answer: `signal` aborts once it stops waiting for it (a hook's request,
+ * `hookRequestSignal`; none for a caller that always reads the answer), and `readFacts` reads the facts of the answer
+ * for a caller that reads them.
+ */
+interface EventCaller {
+  readonly signal?: AbortSignal | undefined;
+  readonly readFacts?: AnswerFactsReader | undefined;
+}
+
 /** An event's deliveries, and the facts of its answer where its caller reads them. */
 interface RoutedEvent {
   readonly deliveries: readonly AdapterDelivery[];
@@ -413,12 +422,10 @@ async function routeEngineEvent(
   { event, configuration }: EngineRequest,
   options: EngineServiceOptions,
   state: EngineRoutingState,
-  readFacts?: AnswerFactsReader,
+  { signal, readFacts }: EventCaller = {},
 ): Promise<RoutedEvent> {
   const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
   const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(event, configuration, options, state);
-  // Aborts once the hook that sent the event stops waiting for its answer (`watchHookRequests`); none outside a request.
-  const signal = handledHookRequest.getStore();
   const lane = laneOf(runtimeKey, sessionId);
   keepRuntime(state, runtimeKey);
   const execution = state.lanes.run(lane, async () => {
@@ -991,24 +998,6 @@ function hookRequestSignal(response: ServerResponse): AbortSignal {
   return request.signal;
 }
 
-/**
- * The hook request the engine socket is handling (`watchHookRequests`), through the awaits of its handling; none for an
- * event ingested outside a request (`EngineService.ingest` called directly).
- */
-const handledHookRequest = new AsyncLocalStorage<AbortSignal>();
-
-/**
- * Gives each request `server` handles its `hookRequestSignal`, watched from before its body is read, so a close at any
- * point before the answer is written counts. The listener runs just ahead of the server's handler, in the same
- * synchronous emit, so the handling and every await of it see that request's signal, which `routeEngineEvent` passes
- * to the runtime with the event (`IngestOptions.signal`).
- */
-function watchHookRequests(server: Server): void {
-  server.prependListener("request", (_incoming: IncomingMessage, response: ServerResponse) => {
-    handledHookRequest.enterWith(hookRequestSignal(response));
-  });
-}
-
 /** What listening beside a held pipe needs; tests pass their own. */
 export interface HeldPipeListening {
   listen: (socketPath: string) => Promise<void>;
@@ -1132,8 +1121,12 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       return;
     }
     try {
+      // Watched from before the body is read, so the hook giving up at any point before its answer is written counts; the
+      // runtime takes it with the event (`IngestOptions.signal`).
+      const signal = hookRequestSignal(response);
       const request = await readEngineRequest(incoming);
-      const { deliveries, facts } = await routeEngineEvent(request, options, routing, answerFactsReader(incoming, request.event, options));
+      const readFacts = answerFactsReader(incoming, request.event, options);
+      const { deliveries, facts } = await routeEngineEvent(request, options, routing, { signal, readFacts });
       response.end(encodeRerailEventResult({ eventId: request.event.eventId, deliveries: [...deliveries], ...facts }));
     } catch (error) {
       response.writeHead(400).end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
@@ -1141,7 +1134,6 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   });
   let socketPath = options.socketPath;
   const connections = trackConnections(server);
-  watchHookRequests(server);
   const engineService: EngineService = {
     get socketPath() {
       return socketPath;

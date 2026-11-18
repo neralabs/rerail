@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { ingestEngineEvent, startEngineService } from "../../../src/runtime/engine-service.js";
+import { EVENT_ANSWER_HEADER, EVENT_ANSWER_WITH_FACTS } from "../../../src/runtime/event-protocol.js";
 import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -19,9 +20,10 @@ const SESSION = "hook-gave-up";
 
 /**
  * An engine service in a folder of its own with a Claude Code session started, whose turn's edit checks end only once
- * the test calls `release`, then steer `LATE` once.
+ * the test calls `release`, then steer `LATE` once. With `facts`, it tells a hook that asks the facts of each answer, as
+ * the daemon's does.
  */
-async function heldStopService() {
+async function heldStopService(facts = false) {
   const root = await mkdtemp(join(tmpdir(), "rerail-hook-gave-up-"));
   onTestFinished(async () => {
     await removeFolder(root);
@@ -39,6 +41,7 @@ async function heldStopService() {
     storageRoot: join(root, "state"),
     databasePath,
     embedder: testEmbedder,
+    ...(facts ? { answerFacts: () => ({ dashboard: null }) } : {}),
     createAuditor: ({ steerDelivery }) => ({
       openWorkspace: async () => {
         opened.resolve();
@@ -104,10 +107,10 @@ function nextEventAnswer(): Promise<ServerResponse> {
 }
 
 /**
- * Sends the turn's end as a hook does, on a connection the test closes as the hook gives up: `giveUp` resolves once the
- * engine's side of it has closed.
+ * Sends the turn's end as a hook does, with `headers`, on a connection the test closes as the hook gives up: `giveUp`
+ * resolves once the engine's side of it has closed.
  */
-async function stopHook(socketPath: string, root: string): Promise<{ giveUp: () => Promise<void> }> {
+async function stopHook(socketPath: string, root: string, headers: string): Promise<{ giveUp: () => Promise<void> }> {
   const accepted = nextServerSocket();
   const client = connect(socketPath);
   client.on("error", () => undefined);
@@ -116,7 +119,7 @@ async function stopHook(socketPath: string, root: string): Promise<{ giveUp: () 
   });
   await once(client, "connect");
   const body = JSON.stringify({ event: { kind: "turn-end", eventId: "stop", sessionId: SESSION, session: { host: "claude-code", sessionId: SESSION, cwd: root }, text: "" } });
-  client.write(`POST /events HTTP/1.1\r\nHost: localhost\r\nconnection: close\r\ncontent-type: application/json\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+  client.write(`POST /events HTTP/1.1\r\nHost: localhost\r\nconnection: close\r\n${headers}content-type: application/json\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
   const server = await accepted;
   const closed = once(server, "close");
   return {
@@ -133,10 +136,16 @@ async function recordedDeliveries(root: string, content: string): Promise<number
   return ledger.split("\n").filter(line => line.includes("\"type\":\"delivery\"") && line.includes(content)).length;
 }
 
+/** The hooks a stop comes from: one older than the answer's facts, and one that reads them, as every hook now does. */
+const STOP_HOOKS = [
+  { hook: "a hook that reads no facts of the answer", facts: false, headers: "" },
+  { hook: "a hook that reads the answer's facts", facts: true, headers: `${EVENT_ANSWER_HEADER}: ${EVENT_ANSWER_WITH_FACTS}\r\n` },
+];
+
 describe("an engine service whose hook gave up on a stop", () => {
-  it("hands the steers the stop's checks find to the session's next event, once, and records them once", async () => {
-    const held = await heldStopService();
-    const { giveUp } = await stopHook(held.engine.socketPath, held.root);
+  it.each(STOP_HOOKS)("hands the steers the stop's checks find to the session's next event, once, and records them once, from $hook", async ({ facts, headers }) => {
+    const held = await heldStopService(facts);
+    const { giveUp } = await stopHook(held.engine.socketPath, held.root, headers);
     await held.settling;
     await giveUp();
     held.release();
