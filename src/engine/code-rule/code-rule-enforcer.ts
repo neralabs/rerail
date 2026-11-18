@@ -592,11 +592,6 @@ function recordSentPackages(packages: Map<string, string>, edit: CodeRuleEdit, f
     if (loadNativeBinding().readsPackageManifests(file.language)) packages.set(file.path, JSON.stringify(file.package ?? null));
 }
 
-/** Turns to take a workspace: `take` resolves with the function that gives the turn back. */
-export interface WorkspaceTurns {
-  take(): Promise<() => void>;
-}
-
 /** Generated snapshots and repository audits have independent native state. */
 export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #workspaceRoot: string;
@@ -612,23 +607,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #followGitignore: boolean;
   readonly #openGitIgnore: (root: string) => NativeGitIgnoreMatcher | null;
   readonly #steerShell: SteerShell | undefined;
-  readonly #workspaceTurns: WorkspaceTurns | undefined;
-  readonly #readsAt: ((version: string) => ((path: string) => boolean) | undefined) | undefined;
-  /** The turn this lane holds while it takes a workspace again (`#workspaceForPending`); given back with the workspace. */
-  #turn: (() => void) | undefined;
-  /** The session's own work reached the lane, or it is the session's own checkout's: it keeps its workspace. */
-  #kept = false;
   /** Git's exclude stack for this checkout, opened on first use; null outside Git or where it cannot be opened. */
   #gitIgnore: NativeGitIgnoreMatcher | null | undefined;
   #scope: AuditScope;
   #mode: AuditMode;
   #workspace: PreparedWorkspace | undefined;
   #replacement: PreparedWorkspace | undefined;
-  /**
-   * The lane holds no workspace: it gave its own back (`releaseWorkspace`) or opened with none (`openReleased`). Its next
-   * audit takes a fresh one in its turn; a question goes to an open lane at the same rules (`readsAt`) meanwhile.
-   */
-  #released = false;
   #sessionId: string | undefined;
   #revision = 0;
   readonly #versions = new Map<string, number>();
@@ -710,13 +694,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       openGitIgnore?: (root: string) => NativeGitIgnoreMatcher | null;
       /** The shell the session's coding agent runs commands in, which a steer's command is written for (`steerShell`). */
       steerShell?: SteerShell | undefined;
-      /**
-       * A lane that gave its workspace back waits its turn to take one again (`releaseWorkspace`), so a batch across
-       * many worktrees holds a few workspaces at once rather than one in each; every turn is given back.
-       */
-      workspaceTurns?: WorkspaceTurns;
-      /** What an open lane at a rules version reads (its `readsPath`), which answers for this lane at that version while it has no workspace. */
-      readsAt?: (version: string) => ((path: string) => boolean) | undefined;
     },
   ) {
     this.#catalog = catalog;
@@ -731,8 +708,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#followGitignore = options.followGitignore ?? false;
     this.#openGitIgnore = options.openGitIgnore ?? (root => loadNativeBinding().openGitIgnoreMatcher(root));
     this.#steerShell = options.steerShell;
-    this.#workspaceTurns = options.workspaceTurns;
-    this.#readsAt = options.readsAt;
     this.#ownedAudits =
       options.audits === undefined
         ? new SqliteAuditStore(defaultRerailDatabasePath())
@@ -753,7 +728,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * say, a path Git ignores is refused while the lane follows `.gitignore`.
    */
   acceptsPath(path: string): boolean {
-    return this.#readsNow(path) && !this.ignoresPath(path, false);
+    return this.#readsPath(path) && !this.ignoresPath(path, false);
   }
 
   /**
@@ -764,25 +739,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return (this.#replacement ?? this.#workspace)?.version;
   }
 
-  /** Whether the lane gave its workspace back (`releaseWorkspace`) and has not taken another yet. */
-  get released(): boolean {
-    return this.#released;
-  }
-
   /** `acceptsPath` apart from Git's ignore rules: what another checkout at `rulesVersion` reads (the router asks it). */
   readsPath(path: string): boolean {
-    return this.#readsNow(path);
-  }
-
-  /**
-   * `#readsPath` by the lane's rules. A lane with no workspace asks an open lane at its rules' version, which reads the
-   * same paths, and takes a workspace to answer only when none is open at it.
-   */
-  #readsNow(path: string): boolean {
-    if (!this.#released) return this.#readsPath(path);
-    const reads = this.#readsAt?.(this.#catalog.status.version);
-    if (reads !== undefined) return reads(path);
-    this.#takeWorkspaceAgain();
     return this.#readsPath(path);
   }
 
@@ -815,7 +773,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * no rule reads anyway.
    */
   ignoredEdit(path: string): NativeGitIgnoreMatch | undefined {
-    if (!this.#followGitignore || !this.#readsNow(path)) return undefined;
+    if (!this.#followGitignore || !this.#readsPath(path)) return undefined;
     return this.#askGitIgnore(path, matcher => matcher.ignoredBy(path, false)) ?? undefined;
   }
 
@@ -829,104 +787,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       this.#gitIgnore ??= null;
       process.stderr.write(`rerail: cannot read Git ignore rules for ${path || "."}: ${errorMessage(error)}\n`);
       return undefined;
-    }
-  }
-
-  /**
-   * Gives back the native workspace (its rules, its storage and the checkout's index) while no work of the lane needs
-   * it, keeping all the lane applied and recorded, and its turn; returns whether it gave one back. The lane's next
-   * audit takes a fresh workspace at the catalog's version in its turn and applies again what the lane applied
-   * (`#takeWorkspaceAgain`), as a rules change does, so it judges each edit as an open one would.
-   */
-  releaseWorkspace(): boolean {
-    const released = this.#disposeIdleWorkspace();
-    // Given back whether or not the lane gave its workspace back, so no lane waits on a lane that stays busy.
-    this.#giveTurnBack();
-    return released;
-  }
-
-  #disposeIdleWorkspace(): boolean {
-    const prepared = this.#workspace;
-    if (prepared === undefined || this.#kept || this.#closing || this.#working()) return false;
-    if (this.#replacement !== undefined) this.#disposeWorkspace(this.#replacement.workspace);
-    this.#replacement = undefined;
-    this.#workspace = undefined;
-    this.#released = true;
-    this.#disposeWorkspace(prepared.workspace);
-    return true;
-  }
-
-  /** The session's own work reached the lane: it keeps its workspace from now on, and needs no turn to take one. */
-  keepWorkspace(): void {
-    this.#kept = true;
-    this.#giveTurnBack();
-  }
-
-  /** Whether the lane keeps its workspace (`keepWorkspace`). */
-  get kept(): boolean {
-    return this.#kept;
-  }
-
-  /** Whether the lane holds a turn (`workspaceTurns`), which `releaseWorkspace` gives back. */
-  get holdsTurn(): boolean {
-    return this.#turn !== undefined;
-  }
-
-  /**
-   * Opens the lane with no workspace, as one that gave its own back: an audit takes one in its turn (`workspaceTurns`),
-   * and until then a lane at the same rules answers what it reads (`readsAt`).
-   */
-  openReleased(sessionId: string): void {
-    if (this.#sessionId !== undefined || this.#closing) throw new Error("Executable policy enforcer cannot be reopened");
-    this.#sessionId = sessionId;
-    this.#reportQuarantined();
-    this.#released = true;
-  }
-
-  #giveTurnBack(): void {
-    const turn = this.#turn;
-    this.#turn = undefined;
-    turn?.();
-  }
-
-  /** A lane with no workspace and edits queued takes one, in its turn unless it keeps its workspace. */
-  async #workspaceForPending(): Promise<void> {
-    if (!this.#released || this.#pending.size === 0) return;
-    this.#startFirstPending();
-    const turn = this.#kept ? undefined : await this.#workspaceTurns?.take();
-    this.#takeWorkspaceInTurn(turn);
-  }
-
-  /**
-   * The audit of the first queued edit starts now, as an open lane's starts when its pump picks the edit up, so a lane
-   * waiting its turn records its audit in the order the session's batch named it, at the catalog's rules.
-   */
-  #startFirstPending(): void {
-    const first = this.#pending.entries().next().value;
-    if (first !== undefined) this.#ensureStoredAudit(first[1], first[0], this.#catalog.provenance());
-  }
-
-  #takeWorkspaceInTurn(turn: (() => void) | undefined): void {
-    this.#turn = turn;
-    // A lane the session's work reached, or that closed, while it waited holds no turn.
-    if (this.#kept || this.#closing) this.#giveTurnBack();
-    this.#takeWorkspaceAgain();
-  }
-
-  /** Whether an edit is being stored, queued, evaluated or audited. */
-  #working(): boolean {
-    return this.snapshotStatus().pending || this.#storing.size > 0 || this.#generatedEditAudits.size > 0;
-  }
-
-  /** A workspace for a lane that gave its own back, at the catalog's version; the next evaluation installs it (`#run`). */
-  #takeWorkspaceAgain(): void {
-    if (!this.#released) return;
-    this.#released = false;
-    if (this.#closing) return;
-    try {
-      this.#replacement = this.#prepareWorkspace();
-    } catch (error) {
-      this.#readFailures.set("catalog", failure("catalog", "adapter-error", errorMessage(error), undefined, "evaluate"));
     }
   }
 
@@ -1002,7 +862,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     try {
       this.#catalog.refresh();
       this.#reportQuarantined();
-      if (this.#holdsCurrentRules()) return;
+      if ((this.#replacement ?? this.#workspace)?.version === this.#catalog.status.version) return;
       const replacement = this.#prepareWorkspace();
       if (this.#replacement !== undefined) this.#disposeWorkspace(this.#replacement.workspace);
       this.#replacement = replacement;
@@ -1012,14 +872,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
         failure("catalog", "adapter-error", errorMessage(error), undefined, "evaluate"),
       );
     }
-  }
-
-  /**
-   * Whether the lane's workspace is at the catalog's version, or the lane gave its workspace back and takes one at the
-   * catalog's version when an audit or a question needs it (`#takeWorkspaceAgain`).
-   */
-  #holdsCurrentRules(): boolean {
-    return this.#released || (this.#replacement ?? this.#workspace)?.version === this.#catalog.status.version;
   }
 
   /** Digest of the compiled rule catalog as of now: what a repository audit started now records as its `catalogRevision`. */
@@ -1170,7 +1022,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     }
     this.#workspace?.workspace.close();
     this.#replacement?.workspace.close();
-    this.#giveTurnBack();
   }
 
   /** Ends the audits this evaluator started and left running, without touching the session's other audits. */
@@ -1329,26 +1180,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       });
   }
 
-  /** Whether the lane takes or installs a workspace before its next edit: it holds none and edits wait, or a replacement does. */
-  #workspaceToInstall(): boolean {
-    return (this.#released && this.#pending.size > 0) || this.#replacement !== undefined;
-  }
-
-  /**
-   * A lane with no workspace takes one in its turn (`#workspaceForPending`); else its replacement goes in
-   * (`#replaceWorkspace`), whose own promise the pump awaits, as it did before lanes gave workspaces back.
-   */
-  #installWorkspace(): Promise<void> {
-    const replacement = this.#replacement;
-    if (this.#released || replacement === undefined) return this.#workspaceForPending();
-    return this.#replaceWorkspace(replacement);
-  }
-
   async #run(): Promise<void> {
     await yieldToHost();
     while (!this.#closing) {
-      // An open lane with no replacement picks its next edit up in the same turn.
-      while (this.#workspaceToInstall() && !this.#closing) await this.#installWorkspace();
+      while (this.#replacement !== undefined && !this.#closing) await this.#replaceWorkspace(this.#replacement);
       const entry = this.#pending.entries().next().value;
       if (entry === undefined) return;
       const [path, stored] = entry;

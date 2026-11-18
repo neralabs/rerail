@@ -15,7 +15,7 @@ import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
 import { worktreeRegistry } from "../catalog/repository-identity.js";
 import { loadNativeBinding, type NativeGitIgnoreMatcher } from "../native/native.js";
-import { NativeCodeRuleEnforcer, type WorkspaceTurns } from "./code-rule-enforcer.js";
+import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import type { GitIgnoreMatchers } from "../native/git-ignore-matchers.js";
 import type {
   AuditorCloseOptions,
@@ -61,64 +61,6 @@ interface Lane {
   readonly opening: Promise<void>;
 }
 
-/** How many lanes of other worktrees hold a workspace at once in one session; the rest wait their turn, in order. */
-const WALK_LANES_AT_ONCE = 4;
-
-/**
- * Turns to take a workspace (`WorkspaceTurns`): at most `limit` held at once, handed on in the order asked. A lane that
- * holds a turn and has nothing left to audit keeps its workspace (`idle`) until another lane waits for a turn, the lane
- * idle longest giving its own back first: a worktree whose files keep changing is judged on one workspace from batch to
- * batch, as an open lane is, where giving it back after each batch prepared it and applied all its edits again each time.
- */
-class LaneTurns implements WorkspaceTurns {
-  #free: number;
-  readonly #waiting: Array<(giveBack: () => void) => void> = [];
-  /** Lanes holding a turn with nothing to audit, longest idle first, each with how it gives its workspace back. */
-  readonly #idle = new Map<object, () => void>();
-
-  constructor(limit: number) {
-    this.#free = limit;
-  }
-
-  async take(): Promise<() => void> {
-    if (this.#free > 0) {
-      this.#free -= 1;
-      return this.#turn();
-    }
-    const turn = new Promise<() => void>(resolve => this.#waiting.push(resolve));
-    this.#reclaim();
-    return await turn;
-  }
-
-  /** `holder` holds a turn and has nothing to audit: it gives its workspace back with `release` once a lane waits. */
-  idle(holder: object, release: () => void): void {
-    this.#idle.delete(holder);
-    this.#idle.set(holder, release);
-    this.#reclaim();
-  }
-
-  /** Idle lanes give their workspaces back, longest idle first, while lanes wait; one that holds no turn hands none on. */
-  #reclaim(): void {
-    for (const [holder, release] of this.#idle) {
-      if (this.#waiting.length === 0) return;
-      this.#idle.delete(holder);
-      release();
-    }
-  }
-
-  /** A turn's give-back: the first waiting takes the turn, else it is free again; a second call does nothing. */
-  #turn(): () => void {
-    let given = false;
-    return () => {
-      if (given) return;
-      given = true;
-      const next = this.#waiting.shift();
-      if (next === undefined) this.#free += 1;
-      else next(this.#turn());
-    };
-  }
-}
-
 function merged(revision: number, responses: readonly CodeRuleResponse[]): CodeRuleResponse {
   return {
     revision,
@@ -144,10 +86,6 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   readonly #gitIgnoreReported = new Set<string>();
   /** The checkouts another lane answered for: their catalogs are read again when the lanes' are (`refreshCodeRules`). */
   readonly #answeredByOthers = new Set<string>();
-  /** Lanes giving their workspace back once their audits settle (`#releaseWhenSettled`); a settle waits for them. */
-  readonly #releasing = new Set<Promise<void>>();
-  /** The turns this session's lanes of other worktrees take a workspace in (`WALK_LANES_AT_ONCE`). */
-  readonly #turns = new LaneTurns(WALK_LANES_AT_ONCE);
   #settings: Required<AuditSettings>;
   #sessionId: string | undefined;
   #closing = false;
@@ -167,9 +105,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     } catch (error) {
       process.stderr.write(`rerail: policy execution recording failed: ${error instanceof Error ? error.message : String(error)}\n`);
     }
-    const lane = this.#lane(this.#options.startingCheckout);
-    lane?.enforcer.keepWorkspace();
-    await lane?.opening;
+    await this.#lane(this.#options.startingCheckout)?.opening;
   }
 
   /**
@@ -261,14 +197,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   #accepts(owner: CheckoutOwner | undefined): boolean {
     if (owner === undefined) return false;
     const root = owner.checkoutRoot;
-    const lane = this.#openLane(root) ?? this.#laneWithRulesOf(root) ?? this.#lane(root);
+    const lane = this.#lanes.get(root) ?? this.#laneWithRulesOf(root) ?? this.#lane(root);
     return lane !== undefined && this.#readsIn(lane, owner);
-  }
-
-  /** `root`'s lane while it holds a workspace; one that gave it back (`#releaseWhenSettled`) answers through another. */
-  #openLane(root: string): Lane | undefined {
-    const lane = this.#lanes.get(root);
-    return lane?.enforcer.released === true ? undefined : lane;
   }
 
   /** Whether `lane` reads `owner`'s path: its own checkout's answer, or another's by the same rules and that checkout's Git ignore rules. */
@@ -392,15 +322,11 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     this.#assertSession(sessionId);
     const partitioned = new Map<Lane, CodeRuleEdit[]>();
     for (const edit of batch.edits) {
-      // A lane a Log batch opens takes its workspace in its turn (`#releaseWhenSettled`).
-      const routed = this.#route(edit.path, batch.mode === "log");
+      const routed = this.#route(edit.path);
       if (routed === undefined) continue;
       partitioned.set(routed.lane, [...(partitioned.get(routed.lane) ?? []), { ...edit, path: routed.path }]);
     }
     const responses: CodeRuleResponse[] = [];
-    // A batch across more worktrees than the session holds workspaces for takes its lanes through the turns: a
-    // workspace kept after it would only be taken back by the next such batch.
-    const keeps = partitioned.size <= WALK_LANES_AT_ONCE;
     for (const lane of [...this.#lanes.values()]) {
       if (!this.#mayRun(lane.root)) continue;
       const edits = partitioned.get(lane);
@@ -411,39 +337,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
       }
       await lane.opening;
       responses.push(await lane.enforcer.auditGeneratedEdits(sessionId, { ...batch, edits }));
-      this.#releaseWhenSettled(lane, batch.mode, keeps);
     }
     return merged(batch.revision, responses);
-  }
-
-  /**
-   * A lane in another checkout that only Log batches reached (the walk's findings in another worktree, which every
-   * session watching it audits) gives its workspace back once their audits settle and another lane of the session needs
-   * a turn (`#settled`), or at once after a batch across more worktrees than that (`keeps` false): a workspace holds
-   * the checkout's index, and a session kept one open in every worktree whose change it audited, so each session in a
-   * repository of many worktrees added hundreds of MB. The lane keeps what it applied and recorded, and judges its next
-   * batch as an open one would (`releaseWorkspace`). The session's own checkout, and a lane its own work reached, stay
-   * open.
-   */
-  #releaseWhenSettled(lane: Lane, mode: AuditMode | undefined, keeps: boolean): void {
-    if (mode !== "log") lane.enforcer.keepWorkspace();
-    if (lane.enforcer.kept) return;
-    const releasing = lane.enforcer.settleGeneratedEdits()
-      .then(() => { this.#settled(lane, keeps); })
-      .catch(() => undefined)
-      .finally(() => this.#releasing.delete(releasing));
-    this.#releasing.add(releasing);
-  }
-
-  /**
-   * A lane whose audits settled: one that holds a turn, after a batch the session's turns hold whole (`keeps`), keeps
-   * its workspace until another lane waits for one (`LaneTurns.idle`); any other gives it back now, one that opened
-   * with its workspace, for a walk's question, included.
-   */
-  #settled(lane: Lane, keeps: boolean): void {
-    if (this.#lanes.get(lane.root) !== lane) return;
-    if (keeps && lane.enforcer.holdsTurn) this.#turns.idle(lane, () => lane.enforcer.releaseWorkspace());
-    else lane.enforcer.releaseWorkspace();
   }
 
   async settleGeneratedEdits(): Promise<void> {
@@ -467,7 +362,6 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     }
     const visited = new Set<string>();
     for (const [lane, paths] of this.#byLane(input.paths ?? [])) {
-      lane.enforcer.keepWorkspace();
       await lane.opening;
       auditIds.push(...await lane.enforcer.audit(sessionId, { scope: "touched-files", mode: input.mode, paths }));
       // The lane's walk skips the checkouts nested in a folder it was given; each is audited whole, in its own lane.
@@ -527,7 +421,6 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   async #auditCheckout(sessionId: string, root: string, mode: AuditMode, audit: RepositoryAuditHooks | undefined) {
     const lane = this.#lane(root);
     if (lane === undefined) return undefined;
-    lane.enforcer.keepWorkspace();
     await lane.opening;
     if (audit !== undefined && !audit.claim(root, lane.enforcer.catalogRevision())) return undefined;
     const report = await lane.enforcer.auditRepository(sessionId, mode);
@@ -553,13 +446,12 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
         await settle(lane);
       }));
     }
-    await Promise.all(this.#releasing);
   }
 
-  #route(path: string, lazily = false): { lane: Lane; path: string } | undefined {
+  #route(path: string): { lane: Lane; path: string } | undefined {
     const owner = this.#owner(resolve(this.#sessionRoot, path));
     if (owner === undefined) return undefined;
-    const lane = this.#lane(owner.checkoutRoot, lazily);
+    const lane = this.#lane(owner.checkoutRoot);
     return lane === undefined ? undefined : { lane, path: owner.path };
   }
 
@@ -602,48 +494,30 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * The lane of an eligible checkout, opened on first use; undefined while the checkout may not run rules, and for
    * every checkout while the session's own checkout is stopped (the gate stays on the starting checkout).
    */
-  #lane(root: string, lazily = false): Lane | undefined {
+  #lane(root: string): Lane | undefined {
     const sessionId = this.#sessionId;
     if (sessionId === undefined || this.#closing || !this.#mayRun(root)) return undefined;
     let lane = this.#lanes.get(root);
     if (lane === undefined) {
-      lane = this.#newLane(root, sessionId, lazily);
+      const enforcer = new NativeCodeRuleEnforcer(this.#options.catalogs.catalog(root), {
+        workspaceRoot: root,
+        steerDelivery: this.#options.steerDelivery,
+        audits: this.#options.audits,
+        ...this.#settings,
+        ...(this.#options.timingLog === undefined ? {} : { timingLog: this.#options.timingLog }),
+        followGitignore: this.#options.followGitignore ?? false,
+        // The matcher a walk's questions opened for the checkout before it had a lane, so the checkout holds one index.
+        openGitIgnore: () => this.#gitIgnoreMatcher({ checkoutRoot: root, path: "" }),
+        steerShell: this.#options.steerShell,
+        presentPath: path => relative(this.#sessionRoot, join(root, path)).split(sep).join("/"),
+        nestedCheckouts: () => this.#nestedCheckoutsOf(root),
+      });
+      // The enforcer registers its code rules synchronously, so the new lane answers `acceptsPath` at once.
+      lane = { root, enforcer, opening: enforcer.openWorkspace(sessionId) };
+      lane.opening.catch(() => undefined);
       this.#lanes.set(root, lane);
     }
     return lane;
-  }
-
-  /**
-   * A lane for `root`, its workspace opened now, or `lazily`: with none until an audit takes one in its turn, a lane at
-   * the same rules answering what it reads meanwhile (`openReleased`).
-   */
-  #newLane(root: string, sessionId: string, lazily: boolean): Lane {
-    const enforcer = new NativeCodeRuleEnforcer(this.#options.catalogs.catalog(root), {
-      workspaceRoot: root,
-      steerDelivery: this.#options.steerDelivery,
-      audits: this.#options.audits,
-      ...this.#settings,
-      ...(this.#options.timingLog === undefined ? {} : { timingLog: this.#options.timingLog }),
-      followGitignore: this.#options.followGitignore ?? false,
-      // The matcher a walk's questions opened for the checkout before it had a lane, so the checkout holds one index.
-      openGitIgnore: () => this.#gitIgnoreMatcher({ checkoutRoot: root, path: "" }),
-      steerShell: this.#options.steerShell,
-      presentPath: path => relative(this.#sessionRoot, join(root, path)).split(sep).join("/"),
-      nestedCheckouts: () => this.#nestedCheckoutsOf(root),
-      workspaceTurns: this.#turns,
-      readsAt: version => this.#readsAt(version),
-    });
-    if (lazily) enforcer.openReleased(sessionId);
-    // The enforcer registers its code rules synchronously, so a lane opened now answers `acceptsPath` at once.
-    const opening = lazily ? Promise.resolve() : enforcer.openWorkspace(sessionId);
-    opening.catch(() => undefined);
-    return { root, enforcer, opening };
-  }
-
-  /** What an open lane at `version` reads, for a lane with no workspace (`readsAt`); undefined while none is open at it. */
-  #readsAt(version: string): ((path: string) => boolean) | undefined {
-    const lane = this.#laneAt(version);
-    return lane === undefined ? undefined : path => lane.enforcer.readsPath(path);
   }
 
   /** Whether `root` may run rules in this session: it is eligible, and the session's own checkout is not stopped. */
