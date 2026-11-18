@@ -1192,6 +1192,8 @@ export class CodeRuleBridge {
   readonly #rewindable = new Map<string, RewindableEdit>();
   /** Command tool calls whose results must reconcile shell writes. */
   readonly #commands = new Set<string>();
+  /** Command tool calls the runtime answered while the evaluator opened (`unwatchedCall`), until their results. */
+  readonly #unwatchedCommands = new Set<string>();
   /**
    * What the session last observed of each source of its folder, and of each source elsewhere that a tool call of it
    * read; of the other worktrees, only where that differs from the snapshot `#worktreeView` holds (`#observe`).
@@ -1496,14 +1498,17 @@ export class CodeRuleBridge {
    * A call the runtime answered without code rules while the evaluator was still opening: never begun, so nothing of it
    * is captured, but what it writes is the session's own. Its window is taken by the workspace as it opens, so the walk
    * credits what was stamped while it ran; its result reconciles nothing, and what it wrote is the next walk's. A host
-   * whose edit tool no hook shows opens one for each turn the same way, as its writes are seen by no call.
+   * whose edit tool no hook shows opens one for each turn the same way, as its writes are seen by no call. `toolName`
+   * names the call's tool, none for a turn's window.
    */
-  async unwatchedCall(toolCallId: string): Promise<void> {
+  async unwatchedCall(toolCallId: string, toolName?: string): Promise<void> {
+    if (toolName !== undefined && isCommandTool(toolName)) this.#unwatchedCommands.add(toolCallId);
     (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, await filesystemClock());
   }
 
   /** Ends the window `unwatchedCall` opened for the call, at its result. */
   async unwatchedResult(toolCallId: string): Promise<void> {
+    this.#unwatchedCommands.delete(toolCallId);
     (this.#discovery?.toolCalls ?? this.#unwatched).finish(toolCallId, await filesystemClock());
   }
 
@@ -2506,7 +2511,7 @@ export class CodeRuleBridge {
     for (const [worktree, snapshot] of take.snapshots) if (discovery.worktrees.roots.has(worktree)) this.#worktreeView.take(worktree, snapshot);
     const pendingPaths = this.#pendingPaths();
     for (const path of new Set([...take.walk.previous.keys(), ...take.scan.sources.keys()])) {
-      if (this.#toolChanged(discovery, take.walk, path, pendingPaths)) this.#keepToolView(path, take.walk.previous.get(path));
+      if (this.#toolChanged(discovery, take.walk, path, pendingPaths, take.scan.sources.get(path))) this.#keepToolView(path, take.walk.previous.get(path));
     }
     for (const [path, before] of take.views) this.#keepToolView(path, before);
   }
@@ -2679,7 +2684,7 @@ export class CodeRuleBridge {
     const pendingPaths = this.#pendingPaths();
     const edits: CodeRuleEdit[] = [];
     for (const path of [...new Set([...walk.previous.keys(), ...current.keys()])].sort(compareDeterministicStrings)) {
-      if (!walkAnswersFor(discovery, walk, path) || this.#toolChanged(discovery, walk, path, pendingPaths)) continue;
+      if (!walkAnswersFor(discovery, walk, path) || this.#toolChanged(discovery, walk, path, pendingPaths, current.get(path))) continue;
       const previous = walk.previous.get(path);
       const edit = this.#discoveredEdit(discovery, path, previous, current.get(path), walk.baseline);
       if (edit === undefined) continue;
@@ -2691,9 +2696,24 @@ export class CodeRuleBridge {
     return edits;
   }
 
-  /** A begin/finish after scan launch wins even when its bytes happen to match the old snapshot. */
-  #toolChanged(discovery: SourceDiscovery, walk: WalkStart, path: string, pendingPaths: ReadonlySet<string>): boolean {
-    return discovery.versions.get(path) !== walk.versions.get(path) || pendingPaths.has(path);
+  /**
+   * A begin/finish after scan launch wins even when its bytes happen to match the old snapshot. So does a shell command
+   * still running that may be writing a source the session has observed (`#commandWriting`): its result reports it.
+   */
+  #toolChanged(discovery: SourceDiscovery, walk: WalkStart, path: string, pendingPaths: ReadonlySet<string>, current: Source | undefined): boolean {
+    return discovery.versions.get(path) !== walk.versions.get(path) || pendingPaths.has(path)
+      || (walk.previous.has(path) && this.#commandWriting(discovery, current));
+  }
+
+  /**
+   * Whether a shell command of the session that still runs had begun when `current`, a source as a walk found it, last
+   * changed; for one gone, whether such a command runs at all. The command may be part way through writing it: a walk
+   * that took it now would audit a half-written file as the session's edit, and the command's result would measure the
+   * rest of its change from that. The result's walk takes the change whole, from what the session saw before.
+   */
+  #commandWriting(discovery: SourceDiscovery, current: Source | undefined): boolean {
+    const commands = [...this.#commands, ...this.#unwatchedCommands];
+    return commands.some(toolCallId => discovery.toolCalls.runsSince(toolCallId, current?.modifiedAt));
   }
 
   /** The paths a tool call in progress has captured: its finish, not a walk, reports them. */
