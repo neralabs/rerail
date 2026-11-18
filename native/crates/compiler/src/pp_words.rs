@@ -587,16 +587,40 @@ struct Em {
 /// binary operands' least precedences, and whether an operand is evaluated (`&&`, `||` and `?:`
 /// evaluate only the operands they take).
 #[derive(Default)]
-struct Ex {
-    lo: u32,
-    at: u32,
-    hi: u32,
-    t: Tok,
-    err: bool,
+#[repr(C)]
+pub(crate) struct Ex {
+    pub(crate) lo: u32,
+    pub(crate) at: u32,
+    pub(crate) hi: u32,
+    pub(crate) t: Tok,
+    pub(crate) err: bool,
     vals: Vec<crate::pp_expr::Value>,
-    ops: Vec<&'static [u8]>,
+    /// Indices into `OPS`.
+    ops: Vec<u8>,
     mins: Vec<u8>,
     live: Vec<bool>,
+}
+
+/// `#if`'s operators (an `EXPR` operator's index); `OPS.len()` an operator of no expression
+/// (`&=`, `[`).
+pub(crate) const OPS: &[&[u8]] = &[b"||", b"&&", b"|", b"^", b"&", b"==", b"!=", b"<", b">", b"<=", b">=", b"<<", b">>", b"+", b"-", b"*", b"/", b"%", b"~", b"!", b"(", b")", b"?", b":", b","];
+
+/// An operator's index in `OPS`.
+pub(crate) const fn op_index(op: &[u8]) -> u8 {
+    let mut i = 0;
+    while i < OPS.len() {
+        let o = OPS[i];
+        if o.len() == op.len() && (o.len() < 1 || o[0] == op[0]) && (o.len() < 2 || o[1] == op[1]) {
+            return i as u8;
+        }
+        i += 1;
+    }
+    OPS.len() as u8
+}
+
+/// The operator of index `i` (`OPS`), `\0` for one of no expression.
+fn op_bytes(i: u8) -> &'static [u8] {
+    OPS.get(usize::from(i)).copied().unwrap_or(b"\0")
 }
 
 /// The `#define` being read (`DEFINE`).
@@ -836,6 +860,21 @@ pub(crate) struct Ctx {
     pub room_exps: u64,
     /// The substitution being made (`Machine::sub`).
     pub sub: *mut Sub,
+    /// `#if`'s expression (`Machine::ex`), and its stacks: `Value`s, `OPS` indices, least
+    /// precedences, and whether an operand is evaluated.
+    pub ex: *mut Ex,
+    pub vals: *mut crate::pp_expr::Value,
+    pub nvals: u64,
+    pub room_vals: u64,
+    pub ops: *mut u8,
+    pub nops: u64,
+    pub room_ops: u64,
+    pub mins: *mut u8,
+    pub nmins: u64,
+    pub room_mins: u64,
+    pub live: *mut u8,
+    pub nlive: u64,
+    pub room_live: u64,
     pub returns: *mut u32,
     pub nreturns: u64,
     pub room_returns: u64,
@@ -853,11 +892,17 @@ pub(crate) struct FileC {
     pub ntoks: u64,
     pub bytes: *const u8,
     pub nbytes: u64,
+    /// Its `#` chains (`File::chains`): `(u32, u32)`s (`PAIR`), sorted by the first.
+    pub chains: *const u8,
+    pub nchains: u64,
 }
 
 /// A conditional's layout (`Machine::conds`): its size and its file source's offset.
 pub(crate) const COND_SIZE: usize = std::mem::size_of::<(u32, bool, bool)>();
 pub(crate) const COND_SRC: usize = std::mem::offset_of!((u32, bool, bool), 0);
+/// Its chain taken, and its `#else` seen.
+pub(crate) const COND_TAKEN: usize = std::mem::offset_of!((u32, bool, bool), 1);
+pub(crate) const COND_ELSE: usize = std::mem::offset_of!((u32, bool, bool), 2);
 /// An argument's or an expansion's range: its size, and its two ends' offsets.
 pub(crate) const PAIR: (usize, usize, usize) = (std::mem::size_of::<(u32, u32)>(), std::mem::offset_of!((u32, u32), 0), std::mem::offset_of!((u32, u32), 1));
 /// An argument use: its size, its parameter's offset, its "inside `__VA_OPT__`"'s.
@@ -874,7 +919,7 @@ pub(crate) const LEVEL: (usize, usize, usize) = (std::mem::size_of::<(u16, u32)>
 /// `code` reads and writes only within the `Ctx` it is given: each buffer below its room.
 pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, bounds: &Bounds, code: unsafe extern "C" fn(*mut Ctx) -> u64, reasons: &[&'static str]) -> Result<Expanded, Refused> {
     let mut m = Machine::new(program, files, env, bounds)?;
-    let filesc: Vec<FileC> = files.iter().map(|f| FileC { toks: f.toks.as_ptr(), ntoks: f.toks.len() as u64, bytes: f.bytes.as_ptr(), nbytes: f.bytes.len() as u64 }).collect();
+    let filesc: Vec<FileC> = files.iter().map(|f| FileC { toks: f.toks.as_ptr(), ntoks: f.toks.len() as u64, bytes: f.bytes.as_ptr(), nbytes: f.bytes.len() as u64, chains: f.chains.as_ptr().cast(), nchains: f.chains.len() as u64 }).collect();
     fn room<T>(v: &mut Vec<T>, n: usize) -> u64 {
         v.reserve_exact(n.saturating_sub(v.len()));
         n as u64
@@ -935,6 +980,19 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         exps: m.exps.as_mut_ptr().cast(),
         nexps: m.exps.len() as u64,
         sub: &mut m.sub,
+        room_vals: room(&mut m.ex.vals, bounds.depth * 4),
+        vals: m.ex.vals.as_mut_ptr(),
+        nvals: m.ex.vals.len() as u64,
+        room_ops: room(&mut m.ex.ops, bounds.depth * 4),
+        ops: m.ex.ops.as_mut_ptr(),
+        nops: m.ex.ops.len() as u64,
+        room_mins: room(&mut m.ex.mins, bounds.depth * 4),
+        mins: m.ex.mins.as_mut_ptr(),
+        nmins: m.ex.mins.len() as u64,
+        room_live: room(&mut m.ex.live, bounds.depth * 4),
+        live: m.ex.live.as_mut_ptr().cast(),
+        nlive: m.ex.live.len() as u64,
+        ex: &mut m.ex,
         returns: returns.as_mut_ptr(),
         nreturns: 0,
         room_returns: bounds.depth as u64,
@@ -963,6 +1021,10 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         m.uses.set_len(c.nuses as usize);
         m.levels.set_len(c.nlevels as usize);
         m.exps.set_len(c.nexps as usize);
+        m.ex.vals.set_len(c.nvals as usize);
+        m.ex.ops.set_len(c.nops as usize);
+        m.ex.mins.set_len(c.nmins as usize);
+        m.ex.live.set_len(c.nlive as usize);
     }
     (m.collecting, m.t, m.from_file, m.in_if, m.d, m.line_last) = (c.collecting as u32, c.t, c.from_file != 0, c.in_if != 0, c.d as u32, c.line_last);
     if r == 0 {
@@ -1910,7 +1972,7 @@ impl<'a> Machine<'a> {
     }
 
     /// The operator of the expression's next token, if it has one.
-    fn expr_peek(&self) -> Option<&'static [u8]> {
+    fn expr_peek(&self) -> Option<u8> {
         let ex = &self.ex;
         if ex.err || ex.at >= ex.hi {
             return None;
@@ -1920,11 +1982,18 @@ impl<'a> Machine<'a> {
 
     /// A token's operator: a punctuator's spelling (or an alternative token's punctuator), as
     /// one of the evaluator's operators; `None` for any other token.
-    fn expr_op(&self, t: &Tok) -> Option<&'static [u8]> {
-        const OPS: &[&[u8]] = &[b"||", b"&&", b"|", b"^", b"&", b"==", b"!=", b"<", b">", b"<=", b">=", b"<<", b">>", b"+", b"-", b"*", b"/", b"%", b"~", b"!", b"(", b")", b"?", b":", b","];
+    fn expr_op(&self, t: &Tok) -> Option<u8> {
         let it = crate::pp_expr::item(t.kind, self.text(t), self.program.pp.cpp);
         let op = it.op?;
-        Some(OPS.iter().copied().find(|o| *o == op).unwrap_or(b"\0"))
+        Some(OPS.iter().position(|o| *o == op).unwrap_or(OPS.len()) as u8)
+    }
+
+    /// Room for one more on one of the expression's stacks (`len` long).
+    fn ex_room(&self, len: usize) -> R<()> {
+        if len >= self.bounds.depth * 4 {
+            return Err("past the expression's bound");
+        }
+        Ok(())
     }
 
     fn live(&self) -> bool {
@@ -1963,10 +2032,8 @@ impl<'a> Machine<'a> {
             1 => {
                 let t = self.ex.t;
                 match self.expr_op(&t) {
-                    Some(op @ (b"+" | b"-" | b"~" | b"!")) => {
-                        if self.ex.ops.len() >= self.bounds.depth * 4 {
-                            return Err("past the expression's bound");
-                        }
+                    Some(op) if matches!(op_bytes(op), b"+" | b"-" | b"~" | b"!") => {
+                        self.ex_room(self.ex.ops.len())?;
                         self.ex.ops.push(op);
                         true
                     }
@@ -1976,15 +2043,15 @@ impl<'a> Machine<'a> {
             2 => {
                 let op = self.ex.ops.pop().ok_or("no operator")?;
                 let v = self.ex.vals.last_mut().ok_or("no value")?;
-                *v = prefix(op, *v);
+                *v = prefix(op_bytes(op), *v);
                 return Ok(None);
             }
             3 => {
                 let t = self.ex.t;
-                self.expr_op(&t) == Some(b"(")
+                self.expr_op(&t) == Some(op_index(b"("))
             }
             4 => {
-                if self.expr_peek() == Some(b")") {
+                if self.expr_peek() == Some(op_index(b")")) {
                     self.ex.at += 1;
                 } else {
                     self.ex.err = true;
@@ -2002,7 +2069,7 @@ impl<'a> Machine<'a> {
                 return Ok(None);
             }
             6 => {
-                if self.expr_peek() != Some(b",") {
+                if self.expr_peek() != Some(op_index(b",")) {
                     return Ok(Some(false));
                 }
                 self.ex.at += 1;
@@ -2010,20 +2077,21 @@ impl<'a> Machine<'a> {
                 true
             }
             7 => {
+                self.ex_room(self.ex.mins.len())?;
                 self.ex.mins.push(1);
                 return Ok(None);
             }
             8 => {
                 let min = *self.ex.mins.last().ok_or("no precedence")?;
                 let Some(op) = self.expr_peek() else { return Ok(Some(false)) };
-                let Some(p) = binary(op).filter(|&p| p >= min) else { return Ok(Some(false)) };
-                if self.ex.mins.len() >= self.bounds.depth * 4 {
-                    return Err("past the expression's bound");
-                }
+                let Some(p) = binary(op_bytes(op)).filter(|&p| p >= min) else { return Ok(Some(false)) };
+                self.ex_room(self.ex.mins.len())?;
+                self.ex_room(self.ex.ops.len())?;
+                self.ex_room(self.ex.live.len())?;
                 self.ex.at += 1;
                 let l = *self.ex.vals.last().ok_or("no value")?;
                 let live = self.live()
-                    && match op {
+                    && match op_bytes(op) {
                         b"&&" => l.is_true(),
                         b"||" => !l.is_true(),
                         _ => true,
@@ -2036,10 +2104,10 @@ impl<'a> Machine<'a> {
                 self.ex.live.pop();
                 let live = self.live();
                 let (l, r) = self.pop2()?;
-                let v = match op {
+                let v = match op_bytes(op) {
                     b"&&" => Value::int((l.is_true() && r.is_true()) as i64),
                     b"||" => Value::int((l.is_true() || r.is_true()) as i64),
-                    _ => crate::pp_expr::apply(op, l, r, live).unwrap_or_else(|| {
+                    op => crate::pp_expr::apply(op, l, r, live).unwrap_or_else(|| {
                         self.ex.err = true;
                         zero
                     }),
@@ -2052,9 +2120,10 @@ impl<'a> Machine<'a> {
                 return Ok(None);
             }
             11 => {
-                if self.expr_peek() != Some(b"?") {
+                if self.expr_peek() != Some(op_index(b"?")) {
                     return Ok(Some(false));
                 }
+                self.ex_room(self.ex.live.len())?;
                 self.ex.at += 1;
                 let c = *self.ex.vals.last().ok_or("no value")?;
                 let live = self.live() && c.is_true();
@@ -2063,7 +2132,7 @@ impl<'a> Machine<'a> {
             }
             12 => {
                 self.ex.live.pop();
-                if self.expr_peek() == Some(b":") {
+                if self.expr_peek() == Some(op_index(b":")) {
                     self.ex.at += 1;
                 } else {
                     self.ex.err = true;

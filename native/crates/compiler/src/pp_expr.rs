@@ -12,6 +12,7 @@ use crate::pp_words::{IDENT, LITERAL, NUMBER, PUNCT};
 
 /// A value: its bits and whether it is unsigned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(C)]
 pub struct Value {
     pub bits: u64,
     pub unsigned: bool,

@@ -21,6 +21,7 @@
 //!   - `Pop`: the next entry of a stack the machine keeps, popped (the preprocessing words: a
 //!     source at its end, the conditionals opened in a file), so at most what was pushed.
 //!   - `Probe`: the next slot of a hash table probed, at most every slot once.
+//!   - `Halve`: a sorted list's search range halved, so at most its length's log.
 //!   - `Item`: the next item of a list the machine stored (a definition's argument uses, a
 //!     level's tokens, a frame's expansions), so at most its length.
 //!
@@ -47,6 +48,7 @@ pub enum Step {
     Pop,
     Probe,
     Item,
+    Halve,
 }
 
 /// Why a function was refused.
