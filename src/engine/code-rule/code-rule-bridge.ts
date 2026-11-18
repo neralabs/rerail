@@ -1083,13 +1083,14 @@ export function isCommandTool(toolName: string): boolean {
 }
 
 /**
- * Whether `begin` and `finish` check what a call writes at the call's own result, given the paths its input names
- * (`generatedEditPaths`): an edit tool's call names the paths it writes, whose text `begin` captures, and a command
- * tool's result reconciles the workspace. Any other call only opens a window (`unwatchedCall` opens the same one), and
- * what it wrote is the next walk's.
+ * What `begin` and `finish` check of a call at the call's own result, given the paths its input names
+ * (`generatedEditPaths`): an edit tool's call names the paths it writes, whose text `begin` captures (`edit`), and a
+ * command tool's result reconciles the workspace (`command`). Any other call only opens a window (`unwatchedCall` opens
+ * the same one), and what it wrote is the next walk's (undefined).
  */
-export function checkedAtResult(toolName: string, paths: readonly string[]): boolean {
-  return paths.length > 0 || isCommandTool(toolName);
+export function checkAtResult(toolName: string, paths: readonly string[]): "edit" | "command" | undefined {
+  if (paths.length > 0) return "edit";
+  return isCommandTool(toolName) ? "command" : undefined;
 }
 
 /**
@@ -1407,10 +1408,9 @@ export class CodeRuleBridge {
     this.#auditor.refreshOwners?.(paths);
     // What the ignore files a tool is about to write hold now is the baseline its edit is compared with.
     await this.#rememberIgnoreFiles(paths);
-    if (paths.length === 0) {
-      if (isCommandTool(toolName)) this.#commands.add(toolCallId);
-      return {};
-    }
+    const check = checkAtResult(toolName, paths);
+    if (check === "command") this.#commands.add(toolCallId);
+    if (check !== "edit") return {};
     return await this.#enqueue(async () => {
       this.#assertDiscovery(discovery);
       const preimages = restoredPreimages === undefined

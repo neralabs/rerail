@@ -22,7 +22,7 @@ import {
 } from "./owed-ledger.js";
 import {
   CodeRuleBridge, generatedEditPaths, ledgerPreimage, type HeldCall, type Preimage, type RewoundEdit, type SessionWalkResume,
-  checkedAtResult, type SourceObservationCache,
+  checkAtResult, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
@@ -147,12 +147,12 @@ const REOPENED_RULES_WAIT_MS = 20_000;
 
 /**
  * Whether a code-rule boundary of a reopened session needs its rules, so a steer from it rides its own answer: a call
- * the evaluator checks at its result (`checkedAtResult`) and that call's result do, and so does a turn's end, whose
+ * the evaluator checks at its result (`checkAtResult`) and that call's result do, and so does a turn's end, whose
  * walk checks what the turn's shell and other tools wrote. A call that writes nothing the evaluator checks, and its
  * result, go on at once, as every boundary does while a session's first index runs.
  */
 function needsRules(event: AdapterEvent, pending: readonly PendingCodeRuleCall[]): boolean {
-  if (event.kind === "call") return checkedAtResult(event.toolName, generatedEditPaths(event.toolName, event.input));
+  if (event.kind === "call") return checkAtResult(event.toolName, generatedEditPaths(event.toolName, event.input)) !== undefined;
   if (event.kind === "result") return pending.some(call => call.id === event.toolCallId && call.checked);
   return event.kind === "turn-end";
 }
@@ -257,7 +257,7 @@ const MERGE_ASSIST_WAIT_MS = 1_000;
 interface PendingCodeRuleCall {
   id: string;
   toolName: string;
-  /** Whether its result is checked (`checkedAtResult`), and so waits for a reopened session's rules (`needsRules`). */
+  /** Whether its result is checked (`checkAtResult`), and so waits for a reopened session's rules (`needsRules`). */
   checked: boolean;
   /** The subagent that made it (Claude Code's `agent_id`), absent for the session's own agent. */
   agentId?: string | undefined;
@@ -1455,7 +1455,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       type: "policy-call", toolCallId: id, toolName: event.toolName, paths,
       ...(preimages === undefined ? {} : { preimages }), ...agent,
     });
-    const checked = checkedAtResult(event.toolName, paths);
+    const checked = checkAtResult(event.toolName, paths) !== undefined;
     state.pendingCodeRuleCalls.push({ id, toolName: event.toolName, checked, ...agent });
     if (paths.length > 0) state.mergeAssistEdits.add(id);
   }
@@ -2192,7 +2192,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       repositoryAudit: undefined,
       // Restored whether or not the evaluator opens, so their results still close them in the ledger.
       pendingCodeRuleCalls: openCalls.map(call => ({
-        id: call.toolCallId, toolName: call.toolName, checked: checkedAtResult(call.toolName, call.paths),
+        id: call.toolCallId, toolName: call.toolName, checked: checkAtResult(call.toolName, call.paths) !== undefined,
         ...(call.agentId === undefined ? {} : { agentId: call.agentId }),
       })),
       callsAwaitingResult: new Set(),
