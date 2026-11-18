@@ -417,6 +417,8 @@ describe("CodeRuleBridge", () => {
     const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
     const bridge = createBridge(root, auditor(auditGeneratedEdits));
     await bridge.openWorkspace("session-1");
+    // The session's first walk has run, so what it read of the file comes before the calls' sightings, not after them.
+    await bridge.checkpoint("turn");
     await bridge.begin("edit-1", "write", { path: "src/a.py" });
     await writeFile(path, "middle\n");
     await bridge.finish("edit-1");
