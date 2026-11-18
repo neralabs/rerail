@@ -227,11 +227,11 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
   idleRuntimeMs?: number;
   /**
    * What the answer to `event` tells a hook that asks (`EVENT_ANSWER_HEADER`) beside `deliveries`, from what the runtime
-   * that took the event holds of its session (`session`; undefined where none holds it): the daemon's, which adds its
-   * dashboard's origin. Undefined where it cannot say; the hook then asks over HTTP. A standalone service (tests,
-   * benchmarks) has none. Synchronous, from facts already held, so the answer waits for no read.
+   * that took the event holds of its session (`held`, asked only when needed; undefined where no runtime holds it): the
+   * daemon's, which adds its dashboard's origin. Undefined where it cannot say; the hook then asks over HTTP. A
+   * standalone service (tests, benchmarks) has none. Synchronous, from facts already held, so the answer waits for no read.
    */
-  answerFacts?: (event: AdapterEvent, deliveries: readonly AdapterDelivery[], session: HeldSession | undefined) => EventAnswerFacts | undefined;
+  answerFacts?: (event: AdapterEvent, deliveries: readonly AdapterDelivery[], held: () => HeldSession | undefined) => EventAnswerFacts | undefined;
 };
 
 /** How the facts of an answer are read from the runtime that took its event, in the session's lane right after it. */
@@ -245,7 +245,7 @@ function answerFactsReader(incoming: IncomingMessage, event: AdapterEvent, optio
   const version = Number(incoming.headers[EVENT_ANSWER_HEADER]);
   const { answerFacts } = options;
   if (!Number.isInteger(version) || version < EVENT_ANSWER_WITH_FACTS || answerFacts === undefined) return undefined;
-  return (runtime, deliveries) => answerFacts(event, deliveries, runtime.heldSession(event));
+  return (runtime, deliveries) => answerFacts(event, deliveries, () => runtime.heldSession(event));
 }
 
 /**

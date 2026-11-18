@@ -375,7 +375,8 @@ describe("the answer to a hook's event", () => {
         auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
         close: async () => undefined,
       }),
-      answerFacts: (_event, _deliveries, session) => {
+      answerFacts: (_event, _deliveries, readHeld) => {
+        const session = readHeld();
         held.push(session);
         if (!readable) throw new Error("the daemon could not tell its dashboard");
         return { dashboard: null, ...(session?.sessionNote === undefined ? {} : { sessionNote: session.sessionNote }) };

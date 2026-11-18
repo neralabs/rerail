@@ -32,16 +32,20 @@ function linksSomething(event: AdapterEvent, deliveries: readonly AdapterDeliver
 /**
  * The facts of the answer to `event` from a daemon whose dashboard is at `origin`: the dashboard where the hook links
  * something (null where the daemon has none a browser may open), and at a session's start what its note says of its
- * rules. Nothing where no runtime holds the event's session (`session` undefined); the hook then reads both after the
- * answer, as from a daemon older than these facts.
+ * rules. `held` tells what the runtime that took the event holds of its session, and is asked only for an answer that
+ * links something, which most events' answers do not. Nothing where no runtime holds the session; the hook then reads
+ * both after the answer, as from a daemon older than these facts.
  */
 export function eventAnswerFacts(
-  origin: string, event: AdapterEvent, deliveries: readonly AdapterDelivery[], session: HeldSession | undefined,
+  origin: string, event: AdapterEvent, deliveries: readonly AdapterDelivery[], held: () => HeldSession | undefined,
 ): EventAnswerFacts {
+  // A session's start always links its note, so an answer that links nothing has no note either.
+  if (!linksSomething(event, deliveries)) return {};
+  const session = held();
   if (session === undefined) return {};
   const linkable = linkableOrigin(origin);
   return {
-    ...(linksSomething(event, deliveries) ? { dashboard: linkable === null ? null : checkoutDashboard(linkable, session.checkout) } : {}),
+    dashboard: linkable === null ? null : checkoutDashboard(linkable, session.checkout),
     ...(session.sessionNote === undefined ? {} : { sessionNote: session.sessionNote }),
   };
 }
