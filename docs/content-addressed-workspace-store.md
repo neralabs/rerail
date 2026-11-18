@@ -64,10 +64,13 @@ Tests: `newer_compatibility_floor_is_refused`,
 
 ## Connections and busy writers
 
-Each thread reads on its own connection; a busy writer retries, then leaves the store alone.
+Each thread reads on its own connection. The writes of one process wait their turn in the store's
+writer line and are handed the store at the release of the writer ahead, in arrival order.
 
-A write that stays busy for 10 s gives up. The workspace then skips the store for 30 s and keeps its
-results in memory.
+A write whose turn has not come within 10 s gives up, and the workspace keeps its results in memory
+until the writer it waited behind lets go. Only a writer of another process (a checkout's own store
+under a dev build) is waited out through SQLite's busy handler; behind one, the workspace skips the
+store for 30 s.
 
 <details>
 <summary>Connection settings</summary>
@@ -89,22 +92,36 @@ PRAGMA journal_size_limit=16777216;
 ```
 
 It also sets a 128-entry statement cache and a busy handler, `wait_for_writer`, waiting up to
-`BUSY_TIMEOUT` (250 ms) per attempt for the write lock.
+`BUSY_TIMEOUT` (250 ms) per attempt for the write lock. A write meets that lock held only by a
+writer of another process: within the process, the writer line orders writers first.
 
 </details>
 
 <details>
-<summary>Retry, give-up and cooldown details</summary>
+<summary>Writer line, retry, give-up and cooldown details</summary>
 
-1. **Retry.** Every write runs under `retry_busy`: a `Busy` attempt rolls back and re-runs whole
-   after jittered backoff, doubling from 2 ms to 200 ms.
-2. **Give up.** After `BUSY_DEADLINE` (10 s) the write returns `StoreError::Busy`. An
-   `OperationDeadline` shares one deadline across an operation's writes (an apply's publication
-   passes, a snapshot's batches).
-3. **Cool down.** The workspace skips the store for `STORE_BUSY_COOLDOWN` (30 s), keeping results in
-   memory; the first apply afterwards publishes them.
+1. **Turn.** Each store file has one `WriterLine` per process (`writer_line.rs`), shared by every
+   `ContentStore` on it. The store connection's `transaction_with_behavior` takes the write's turn
+   for an immediate or exclusive transaction and holds it until the transaction ends; the holder's
+   commit hands the line to the writer that arrived next. A writer committing batch after batch (a
+   Git snapshot publication, a search-index build) thus delays a write that arrives meanwhile by the
+   batch in progress, not the run (test: `a_write_during_a_run_of_batches_waits_for_the_batch_in_progress_not_the_run`).
+2. **Retry.** Every write runs under `retry_busy`: a `Busy` attempt, a writer of another process
+   holding SQLite's lock, rolls back and re-runs whole after jittered backoff, doubling from 2 ms to
+   200 ms.
+3. **Give up.** After `BUSY_DEADLINE` (10 s) of waiting, in the line and on another process, the
+   write returns `StoreError::Busy`. An `OperationDeadline` shares one deadline across an
+   operation's writes (an apply's publication passes, a snapshot's batches). In the line the bound is
+   reached only when the writers ahead stop letting go (a disk that stalls).
+4. **Stall.** A waiter that reaches the bound marks the holder stalled (`writes_stalled`) until that
+   holder lets go. Meanwhile an apply leaves the store alone, keeping results in memory, and the
+   first apply after the holder lets go publishes them.
+5. **Cool down.** After a write waited out a writer of another process, whose end this process
+   cannot see, the workspace skips the store for `STORE_BUSY_COOLDOWN` (30 s); the first apply
+   afterwards publishes what it kept.
 
-A workspace result's `workspaceProfile` reports `storageRetries` and `storageRetryWaitNanoseconds`.
+A workspace result's `workspaceProfile` reports `storageRetries` and `storageRetryWaitNanoseconds`,
+the latter with each successful write's wait for its turn.
 
 </details>
 
