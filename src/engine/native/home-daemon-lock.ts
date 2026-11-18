@@ -76,6 +76,20 @@ export function homeDaemonHolder(home: string): number | undefined {
   }
 }
 
+/** Where the holder of `home`'s lock records its pid. */
+export function homeDaemonHolderFile(home: string): string {
+  return join(home, LOCKS_DIR, HOLDER_FILE);
+}
+
+/** When the holder's record in `home` was last written, in epoch ms, or undefined when there is none to read. */
+export function homeDaemonHolderWrittenAt(home: string): number | undefined {
+  try {
+    return statSync(homeDaemonHolderFile(home)).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Removes the holder's record in `home` when it names `pid`, a daemon that ended without its exit handler, which removes
  * the record on every other exit. Windows ends a process that way at a kill, and soon gives its pid to another process.
