@@ -68,6 +68,24 @@ describe("GitIgnoreMatchers", () => {
     expect(matchers.size).toBe(0);
   });
 
+  it("opens a fresh matcher for a router when the shared one cannot say whether what it read changed", async () => {
+    const { main } = await checkout();
+    const binding = loadNativeBinding();
+    let opens = 0;
+    const matchers = new GitIgnoreMatchers(root => {
+      opens += 1;
+      const matcher = binding.openGitIgnoreMatcher(root);
+      return matcher === null ? null : {
+        ignored: (path, directory) => matcher.ignored(path, directory),
+        ignoredBy: (path, directory) => matcher.ignoredBy(path, directory),
+        sourcesUnchanged: () => { throw new Error("cannot read the Git configuration"); },
+      };
+    });
+    const first = matchers.matcher(main, user("first"));
+    expect(matchers.matcher(main, user("second"))).not.toBe(first);
+    expect(opens).toBe(2);
+  });
+
   it("gives a router that asks after the checkout's .gitignore changed a matcher that follows it, and leaves an earlier one's as it was", async () => {
     const { main } = await checkout();
     const matchers = new GitIgnoreMatchers();
