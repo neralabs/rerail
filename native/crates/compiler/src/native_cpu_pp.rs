@@ -74,6 +74,7 @@ const REASONS: &[&str] = &[
     "past the wanted files' bound",
     "past push_macro's bound",
     "past the unanswered features' bound",
+    "a _Pragma's text the token grammar refuses",
 ];
 const R_STOPPED: u64 = 1;
 const R_CALLS: u64 = 2;
@@ -107,6 +108,7 @@ const R_NO_PREC: u64 = 29;
 const R_WANTED: u64 = 30;
 const R_PUSHED: u64 = 31;
 const R_ASKED: u64 = 32;
+const R_PRAGMA: u64 = 33;
 
 /// One of the machine's buffers in `Ctx`: its start's, length's and room's fields, its
 /// element's size, and why a push past its room refuses.
@@ -2863,6 +2865,13 @@ impl Lower<'_, '_> {
     /// (`Step::Item`).
     #[allow(clippy::too_many_arguments)]
     fn find_named(&mut self, file: Value, p: Value, n: Value, angle: Value, next: Value, embed: Value) -> (Value, Value) {
+        let no = self.f.ins().iconst(types::I8, 0);
+        self.find_named_as(file, p, n, angle, next, embed, no)
+    }
+
+    /// `find_named`, or a `_Pragma`'s text's file (`pragma`).
+    #[allow(clippy::too_many_arguments)]
+    fn find_named_as(&mut self, file: Value, p: Value, n: Value, angle: Value, next: Value, embed: Value, pragma: Value) -> (Value, Value) {
         let fc = self.file_c(file);
         let named = ld(self.f, types::I64, fc, offset_of!(FileC, named) as i32);
         let count = ld(self.f, types::I64, fc, offset_of!(FileC, nnamed) as i32);
@@ -2884,7 +2893,7 @@ impl Lower<'_, '_> {
         let e = elem(self.f, named, i, NAMED);
         let len = ld(self.f, types::I64, e, offset_of!(NamedC, len) as i32);
         let mut same = self.f.ins().icmp(IntCC::Equal, len, n);
-        for (o, want) in [(offset_of!(NamedC, angle), angle), (offset_of!(NamedC, next), next), (offset_of!(NamedC, embed), embed)] {
+        for (o, want) in [(offset_of!(NamedC, angle), angle), (offset_of!(NamedC, next), next), (offset_of!(NamedC, embed), embed), (offset_of!(NamedC, pragma), pragma)] {
             let x = ldu(self.f, types::I8, e, o as i32);
             let w = self.f.ins().uextend(types::I64, want);
             let eq = self.f.ins().icmp(IntCC::Equal, x, w);
@@ -2913,6 +2922,13 @@ impl Lower<'_, '_> {
     /// `Machine::want`: a file wanted and not found, recorded; its name's bytes copied.
     #[allow(clippy::too_many_arguments)]
     fn want(&mut self, pc: usize, file: Value, p: Value, n: Value, angle: Value, next: Value, embed: Value) {
+        let no = self.f.ins().iconst(types::I8, 0);
+        self.want_as(pc, file, p, n, angle, next, embed, no);
+    }
+
+    /// `want`, or a `_Pragma`'s text wanted as a file (`pragma`).
+    #[allow(clippy::too_many_arguments)]
+    fn want_as(&mut self, pc: usize, file: Value, p: Value, n: Value, angle: Value, next: Value, embed: Value, pragma: Value) {
         let ctx = self.ctx;
         let nw = self.vlen(WANTED);
         let room = ld(self.f, types::I64, ctx, at!(room_wanted));
@@ -2931,6 +2947,7 @@ impl Lower<'_, '_> {
         st(self.f, types::I8, angle, w, offset_of!(Want, angle) as i32);
         st(self.f, types::I8, next, w, offset_of!(Want, next) as i32);
         st(self.f, types::I8, embed, w, offset_of!(Want, embed) as i32);
+        st(self.f, types::I8, pragma, w, offset_of!(Want, pragma) as i32);
     }
 
     /// `Src::file(f, end)` pushed (refusing past the sources' bound).
@@ -3246,6 +3263,14 @@ impl Lower<'_, '_> {
         self.f.ins().jump(head, &[n1.into()]);
         self.f.switch_to_block(done);
         let n = self.f.block_params(done)[0];
+        self.pragma_of(pc, file, n, next);
+    }
+
+    /// `Machine::pragma_of`: the pragma whose first tokens (at most three) are `pragma_toks`
+    /// and whose count is `n`, carried out for `file`; then `next`.
+    fn pragma_of(&mut self, pc: usize, file: Value, n: Value, next: Block) {
+        let ctx = self.ctx;
+        let pt = at!(pragma_toks);
         let t0 = pt;
         let t1 = pt + TOK as i32;
         let t2 = pt + 2 * TOK as i32;
@@ -3790,118 +3815,6 @@ impl Lower<'_, '_> {
         self.f.switch_to_block(done);
     }
 
-    /// `pragma_words` of the `n` bytes at `p` (`_Pragma`'s text): its word's range, and
-    /// `( "…" )`'s string's (where `ok`). A fold a byte a lane (`lanes`): the state (0 blanks,
-    /// 1 the word, 2 blanks, 3 after `(`, 4 the string's prefix, 5 the string, 6 an escaped
-    /// byte, 7 closed, 8 none), the byte's index, and the ranges' ends.
-    fn pragma_words(&mut self, p: Value, n: Value) -> ((Value, Value), Value, (Value, Value)) {
-        let k = |l: &mut Self, x: i64| l.f.ins().iconst(types::I64, x);
-        let init = [k(self, 0), k(self, 0), k(self, 0), k(self, 0), k(self, 0), k(self, 0)];
-        let st = self.lanes(p, n, &init, &mut |l, c, st| {
-            let f = &mut *l.f;
-            let (mut state, i, mut w0, mut w1, mut s0, mut e) = (st[0], st[1], st[2], st[3], st[4], st[5]);
-            let is = |f: &mut FunctionBuilder<'_>, x: Value, y: i64| f.ins().icmp_imm(IntCC::Equal, x, y);
-            let k = |f: &mut FunctionBuilder<'_>, x: i64| f.ins().iconst(types::I64, x);
-            let mut blank = f.ins().iconst(types::I8, 0);
-            for b in [b' ', b'\t', 0x0b, 0x0c] {
-                let x = is(f, c, i64::from(b));
-                blank = f.ins().bor(blank, x);
-            }
-            let mut word = f.ins().iconst(types::I8, 0);
-            for (lo, n) in [(b'0', 10), (b'A', 26), (b'a', 26)] {
-                let d = f.ins().iadd_imm(c, -i64::from(lo));
-                let x = f.ins().icmp_imm(IntCC::UnsignedLessThan, d, n);
-                word = f.ins().bor(word, x);
-            }
-            for b in [b'_', b'$'] {
-                let x = is(f, c, i64::from(b));
-                word = f.ins().bor(word, x);
-            }
-            let nblank = f.ins().bxor_imm(blank, 1);
-            let nword = f.ins().bxor_imm(word, 1);
-            let lp = is(f, c, i64::from(b'('));
-            let q = is(f, c, i64::from(b'"'));
-            let bs = is(f, c, i64::from(b'\\'));
-            // 0: blanks, then the word begins here.
-            let s = is(f, state, 0);
-            let go = f.ins().band(s, nblank);
-            w0 = f.ins().select(go, i, w0);
-            let one = k(f, 1);
-            state = f.ins().select(go, one, state);
-            // 1: the word, then its end here.
-            let s = is(f, state, 1);
-            let end = f.ins().band(s, nword);
-            w1 = f.ins().select(end, i, w1);
-            let two = k(f, 2);
-            state = f.ins().select(end, two, state);
-            let mut cons = f.ins().band(s, word);
-            // 2: blanks, then `(`, else none.
-            let s = is(f, state, 2);
-            let nc = f.ins().bxor_imm(cons, 1);
-            let s = f.ins().band(s, nc);
-            let paren = f.ins().band(s, lp);
-            let other = f.ins().band(s, nblank);
-            let np = f.ins().bxor_imm(lp, 1);
-            let other = f.ins().band(other, np);
-            let three = k(f, 3);
-            let eight = k(f, 8);
-            state = f.ins().select(paren, three, state);
-            state = f.ins().select(other, eight, state);
-            cons = f.ins().bor(cons, s);
-            // 3: blanks, then the string's prefix begins here.
-            let s = is(f, state, 3);
-            let nc = f.ins().bxor_imm(cons, 1);
-            let s = f.ins().band(s, nc);
-            let go = f.ins().band(s, nblank);
-            s0 = f.ins().select(go, i, s0);
-            let four = k(f, 4);
-            state = f.ins().select(go, four, state);
-            let sb = f.ins().band(s, blank);
-            cons = f.ins().bor(cons, sb);
-            // 4: the prefix's word bytes, then `"`, else none.
-            let s = is(f, state, 4);
-            let nc = f.ins().bxor_imm(cons, 1);
-            let s = f.ins().band(s, nc);
-            let open = f.ins().band(s, q);
-            let nq = f.ins().bxor_imm(q, 1);
-            let bad = f.ins().band(s, nword);
-            let bad = f.ins().band(bad, nq);
-            let five = k(f, 5);
-            state = f.ins().select(open, five, state);
-            state = f.ins().select(bad, eight, state);
-            cons = f.ins().bor(cons, s);
-            // 6: an escaped byte passed.
-            let s6 = is(f, state, 6);
-            let nc = f.ins().bxor_imm(cons, 1);
-            let s6 = f.ins().band(s6, nc);
-            state = f.ins().select(s6, five, state);
-            cons = f.ins().bor(cons, s6);
-            // 5: the string to its `"`, a `\` passing the byte after it.
-            let s5 = is(f, state, 5);
-            let nc = f.ins().bxor_imm(cons, 1);
-            let s5 = f.ins().band(s5, nc);
-            let esc = f.ins().band(s5, bs);
-            let close = f.ins().band(s5, q);
-            let six = k(f, 6);
-            let seven = k(f, 7);
-            state = f.ins().select(esc, six, state);
-            state = f.ins().select(close, seven, state);
-            let i1 = f.ins().iadd_imm(i, 1);
-            e = f.ins().select(close, i1, e);
-            vec![state, i1, w0, w1, s0, e]
-        });
-        let (state, w0, w1, s0, e) = (st[0], st[2], st[3], st[4], st[5]);
-        let f = &mut *self.f;
-        // The text's end: in the blanks, the word is empty there; in the word, it ends there.
-        let s0_ = f.ins().icmp_imm(IntCC::Equal, state, 0);
-        let s1_ = f.ins().icmp_imm(IntCC::Equal, state, 1);
-        let w0 = f.ins().select(s0_, n, w0);
-        let open = f.ins().bor(s0_, s1_);
-        let w1 = f.ins().select(open, n, w1);
-        let ok = f.ins().icmp_imm(IntCC::Equal, state, 7);
-        ((w0, w1), ok, (s0, e))
-    }
-
     fn bi_state(&mut self) -> Value {
         ld(self.f, types::I64, self.ctx, at!(bi))
     }
@@ -4082,17 +3995,38 @@ impl Lower<'_, '_> {
                 let (ok, t0, t1) = self.destringize(pc, p, n);
                 let text = self.f.create_block();
                 self.f.ins().brif(ok, text, &[], skip, &[]);
+                // Its text is a file of its own, lexed by the token grammar (the host's): the
+                // file on top's named one, its first three tokens the pragma's; else wanted.
                 self.f.switch_to_block(text);
                 let base = ld(self.f, types::I64, ctx, at!(scratch));
                 let tp = self.f.ins().iadd(base, t0);
                 let tn = self.f.ins().isub(t1, t0);
-                let ((w0, w1), has_lit, (l0, l1)) = self.pragma_words(tp, tn);
                 let file = self.cur_file();
-                let wp = self.f.ins().iadd(tp, w0);
-                let wn = self.f.ins().isub(w1, w0);
-                let lp = self.f.ins().iadd(tp, l0);
-                let ln = self.f.ins().isub(l1, l0);
-                self.pragma_do(pc, file, (wp, wn), has_lit, (lp, ln), skip);
+                let (no, yes) = (self.f.ins().iconst(types::I8, 0), self.f.ins().iconst(types::I8, 1));
+                let (found, to) = self.find_named_as(file, tp, tn, no, no, no, yes);
+                let (hit, miss) = (self.f.create_block(), self.f.create_block());
+                self.f.ins().brif(found, hit, &[], miss, &[]);
+                self.f.switch_to_block(miss);
+                self.want_as(pc, file, tp, tn, no, no, no, yes);
+                self.f.ins().jump(skip, &[]);
+                self.f.switch_to_block(hit);
+                let lexed = self.f.ins().icmp_imm(IntCC::NotEqual, to, i64::from(NONE));
+                self.check(lexed, pc, R_PRAGMA);
+                let fc = self.file_c(to);
+                let toks = ld(self.f, types::I64, fc, offset_of!(FileC, toks) as i32);
+                let ntoks = ld(self.f, types::I64, fc, offset_of!(FileC, ntoks) as i32);
+                // Its first tokens, at most three (straight code), where `#pragma`'s are kept.
+                for k in 0..3i64 {
+                    let have = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, ntoks, k);
+                    let (put, on) = (self.f.create_block(), self.f.create_block());
+                    self.f.ins().brif(have, put, &[], on, &[]);
+                    self.f.switch_to_block(put);
+                    let src = self.f.ins().iadd_imm(toks, k * TOK);
+                    copy_tok(self.f, src, 0, ctx, at!(pragma_toks) + (k * TOK) as i32);
+                    self.f.ins().jump(on, &[]);
+                    self.f.switch_to_block(on);
+                }
+                self.pragma_of(pc, file, ntoks, skip);
             }
         }
     }

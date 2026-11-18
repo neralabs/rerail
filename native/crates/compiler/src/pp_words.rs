@@ -164,19 +164,22 @@ pub struct File<'a> {
 
 /// An include whose header name is made by expanding its line: the name (its quotes or brackets
 /// taken off), `<…>`, `#include_next`, an `#embed`'s (or `__has_embed`'s: its file is data, never
-/// lexed), and the file it names (`NONE`: not found).
+/// lexed), and the file it names (`NONE`: not found). Or a `_Pragma`'s text, and the file of it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Named {
     pub name: Vec<u8>,
     pub angle: bool,
     pub next: bool,
     pub embed: bool,
+    /// A `_Pragma`'s text, not a header name: `to` is that text as a file of its own, lexed by
+    /// the token grammar (the lean pass's `pragma_text`).
+    pub pragma: bool,
     pub to: u32,
 }
 
 impl Named {
     fn is(&self, name: &[u8], angle: bool, next: bool, embed: bool) -> bool {
-        self.name == name && self.angle == angle && self.next == next && self.embed == embed
+        !self.pragma && self.name == name && self.angle == angle && self.next == next && self.embed == embed
     }
 }
 
@@ -200,6 +203,7 @@ pub(crate) struct Want {
     pub(crate) angle: bool,
     pub(crate) next: bool,
     pub(crate) embed: bool,
+    pub(crate) pragma: bool,
 }
 
 /// `#embed`'s state as the compiled words keep it (`Machine::embed` and `em`): the name's
@@ -278,6 +282,7 @@ pub(crate) struct NamedC {
     pub(crate) angle: bool,
     pub(crate) next: bool,
     pub(crate) embed: bool,
+    pub(crate) pragma: bool,
 }
 
 /// The file includes nest to at most (clang's bound).
@@ -904,7 +909,7 @@ impl<'a> Machine<'a> {
 
     fn finish(self) -> Expanded {
         let bytes = &self.wanted_bytes;
-        let wanted = self.wanted.iter().map(|w| (w.file, Named { name: bytes[w.lo as usize..w.hi as usize].to_vec(), angle: w.angle, next: w.next, embed: w.embed, to: NONE })).collect();
+        let wanted = self.wanted.iter().map(|w| (w.file, Named { name: bytes[w.lo as usize..w.hi as usize].to_vec(), angle: w.angle, next: w.next, embed: w.embed, pragma: w.pragma, to: NONE })).collect();
         let bytes = &self.asked_bytes;
         let unanswered = self.asked.iter().map(|a| (BUILTINS[a.b as usize].0.as_bytes().to_vec(), bytes[a.lo as usize..a.hi as usize].to_vec())).collect();
         Expanded { toks: self.out, scratch: self.scratch, wanted, exps: self.exps, unanswered }
@@ -1089,7 +1094,7 @@ pub(crate) const LEVEL: (usize, usize, usize) = (std::mem::size_of::<(u16, u32)>
 /// `code` reads and writes only within the `Ctx` it is given: each buffer below its room.
 pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, bounds: &Bounds, code: unsafe extern "C" fn(*mut Ctx) -> u64, reasons: &[&'static str]) -> Result<Expanded, Refused> {
     let mut m = Machine::new(program, files, env, bounds)?;
-    let named: Vec<Vec<NamedC>> = files.iter().map(|f| f.named.iter().map(|n| NamedC { name: n.name.as_ptr(), len: n.name.len() as u64, to: n.to, angle: n.angle, next: n.next, embed: n.embed }).collect()).collect();
+    let named: Vec<Vec<NamedC>> = files.iter().map(|f| f.named.iter().map(|n| NamedC { name: n.name.as_ptr(), len: n.name.len() as u64, to: n.to, angle: n.angle, next: n.next, embed: n.embed, pragma: n.pragma }).collect()).collect();
     let filesc: Vec<FileC> = files
         .iter()
         .zip(&named)
@@ -2484,6 +2489,11 @@ impl<'a> Machine<'a> {
     /// with their blanks, in scratch (the lean pass's `header_of`).
     /// A file wanted and not found, recorded: its name's bytes copied to `wanted_bytes`.
     fn want(&mut self, file: u32, name: Spell<'a>, angle: bool, next: bool, embed: bool) -> R<()> {
+        self.want_as(file, name, angle, next, embed, false)
+    }
+
+    /// `want`, or a `_Pragma`'s text wanted as a file (`pragma`).
+    fn want_as(&mut self, file: u32, name: Spell<'a>, angle: bool, next: bool, embed: bool, pragma: bool) -> R<()> {
         let n = self.spell(name).len();
         if self.wanted.len() >= self.bounds.output || self.wanted_bytes.len() + n > self.bounds.scratch {
             return Err("past the wanted files' bound");
@@ -2493,7 +2503,7 @@ impl<'a> Machine<'a> {
             Spell::Scratch(a, b) => self.wanted_bytes.extend_from_slice(&self.scratch[a as usize..b as usize]),
             Spell::Bytes(b) => self.wanted_bytes.extend_from_slice(b),
         }
-        self.wanted.push(Want { file, lo, hi: self.wanted_bytes.len() as u32, angle, next, embed });
+        self.wanted.push(Want { file, lo, hi: self.wanted_bytes.len() as u32, angle, next, embed, pragma });
         Ok(())
     }
 
@@ -2536,6 +2546,12 @@ impl<'a> Machine<'a> {
             }
             n += 1;
         }
+        self.pragma_of(file, toks, n)
+    }
+
+    /// A pragma read from its first three tokens and its count (`#pragma`'s line, or a
+    /// `_Pragma`'s text lexed as a file): its word and its string argument carried out.
+    fn pragma_of(&mut self, file: u32, toks: [Tok; 3], n: usize) -> R<()> {
         let word = if n > 0 && toks[0].kind == IDENT { self.tok_spell(&toks[0]) } else { Spell::Bytes(b"") };
         // The lean pass's string argument: `( "…" )`, a string literal, not a raw one.
         let lit = (n > 2 && self.spelled(&toks[1], b"(") && toks[2].kind == LITERAL).then(|| self.tok_spell(&toks[2]));
@@ -2665,12 +2681,26 @@ impl<'a> Machine<'a> {
                 // `_Pragma("…")`: one string literal, its text the pragma's.
                 let one = (hi - lo == 1).then(|| self.kept[lo as usize]).filter(|s| s.kind == LITERAL);
                 self.kept.truncate(lo as usize);
+                // Its text is a file of its own, lexed by the token grammar as the host lexes
+                // every file: the file on top's named one, else wanted (the host lexes it, and
+                // the TU runs again).
                 if let Some(s) = one
-                    && let Some(text @ Spell::Scratch(t0, t1)) = self.destringize(self.tok_spell(&s))?
+                    && let Some(text) = self.destringize(self.tok_spell(&s))?
                 {
                     let file = self.cur_file();
-                    let (w, lit) = pragma_words(&self.scratch[t0 as usize..t1 as usize]);
-                    self.pragma_do(file, text.sub(w.0, w.1), lit.map(|l| text.sub(l.0, l.1)))?;
+                    let named = self.files[file as usize].named;
+                    match named.iter().find(|n| n.pragma && n.name == self.spell(text)).map(|n| n.to) {
+                        Some(to) if to != NONE => {
+                            let ts = self.files[to as usize].toks;
+                            let mut toks = [Tok::default(); 3];
+                            for (k, t) in ts.iter().take(3).enumerate() {
+                                toks[k] = *t;
+                            }
+                            self.pragma_of(file, toks, ts.len())?;
+                        }
+                        Some(_) => return Err("a _Pragma's text the token grammar refuses"),
+                        None => self.want_as(file, text, false, false, false, true)?,
+                    }
                 }
                 Ok(Some(false))
             }
@@ -3271,45 +3301,6 @@ impl<'a> Machine<'a> {
 
 /// A string literal's characters, its `\"` and `\\` unescaped (the lean pass's `destringize`):
 /// `None` where it is no string literal (a character constant, a raw string).
-
-/// A pragma's text (`_Pragma`'s) read as `#pragma`'s tokens are: its first word, and the string
-/// literal of `( "…" )` after it (ranges of `text`).
-fn pragma_words(text: &[u8]) -> ((usize, usize), Option<(usize, usize)>) {
-    let blank = |c: u8| c == b' ' || c == b'\t' || c == b'\x0b' || c == b'\x0c';
-    let mut k = 0;
-    let skip = |k: &mut usize| {
-        while *k < text.len() && blank(text[*k]) {
-            *k += 1;
-        }
-    };
-    skip(&mut k);
-    let w = k;
-    while k < text.len() && word_byte(text[k]) {
-        k += 1;
-    }
-    let word = (w, k);
-    skip(&mut k);
-    if text.get(k) != Some(&b'(') {
-        return (word, None);
-    }
-    k += 1;
-    skip(&mut k);
-    let s = k;
-    while k < text.len() && word_byte(text[k]) {
-        k += 1;
-    }
-    if text.get(k) != Some(&b'"') {
-        return (word, None);
-    }
-    k += 1;
-    while k < text.len() && text[k] != b'"' {
-        k += if text[k] == b'\\' { 2 } else { 1 };
-    }
-    if k >= text.len() {
-        return (word, None);
-    }
-    (word, Some((s, k + 1)))
-}
 
 #[cfg(test)]
 #[test]

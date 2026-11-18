@@ -247,17 +247,41 @@ impl<F: rerail_c_pp::files::Files> Tu<'_, F> {
             Some(k) => k,
             None => {
                 let Some(src) = self.io.read(&path) else { return Ok(pp_words::NONE) };
-                let mut lines = Vec::new();
-                let mut i = 0;
-                while let Some(k) = rerail_simd8::micro::find(&src, i, b'\n') {
-                    lines.push(k as u32);
-                    i = k + 1;
-                }
-                self.units.push(Unit { path, src, lines, found_by, lexed: None, includes: Vec::new(), named: Vec::new(), resolved: false });
-                self.units.len() - 1
+                self.unit(path, src, found_by)
             }
         };
-        if lex && self.units[k].lexed.is_none() {
+        if lex {
+            self.lex(k)?;
+        }
+        Ok(k as u32)
+    }
+
+    /// A `_Pragma`'s text as a file of its own (the lean pass's `pragma_text`), lexed: its tokens
+    /// are the pragma's. One unit a text.
+    fn pragma(&mut self, text: Vec<u8>) -> Result<u32, String> {
+        let k = match self.units.iter().position(|u| u.path == PRAGMA && u.src == text) {
+            Some(k) => k,
+            None => self.unit(PRAGMA.to_string(), text, None),
+        };
+        self.lex(k)?;
+        Ok(k as u32)
+    }
+
+    /// A unit of `src`, not lexed yet.
+    fn unit(&mut self, path: String, src: Vec<u8>, found_by: Option<u32>) -> usize {
+        let mut lines = Vec::new();
+        let mut i = 0;
+        while let Some(k) = rerail_simd8::micro::find(&src, i, b'\n') {
+            lines.push(k as u32);
+            i = k + 1;
+        }
+        self.units.push(Unit { path, src, lines, found_by, lexed: None, includes: Vec::new(), named: Vec::new(), resolved: false });
+        self.units.len() - 1
+    }
+
+    /// Unit `k` lexed (once): its token tape, mode (a)'s read, its chains and `#if` depth.
+    fn lex(&mut self, k: usize) -> Result<(), String> {
+        if self.units[k].lexed.is_none() {
             let (src, path) = (&self.units[k].src, &self.units[k].path);
             let toks = (self.g.tokens)(src, self.cpp).ok_or_else(|| format!("the token grammar refuses {path}"))?;
             let read = (self.g.read)(src).ok_or_else(|| format!("the directives' grammar refuses {path}"))?;
@@ -267,7 +291,7 @@ impl<F: rerail_c_pp::files::Files> Tu<'_, F> {
             let if_depth = if_depth(&read, src, &tape);
             self.units[k].lexed = Some(Lexed { read, tape, chains, if_depth });
         }
-        Ok(k as u32)
+        Ok(())
     }
 
     /// The file a header name names from file `from`.
@@ -304,6 +328,9 @@ impl<F: rerail_c_pp::files::Files> Tu<'_, F> {
     }
 }
 
+/// A `_Pragma`'s file's path (`Tu::pragma`), as the lean pass names it.
+const PRAGMA: &str = "<pragma>";
+
 /// The rounds of the import fixpoint a TU may take: each finds the includes whose names its
 /// expansion makes.
 const ROUNDS: usize = 16;
@@ -338,10 +365,10 @@ pub fn expand_tu_with<F: rerail_c_pp::files::Files>(main: &str, io: &mut F, cpp:
         drop(files);
         for (from, mut w) in e.wanted {
             let from = from as usize;
-            if tu.units[from].named.iter().any(|n| (&n.name, n.angle, n.next, n.embed) == (&w.name, w.angle, w.next, w.embed)) {
+            if tu.units[from].named.iter().any(|n| (&n.name, n.angle, n.next, n.embed, n.pragma) == (&w.name, w.angle, w.next, w.embed, w.pragma)) {
                 continue;
             }
-            w.to = tu.find(from, &w.name, w.angle, w.next, !w.embed)?;
+            w.to = if w.pragma { tu.pragma(w.name.clone())? } else { tu.find(from, &w.name, w.angle, w.next, !w.embed)? };
             tu.units[from].named.push(w);
         }
     }

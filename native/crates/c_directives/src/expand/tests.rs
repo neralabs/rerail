@@ -195,6 +195,8 @@ H5C(H5A())
         concat!(
             "#define M 1\n_Pragma(\"push_macro(\\\"M\\\")\")\n#undef M\nM\n_Pragma(\"pop_macro(\\\"M\\\")\")\nM\n",
             "#define P(x) _Pragma(#x) after\nP(message(\"hi\"))\n_Pragma\nx\n_Pragma(1) y\n#define Q \"once\"\n_Pragma(Q) z\n",
+            // Its text lexed as a file is: a comment a blank, and the same text twice one file.
+            "#define N 2\n_Pragma(\" push_macro/**/( \\\"N\\\" ) \")\n#undef N\nN\n_Pragma(\"pop_macro(\\\"N\\\")\")\nN\n_Pragma(\"pop_macro(\\\"N\\\")\") N\n",
         ),
     ),
     ("undefines and redefinitions", "#define A 1\nA\n#undef A\nA\n#define A 2\nA\n#undef B\n#define F(x) x\n#undef F\nF(1)\n# \n#pragma x\nA\n"),
