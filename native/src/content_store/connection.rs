@@ -407,6 +407,7 @@ impl ConnectionGuard<'_> {
     /// A checkpoint its writes leave due runs after the turn is handed on.
     pub(super) fn execute_batch(&self, sql: &str) -> rusqlite::Result<()> {
         let connection: &Connection = self;
+        // Cleared first, as in `StoreTransaction::commit`.
         CHECKPOINT_DUE.set(false);
         let turn = take_turn(self.line)?;
         let ran = connection.execute_batch(sql);
@@ -441,6 +442,11 @@ impl StoreTransaction<'_> {
             connection,
             turn,
         } = self;
+        // The mark is the thread's, not the connection's. It is cleared first, so that a mark left
+        // by a commit made beside this path and `execute_batch` (a write outside a turn, which
+        // debug builds roll back) is not read as this commit's, perhaps on another store. Both
+        // paths read it right after their commit, so none is left today; a stale one would cost
+        // one passive checkpoint.
         CHECKPOINT_DUE.set(false);
         transaction.commit()?;
         drop(turn);
