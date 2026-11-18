@@ -141,8 +141,13 @@ describe("a steered hook's receipt", () => {
     const emitted = emitHookOutput(output, sink());
     await daemon.receiptRead;
     expect(daemon.receipts).toEqual(handed(root));
+    // The refusal reaches the hook in a few turns of this thread's event loop (setImmediate is not faked here).
+    for (let turn = 0; turn < 10; turn += 1) await new Promise(resolve => setImmediate(resolve));
+    // The hook tries the lock at SQLite's busy pauses (1, 2, 5, 10 ms) as its busy wait did, between its turns: this
+    // thread, which holds the lock, runs meanwhile, so it can give the lock back.
+    await vi.advanceTimersByTimeAsync(20);
+    expect(receiptRows(root)).toEqual([]);
     release();
-    // The hook tries the lock again at SQLite's busy pauses (1, 2, 5, 10 ms), as its busy wait did.
     await vi.advanceTimersByTimeAsync(20);
     await emitted;
     expect(receiptRows(root)).toHaveLength(1);
