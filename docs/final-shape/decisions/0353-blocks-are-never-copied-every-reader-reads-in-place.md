@@ -521,6 +521,13 @@ Each step ends with:
          the axis alone (against 397–524 MB with `Loc`'s 70–98 MB); `Loc` read in place, 4.1–5.9 M rows a run;
          74–85 B instructions against 68–89 B; findings 1,629.
      - **4e.** Measured: the 660.8 MB is 0; refusals and strata apart, against Q68's.
+       Measured 2026-11-18 (hogql cold, format 15, the Metal binding, 3 runs at load 45–57, after 4b's CPU part):
+       findings 1,629; the views made on the device are the axis alone, 439, 523 and 467 MB (step 5's: of the
+       660.8 MB, every view step 4 covers is read in place). Strata placed on the GPU and refused at run time: 11
+       strata in 32 runs (0.56 s on the CPU), 7 in 25 (0.19 s), 2 in 2 (0.01 s); the largest refusals are the axis's
+       views of 2.2–2.5 M rows (`ann_ctx`). Strata run apart because the wave's budget was spent: 73, 134 and 77,
+       against 197 and 127 at the `line` commit and Q68's 103–181 (36–55 under the old prices). Instructions 65.2–
+       76.8 B. What remains of both is the axis's made views, which step 5 writes once.
    - A stage's input may be a tape view: the kernels read the chunk block's placed tapes through the generated MSL
      (`metal_tape.metal`'s reads, 0293 §9).
    - A scan is a dispatch over 64-node groups.
