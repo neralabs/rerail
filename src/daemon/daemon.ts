@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { spawn } from "../engine/child-process.js";
 import { replaceFile } from "../engine/file-replace.js";
-import { searchGitFrom } from "../engine/git.js";
+import { followHomeShare, searchGitFrom } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { daemonExit } from "./daemon-exit.js";
@@ -1368,6 +1368,9 @@ async function runRerailDaemon(argv: readonly string[], services: RerailDaemonSe
   // looked for from that checkout, before anything runs Git, so its PATH entries are skipped as a hook skips them.
   const workspaceRoot = arguments_.workspaceRoot ?? process.cwd();
   searchGitFrom(workspaceRoot);
+  // Only the daemon, which lives on, asks whether the home share is there: off the network that ask is pending about
+  // 21 s, and it would keep a hook or a command alive that long after its work.
+  followHomeShare();
   const tls = arguments_.tls === undefined ? undefined : await loadDaemonTls(arguments_.tls);
   // Before anything opens a store: the main daemon is the machine's one main instance, and a second one stops
   // here naming the first. A checkout's daemon is a dev build with its own content store and skips this lock. Every

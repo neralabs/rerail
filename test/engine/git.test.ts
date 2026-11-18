@@ -1418,7 +1418,22 @@ describe("ProcessGit", () => {
     expect([git.replacedNow("/opt/git/bin/git", 10_000), disk.reads.later]).toEqual(["/usr/bin/git", ["/opt/git/bin/git", "/usr/bin/git"]]);
   });
 
-  it("puts the launcher's home's bin on PATH by the last look at the home share, each start looking again off its thread", async () => {
+  it("asks nothing of the home share in a process that does not follow it, and puts both homes' bin on PATH at every start, the share's first", () => {
+    const install = String.raw`C:\Program Files\Git`;
+    const ucrt = win32.join(install, "ucrt64", "bin", "git.exe");
+    const disk = disks(new Set([win32.join(install, "cmd", "git.exe"), win32.join(install, "etc", "gitconfig")]));
+    // A hook or a command, which ends once nothing is pending: an ask of a share off the network would hold it 21 s.
+    const asked: string[] = [];
+    const folder = async (path: string) => (asked.push(path), await new Promise<boolean>(() => undefined));
+    const git = new ProcessGit(() => () => ({ path: ucrt, looked: [win32.join(install, "cmd", "git.exe")] }), { ...disk, folder });
+    expect(git.path()).toBe(ucrt);
+    const env = { Path: String.raw`C:\WINDOWS`, HOMEDRIVE: String.raw`\\server\homes`, HOMEPATH: String.raw`\me`, USERPROFILE: String.raw`C:\Users\me` };
+    const bins = [win32.join(env.HOMEDRIVE, env.HOMEPATH, "bin"), win32.join(env.USERPROFILE, "bin")];
+    for (let start = 0; start < 3; start += 1) expect((git.startEnvironment(ucrt, env).Path ?? "").split(";").slice(2, -1)).toEqual(bins);
+    expect(asked).toEqual([]);
+  });
+
+  it("in a process that follows the home share, puts the launcher's home's bin on PATH by its last look, each start looking again off its thread", async () => {
     const install = String.raw`C:\Program Files\Git`;
     const ucrt = win32.join(install, "ucrt64", "bin", "git.exe");
     const files = new Set([win32.join(install, "cmd", "git.exe"), win32.join(install, "etc", "gitconfig")]);
@@ -1428,6 +1443,8 @@ describe("ProcessGit", () => {
     const asked: string[] = [];
     const folder = async (path: string) => (asked.push(path), await answer.promise);
     const git = new ProcessGit(() => () => ({ path: ucrt, looked: [win32.join(install, "cmd", "git.exe")] }), { ...disk, folder });
+    // The daemon follows it.
+    git.followHomeShare();
     expect(git.path()).toBe(ucrt);
     // The first look reads Git's install in the thread; no start reads anything after it.
     disk.reads.now.length = 0;
@@ -1440,6 +1457,8 @@ describe("ProcessGit", () => {
     answer.resolve(true);
     await new Promise(setImmediate);
     answer = Promise.withResolvers<boolean>();
+    // Following it again keeps the answer it has.
+    git.followHomeShare();
     expect([homes(git.startEnvironment(ucrt, env)), asked]).toEqual([[share], [share, share]]);
     // The share gone at that look: the profile, from the start after it.
     answer.resolve(false);

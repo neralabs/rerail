@@ -149,7 +149,7 @@ describe.runIf(WINDOWS)("Git for Windows' own git.exe started without its launch
     }
   });
 
-  it("runs a program only in the profile's bin as the launcher does once the home share is known to be a folder: not at all", async () => {
+  it("runs a program only in the profile's bin as the launcher does in the daemon once the home share is known to be a folder, not at all, and in any other process", async () => {
     const root = await repository();
     const [share, profile] = [join(root, "share"), join(root, "profile")];
     await Promise.all([mkdir(join(share, "bin"), { recursive: true }), mkdir(join(profile, "bin"), { recursive: true })]);
@@ -158,7 +158,12 @@ describe.runIf(WINDOWS)("Git for Windows' own git.exe started without its launch
     git(root, "config", "alias.only", "!rerail-only-profile");
     const launcher = machineLauncher();
     for (const [name, value] of Object.entries({ HOME: undefined, HOMEDRIVE: share.slice(0, 2), HOMEPATH: share.slice(2), USERPROFILE: profile, PATH: personPath(launcher) })) vi.stubEnv(name, value);
+    // A hook or a command never asks whether the share is there: its Git gets both homes' bin, the share's first.
+    const other = await freshGit();
+    expect((await other.runGitAsync(root, ["rev-parse", "--git-dir"])).status).toBe(0);
+    expect([other.runGit(root, ["only"]).stdout.trim(), other.runGit(root, ["only"]).stdout.trim()]).toEqual(["only-profile", "only-profile"]);
     const started = await freshGit();
+    started.followHomeShare();
     // The first start has the share looked at off the thread; a call that does not block lets that look answer.
     expect((await started.runGitAsync(root, ["rev-parse", "--git-dir"])).status).toBe(0);
     const through = spawnSync(launcher, ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=NUL", "-C", root, "only"], {

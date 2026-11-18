@@ -556,8 +556,9 @@ function launcherHomes(env: NodeJS.ProcessEnv, shareExists: boolean | undefined)
  * else `USERPROFILE`, and git.exe started without `HOME` takes the same in its own process. Only a look at the folder
  * tells which, and on a home share that does not answer (a domain account's home folder on a laptop off the network)
  * Windows waits about 21 s for the server: a look in Rerail's thread stopped every call the daemon serves for that
- * long. So a start takes the answer of the last look off the thread (`shareExists`, {@link ProcessGit}): the share,
- * or the profile. Before the first answer, both, the share's first, so the launcher's is among them.
+ * long. So a start in the daemon takes the answer of the last look off the thread (`shareExists`,
+ * {@link ProcessGit.followHomeShare}): the share, or the profile. In any other process, and in the daemon before the
+ * first answer, both, the share's first, so the launcher's is among them.
  */
 function unsetHomes(env: NodeJS.ProcessEnv, shareExists: boolean | undefined): string[] {
   const share = homeShare(env);
@@ -670,7 +671,7 @@ function keptBy(look: GitLook, disk: GitProbe & GitPathProbe): KeptGit {
  * How a {@link ProcessGit} reads the disk: `now` in its thread, for the first look, which a process makes before its
  * first Git call; `later` off its thread, for each look after a Git it kept is gone; `within`, in another thread with
  * each answer waited for in this one ({@link askedInThread}), for such a look made by a call that blocks; and `folder`,
- * off its thread, for whether the home share exists.
+ * off its thread, for whether the home share exists, in a process that follows it ({@link ProcessGit.followHomeShare}).
  */
 export interface GitDisks {
   readonly now: GitProbe & GitPathProbe;
@@ -737,13 +738,24 @@ export class ProcessGit {
   readonly #builds = new Map<string, GitForWindowsBuild | undefined>();
   /** The look after the Git kept was found gone, while it runs: every start that failed on that Git waits for it. */
   #looking: Promise<string | undefined> | undefined;
-  readonly #share: HomeShare;
+  /** The home share's last answer, once {@link followHomeShare} has the process follow it. */
+  #share: HomeShare | undefined;
 
   /** `decide` makes the look at the first ask, after the daemon has named its repository (`searchGitFrom`). */
   constructor(decide: () => GitLook, disks: GitDisks = machineDisks) {
     this.#decide = decide;
     this.#disks = disks;
-    this.#share = new HomeShare(path => disks.folder(path));
+  }
+
+  /**
+   * Has each start from now on put the launcher's home's bin on `PATH` by the home share's last answer, asked again off
+   * this thread at each start ({@link HomeShare}). Only the daemon, which lives on, calls this. On a share that does not
+   * answer, the ask is pending for about 21 s, and a process that ends once its event loop is empty, as a hook or a
+   * command does, would live that long after its work. Without it a start puts both homes' bin on `PATH`, the share's
+   * first ({@link unsetHomes}), and asks the disk nothing.
+   */
+  followHomeShare(): void {
+    this.#share ??= new HomeShare(path => this.#disks.folder(path));
   }
 
   /** The Git's path; throws {@link GitUnavailableError} when none is installed. */
@@ -756,12 +768,12 @@ export class ProcessGit {
 
   /**
    * The environment a start of `executable`, a Git this process kept, gets from `env`: as {@link gitStartEnvironment}
-   * gives it, by what the look that found that Git read and the last answer about the home share ({@link HomeShare}).
-   * It reads no file, so no start waits on a folder.
+   * gives it, by what the look that found that Git read and, in a process that follows it ({@link followHomeShare}),
+   * the last answer about the home share. It reads no file, so no start waits on a folder.
    */
   startEnvironment(executable: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
     const install = this.#builds.get(executable);
-    return install === undefined ? env : launcherEnvironment(install, env, this.#share.exists(env));
+    return install === undefined ? env : launcherEnvironment(install, env, this.#share?.exists(env));
   }
 
   /**
@@ -828,6 +840,11 @@ const processGit = new ProcessGit(() => gitLook());
  */
 export function gitExecutable(): string {
   return processGit.path();
+}
+
+/** Has this process's Git starts follow the home share's last answer ({@link ProcessGit.followHomeShare}): the daemon's. */
+export function followHomeShare(): void {
+  processGit.followHomeShare();
 }
 
 /** Whether a Git start failed because no program was at the path it named: Node's `ENOENT` from the start itself. */
