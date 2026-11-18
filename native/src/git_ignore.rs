@@ -537,10 +537,19 @@ mod tests {
         let output = std::process::Command::new("git")
             .arg("-C")
             .arg(root)
-            .args(["config", "--type=bool", "--default=false", "--get", "core.ignoreCase"])
+            .args([
+                "config",
+                "--type=bool",
+                "--default=false",
+                "--get",
+                "core.ignoreCase",
+            ])
             .output()
             .unwrap();
-        assert!(output.status.success(), "git config --get core.ignoreCase failed");
+        assert!(
+            output.status.success(),
+            "git config --get core.ignoreCase failed"
+        );
         let folds = String::from_utf8_lossy(&output.stdout).trim() == "true";
         let value = if folds { "false" } else { "true" };
         git(root, &["config", "core.ignoreCase", value]);
