@@ -98,7 +98,7 @@ In a terminal: rerail status · rerail version · rerail update · rerail daemon
 
 - **Not started:** says so and points at `/rerail-start`.
 - **No daemon:** says `✕ Rerail is not running.` and how to start it.
-- **Daemon not answering:** the daemon runs but gave no answer within 2 seconds, so it says to ask again, and to run `rerail status` if that keeps happening, rather than how to start it. `rerail session` still asks the daemon once more for the dashboard link, so `--open` opens the page if the daemon answers then; in OMP and Pi, `/rerail` does not wait on it a second time.
+- **Daemon not answering:** the daemon runs but gave no answer within 2 seconds, so it says to ask again, and to run `rerail status` if that keeps happening, rather than how to start it. It is not asked a second time, so this comes after those 2 seconds; only `rerail session --open` asks it once more for the dashboard link, and opens the page if the daemon answers then.
 - **Cursor:** shows the repository's rule count and a link to its rules.
 
 ## Steer

@@ -8,7 +8,7 @@ import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contrac
 import { ENTRY_POINTS, PACKAGE_ROOT as packageRoot, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { internalTesting } from "../engine/internal-testing.js";
 import { claudeWorkspace } from "../hosts/claude/claude-event-adapter.js";
-import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
+import { readRerailSummary, readRulesDashboard, type RerailSummaryRead } from "../presentation/session-presentation.js";
 import { renderRerailSummary, type RerailSummaryInput } from "../harness/rerail-summary.js";
 import {
   assertLocalEngineEntitlement,
@@ -24,7 +24,6 @@ import { CustomerActivationManager, CustomerProfileStore } from "../activation/c
 import {
   checkoutRuleCounts, readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState, type RepositoryStopOptions,
 } from "../runtime/repository-start.js";
-import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { gitExecutable, GitUnavailableError } from "../engine/git.js";
 import { checkSetupAnswer, setupAgents, setupPacks, startRerail } from "./repository-setup.js";
@@ -640,27 +639,19 @@ function sessionTarget(args: readonly string[]): { host: RerailHost; sessionId: 
   return { host: host as RerailHost, sessionId };
 }
 
-type SessionSummary = Pick<RerailSummaryInput, "presentation" | "repositoryState" | "rulesUrl">;
-
-/** What `rerail session` shows of the daemon: the session's presentation, else the repository's state, and the rules page. */
-async function readSessionSummary(host: RerailHost, sessionId: string | undefined, cwd: string): Promise<SessionSummary> {
-  // Nothing autostarts where Rerail is off, so with no daemon answering the checkout's own state decides,
-  // read without ever taking the write lock.
-  const startState = (): RepositoryStartState | undefined => readOnlyStartState(cwd);
-  const presentation = sessionId === undefined ? null : await readPresentation({ host, sessionId, cwd, onDemand: true, startState });
-  const repositoryState = presentation === null ? await readSummaryState(cwd, host, startState) : presentation.repositoryState;
-  return { presentation, repositoryState, rulesUrl: (await readRulesDashboard({ cwd })).url };
-}
-
 /** The rule counts `/rerail` shows where the coding agent cannot name its session, in a started checkout; else none. */
-function summaryCounts({ presentation, repositoryState }: SessionSummary, cwd: string): Pick<RerailSummaryInput, "ruleCount" | "awaitingApproval"> {
+function summaryCounts({ presentation, repositoryState }: RerailSummaryRead, cwd: string): Pick<RerailSummaryInput, "ruleCount" | "awaitingApproval"> {
   const counts = presentation === null && repositoryState === "started" ? repositoryRuleCounts(cwd) : null;
   return { ruleCount: counts?.on ?? null, awaitingApproval: counts?.awaitingApproval ?? null };
 }
 
-/** `rerail session --open`: the session's page, else the rules page; exit 3 when there is neither. */
-async function openSessionPage({ presentation, rulesUrl }: SessionSummary): Promise<number> {
-  const page = presentation?.url ?? rulesUrl;
+/**
+ * `rerail session --open`: the session's page, else the rules page; exit 3 when there is neither. Where no daemon
+ * answered the summary's read, the rules page is asked for once more: the person asked for a page, and a daemon that
+ * was busy a moment ago may answer now.
+ */
+async function openSessionPage({ presentation, rulesUrl }: RerailSummaryRead, cwd: string): Promise<number> {
+  const page = presentation?.url ?? rulesUrl ?? (await readRulesDashboard({ cwd })).url;
   if (page === null) return 3;
   reportOpening(await openDashboard(page), page);
   return 0;
@@ -675,14 +666,16 @@ async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
   const open = rawArgs.includes("--open");
   const { host, sessionId } = sessionTarget(rawArgs.filter(argument => argument !== "--open"));
   const cwd = claudeWorkspace(process.cwd());
-  const summary = await readSessionSummary(host, sessionId, cwd);
+  // Nothing autostarts where Rerail is off, so with no daemon answering the checkout's own state decides,
+  // read without ever taking the write lock.
+  const summary = await readRerailSummary({ host, sessionId, cwd, startState: () => readOnlyStartState(cwd) });
   process.stdout.write(`${renderRerailSummary({
     ...summary,
     ...summaryCounts(summary, cwd),
     repositoryName: repositoryName(cwd),
     sigil: ADAPTER_CAPABILITIES[host].commandSigil,
   })}\n`);
-  return open ? await openSessionPage(summary) : 0;
+  return open ? await openSessionPage(summary, cwd) : 0;
 }
 
 /** The daemon commands need only the launcher home; they never load an activation policy. */
