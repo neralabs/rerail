@@ -490,7 +490,7 @@ Each step ends with:
          - A read from a frozen generation that is dropped while it reads is caught: the read checks its
            generation's stamp after it, and reads again. An entry's loads are masked to the entry, so a read of
            one being rewritten reads nothing outside the cache.
-         - Every loop is bounded (decision 0103's device work queue). A read that finds no room (the spare not
+         - Every loop is bounded, as the device's work queue's are. A read that finds no room (the spare not
            yet cleared, its retries spent) counts a failure in the cache's header; the host refuses that
            dispatch's batch, which runs on the CPU (counted), rather than wait.
      - **4c.** The views' reads written once (CLIF, for Rust, the JIT and MSL), over a document's `TapeView` and
