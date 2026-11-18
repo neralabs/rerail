@@ -94,6 +94,8 @@ pub fn try_lock_exclusive(path: String) -> Result<Option<ExclusiveFileLock>> {
 }
 
 /// What the wait's promise settles with, made on the JavaScript thread.
+// Only `lock_exclusive` uses it, which only JavaScript calls.
+#[cfg_attr(test, allow(dead_code))]
 type Settle = Box<dyn FnOnce(Env) -> Result<Option<ExclusiveFileLock>> + Send>;
 
 /// Takes an exclusive lock on `path`, creating the file when missing, waiting up to `wait_ms` while
@@ -101,6 +103,8 @@ type Settle = Box<dyn FnOnce(Env) -> Result<Option<ExclusiveFileLock>> + Send>;
 /// when the other handle still holds it at the bound. A wait given up never ends up holding the
 /// lock. The file opens before this returns, so an open that fails throws here.
 #[napi(ts_return_type = "Promise<ExclusiveFileLock | null>")]
+// Only JavaScript calls it; tests drive `wait_for_lock`, the wait its thread runs.
+#[cfg_attr(test, allow(dead_code))]
 pub fn lock_exclusive(env: &Env, path: String, wait_ms: u32) -> Result<Object<'_>> {
     let file = open_waiting_lock_file(&path)?;
     let wait = Duration::from_millis(wait_ms.into());
@@ -126,12 +130,14 @@ pub fn lock_exclusive(env: &Env, path: String, wait_ms: u32) -> Result<Object<'_
     Ok(promise)
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn wait_and_name(file: File, wait: Duration, path: &str) -> Result<Option<File>> {
     crate::panic_boundary::contain_panic("the wait for a lock", || {
         wait_for_lock(file, wait).map_err(|error| lock_failure("lock", path, error))
     })
 }
 
+#[cfg_attr(test, allow(dead_code))]
 fn settle(deferred: JsDeferred<Option<ExclusiveFileLock>, Settle>, waited: Result<Option<File>>) {
     match waited {
         Ok(file) => deferred.resolve(Box::new(move |_| Ok(file.map(ExclusiveFileLock::holding)))),
@@ -391,7 +397,8 @@ mod tests {
         // SAFETY: a handler that does nothing, installed without SA_RESTART.
         unsafe {
             let mut action: libc::sigaction = std::mem::zeroed();
-            action.sa_sigaction = on_signal as usize;
+            let handler: extern "C" fn(libc::c_int) = on_signal;
+            action.sa_sigaction = handler as libc::sighandler_t;
             libc::sigaction(libc::SIGUSR1, &action, std::ptr::null_mut());
         }
         let (directory, path) = lock_path("signal");
