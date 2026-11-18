@@ -129,4 +129,18 @@ describe("an engine service beside the events hooks left while its daemon did no
     // A call begun late read its file's "before" from the file as already edited, and found no edit to check.
     expect(edits.map(edit => edit.generatedText)).toEqual(["def a():\n    return 2\n"]);
   });
+
+  it("takes what a shell command left untaken wrote as the session's own, from when its hooks met it", async () => {
+    const held = await serviceWithUntaken();
+    const tool = { sessionId: SESSION, toolCallId: "shell-1", toolName: "Bash" } as const;
+    // The hooks met the call and its result around the command's run, a minute apart; the check comes after both.
+    const ran = Date.now();
+    await held.leave({ kind: "call", eventId: "shell-1:call", ...tool, input: { command: "python generate.py" } }, ran - 60_000);
+    writeFileSync(join(held.root, "b.py"), "def b():\n    return 3\n");
+    await held.leave({ kind: "result", eventId: "shell-1:result", ...tool, output: "ok" }, ran + 60_000);
+    await held.send(prompt("next"));
+    // Checked by the clock as it was checked, the call ran after the file was written, which read as another writer's.
+    const edits = held.batches.flatMap(batch => batch.edits).filter(edit => edit.path === "b.py");
+    expect(edits.map(edit => edit.generatedText)).toEqual(["def b():\n    return 3\n"]);
+  });
 });

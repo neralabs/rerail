@@ -1302,12 +1302,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // A code-rule boundary reached while the session's evaluator is still opening (indexing) goes on without code rules.
     const bridge = CODE_RULE_BOUNDARIES[event.kind] === true ? await this.#codeRuleWorkspaceNow(state, event) : state.codeRuleBridge;
     bridge?.refreshCodeRules();
-    await this.#noteTurnWindow(state, event);
-
     // A hook host's stop hook is the end of the agent's run; OMP and Pi end a turn at every model call, and yield later.
     const yields = event.kind === "turn-end" && ADAPTER_CAPABILITIES[descriptor.host].toolSurface !== "native";
+    // The event's record, and the run of its tool call, at the time it happened.
     state.observedAt = observedAt;
     try {
+      await this.#noteTurnWindow(state, event);
       await this.#ingestEventWork(state, bridge, event, yields, signal);
     } finally {
       state.observedAt = undefined;
@@ -2078,6 +2078,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       });
       bridge = new CodeRuleBridge(checkout.cwd, auditor, {
         observations: this.#sourceObservations,
+        // A call checked after it ran (`IngestOptions.observedAt`) ran when its hooks met it.
+        eventTime: () => opened.observedAt,
         ...walkResumeOption(suspension),
         heldCalls: heldCallsOf(opened.restoredCalls),
         // Every checkout of a clone has its clone id; a checkout the catalog does not know walks on its own. The walk is

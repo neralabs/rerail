@@ -1168,6 +1168,8 @@ export class CodeRuleBridge {
   #firstSightBytes = 0;
   /** The most `#texts` may take (`MAX_SESSION_TEXT_BYTES`). */
   readonly #sessionTextBytes: number;
+  /** `eventTime` of the bridge's options. */
+  readonly #eventTime: (() => number | undefined) | undefined;
 
   constructor(
     cwd: string,
@@ -1202,6 +1204,12 @@ export class CodeRuleBridge {
        * as it leaves a begun call's, so an edit one made while the session was closed is not read as another writer's.
        */
       heldCalls?: readonly HeldCall[];
+      /**
+       * When the event the session is checking happened, where it is checked after it happened (a hook left it while the
+       * daemon did not read): a tool call's run is then read from those times, not from the clock as it is checked, so
+       * what the call wrote is the session's own. Undefined, or returning undefined, reads the filesystem's clock.
+       */
+      eventTime?: () => number | undefined;
     } = {},
   ) {
     this.#cwd = resolve(cwd);
@@ -1210,6 +1218,7 @@ export class CodeRuleBridge {
     this.#observations = options.observations;
     this.#resume = options.resume;
     this.#heldCalls = options.heldCalls ?? [];
+    this.#eventTime = options.eventTime;
     // A session opened fresh has no text to read back before its first event is answered.
     if (options.resume === undefined) this.#heldTexts.resolve();
     this.#discoveryWaitMs = options.discoveryWaitMs ?? BOUNDARY_DISCOVERY_WAIT_MS;
@@ -1392,7 +1401,7 @@ export class CodeRuleBridge {
     restoredPreimages?: Readonly<Record<string, Preimage>>,
   ): Promise<Readonly<Record<string, Preimage>>> {
     const discovery = this.#requireDiscovery();
-    discovery.toolCalls.begin(toolCallId, await filesystemClock());
+    discovery.toolCalls.begin(toolCallId, await this.#toolCallClock());
     this.refreshCodeRules();
     const paths = generatedEditPaths(toolName, input);
     this.#auditor.refreshOwners?.(paths);
@@ -1420,12 +1429,17 @@ export class CodeRuleBridge {
    * whose edit tool no hook shows opens one for each turn the same way, as its writes are seen by no call.
    */
   async unwatchedCall(toolCallId: string): Promise<void> {
-    (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, await filesystemClock());
+    (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, await this.#toolCallClock());
+  }
+
+  /** Where a tool call starts or ends on the filesystem's clock: when its event happened, or now (`eventTime`). */
+  async #toolCallClock(): Promise<number> {
+    return this.#eventTime?.() ?? await filesystemClock();
   }
 
   /** Ends the window `unwatchedCall` opened for the call, at its result. */
   async unwatchedResult(toolCallId: string): Promise<void> {
-    (this.#discovery?.toolCalls ?? this.#unwatched).finish(toolCallId, await filesystemClock());
+    (this.#discovery?.toolCalls ?? this.#unwatched).finish(toolCallId, await this.#toolCallClock());
   }
 
   /**
@@ -1434,7 +1448,7 @@ export class CodeRuleBridge {
    */
   async finish(toolCallId: string, failed = false, options: { rewindable?: boolean } = {}): Promise<readonly CodeRuleResponse[]> {
     const discovery = this.#requireDiscovery();
-    discovery.toolCalls.finish(toolCallId, await filesystemClock());
+    discovery.toolCalls.finish(toolCallId, await this.#toolCallClock());
     if (this.#commands.delete(toolCallId)) {
       const responses = await this.#reconcile(discovery);
       await this.#noteIgnoreRules([]);
@@ -1681,7 +1695,7 @@ export class CodeRuleBridge {
    */
   async checkpoint(checkpoint: Extract<CodeRuleCheckpoint, "turn" | "final">): Promise<CodeRuleResponse> {
     const discovery = this.#requireDiscovery();
-    discovery.toolCalls.finishAll(await filesystemClock());
+    discovery.toolCalls.finishAll(await this.#toolCallClock());
     await this.#awaitDiscovery(discovery, checkpoint, checkpoint);
     await this.#noteIgnoreRules([]);
     this.#assertDiscovery(discovery);
