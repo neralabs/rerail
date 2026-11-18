@@ -179,20 +179,26 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect((await service.scan(ws.repo)).readiness.github.state).toBe("signed-in");
   });
 
-  it("reads gh's sign-in for a status only while none is kept, once for status reads at the same time", async () => {
+  it("reads gh's sign-in for a status only while none is kept, and once for listings at the same time", async () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
-    const github = new FakeGithub();
+    const github = new HeldReadiness();
     const service = ws.service({ github });
     await service.setEnabled(ws.repo, true);
     const reads = github.readinessReads;
 
-    // The kept reading is gone, as when the repository took a new key.
+    // The kept reading is gone, as when the repository took a new key: the next status reads gh, the one after not.
     ws.database.delete(mergeAssistState).where(eq(mergeAssistState.key, `github:${ws.repositoryKey}`)).run();
-    const statuses = await Promise.all([service.status(ws.repo), service.status(ws.repo)]);
-    expect(statuses.map(status => status.readiness.github.state)).toEqual(["signed-in", "signed-in"]);
-    expect(github.readinessReads).toBe(reads + 1);
+    expect((await service.status(ws.repo)).readiness.github.state).toBe("signed-in");
     await service.status(ws.repo);
     expect(github.readinessReads).toBe(reads + 1);
+
+    // Two checkouts of the repository scanned at once: both listings ask while one read is out, and it serves both.
+    const other = ws.worktree("jbarnes-docs");
+    github.hold();
+    const scans = [service.scan(ws.repo), service.scan(other)];
+    github.release();
+    await Promise.all(scans);
+    expect(github.readinessReads).toBe(reads + 2);
   });
 
   it("keeps nothing gh says after Merge Assist went off, so turning it on again reads gh afresh", async () => {
