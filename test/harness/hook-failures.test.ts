@@ -15,6 +15,9 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
 });
 
 import { HOOK_FAILURES_FILE, hookFailureLines, readHookFailures, recordHookFailure, type HookFailure, type HookFailureLog } from "../../src/harness/hook-failures.js";
+import { pendingPath, persistPending, withSessionLock } from "../../src/harness/hook-adapter.js";
+import { runClaudeHook } from "../../src/hosts/claude/index.js";
+import { startTestRepository } from "../support/started-repository.js";
 import { DaemonUnreachableError, hookRerailStarted, runHostHook } from "../../src/harness/hook-host.js";
 import { leaveUntaken, LOCKS_DIR, loadNativeBinding, UNTAKEN_EVENTS_DIR, UNTAKEN_MOST_EVENTS, untakenFolderId } from "../../src/engine/index.js";
 import { daemonLeftEventUntaken, engineRequestBody, parseEngineRequest } from "../../src/runtime/index.js";
@@ -652,6 +655,57 @@ describe("a hook beside a daemon that runs but does not read", () => {
     expect(await daemonLeftEventUntaken()).toBeDefined();
     await closeEngine();
     expect(await daemonLeftEventUntaken()).toBeUndefined();
+  });
+
+  it("holds no session lock: it leaves its event while another hook of its session holds the lock, and keeps none waiting", async () => {
+    const rerailHome = await home();
+    const front = await silentFront();
+    const closeEngine = await recordedDaemon(rerailHome, (front.server.address() as AddressInfo).port);
+    const storageRoot = join(rerailHome, "sessions");
+    const holding = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const holder = withSessionLock(storageRoot, "claude-code", "s", async () => {
+      holding.resolve();
+      await release.promise;
+    });
+    try {
+      await holding.promise;
+      await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
+      const handle = async (runtime: { ingest: (event: ReturnType<typeof prompt>) => Promise<unknown> }) => ({ answered: await runtime.ingest(prompt("second")) });
+      // Before, the hook took the lock to run its handler and waited for the holder, up to the lock's 30 s.
+      expect(await runHostHook("claude-code", rerailHome, "s", false, { storageRoot, daemonDeadline: Date.now() + 60_000, arrivedAt: 2_000 }, handle, "UserPromptSubmit")).toEqual({ answered: [] });
+      expect(untaken(rerailHome)).toEqual(["first", "second"]);
+    } finally {
+      release.resolve();
+      await holder;
+      await Promise.all([closeFront(front.server), closeEngine()]);
+    }
+  });
+
+  it("touches none of its session's files: a steer held for the session stays for the next hook the daemon answers", async () => {
+    const rerailHome = await home();
+    const front = await silentFront();
+    const closeEngine = await recordedDaemon(rerailHome, (front.server.address() as AddressInfo).port);
+    const storageRoot = join(rerailHome, "sessions");
+    try {
+      const held = { sessionId: "s", requested: "steer" as const, mechanism: "additional-context" as const, content: "held steer", ruleIds: [], rules: [] };
+      const path = pendingPath(storageRoot, "claude-code", "s");
+      await persistPending(path, [held]);
+      const before = readFileSync(path, "utf8");
+      await leaveUntaken(rerailHome, process.pid, engineRequestBody(prompt("first")), 1_000);
+      const input = {
+        hook_event_name: "PostToolUse", session_id: "s", cwd: rerailHome, transcript_path: join(rerailHome, "t.jsonl"),
+        tool_name: "Bash", tool_input: { command: "ls" }, tool_use_id: "toolu_1", tool_response: { stdout: "", stderr: "" },
+      };
+      const databasePath = join(rerailHome, "rerail.sqlite");
+      startTestRepository(rerailHome, databasePath);
+      // Before, the hook routed the session's held steers as it would with a daemon's answer: it took them into its
+      // own output and emptied their file, under the lock.
+      expect(await runClaudeHook(input, { storageRoot, databasePath })).toEqual({});
+      expect(readFileSync(path, "utf8")).toBe(before);
+    } finally {
+      await Promise.all([closeFront(front.server), closeEngine()]);
+    }
   });
 
   it("loses its event, and says why, once the folder holds the most events Rerail keeps for the daemon", async () => {

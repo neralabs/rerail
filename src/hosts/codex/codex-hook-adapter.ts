@@ -69,6 +69,8 @@ export async function handleCodexEvent(
   const sessionId = requiredText(input, "session_id");
   const deliveries: AdapterDelivery[] = [];
   for (const event of codexHookEvents(input)) deliveries.push(...await eventLoop.ingest(event));
+  // Left for a daemon that is not reading: the session's held steers wait in their file for the next hook it answers.
+  if (eventLoop.untaken === true) return {};
   const path = pendingPath(storageRoot, "codex", sessionId);
   if (hook === "Stop") {
     await holdStopSteers(path, deliveries);

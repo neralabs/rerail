@@ -220,6 +220,9 @@ export async function handleCursorEvent(
   const deliveries = transcriptOwnsText && (hook === "afterAgentResponse" || hook === "stop")
     ? []
     : await eventLoop.ingest(event);
+  // Left for a daemon that is not reading: the answer of a hook with nothing to deliver, and the session's held steers
+  // wait in their file for the next hook the daemon answers.
+  if (eventLoop.untaken === true) return cursorHookOutput(hook, []);
   switch (hook) {
     case "beforeSubmitPrompt":
       await persistPending(path, deliveries.filter(delivery => steers(delivery.requested)));

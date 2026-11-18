@@ -283,13 +283,21 @@ async function runWithLoop(hook: HookRun, loopFor: (lock: SessionLock) => Rerail
 
 /**
  * Runs the hook's handler with an `ingest` that leaves each event in the home's untaken folder for the daemon `daemon`
- * names, which runs but does not read (`untaken-events.ts`), and gives the coding agent what a daemon that holds
- * nothing for the event gives: no delivery. The daemon checks the event as it reads again, before any event sent to it
- * after, and what that check finds reaches the agent with the session's next answer.
+ * names, which runs but does not read (`untaken-events.ts`), and gives the coding agent the answer of a hook with
+ * nothing to deliver: the handler touches none of the session's files then (`RerailEventLoop.untaken`), so the hook
+ * takes no session lock, waits for no other hook of its session and keeps none of them waiting. The daemon checks the
+ * event as it reads again, before any event sent to it after, and what that check finds reaches the agent with the
+ * session's next answer.
  */
 async function leaveForDaemon(hook: HookRun, daemon: DaemonState): Promise<HookOutput> {
-  return await runWithLoop(hook, () => ({ ingest: async adapterEvent => await leaveEvent(hook, daemon, adapterEvent), untaken: true }));
+  return await hook.handle({ ingest: async adapterEvent => await leaveEvent(hook, daemon, adapterEvent), untaken: true }, hook.storageRoot, NO_LOCK);
 }
+
+/** The lock of a hook that leaves its event: it holds nothing, as such a hook touches none of its session's files. */
+const NO_LOCK: SessionLock = {
+  released: async work => await work(),
+  kept: async work => await work(),
+};
 
 /**
  * Leaves `adapterEvent` for `daemon` as the daemon keeps what it records: its secrets scrubbed, and a tool's output

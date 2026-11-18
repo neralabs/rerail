@@ -96,6 +96,8 @@ export async function handleClaudeEvent(
   const sessionId = requiredText(input, "session_id");
   const deliveries: AdapterDelivery[] = [];
   for (const event of claudeHookEvents(input)) deliveries.push(...await eventLoop.ingest(event));
+  // Left for a daemon that is not reading: the session's held steers wait in their file for the next hook it answers.
+  if (eventLoop.untaken === true) return {};
   const path = pendingPath(storageRoot, "claude-code", sessionId);
   if (hook === "SessionEnd") {
     await rm(path, { force: true });

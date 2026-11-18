@@ -279,6 +279,21 @@ describe("a Cursor hook while the daemon is not reading", () => {
     return { ...scriptedLoop({}), untaken: true };
   }
 
+  it("answers as with nothing to deliver, keeping the steers held for the session for the next hook the daemon answers", async () => {
+    const root = await temporaryDirectory();
+    const storage = join(root, "sessions");
+    const common = { conversation_id: "cursor-held", generation_id: "g1", cwd: root };
+    const tool = (id: string) => ({ tool_use_id: id, tool_name: "Shell", tool_input: { command: "ls" } });
+    const steer: AdapterDelivery = { sessionId: "cursor-held", requested: "steer", mechanism: "deferred-context", content: "Held steer.", ruleIds: [], rules: [] };
+    // Cursor shows nothing at a call, so its steer waits for a result that can carry it.
+    expect(await handleCursorEvent({ ...common, ...tool("t1"), hook_event_name: "preToolUse" }, scriptedLoop({ call: [steer] }), storage)).toEqual({ permission: "allow" });
+    const left = untakenLoop();
+    // Before, the hook routed the held steer into its own answer and emptied the session's file, under the lock.
+    expect(await handleCursorEvent({ ...common, ...tool("t1"), hook_event_name: "postToolUse", tool_output: "a" }, left, storage)).toEqual({});
+    expect(await handleCursorEvent({ ...common, ...tool("t2"), hook_event_name: "postToolUse", tool_output: "a" }, scriptedLoop({}), storage))
+      .toEqual({ additional_context: expect.stringContaining("Held steer.") });
+  });
+
   it("leaves the transcript unread for the next hook the daemon answers, and leaves only the hook's own event", async () => {
     const { storage, common } = await unreadTranscript();
     const tool = { tool_use_id: "shell-1", tool_name: "Shell", tool_input: { command: "ls" } };
