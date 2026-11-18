@@ -44,7 +44,20 @@ The selected source has no effect on what that expression resolves to.
 Explicit relative paths in rule expressions start at the worktree root of the named repository.
 Paths in a bare repository can name tree entries from the tree root.
 Commit message searches use Git's regular expression syntax.
-The `git_revision_error` reason distinguishes resolution errors, wrong object kinds, and unreadable or corrupt objects.
+The `git_revision_error` reason is one of these symbols.
+
+| Reason | Meaning |
+| --- | --- |
+| `missing-revision` | No name, object prefix, or commit message matched |
+| `ambiguous-revision` | The expression matched more than one object |
+| `invalid-revision` | Git could not interpret the expression or follow its navigation |
+| `missing-object` | A required object is absent from local storage |
+| `missing-path` | A tree lacks the requested entry |
+| `wrong-object-kind` | A step requires a different Git object kind |
+| `unreadable-object` | A Git storage read failed |
+| `corrupt-object` | The bytes failed the object checksum |
+| `repository-not-open` | The repository argument has no open repository |
+
 The resolver checks the objects it reads during navigation before it follows their IDs.
 
 ## Relations
