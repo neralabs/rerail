@@ -3283,6 +3283,14 @@ where the tree names `num_text`, `num_source`, `rr_agg75` and the annotation cop
   request carry (`AskedByRule::step`) read that as an id of the step's input. Fixed: where a rebuild leaves a
   relation's rules as they were, in order, each place keeps its readers. The warm run's faults above remain: two
   manifests (10 and 8 sources), a COMMIT to the store, 3 recomputations. Still ignored, this item.
+- **Traced so far** (2026-11-18, `RERAIL_TEST_KEEP`, the store read after both runs): the root's two lanes' manifests
+  differ cold to warm under the same plan digests. Cold names 27 and 30 sources, warm 10 and 8. The 17 the first
+  lane's warm manifest lacks are the pipelines' kept runs (0333): 15 program images and two `pipeline_run` fact
+  sources, which `record_runs` names only as the writer stores them. A warm run that finds the prepared program
+  does not run the preparation, so it keeps no run (`kept_runs` empty: 5 plans against the cold run's 6) and names
+  none of their sources. The second lane differs the other way too: 14 plans warm against 10 cold. To do: a run
+  that reuses the prepared program keeps the last runs it found (`last_named`), naming their keys and sources (the
+  run's facts' images by `image_key`); then find the second lane's 4 extra plans, the COMMIT and the 3 recomputations.
 
 ### Q102. `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` fails at final-rerail-shape-rr-align's f7c563513
 
